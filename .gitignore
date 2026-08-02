@@ -32,6 +32,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the template must be committed — `npm run db:setup` copies it.
+!.env.example
 
 # vercel
 .vercel
