@@ -1,0 +1,29 @@
+# Local development database.
+#
+#   docker compose up -d
+#   npm run db:setup
+#
+# An alternative to installing Postgres natively — same connection string
+# either way, so .env.local does not change. Nobody shares a database, and
+# nobody needs credentials to anyone's cloud account to develop.
+services:
+  db:
+    image: postgres:16
+    container_name: mahek-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mahek
+      POSTGRES_PASSWORD: mahek
+      POSTGRES_DB: mahekone
+    ports:
+      - "5432:5432"
+    volumes:
+      - mahek-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mahek -d mahekone"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mahek-pgdata:

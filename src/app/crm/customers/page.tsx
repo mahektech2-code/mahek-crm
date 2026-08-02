@@ -1,0 +1,44 @@
+import { isManager, requireUser } from "@/lib/auth";
+import { getScope, scopeLabel } from "@/lib/scope";
+import { listCustomers, listTeam } from "@/lib/queries";
+import { CustomersScreen } from "./customers-screen";
+
+export const metadata = { title: "Customers — MahekOne CRM" };
+
+export default async function CustomersPage() {
+  const user = await requireUser();
+  const scope = await getScope(user);
+
+  const [rows, team] = await Promise.all([
+    listCustomers(user, scope),
+    listTeam(),
+  ]);
+
+  return (
+    <CustomersScreen
+      scopeLabel={scopeLabel(scope, user)}
+      isManager={isManager(user)}
+      team={team.map((t) => ({ id: t.id, name: t.name }))}
+      rows={rows.map((c) => ({
+        id: c.id,
+        name: c.name,
+        contactPerson: c.contactPerson,
+        phone: c.phone,
+        city: c.city,
+        ownerId: c.ownerId,
+        ownerName: c.ownerName,
+        status: c.status,
+        lastOrderDate: c.lastOrderDate,
+        lastContactAt: c.lastContactAt ? c.lastContactAt.toISOString() : null,
+        outstanding: c.outstanding,
+        slowPayer: c.slowPayer,
+        openComplaints: c.openComplaints,
+        gstin: c.gstin,
+        creditTermDays: c.creditTermDays,
+        cycleDays: c.cycleDays,
+        route: c.route,
+        deactivationRequested: c.deactivationRequested,
+      }))}
+    />
+  );
+}
