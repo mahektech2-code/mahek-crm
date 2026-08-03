@@ -18,19 +18,20 @@ import { ConfirmDialog, FilterPills, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { CallPanel, type CallTarget } from "@/components/crm/call-panel";
-import { rebuildQueue, restoreWorkedRows, skipQueueItem } from "@/lib/actions/crm";
+import { rebuildQueue, skipQueueItem } from "@/lib/actions/crm";
 import { money, phoneDisplay, shortDate } from "@/lib/format";
 
+type Reason = { kind: string; label: string; weight: number };
+
 type Row = {
-  id: string;
   customerId: string;
   name: string;
   contactPerson: string;
   phone: string;
-  reason: string;
-  worked: boolean;
-  skipped: boolean;
-  heldBackReason: string | null;
+  score: number;
+  /** Every reason the customer qualified, strongest first. */
+  reasons: Reason[];
+  daysSinceContact: number | null;
   outstanding: number;
   slowPayer: boolean;
   lastOrderDate: string | null;
@@ -38,25 +39,36 @@ type Row = {
   hasComplaint: boolean;
 };
 
-type Filter = "todo" | "all" | "worked" | "overdue" | "complaints";
+type Suppressed = { customerId: string; name: string; reason: string };
 
+type Filter = "all" | "orders" | "complaints" | "reminders";
+
+/** The engine's own reason kinds — nothing here invents a category. */
 const REASON_TONE: Record<string, "danger" | "warn" | "brand" | "neutral"> = {
-  "Open complaint": "danger",
-  "Payment overdue": "danger",
-  "Reminder due": "warn",
-  "Payment follow-up": "warn",
-  "Gone quiet": "neutral",
-  "Due to reorder": "brand",
+  reminderOverdue: "danger",
+  reminderDueToday: "warn",
+  orderOverdueFullCycle: "danger",
+  orderDue: "brand",
+  orderDueSoon: "brand",
+  checkInOverdue: "warn",
+  checkInDue: "neutral",
 };
+
+const REMINDER_KINDS = ["reminderOverdue", "reminderDueToday"];
+const ORDER_KINDS = ["orderOverdueFullCycle", "orderDue", "orderDueSoon"];
 
 export function QueueScreen({
   scopeLabel,
   rows,
+  suppressed,
+  progress,
   callTargets,
   activity,
 }: {
   scopeLabel: string;
   rows: Row[];
+  suppressed: Suppressed[];
+  progress: { worked: number; total: number; percent: number };
   callTargets: Record<string, CallTarget>;
   activity: {
     connected: number;
@@ -70,33 +82,30 @@ export function QueueScreen({
   const router = useRouter();
   const { run } = useToast();
 
-  const [filter, setFilter] = React.useState<Filter>("todo");
+  const [filter, setFilter] = React.useState<Filter>("all");
   const [selectedRaw, setSelected] = React.useState(0);
   const [openId, setOpenId] = React.useState<string | null>(null);
   const [heldOpen, setHeldOpen] = React.useState(false);
   const [skipping, setSkipping] = React.useState<Row | null>(null);
   const [busy, setBusy] = React.useState(false);
 
-  const held = rows.filter((r) => r.skipped);
-  const active = rows.filter((r) => !r.skipped);
-  const worked = active.filter((r) => r.worked).length;
-  const total = active.length;
+  // The queue is computed on request: a customer who has been called today is
+  // simply no longer a candidate, so there is no "worked" row state to hold.
+  const hasAny = (r: Row, kinds: string[]) =>
+    r.reasons.some((x) => kinds.includes(x.kind));
 
-  // Clamped during render — the list shrinks as rows get worked.
   const visibleRef = React.useMemo(() => {
     switch (filter) {
-      case "todo":
-        return active.filter((r) => !r.worked);
-      case "worked":
-        return active.filter((r) => r.worked);
-      case "overdue":
-        return active.filter((r) => r.reason === "Payment overdue" && !r.worked);
+      case "orders":
+        return rows.filter((r) => hasAny(r, ORDER_KINDS));
       case "complaints":
-        return active.filter((r) => r.hasComplaint && !r.worked);
+        return rows.filter((r) => r.hasComplaint);
+      case "reminders":
+        return rows.filter((r) => hasAny(r, REMINDER_KINDS));
       default:
-        return active;
+        return rows;
     }
-  }, [active, filter]);
+  }, [rows, filter]);
 
   const visible = visibleRef;
   const selected = Math.min(selectedRaw, Math.max(0, visible.length - 1));
@@ -129,10 +138,10 @@ export function QueueScreen({
   }, [visible, selected, openId]);
 
   const openTarget = openId ? (callTargets[openId] ?? null) : null;
-  const nextUnworked = visible.findIndex((r) => !r.worked && r.customerId !== openId);
+  const nextUnworked = visible.findIndex((r) => r.customerId !== openId);
 
   function advance() {
-    const remaining = visible.filter((r) => !r.worked && r.customerId !== openId);
+    const remaining = visible.filter((r) => r.customerId !== openId);
     if (remaining.length) {
       setOpenId(remaining[0].customerId);
       setSelected(visible.indexOf(remaining[0]));
@@ -151,6 +160,7 @@ export function QueueScreen({
             <Button
               variant="secondary"
               disabled={busy}
+              title="The queue is recomputed on every load — this just re-reads it"
               onClick={async () => {
                 setBusy(true);
                 await run(rebuildQueue());
@@ -158,7 +168,7 @@ export function QueueScreen({
                 router.refresh();
               }}
             >
-              Re-prioritise
+              Refresh
             </Button>
             <Button
               variant="primary"
@@ -178,18 +188,13 @@ export function QueueScreen({
 
       <Card className="mb-4 flex items-center gap-5 px-5 py-3.5">
         <span className="text-lg font-semibold text-ink">
-          {worked} of {total} worked
+          {progress.worked} of {progress.total} worked
         </span>
-        <Progress
-          value={total ? Math.round((worked / total) * 100) : 0}
-          className="max-w-[320px] flex-1"
-        />
-        <span className="text-[13px] font-medium text-body">
-          {total ? Math.round((worked / total) * 100) : 0}%
-        </span>
+        <Progress value={progress.percent} className="max-w-[320px] flex-1" />
+        <span className="text-[13px] font-medium text-body">{progress.percent}%</span>
         <span className="h-5 w-px bg-divider" />
         <span className="text-[13px] text-muted">
-          Queue rebuilds from the book whenever you press Re-prioritise
+          Computed fresh on every load from the current state of the book
         </span>
       </Card>
 
@@ -208,11 +213,22 @@ export function QueueScreen({
           value={filter}
           onChange={setFilter}
           options={[
-            { key: "todo", label: "To work", count: active.filter((r) => !r.worked).length },
-            { key: "overdue", label: "Payment overdue", count: active.filter((r) => r.reason === "Payment overdue" && !r.worked).length },
-            { key: "complaints", label: "Has complaint", count: active.filter((r) => r.hasComplaint && !r.worked).length },
-            { key: "worked", label: "Worked", count: worked },
-            { key: "all", label: "All", count: active.length },
+            { key: "all", label: "To work", count: rows.length },
+            {
+              key: "reminders",
+              label: "Reminder due",
+              count: rows.filter((r) => hasAny(r, REMINDER_KINDS)).length,
+            },
+            {
+              key: "orders",
+              label: "Due to reorder",
+              count: rows.filter((r) => hasAny(r, ORDER_KINDS)).length,
+            },
+            {
+              key: "complaints",
+              label: "Has complaint",
+              count: rows.filter((r) => r.hasComplaint).length,
+            },
           ]}
         />
         <span className="flex-1" />
@@ -221,7 +237,7 @@ export function QueueScreen({
         </span>
       </div>
 
-      {held.length ? (
+      {suppressed.length ? (
         <Card className="mb-3">
           <button
             onClick={() => setHeldOpen((o) => !o)}
@@ -233,7 +249,8 @@ export function QueueScreen({
               className={cx("text-muted transition-transform", heldOpen && "rotate-90")}
             />
             <span className="text-sm text-muted">
-              {held.length} customer{held.length === 1 ? "" : "s"} held back today
+              {suppressed.length} customer{suppressed.length === 1 ? "" : "s"} held
+              back today
             </span>
             <span className="flex-1" />
             <span className="text-[13px] text-muted">
@@ -242,9 +259,9 @@ export function QueueScreen({
           </button>
           {heldOpen ? (
             <div className="border-t border-divider py-1 pr-4 pl-10">
-              {held.map((h) => (
+              {suppressed.map((h) => (
                 <div
-                  key={h.id}
+                  key={h.customerId}
                   className="flex items-center gap-3 border-b border-canvas py-1.5 last:border-0"
                 >
                   <Link
@@ -254,7 +271,7 @@ export function QueueScreen({
                     {h.name}
                   </Link>
                   <span className="text-[13px] text-muted">
-                    {h.heldBackReason ?? "Held back"}
+                    {h.reason}
                   </span>
                 </div>
               ))}
@@ -267,13 +284,12 @@ export function QueueScreen({
         {visible.length ? (
           visible.map((r, i) => (
             <div
-              key={r.id}
+              key={r.customerId}
               onClick={() => setSelected(i)}
               onDoubleClick={() => setOpenId(r.customerId)}
               className={cx(
                 "flex cursor-pointer items-center gap-4 border-b border-divider px-5 py-3 last:border-0",
                 i === selected ? "bg-brand-soft/50" : "hover:bg-canvas",
-                r.worked && "opacity-60",
               )}
             >
               <div className="min-w-0 flex-1">
@@ -285,9 +301,12 @@ export function QueueScreen({
                   >
                     {r.name}
                   </Link>
-                  <Badge tone={REASON_TONE[r.reason] ?? "neutral"}>{r.reason}</Badge>
+                  {r.reasons.map((reason) => (
+                    <Badge key={reason.kind} tone={REASON_TONE[reason.kind] ?? "neutral"}>
+                      {reason.label}
+                    </Badge>
+                  ))}
                   {r.slowPayer ? <SlowPayerBadge /> : null}
-                  {r.worked ? <Badge tone="success">Worked</Badge> : null}
                 </div>
                 <div className="mt-0.5 flex items-center gap-2 text-[13px] text-muted">
                   <span>{r.contactPerson}</span>
@@ -297,6 +316,12 @@ export function QueueScreen({
                   <span>
                     Last order{" "}
                     {r.lastOrderDate ? shortDate(r.lastOrderDate) : "never"}
+                  </span>
+                  <span>·</span>
+                  <span>
+                    {r.daysSinceContact === null
+                      ? "Never contacted"
+                      : `Contacted ${r.daysSinceContact}d ago`}
                   </span>
                 </div>
                 <div className="mt-0.5 truncate text-[13px] text-muted">
@@ -321,13 +346,13 @@ export function QueueScreen({
               <div className="flex flex-none items-center gap-2">
                 <Button
                   size="sm"
-                  variant={r.worked ? "secondary" : "primary"}
+                  variant="primary"
                   onClick={(e) => {
                     e.stopPropagation();
                     setOpenId(r.customerId);
                   }}
                 >
-                  {r.worked ? "Log again" : "Call"}
+                  Call
                 </Button>
                 <RowMenu
                   items={[
@@ -354,7 +379,7 @@ export function QueueScreen({
               </div>
             </div>
           ))
-        ) : filter === "todo" && total > 0 ? (
+        ) : filter === "all" ? (
           <EmptyState
             icon={<Icon name="check" size={24} className="text-success" />}
             title="Queue cleared for today"
@@ -367,15 +392,12 @@ export function QueueScreen({
                 >
                   Open payment follow-up
                 </Link>
-                <Button
-                  variant="secondary"
-                  onClick={async () => {
-                    await run(restoreWorkedRows());
-                    router.refresh();
-                  }}
+                <Link
+                  href="/crm/inactive"
+                  className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-4 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
                 >
-                  Restore worked rows
-                </Button>
+                  Open the inactive watch
+                </Link>
               </>
             }
           />
@@ -406,7 +428,7 @@ export function QueueScreen({
         onClose={() => setSkipping(null)}
         onConfirm={async (reason) => {
           if (!skipping) return;
-          await run(skipQueueItem(skipping.id, reason));
+          await run(skipQueueItem(skipping.customerId, reason));
           router.refresh();
         }}
       />

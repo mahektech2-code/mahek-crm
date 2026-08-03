@@ -36,6 +36,8 @@ export type QueueCandidate = {
   activeInOrderSystem: boolean;
   calledToday: boolean;
   doNotContact: boolean;
+  /** Skipped by hand today, with the reason the telecaller gave. */
+  skippedTodayReason: string | null;
 
   /** Tie-breakers. */
   outstanding: number;
@@ -239,6 +241,8 @@ function suppressionReason(
   config: QueueConfig,
 ): string | null {
   if (c.doNotContact) return "Marked do not contact";
+
+  if (c.skippedTodayReason) return `Skipped today — ${c.skippedTodayReason}`;
 
   if (config["queue.excludeCalledToday"] && c.calledToday) {
     return "Already called today";

@@ -7,13 +7,14 @@ import {
   attendance,
   complaints,
   customers,
-  queueItems,
   reminders,
   type User,
 } from "@/db/schema";
 import { APPS, type AppDefinition, type AppId } from "./apps";
 import { isManager } from "./auth";
-import { today } from "./format";
+// The business day, not the calendar day — a 4am sign-in belongs to the shift
+// that started yesterday, and the boundary is configurable.
+import { today } from "./recompute";
 
 /* ---------------------------------------------------------------------------
  * Who can open what, and what is waiting for them inside it.
@@ -54,7 +55,7 @@ export type LauncherApp = AppDefinition & {
  */
 export async function launcherApps(user: User): Promise<LauncherApp[]> {
   const ids = await listUserApps(user.id);
-  const day = today();
+  const day = await today();
   const teamWide = isManager(user);
 
   const out: LauncherApp[] = [];
@@ -69,27 +70,17 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
       continue;
     }
 
-    const [dueReminders, queueLeft, openComplaints] = await Promise.all([
+    // The queue is computed on request, so the launcher counts the durable
+    // things waiting rather than rebuilding a whole queue for a tile.
+    const [dueReminders, openComplaints] = await Promise.all([
       db
         .select({ n: sql<number>`count(*)::int` })
         .from(reminders)
         .where(
           and(
-            eq(reminders.status, "open"),
+            eq(reminders.status, "pending"),
             lte(reminders.dueDate, day),
-            teamWide ? undefined : eq(reminders.userId, user.id),
-          ),
-        )
-        .then((r) => r[0]?.n ?? 0),
-      db
-        .select({ n: sql<number>`count(*)::int` })
-        .from(queueItems)
-        .where(
-          and(
-            eq(queueItems.day, day),
-            eq(queueItems.worked, false),
-            eq(queueItems.skipped, false),
-            teamWide ? undefined : eq(queueItems.ownerId, user.id),
+            teamWide ? undefined : eq(reminders.assignedUserId, user.id),
           ),
         )
         .then((r) => r[0]?.n ?? 0),
@@ -99,33 +90,25 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
         .innerJoin(customers, eq(customers.id, complaints.customerId))
         .where(
           and(
-            inArray(complaints.status, ["Open", "In progress"]),
+            inArray(complaints.status, ["open", "in_progress", "awaiting_customer"]),
             teamWide ? undefined : eq(customers.ownerId, user.id),
           ),
         )
         .then((r) => r[0]?.n ?? 0),
     ]);
 
-    // The badge counts the same thing the sentence describes — a tile that says
-    // "17 still to call" must not wear a badge reading 26.
-    const [count, status] = queueLeft
+    // The badge counts the same thing the sentence describes.
+    const [count, status] = dueReminders
       ? ([
-          queueLeft,
-          teamWide
-            ? `${queueLeft} still to call across the team`
-            : `${queueLeft} in your queue today`,
+          dueReminders,
+          `${dueReminders} reminder${dueReminders === 1 ? "" : "s"} due`,
         ] as const)
-      : dueReminders
+      : openComplaints
         ? ([
-            dueReminders,
-            `${dueReminders} reminder${dueReminders === 1 ? "" : "s"} due`,
+            openComplaints,
+            `${openComplaints} complaint${openComplaints === 1 ? "" : "s"} open`,
           ] as const)
-        : openComplaints
-          ? ([
-              openComplaints,
-              `${openComplaints} complaint${openComplaints === 1 ? "" : "s"} open`,
-            ] as const)
-          : ([0, "Nothing waiting"] as const);
+        : ([0, "Nothing waiting"] as const);
 
     out.push({ ...app, count, status });
   }
@@ -147,7 +130,7 @@ export function lockedApps(ids: AppId[]): AppDefinition[] {
 export async function recordSignIn(userId: string, id: string) {
   await db
     .insert(attendance)
-    .values({ id, userId, day: today(), signedInAt: new Date() })
+    .values({ id, userId, day: await today(), signedInAt: new Date() })
     .onConflictDoUpdate({
       target: [attendance.userId, attendance.day],
       set: { signedOutAt: null },
@@ -158,14 +141,14 @@ export async function recordSignOut(userId: string) {
   await db
     .update(attendance)
     .set({ signedOutAt: new Date() })
-    .where(and(eq(attendance.userId, userId), eq(attendance.day, today())));
+    .where(and(eq(attendance.userId, userId), eq(attendance.day, await today())));
 }
 
 export async function todaysAttendance(userId: string) {
   const rows = await db
     .select()
     .from(attendance)
-    .where(and(eq(attendance.userId, userId), eq(attendance.day, today())))
+    .where(and(eq(attendance.userId, userId), eq(attendance.day, await today())))
     .limit(1);
   return rows[0] ?? null;
 }

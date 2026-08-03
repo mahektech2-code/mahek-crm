@@ -54,6 +54,7 @@ const KIND_TONE: Record<string, "brand" | "success" | "warn" | "danger" | "neutr
 export function RecordScreen({
   customer,
   daysSinceOrder,
+  followUpStage,
   target,
   openComplaint,
   openPromise,
@@ -73,6 +74,8 @@ export function RecordScreen({
     lastOrderDate: string | null;
     lastOrderValue: number;
     cycleDays: number;
+    /** True while the cycle is the configured fallback, not their own history. */
+    cycleIsDefault: boolean;
     avgOrderValue: number;
     orders6m: number;
     paysInDays: number;
@@ -84,6 +87,13 @@ export function RecordScreen({
     deactivationReason: string | null;
   };
   daysSinceOrder: number | null;
+  followUpStage: {
+    stage: number;
+    daysOverdue: number;
+    nextChannel: "whatsapp" | "call";
+    held: boolean;
+    heldReason: string | null;
+  } | null;
   target: { amount: number; achieved: number; isDefault: boolean; shareOfBook: number };
   openComplaint: { description: string; category: string } | null;
   openPromise: { amount: number; promisedBy: string } | null;
@@ -104,7 +114,9 @@ export function RecordScreen({
   const overCycle = daysSinceOrder !== null && daysSinceOrder > customer.cycleDays;
   const paysLate = customer.paysInDays > customer.creditTermDays;
 
-  const alert = openComplaint
+  const alert = followUpStage?.held
+    ? `Held at stage ${followUpStage.stage} — ${followUpStage.heldReason ?? "a dispute is open"}.`
+    : openComplaint
     ? `Open ${openComplaint.category.toLowerCase()} complaint — mention it before anything else.`
     : openPromise && openPromise.promisedBy < today()
       ? `${money(openPromise.amount)} was promised for ${shortDate(openPromise.promisedBy)} and has not arrived.`
@@ -262,7 +274,26 @@ export function RecordScreen({
               <Figure label="Days since order" tone={overCycle ? "danger" : undefined}>
                 {daysSinceOrder === null ? "—" : ageLabel(daysSinceOrder)}
               </Figure>
-              <Figure label="Buying cycle">{customer.cycleDays} days</Figure>
+              <Figure label="Buying cycle">
+                {customer.cycleDays} days
+                {customer.cycleIsDefault ? (
+                  <span className="ml-1 text-[11px] font-normal text-muted">
+                    (default — not enough order history)
+                  </span>
+                ) : null}
+              </Figure>
+              {followUpStage ? (
+                <Figure
+                  label="Collections stage"
+                  tone={followUpStage.stage >= 3 ? "danger" : undefined}
+                >
+                  Stage {followUpStage.stage}
+                  <span className="ml-1 text-[11px] font-normal text-muted">
+                    ({followUpStage.daysOverdue} days overdue · next by{" "}
+                    {followUpStage.nextChannel})
+                  </span>
+                </Figure>
+              ) : null}
               <Figure label="Average order">{money(customer.avgOrderValue)}</Figure>
               <Figure label="Orders, last 6 months">{customer.orders6m}</Figure>
               <Figure label="Pays on average" tone={paysLate ? "danger" : "success"}>

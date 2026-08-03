@@ -20,7 +20,8 @@ import { money, phoneDisplay, shortDate, stamp, today } from "@/lib/format";
 
 export type CallTarget = {
   customerId: string;
-  queueItemId?: string | null;
+  /** Where the call was started from — kept on the call record. */
+  sourceModule?: "call_queue" | "payment_follow_up" | "inactive_watch" | "ad_hoc";
   name: string;
   contactPerson: string;
   phone: string;
@@ -100,6 +101,10 @@ function CallPanelForm({ target, onClose, onSaved, hasNext }: CallPanelProps) {
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
+  // The panel is keyed on the customer, so this is generated once per opening
+  // and rejected by the server on a second submit of the same call.
+  const idempotencyKey = React.useRef(crypto.randomUUID());
+
   const [orderOpen, setOrderOpen] = React.useState(false);
   const [orderProduct, setOrderProduct] = React.useState(PRODUCTS[0]);
   const [orderQty, setOrderQty] = React.useState("1");
@@ -144,7 +149,10 @@ function CallPanelForm({ target, onClose, onSaved, hasNext }: CallPanelProps) {
         const result = await run(
           saveCall({
             customerId: target.customerId,
-            queueItemId: target.queueItemId ?? null,
+            sourceModule: target.sourceModule ?? "ad_hoc",
+            // Stable for as long as the panel is open on this customer, so a
+            // double-click or a retried submit logs one call, not two.
+            idempotencyKey: idempotencyKey.current,
             connection,
             outcome,
             note,

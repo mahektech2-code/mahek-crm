@@ -187,6 +187,7 @@ function candidate(over: Partial<QueueCandidate> = {}): QueueCandidate {
     activeInOrderSystem: false,
     calledToday: false,
     doNotContact: false,
+    skippedTodayReason: null,
     outstanding: 0,
     targetGap: 0,
     ...over,
@@ -221,6 +222,17 @@ describe("E2 queue builder", () => {
     assert.equal(r.entries.length, 0);
     assert.equal(r.suppressed.length, 1);
     assert.match(r.suppressed[0].reason, /order system/i);
+  });
+
+  test("a hand skip suppresses for the day, carrying the reason given", () => {
+    const c = candidate({
+      lastContactDate: addDays(TODAY, -40),
+      skippedTodayReason: "factory shut for stocktake",
+    });
+    const r = buildQueue([c], TODAY, C);
+    assert.equal(r.entries.length, 0);
+    assert.equal(r.suppressed.length, 1);
+    assert.match(r.suppressed[0].reason, /factory shut for stocktake/);
   });
 
   test("a CONFIRMED WhatsApp inside the cooldown suppresses", () => {

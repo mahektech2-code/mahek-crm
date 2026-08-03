@@ -26,29 +26,22 @@ import { recordPayment, recordPromise } from "@/lib/actions/crm";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { addDays, ageLabel, money, shortDate, stamp, today } from "@/lib/format";
 
-type Row = {
-  customerId: string;
-  name: string;
-  slowPayer: boolean;
-  ownerName: string | null;
-  outstanding: number;
-  billsOverdue: number;
-  oldestDays: number;
-  lastFollowUp: string | null;
-  stage: string;
-  nextAction: string;
-  promiseAmount: number | null;
-  promiseBy: string | null;
+import type { WorklistRow } from "@/lib/services/payment-service";
+
+type Row = WorklistRow & {
   openBills: Array<{ id: string; billNo: string; balance: number; dueDate: string }>;
 };
 
-const STAGE_TONE: Record<string, "danger" | "warn" | "brand" | "success" | "neutral"> = {
-  "Reminder due": "brand",
-  "Stage 1 sent": "warn",
-  "Stage 2 sent": "warn",
-  "Promise made": "success",
-  "Promise broken": "danger",
-  Escalate: "danger",
+/** Stage is the engine's, not the interface's — 1, 2, 3 and nothing else. */
+const STAGE_LABEL: Record<number, string> = {
+  1: "Stage 1 · nudge",
+  2: "Stage 2 · call",
+  3: "Stage 3 · escalate",
+};
+const STAGE_TONE: Record<number, "danger" | "warn" | "brand"> = {
+  1: "brand",
+  2: "warn",
+  3: "danger",
 };
 
 type Tab = "all" | "chase" | "promised" | "escalate";
@@ -57,10 +50,12 @@ export function PaymentsScreen({
   scopeLabel,
   isManager,
   rows,
+  aging,
 }: {
   scopeLabel: string;
   isManager: boolean;
   rows: Row[];
+  aging: { total: number; buckets: Array<{ label: string; amount: number }> };
 }) {
   const router = useRouter();
   const { run, push } = useToast();
@@ -74,9 +69,9 @@ export function PaymentsScreen({
 
   const buckets = {
     all: rows,
-    chase: rows.filter((r) => r.stage.startsWith("Stage") || r.stage === "Reminder due"),
-    promised: rows.filter((r) => r.stage === "Promise made" || r.stage === "Promise broken"),
-    escalate: rows.filter((r) => r.stage === "Escalate"),
+    chase: rows.filter((r) => !r.held && !r.promisedDate && r.stage < 3),
+    promised: rows.filter((r) => Boolean(r.promisedDate)),
+    escalate: rows.filter((r) => r.stage === 3 || r.promiseBroken),
   };
 
   const visible = React.useMemo(() => {
@@ -85,14 +80,14 @@ export function PaymentsScreen({
     if (q) list = list.filter((r) => r.name.toLowerCase().includes(q));
     if (slowOnly) list = list.filter((r) => r.slowPayer);
     return monthEnd
-      ? [...list].sort((a, b) => b.outstanding - a.outstanding)
-      : [...list].sort((a, b) => b.oldestDays - a.oldestDays);
+      ? [...list].sort((a, b) => b.totalOverdue - a.totalOverdue)
+      : [...list].sort((a, b) => b.daysOverdue - a.daysOverdue);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, query, slowOnly, monthEnd, rows]);
 
-  const total = visible.reduce((a, r) => a + r.outstanding, 0);
-  const broken = rows.filter((r) => r.stage === "Promise broken").length;
-  const over90 = rows.filter((r) => r.oldestDays > 90).length;
+  const total = visible.reduce((a, r) => a + r.totalOverdue, 0);
+  const broken = rows.filter((r) => r.promiseBroken).length;
+  const held = rows.filter((r) => r.held).length;
 
   return (
     <div className="max-w-[1400px] px-6 pt-6 pb-10">
@@ -112,10 +107,10 @@ export function PaymentsScreen({
                   visible.map((r) => [
                     r.name,
                     r.ownerName ?? "",
-                    r.stage,
-                    r.billsOverdue,
-                    r.oldestDays,
-                    Math.round(r.outstanding / 100),
+                    STAGE_LABEL[r.stage] ?? r.stage,
+                    r.overdueBillCount,
+                    r.daysOverdue,
+                    Math.round(r.totalOverdue / 100),
                     r.nextAction,
                   ]),
                 ),
@@ -138,13 +133,34 @@ export function PaymentsScreen({
             tone: broken ? "danger" : "ink",
             sub: broken ? "call these today" : undefined,
           },
-          { label: "Over 90 days", value: String(over90), tone: over90 ? "danger" : "ink" },
+          {
+            label: "Held (disputed)",
+            value: String(held),
+            tone: held ? "danger" : "ink",
+            sub: held ? "not escalating" : undefined,
+          },
           {
             label: "Average per customer",
             value: money(visible.length ? Math.round(total / visible.length) : 0),
           },
         ]}
       />
+
+      <Card className="mb-3 flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
+        <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+          Ageing
+        </span>
+        {aging.buckets.map((b) => (
+          <span key={b.label} className="text-[13px] text-body">
+            {b.label}{" "}
+            <span className="font-medium text-ink">{money(b.amount)}</span>
+          </span>
+        ))}
+        <span className="flex-1" />
+        <span className="text-[13px] text-muted">
+          {money(aging.total)} outstanding in all
+        </span>
+      </Card>
 
       {monthEnd ? (
         <Callout tone="warn">
@@ -227,16 +243,21 @@ export function PaymentsScreen({
                     >
                       {r.name}
                     </Link>
-                    <Badge tone={STAGE_TONE[r.stage] ?? "neutral"}>{r.stage}</Badge>
+                    <Badge tone={STAGE_TONE[r.stage] ?? "neutral"}>
+                      {STAGE_LABEL[r.stage] ?? `Stage ${r.stage}`}
+                    </Badge>
                     {r.slowPayer ? <SlowPayerBadge /> : null}
+                    {r.held ? <Badge tone="warn">Held</Badge> : null}
+                    {r.promiseBroken ? <Badge tone="danger">Promise broken</Badge> : null}
                   </div>
                   <div className="mt-1 text-[13px] text-muted">
-                    {r.billsOverdue} bill{r.billsOverdue === 1 ? "" : "s"} overdue ·
-                    oldest by {ageLabel(r.oldestDays)} · last contact{" "}
-                    {r.lastFollowUp ? stamp(r.lastFollowUp) : "never"}
-                    {r.promiseBy
-                      ? ` · promised ${money(r.promiseAmount ?? 0)} by ${shortDate(r.promiseBy)}`
+                    {r.overdueBillCount} bill{r.overdueBillCount === 1 ? "" : "s"} overdue ·
+                    oldest by {ageLabel(r.daysOverdue)} · last contact{" "}
+                    {r.lastFollowUpAt ? stamp(r.lastFollowUpAt) : "never"}
+                    {r.promisedDate
+                      ? ` · promised ${money(r.promisedAmount ?? 0)} by ${shortDate(r.promisedDate)}`
                       : ""}
+                    {r.heldReason ? ` · ${r.heldReason}` : ""}
                   </div>
                 </div>
 
@@ -245,7 +266,7 @@ export function PaymentsScreen({
                     Outstanding
                   </div>
                   <div className="text-sm font-medium text-danger">
-                    {money(r.outstanding)}
+                    {money(r.totalOverdue)}
                   </div>
                 </div>
 
@@ -261,14 +282,18 @@ export function PaymentsScreen({
                 <div className="flex flex-none items-center gap-2">
                   <Button
                     size="sm"
-                    variant={r.stage === "Promise broken" ? "danger" : "primary"}
+                    variant={r.promiseBroken || r.stage === 3 ? "danger" : "primary"}
+                    disabled={r.held}
+                    title={r.held ? (r.heldReason ?? "Held while the dispute is open") : undefined}
                     onClick={() =>
-                      r.stage === "Reminder due"
+                      // Stage 1 is WhatsApp-only. The engine rejects a stage-1
+                      // call attempt, so the button must not offer one.
+                      r.nextChannel === "whatsapp"
                         ? router.push(`/crm/whatsapp?customer=${r.customerId}`)
                         : setPromising(r)
                     }
                   >
-                    {r.stage === "Reminder due" ? "Send reminder" : "Record promise"}
+                    {r.nextChannel === "whatsapp" ? "Send reminder" : "Record promise"}
                   </Button>
                   <RowMenu
                     items={[
@@ -358,7 +383,7 @@ function PromiseModal(props: PromiseProps) {
 
 function PromiseModalBody({ row, onClose, onSubmit }: PromiseProps) {
   const [amount, setAmount] = React.useState(
-    String(Math.round((row?.outstanding ?? 0) / 100)),
+    String(Math.round((row?.totalOverdue ?? 0) / 100)),
   );
   const [promisedBy, setPromisedBy] = React.useState(addDays(today(), 7));
   const [note, setNote] = React.useState("");
@@ -392,7 +417,7 @@ function PromiseModalBody({ row, onClose, onSubmit }: PromiseProps) {
       }
     >
       <div className="mb-3 text-sm text-muted">
-        {row?.name} · {money(row?.outstanding ?? 0)} outstanding
+        {row?.name} · {money(row?.totalOverdue ?? 0)} overdue
       </div>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Amount promised">

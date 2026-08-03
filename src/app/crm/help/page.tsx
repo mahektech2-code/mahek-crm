@@ -15,11 +15,11 @@ export default async function HelpPage() {
         id: a.id,
         title: a.title,
         category: a.category,
-        role: a.role,
-        isScript: a.isScript,
+        role: a.roles.join(", "),
+        isScript: a.type === "call_script",
         scriptBody: a.scriptBody,
         body: a.body,
-        updatedOn: a.updatedOn,
+        updatedOn: a.updatedAt.toISOString().slice(0, 10),
       }))}
     />
   );

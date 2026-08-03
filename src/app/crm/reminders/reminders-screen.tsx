@@ -26,17 +26,15 @@ import {
 } from "@/lib/actions/crm";
 import { addDays, ageLabel, shortDate, today } from "@/lib/format";
 
-type Row = {
-  id: string;
-  customerId: string;
-  customerName: string;
-  userId: string;
-  userName: string;
-  dueDate: string;
-  note: string;
-  source: string;
-  status: "open" | "done" | "cancelled";
-  overdueDays: number;
+import type { ReminderRow as Row } from "@/lib/services/worklist-services";
+
+const TYPE_LABEL: Record<string, string> = {
+  call_back: "call back",
+  payment_promise: "payment promise",
+  order_confirmation: "order confirmation",
+  send_information: "information to send",
+  check_stock: "stock check",
+  other: "other",
 };
 
 type Tab = "today" | "overdue" | "upcoming" | "done" | "all";
@@ -44,10 +42,14 @@ type Tab = "today" | "overdue" | "upcoming" | "done" | "all";
 function overdueByPerson(overdue: Row[]) {
   const map = new Map<string, { name: string; overdue: number; oldest: number }>();
   for (const r of overdue) {
-    const entry = map.get(r.userId) ?? { name: r.userName, overdue: 0, oldest: 0 };
+    const entry = map.get(r.assignedUserName) ?? {
+      name: r.assignedUserName,
+      overdue: 0,
+      oldest: 0,
+    };
     entry.overdue += 1;
     entry.oldest = Math.max(entry.oldest, r.overdueDays);
-    map.set(r.userId, entry);
+    map.set(r.assignedUserName, entry);
   }
   return [...map.values()].sort((a, b) => b.overdue - a.overdue);
 }
@@ -70,13 +72,15 @@ export function RemindersScreen({
   const [tab, setTab] = React.useState<Tab>("today");
   const [newOpen, setNewOpen] = React.useState(false);
   const [rescheduling, setRescheduling] = React.useState<Row | null>(null);
+  const [dismissing, setDismissing] = React.useState<Row | null>(null);
 
-  const open = rows.filter((r) => r.status === "open");
+  // displayStatus is derived on the server against the business day. Deriving
+  // it again here from a browser clock is how the two end up disagreeing.
   const buckets = {
-    today: open.filter((r) => r.dueDate === t),
-    overdue: open.filter((r) => r.dueDate < t),
-    upcoming: open.filter((r) => r.dueDate > t),
-    done: rows.filter((r) => r.status === "done"),
+    today: rows.filter((r) => r.displayStatus === "due_today"),
+    overdue: rows.filter((r) => r.displayStatus === "overdue"),
+    upcoming: rows.filter((r) => r.displayStatus === "upcoming"),
+    done: rows.filter((r) => r.status !== "pending"),
     all: rows,
   };
   const visible = buckets[tab];
@@ -172,18 +176,18 @@ export function RemindersScreen({
                 <div
                   className={cx(
                     "text-sm font-medium",
-                    r.status !== "open"
+                    r.status !== "pending"
                       ? "text-muted"
-                      : r.dueDate < t
+                      : r.displayStatus === "overdue"
                         ? "text-danger"
-                        : r.dueDate === t
+                        : r.displayStatus === "due_today"
                           ? "text-ink"
                           : "text-body",
                   )}
                 >
                   {shortDate(r.dueDate)}
                 </div>
-                {r.status === "open" && r.overdueDays > 0 ? (
+                {r.status === "pending" && r.overdueDays > 0 ? (
                   <div className="mt-0.5 text-[11px] text-danger">
                     {ageLabel(r.overdueDays)} late
                   </div>
@@ -194,7 +198,7 @@ export function RemindersScreen({
                 <div
                   className={cx(
                     "text-[15px] leading-[21px]",
-                    r.status === "open" ? "text-ink" : "text-muted line-through",
+                    r.status === "pending" ? "text-ink" : "text-muted line-through",
                   )}
                 >
                   {r.note}
@@ -206,11 +210,16 @@ export function RemindersScreen({
                   >
                     {r.customerName}
                   </Link>
-                  {isTeamView ? ` · ${r.userName}` : ""} · from {r.source}
+                  {isTeamView ? ` · ${r.assignedUserName}` : ""} ·{" "}
+                  {TYPE_LABEL[r.type] ?? r.type}
+                  {r.systemGenerated ? " · set by the system" : ""}
+                  {r.rescheduledOften
+                    ? ` · moved ${r.rescheduleCount} times`
+                    : ""}
                 </div>
               </div>
 
-              {r.status === "open" ? (
+              {r.status === "pending" ? (
                 <div className="flex flex-none items-center gap-2">
                   <Button
                     size="sm"
@@ -240,19 +249,16 @@ export function RemindersScreen({
                         onSelect: () => router.push(`/crm/customers/${r.customerId}`),
                       },
                       {
-                        label: "Cancel reminder",
+                        label: "Dismiss reminder",
                         destructive: true,
-                        onSelect: async () => {
-                          await run(cancelReminder(r.id));
-                          router.refresh();
-                        },
+                        onSelect: () => setDismissing(r),
                       },
                     ]}
                   />
                 </div>
               ) : (
-                <Badge tone={r.status === "done" ? "success" : "muted"}>
-                  {r.status === "done" ? "Done" : "Cancelled"}
+                <Badge tone={r.status === "completed" ? "success" : "muted"}>
+                  {r.status === "completed" ? "Done" : "Dismissed"}
                 </Badge>
               )}
             </div>
@@ -295,7 +301,89 @@ export function RemindersScreen({
           }
         }}
       />
+
+      <DismissModal
+        reminder={dismissing}
+        onClose={() => setDismissing(null)}
+        onSubmit={async (reason) => {
+          if (!dismissing) return;
+          const result = await run(cancelReminder(dismissing.id, reason));
+          if (result.ok) {
+            setDismissing(null);
+            router.refresh();
+          }
+        }}
+      />
     </div>
+  );
+}
+
+/**
+ * A reminder is never deleted, only dismissed with a reason — otherwise the
+ * overdue pile can be cleared without anyone being able to ask why.
+ */
+function DismissModal({
+  reminder,
+  onClose,
+  onSubmit,
+}: {
+  reminder: Row | null;
+  onClose: () => void;
+  onSubmit: (reason: string) => Promise<void>;
+}) {
+  const [reason, setReason] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState(false);
+
+  return (
+    <Modal
+      open={Boolean(reminder)}
+      onClose={onClose}
+      title="Dismiss reminder"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Keep it
+          </Button>
+          <Button
+            variant="danger"
+            disabled={busy}
+            onClick={async () => {
+              if (!reason.trim()) {
+                setError(true);
+                return;
+              }
+              setBusy(true);
+              try {
+                await onSubmit(reason);
+                setReason("");
+                setError(false);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Dismiss
+          </Button>
+        </>
+      }
+    >
+      <div className="mb-3 text-sm text-muted">{reminder?.note}</div>
+      <Field
+        label="Why is this no longer needed?"
+        error={error ? "Give a reason — this stays on the customer record." : null}
+      >
+        <Textarea
+          value={reason}
+          onChange={(e) => {
+            setReason(e.target.value);
+            setError(false);
+          }}
+          className="h-16"
+          placeholder="Customer already paid, order cancelled, duplicate…"
+        />
+      </Field>
+    </Modal>
   );
 }
 

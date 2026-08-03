@@ -25,6 +25,14 @@ import { useToast } from "@/components/ui/toast";
 import { reassignComplaint, resolveComplaint } from "@/lib/actions/crm";
 import { ageLabel, shortDate, stamp } from "@/lib/format";
 
+type Status =
+  | "open"
+  | "in_progress"
+  | "awaiting_customer"
+  | "resolved"
+  | "closed"
+  | "rejected";
+
 type Row = {
   id: string;
   customerId: string;
@@ -32,13 +40,32 @@ type Row = {
   category: string;
   description: string;
   loggedByName: string;
-  loggedOn: string;
+  createdAt: Date;
   assignedTo: string;
-  status: "Open" | "In progress" | "Resolved" | "Closed";
+  severity: "low" | "medium" | "high" | "critical";
+  status: Status;
   ageDays: number;
-  resolutionNote: string | null;
-  customerTold: boolean;
+  slaDueAt: Date;
+  slaBreached: boolean;
+  resolutionNotes: string | null;
+  customerInformed: boolean;
 };
+
+const STATUS_LABEL: Record<Status, string> = {
+  open: "Open",
+  in_progress: "In progress",
+  awaiting_customer: "Awaiting customer",
+  resolved: "Resolved",
+  closed: "Closed",
+  rejected: "Rejected",
+};
+
+const CLOSED: Status[] = ["resolved", "closed", "rejected"];
+
+function statusTone(s: Status) {
+  if (CLOSED.includes(s)) return "success" as const;
+  return s === "open" ? ("danger" as const) : ("warn" as const);
+}
 
 type Event = { at: string; note: string };
 type Tab = "open" | "progress" | "resolved" | "all";
@@ -70,9 +97,11 @@ export function ComplaintsScreen({
   const [reassigning, setReassigning] = React.useState(false);
 
   const buckets = {
-    open: rows.filter((r) => r.status === "Open"),
-    progress: rows.filter((r) => r.status === "In progress"),
-    resolved: rows.filter((r) => r.status === "Resolved" || r.status === "Closed"),
+    open: rows.filter((r) => r.status === "open"),
+    progress: rows.filter(
+      (r) => r.status === "in_progress" || r.status === "awaiting_customer",
+    ),
+    resolved: rows.filter((r) => CLOSED.includes(r.status)),
     all: rows,
   };
   const visible = buckets[tab];
@@ -90,8 +119,8 @@ export function ComplaintsScreen({
 
   function open(row: Row) {
     setCurrent(row);
-    setNotes(row.resolutionNote ?? "");
-    setTold(row.customerTold);
+    setNotes(row.resolutionNotes ?? "");
+    setTold(row.customerInformed);
     setNotesError(false);
   }
 
@@ -115,7 +144,7 @@ export function ComplaintsScreen({
           },
           {
             label: "Customer told",
-            value: `${buckets.resolved.filter((r) => r.customerTold).length}/${buckets.resolved.length}`,
+            value: `${buckets.resolved.filter((r) => r.customerInformed).length}/${buckets.resolved.length}`,
           },
         ]}
       />
@@ -196,25 +225,25 @@ export function ComplaintsScreen({
                       {r.description}
                     </Td>
                     <Td>{r.loggedByName}</Td>
-                    <Td>{shortDate(r.loggedOn)}</Td>
+                    <Td>{shortDate(r.createdAt.toISOString())}</Td>
                     <Td>{r.assignedTo}</Td>
                     <Td>
                       <Badge
                         tone={
-                          r.status === "Open"
+                          r.status === "open"
                             ? "danger"
-                            : r.status === "In progress"
+                            : r.status === "in_progress"
                               ? "warn"
                               : "success"
                         }
                       >
-                        {r.status}
+                        {STATUS_LABEL[r.status]}
                       </Badge>
                     </Td>
                     <Td
                       align="right"
                       className={
-                        r.status !== "Resolved" && r.ageDays > 7
+                        !CLOSED.includes(r.status) && r.slaBreached
                           ? "font-medium text-danger"
                           : ""
                       }
@@ -253,15 +282,15 @@ export function ComplaintsScreen({
               </div>
               <div className="mt-1.5 flex items-center gap-2">
                 <Badge
-                  tone={
-                    current.status === "Open"
-                      ? "danger"
-                      : current.status === "In progress"
-                        ? "warn"
-                        : "success"
-                  }
+                  tone={statusTone(current.status)}
                 >
-                  {current.status}
+                  {STATUS_LABEL[current.status]}
+                </Badge>
+                <Badge tone={current.slaBreached ? "danger" : "neutral"}>
+                  {current.slaBreached ? "SLA breached" : `SLA ${stamp(current.slaDueAt.toISOString())}`}
+                </Badge>
+                <Badge tone={current.severity === "critical" || current.severity === "high" ? "danger" : "neutral"}>
+                  {current.severity}
                 </Badge>
                 <span className="text-[13px] text-muted">
                   {current.category} · open {ageLabel(current.ageDays)}
@@ -317,11 +346,11 @@ export function ComplaintsScreen({
             <div className="flex gap-2.5 border-t border-line px-5 py-3">
               <Button
                 variant="primary"
-                disabled={busy || !isManager || current.status === "Resolved"}
+                disabled={busy || !isManager || CLOSED.includes(current.status)}
                 title={
                   !isManager
                     ? "Closing a complaint is a manager action"
-                    : current.status === "Resolved"
+                    : CLOSED.includes(current.status)
                       ? "Already resolved"
                       : undefined
                 }
@@ -345,7 +374,7 @@ export function ComplaintsScreen({
                   }
                 }}
               >
-                {current.status === "Resolved" ? "Resolved" : "Mark resolved"}
+                {CLOSED.includes(current.status) ? "Resolved" : "Mark resolved"}
               </Button>
               <Button variant="secondary" onClick={() => setReassigning(true)}>
                 Reassign

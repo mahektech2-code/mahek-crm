@@ -1,6 +1,6 @@
 import { isManager, requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
-import { complaintEventsFor, listComplaints } from "@/lib/queries";
+import { complaintHistories, listComplaints } from "@/lib/services/worklist-services";
 import { ComplaintsScreen } from "./complaints-screen";
 
 export const metadata = { title: "Complaints — MahekOne CRM" };
@@ -8,9 +8,8 @@ export const metadata = { title: "Complaints — MahekOne CRM" };
 export default async function ComplaintsPage() {
   const user = await requireUser();
   const scope = await getScope(user);
-  const rows = await listComplaints(user, scope);
-
-  const events = await complaintEventsFor(rows.map((c) => c.id));
+  const rows = await listComplaints();
+  const events = await complaintHistories(rows.map((c) => c.id));
 
   return (
     <ComplaintsScreen
