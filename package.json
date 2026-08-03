@@ -14,7 +14,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:generate": "drizzle-kit generate",
     "db:deploy": "drizzle-kit migrate",
-    "check:links": "node --env-file=.env.local scripts/check-links.mjs"
+    "check:links": "node --env-file=.env.local scripts/check-links.mjs",
+    "test": "tsx --test src/lib/**/*.test.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",
