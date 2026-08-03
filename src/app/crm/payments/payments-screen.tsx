@@ -114,6 +114,8 @@ export function PaymentsScreen({
                     r.nextAction,
                   ]),
                 ),
+                [tab === "all" ? null : tab, slowOnly ? "slow-payers" : null,
+                 monthEnd ? "month-end" : null, query || null],
               );
               push(`Exported ${visible.length} rows`);
             }}

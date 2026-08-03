@@ -162,6 +162,11 @@ export function BillsScreen({
                     STATUS_LABEL[r.status],
                   ]),
                 ),
+                [
+                  status === "All" ? null : STATUS_LABEL[status as Row["status"]],
+                  bucket === "All" ? null : bucket,
+                  customerFilter?.name ?? null,
+                ],
               );
               push(`Exported ${filtered.length} rows`);
             }}

@@ -90,6 +90,7 @@ export function InactiveScreen({
                     r.ageDays,
                   ]),
                 ),
+                ["all-on-watch"],
               );
               push(`Exported ${rows.length} rows`);
             }}

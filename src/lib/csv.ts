@@ -10,12 +10,37 @@ export function toCsv(
     .join("\n");
 }
 
-export function downloadCsv(name: string, csv: string) {
+/**
+ * The filename carries the filters that produced the file and the moment it was
+ * taken. Two exports of the same screen an hour apart are different files, and
+ * a spreadsheet found on somebody's desktop next week still says what it is.
+ */
+export function downloadCsv(name: string, csv: string, filters?: Array<string | null>) {
+  const slug = (filters ?? [])
+    .filter((f): f is string => Boolean(f && f.trim()))
+    .map((f) =>
+      f
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, ""),
+    )
+    .filter(Boolean)
+    .join("-");
+
+  // Local time, not UTC — the person reading the name is in Asia/Kolkata.
+  const now = new Date();
+  const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate(),
+  ).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(
+    now.getMinutes(),
+  ).padStart(2, "0")}`;
+
   const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = [name, slug, stamp].filter(Boolean).join("-") + ".csv";
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

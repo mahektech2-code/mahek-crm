@@ -1310,6 +1310,7 @@ function LogTab({
                   m.edited ? "yes" : "no",
                 ]),
               ),
+              [statusFilter === "All statuses" ? null : statusFilter, query || null],
             );
             push(`Exported ${filtered.length} rows`);
           }}
