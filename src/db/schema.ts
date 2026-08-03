@@ -396,6 +396,10 @@ export const complaints = pgTable(
     customerTold: boolean("customer_told").notNull().default(false),
     loggedOn: date("logged_on").notNull(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    requestCn: boolean("request_cn").notNull().default(false),
+    billId: text("bill_id").references(() => bills.id),
+    goodsDescription: text("goods_description"),
+    mobileNumber: text("mobile_number"),
   },
   (t) => [index("complaints_customer_idx").on(t.customerId)],
 );
@@ -407,6 +411,17 @@ export const complaintEvents = pgTable("complaint_events", {
     .references(() => complaints.id, { onDelete: "cascade" }),
   note: text("note").notNull(),
   at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const complaintImages = pgTable("complaint_images", {
+  id: text("id").primaryKey(),
+  complaintId: text("complaint_id")
+    .notNull()
+    .references(() => complaints.id, { onDelete: "cascade" }),
+  url: text("url").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 /* ----------------------------------------------------------------- targets */
@@ -638,7 +653,19 @@ export const complaintsRelations = relations(complaints, ({ one, many }) => ({
     fields: [complaints.loggedById],
     references: [users.id],
   }),
+  bill: one(bills, {
+    fields: [complaints.billId],
+    references: [bills.id],
+  }),
   events: many(complaintEvents),
+  images: many(complaintImages),
+}));
+
+export const complaintImagesRelations = relations(complaintImages, ({ one }) => ({
+  complaint: one(complaints, {
+    fields: [complaintImages.complaintId],
+    references: [complaints.id],
+  }),
 }));
 
 export const queueItemsRelations = relations(queueItems, ({ one }) => ({
@@ -666,6 +693,7 @@ export type QueueItem = typeof queueItems.$inferSelect;
 export type Interaction = typeof interactions.$inferSelect;
 export type Reminder = typeof reminders.$inferSelect;
 export type Complaint = typeof complaints.$inferSelect;
+export type ComplaintImage = typeof complaintImages.$inferSelect;
 export type Target = typeof targets.$inferSelect;
 export type WaTemplate = typeof waTemplates.$inferSelect;
 export type WaMessage = typeof waMessages.$inferSelect;

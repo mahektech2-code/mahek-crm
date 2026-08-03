@@ -517,6 +517,25 @@ export function Checkbox({
   );
 }
 
+export function Radio({
+  label,
+  className,
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement> & { label: React.ReactNode }) {
+  return (
+    <label
+      className={cx("flex cursor-pointer items-center gap-2 text-sm text-body", className)}
+    >
+      <input
+        {...props}
+        type="radio"
+        className="h-[15px] w-[15px] accent-[#6835FB]"
+      />
+      {label}
+    </label>
+  );
+}
+
 /** Rupee-prefixed money input. */
 export function MoneyInput({
   invalid,
