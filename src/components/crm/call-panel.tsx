@@ -2,8 +2,8 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Drawer, DrawerHeader } from "@/components/ui/overlays";
-import { Badge, Button, Field, Input, Select, Textarea, cx } from "@/components/ui/primitives";
+import { Button, Field, Input, Select, Textarea, cx } from "@/components/ui/primitives";
+import { useEscape } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { saveInteractionAction } from "@/lib/actions/crm";
@@ -142,6 +142,9 @@ type CallPanelProps = {
   onClose: () => void;
   onSaved?: (advance: boolean) => void;
   hasNext?: boolean;
+  hasPrevious?: boolean;
+  onPrevious?: () => void;
+  onNext?: () => void;
 };
 
 /**
@@ -163,7 +166,11 @@ function CallPanelForm({
   onClose,
   onSaved,
   hasNext,
+  hasPrevious,
+  onPrevious,
+  onNext,
 }: CallPanelProps) {
+  useEscape(onClose);
   const router = useRouter();
   const { run, push } = useToast();
 
@@ -186,7 +193,6 @@ function CallPanelForm({
   // The information strip loads with the panel rather than being prefetched
   // for every row behind it — most rows are never opened.
   const [info, setInfo] = React.useState<CustomerInfo | null>(null);
-  const [infoOpen, setInfoOpen] = React.useState(false);
   React.useEffect(() => {
     if (!target) return;
     const controller = new AbortController();
@@ -290,74 +296,77 @@ function CallPanelForm({
   if (!target) return null;
 
   return (
-    <Drawer open onClose={onClose} label={`Log interaction · ${target.name}`}>
-      <DrawerHeader onClose={onClose}>
-        <div className="text-lg leading-6 font-semibold text-ink">{target.name}</div>
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-[13px] text-muted">
-          <span>{target.contactPerson}</span>
-          <span>·</span>
-          <a href={`tel:${target.phone}`} className="font-medium text-ink no-underline">
-            {phoneDisplay(target.phone)}
-          </a>
+    <div
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Log interaction · ${target.name}`}
+      className="animate-fade-in fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(26,30,40,0.45)] p-6"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="flex h-[760px] max-h-[calc(100vh-48px)] w-[1160px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[6px] bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+      >
+        {/* ------------------------------------------------------- header */}
+        <div className="flex items-start gap-4 border-b border-divider px-6 py-4">
+          <div className="min-w-0 flex-1">
+            <div className="text-lg leading-6 font-semibold text-ink">{target.name}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[13px] text-muted">
+              <span>{target.contactPerson}</span>
+              <span>·</span>
+              <a href={`tel:${target.phone}`} className="font-medium text-ink no-underline">
+                {phoneDisplay(target.phone)}
+              </a>
+              <button
+                title="Copy number"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(target.phone);
+                    push("Number copied");
+                  } catch {
+                    push("The browser blocked the clipboard.", "error");
+                  }
+                }}
+                className="inline-flex h-5.5 w-5.5 cursor-pointer items-center justify-center rounded-[4px] border border-line text-muted hover:bg-canvas hover:text-body"
+              >
+                <Icon name="copy" size={12} strokeWidth={1.8} />
+              </button>
+              <span>·</span>
+              <span>{target.city}</span>
+            </div>
+          </div>
           <button
-            title="Copy number"
-            onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(target.phone);
-                push("Number copied");
-              } catch {
-                push("The browser blocked the clipboard.", "error");
-              }
-            }}
-            className="inline-flex h-5.5 w-5.5 cursor-pointer items-center justify-center rounded-[4px] border border-line text-muted hover:bg-canvas hover:text-body"
+            onClick={onClose}
+            title="Close"
+            className="inline-flex h-5.5 w-5.5 flex-none cursor-pointer items-center justify-center rounded-[4px] border border-line text-muted hover:bg-canvas hover:text-body"
           >
-            <Icon name="copy" size={12} strokeWidth={1.8} />
+            <Icon name="close" size={12} strokeWidth={1.8} />
           </button>
         </div>
-        {target.reason ? (
-          <div className="mt-1.5">
-            <Badge tone="brand">{target.reason}</Badge>
-          </div>
-        ) : null}
-        {target.openComplaint ? (
-          <div className="mt-1.5 rounded-[4px] border border-danger-line bg-danger-soft px-2.5 py-1.5 text-[13px] text-danger">
-            Open complaint — mention it first: {target.openComplaint}
-          </div>
-        ) : null}
-      </DrawerHeader>
 
-      {info ? (
-        <div className="border-b border-divider bg-canvas">
-          <button
-            onClick={() => setInfoOpen((o) => !o)}
-            className="flex w-full cursor-pointer items-center gap-3 px-5 py-2.5 text-left"
+        {/* The four figures a telecaller needs before they speak. */}
+        <div className="grid grid-cols-[repeat(4,minmax(0,1fr))] gap-4 border-b border-divider bg-canvas px-6 py-3">
+          <Stat
+            label="Outstanding"
+            tone={target.outstanding > 0 ? "danger" : undefined}
           >
-            <Icon
-              name="chevron"
-              size={14}
-              className={cx("text-muted transition-transform", infoOpen && "rotate-90")}
-            />
-            <span className="text-[13px] text-body">
-              Last order{" "}
-              {info.purchase.lastOrderDate
-                ? `${shortDate(info.purchase.lastOrderDate)} · ${info.purchase.lastOrderDaysAgo}d ago`
-                : "never"}
-            </span>
-            <span className="text-line-strong">·</span>
-            <span className="text-[13px] text-body">
-              Cycle {info.purchase.cycleDays}d
-              {info.purchase.cycleIsDefault ? " (default)" : ""}
-            </span>
-            <span className="flex-1" />
-            {info.outstanding > 0 ? (
-              <span className="text-[13px] font-medium text-danger">
-                {money(info.outstanding)}
-              </span>
-            ) : null}
-          </button>
+            {money(target.outstanding)}
+          </Stat>
+          <Stat label="Target gap">{money(target.targetGap)}</Stat>
+          <Stat label="Reminder">{target.reason ?? "—"}</Stat>
+          <Stat
+            label="Open complaint"
+            tone={target.openComplaint ? "danger" : undefined}
+          >
+            {target.openComplaint ? "Yes — mention it first" : "None"}
+          </Stat>
+        </div>
 
-          {infoOpen ? (
-            <div className="border-t border-divider px-5 pt-3 pb-4">
+        {/* --------------------------------------- information | the form */}
+        <div className="grid min-h-0 flex-1 grid-cols-[clamp(320px,36%,420px)_minmax(0,1fr)]">
+          <div className="min-h-0 overflow-y-auto border-r border-divider p-5">
+            {info ? (
+<>
               <InfoRow label="Purchase summary">
                 <Figure label="Last order">
                   {info.purchase.lastOrderDate
@@ -467,12 +476,25 @@ function CallPanelForm({
                   </p>
                 )}
               </div>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+            </>
+            ) : (
+              <p className="text-[13px] text-muted">Loading this customer&rsquo;s history…</p>
+            )}
 
-      <div className="flex-1 overflow-y-auto p-5">
+            <div className="mt-4 rounded-[4px] border border-line bg-canvas px-3 py-2.5">
+              <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                Script
+              </span>
+              <p className="mt-1 text-[13px] text-muted">
+                No script has been written for this situation yet.
+              </p>
+              <a href="/crm/help" className="mt-1 inline-block text-[13px] text-brand">
+                Open the Help Center
+              </a>
+            </div>
+          </div>
+
+          <div className="min-h-0 overflow-y-auto px-6 py-5">
         {saved ? (
           <div className="rounded-[6px] border border-line bg-surface p-5 text-center">
             <div className="text-lg font-semibold text-ink">Log saved</div>
@@ -693,26 +715,49 @@ function CallPanelForm({
           </>
         )}
       </div>
-
-      {chosen && !saved ? (
-        <div className="flex gap-2.5 border-t border-line px-5 py-3">
-          <Button variant="primary" disabled={busy} onClick={() => save(false)}>
-            Save log
-          </Button>
-          {hasNext ? (
-            <Button variant="secondary" disabled={busy} onClick={() => save(true)}>
-              Save and next
-            </Button>
-          ) : null}
-          <span className="flex-1" />
-          {target.outstanding > 0 ? (
-            <span className="self-center text-[13px] text-muted">
-              {money(target.outstanding)} outstanding
-            </span>
-          ) : null}
         </div>
-      ) : null}
-    </Drawer>
+
+        {/* ------------------------------------------------------- footer */}
+        <div className="flex items-center gap-2.5 border-t border-divider px-6 py-3">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!hasPrevious}
+            title={hasPrevious ? "Previous customer" : "This is the first row"}
+            onClick={() => onPrevious?.()}
+          >
+            ◀ Previous
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!hasNext}
+            title={hasNext ? "Next customer" : "This is the last row"}
+            onClick={() => onNext?.()}
+          >
+            Next ▶
+          </Button>
+          <span className="flex-1" />
+          {chosen && !saved ? (
+            <>
+              <Button variant="primary" disabled={busy} onClick={() => save(false)}>
+                Save log
+              </Button>
+              {hasNext ? (
+                <Button variant="secondary" disabled={busy} onClick={() => save(true)}>
+                  Save &amp; next ▶
+                </Button>
+              ) : null}
+            </>
+          ) : (
+            <span className="text-[13px] text-muted">
+              {saved ? "Saved" : "Pick how the interaction happened to begin"}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+
   );
 }
 
@@ -734,6 +779,33 @@ function Figure({ label, children }: { label: string; children: React.ReactNode 
     <span className="block">
       <span className="block text-[11px] text-muted">{label}</span>
       <span className="block text-[13px] font-medium text-ink">{children}</span>
+    </span>
+  );
+}
+
+/** One figure in the header strip. */
+function Stat({
+  label,
+  tone,
+  children,
+}: {
+  label: string;
+  tone?: "danger";
+  children: React.ReactNode;
+}) {
+  return (
+    <span className="block min-w-0">
+      <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+        {label}
+      </span>
+      <span
+        className={cx(
+          "block truncate text-sm font-medium",
+          tone === "danger" ? "text-danger" : "text-ink",
+        )}
+      >
+        {children}
+      </span>
     </span>
   );
 }

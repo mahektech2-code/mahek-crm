@@ -150,16 +150,24 @@ export function QueueScreen({
   }, [visible, selected, openId]);
 
   const openTarget = openId ? (callTargets[openId] ?? null) : null;
-  const nextUnworked = visible.findIndex((r) => r.customerId !== openId);
+  // Where the open customer sits in the list, so the modal's Previous/Next
+  // walk the queue in the order it is shown rather than in save order.
+  const openIndex = visible.findIndex((r) => r.customerId === openId);
+  const hasPrevious = openIndex > 0;
+  const hasNext = openIndex !== -1 && openIndex < visible.length - 1;
+
+  function goTo(index: number) {
+    const row = visible[index];
+    if (!row) return;
+    setOpenId(row.customerId);
+    setSelected(index);
+  }
 
   function advance() {
-    const remaining = visible.filter((r) => r.customerId !== openId);
-    if (remaining.length) {
-      setOpenId(remaining[0].customerId);
-      setSelected(visible.indexOf(remaining[0]));
-    } else {
-      setOpenId(null);
-    }
+    // After a save the worked row drops out on the next load, so stepping
+    // forward means the same index, not the next one.
+    if (hasNext) goTo(openIndex + 1);
+    else setOpenId(null);
   }
 
   return (
@@ -426,7 +434,10 @@ export function QueueScreen({
         complaintCategories={categories}
         quickNotes={quickNotes}
         products={products}
-        hasNext={nextUnworked !== -1}
+        hasNext={hasNext}
+        hasPrevious={hasPrevious}
+        onPrevious={() => goTo(openIndex - 1)}
+        onNext={() => goTo(openIndex + 1)}
         onClose={() => setOpenId(null)}
         onSaved={(advanceNext) => {
           if (advanceNext) advance();
