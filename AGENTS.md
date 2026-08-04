@@ -176,10 +176,17 @@ their own cycle, clamped: a 22-day cycle is called on day 18, a 60-day cycle
 on day 50. Underneath it all sits a quiet window — no order is chased inside
 15 days of the last one, because a customer reordering faster than that is
 serving themselves. Customers who have never ordered are prospects, worked on
-their own short cadence; customers whose cycle could not yet be measured fall
-to the check-in interval. The check-in rule does NOT apply once a cycle is
-real, or it would drag a fast-cycling customer back in and defeat the quiet
-window.
+their own short cadence.
+
+**The quiet window silences order chasing, not the customer.** A fast-cycling
+customer still gets a weekly check-in inside it — that call asks whether
+everything is running fine, not for an order, and the two must never be
+confused. So the order reasons are stripped and the check-in reason is what
+the telecaller sees. Weekly check-ins go to exactly two groups: customers
+reordering faster than the quiet window, and customers whose cycle could not
+be measured yet. A customer with a measured cycle of 15 days or more gets
+neither — their cycle already says when to call, and a weekly check-in on top
+would ring a 60-day buyer eight times before their order was due.
 
 **A reminder outranks the quiet window and the no-order cooldown.** A callback
 the customer asked for is not chasing, and not making it is worse than any

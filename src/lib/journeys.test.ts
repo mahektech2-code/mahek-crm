@@ -1202,10 +1202,10 @@ describe("Journey 9 — the Information tab", () => {
 /* ------------------------------------------------ the calling rules, end to end */
 
 describe("Who the Call Log puts in front of a telecaller", () => {
-  test("a customer reordering inside the quiet window is left alone", async () => {
+  test("no order is chased inside the quiet window", async () => {
     const customer = await makeCustomer(priya.id, {
       lastOrderDate: addDays(TODAY, -6),
-      lastContactDate: addDays(TODAY, -90),
+      lastContactDate: addDays(TODAY, -1),
       cycleDays: 8,
       cycleIsDefault: false,
     });
@@ -1213,13 +1213,32 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     assert.equal(
       q.entries.some((e) => e.customerId === customer.id),
       false,
-      "they order every 8 days on their own — a call adds nothing",
+      "they order every 8 days on their own — asking for an order adds nothing",
+    );
+  });
+
+  test("but a fast-cycling customer still gets their weekly check-in", async () => {
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -2),
+      lastContactDate: addDays(TODAY, -9),
+      cycleDays: 8,
+      cycleIsDefault: false,
+    });
+    const q = await getQueue();
+    const entry = q.entries.find((e) => e.customerId === customer.id);
+    assert.ok(entry, "going quiet on your best customers is how you lose them");
+    assert.ok(entry.reasons[0].kind.startsWith("checkIn"));
+    assert.ok(
+      entry.reasons.every((r) => !r.kind.startsWith("order")),
+      "and it is a service call, not an order chase",
     );
   });
 
   test("late by their own cycle but inside the quiet window is held back visibly", async () => {
     const customer = await makeCustomer(priya.id, {
       lastOrderDate: addDays(TODAY, -12),
+      // Contacted yesterday, so no check-in is due to carry them onto the list.
+      lastContactDate: addDays(TODAY, -1),
       cycleDays: 8,
       cycleIsDefault: false,
     });
@@ -1230,7 +1249,7 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     );
     const held = q.suppressed.find((x) => x.customerId === customer.id);
     assert.ok(held, "held back customers are shown, never silently dropped");
-    assert.match(held.reason, /quiet for/);
+    assert.match(held.reason, /no order chased for/);
   });
 
   test("a 22-day cycle is called on day 18, not day 17", async () => {

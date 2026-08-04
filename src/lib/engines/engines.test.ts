@@ -367,12 +367,13 @@ describe("E2 queue builder", () => {
 
   /* -------------------------------------------------- the quiet window */
 
-  test("a customer ordering faster than the quiet window is left alone", () => {
-    // Orders every 8 days, ordered 6 days ago. They are serving themselves.
+  test("no order is chased inside the quiet window", () => {
+    // Orders every 8 days, ordered 6 days ago, spoken to recently. They are
+    // serving themselves and there is no check-in due either.
     const c = candidate({
       lastOrderDate: addDays(TODAY, -6),
       cycleDays: 8,
-      lastContactDate: addDays(TODAY, -90),
+      lastContactDate: addDays(TODAY, -1),
     });
     const r = buildQueue([c], TODAY, C);
     assert.equal(r.entries.length, 0, "not called");
@@ -380,17 +381,71 @@ describe("E2 queue builder", () => {
 
   test("late by their own cycle but inside the quiet window is SUPPRESSED, not omitted", () => {
     // Cycle 8, ordered 12 days ago: overdue by their reckoning, but under 15.
-    // The telecaller must be able to find out why they are missing.
-    const c = candidate({ lastOrderDate: addDays(TODAY, -12), cycleDays: 8 });
+    // Contacted yesterday, so no check-in is due to carry them onto the list.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -12),
+      cycleDays: 8,
+      lastContactDate: addDays(TODAY, -1),
+    });
     const r = buildQueue([c], TODAY, C);
     assert.equal(r.entries.length, 0);
     assert.equal(r.suppressed.length, 1);
-    assert.match(r.suppressed[0].reason, /quiet for 3 more days/);
+    assert.match(r.suppressed[0].reason, /no order chased for 3 more days/);
   });
 
-  test("past the quiet window, a fast-cycling customer is called", () => {
-    const c = candidate({ lastOrderDate: addDays(TODAY, -15), cycleDays: 8 });
-    assert.equal(buildQueue([c], TODAY, C).entries.length, 1);
+  /* --------------------------------- the weekly check-in on good customers */
+
+  test("a fast-cycling customer still gets a weekly check-in inside the quiet window", () => {
+    // Ordered 2 days ago, so nothing to chase — but last spoken to 9 days ago.
+    // Going quiet on your best customers for weeks is how you lose them.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -2),
+      cycleDays: 8,
+      lastContactDate: addDays(TODAY, -9),
+    });
+    const { entries } = buildQueue([c], TODAY, C);
+    assert.equal(entries.length, 1);
+    assert.ok(entries[0].reasons[0].kind.startsWith("checkIn"));
+    assert.match(entries[0].reasons[0].label, /Weekly check-in/);
+  });
+
+  test("that check-in is not an order chase — no order reason rides along", () => {
+    // Cycle 8, ordered 12 days ago: past their call day, but inside the quiet
+    // window. The call is "is everything running fine", and the screen must
+    // not tell the telecaller to ask for an order.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -12),
+      cycleDays: 8,
+      lastContactDate: addDays(TODAY, -9),
+    });
+    const { entries } = buildQueue([c], TODAY, C);
+    assert.equal(entries.length, 1);
+    assert.ok(
+      entries[0].reasons.every((r) => !r.kind.startsWith("order")),
+      "order chasing is stripped inside the quiet window",
+    );
+  });
+
+  test("a slow-cycling customer gets NO weekly check-in", () => {
+    // A 60-day buyer contacted 9 days ago. Their cycle already says when to
+    // call; a weekly check-in would ring them eight times before it is due.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -5),
+      cycleDays: 60,
+      lastContactDate: addDays(TODAY, -9),
+    });
+    assert.equal(buildQueue([c], TODAY, C).entries.length, 0);
+  });
+
+  test("past the quiet window, a fast-cycling customer is chased for an order", () => {
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -15),
+      cycleDays: 8,
+      lastContactDate: addDays(TODAY, -1),
+    });
+    const { entries } = buildQueue([c], TODAY, C);
+    assert.equal(entries.length, 1);
+    assert.ok(entries[0].reasons.some((r) => r.kind.startsWith("order")));
   });
 
   test("a reminder overrides the quiet window", () => {

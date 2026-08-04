@@ -104,18 +104,39 @@ export function buildQueue(
   const suppressed: SuppressedEntry[] = [];
 
   for (const c of candidates) {
-    const reasons = reasonsFor(c, today, config, weights);
-    if (!reasons.length) continue;
+    const all = reasonsFor(c, today, config, weights);
+    if (!all.length) continue;
 
-    // Suppression is evaluated only for customers who would otherwise appear —
-    // and it is a return value, not a filter. The interface has a strip that
-    // explains who is missing and why; silently dropping them would remove a
-    // telecaller's ability to understand their own queue.
     // A reminder is a promise the telecaller made. It overrides the quiet
     // window and the no-order cooldown, but not do-not-contact.
-    const hasReminderReason = reasons.some(
+    const hasReminderReason = all.some(
       (r) => r.kind === "reminderOverdue" || r.kind === "reminderDueToday",
     );
+
+    // The quiet window silences ORDER CHASING, not the customer. A fast-cycling
+    // customer still gets their weekly check-in inside it — that call is "is
+    // everything running fine", not "please place an order", and the two must
+    // not be confused. So the order reasons are stripped rather than the whole
+    // customer suppressed, and what the telecaller sees is the call they are
+    // actually making.
+    const quiet = quietWindow(c, today, config, hasReminderReason);
+    const reasons = quiet ? all.filter((r) => !isOrderChasing(r.kind)) : all;
+
+    if (!reasons.length) {
+      // Nothing but order chasing, and the window says not yet. Shown rather
+      // than dropped: a customer late by their own cycle would otherwise
+      // vanish with no explanation.
+      suppressed.push({
+        customerId: c.customerId,
+        name: c.name,
+        reason: quiet!,
+      });
+      continue;
+    }
+
+    // Suppression is a return value, not a filter. The interface has a strip
+    // that explains who is missing and why; silently dropping them would
+    // remove a telecaller's ability to understand their own queue.
     const held = suppressionReason(c, today, config, hasReminderReason);
     if (held) {
       suppressed.push({ customerId: c.customerId, name: c.name, reason: held });
@@ -250,11 +271,24 @@ function reasonsFor(
   }
 
   /* ---- check-in due ---- */
-  // Only for customers who HAVE ordered but whose cycle could not be
-  // measured. Once the cycle is real it drives the call instead, and running
-  // both would drag a fast-cycling customer back in on the check-in interval
-  // — exactly what the quiet window exists to prevent.
-  if (c.lastOrderDate && c.cycleIsDefault) {
+  //
+  // Two kinds of customer, one cadence.
+  //
+  // Customers who reorder faster than the quiet window are never chased for an
+  // order — they are the good ones and they order on their own. But going
+  // silent on your best customers for weeks is how you lose them, so they get
+  // a weekly call that asks whether everything is running fine and whether
+  // they need anything, not whether they will place an order.
+  //
+  // Customers whose cycle could not be measured yet get the same cadence for a
+  // different reason: there is no cycle to time a call from.
+  //
+  // Customers with a measured cycle of 15 days or more get neither — their
+  // cycle already says when to call, and adding a weekly check-in on top would
+  // mean ringing a 60-day buyer eight times before their order is due.
+  const fastCycling =
+    !c.cycleIsDefault && c.cycleDays < config["queue.quietDaysAfterOrder"];
+  if (c.lastOrderDate && (c.cycleIsDefault || fastCycling)) {
     const since = c.lastContactDate ?? c.createdDate;
     const daysSince = daysBetween(since, today);
     const interval = config["queue.checkInIntervalDays"];
@@ -262,13 +296,17 @@ function reasonsFor(
     if (daysSince > interval * 1.5) {
       reasons.push({
         kind: "checkInOverdue",
-        label: `No contact for ${daysSince} days — cycle not established yet`,
+        label: fastCycling
+          ? `Orders every ${c.cycleDays} days — no contact for ${daysSince} days`
+          : `No contact for ${daysSince} days — cycle not established yet`,
         weight: weights.checkInOverdue,
       });
     } else if (daysSince >= interval) {
       reasons.push({
         kind: "checkInDue",
-        label: `Check-in due — ${daysSince} days since last contact`,
+        label: fastCycling
+          ? `Weekly check-in — orders every ${c.cycleDays} days, ${daysSince} days since last contact`
+          : `Check-in due — ${daysSince} days since last contact`,
         weight: weights.checkInDue,
       });
     }
@@ -296,6 +334,37 @@ function callDayFor(cycleDays: number, config: QueueConfig): number {
   return Math.max(0, cycleDays - lead);
 }
 
+/** The order-chasing reasons — the ones the quiet window holds back. */
+function isOrderChasing(kind: QueueReasonKind): boolean {
+  return (
+    kind === "orderDue" ||
+    kind === "orderDueSoon" ||
+    kind === "orderOverdueFullCycle"
+  );
+}
+
+/**
+ * Why order chasing is held back today, or null if it is not.
+ *
+ * A customer reordering faster than this window is serving themselves and a
+ * call asking for an order adds nothing. They can still be LATE by their own
+ * cycle while inside it, which is why this returns a sentence: the screen
+ * shows it rather than dropping them without explanation.
+ */
+function quietWindow(
+  c: QueueCandidate,
+  today: BusinessDate,
+  config: QueueConfig,
+  hasReminderReason: boolean,
+): string | null {
+  if (!c.lastOrderDate || hasReminderReason) return null;
+  const quiet = config["queue.quietDaysAfterOrder"];
+  const sinceOrder = daysBetween(c.lastOrderDate, today);
+  if (sinceOrder >= quiet) return null;
+  const left = quiet - sinceOrder;
+  return `Orders every ${c.cycleDays} days · ordered ${sinceOrder === 0 ? "today" : `${sinceOrder} day${sinceOrder === 1 ? "" : "s"} ago`} — no order chased for ${left} more day${left === 1 ? "" : "s"}`;
+}
+
 function suppressionReason(
   c: QueueCandidate,
   today: BusinessDate,
@@ -312,22 +381,6 @@ function suppressionReason(
 
   if (config["queue.excludeActiveInOrderSystem"] && c.activeInOrderSystem) {
     return "Active in the order system";
-  }
-
-  // The quiet window. A customer who reorders faster than this is serving
-  // themselves and a call adds nothing — but they can still be LATE by their
-  // own cycle while inside it, which is why this is a suppression rather than
-  // part of callDayFor: the strip says why they are missing.
-  //
-  // Reminders are exempt. A callback the customer asked for is not chasing,
-  // and not making it is worse than any wasted call.
-  const quiet = config["queue.quietDaysAfterOrder"];
-  if (c.lastOrderDate && !hasReminderReason) {
-    const sinceOrder = daysBetween(c.lastOrderDate, today);
-    if (sinceOrder < quiet) {
-      const left = quiet - sinceOrder;
-      return `Orders every ${c.cycleDays} days · ordered ${sinceOrder === 0 ? "today" : `${sinceOrder} day${sinceOrder === 1 ? "" : "s"} ago`} — quiet for ${left} more day${left === 1 ? "" : "s"}`;
-    }
   }
 
   // Asked for an order and told no. Without this a customer past their call
