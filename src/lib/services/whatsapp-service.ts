@@ -256,7 +256,7 @@ export async function markCopied(messageId: string): Promise<Result> {
 
 /**
  * The only place a manual message becomes real. Sets the customer's
- * last-WhatsApp date, which is what suppresses them from the call queue.
+ * last-WhatsApp date, which is what suppresses them from the call log.
  */
 export async function confirmSent(messageId: string): Promise<Result> {
   const ctx = await resolveScope();

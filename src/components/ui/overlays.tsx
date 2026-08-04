@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Button, cx } from "./primitives";
 
-function useEscape(onClose: () => void) {
+export function useEscape(onClose: () => void) {
   React.useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();

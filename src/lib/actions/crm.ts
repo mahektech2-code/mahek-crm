@@ -9,6 +9,8 @@ import { db } from "@/db";
 import {
   auditLog,
   complaintImages,
+  complaints,
+  complaintStatusHistory,
   customers,
   eodReports,
   notifications,
@@ -20,8 +22,8 @@ import {
   assertCustomerInScope,
 } from "@/lib/access-control";
 import { SCOPE_COOKIE_NAME, DENSITY_COOKIE_NAME } from "@/lib/scope";
-import { invalidateConfig, updateSetting } from "@/lib/config/store";
-import { logCall as logCallService } from "@/lib/services/call-service";
+import { getConfig, invalidateConfig, updateSetting } from "@/lib/config/store";
+import { saveInteraction } from "@/lib/services/interaction-service";
 import { fileStorage } from "@/lib/storage";
 import {
   recordFollowUpAttempt,
@@ -59,7 +61,7 @@ const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
 /** Screens that read shared numbers — refresh them together after any write. */
 const SHARED = [
-  "/crm/dashboard", "/crm/queue", "/crm/reminders", "/crm/history",
+  "/crm/dashboard", "/crm/call-log", "/crm/reminders", "/crm/history",
   "/crm/payments", "/crm/bills", "/crm/inactive", "/crm/customers",
   "/crm/complaints", "/crm/targets", "/crm/eod", "/crm/whatsapp",
 ];
@@ -96,47 +98,26 @@ export async function setDensity(density: "comfortable" | "compact") {
 
 /* -------------------------------------------------------------- the call */
 
-export type SaveCallInput = {
-  customerId: string;
-  connection: string;
-  outcome: string;
-  note?: string;
-  sourceModule?: "call_queue" | "payment_follow_up" | "inactive_watch" | "ad_hoc";
-  orderProduct?: string;
-  orderQty?: string;
-  orderValue?: string;
-  orderDispatch?: string;
-  reminderDue?: string;
-  reminderNote?: string;
-  complaintCategory?: string;
-  complaintDesc?: string;
-  idempotencyKey?: string;
-};
-
-const CONNECTION_MAP: Record<string, string> = {
-  Connected: "connected",
-  Missed: "no_answer",
-  "Not reachable": "no_answer",
-  Busy: "busy",
-  "Wrong number": "wrong_number",
-};
-
-const OUTCOME_MAP: Record<string, string> = {
-  "Order placed": "order_placed",
-  "Will order later": "will_order_later",
-  "Payment promised": "payment_promised",
-  "Not interested": "refused",
-  "Call back later": "call_back_requested",
-  "Complaint raised": "complaint_raised",
-  "No answer": "not_reachable",
-};
-
+/** Jyoti's dialog offers business labels; the column is an enum. */
 const CATEGORY_MAP: Record<string, string> = {
+  Packaging: "packaging_damage",
+  "Packaging Damage": "packaging_damage",
+  Staff: "service",
+  Product: "product_quality",
+  "Product Quality": "product_quality",
+  "Product Complaint": "product_quality",
+  Transport: "delivery",
+  Transportation: "delivery",
   Delivery: "delivery",
-  "Product quality": "product_quality",
-  Billing: "billing",
+  "Dispatch Delay": "dispatch_delay",
+  "Rate / Discount": "pricing",
   Pricing: "pricing",
+  "Immediate Payment": "billing_issue",
+  "Billing Issue": "billing_issue",
+  Billing: "billing_issue",
+  "Sales Promotion": "other",
   Service: "service",
+  Shortage: "shortage",
   Other: "other",
 };
 
@@ -148,48 +129,60 @@ function parseRupees(input?: string): number | null {
   return Number.isFinite(value) && value > 0 ? Math.round(value * 100) : null;
 }
 
-export async function saveCall(raw: SaveCallInput): Promise<Result<{ produced: string[] }>> {
-  try {
-    const orderValue = parseRupees(raw.orderValue);
-    if (raw.orderValue?.trim() && orderValue === null) {
-      return err("Enter the order value in rupees.", "validation", [
-        { field: "orderValue", message: "Enter a positive amount." },
-      ]);
-    }
+export type SaveInteractionActionInput = {
+  customerId: string;
+  interactionType: "outbound_call" | "inbound_call" | "order_received";
+  outcome?: string | null;
+  notes?: string;
+  quickNoteIds?: string[];
+  productQuantities?: Record<string, number>;
+  followUpDate?: string;
+  paymentPromiseDate?: string;
+  complaintCategory?: string;
+  orderDate?: string;
+  sourceModule?:
+    | "call_queue"
+    | "payment_follow_up"
+    | "inactive_watch"
+    | "customer_record"
+    | "ad_hoc";
+  queuePosition?: number;
+  idempotencyKey?: string;
+};
 
-    const result = await logCallService({
+/**
+ * Logging an interaction. Thin over the service, which owns validation and
+ * every side effect — this exists only to be callable from the interface.
+ */
+export async function saveInteractionAction(
+  raw: SaveInteractionActionInput,
+): Promise<Result<{ produced: string[]; complaintUpdated: boolean }>> {
+  try {
+    const result = await saveInteraction({
       customerId: raw.customerId,
-      connectionStatus: (CONNECTION_MAP[raw.connection] ?? "connected") as never,
-      outcome: (OUTCOME_MAP[raw.outcome] ?? null) as never,
-      notes: raw.note,
-      sourceModule: raw.sourceModule ?? "call_queue",
-      order:
-        orderValue !== null
-          ? {
-              product: raw.orderProduct || "Unspecified",
-              quantity: Number(raw.orderQty) || 1,
-              totalAmount: orderValue,
-              expectedDispatch: raw.orderDispatch || undefined,
-            }
-          : undefined,
-      reminder:
-        raw.reminderDue && raw.reminderNote?.trim()
-          ? { dueDate: raw.reminderDue, note: raw.reminderNote.trim(), type: "call_back" }
-          : undefined,
-      complaint:
-        raw.complaintCategory && raw.complaintDesc?.trim()
-          ? {
-              category: (CATEGORY_MAP[raw.complaintCategory] ?? "other") as never,
-              description: raw.complaintDesc.trim(),
-              severity: "medium",
-            }
-          : undefined,
+      interactionType: raw.interactionType,
+      outcome: (raw.outcome ?? null) as never,
+      notes: raw.notes,
+      quickNoteIds: raw.quickNoteIds ?? [],
+      productQuantities: raw.productQuantities ?? {},
+      followUpDate: raw.followUpDate,
+      paymentPromiseDate: raw.paymentPromiseDate,
+      complaintCategory: raw.complaintCategory as never,
+      orderDate: raw.orderDate,
+      sourceModule: raw.sourceModule ?? "ad_hoc",
+      queuePosition: raw.queuePosition,
       idempotencyKey: raw.idempotencyKey ?? randomUUID(),
     });
-
     if (!result.ok) return result;
     refreshAll();
-    return ok({ produced: result.data.produced }, result.message ?? "Call saved");
+    return ok(
+      {
+        produced: result.data.produced,
+        complaintUpdated: result.data.complaintUpdated,
+      },
+      result.message ?? "Interaction saved",
+      result.warnings,
+    );
   } catch (e) {
     return fromThrown(e);
   }
@@ -255,6 +248,7 @@ export async function createRemindersBulk(
     if (!customerIds.length) return err("Select at least one customer.", "validation");
     for (const customerId of customerIds) {
       const r = await createReminderService({ customerId, dueDate, note });
+      // One bad customer must not leave a half-finished bulk behind silently.
       if (!r.ok) return r;
     }
     refreshAll();
@@ -629,29 +623,49 @@ export async function logComplaint(input: {
       ]);
     }
 
-    const r = await logCallService({
-      customerId: input.customerId,
-      connectionStatus: "connected",
-      outcome: "complaint_raised",
-      notes: `Complaint logged: ${input.description}`,
-      sourceModule: "ad_hoc",
-      complaint: {
+    // Her dialog does not ask how the complaint reached us, so it must not
+    // invent an inbound call — that would inflate the call counts. A complaint
+    // raised ON a call comes through saveInteraction instead, and gets its
+    // interaction record there.
+    const ctx = await resolveScope();
+    const config = await getConfig();
+    const severity = config["complaints.defaultSeverity"];
+    const slaHours = config["complaints.slaHours"][severity];
+    const complaintId = id("cmp");
+
+    await db.transaction(async (tx) => {
+      await tx.insert(complaints).values({
+        id: complaintId,
+        customerId: input.customerId,
+        loggedByUserId: ctx.user.id,
         category: (CATEGORY_MAP[input.category] ?? "other") as never,
-        description: input.description,
-        severity: "medium",
-        mobileNumber: input.mobileNumber,
-        requestCn: input.requestCn,
-        billId: input.billId,
-        goodsDescription: input.goodsDescription,
-      },
-      idempotencyKey: randomUUID(),
+        description: input.description.trim(),
+        severity,
+        slaDueAt: new Date(Date.now() + slaHours * 3_600_000),
+        mobileNumber: input.mobileNumber?.trim() || null,
+        requestCn: input.requestCn ?? false,
+        billId: input.requestCn ? (input.billId ?? null) : null,
+        goodsDescription: input.requestCn
+          ? input.goodsDescription?.trim() || null
+          : null,
+        createdById: ctx.user.id,
+        updatedById: ctx.user.id,
+      });
+      await tx.insert(complaintStatusHistory).values({
+        id: id("csh"),
+        complaintId,
+        fromStatus: null,
+        toStatus: "open",
+        changedById: ctx.user.id,
+        note: `Logged by ${ctx.user.name}`,
+      });
     });
-    if (!r.ok) return r;
+
+
 
     // Storage has no backend yet (see lib/storage.ts), so attaching images is
     // best-effort — the complaint itself must always save.
     let imagesAttached = false;
-    const complaintId = r.data.complaintId;
     if (input.images?.length && complaintId) {
       const uploads = await Promise.allSettled(
         input.images.map((file) => fileStorage.upload(file)),

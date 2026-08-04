@@ -41,7 +41,7 @@ export type SettingDefinition = {
 };
 
 export const SETTINGS = [
-  /* ----------------------------------------------------------- call queue */
+  /* ----------------------------------------------------------- call log */
   {
     key: "queue.checkInIntervalDays",
     type: "integer",
@@ -414,6 +414,36 @@ export const SETTINGS = [
     default: { low: 120, medium: 48, high: 24 },
   },
   {
+    key: "complaints.defaultSeverity",
+    type: "text",
+    category: "complaints",
+    label: "Default severity",
+    description: "Severity given to a complaint raised on a call, which sets its SLA.",
+    default: "medium",
+    options: ["low", "medium", "high"],
+  },
+  {
+    key: "interactions.maxNotesLength",
+    type: "integer",
+    category: "complaints",
+    label: "Maximum note length",
+    description: "Longest note accepted when logging an interaction.",
+    default: 2000,
+    min: 200,
+    max: 10000,
+  },
+  {
+    key: "customers.defaultCreditDays",
+    type: "integer",
+    category: "bills",
+    label: "Default credit days",
+    description:
+      "Shown on a customer's information tab where no per-customer value is set.",
+    default: 30,
+    min: 0,
+    max: 180,
+  },
+  {
     key: "complaints.categories",
     type: "structured",
     category: "complaints",
@@ -663,6 +693,9 @@ export type Config = {
 
   "complaints.slaHours": { low: number; medium: number; high: number };
   "complaints.categories": string[];
+  "complaints.defaultSeverity": "low" | "medium" | "high";
+  "interactions.maxNotesLength": number;
+  "customers.defaultCreditDays": number;
 
   "whatsapp.mode": "manual" | "automatic";
   "whatsapp.contactsPerWeekLimit": number;

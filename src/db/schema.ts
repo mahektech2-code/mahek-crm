@@ -63,11 +63,43 @@ export const callOutcomeEnum = pgEnum("call_outcome", [
   "refused",
 ]);
 
+/**
+ * What kind of interaction this was. An "order received" is NOT a call: it
+ * arrived by WhatsApp or the ERP with nobody speaking to anybody, and counting
+ * it as one inflates calls attempted, connect rate and every conversion metric.
+ */
+export const interactionTypeEnum = pgEnum("interaction_type", [
+  "outbound_call",
+  "inbound_call",
+  "order_received",
+]);
+
+/**
+ * The union of both outcome sets. Which values are legal depends on the
+ * interaction type, and that is enforced in the save operation — an inbound
+ * record with "not_interested" is rejected at the boundary, not just hidden
+ * by the interface.
+ */
+export const interactionOutcomeEnum = pgEnum("interaction_outcome", [
+  /* outbound */
+  "order_taken",
+  "no_order",
+  "no_answer",
+  "payment_promised",
+  "follow_up",
+  "not_interested",
+  /* inbound (order_taken, payment_promised and follow_up are shared) */
+  "complaint",
+  "transport_follow_up",
+  "casual_talk",
+]);
+
 /** Required attribution: reporting must tell routine calling from collections. */
 export const sourceModuleEnum = pgEnum("source_module", [
   "call_queue",
   "payment_follow_up",
   "inactive_watch",
+  "customer_record",
   "ad_hoc",
 ]);
 
@@ -110,14 +142,20 @@ export const complaintStatusEnum = pgEnum("complaint_status", [
   "rejected",
 ]);
 
+/**
+ * Reconciled to one set covering both the old list and the categories the
+ * inbound complaint outcome introduced. Existing records are mapped onto this
+ * during migration rather than left pointing at values that no longer exist.
+ */
 export const complaintCategoryEnum = pgEnum("complaint_category", [
-  "delivery",
   "product_quality",
-  "billing",
+  "packaging_damage",
+  "dispatch_delay",
+  "billing_issue",
+  "delivery",
   "pricing",
   "service",
   "shortage",
-  "packaging",
   "other",
 ]);
 
@@ -311,6 +349,8 @@ export const customers = pgTable(
     /* commercial terms */
     gstin: text("gstin"),
     creditTermDays: integer("credit_term_days").notNull().default(30),
+    /** Shown on the information tab; falls back to the configured default. */
+    creditDays: integer("credit_days"),
     route: text("route"),
     customerSince: date("customer_since"),
 
@@ -321,6 +361,13 @@ export const customers = pgTable(
     lastOrderDate: date("last_order_date"),
     lastOrderValue: bigint("last_order_value", { mode: "number" }).notNull().default(0),
     lastContactDate: date("last_contact_date"),
+    /**
+     * The last time somebody actually dialled — distinct from lastContactDate.
+     * An unanswered call updates this but NOT contact: a ringing phone is not
+     * contact, and letting it reset the check-in timer would quietly drop a
+     * customer nobody has spoken to out of the queue.
+     */
+    lastCallDate: date("last_call_date"),
     /**
      * Set ONLY on confirmed send (manual) or actual send (automatic).
      * Never on copy — see lib/engines/queue.ts.
@@ -361,13 +408,44 @@ export const calls = pgTable(
       .notNull()
       .references(() => users.id),
     direction: callDirectionEnum("direction").notNull().default("outbound"),
+
+    /** Outbound call, inbound call, or an order that arrived with no call. */
+    interactionType: interactionTypeEnum("interaction_type")
+      .notNull()
+      .default("outbound_call"),
+    /** Null only for order_received, where the type is the whole classification. */
+    outcome: interactionOutcomeEnum("outcome"),
+
+    /** When the record was created. Never user-editable. */
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    /**
+     * Order-received only, and USER-ENTERED. Somebody logging Friday's
+     * WhatsApp order on Monday must be able to say so — storing the log
+     * timestamp instead would silently corrupt the buying cycle, and through
+     * it the queue and the inactive watch.
+     */
+    orderDate: date("order_date"),
+
     durationSeconds: integer("duration_seconds"),
-    /** The EOD missed-call count reads this. Never a user-entered summary. */
-    connectionStatus: connectionEnum("connection_status").notNull(),
-    outcome: callOutcomeEnum("outcome"),
+    /**
+     * RETIRED for new records — kept so historical rows do not lose the
+     * rang/busy/switched-off detail. The EOD missed count now reads the
+     * outcome, not this.
+     */
+    connectionStatus: connectionEnum("connection_status"),
+    legacyOutcome: callOutcomeEnum("legacy_outcome"),
+
     notes: text("notes"),
+    /**
+     * The quick notes the user actually clicked, as references. The merged
+     * text in `notes` is what a human reads; these are what makes "how often
+     * is 'Price high' the reason we lose an order" answerable at all.
+     */
+    quickNoteIds: jsonb("quick_note_ids").$type<string[]>().notNull().default([]),
+
     sourceModule: sourceModuleEnum("source_module").notNull().default("ad_hoc"),
+    /** Where in the day's queue this fell, when it came from the queue. */
+    queuePosition: integer("queue_position"),
 
     /* what the call produced */
     orderId: text("order_id"),
@@ -391,6 +469,76 @@ export const calls = pgTable(
 );
 
 /* ----------------------------------------------------------------- §3.5 order */
+
+/* --------------------------------------------------------------- products */
+
+export const products = pgTable(
+  "products",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    /** Where it is separable from the name — "5L", "200L". */
+    packSize: text("pack_size"),
+    /** Join key to the external order system. */
+    externalCode: text("external_code"),
+    /** Discontinued products stay for history but leave the entry list. */
+    active: boolean("active").notNull().default(true),
+    displayOrder: integer("display_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("products_active_idx").on(t.active, t.displayOrder)],
+);
+
+/** One row per product with a non-zero quantity. Blanks are not stored. */
+export const interactionProductLines = pgTable(
+  "interaction_product_lines",
+  {
+    id: text("id").primaryKey(),
+    interactionId: text("interaction_id")
+      .notNull()
+      .references(() => calls.id, { onDelete: "cascade" }),
+    productId: text("product_id")
+      .notNull()
+      .references(() => products.id),
+    quantity: integer("quantity").notNull(),
+  },
+  (t) => [index("interaction_lines_idx").on(t.interactionId)],
+);
+
+/**
+ * Quick notes are CONFIGURATION, not constants. The lists shipped with the
+ * brief are labelled "examples" — a draft, not an agreed set. A manager must
+ * be able to add "Diwali stock booking" in October without a deploy.
+ */
+export const quickNotes = pgTable(
+  "quick_notes",
+  {
+    id: text("id").primaryKey(),
+    interactionType: interactionTypeEnum("interaction_type").notNull(),
+    /** Null for order_received, which has no outcome. */
+    outcome: interactionOutcomeEnum("outcome"),
+    /** Shown on the chip and appended to the notes when clicked. */
+    label: text("label").notNull(),
+    displayOrder: integer("display_order").notNull().default(0),
+    active: boolean("active").notNull().default(true),
+    /** Incremented on use, so the list can order itself by what people pick. */
+    usageCount: integer("usage_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("quick_notes_lookup_idx").on(t.interactionType, t.outcome, t.displayOrder)],
+);
+
+/** Records that could not be mapped cleanly during migration — never guessed. */
+export const migrationExceptions = pgTable("migration_exceptions", {
+  id: text("id").primaryKey(),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id").notNull(),
+  reason: text("reason").notNull(),
+  detail: jsonb("detail"),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const orders = pgTable(
   "orders",
@@ -1025,6 +1173,10 @@ export type FollowUpState = typeof followUpStates.$inferSelect;
 export type FollowUpAttempt = typeof followUpAttempts.$inferSelect;
 export type Reminder = typeof reminders.$inferSelect;
 export type Complaint = typeof complaints.$inferSelect;
+export type Product = typeof products.$inferSelect;
+export type InteractionProductLine = typeof interactionProductLines.$inferSelect;
+export type QuickNote = typeof quickNotes.$inferSelect;
+export type Interaction = typeof calls.$inferSelect;
 export type ComplaintImage = typeof complaintImages.$inferSelect;
 export type ComplaintStatusHistory = typeof complaintStatusHistory.$inferSelect;
 export type MonthlyTarget = typeof monthlyTargets.$inferSelect;

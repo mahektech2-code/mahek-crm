@@ -6,6 +6,8 @@ import { requireUser } from "@/lib/auth";
 import { currentPeriod, customerTimeline, getCustomer, today } from "@/lib/queries";
 import { getFollowUpDetail } from "@/lib/services/payment-service";
 import { getConfig } from "@/lib/config/store";
+import { listActiveProducts } from "@/db/seed-catalogue";
+import { quickNotes as quickNotesTable } from "@/db/schema";
 import { listTargets } from "@/lib/services/worklist-services";
 import { daysBetween } from "@/lib/format";
 import { RecordScreen } from "./record-screen";
@@ -63,6 +65,11 @@ export default async function CustomerRecordPage({
       .where(and(eq(orders.customerId, id)))
       .limit(1)
       .then((r) => r[0]),
+  ]);
+
+  const [quickNoteRows, productRows] = await Promise.all([
+    db.select().from(quickNotesTable).where(eq(quickNotesTable.active, true)),
+    listActiveProducts(),
   ]);
 
   const target = targets.find((t) => t.customerId === id);
@@ -147,6 +154,24 @@ export default async function CustomerRecordPage({
         oldestDueDate: overdue[0]?.effectiveDueDate ?? null,
       }}
       categories={config["complaints.categories"]}
+      complaintCategories={config["complaints.categories"].map((c) => ({
+        value: c
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "_")
+          .replace(/^_|_$/g, ""),
+        label: c,
+      }))}
+      quickNotes={quickNoteRows.map((n) => ({
+        id: n.id,
+        interactionType: n.interactionType,
+        outcome: n.outcome,
+        label: n.label,
+      }))}
+      products={productRows.map((p) => ({
+        id: p.id,
+        name: p.name,
+        packSize: p.packSize,
+      }))}
       timeline={timeline.map((t) => ({
         id: t.id,
         kind: t.kind,

@@ -11,6 +11,10 @@ import {
   complaintStatusHistory,
   complaints,
   customers,
+  interactionProductLines,
+  migrationExceptions,
+  products,
+  quickNotes,
   eodReports,
   followUpAttempts,
   followUpStates,
@@ -32,6 +36,7 @@ import {
 import { hashPassword } from "../lib/password";
 import { initialsOf } from "../lib/format";
 import { SETTINGS } from "../lib/config/registry";
+import { seedCatalogue } from "./seed-catalogue";
 
 /* ---------------------------------------------------------------------------
  * Seed: around fifty realistic customers with six months of orders, bills and
@@ -147,6 +152,7 @@ async function main() {
     waReplies, waMessages, waRuns, waTemplates,
     complaintStatusHistory, complaints, inactiveWatchItems,
     followUpAttempts, followUpStates, reminders, calls, orders,
+    interactionProductLines, migrationExceptions, quickNotes, products,
     payments, bills, monthlyTargets, customers, appAccess, sessions, users,
     helpArticles, appSettings,
   ]) {
@@ -164,6 +170,10 @@ async function main() {
       description: s.description,
     })),
   );
+
+  console.log("Seeding products and quick notes…");
+  const cat = await seedCatalogue();
+  console.log(`  ${cat.productsAdded} products · ${cat.quickNotesAdded} quick notes`);
 
   console.log("Creating the team…");
   const passwordHash = await hashPassword("mahek1234");
@@ -312,8 +322,10 @@ async function main() {
   await db.insert(payments).values(paymentRows);
 
   console.log("Creating calls…");
-  const CONNECTIONS = ["connected", "connected", "connected", "no_answer", "busy", "switched_off"] as const;
-  const OUTCOMES = ["order_placed", "will_order_later", "no_requirement_now", "payment_promised", "call_back_requested"] as const;
+  // Most calls connect. The ones that do not are "No Answer" — an OUTCOME
+  // now, not a connection status, which is what the EOD missed count reads.
+  const CONNECTS = [true, true, true, true, false] as const;
+  const OUTCOMES = ["order_taken", "no_order", "payment_promised", "follow_up"] as const;
   const NOTES = [
     "Wants the revised 200L drum rate before committing.",
     "Stock is sufficient until month end, will reorder after that.",
@@ -327,17 +339,17 @@ async function main() {
   for (const c of customerRows) {
     for (let n = 0; n < between(2, 7); n++) {
       const daysAgo = n === 0 && rand() > 0.6 ? 0 : between(1, 45);
-      const connection = pick([...CONNECTIONS]);
+      const connected = pick([...CONNECTS]);
       callRows.push({
         id: id("call"),
         customerId: c.id!,
         userId: c.ownerId!,
         direction: "outbound",
+        interactionType: "outbound_call",
         startedAt: at(-daysAgo, between(10, 18), between(0, 59)),
-        durationSeconds: connection === "connected" ? between(45, 420) : 0,
-        connectionStatus: connection,
-        outcome: connection === "connected" ? pick([...OUTCOMES]) : "not_reachable",
-        notes: connection === "connected" ? pick(NOTES) : "Rang out, will retry.",
+        durationSeconds: connected ? between(45, 420) : 0,
+        outcome: connected ? pick([...OUTCOMES]) : "no_answer",
+        notes: connected ? pick(NOTES) : "Phone rang",
         sourceModule: pick(["call_queue", "call_queue", "payment_follow_up", "ad_hoc"] as const),
       });
     }
@@ -387,11 +399,11 @@ async function main() {
   const COMPLAINTS = [
     { cat: "delivery" as const, sev: "high" as const, desc: "Last consignment was two drums short of the invoice.", status: "open" as const, ago: 9 },
     { cat: "product_quality" as const, sev: "medium" as const, desc: "NC thinner from the last batch is drying too slowly.", status: "in_progress" as const, ago: 6 },
-    { cat: "billing" as const, sev: "medium" as const, desc: "GST rate on the bill is 18% but the order was quoted at 12%.", status: "open" as const, ago: 3 },
+    { cat: "billing_issue" as const, sev: "medium" as const, desc: "GST rate on the bill is 18% but the order was quoted at 12%.", status: "open" as const, ago: 3 },
     { cat: "pricing" as const, sev: "low" as const, desc: "Competitor is quoting eight rupees per litre less on 200L drums.", status: "open" as const, ago: 14 },
     { cat: "service" as const, sev: "low" as const, desc: "Nobody called back after the last complaint was raised.", status: "resolved" as const, ago: 20 },
     { cat: "shortage" as const, sev: "high" as const, desc: "Delivery arrived a day late and the shop was shut.", status: "in_progress" as const, ago: 4 },
-    { cat: "packaging" as const, sev: "medium" as const, desc: "Two drums had damaged seals on arrival.", status: "open" as const, ago: 11 },
+    { cat: "packaging_damage" as const, sev: "medium" as const, desc: "Two drums had damaged seals on arrival.", status: "open" as const, ago: 11 },
   ];
   const SLA = { low: 120, medium: 48, high: 24 };
 

@@ -20,7 +20,12 @@ import {
 import { FilterPills, Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
-import { CallPanel, type CallTarget } from "@/components/crm/call-panel";
+import {
+  CallPanel,
+  type CallTarget,
+  type ProductOption,
+  type QuickNoteOption,
+} from "@/components/crm/call-panel";
 import { createReminder, logComplaint } from "@/lib/actions/crm";
 import {
   ageLabel,
@@ -61,6 +66,9 @@ export function RecordScreen({
   billStats,
   timeline,
   categories,
+  complaintCategories,
+  quickNotes,
+  products,
 }: {
   customer: {
     id: string;
@@ -102,6 +110,9 @@ export function RecordScreen({
   timeline: Entry[];
   /** Complaint categories, from configuration rather than a constant. */
   categories: string[];
+  complaintCategories: Array<{ value: string; label: string }>;
+  quickNotes: QuickNoteOption[];
+  products: ProductOption[];
 }) {
   const router = useRouter();
   const { run } = useToast();
@@ -355,7 +366,9 @@ export function RecordScreen({
       {calling ? (
         <CallPanel
           target={callTarget}
-          categories={categories}
+          complaintCategories={complaintCategories}
+          quickNotes={quickNotes}
+          products={products}
           onClose={() => setCalling(false)}
         />
       ) : null}

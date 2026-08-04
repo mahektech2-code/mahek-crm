@@ -17,7 +17,13 @@ import {
 import { ConfirmDialog, FilterPills, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
-import { CallPanel, type CallTarget } from "@/components/crm/call-panel";
+import {
+  CallPanel,
+  type CallTarget,
+  type ProductOption,
+  type QuickNoteOption,
+  type ScriptOption,
+} from "@/components/crm/call-panel";
 import { rebuildQueue, skipQueueItem } from "@/lib/actions/crm";
 import { money, phoneDisplay, shortDate } from "@/lib/format";
 
@@ -65,6 +71,9 @@ export function QueueScreen({
   callTargets,
   activity,
   categories,
+  quickNotes,
+  products,
+  scripts,
 }: {
   scopeLabel: string;
   rows: Row[];
@@ -72,7 +81,10 @@ export function QueueScreen({
   progress: { worked: number; total: number; percent: number };
   callTargets: Record<string, CallTarget>;
   /** Complaint categories, from configuration rather than a constant. */
-  categories: string[];
+  categories: Array<{ value: string; label: string }>;
+  quickNotes: QuickNoteOption[];
+  products: ProductOption[];
+  scripts: ScriptOption[];
   activity: {
     connected: number;
     attempted: number;
@@ -141,23 +153,31 @@ export function QueueScreen({
   }, [visible, selected, openId]);
 
   const openTarget = openId ? (callTargets[openId] ?? null) : null;
-  const nextUnworked = visible.findIndex((r) => r.customerId !== openId);
+  // Where the open customer sits in the list, so the modal's Previous/Next
+  // walk the queue in the order it is shown rather than in save order.
+  const openIndex = visible.findIndex((r) => r.customerId === openId);
+  const hasPrevious = openIndex > 0;
+  const hasNext = openIndex !== -1 && openIndex < visible.length - 1;
+
+  function goTo(index: number) {
+    const row = visible[index];
+    if (!row) return;
+    setOpenId(row.customerId);
+    setSelected(index);
+  }
 
   function advance() {
-    const remaining = visible.filter((r) => r.customerId !== openId);
-    if (remaining.length) {
-      setOpenId(remaining[0].customerId);
-      setSelected(visible.indexOf(remaining[0]));
-    } else {
-      setOpenId(null);
-    }
+    // After a save the worked row drops out on the next load, so stepping
+    // forward means the same index, not the next one.
+    if (hasNext) goTo(openIndex + 1);
+    else setOpenId(null);
   }
 
   return (
     <div className="max-w-[1440px] px-6 pt-6 pb-10">
       <PageHeader
-        title="Call queue"
-        subtitle={`${scopeLabel} · Worked top to bottom. The first row is your next call.`}
+        title="Call Log"
+        subtitle={`${scopeLabel} · Worked top to bottom. The first row is your next call — log an inbound call or an order that arrived without one from any row.`}
         actions={
           <>
             <Button
@@ -414,8 +434,15 @@ export function QueueScreen({
 
       <CallPanel
         target={openTarget}
-        categories={categories}
-        hasNext={nextUnworked !== -1}
+        complaintCategories={categories}
+        quickNotes={quickNotes}
+        products={products}
+        scripts={scripts}
+        hasNext={hasNext}
+        hasPrevious={hasPrevious}
+        onPrevious={() => goTo(openIndex - 1)}
+        onNext={() => goTo(openIndex + 1)}
+        position={openIndex >= 0 ? `${openIndex + 1} of ${visible.length}` : undefined}
         onClose={() => setOpenId(null)}
         onSaved={(advanceNext) => {
           if (advanceNext) advance();
