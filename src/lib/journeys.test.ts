@@ -967,6 +967,127 @@ describe("Journey 8 — the interaction log", () => {
   });
 });
 
+
+/* ------------------------- journey 9: the information tab (§7) */
+
+describe("Journey 9 — the Information tab", () => {
+  test("last call ignores Order Received, because that was not a call", async () => {
+    const customer = await makeCustomer(priya.id);
+    const [product] = await db.select().from(productsTable).limit(1);
+    const { customerInformation } = await import("@/lib/services/customer-info-service");
+
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      idempotencyKey: randomUUID(),
+    });
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "order_received",
+      productQuantities: { [product.id]: 5 },
+      orderDate: TODAY,
+      idempotencyKey: randomUUID(),
+    });
+
+    const info = await customerInformation(customer.id);
+    assert.ok(info);
+    assert.equal(info.purchase.lastCallDate, TODAY, "the call counts");
+    assert.equal(info.recentCalls.length, 1, "the order does not appear under Last 3 calls");
+    assert.equal(info.recentCalls[0].outcome, "no_order");
+  });
+
+  test("next order date is last order plus their own cycle", async () => {
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -10),
+      cycleDays: 21,
+      cycleIsDefault: false,
+    });
+    const { customerInformation } = await import("@/lib/services/customer-info-service");
+
+    const info = await customerInformation(customer.id);
+    assert.ok(info);
+    assert.equal(info.purchase.nextOrderDate, addDays(TODAY, 11));
+    assert.equal(info.purchase.lastOrderDaysAgo, 10);
+    assert.equal(info.purchase.cycleIsDefault, false, "a real cycle, not a fallback");
+  });
+
+  test("a default cycle is flagged as one", async () => {
+    const customer = await makeCustomer(priya.id, { cycleIsDefault: true });
+    const { customerInformation } = await import("@/lib/services/customer-info-service");
+    const info = await customerInformation(customer.id);
+    assert.equal(info?.purchase.cycleIsDefault, true);
+  });
+
+  test("run rate divides the gap over WORKING days, and survives a zero target", async () => {
+    const customer = await makeCustomer(priya.id);
+    const { customerInformation } = await import("@/lib/services/customer-info-service");
+
+    // No target set at all — the maths must not divide by zero.
+    const bare = await customerInformation(customer.id);
+    assert.ok(bare);
+    assert.equal(bare.monthly.achievementPercent, 0);
+    assert.equal(bare.monthly.gap, 0);
+
+    // The service takes paise; only the action converts from rupees.
+    setTestUser(manager);
+    await setTarget(customer.id, 1_00_000_00, TODAY.slice(0, 7));
+    setTestUser(priya);
+
+    const info = await customerInformation(customer.id);
+    assert.ok(info);
+    assert.equal(info.monthly.target, 1_00_000_00);
+    assert.ok(info.monthly.workingDaysRemaining > 0);
+    assert.ok(
+      info.monthly.workingDaysRemaining <= 31,
+      "working days remaining cannot exceed the month",
+    );
+    // Gap spread over the working days left, not calendar days.
+    assert.equal(
+      info.monthly.requiredPerDay,
+      Math.round(info.monthly.gap / info.monthly.workingDaysRemaining),
+    );
+  });
+
+  test("credit days fall back to the configured default, and say so", async () => {
+    const plain = await makeCustomer(priya.id);
+    const own = await makeCustomer(priya.id, { creditDays: 45 });
+    const { customerInformation } = await import("@/lib/services/customer-info-service");
+
+    const a = await customerInformation(plain.id);
+    assert.equal(a?.creditDays, (await getConfig())["customers.defaultCreditDays"]);
+    assert.equal(a?.creditDaysIsDefault, true);
+
+    const b = await customerInformation(own.id);
+    assert.equal(b?.creditDays, 45);
+    assert.equal(b?.creditDaysIsDefault, false);
+  });
+
+  test("product history comes from the CRM and is labelled as such", async () => {
+    const customer = await makeCustomer(priya.id);
+    const [product] = await db.select().from(productsTable).limit(1);
+    const { customerInformation } = await import("@/lib/services/customer-info-service");
+
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "order_received",
+      productQuantities: { [product.id]: 3 },
+      orderDate: TODAY,
+      idempotencyKey: randomUUID(),
+    });
+
+    const info = await customerInformation(customer.id);
+    assert.ok(info);
+    assert.equal(info.productHistory.length, 1);
+    assert.equal(info.productHistory[0].totalOrderCount, 1);
+    assert.equal(
+      info.productHistorySource,
+      "crm",
+      "the ERP is not connected, and the screen must not imply it is",
+    );
+  });
+});
+
 /* ------------------------------------ cross-cutting: config, idempotency, audit */
 
 describe("Cross-cutting rules", () => {

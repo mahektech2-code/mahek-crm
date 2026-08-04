@@ -7,7 +7,7 @@ import { Badge, Button, Field, Input, Select, Textarea, cx } from "@/components/
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { saveInteractionAction } from "@/lib/actions/crm";
-import { money, phoneDisplay, today } from "@/lib/format";
+import { money, phoneDisplay, shortDate, today } from "@/lib/format";
 
 export type CallTarget = {
   customerId: string;
@@ -51,6 +51,43 @@ export type QuickNoteOption = {
 };
 
 export type ProductOption = { id: string; name: string; packSize: string | null };
+
+/** §7 — what the information strip shows. Derived server-side. */
+export type CustomerInfo = {
+  purchase: {
+    lastOrderDate: string | null;
+    lastOrderDaysAgo: number | null;
+    cycleDays: number;
+    cycleIsDefault: boolean;
+    nextOrderDate: string | null;
+    lastCallDate: string | null;
+    lastCallDaysAgo: number | null;
+  };
+  monthly: {
+    target: number;
+    achieved: number;
+    achievementPercent: number;
+    gap: number;
+    workingDaysRemaining: number;
+    requiredPerDay: number;
+    shortfallPerDay: number;
+  };
+  outstanding: number;
+  creditDays: number;
+  creditDaysIsDefault: boolean;
+  recentCalls: Array<{
+    id: string;
+    at: string;
+    outcome: string | null;
+    notes: string | null;
+  }>;
+  productHistory: Array<{
+    productName: string;
+    lastPurchaseDate: string | null;
+    totalOrderCount: number;
+  }>;
+  productHistorySource: "external" | "crm";
+};
 
 const TYPES: Array<{ key: InteractionType; label: string; sub: string; icon: string }> = [
   { key: "outbound_call", label: "We Called Them", sub: "An outbound call you made", icon: "phone" },
@@ -145,6 +182,22 @@ function CallPanelForm({
 
   // One key per opening, so a double-click logs one interaction, not two.
   const idempotencyKey = React.useRef(crypto.randomUUID());
+
+  // The information strip loads with the panel rather than being prefetched
+  // for every row behind it — most rows are never opened.
+  const [info, setInfo] = React.useState<CustomerInfo | null>(null);
+  const [infoOpen, setInfoOpen] = React.useState(false);
+  React.useEffect(() => {
+    if (!target) return;
+    const controller = new AbortController();
+    fetch(`/api/customer-info?customerId=${target.customerId}`, {
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : { info: null }))
+      .then((d) => setInfo(d.info))
+      .catch(() => setInfo(null));
+    return () => controller.abort();
+  }, [target]);
 
   const isOrderReceived = type === "order_received";
   const chosen = isOrderReceived || Boolean(outcome);
@@ -272,6 +325,152 @@ function CallPanelForm({
           </div>
         ) : null}
       </DrawerHeader>
+
+      {info ? (
+        <div className="border-b border-divider bg-canvas">
+          <button
+            onClick={() => setInfoOpen((o) => !o)}
+            className="flex w-full cursor-pointer items-center gap-3 px-5 py-2.5 text-left"
+          >
+            <Icon
+              name="chevron"
+              size={14}
+              className={cx("text-muted transition-transform", infoOpen && "rotate-90")}
+            />
+            <span className="text-[13px] text-body">
+              Last order{" "}
+              {info.purchase.lastOrderDate
+                ? `${shortDate(info.purchase.lastOrderDate)} · ${info.purchase.lastOrderDaysAgo}d ago`
+                : "never"}
+            </span>
+            <span className="text-line-strong">·</span>
+            <span className="text-[13px] text-body">
+              Cycle {info.purchase.cycleDays}d
+              {info.purchase.cycleIsDefault ? " (default)" : ""}
+            </span>
+            <span className="flex-1" />
+            {info.outstanding > 0 ? (
+              <span className="text-[13px] font-medium text-danger">
+                {money(info.outstanding)}
+              </span>
+            ) : null}
+          </button>
+
+          {infoOpen ? (
+            <div className="border-t border-divider px-5 pt-3 pb-4">
+              <InfoRow label="Purchase summary">
+                <Figure label="Last order">
+                  {info.purchase.lastOrderDate
+                    ? `${shortDate(info.purchase.lastOrderDate)} · ${info.purchase.lastOrderDaysAgo}d ago`
+                    : "Never"}
+                </Figure>
+                <Figure label="Purchase cycle">
+                  {info.purchase.cycleDays} days
+                  {info.purchase.cycleIsDefault ? " (default)" : ""}
+                </Figure>
+                <Figure label="Next order">
+                  {info.purchase.nextOrderDate
+                    ? shortDate(info.purchase.nextOrderDate)
+                    : "—"}
+                </Figure>
+                <Figure label="Last call">
+                  {info.purchase.lastCallDate
+                    ? `${shortDate(info.purchase.lastCallDate)} · ${info.purchase.lastCallDaysAgo}d ago`
+                    : "Never"}
+                </Figure>
+              </InfoRow>
+
+              <InfoRow label="Monthly performance">
+                <Figure label="Monthly target">{money(info.monthly.target)}</Figure>
+                <Figure label="Achieved">
+                  {money(info.monthly.achieved)} · {info.monthly.achievementPercent}%
+                </Figure>
+                <Figure label="Target gap this month">
+                  {money(info.monthly.gap)}
+                  <span className="ml-1 text-[11px] font-normal text-muted">
+                    {info.monthly.workingDaysRemaining} working days left
+                  </span>
+                </Figure>
+                <Figure label="Run rate">
+                  Need {money(info.monthly.requiredPerDay)}/day
+                  {info.monthly.shortfallPerDay > 0 ? (
+                    <span className="ml-1 text-[11px] font-normal text-danger">
+                      Short by {money(info.monthly.shortfallPerDay)}/day
+                    </span>
+                  ) : null}
+                </Figure>
+              </InfoRow>
+
+              <InfoRow label="Account">
+                <Figure label="Outstanding">{money(info.outstanding)}</Figure>
+                <Figure label="Credit days">
+                  {info.creditDays}
+                  {info.creditDaysIsDefault ? " (default)" : ""}
+                </Figure>
+              </InfoRow>
+
+              <div className="mt-3">
+                <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                  Last 3 calls
+                </span>
+                {info.recentCalls.length ? (
+                  <div className="mt-1">
+                    {info.recentCalls.map((c) => (
+                      <div key={c.id} className="border-b border-divider py-1.5 last:border-0">
+                        <div className="text-[13px] text-body">
+                          {shortDate(c.at.slice(0, 10))} ·{" "}
+                          {c.outcome ? (OUTCOME_LABEL[c.outcome] ?? c.outcome) : "—"}
+                        </div>
+                        {c.notes ? (
+                          <div className="text-[13px] text-muted">{c.notes}</div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-[13px] text-muted">
+                    No calls logged against this customer yet. The first one you save
+                    appears here.
+                  </p>
+                )}
+              </div>
+
+              <div className="mt-3">
+                <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                  Order status
+                </span>
+                <span className="ml-1.5 text-[11px] text-muted">
+                  {info.productHistorySource === "external"
+                    ? "From ERP · read-only"
+                    : "From orders captured in the CRM — the ERP is not connected"}
+                </span>
+                {info.productHistory.length ? (
+                  <div className="mt-1">
+                    {info.productHistory.map((p) => (
+                      <div
+                        key={p.productName}
+                        className="flex items-center gap-3 border-b border-divider py-1.5 text-[13px] last:border-0"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-body">
+                          {p.productName}
+                        </span>
+                        <span className="text-muted">
+                          {p.lastPurchaseDate ? shortDate(p.lastPurchaseDate) : "—"}
+                        </span>
+                        <span className="w-8 text-right text-ink">{p.totalOrderCount}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-[13px] text-muted">
+                    Nothing bought through the CRM yet.
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="flex-1 overflow-y-auto p-5">
         {saved ? (
@@ -514,5 +713,27 @@ function CallPanelForm({
         </div>
       ) : null}
     </Drawer>
+  );
+}
+
+function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="mb-3">
+      <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+        {label}
+      </span>
+      <div className="mt-1 grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-x-4 gap-y-1.5">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Figure({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span className="block">
+      <span className="block text-[11px] text-muted">{label}</span>
+      <span className="block text-[13px] font-medium text-ink">{children}</span>
+    </span>
   );
 }
