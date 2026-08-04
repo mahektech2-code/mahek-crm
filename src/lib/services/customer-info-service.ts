@@ -66,8 +66,22 @@ export type ProductHistoryRow = {
 };
 
 export type CustomerInformation = {
-  purchase: PurchaseSummary;
-  monthly: MonthlyPerformance;
+  kind: "lead" | "customer";
+  /** Set only on leads. */
+  lead: {
+    source: string | null;
+    addedDate: string;
+    ownerName: string | null;
+  } | null;
+  /** Set only on customers. */
+  accountManagers: { sales: string | null; backOffice: string | null } | null;
+  /**
+   * Null on a lead. A record with no orders has no cycle, no run rate and no
+   * target — showing zeroes would read as a customer performing badly rather
+   * than as one who has not started.
+   */
+  purchase: PurchaseSummary | null;
+  monthly: MonthlyPerformance | null;
   outstanding: number;
   creditDays: number;
   /** True when it fell back to the configured default. */
@@ -96,6 +110,18 @@ export async function customerInformation(
     .where(eq(customers.id, customerId));
   if (!customer) return null;
   await assertCustomerInScope(customer.ownerId);
+
+  const isLead = customer.kind === "lead";
+
+  const [names] = await db.execute<{
+    owner: string | null;
+    sales: string | null;
+    back_office: string | null;
+  }>(sql`
+    select (select name from users where id = ${customer.ownerId}) as owner,
+           (select name from users where id = ${customer.salesAmId}) as sales,
+           (select name from users where id = ${customer.backOfficeAmId}) as back_office
+  `);
 
   const config = await getConfig();
   const day = await today();
@@ -178,8 +204,10 @@ export async function customerInformation(
 
   // On the last working day of the month the whole gap is due today, and on a
   // non-working day there is nothing left to divide by — guard both.
-  const requiredPerDay = workingDaysRemaining > 0 ? Math.round(gap / workingDaysRemaining) : gap;
-  const currentPace = workingDaysElapsed > 0 ? achieved / workingDaysElapsed : 0;
+  const requiredPerDay =
+    workingDaysRemaining > 0 ? Math.round(gap / workingDaysRemaining) : gap;
+  const currentPace =
+    workingDaysElapsed > 0 ? achieved / workingDaysElapsed : 0;
   const shortfallPerDay = Math.max(0, Math.round(requiredPerDay - currentPace));
 
   const monthly: MonthlyPerformance = {
@@ -234,8 +262,21 @@ export async function customerInformation(
   `);
 
   return {
-    purchase,
-    monthly,
+    kind: customer.kind,
+    lead: isLead
+      ? {
+          source: customer.leadSource,
+          addedDate: customer.createdAt.toISOString().slice(0, 10),
+          ownerName: names?.owner ?? null,
+        }
+      : null,
+    accountManagers: isLead
+      ? null
+      : { sales: names?.sales ?? null, backOffice: names?.back_office ?? null },
+    // A lead has no orders, so a cycle and a run rate would be zeroes dressed
+    // up as performance.
+    purchase: isLead ? null : purchase,
+    monthly: isLead ? null : monthly,
     outstanding: customer.outstanding,
     creditDays: customer.creditDays ?? config["customers.defaultCreditDays"],
     creditDaysIsDefault: customer.creditDays === null,

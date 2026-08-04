@@ -39,6 +39,7 @@ type Row = {
   reasons: Reason[];
   daysSinceContact: number | null;
   outstanding: number;
+  kind: "lead" | "customer";
   slowPayer: boolean;
   lastOrderDate: string | null;
   lastNote: string | null;
@@ -355,6 +356,7 @@ export function QueueScreen({
                       {reason.label}
                     </Badge>
                   ))}
+                  {r.kind === "lead" ? <Badge tone="brand">Lead</Badge> : null}
                   {r.slowPayer ? <SlowPayerBadge /> : null}
                 </div>
                 <div className="mt-0.5 flex items-center gap-2 text-[13px] text-muted">

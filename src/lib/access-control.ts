@@ -1,7 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import { randomUUID } from "node:crypto";
-import { eq, inArray, or } from "drizzle-orm";
+import { eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, users, type User } from "@/db/schema";
 import { requireUser } from "./auth";
@@ -31,39 +31,76 @@ export type RequestScope = {
  * preference cookie cannot widen it. A manager sees their reports, and an
  * admin sees everything.
  */
-export const resolveScope = cache(async function resolveScope(): Promise<RequestScope> {
-  const user = await requireUser();
+export const resolveScope = cache(
+  async function resolveScope(): Promise<RequestScope> {
+    const user = await requireUser();
 
-  if (user.role === "telecaller") {
-    return { user, role: "telecaller", scope: { kind: "own", userIds: [user.id] } };
-  }
+    if (user.role === "telecaller") {
+      return {
+        user,
+        role: "telecaller",
+        scope: { kind: "own", userIds: [user.id] },
+      };
+    }
 
-  if (user.role === "admin") {
-    return { user, role: "admin", scope: { kind: "all", userIds: null } };
-  }
+    if (user.role === "admin") {
+      return { user, role: "admin", scope: { kind: "all", userIds: null } };
+    }
 
-  // A manager may deliberately narrow to their own book.
-  const preference = await getScopePreference(user);
-  if (preference === "mine") {
-    return { user, role: "manager", scope: { kind: "own", userIds: [user.id] } };
-  }
+    // A manager may deliberately narrow to their own book.
+    const preference = await getScopePreference(user);
+    if (preference === "mine") {
+      return {
+        user,
+        role: "manager",
+        scope: { kind: "own", userIds: [user.id] },
+      };
+    }
 
-  const reports = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(or(eq(users.reportsToId, user.id), eq(users.id, user.id)));
+    const reports = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(or(eq(users.reportsToId, user.id), eq(users.id, user.id)));
 
-  return {
-    user,
-    role: "manager",
-    scope: { kind: "team", userIds: reports.map((r) => r.id) },
-  };
-});
+    return {
+      user,
+      role: "manager",
+      scope: { kind: "team", userIds: reports.map((r) => r.id) },
+    };
+  },
+);
 
 /** The user ids a query may read, or null for unrestricted. */
 export function scopedUserIds(scope: DataScope): string[] | null {
   return scope.kind === "all" ? null : scope.userIds;
 }
+
+/**
+ * Whose book a customer record sits in — the ONE definition, so no query can
+ * quietly disagree with another about what "mine" means.
+ *
+ * A lead answers to its owner. A customer answers to its sales account
+ * manager, falling back to the owner while the field is unset, so a record
+ * mid-migration is never orphaned out of everybody's list.
+ */
+export function assignedUserId(c: {
+  kind: "lead" | "customer";
+  ownerId: string | null;
+  salesAmId: string | null;
+}): string | null {
+  return c.kind === "lead" ? c.ownerId : (c.salesAmId ?? c.ownerId);
+}
+
+/**
+ * The same rule as SQL, for scoped list queries. Written out rather than built
+ * from Drizzle column refs because these run inside correlated subqueries,
+ * where a bare "owner_id" binds to the wrong table.
+ */
+export const ASSIGNED_TO_SQL = sql`
+  case when customers.kind = 'lead'
+       then customers.owner_id
+       else coalesce(customers.sales_am_id, customers.owner_id)
+  end`;
 
 /* -------------------------------------------------------------- permissions */
 
@@ -111,7 +148,9 @@ export class NotPermittedError extends Error {
     // Names the required role rather than pretending the resource is absent —
     // the interface shows locked-but-visible controls, and the backend should
     // tell the same story.
-    super(`That is a manager action. "${capability}" requires the manager role.`);
+    super(
+      `That is a manager action. "${capability}" requires the manager role.`,
+    );
     this.name = "NotPermittedError";
     this.capability = capability;
   }

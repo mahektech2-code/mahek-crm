@@ -10,7 +10,7 @@ import {
   reminders,
 } from "@/db/schema";
 import { getConfig } from "../config/store";
-import { resolveScope, scopedUserIds } from "../access-control";
+import { ASSIGNED_TO_SQL, resolveScope, scopedUserIds } from "../access-control";
 import {
   buildQueue,
   type QueueCandidate,
@@ -40,6 +40,7 @@ export type QueueRow = QueueResult["entries"][number] & {
   phone: string;
   city: string;
   ownerName: string | null;
+  kind: "lead" | "customer";
   slowPayer: boolean;
   lastOrderDate: string | null;
   lastOrderValue: number;
@@ -79,7 +80,9 @@ async function queueInputs(ids: string[] | null, day: string) {
     workingDays: config["workingDay.workingDays"],
   });
 
-  const ownerFilter = ids ? inArray(customers.ownerId, ids) : undefined;
+  // Whose book, by the single definition — a lead answers to its owner, a
+  // customer to its sales account manager.
+  const ownerFilter = ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined;
 
   // Deactivated customers are never candidates.
   const rows = await db
@@ -222,6 +225,7 @@ export async function getQueue(): Promise<QueueView> {
       phone: c.phone,
       city: c.city,
       ownerName: row.ownerName,
+      kind: c.kind,
       slowPayer: c.slowPayer,
       lastOrderDate: c.lastOrderDate,
       lastOrderValue: c.lastOrderValue,

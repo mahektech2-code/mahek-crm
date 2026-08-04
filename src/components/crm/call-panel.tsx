@@ -66,6 +66,8 @@ export type CallTarget = {
   phone: string;
   city: string;
   ownerName: string | null;
+  /** A lead has never ordered. It changes what the modal can truthfully show. */
+  kind?: "lead" | "customer";
   reason?: string;
   /** The engine's kind for the top reason, shown as the badge on the right. */
   reasonKind?: string;
@@ -144,6 +146,14 @@ function scriptBlocks(script: ScriptOption) {
 
 /** §7 — what the information strip shows. Derived server-side. */
 export type CustomerInfo = {
+  kind: "lead" | "customer";
+  lead: {
+    source: string | null;
+    addedDate: string;
+    ownerName: string | null;
+  } | null;
+  accountManagers: { sales: string | null; backOffice: string | null } | null;
+  /** Null on a lead: no orders means no cycle and no target. */
   purchase: {
     lastOrderDate: string | null;
     lastOrderDaysAgo: number | null;
@@ -152,7 +162,7 @@ export type CustomerInfo = {
     nextOrderDate: string | null;
     lastCallDate: string | null;
     lastCallDaysAgo: number | null;
-  };
+  } | null;
   monthly: {
     target: number;
     achieved: number;
@@ -161,7 +171,7 @@ export type CustomerInfo = {
     workingDaysRemaining: number;
     requiredPerDay: number;
     shortfallPerDay: number;
-  };
+  } | null;
   outstanding: number;
   creditDays: number;
   creditDaysIsDefault: boolean;
@@ -500,6 +510,8 @@ function CallPanelForm({
   // The Reminder figure carries the reminder, not whatever reason put them in
   // the queue. Showing "Order due today" under a heading that says Reminder is
   // how a telecaller ends up looking for a promise nobody made.
+  const isLead = target.kind === "lead";
+
   const reminderText =
     target.reasonKind === "reminderOverdue" ||
     target.reasonKind === "reminderDueToday"
@@ -521,8 +533,11 @@ function CallPanelForm({
         {/* ------------------------------------------------------- header */}
         <div className="flex items-start gap-4 border-b border-divider px-6 py-4">
           <div className="min-w-0 flex-1">
-            <div className="text-[22px] leading-7 font-semibold text-ink">
-              {target.name}
+            <div className="flex items-center gap-2.5">
+              <span className="text-[22px] leading-7 font-semibold text-ink">
+                {target.name}
+              </span>
+              {isLead ? <Badge tone="brand">Lead</Badge> : null}
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
               <span>{target.contactPerson}</span>
@@ -549,15 +564,6 @@ function CallPanelForm({
               </button>
               <span>·</span>
               <span>{target.city}</span>
-              {target.ownerName ? (
-                <>
-                  <span>·</span>
-                  {/* Whose book this is. A manager working the team queue is
-                      otherwise calling on somebody else's relationship without
-                      being told so. */}
-                  <span>Owner {target.ownerName}</span>
-                </>
-              ) : null}
             </div>
           </div>
           <button
@@ -575,14 +581,51 @@ function CallPanelForm({
             say nothing, and reads as a thing to check when it is not. Each
             figure appears only when it has something to report. */}
         <div className="flex items-center gap-5 border-y border-divider bg-canvas px-6 py-2.5">
-          <Stat
-            label="Outstanding"
-            tone={target.outstanding > 0 ? "danger" : undefined}
-          >
-            {money(target.outstanding)}
-          </Stat>
-          <StatDivider />
-          <Stat label="Target gap">{money(target.targetGap)}</Stat>
+          {/* A lead and a customer are different conversations, so the strip
+              carries different facts. Outstanding and target gap on a record
+              that has never ordered would both read zero, which looks like a
+              customer doing badly rather than one who has not started. */}
+          {isLead ? (
+            <>
+              <Stat label="Lead owner">
+                {info?.lead?.ownerName ?? "Unassigned"}
+              </Stat>
+              <StatDivider />
+              <Stat label="Added">
+                {info?.lead ? shortDate(info.lead.addedDate) : "—"}
+              </Stat>
+              <StatDivider />
+              <Stat label="Source">{info?.lead?.source ?? "Not recorded"}</Stat>
+            </>
+          ) : (
+            <>
+              <Stat label="Account manager · sales">
+                {info?.accountManagers?.sales ??
+                  target.ownerName ??
+                  "Unassigned"}
+              </Stat>
+              <StatDivider />
+              {/* Unassigned back office is worth flagging: dispatch and billing
+                  questions on this call have nobody to go to. */}
+              <Stat
+                label="Account manager · back office"
+                tone={
+                  info && !info.accountManagers?.backOffice ? "warn" : undefined
+                }
+              >
+                {info?.accountManagers?.backOffice ?? "Unassigned"}
+              </Stat>
+              <StatDivider />
+              <Stat
+                label="Outstanding"
+                tone={target.outstanding > 0 ? "danger" : undefined}
+              >
+                {money(target.outstanding)}
+              </Stat>
+              <StatDivider />
+              <Stat label="Target gap">{money(target.targetGap)}</Stat>
+            </>
+          )}
           {reminderText ? (
             <>
               <StatDivider />
@@ -698,94 +741,112 @@ function CallPanelForm({
                   </div>
                 ) : info ? (
                   <>
+                    {info.lead ? (
+                      <div className="border-b border-divider px-6 py-4">
+                        <p className="rounded-[4px] border border-brand-softer bg-brand-soft px-3.5 py-3 text-sm leading-[21px] text-ink">
+                          This is a lead — nobody here has ordered yet. There is
+                          no buying cycle, outstanding or monthly target to work
+                          from, so the call is about finding out what they use
+                          and what it would take to win the first order.
+                          {info.lead.source
+                            ? ` Came in through ${info.lead.source}.`
+                            : ""}
+                        </p>
+                      </div>
+                    ) : null}
+
                     {/* Three columns, not four: the design folds the next expected
                   order into the purchase cycle as its sub-line, because the
                   cycle is what predicts the date and reading them apart makes
                   the reader do the arithmetic. */}
-                    <InfoSection label="Purchase summary">
-                      <Figure
-                        label="Last order"
-                        value={
-                          info.purchase.lastOrderDate
-                            ? shortDate(info.purchase.lastOrderDate)
-                            : "Never"
-                        }
-                        sub={
-                          info.purchase.lastOrderDaysAgo === null
-                            ? "No order recorded"
-                            : daysAgoLabel(info.purchase.lastOrderDaysAgo)
-                        }
-                      />
-                      <Figure
-                        label="Purchase cycle"
-                        value={`${info.purchase.cycleDays} days`}
-                        sub={
-                          info.purchase.nextOrderDate
-                            ? `Next order: ${shortDate(info.purchase.nextOrderDate)}`
-                            : info.purchase.cycleIsDefault
-                              ? "Default — too little history"
-                              : "No order to count from"
-                        }
-                        subTone="brand"
-                      />
-                      <Figure
-                        label="Last call"
-                        value={
-                          info.purchase.lastCallDate
-                            ? shortDate(info.purchase.lastCallDate)
-                            : "Never"
-                        }
-                        sub={
-                          info.purchase.lastCallDaysAgo === null
-                            ? "Never spoken to"
-                            : daysAgoLabel(info.purchase.lastCallDaysAgo)
-                        }
-                      />
-                    </InfoSection>
+                    {info.purchase && info.monthly ? (
+                      <>
+                        <InfoSection label="Purchase summary">
+                          <Figure
+                            label="Last order"
+                            value={
+                              info.purchase.lastOrderDate
+                                ? shortDate(info.purchase.lastOrderDate)
+                                : "Never"
+                            }
+                            sub={
+                              info.purchase.lastOrderDaysAgo === null
+                                ? "No order recorded"
+                                : daysAgoLabel(info.purchase.lastOrderDaysAgo)
+                            }
+                          />
+                          <Figure
+                            label="Purchase cycle"
+                            value={`${info.purchase.cycleDays} days`}
+                            sub={
+                              info.purchase.nextOrderDate
+                                ? `Next order: ${shortDate(info.purchase.nextOrderDate)}`
+                                : info.purchase.cycleIsDefault
+                                  ? "Default — too little history"
+                                  : "No order to count from"
+                            }
+                            subTone="brand"
+                          />
+                          <Figure
+                            label="Last call"
+                            value={
+                              info.purchase.lastCallDate
+                                ? shortDate(info.purchase.lastCallDate)
+                                : "Never"
+                            }
+                            sub={
+                              info.purchase.lastCallDaysAgo === null
+                                ? "Never spoken to"
+                                : daysAgoLabel(info.purchase.lastCallDaysAgo)
+                            }
+                          />
+                        </InfoSection>
 
-                    <InfoSection label="Monthly performance">
-                      {/* The percentage leads and the rupees explain it. A target of
+                        <InfoSection label="Monthly performance">
+                          {/* The percentage leads and the rupees explain it. A target of
                     ₹2,47,079 tells you nothing on its own; 0% does. */}
-                      <Figure
-                        label="Monthly target"
-                        value={`${info.monthly.achievementPercent}%`}
-                        sub={`${money(info.monthly.achieved)} achieved`}
-                      />
-                      <Figure
-                        label="Target gap this month"
-                        value={money(info.monthly.gap)}
-                        sub={`${info.monthly.workingDaysRemaining} working days left`}
-                      />
-                      {/* Boxed, and tinted when behind — this is the one figure on
+                          <Figure
+                            label="Monthly target"
+                            value={`${info.monthly.achievementPercent}%`}
+                            sub={`${money(info.monthly.achieved)} achieved`}
+                          />
+                          <Figure
+                            label="Target gap this month"
+                            value={money(info.monthly.gap)}
+                            sub={`${info.monthly.workingDaysRemaining} working days left`}
+                          />
+                          {/* Boxed, and tinted when behind — this is the one figure on
                     the tab that says do something differently today. */}
-                      <div
-                        className={cx(
-                          "rounded-[4px] border px-2.5 py-2",
-                          info.monthly.shortfallPerDay > 0
-                            ? "border-danger-soft bg-danger-soft"
-                            : "border-line bg-canvas",
-                        )}
-                      >
-                        <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                          Run rate
-                        </span>
-                        <span
-                          className={cx(
-                            "mt-0.5 block text-lg leading-6 font-semibold",
-                            info.monthly.shortfallPerDay > 0
-                              ? "text-warn-ink"
-                              : "text-ink",
-                          )}
-                        >
-                          {info.monthly.shortfallPerDay > 0
-                            ? `Short by ${money(info.monthly.shortfallPerDay)}/day`
-                            : "On track"}
-                        </span>
-                        <span className="block text-[13px] text-body">
-                          Need {money(info.monthly.requiredPerDay)}/day
-                        </span>
-                      </div>
-                    </InfoSection>
+                          <div
+                            className={cx(
+                              "rounded-[4px] border px-2.5 py-2",
+                              info.monthly.shortfallPerDay > 0
+                                ? "border-danger-soft bg-danger-soft"
+                                : "border-line bg-canvas",
+                            )}
+                          >
+                            <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                              Run rate
+                            </span>
+                            <span
+                              className={cx(
+                                "mt-0.5 block text-lg leading-6 font-semibold",
+                                info.monthly.shortfallPerDay > 0
+                                  ? "text-warn-ink"
+                                  : "text-ink",
+                              )}
+                            >
+                              {info.monthly.shortfallPerDay > 0
+                                ? `Short by ${money(info.monthly.shortfallPerDay)}/day`
+                                : "On track"}
+                            </span>
+                            <span className="block text-[13px] text-body">
+                              Need {money(info.monthly.requiredPerDay)}/day
+                            </span>
+                          </div>
+                        </InfoSection>
+                      </>
+                    ) : null}
 
                     {/* No heading in the design — two figures that need no naming as
                   a group, and a heading would only add a line. */}

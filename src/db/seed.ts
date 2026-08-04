@@ -53,7 +53,8 @@ const IST = new Intl.DateTimeFormat("en-CA", {
   month: "2-digit",
   day: "2-digit",
 });
-const iso = (offsetDays: number) => IST.format(new Date(now.getTime() + offsetDays * DAY));
+const iso = (offsetDays: number) =>
+  IST.format(new Date(now.getTime() + offsetDays * DAY));
 const at = (offsetDays: number, hour = 10, minute = 0) => {
   const d = new Date(now.getTime() + offsetDays * DAY);
   d.setHours(hour, minute, 0, 0);
@@ -71,90 +72,341 @@ function rng(seed: number) {
   };
 }
 const rand = rng(20260803);
-const pick = <T,>(list: T[]): T => list[Math.floor(rand() * list.length)];
-const between = (lo: number, hi: number) => lo + Math.floor(rand() * (hi - lo + 1));
+const pick = <T>(list: T[]): T => list[Math.floor(rand() * list.length)];
+const between = (lo: number, hi: number) =>
+  lo + Math.floor(rand() * (hi - lo + 1));
 
 const TEAM = [
-  { name: "Priya Sharma", email: "priya@mahek.in", phone: "9820011001", role: "telecaller" as const, apps: ["crm"] },
-  { name: "Rakesh Yadav", email: "rakesh@mahek.in", phone: "9820011002", role: "telecaller" as const, apps: ["crm"] },
-  { name: "Anjali Patel", email: "anjali@mahek.in", phone: "9820011003", role: "telecaller" as const, apps: ["crm"] },
-  { name: "Suresh Kumar", email: "suresh@mahek.in", phone: "9820011004", role: "telecaller" as const, apps: ["crm"] },
-  { name: "Neha Joshi", email: "neha@mahek.in", phone: "9820011005", role: "telecaller" as const, apps: ["crm", "reports"] },
-  { name: "Vikram Rao", email: "vikram@mahek.in", phone: "9820011006", role: "manager" as const, apps: ["crm", "orders", "reports", "people", "admin"] },
-  { name: "Mahesh Parab", email: "mahesh@mahek.in", phone: "9820011007", role: "telecaller" as const, apps: ["field"] },
+  {
+    name: "Priya Sharma",
+    email: "priya@mahek.in",
+    phone: "9820011001",
+    role: "telecaller" as const,
+    apps: ["crm"],
+  },
+  {
+    name: "Rakesh Yadav",
+    email: "rakesh@mahek.in",
+    phone: "9820011002",
+    role: "telecaller" as const,
+    apps: ["crm"],
+  },
+  {
+    name: "Anjali Patel",
+    email: "anjali@mahek.in",
+    phone: "9820011003",
+    role: "telecaller" as const,
+    apps: ["crm"],
+  },
+  {
+    name: "Suresh Kumar",
+    email: "suresh@mahek.in",
+    phone: "9820011004",
+    role: "telecaller" as const,
+    apps: ["crm"],
+  },
+  {
+    name: "Neha Joshi",
+    email: "neha@mahek.in",
+    phone: "9820011005",
+    role: "telecaller" as const,
+    apps: ["crm", "reports"],
+  },
+  {
+    name: "Vikram Rao",
+    email: "vikram@mahek.in",
+    phone: "9820011006",
+    role: "manager" as const,
+    apps: ["crm", "orders", "reports", "people", "admin"],
+  },
+  {
+    name: "Mahesh Parab",
+    email: "mahesh@mahek.in",
+    phone: "9820011007",
+    role: "telecaller" as const,
+    apps: ["field"],
+  },
 ];
 
 const CITIES: Array<[string, string]> = [
-  ["Nashik", "Nashik City"], ["Nashik", "Nashik–Sinnar"], ["Pune", "Pune West"],
-  ["Pune", "Pune East"], ["Mumbai", "Mumbai Central"], ["Thane", "Thane"],
-  ["Nagpur", "Nagpur"], ["Aurangabad", "Marathwada"], ["Kolhapur", "Kolhapur"],
-  ["Sangli", "Sangli"], ["Satara", "Satara"], ["Jalgaon", "Khandesh"],
-  ["Ahmednagar", "Ahmednagar"], ["Amravati", "Vidarbha"], ["Ratnagiri", "Konkan"],
+  ["Nashik", "Nashik City"],
+  ["Nashik", "Nashik–Sinnar"],
+  ["Pune", "Pune West"],
+  ["Pune", "Pune East"],
+  ["Mumbai", "Mumbai Central"],
+  ["Thane", "Thane"],
+  ["Nagpur", "Nagpur"],
+  ["Aurangabad", "Marathwada"],
+  ["Kolhapur", "Kolhapur"],
+  ["Sangli", "Sangli"],
+  ["Satara", "Satara"],
+  ["Jalgaon", "Khandesh"],
+  ["Ahmednagar", "Ahmednagar"],
+  ["Amravati", "Vidarbha"],
+  ["Ratnagiri", "Konkan"],
 ];
 
-const PREFIX = ["Shree", "Om Sai", "Krishna", "Balaji", "Ganesh", "Deccan", "Sai", "Jai Bhavani",
-  "Maharashtra", "New India", "Ratnadeep", "Vishwas", "Shivneri", "Anand", "Laxmi",
-  "Sagar", "Konkan", "Mumbai", "Vasai", "Bharat", "Sharda", "Tapti", "Girna",
-  "Vidarbha", "Orange City", "Wardha", "Amravati", "Godavari", "Panchvati", "Sahyadri"];
-const SUFFIX = ["Paints & Hardware", "Traders", "Paint House", "Coatings", "Hardware Mart",
-  "Paint Suppliers", "Enterprises", "Hardware", "Paint Depot", "Colours",
-  "Chemicals", "Colour House", "Hardware Stores", "Paint Centre"];
-const FIRST = ["Mahesh", "Ganesh", "Sunil", "Rohit", "Amit", "Prakash", "Nitin", "Santosh",
-  "Vijay", "Kiran", "Anil", "Deepak", "Manoj", "Sachin", "Ravi", "Pravin",
-  "Suhas", "Farhan", "Dinesh", "Yogesh", "Nilesh", "Ashok", "Rahul", "Sandeep"];
-const LAST = ["Shah", "Pawar", "Deshmukh", "Jadhav", "Kulkarni", "More", "Bhosale", "Gaikwad",
-  "Shinde", "Salunkhe", "Chavan", "Patil", "Kadam", "Thorat", "Mane", "Sawant",
-  "Naik", "Shaikh", "Raut", "Tambe", "Wagh", "Borse", "Ingle", "Dhole"];
+const PREFIX = [
+  "Shree",
+  "Om Sai",
+  "Krishna",
+  "Balaji",
+  "Ganesh",
+  "Deccan",
+  "Sai",
+  "Jai Bhavani",
+  "Maharashtra",
+  "New India",
+  "Ratnadeep",
+  "Vishwas",
+  "Shivneri",
+  "Anand",
+  "Laxmi",
+  "Sagar",
+  "Konkan",
+  "Mumbai",
+  "Vasai",
+  "Bharat",
+  "Sharda",
+  "Tapti",
+  "Girna",
+  "Vidarbha",
+  "Orange City",
+  "Wardha",
+  "Amravati",
+  "Godavari",
+  "Panchvati",
+  "Sahyadri",
+];
+const SUFFIX = [
+  "Paints & Hardware",
+  "Traders",
+  "Paint House",
+  "Coatings",
+  "Hardware Mart",
+  "Paint Suppliers",
+  "Enterprises",
+  "Hardware",
+  "Paint Depot",
+  "Colours",
+  "Chemicals",
+  "Colour House",
+  "Hardware Stores",
+  "Paint Centre",
+];
+const FIRST = [
+  "Mahesh",
+  "Ganesh",
+  "Sunil",
+  "Rohit",
+  "Amit",
+  "Prakash",
+  "Nitin",
+  "Santosh",
+  "Vijay",
+  "Kiran",
+  "Anil",
+  "Deepak",
+  "Manoj",
+  "Sachin",
+  "Ravi",
+  "Pravin",
+  "Suhas",
+  "Farhan",
+  "Dinesh",
+  "Yogesh",
+  "Nilesh",
+  "Ashok",
+  "Rahul",
+  "Sandeep",
+];
+const LAST = [
+  "Shah",
+  "Pawar",
+  "Deshmukh",
+  "Jadhav",
+  "Kulkarni",
+  "More",
+  "Bhosale",
+  "Gaikwad",
+  "Shinde",
+  "Salunkhe",
+  "Chavan",
+  "Patil",
+  "Kadam",
+  "Thorat",
+  "Mane",
+  "Sawant",
+  "Naik",
+  "Shaikh",
+  "Raut",
+  "Tambe",
+  "Wagh",
+  "Borse",
+  "Ingle",
+  "Dhole",
+];
 
-const PRODUCTS = ["NC thinner 20L", "MTO thinner 200L", "Low-odour thinner 20L", "PU thinner 20L"];
+const PRODUCTS = [
+  "NC thinner 20L",
+  "MTO thinner 200L",
+  "Low-odour thinner 20L",
+  "PU thinner 20L",
+];
 
 const TEMPLATES = [
-  { name: "Order confirmation", category: "order_confirmation" as const, stage: null, appliesTo: "personal" as const,
-    body: "Namaste {{contact}} ji,\n\nThank you for your order with Mahek Marketing.\n\nOrder value: {{last_order_value}}\nWe will confirm the dispatch date shortly.\n\n— {{owner}}, Mahek Marketing India" },
-  { name: "Payment reminder · stage 1", category: "payment_reminder" as const, stage: 1, appliesTo: "personal" as const,
-    body: "Namaste {{contact}} ji,\n\nA gentle reminder that {{outstanding}} is pending against {{customer}}.\n\nOldest bill {{bill_no}} was due on {{bill_due}}.\n\nKindly arrange the payment at your convenience.\n\n— {{owner}}, Mahek Marketing India" },
-  { name: "Payment reminder · stage 2", category: "payment_reminder" as const, stage: 2, appliesTo: "personal" as const,
-    body: "Namaste {{contact}} ji,\n\n{{outstanding}} is now overdue against {{customer}}.\n\nBill {{bill_no}} was due on {{bill_due}}. Please confirm a date by which we can expect the payment.\n\n— {{owner}}, Mahek Marketing India" },
-  { name: "Payment reminder · stage 3", category: "payment_reminder" as const, stage: 3, appliesTo: "personal" as const,
-    body: "Namaste {{contact}} ji,\n\nDespite earlier reminders, {{outstanding}} remains unpaid against {{customer}}.\n\nWe would like to settle this before further supplies. Please call us today.\n\n— {{owner}}, Mahek Marketing India" },
-  { name: "Reorder nudge", category: "reactivation" as const, stage: null, appliesTo: "group" as const,
-    body: "Namaste {{contact}} ji,\n\nIt has been a while since your last order on {{last_order_date}}. Stock is ready and rates are unchanged this month.\n\nShall I book your usual quantity?\n\n— {{owner}}, Mahek Marketing India" },
-  { name: "Routine check-in", category: "routine_check_in" as const, stage: null, appliesTo: "personal" as const,
-    body: "Namaste {{contact}} ji,\n\nChecking in from Mahek Marketing. Do you need any thinner stock this week?\n\n— {{owner}}" },
+  {
+    name: "Order confirmation",
+    category: "order_confirmation" as const,
+    stage: null,
+    appliesTo: "personal" as const,
+    body: "Namaste {{contact}} ji,\n\nThank you for your order with Mahek Marketing.\n\nOrder value: {{last_order_value}}\nWe will confirm the dispatch date shortly.\n\n— {{owner}}, Mahek Marketing India",
+  },
+  {
+    name: "Payment reminder · stage 1",
+    category: "payment_reminder" as const,
+    stage: 1,
+    appliesTo: "personal" as const,
+    body: "Namaste {{contact}} ji,\n\nA gentle reminder that {{outstanding}} is pending against {{customer}}.\n\nOldest bill {{bill_no}} was due on {{bill_due}}.\n\nKindly arrange the payment at your convenience.\n\n— {{owner}}, Mahek Marketing India",
+  },
+  {
+    name: "Payment reminder · stage 2",
+    category: "payment_reminder" as const,
+    stage: 2,
+    appliesTo: "personal" as const,
+    body: "Namaste {{contact}} ji,\n\n{{outstanding}} is now overdue against {{customer}}.\n\nBill {{bill_no}} was due on {{bill_due}}. Please confirm a date by which we can expect the payment.\n\n— {{owner}}, Mahek Marketing India",
+  },
+  {
+    name: "Payment reminder · stage 3",
+    category: "payment_reminder" as const,
+    stage: 3,
+    appliesTo: "personal" as const,
+    body: "Namaste {{contact}} ji,\n\nDespite earlier reminders, {{outstanding}} remains unpaid against {{customer}}.\n\nWe would like to settle this before further supplies. Please call us today.\n\n— {{owner}}, Mahek Marketing India",
+  },
+  {
+    name: "Reorder nudge",
+    category: "reactivation" as const,
+    stage: null,
+    appliesTo: "group" as const,
+    body: "Namaste {{contact}} ji,\n\nIt has been a while since your last order on {{last_order_date}}. Stock is ready and rates are unchanged this month.\n\nShall I book your usual quantity?\n\n— {{owner}}, Mahek Marketing India",
+  },
+  {
+    name: "Routine check-in",
+    category: "routine_check_in" as const,
+    stage: null,
+    appliesTo: "personal" as const,
+    body: "Namaste {{contact}} ji,\n\nChecking in from Mahek Marketing. Do you need any thinner stock this week?\n\n— {{owner}}",
+  },
 ];
 
 const HELP = [
-  { title: "Opening a cold call", category: "Call scripts", type: "call_script" as const, roles: ["telecaller", "manager"],
-    scriptBody: "Namaste, am I speaking to {contact name}? This is {your name} calling from Mahek Marketing India, Nashik. We supply thinners and coatings.\n\nIs this a good time to speak for two minutes?",
-    body: "Say the company name in the first sentence. Most shopkeepers take the call if they recognise the supplier.\n\nIf they say it is a bad time, ask for a specific time later the same day and set a reminder before you hang up. Do not leave it at 'I will call back'." },
-  { title: "Asking for an overdue payment", category: "Call scripts", type: "call_script" as const, roles: ["telecaller", "manager"],
-    scriptBody: "Namaste {contact name} ji. I am calling about bill {bill number} for {amount}, which was due on {due date}.\n\nCan you tell me a date by which we can expect the payment?",
-    body: "Never ask 'when can you pay'. Ask for a date, and repeat it back. A date is a promise you can record; 'soon' is not.\n\nAlways record the promise in the app before the call ends — it creates the chase reminder for the day after." },
-  { title: "Handling a short supply complaint", category: "Call scripts", type: "call_script" as const, roles: ["telecaller", "manager"],
-    scriptBody: "I am sorry that happened. Let me note exactly what was short — which product and how many drums?\n\nI am logging it now and our operations team will come back to you. You will hear from us either way.",
-    body: "Log the complaint while the customer is still on the line, in their words. Do not promise a resolution date you cannot control — promise a call back instead." },
-  { title: "Why a customer is held back from the queue", category: "SOPs", type: "sop" as const, roles: ["telecaller", "manager"],
-    body: "A customer is held back when:\n\n· a WhatsApp message was CONFIRMED sent inside the cooldown window\n· they were already called today, by anybody\n· they are active in the order system\n· they are marked do not contact\n\nA message you copied but never confirmed does NOT hold anyone back — the system cannot know it was sent. Held-back customers are always listed under the queue with the reason." },
-  { title: "Closing the day properly", category: "SOPs", type: "sop" as const, roles: ["telecaller", "manager"],
-    body: "Before you submit the EOD report:\n\n1. Every reminder due today must be closed or carried forward.\n2. Every call you made must have an outcome.\n3. Any order taken must have a value against it.\n\nThe EOD text is generated from what you logged, so a thin report means thin logging, not a thin day." },
-  { title: "Reading the payment stages", category: "SOPs", type: "sop" as const, roles: ["telecaller", "manager"],
-    body: "Stage 1 → WhatsApp only. The system will refuse a call attempt at this stage.\nStage 2 → alternates. If the last touch was WhatsApp, call; otherwise message.\nStage 3 → call.\n\nA disputed account holds at its current stage rather than escalating." },
-  { title: "Deciding on an inactive customer", category: "SOPs", type: "sop" as const, roles: ["manager"],
-    body: "A customer reaches the watch after twice their OWN buying cycle with no order. A 14-day buyer going quiet for a month matters more than a 45-day buyer doing the same.\n\nDecide within two weeks: contact, set a reminder, request deactivation, or mark them not actually inactive. A row sitting without a decision is the one that quietly leaves." },
-  { title: "Setting monthly targets", category: "SOPs", type: "sop" as const, roles: ["manager"],
-    body: "Where no target is set, the trailing average of recent achievement is applied and the row is badged 'Default'.\n\nDefaults are honest but unambitious. Review them at the start of the month and set real numbers on the accounts that can grow." },
+  {
+    title: "Opening a cold call",
+    category: "Call scripts",
+    type: "call_script" as const,
+    roles: ["telecaller", "manager"],
+    scriptBody:
+      "Namaste, am I speaking to {contact name}? This is {your name} calling from Mahek Marketing India, Nashik. We supply thinners and coatings.\n\nIs this a good time to speak for two minutes?",
+    body: "Say the company name in the first sentence. Most shopkeepers take the call if they recognise the supplier.\n\nIf they say it is a bad time, ask for a specific time later the same day and set a reminder before you hang up. Do not leave it at 'I will call back'.",
+  },
+  {
+    title: "Asking for an overdue payment",
+    category: "Call scripts",
+    type: "call_script" as const,
+    roles: ["telecaller", "manager"],
+    scriptBody:
+      "Namaste {contact name} ji. I am calling about bill {bill number} for {amount}, which was due on {due date}.\n\nCan you tell me a date by which we can expect the payment?",
+    body: "Never ask 'when can you pay'. Ask for a date, and repeat it back. A date is a promise you can record; 'soon' is not.\n\nAlways record the promise in the app before the call ends — it creates the chase reminder for the day after.",
+  },
+  {
+    title: "Handling a short supply complaint",
+    category: "Call scripts",
+    type: "call_script" as const,
+    roles: ["telecaller", "manager"],
+    scriptBody:
+      "I am sorry that happened. Let me note exactly what was short — which product and how many drums?\n\nI am logging it now and our operations team will come back to you. You will hear from us either way.",
+    body: "Log the complaint while the customer is still on the line, in their words. Do not promise a resolution date you cannot control — promise a call back instead.",
+  },
+  {
+    title: "Why a customer is held back from the queue",
+    category: "SOPs",
+    type: "sop" as const,
+    roles: ["telecaller", "manager"],
+    body: "A customer is held back when:\n\n· a WhatsApp message was CONFIRMED sent inside the cooldown window\n· they were already called today, by anybody\n· they are active in the order system\n· they are marked do not contact\n\nA message you copied but never confirmed does NOT hold anyone back — the system cannot know it was sent. Held-back customers are always listed under the queue with the reason.",
+  },
+  {
+    title: "Closing the day properly",
+    category: "SOPs",
+    type: "sop" as const,
+    roles: ["telecaller", "manager"],
+    body: "Before you submit the EOD report:\n\n1. Every reminder due today must be closed or carried forward.\n2. Every call you made must have an outcome.\n3. Any order taken must have a value against it.\n\nThe EOD text is generated from what you logged, so a thin report means thin logging, not a thin day.",
+  },
+  {
+    title: "Reading the payment stages",
+    category: "SOPs",
+    type: "sop" as const,
+    roles: ["telecaller", "manager"],
+    body: "Stage 1 → WhatsApp only. The system will refuse a call attempt at this stage.\nStage 2 → alternates. If the last touch was WhatsApp, call; otherwise message.\nStage 3 → call.\n\nA disputed account holds at its current stage rather than escalating.",
+  },
+  {
+    title: "Deciding on an inactive customer",
+    category: "SOPs",
+    type: "sop" as const,
+    roles: ["manager"],
+    body: "A customer reaches the watch after twice their OWN buying cycle with no order. A 14-day buyer going quiet for a month matters more than a 45-day buyer doing the same.\n\nDecide within two weeks: contact, set a reminder, request deactivation, or mark them not actually inactive. A row sitting without a decision is the one that quietly leaves.",
+  },
+  {
+    title: "Setting monthly targets",
+    category: "SOPs",
+    type: "sop" as const,
+    roles: ["manager"],
+    body: "Where no target is set, the trailing average of recent achievement is applied and the row is badged 'Default'.\n\nDefaults are honest but unambitious. Review them at the start of the month and set real numbers on the accounts that can grow.",
+  },
+];
+
+/** Where a lead came from. Free text in the schema; these are the common ones. */
+const LEAD_SOURCES = [
+  "Walk-in",
+  "Referral",
+  "Exhibition, Nashik",
+  "Cold list",
+  "Existing customer's contact",
 ];
 
 async function main() {
   console.log("Clearing…");
   for (const table of [
-    auditLog, jobRuns, notifications, eodReports, bugReports, attendance,
-    waReplies, waMessages, waRuns, waTemplates,
-    complaintStatusHistory, complaints, inactiveWatchItems,
-    followUpAttempts, followUpStates, reminders, calls, orders,
-    interactionProductLines, migrationExceptions, quickNotes, products,
-    payments, bills, monthlyTargets, customers, appAccess, sessions, users,
-    helpArticles, appSettings,
+    auditLog,
+    jobRuns,
+    notifications,
+    eodReports,
+    bugReports,
+    attendance,
+    waReplies,
+    waMessages,
+    waRuns,
+    waTemplates,
+    complaintStatusHistory,
+    complaints,
+    inactiveWatchItems,
+    followUpAttempts,
+    followUpStates,
+    reminders,
+    calls,
+    orders,
+    interactionProductLines,
+    migrationExceptions,
+    quickNotes,
+    products,
+    payments,
+    bills,
+    monthlyTargets,
+    customers,
+    appAccess,
+    sessions,
+    users,
+    helpArticles,
+    appSettings,
   ]) {
     await db.delete(table);
   }
@@ -173,7 +425,9 @@ async function main() {
 
   console.log("Seeding products and quick notes…");
   const cat = await seedCatalogue();
-  console.log(`  ${cat.productsAdded} products · ${cat.quickNotesAdded} quick notes`);
+  console.log(
+    `  ${cat.productsAdded} products · ${cat.quickNotesAdded} quick notes`,
+  );
 
   console.log("Creating the team…");
   const passwordHash = await hashPassword("mahek1234");
@@ -205,7 +459,10 @@ async function main() {
 
   console.log("Creating customers…");
   const crmUsers = userRows.filter((u) => u.name !== "Mahesh Parab");
-  type SeedCustomer = typeof customers.$inferInsert & { cycle: number; paysIn: number };
+  type SeedCustomer = typeof customers.$inferInsert & {
+    cycle: number;
+    paysIn: number;
+  };
   const customerRows: SeedCustomer[] = [];
 
   for (let i = 0; i < 52; i++) {
@@ -226,14 +483,29 @@ async function main() {
       region: route,
       route,
       status: "active",
+      // Every seventh record is a lead: never ordered, no account managers,
+      // so the modal's two header layouts and the lead notice are both
+      // reachable without hand-editing the database.
+      kind: (i % 7 === 3 ? "lead" : "customer") as "lead" | "customer",
+      leadSource: i % 7 === 3 ? LEAD_SOURCES[i % LEAD_SOURCES.length] : null,
       ownerId: owner.id,
+      salesAmId: i % 7 === 3 ? null : owner.id,
+      // Back office is left unassigned on some, which the modal flags.
+      backOfficeAmId:
+        i % 7 === 3
+          ? null
+          : i % 4 === 0
+            ? null
+            : crmUsers[(i + 2) % crmUsers.length].id,
       gstin: `27AAB${String(1000 + i)}M1Z${i % 10}`,
       creditTermDays: 30,
       customerSince: iso(-between(200, 1500)),
       cycleDays: cycle,
       cycleIsDefault: true,
       avgOrderValue: rupees(avg),
-      whatsappGroupName: usesGroup ? `${PREFIX[i % PREFIX.length]} order group` : null,
+      whatsappGroupName: usesGroup
+        ? `${PREFIX[i % PREFIX.length]} order group`
+        : null,
       whatsappDest: usesGroup ? "group" : "personal",
       // A handful are live in the order system, to exercise suppression.
       activeInOrderSystem: i % 17 === 0,
@@ -255,7 +527,10 @@ async function main() {
   const orderRows: Array<typeof orders.$inferInsert> = [];
   for (const c of customerRows) {
     // Walk backwards at roughly their cycle; a quarter are deliberately stale.
-    let offset = -between(1, Math.max(2, Math.round(c.cycle * (rand() < 0.25 ? 2.6 : 0.8))));
+    let offset = -between(
+      1,
+      Math.max(2, Math.round(c.cycle * (rand() < 0.25 ? 2.6 : 0.8))),
+    );
     for (let n = 0; n < 12 && offset > -190; n++) {
       const avgRupees = Math.round((c.avgOrderValue ?? 10_000_000) / 100);
       orderRows.push({
@@ -265,10 +540,17 @@ async function main() {
         source: n % 6 === 0 ? "external" : "crm",
         externalRef: n % 6 === 0 ? `EXT-${randomUUID().slice(0, 8)}` : null,
         orderedAt: at(offset, between(10, 17), between(0, 59)),
-        totalAmount: rupees(between(Math.round(avgRupees * 0.6), Math.round(avgRupees * 1.4))),
+        totalAmount: rupees(
+          between(Math.round(avgRupees * 0.6), Math.round(avgRupees * 1.4)),
+        ),
         status: "confirmed",
         lineItems: [
-          { product: pick(PRODUCTS), quantity: between(2, 12), unitPrice: 0, amount: 0 },
+          {
+            product: pick(PRODUCTS),
+            quantity: between(2, 12),
+            unitPrice: 0,
+            amount: 0,
+          },
         ],
       });
       offset -= Math.max(5, c.cycle + between(-3, 3));
@@ -285,9 +567,12 @@ async function main() {
     const avgRupees = Math.round((c.avgOrderValue ?? 10_000_000) / 100);
     for (let n = 0; n < between(3, 6); n++) {
       const raisedDaysAgo = between(5, 150);
-      const amount = rupees(between(Math.round(avgRupees * 0.5), Math.round(avgRupees * 1.3)));
+      const amount = rupees(
+        between(Math.round(avgRupees * 0.5), Math.round(avgRupees * 1.3)),
+      );
       const billId = id("bil");
-      const settled = raisedDaysAgo > c.paysIn && rand() > (c.paysIn > 45 ? 0.55 : 0.2);
+      const settled =
+        raisedDaysAgo > c.paysIn && rand() > (c.paysIn > 45 ? 0.55 : 0.2);
       const partial = !settled && rand() > 0.8;
       const paid = settled ? amount : partial ? Math.round(amount * 0.4) : 0;
 
@@ -325,7 +610,12 @@ async function main() {
   // Most calls connect. The ones that do not are "No Answer" — an OUTCOME
   // now, not a connection status, which is what the EOD missed count reads.
   const CONNECTS = [true, true, true, true, false] as const;
-  const OUTCOMES = ["order_taken", "no_order", "payment_promised", "follow_up"] as const;
+  const OUTCOMES = [
+    "order_taken",
+    "no_order",
+    "payment_promised",
+    "follow_up",
+  ] as const;
   const NOTES = [
     "Wants the revised 200L drum rate before committing.",
     "Stock is sufficient until month end, will reorder after that.",
@@ -350,7 +640,12 @@ async function main() {
         durationSeconds: connected ? between(45, 420) : 0,
         outcome: connected ? pick([...OUTCOMES]) : "no_answer",
         notes: connected ? pick(NOTES) : "Phone rang",
-        sourceModule: pick(["call_queue", "call_queue", "payment_follow_up", "ad_hoc"] as const),
+        sourceModule: pick([
+          "call_queue",
+          "call_queue",
+          "payment_follow_up",
+          "ad_hoc",
+        ] as const),
       });
     }
   }
@@ -359,7 +654,8 @@ async function main() {
   console.log("Creating reminders, complaints and messages…");
   const reminderRows: Array<typeof reminders.$inferInsert> = [];
   for (const [i, c] of customerRows.entries()) {
-    const offsets = i % 4 === 0 ? [-4, 0, 5] : i % 4 === 1 ? [0] : i % 4 === 2 ? [3] : [];
+    const offsets =
+      i % 4 === 0 ? [-4, 0, 5] : i % 4 === 1 ? [0] : i % 4 === 2 ? [3] : [];
     for (const offset of offsets) {
       reminderRows.push({
         id: id("rem"),
@@ -397,13 +693,55 @@ async function main() {
   await db.insert(reminders).values(reminderRows);
 
   const COMPLAINTS = [
-    { cat: "delivery" as const, sev: "high" as const, desc: "Last consignment was two drums short of the invoice.", status: "open" as const, ago: 9 },
-    { cat: "product_quality" as const, sev: "medium" as const, desc: "NC thinner from the last batch is drying too slowly.", status: "in_progress" as const, ago: 6 },
-    { cat: "billing_issue" as const, sev: "medium" as const, desc: "GST rate on the bill is 18% but the order was quoted at 12%.", status: "open" as const, ago: 3 },
-    { cat: "pricing" as const, sev: "low" as const, desc: "Competitor is quoting eight rupees per litre less on 200L drums.", status: "open" as const, ago: 14 },
-    { cat: "service" as const, sev: "low" as const, desc: "Nobody called back after the last complaint was raised.", status: "resolved" as const, ago: 20 },
-    { cat: "shortage" as const, sev: "high" as const, desc: "Delivery arrived a day late and the shop was shut.", status: "in_progress" as const, ago: 4 },
-    { cat: "packaging_damage" as const, sev: "medium" as const, desc: "Two drums had damaged seals on arrival.", status: "open" as const, ago: 11 },
+    {
+      cat: "delivery" as const,
+      sev: "high" as const,
+      desc: "Last consignment was two drums short of the invoice.",
+      status: "open" as const,
+      ago: 9,
+    },
+    {
+      cat: "product_quality" as const,
+      sev: "medium" as const,
+      desc: "NC thinner from the last batch is drying too slowly.",
+      status: "in_progress" as const,
+      ago: 6,
+    },
+    {
+      cat: "billing_issue" as const,
+      sev: "medium" as const,
+      desc: "GST rate on the bill is 18% but the order was quoted at 12%.",
+      status: "open" as const,
+      ago: 3,
+    },
+    {
+      cat: "pricing" as const,
+      sev: "low" as const,
+      desc: "Competitor is quoting eight rupees per litre less on 200L drums.",
+      status: "open" as const,
+      ago: 14,
+    },
+    {
+      cat: "service" as const,
+      sev: "low" as const,
+      desc: "Nobody called back after the last complaint was raised.",
+      status: "resolved" as const,
+      ago: 20,
+    },
+    {
+      cat: "shortage" as const,
+      sev: "high" as const,
+      desc: "Delivery arrived a day late and the shop was shut.",
+      status: "in_progress" as const,
+      ago: 4,
+    },
+    {
+      cat: "packaging_damage" as const,
+      sev: "medium" as const,
+      desc: "Two drums had damaged seals on arrival.",
+      status: "open" as const,
+      ago: 11,
+    },
   ];
   const SLA = { low: 120, medium: 48, high: 24 };
 
@@ -422,7 +760,10 @@ async function main() {
       severity: cm.sev,
       assignedTo: n % 2 === 0 ? "Operations" : "Accounts",
       status: cm.status,
-      resolutionNotes: cm.status === "resolved" ? "Called the owner and agreed a credit note." : null,
+      resolutionNotes:
+        cm.status === "resolved"
+          ? "Called the owner and agreed a credit note."
+          : null,
       customerInformed: cm.status === "resolved",
       resolvedAt: cm.status === "resolved" ? at(-2, 15) : null,
       resolvedById: cm.status === "resolved" ? managerId : null,
@@ -524,15 +865,33 @@ async function main() {
   );
 
   await db.insert(notifications).values([
-    { id: id("ntf"), userId: userRows[0].id, title: "Promise date passed",
+    {
+      id: id("ntf"),
+      userId: userRows[0].id,
+      title: "Promise date passed",
       body: `${customerRows[1].name} promised payment and nothing has arrived.`,
-      kind: "warn", href: "/crm/payments", createdAt: at(0, 8, 5) },
-    { id: id("ntf"), userId: userRows[0].id, title: "Reply needs action",
+      kind: "warn",
+      href: "/crm/payments",
+      createdAt: at(0, 8, 5),
+    },
+    {
+      id: id("ntf"),
+      userId: userRows[0].id,
+      title: "Reply needs action",
       body: `${customerRows[9].name} says delivery has still not arrived.`,
-      kind: "danger", href: "/crm/whatsapp", createdAt: at(0, 8, 30) },
-    { id: id("ntf"), userId: managerId, title: "Complaint ageing",
+      kind: "danger",
+      href: "/crm/whatsapp",
+      createdAt: at(0, 8, 30),
+    },
+    {
+      id: id("ntf"),
+      userId: managerId,
+      title: "Complaint ageing",
       body: "A pricing complaint has been open for 14 days without a decision.",
-      kind: "danger", href: "/crm/complaints", createdAt: at(0, 9, 15) },
+      kind: "danger",
+      href: "/crm/complaints",
+      createdAt: at(0, 9, 15),
+    },
   ]);
 
   console.log("\nRunning the engines over the seeded book…");
@@ -569,11 +928,14 @@ async function main() {
   console.log(`  complaints     ${complaintRows.length}`);
   console.log(`  messages       ${messageRows.length}`);
   console.log("\nEngines:");
-  for (const [k, v] of Object.entries(counts)) console.log(`  ${k.padEnd(14)} ${v}`);
+  for (const [k, v] of Object.entries(counts))
+    console.log(`  ${k.padEnd(14)} ${v}`);
 
   console.log("\nSign in with the email or the work number:");
   for (const u of TEAM) {
-    console.log(`  ${u.email.padEnd(20)} ${u.phone}  ${u.role.padEnd(11)} ${u.apps.join(", ")}`);
+    console.log(
+      `  ${u.email.padEnd(20)} ${u.phone}  ${u.role.padEnd(11)} ${u.apps.join(", ")}`,
+    );
   }
   console.log("\nPassword for every seeded account: mahek1234\n");
 

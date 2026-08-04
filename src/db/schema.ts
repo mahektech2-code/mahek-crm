@@ -320,6 +320,9 @@ export const sessions = pgTable(
 
 /* -------------------------------------------------------------- §3.3 customer */
 
+/** A record is one or the other, and the difference decides what is shown. */
+export const customerKindEnum = pgEnum("customer_kind", ["lead", "customer"]);
+
 export const customers = pgTable(
   "customers",
   {
@@ -338,9 +341,27 @@ export const customers = pgTable(
     city: text("city").notNull(),
     region: text("region"),
 
+    /* ---- what kind of record this is ----
+     *
+     * A lead has never ordered. It has an owner, a source and a date it was
+     * added, and none of the commercial machinery below applies to it: no
+     * buying cycle, no outstanding, no monthly target. A customer has ordered
+     * and is run by two named account managers instead of a single owner.
+     *
+     * ownerId stays on both rows. For a lead it IS the owner. For a customer
+     * it is history — salesAmId is who the record answers to — and it is kept
+     * so a converted lead still records who found them.
+     */
+    kind: customerKindEnum("kind").notNull().default("customer"),
+    leadSource: text("lead_source"),
+
     /* ownership and status */
     status: customerStatusEnum("status").notNull().default("active"),
     ownerId: text("owner_id").references(() => users.id),
+    /** Who the CUSTOMER answers to. Null on leads. Drives scope. */
+    salesAmId: text("sales_am_id").references(() => users.id),
+    /** Dispatch, billing and paperwork. Null on leads, and may be unassigned. */
+    backOfficeAmId: text("back_office_am_id").references(() => users.id),
     deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
     deactivatedById: text("deactivated_by_id").references(() => users.id),
     deactivationReason: text("deactivation_reason"),
@@ -1095,6 +1116,16 @@ export const attendanceRelations = relations(attendance, ({ one }) => ({
 
 export const customersRelations = relations(customers, ({ one, many }) => ({
   owner: one(users, { fields: [customers.ownerId], references: [users.id] }),
+  salesAm: one(users, {
+    fields: [customers.salesAmId],
+    references: [users.id],
+    relationName: "salesAm",
+  }),
+  backOfficeAm: one(users, {
+    fields: [customers.backOfficeAmId],
+    references: [users.id],
+    relationName: "backOfficeAm",
+  }),
   bills: many(bills),
   calls: many(calls),
   orders: many(orders),

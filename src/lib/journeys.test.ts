@@ -118,6 +118,9 @@ async function makeCustomer(
       phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
       city: "Mumbai",
       ownerId,
+      // Scope resolves through the sales account manager on a customer, so the
+      // fixture sets it. Tests that want a lead pass kind: "lead".
+      salesAmId: ownerId,
       customerSince: addDays(TODAY, -400),
       ...over,
     })
@@ -1087,6 +1090,9 @@ describe("Journey 9 — the Information tab", () => {
 
     const info = await customerInformation(customer.id);
     assert.ok(info);
+    // They have ordered, so the purchase section is present. On a lead it is
+    // null, and the type makes every caller say which it expects.
+    assert.ok(info.purchase);
     assert.equal(info.purchase.lastCallDate, TODAY, "the call counts");
     assert.equal(
       info.recentCalls.length,
@@ -1107,6 +1113,7 @@ describe("Journey 9 — the Information tab", () => {
 
     const info = await customerInformation(customer.id);
     assert.ok(info);
+    assert.ok(info.purchase);
     assert.equal(info.purchase.nextOrderDate, addDays(TODAY, 11));
     assert.equal(info.purchase.lastOrderDaysAgo, 10);
     assert.equal(
@@ -1121,7 +1128,7 @@ describe("Journey 9 — the Information tab", () => {
     const { customerInformation } =
       await import("@/lib/services/customer-info-service");
     const info = await customerInformation(customer.id);
-    assert.equal(info?.purchase.cycleIsDefault, true);
+    assert.equal(info?.purchase?.cycleIsDefault, true);
   });
 
   test("run rate divides the gap over WORKING days, and survives a zero target", async () => {
@@ -1132,6 +1139,7 @@ describe("Journey 9 — the Information tab", () => {
     // No target set at all — the maths must not divide by zero.
     const bare = await customerInformation(customer.id);
     assert.ok(bare);
+    assert.ok(bare.monthly);
     assert.equal(bare.monthly.achievementPercent, 0);
     assert.equal(bare.monthly.gap, 0);
 
@@ -1142,6 +1150,7 @@ describe("Journey 9 — the Information tab", () => {
 
     const info = await customerInformation(customer.id);
     assert.ok(info);
+    assert.ok(info.monthly);
     assert.equal(info.monthly.target, 1_00_000_00);
     assert.ok(info.monthly.workingDaysRemaining > 0);
     assert.ok(
@@ -1332,6 +1341,56 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     assert.ok(
       q.entries.some((e) => e.customerId === customer.id),
       "a promise the telecaller made outranks leaving a good customer alone",
+    );
+  });
+
+  test("a lead shows no purchase cycle, no target and no run rate", async () => {
+    // Zeroes on a record that has never ordered read as a customer performing
+    // badly. The sections are absent, not empty.
+    const lead = await makeCustomer(priya.id, {
+      kind: "lead",
+      leadSource: "Exhibition, Nashik",
+      salesAmId: null,
+      lastOrderDate: null,
+    });
+    const { customerInformation } =
+      await import("@/lib/services/customer-info-service");
+    const info = await customerInformation(lead.id);
+    assert.ok(info);
+    assert.equal(info.kind, "lead");
+    assert.equal(info.purchase, null, "a lead has no buying cycle");
+    assert.equal(info.monthly, null, "and no monthly target to be short of");
+    assert.equal(info.lead?.source, "Exhibition, Nashik");
+    assert.equal(
+      info.accountManagers,
+      null,
+      "account managers are for customers",
+    );
+  });
+
+  test("a lead is scoped by its owner, a customer by its sales account manager", async () => {
+    const lead = await makeCustomer(priya.id, {
+      kind: "lead",
+      salesAmId: null,
+      lastOrderDate: null,
+      lastContactDate: addDays(TODAY, -9),
+    });
+    // Owned by Rakesh on paper, but Priya runs the account.
+    const customer = await makeCustomer(rakesh.id, {
+      salesAmId: priya.id,
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      cycleIsDefault: false,
+    });
+
+    const q = await getQueue();
+    assert.ok(
+      q.entries.some((e) => e.customerId === lead.id),
+      "the lead answers to its owner",
+    );
+    assert.ok(
+      q.entries.some((e) => e.customerId === customer.id),
+      "the customer answers to its sales account manager, not its owner",
     );
   });
 

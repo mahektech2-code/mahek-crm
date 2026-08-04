@@ -22,6 +22,13 @@
       "when": 1785856049550,
       "tag": "0002_queue_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785872884901,
+      "tag": "0003_leads_and_account_managers",
+      "breakpoints": true
     }
   ]
 }
