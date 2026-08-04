@@ -10,6 +10,7 @@ import {
   uniqueIndex,
   index,
   pgEnum,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -1044,6 +1045,30 @@ export const jobRuns = pgTable(
     triggeredById: text("triggered_by_id").references(() => users.id),
   },
   (t) => [index("job_runs_job_idx").on(t.job, t.startedAt)],
+);
+
+/**
+ * Who was in the calling queue when the day opened.
+ *
+ * The queue itself is derived on every read and never stored — that is what
+ * keeps it honest. But a derived list cannot tell you what was on it
+ * YESTERDAY, so "carried over" would be unanswerable without a record of the
+ * list as it stood. This table is that record and nothing more: it is never
+ * read to build a queue, only to compare one against the day before.
+ */
+export const queueSnapshots = pgTable(
+  "queue_snapshots",
+  {
+    day: date("day").notNull(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.day, t.customerId] }),
+    index("queue_snapshots_day_idx").on(t.day),
+  ],
 );
 
 /* --------------------------------------------------------------- relations */

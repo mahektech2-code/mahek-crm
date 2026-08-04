@@ -90,6 +90,8 @@ export default async function QueuePage() {
       // able to see why somebody they expected is not on the list.
       suppressed={queue.suppressed}
       progress={queue.progress}
+      carriedOver={queue.carriedOver}
+      snapshotHour={queue.snapshotHour}
       callTargets={callTargets}
       categories={config["complaints.categories"].map((c) => ({
         value: c

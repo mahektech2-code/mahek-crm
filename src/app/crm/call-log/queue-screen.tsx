@@ -68,6 +68,8 @@ export function QueueScreen({
   rows,
   suppressed,
   progress,
+  carriedOver,
+  snapshotHour,
   callTargets,
   activity,
   categories,
@@ -79,6 +81,8 @@ export function QueueScreen({
   rows: Row[];
   suppressed: Suppressed[];
   progress: { worked: number; total: number; percent: number };
+  carriedOver: number | null;
+  snapshotHour: number;
   callTargets: Record<string, CallTarget>;
   /** Complaint categories, from configuration rather than a constant. */
   categories: Array<{ value: string; label: string }>;
@@ -217,7 +221,9 @@ export function QueueScreen({
         <span className="text-[13px] font-medium text-body">{progress.percent}%</span>
         <span className="h-5 w-px bg-divider" />
         <span className="text-[13px] text-muted">
-          Computed fresh on every load from the current state of the book
+          {carriedOver === null
+            ? "Computed fresh on every load from the current state of the book"
+            : `${carriedOver} ${carriedOver === 1 ? "row" : "rows"} carried over from the previous working day · list settles at ${hourLabel(snapshotHour)}`}
         </span>
       </Card>
 
@@ -466,4 +472,10 @@ export function QueueScreen({
       />
     </div>
   );
+}
+
+/** "8 am" / "8:30 am" — the hour a telecaller would actually say. */
+function hourLabel(hour: number): string {
+  const h = hour % 12 === 0 ? 12 : hour % 12;
+  return `${h} ${hour < 12 ? "am" : "pm"}`;
 }

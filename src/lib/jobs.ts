@@ -2,7 +2,14 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { complaints, jobRuns, notifications, reminders, users } from "@/db/schema";
+import {
+  complaints,
+  jobRuns,
+  notifications,
+  queueSnapshots,
+  reminders,
+  users,
+} from "@/db/schema";
 import { getConfig } from "./config/store";
 import {
   recomputeAllBuyingCycles,
@@ -16,7 +23,9 @@ import {
 } from "./recompute";
 import { sweepUnconfirmed } from "./services/whatsapp-service";
 import { autoGenerateEodReports } from "./services/eod-service";
-import { isWorkingDay, nextWorkingDay } from "./business-date";
+import { isWorkingDay, nextWorkingDay, type BusinessDate } from "./business-date";
+import { buildQueue } from "./engines/queue";
+import { queueCandidatesFor } from "./services/queue-service";
 
 /* ---------------------------------------------------------------------------
  * §7 Scheduled work.
@@ -36,6 +45,7 @@ export type JobName =
   | "recompute-inactivity"
   | "recompute-followups"
   | "recompute-slow-payers"
+  | "snapshot-queue"
   | "seed-targets"
   | "sweep-unconfirmed"
   | "escalate-complaint-sla"
@@ -110,6 +120,16 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
     }, triggeredById),
   );
 
+  // After the recomputes, never before: the snapshot has to record the list as
+  // it will actually be read today, and the recomputes are what decide who is
+  // on it.
+  results.push(
+    await run("snapshot-queue", async () => {
+      const n = await snapshotQueue(day);
+      return { recordsAffected: n, detail: `${n} rows recorded for ${day}` };
+    }, triggeredById),
+  );
+
   // Only on the first of the month, but harmless to call any day: it seeds
   // only customers without a target.
   if (day.endsWith("-01")) {
@@ -122,6 +142,38 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
   }
 
   return results;
+}
+
+/* -------------------------------------------------------- queue snapshot */
+
+/**
+ * Records who is in each telecaller's queue as the day opens.
+ *
+ * The queue is derived on every read and this does not change that — nothing
+ * ever builds a queue FROM this table. It exists so the screen can answer
+ * "how many of these were here yesterday too", which a derived list cannot
+ * answer about its own past.
+ *
+ * Idempotent: re-running replaces the day's rows rather than doubling them,
+ * so a hand-triggered run after a fix is safe.
+ */
+export async function snapshotQueue(day: BusinessDate): Promise<number> {
+  const config = await getConfig();
+  const telecallers = await db.select().from(users).where(eq(users.active, true));
+
+  await db.delete(queueSnapshots).where(eq(queueSnapshots.day, day));
+
+  let written = 0;
+  for (const user of telecallers) {
+    const candidates = await queueCandidatesFor(user.id, day);
+    const { entries } = buildQueue(candidates, day, config);
+    if (!entries.length) continue;
+    await db.insert(queueSnapshots).values(
+      entries.map((e) => ({ day, customerId: e.customerId, userId: user.id })),
+    );
+    written += entries.length;
+  }
+  return written;
 }
 
 /* ----------------------------------------------------------------- hourly */

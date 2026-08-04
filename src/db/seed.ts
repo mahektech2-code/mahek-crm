@@ -539,6 +539,25 @@ async function main() {
   const { recomputeEverything } = await import("../lib/recompute");
   const counts = await recomputeEverything();
 
+  // The previous working day's queue, so "N carried over" has something to
+  // compare against on a fresh clone. Without it the line correctly says it
+  // does not know, which is right but shows nobody what the feature does.
+  const { snapshotQueue } = await import("../lib/jobs");
+  const { previousWorkingDay } = await import("../lib/business-date");
+  const { getConfig } = await import("../lib/config/store");
+  const cfg = await getConfig();
+  const seedDay = await (await import("../lib/recompute")).today();
+  for (const d of [
+    previousWorkingDay(seedDay, {
+      timezone: cfg["workingDay.timezone"],
+      dayBoundaryHour: cfg["workingDay.dayBoundaryHour"],
+      workingDays: cfg["workingDay.workingDays"],
+    }),
+    seedDay,
+  ]) {
+    await snapshotQueue(d);
+  }
+
   console.log("\nSeeded:");
   console.log(`  users          ${userRows.length}`);
   console.log(`  customers      ${customerRows.length}`);

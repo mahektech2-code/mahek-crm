@@ -1,12 +1,19 @@
 import "server-only";
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { calls, customers, monthlyTargets, orders, reminders } from "@/db/schema";
+import {
+  calls,
+  customers,
+  monthlyTargets,
+  orders,
+  queueSnapshots,
+  reminders,
+} from "@/db/schema";
 import { getConfig } from "../config/store";
 import { resolveScope, scopedUserIds } from "../access-control";
 import { buildQueue, type QueueCandidate, type QueueResult } from "../engines/queue";
 import { today } from "../recompute";
-import { dayBoundaryWindow, monthKey } from "../business-date";
+import { dayBoundaryWindow, monthKey, previousWorkingDay } from "../business-date";
 
 /* ---------------------------------------------------------------------------
  * E2 wiring.
@@ -37,14 +44,27 @@ export type QueueView = Omit<QueueResult, "entries"> & {
   entries: QueueRow[];
   /** Progress figures for the header strip. */
   progress: { worked: number; total: number; percent: number };
+  /**
+   * How many of today's rows were also on the previous working day's list.
+   * Null when there is no snapshot to compare against — the first day after
+   * deployment, say — because "0 carried over" and "we do not know" are very
+   * different things to show a telecaller.
+   */
+  carriedOver: number | null;
+  /** The hour the list settles, so the screen can say when. */
+  snapshotHour: number;
   scopeLabel: string;
 };
 
-export async function getQueue(): Promise<QueueView> {
+/**
+ * Everything the queue engine needs, for one scope, on one day.
+ *
+ * Shared by the live screen and by the nightly snapshot so the two can never
+ * disagree about who was on the list — a snapshot built by a second, slightly
+ * different query would be worse than no snapshot at all.
+ */
+async function queueInputs(ids: string[] | null, day: string) {
   const config = await getConfig();
-  const ctx = await resolveScope();
-  const ids = scopedUserIds(ctx.scope);
-  const day = await today();
   const window = dayBoundaryWindow(day, {
     timezone: config["workingDay.timezone"],
     dayBoundaryHour: config["workingDay.dayBoundaryHour"],
@@ -147,6 +167,21 @@ export async function getQueue(): Promise<QueueView> {
     targetGap: Number(targetGap ?? 0),
   }));
 
+  return { config, rows, detail, candidates };
+}
+
+/** The snapshot job's view: one telecaller's list, ranked as they would see it. */
+export async function queueCandidatesFor(userId: string, day: string) {
+  const { candidates } = await queueInputs([userId], day);
+  return candidates;
+}
+
+export async function getQueue(): Promise<QueueView> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const day = await today();
+  const { config, detail, candidates } = await queueInputs(ids, day);
+
   const result = buildQueue(candidates, day, config);
 
   // "Worked" is how many of today's candidates have already been called —
@@ -174,9 +209,31 @@ export async function getQueue(): Promise<QueueView> {
     };
   });
 
+  // Carried over: on today's list and on the previous working day's too. Not
+  // "was due yesterday and ignored" — a row can legitimately reappear — but
+  // the plain fact that it has been waiting more than one day.
+  const previous = previousWorkingDay(day, {
+    timezone: config["workingDay.timezone"],
+    dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+    workingDays: config["workingDay.workingDays"],
+  });
+  const snapshotRows = await db
+    .select({ customerId: queueSnapshots.customerId })
+    .from(queueSnapshots)
+    .where(
+      ids
+        ? and(eq(queueSnapshots.day, previous), inArray(queueSnapshots.userId, ids))
+        : eq(queueSnapshots.day, previous),
+    );
+  const yesterdaysList = new Set(snapshotRows.map((r) => r.customerId));
+
   return {
     ...result,
     entries,
+    carriedOver: yesterdaysList.size
+      ? entries.filter((e) => yesterdaysList.has(e.customerId)).length
+      : null,
+    snapshotHour: config["queue.snapshotHour"],
     progress: {
       worked,
       total,

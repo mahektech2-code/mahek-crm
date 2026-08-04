@@ -100,6 +100,17 @@ export const SETTINGS = [
     max: 500,
   },
   {
+    key: "queue.snapshotHour",
+    type: "integer",
+    category: "queue",
+    label: "Hour the queue is snapshotted",
+    description:
+      "The queue is rebuilt on every read, so this does not schedule the rebuild. It records who was on the list when the day opened, which is the only way \u201cN carried over from yesterday\u201d can be answered. Shown to telecallers as the time the queue settles for the day.",
+    default: 8,
+    min: 0,
+    max: 23,
+  },
+  {
     key: "queue.tierWeights",
     type: "structured",
     category: "queue",
@@ -670,6 +681,7 @@ export function checkConsistency(config: Config): string[] {
 
 export type Config = {
   "queue.checkInIntervalDays": number;
+  "queue.snapshotHour": number;
   "queue.whatsappCooldownDays": number;
   "queue.orderDueLeadDays": number;
   "queue.excludeActiveInOrderSystem": boolean;
