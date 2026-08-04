@@ -200,9 +200,9 @@ function CallPanelForm({
   const [busy, setBusy] = React.useState(false);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [saved, setSaved] = React.useState<string | null>(null);
-  // Three tabs, per the design. Logging is what the telecaller opened this to
-  // do, so that is where it starts; the other two are one click away.
-  const [tab, setTab] = React.useState<"log" | "information" | "script">("log");
+  // Opens on Information: read who you are about to speak to before speaking.
+  // "Log this call" in the footer is the way through to the form.
+  const [tab, setTab] = React.useState<"log" | "information" | "script">("information");
   const [productQuery, setProductQuery] = React.useState("");
 
   // One key per opening, so a double-click logs one interaction, not two.
