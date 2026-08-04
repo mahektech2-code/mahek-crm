@@ -52,6 +52,15 @@ export type QuickNoteOption = {
 
 export type ProductOption = { id: string; name: string; packSize: string | null };
 
+/** A call script from the help centre, matched to the chosen outcome. */
+export type ScriptOption = {
+  id: string;
+  title: string;
+  body: string;
+  /** Which outcome it belongs to; null means it applies generally. */
+  outcome: string | null;
+};
+
 /** §7 — what the information strip shows. Derived server-side. */
 export type CustomerInfo = {
   purchase: {
@@ -137,6 +146,7 @@ type CallPanelProps = {
   quickNotes: QuickNoteOption[];
   products: ProductOption[];
   complaintCategories: Array<{ value: string; label: string }>;
+  scripts?: ScriptOption[];
   /** Products this customer has bought before — the "Usually buys" row. */
   frequentProductIds?: string[];
   onClose: () => void;
@@ -162,6 +172,7 @@ function CallPanelForm({
   quickNotes,
   products,
   complaintCategories,
+  scripts = [],
   frequentProductIds = [],
   onClose,
   onSaved,
@@ -186,6 +197,9 @@ function CallPanelForm({
   const [busy, setBusy] = React.useState(false);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [saved, setSaved] = React.useState<string | null>(null);
+  // Three tabs, per the design. Logging is what the telecaller opened this to
+  // do, so that is where it starts; the other two are one click away.
+  const [tab, setTab] = React.useState<"log" | "information" | "script">("log");
 
   // One key per opening, so a double-click logs one interaction, not two.
   const idempotencyKey = React.useRef(crypto.randomUUID());
@@ -221,6 +235,13 @@ function CallPanelForm({
       ),
     [quickNotes, type, outcome],
   );
+
+  // The script follows the outcome once one is chosen; before that, whatever
+  // general guidance exists.
+  const script =
+    scripts.find((x) => x.outcome && x.outcome === outcome) ??
+    scripts.find((x) => !x.outcome) ??
+    null;
 
   const frequent = products.filter((p) => frequentProductIds.includes(p.id));
   const productLabel = (p: ProductOption) =>
@@ -363,8 +384,41 @@ function CallPanelForm({
         </div>
 
         {/* --------------------------------------- information | the form */}
-        <div className="grid min-h-0 flex-1 grid-cols-[clamp(320px,36%,420px)_minmax(0,1fr)]">
-          <div className="min-h-0 overflow-y-auto border-r border-divider p-5">
+        {/* ---------------------------------------------------- the tabs */}
+        <div className="flex items-center gap-1 border-b border-divider px-6">
+          {(
+            [
+              { key: "log" as const, label: "Call Log" },
+              { key: "information" as const, label: "Information" },
+              { key: "script" as const, label: "Script" },
+            ]
+          ).map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={cx(
+                "cursor-pointer border-b-2 px-3 py-2.5 text-sm",
+                tab === t.key
+                  ? "border-brand font-medium text-ink"
+                  : "border-transparent text-muted hover:text-body",
+              )}
+            >
+              {t.label}
+              {/* The dot marks the tab still holding unfinished work. */}
+              {t.key === "log" && chosen && !saved ? (
+                <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-brand align-middle" />
+              ) : null}
+            </button>
+          ))}
+        </div>
+
+        <div className="min-h-0 flex-1">
+          <div
+            className={cx(
+              "h-full min-h-0 overflow-y-auto p-5",
+              tab === "information" ? "block" : "hidden",
+            )}
+          >
             {info ? (
 <>
               <InfoRow label="Purchase summary">
@@ -481,20 +535,45 @@ function CallPanelForm({
               <p className="text-[13px] text-muted">Loading this customer&rsquo;s history…</p>
             )}
 
-            <div className="mt-4 rounded-[4px] border border-line bg-canvas px-3 py-2.5">
-              <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                Script
-              </span>
-              <p className="mt-1 text-[13px] text-muted">
-                No script has been written for this situation yet.
-              </p>
-              <a href="/crm/help" className="mt-1 inline-block text-[13px] text-brand">
-                Open the Help Center
-              </a>
-            </div>
           </div>
 
-          <div className="min-h-0 overflow-y-auto px-6 py-5">
+          <div
+            className={cx(
+              "h-full min-h-0 overflow-y-auto p-5",
+              tab === "script" ? "block" : "hidden",
+            )}
+          >
+            {script ? (
+              <>
+                <div className="text-[15px] font-semibold text-ink">{script.title}</div>
+                <p className="mt-2 text-sm leading-[22px] whitespace-pre-wrap text-body">
+                  {script.body}
+                </p>
+              </>
+            ) : (
+              <div className="rounded-[4px] border border-dashed border-line px-3 py-6 text-center">
+                <p className="text-sm text-muted">
+                  No script has been written for this situation yet.
+                </p>
+                <a href="/crm/help" className="mt-1 inline-block text-[13px] text-brand">
+                  Open the Help Center
+                </a>
+              </div>
+            )}
+            <a
+              href="/crm/help"
+              className="mt-4 inline-block text-[13px] text-brand"
+            >
+              More scripts and procedures →
+            </a>
+          </div>
+
+          <div
+            className={cx(
+              "h-full min-h-0 overflow-y-auto px-6 py-5",
+              tab === "log" ? "block" : "hidden",
+            )}
+          >
         {saved ? (
           <div className="rounded-[6px] border border-line bg-surface p-5 text-center">
             <div className="text-lg font-semibold text-ink">Log saved</div>

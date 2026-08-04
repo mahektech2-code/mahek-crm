@@ -22,6 +22,7 @@ import {
   type CallTarget,
   type ProductOption,
   type QuickNoteOption,
+  type ScriptOption,
 } from "@/components/crm/call-panel";
 import { rebuildQueue, skipQueueItem } from "@/lib/actions/crm";
 import { money, phoneDisplay, shortDate } from "@/lib/format";
@@ -72,6 +73,7 @@ export function QueueScreen({
   categories,
   quickNotes,
   products,
+  scripts,
 }: {
   scopeLabel: string;
   rows: Row[];
@@ -82,6 +84,7 @@ export function QueueScreen({
   categories: Array<{ value: string; label: string }>;
   quickNotes: QuickNoteOption[];
   products: ProductOption[];
+  scripts: ScriptOption[];
   activity: {
     connected: number;
     attempted: number;
@@ -434,6 +437,7 @@ export function QueueScreen({
         complaintCategories={categories}
         quickNotes={quickNotes}
         products={products}
+        scripts={scripts}
         hasNext={hasNext}
         hasPrevious={hasPrevious}
         onPrevious={() => goTo(openIndex - 1)}

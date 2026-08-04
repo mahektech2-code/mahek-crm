@@ -4,7 +4,7 @@ import { dayActivity, today } from "@/lib/queries";
 import { getConfig } from "@/lib/config/store";
 import { listActiveProducts } from "@/db/seed-catalogue";
 import { db } from "@/db";
-import { quickNotes as quickNotesTable } from "@/db/schema";
+import { helpArticles, quickNotes as quickNotesTable } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getQueue } from "@/lib/services/queue-service";
 import { QueueScreen } from "./queue-screen";
@@ -25,9 +25,12 @@ export default async function QueuePage() {
 
   // The panel needs the whole catalogue up front: a telecaller mid-call should
   // never wait on a round trip to pick a product or a quick note.
-  const [quickNoteRows, productRows] = await Promise.all([
+  const [quickNoteRows, productRows, scriptRows] = await Promise.all([
     db.select().from(quickNotesTable).where(eq(quickNotesTable.active, true)),
     listActiveProducts(),
+    // Call scripts live in the help centre, so there is one place they are
+    // written and the panel simply shows the relevant one.
+    db.select().from(helpArticles).where(eq(helpArticles.type, "call_script")),
   ]);
   const quickNoteOptions = quickNoteRows.map((n) => ({
     id: n.id,
@@ -97,6 +100,12 @@ export default async function QueuePage() {
       }))}
       quickNotes={quickNoteOptions}
       products={productOptions}
+      scripts={scriptRows.map((a) => ({
+        id: a.id,
+        title: a.title,
+        body: a.scriptBody ?? a.body,
+        outcome: null,
+      }))}
       activity={{
         connected: activity.callsConnected,
         attempted: activity.callsAttempted,
