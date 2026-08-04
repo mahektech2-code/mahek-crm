@@ -408,8 +408,8 @@ function CallPanelForm({
         <div className="flex items-center gap-1 border-b border-divider px-6">
           {(
             [
-              { key: "log" as const, label: "Call Log" },
               { key: "information" as const, label: "Information" },
+              { key: "log" as const, label: "Call Log" },
               { key: "script" as const, label: "Script" },
             ]
           ).map((t) => (
