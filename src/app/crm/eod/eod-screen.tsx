@@ -66,7 +66,7 @@ export function EodScreen({
   const blocked = dueReminders.length > 0;
 
   return (
-    <div className="max-w-[1400px] px-6 pt-6 pb-10">
+    <div className="max-w-[1440px] px-6 pt-6 pb-10">
       <PageHeader
         title="EOD report"
         subtitle={`${scopeLabel} · generated from today's activity · ${longDate(day)}`}
@@ -166,7 +166,7 @@ export function EodScreen({
         </div>
       ) : null}
 
-      <div className="grid grid-cols-[1fr_480px] items-start gap-4">
+      <div className="grid grid-cols-[minmax(0,1fr)_clamp(380px,34%,520px)] items-start gap-4">
         <Card>
           <CardHeader
             title={view === "mine" ? "Today's numbers" : "Team roll-up"}

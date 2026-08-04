@@ -154,7 +154,7 @@ export function QueueScreen({
   }
 
   return (
-    <div className="max-w-[1400px] px-6 pt-6 pb-10">
+    <div className="max-w-[1440px] px-6 pt-6 pb-10">
       <PageHeader
         title="Call queue"
         subtitle={`${scopeLabel} · Worked top to bottom. The first row is your next call.`}

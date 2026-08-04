@@ -195,7 +195,7 @@ export function TargetsScreen({
       />
 
       {tab === "shortfall" ? (
-        <div className="grid grid-cols-2 items-start gap-4">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(420px,1fr))] items-start gap-4">
           {groups.map((g) => (
             <Card key={g.title}>
               <div

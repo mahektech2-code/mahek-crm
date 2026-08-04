@@ -33,7 +33,9 @@ export function AppShell({
 
   return (
     <ToastProvider>
-      <div className="flex h-screen min-w-[1280px] flex-col overflow-hidden bg-canvas">
+      {/* The design carries a 1000px floor: below that the sidebar and a
+          data table cannot both be honest, so the page scrolls instead. */}
+      <div className="flex h-screen min-w-[1000px] flex-col overflow-hidden bg-canvas">
         <Header
           user={user}
           isManager={isManager}

@@ -106,7 +106,7 @@ export default async function DashboardPage() {
   ] as const;
 
   return (
-    <div className="max-w-[1400px] px-6 pt-6 pb-10">
+    <div className="max-w-[1440px] px-6 pt-6 pb-10">
       <PageHeader
         title={teamView ? "Team overview" : `${greeting}, ${user.name.split(" ")[0]}`}
         subtitle={`${scopeLabel(scope, user)} · ${
@@ -145,7 +145,7 @@ export default async function DashboardPage() {
         />
       ) : (
         <>
-          <div className="mb-4 grid grid-cols-4 gap-4">
+          <div className="mb-4 grid grid-cols-[repeat(auto-fit,minmax(216px,1fr))] gap-4">
             <StatCard
               href="/crm/queue"
               label="Calling progress"
@@ -182,7 +182,7 @@ export default async function DashboardPage() {
             />
           </div>
 
-          <div className="grid grid-cols-[1fr_380px] items-start gap-4">
+          <div className="grid grid-cols-[minmax(0,1fr)_clamp(300px,26%,420px)] items-start gap-4">
             <Card>
               <CardHeader
                 title="Needs you today"
@@ -339,7 +339,7 @@ function TeamView({
         </Link>
       </div>
 
-      <div className="mb-4 grid grid-cols-4 gap-4">
+      <div className="mb-4 grid grid-cols-[repeat(auto-fit,minmax(216px,1fr))] gap-4">
         <Card className="p-5">
           <SectionLabel>Team calls today</SectionLabel>
           <div className="mt-2 text-[32px] leading-9 font-semibold text-ink">

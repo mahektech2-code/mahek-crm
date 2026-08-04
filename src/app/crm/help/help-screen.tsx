@@ -84,7 +84,7 @@ export function HelpScreen({
         </Select>
       </Card>
 
-      <div className="grid grid-cols-[220px_300px_1fr] items-start gap-4">
+      <div className="grid grid-cols-[clamp(180px,15%,240px)_clamp(240px,22%,320px)_minmax(0,1fr)] items-start gap-4">
         <Card className="overflow-hidden py-1.5">
           {categories.map((c) => {
             const count =
