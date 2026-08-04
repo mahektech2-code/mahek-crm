@@ -12,7 +12,6 @@ import { execFileSync, execSync } from "node:child_process";
 import { existsSync, copyFileSync, readFileSync } from "node:fs";
 import { platform } from "node:os";
 
-const LOCAL_URL = "postgresql://mahek:mahek@127.0.0.1:5432/mahekone";
 
 const say = (m) => console.log(`\n\x1b[1m${m}\x1b[0m`);
 const ok = (m) => console.log(`  \x1b[32m✓\x1b[0m ${m}`);

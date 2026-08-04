@@ -1,28 +1,28 @@
-
-
-
 import { randomUUID } from "node:crypto";
 import { db, sql as client } from "./index";
 import {
   appAccess,
+  appSettings,
   attendance,
   auditLog,
   bills,
-  complaintEvents,
+  bugReports,
+  calls,
+  complaintStatusHistory,
   complaints,
   customers,
   eodReports,
+  followUpAttempts,
+  followUpStates,
   helpArticles,
-  interactions,
+  inactiveWatchItems,
+  jobRuns,
+  monthlyTargets,
   notifications,
   orders,
   payments,
-  promises,
-  queueItems,
   reminders,
   sessions,
-  settings,
-  targets,
   users,
   waMessages,
   waReplies,
@@ -30,47 +30,45 @@ import {
   waTemplates,
 } from "./schema";
 import { hashPassword } from "../lib/password";
-import { initialsOf, shortDate, today as istToday } from "../lib/format";
+import { initialsOf } from "../lib/format";
+import { SETTINGS } from "../lib/config/registry";
 
 /* ---------------------------------------------------------------------------
- * Seed. Shapes the database like a real Mahek Marketing day so every screen has
- * something to show on first run. Dates are relative to today, so the demo does
- * not go stale.
- *
- *   npm run db:seed
+ * Seed: around fifty realistic customers with six months of orders, bills and
+ * calls. The engines cannot be tested meaningfully without this shape of data.
  * ------------------------------------------------------------------------- */
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
-
 const now = new Date();
 const DAY = 86_400_000;
 
-/**
- * Dates are anchored to Asia/Kolkata, the same clock the app uses. Seeding in
- * UTC puts "today's" queue on the wrong date for half of every Indian morning.
- */
 const IST = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Kolkata",
   year: "numeric",
   month: "2-digit",
   day: "2-digit",
 });
-const iso = (offsetDays: number) =>
-  IST.format(new Date(now.getTime() + offsetDays * DAY));
+const iso = (offsetDays: number) => IST.format(new Date(now.getTime() + offsetDays * DAY));
 const at = (offsetDays: number, hour = 10, minute = 0) => {
   const d = new Date(now.getTime() + offsetDays * DAY);
   d.setHours(hour, minute, 0, 0);
   return d;
 };
-const TODAY = istToday();
-const PERIOD = TODAY.slice(0, 7);
+const TODAY = iso(0);
 const rupees = (n: number) => n * 100;
 
-/**
- * `apps` is what a person can open after the single MahekOne sign-in. The three
- * shapes are deliberate: one app goes straight in, several land on the
- * launcher, and the field salesman proves an account can exist with no CRM.
- */
+/** Deterministic pseudo-randomness, so a reseed produces the same book. */
+function rng(seed: number) {
+  let s = seed;
+  return () => {
+    s = (s * 1664525 + 1013904223) % 4294967296;
+    return s / 4294967296;
+  };
+}
+const rand = rng(20260803);
+const pick = <T,>(list: T[]): T => list[Math.floor(rand() * list.length)];
+const between = (lo: number, hi: number) => lo + Math.floor(rand() * (hi - lo + 1));
+
 const TEAM = [
   { name: "Priya Sharma", email: "priya@mahek.in", phone: "9820011001", role: "telecaller" as const, apps: ["crm"] },
   { name: "Rakesh Yadav", email: "rakesh@mahek.in", phone: "9820011002", role: "telecaller" as const, apps: ["crm"] },
@@ -81,728 +79,470 @@ const TEAM = [
   { name: "Mahesh Parab", email: "mahesh@mahek.in", phone: "9820011007", role: "telecaller" as const, apps: ["field"] },
 ];
 
-type SeedCustomer = {
-  name: string;
-  contact: string;
-  phone: string;
-  city: string;
-  owner: number;
-  cycle: number;
-  lastOrderDaysAgo: number;
-  lastOrderValue: number;
-  avgOrder: number;
-  paysIn: number;
-  route: string;
-  group?: string;
-};
-
-const CUSTOMERS: SeedCustomer[] = [
-  { name: "Shree Paints & Hardware", contact: "Mahesh Shah", phone: "9822014567", city: "Nashik", owner: 0, cycle: 21, lastOrderDaysAgo: 12, lastOrderValue: 184000, avgOrder: 172000, paysIn: 34, route: "Nashik–Sinnar", group: "Shree Paints order group" },
-  { name: "Om Sai Traders", contact: "Ganesh Pawar", phone: "9823145678", city: "Pune", owner: 0, cycle: 30, lastOrderDaysAgo: 41, lastOrderValue: 96000, avgOrder: 104000, paysIn: 52, route: "Pune West", group: "Om Sai purchase group" },
-  { name: "Krishna Paint House", contact: "Sunil Deshmukh", phone: "9890234567", city: "Nashik", owner: 0, cycle: 28, lastOrderDaysAgo: 9, lastOrderValue: 212000, avgOrder: 198000, paysIn: 28, route: "Nashik City", group: "Krishna Paint House group" },
-  { name: "Balaji Coatings", contact: "Rohit Jadhav", phone: "9767345678", city: "Aurangabad", owner: 0, cycle: 35, lastOrderDaysAgo: 78, lastOrderValue: 64000, avgOrder: 88000, paysIn: 61, route: "Marathwada" },
-  { name: "Ganesh Hardware Mart", contact: "Amit Kulkarni", phone: "9822456789", city: "Nashik", owner: 0, cycle: 14, lastOrderDaysAgo: 4, lastOrderValue: 148000, avgOrder: 132000, paysIn: 22, route: "Nashik City" },
-  { name: "Deccan Paint Suppliers", contact: "Prakash More", phone: "9765567890", city: "Pune", owner: 0, cycle: 25, lastOrderDaysAgo: 33, lastOrderValue: 276000, avgOrder: 244000, paysIn: 45, route: "Pune East" },
-  { name: "Sai Enterprises", contact: "Nitin Bhosale", phone: "9881678901", city: "Ahmednagar", owner: 0, cycle: 30, lastOrderDaysAgo: 67, lastOrderValue: 52000, avgOrder: 71000, paysIn: 38, route: "Ahmednagar" },
-  { name: "Jai Bhavani Hardware", contact: "Santosh Gaikwad", phone: "9823789012", city: "Nashik", owner: 0, cycle: 21, lastOrderDaysAgo: 18, lastOrderValue: 118000, avgOrder: 109000, paysIn: 30, route: "Nashik–Sinnar" },
-  { name: "Maharashtra Paint Depot", contact: "Vijay Shinde", phone: "9890890123", city: "Nashik", owner: 0, cycle: 18, lastOrderDaysAgo: 2, lastOrderValue: 324000, avgOrder: 288000, paysIn: 26, route: "Nashik City" },
-  { name: "New India Colours", contact: "Kiran Salunkhe", phone: "9822901234", city: "Pune", owner: 0, cycle: 40, lastOrderDaysAgo: 95, lastOrderValue: 44000, avgOrder: 62000, paysIn: 71, route: "Pune West" },
-
-  { name: "Ratnadeep Hardware", contact: "Anil Chavan", phone: "9767012345", city: "Kolhapur", owner: 1, cycle: 28, lastOrderDaysAgo: 22, lastOrderValue: 96000, avgOrder: 94000, paysIn: 33, route: "Kolhapur" },
-  { name: "Vishwas Paint Centre", contact: "Deepak Patil", phone: "9881123456", city: "Sangli", owner: 1, cycle: 30, lastOrderDaysAgo: 56, lastOrderValue: 78000, avgOrder: 86000, paysIn: 58, route: "Sangli" },
-  { name: "Shivneri Traders", contact: "Manoj Kadam", phone: "9823234567", city: "Satara", owner: 1, cycle: 24, lastOrderDaysAgo: 7, lastOrderValue: 156000, avgOrder: 142000, paysIn: 27, route: "Satara" },
-  { name: "Anand Hardware Stores", contact: "Sachin Thorat", phone: "9890345678", city: "Kolhapur", owner: 1, cycle: 35, lastOrderDaysAgo: 88, lastOrderValue: 38000, avgOrder: 54000, paysIn: 66, route: "Kolhapur" },
-  { name: "Laxmi Paint & Chemicals", contact: "Ravi Mane", phone: "9822456780", city: "Sangli", owner: 1, cycle: 21, lastOrderDaysAgo: 14, lastOrderValue: 202000, avgOrder: 188000, paysIn: 31, route: "Sangli" },
-
-  { name: "Sagar Coatings", contact: "Pravin Sawant", phone: "9765678902", city: "Thane", owner: 2, cycle: 18, lastOrderDaysAgo: 5, lastOrderValue: 268000, avgOrder: 236000, paysIn: 24, route: "Thane" },
-  { name: "Konkan Hardware", contact: "Suhas Naik", phone: "9881789013", city: "Ratnagiri", owner: 2, cycle: 45, lastOrderDaysAgo: 102, lastOrderValue: 42000, avgOrder: 58000, paysIn: 49, route: "Konkan" },
-  { name: "Mumbai Paint Mart", contact: "Farhan Shaikh", phone: "9823890124", city: "Mumbai", owner: 2, cycle: 14, lastOrderDaysAgo: 3, lastOrderValue: 412000, avgOrder: 368000, paysIn: 21, route: "Mumbai Central" },
-  { name: "Vasai Colour House", contact: "Dinesh Raut", phone: "9890901235", city: "Vasai", owner: 2, cycle: 28, lastOrderDaysAgo: 31, lastOrderValue: 88000, avgOrder: 96000, paysIn: 42, route: "Palghar" },
-  { name: "Bharat Hardware", contact: "Yogesh Tambe", phone: "9822012346", city: "Thane", owner: 2, cycle: 30, lastOrderDaysAgo: 64, lastOrderValue: 72000, avgOrder: 84000, paysIn: 55, route: "Thane" },
-
-  { name: "Sharda Paints", contact: "Nilesh Wagh", phone: "9767123457", city: "Jalgaon", owner: 3, cycle: 32, lastOrderDaysAgo: 71, lastOrderValue: 56000, avgOrder: 68000, paysIn: 63, route: "Khandesh" },
-  { name: "Tapti Traders", contact: "Ashok Patil", phone: "9881234568", city: "Dhule", owner: 3, cycle: 30, lastOrderDaysAgo: 26, lastOrderValue: 104000, avgOrder: 98000, paysIn: 36, route: "Khandesh" },
-  { name: "Girna Hardware", contact: "Rahul Borse", phone: "9823345679", city: "Jalgaon", owner: 3, cycle: 21, lastOrderDaysAgo: 11, lastOrderValue: 132000, avgOrder: 124000, paysIn: 29, route: "Khandesh" },
-
-  { name: "Vidarbha Paint Supply", contact: "Sandeep Ingle", phone: "9890456781", city: "Nagpur", owner: 4, cycle: 25, lastOrderDaysAgo: 8, lastOrderValue: 246000, avgOrder: 218000, paysIn: 27, route: "Nagpur" },
-  { name: "Orange City Hardware", contact: "Mangesh Dhole", phone: "9822567892", city: "Nagpur", owner: 4, cycle: 30, lastOrderDaysAgo: 48, lastOrderValue: 82000, avgOrder: 92000, paysIn: 51, route: "Nagpur" },
-  { name: "Wardha Colour Mart", contact: "Sunil Kale", phone: "9765678903", city: "Wardha", owner: 4, cycle: 35, lastOrderDaysAgo: 84, lastOrderValue: 46000, avgOrder: 61000, paysIn: 59, route: "Vidarbha" },
-  { name: "Amravati Paint House", contact: "Ganesh Wankhede", phone: "9881789014", city: "Amravati", owner: 4, cycle: 28, lastOrderDaysAgo: 16, lastOrderValue: 138000, avgOrder: 128000, paysIn: 32, route: "Vidarbha" },
+const CITIES: Array<[string, string]> = [
+  ["Nashik", "Nashik City"], ["Nashik", "Nashik–Sinnar"], ["Pune", "Pune West"],
+  ["Pune", "Pune East"], ["Mumbai", "Mumbai Central"], ["Thane", "Thane"],
+  ["Nagpur", "Nagpur"], ["Aurangabad", "Marathwada"], ["Kolhapur", "Kolhapur"],
+  ["Sangli", "Sangli"], ["Satara", "Satara"], ["Jalgaon", "Khandesh"],
+  ["Ahmednagar", "Ahmednagar"], ["Amravati", "Vidarbha"], ["Ratnagiri", "Konkan"],
 ];
+
+const PREFIX = ["Shree", "Om Sai", "Krishna", "Balaji", "Ganesh", "Deccan", "Sai", "Jai Bhavani",
+  "Maharashtra", "New India", "Ratnadeep", "Vishwas", "Shivneri", "Anand", "Laxmi",
+  "Sagar", "Konkan", "Mumbai", "Vasai", "Bharat", "Sharda", "Tapti", "Girna",
+  "Vidarbha", "Orange City", "Wardha", "Amravati", "Godavari", "Panchvati", "Sahyadri"];
+const SUFFIX = ["Paints & Hardware", "Traders", "Paint House", "Coatings", "Hardware Mart",
+  "Paint Suppliers", "Enterprises", "Hardware", "Paint Depot", "Colours",
+  "Chemicals", "Colour House", "Hardware Stores", "Paint Centre"];
+const FIRST = ["Mahesh", "Ganesh", "Sunil", "Rohit", "Amit", "Prakash", "Nitin", "Santosh",
+  "Vijay", "Kiran", "Anil", "Deepak", "Manoj", "Sachin", "Ravi", "Pravin",
+  "Suhas", "Farhan", "Dinesh", "Yogesh", "Nilesh", "Ashok", "Rahul", "Sandeep"];
+const LAST = ["Shah", "Pawar", "Deshmukh", "Jadhav", "Kulkarni", "More", "Bhosale", "Gaikwad",
+  "Shinde", "Salunkhe", "Chavan", "Patil", "Kadam", "Thorat", "Mane", "Sawant",
+  "Naik", "Shaikh", "Raut", "Tambe", "Wagh", "Borse", "Ingle", "Dhole"];
+
+const PRODUCTS = ["NC thinner 20L", "MTO thinner 200L", "Low-odour thinner 20L", "PU thinner 20L"];
 
 const TEMPLATES = [
-  {
-    name: "Order confirmation",
-    category: "Orders",
-    appliesTo: "personal" as const,
-    body:
-      "Namaste {{contact}} ji,\n\nThank you for your order with Mahek Marketing.\n\n" +
-      "Order value: {{last_order_value}}\nWe will confirm the dispatch date shortly.\n\n" +
-      "— {{owner}}, Mahek Marketing India",
-  },
-  {
-    name: "Payment reminder · stage 1",
-    category: "Payments",
-    appliesTo: "personal" as const,
-    body:
-      "Namaste {{contact}} ji,\n\nA gentle reminder that {{outstanding}} is pending " +
-      "against {{customer}}.\n\nOldest bill {{bill_no}} was due on {{bill_due}}.\n\n" +
-      "Kindly arrange the payment at your convenience.\n\n— {{owner}}, Mahek Marketing India",
-  },
-  {
-    name: "Payment reminder · stage 2",
-    category: "Payments",
-    appliesTo: "personal" as const,
-    body:
-      "Namaste {{contact}} ji,\n\n{{outstanding}} is now overdue against {{customer}}.\n\n" +
-      "Bill {{bill_no}} was due on {{bill_due}}. Please confirm a date by which we can " +
-      "expect the payment.\n\n— {{owner}}, Mahek Marketing India",
-  },
-  {
-    name: "Payment reminder · stage 3",
-    category: "Payments",
-    appliesTo: "personal" as const,
-    body:
-      "Namaste {{contact}} ji,\n\nDespite earlier reminders, {{outstanding}} remains " +
-      "unpaid against {{customer}}.\n\nWe would like to settle this before further " +
-      "supplies. Please call us today.\n\n— {{owner}}, Mahek Marketing India",
-  },
-  {
-    name: "Reorder nudge",
-    category: "Sales",
-    appliesTo: "group" as const,
-    body:
-      "Namaste {{contact}} ji,\n\nIt has been a while since your last order on " +
-      "{{last_order_date}}. Stock is ready and rates are unchanged this month.\n\n" +
-      "Shall I book your usual quantity?\n\n— {{owner}}, Mahek Marketing India",
-  },
-  {
-    name: "Complaint acknowledgement",
-    category: "Service",
-    appliesTo: "personal" as const,
-    body:
-      "Namaste {{contact}} ji,\n\nWe have recorded your complaint and it is with our " +
-      "operations team. We will come back to you with a resolution.\n\n" +
-      "Sorry for the trouble.\n\n— {{owner}}, Mahek Marketing India",
-  },
+  { name: "Order confirmation", category: "order_confirmation" as const, stage: null, appliesTo: "personal" as const,
+    body: "Namaste {{contact}} ji,\n\nThank you for your order with Mahek Marketing.\n\nOrder value: {{last_order_value}}\nWe will confirm the dispatch date shortly.\n\n— {{owner}}, Mahek Marketing India" },
+  { name: "Payment reminder · stage 1", category: "payment_reminder" as const, stage: 1, appliesTo: "personal" as const,
+    body: "Namaste {{contact}} ji,\n\nA gentle reminder that {{outstanding}} is pending against {{customer}}.\n\nOldest bill {{bill_no}} was due on {{bill_due}}.\n\nKindly arrange the payment at your convenience.\n\n— {{owner}}, Mahek Marketing India" },
+  { name: "Payment reminder · stage 2", category: "payment_reminder" as const, stage: 2, appliesTo: "personal" as const,
+    body: "Namaste {{contact}} ji,\n\n{{outstanding}} is now overdue against {{customer}}.\n\nBill {{bill_no}} was due on {{bill_due}}. Please confirm a date by which we can expect the payment.\n\n— {{owner}}, Mahek Marketing India" },
+  { name: "Payment reminder · stage 3", category: "payment_reminder" as const, stage: 3, appliesTo: "personal" as const,
+    body: "Namaste {{contact}} ji,\n\nDespite earlier reminders, {{outstanding}} remains unpaid against {{customer}}.\n\nWe would like to settle this before further supplies. Please call us today.\n\n— {{owner}}, Mahek Marketing India" },
+  { name: "Reorder nudge", category: "reactivation" as const, stage: null, appliesTo: "group" as const,
+    body: "Namaste {{contact}} ji,\n\nIt has been a while since your last order on {{last_order_date}}. Stock is ready and rates are unchanged this month.\n\nShall I book your usual quantity?\n\n— {{owner}}, Mahek Marketing India" },
+  { name: "Routine check-in", category: "routine_check_in" as const, stage: null, appliesTo: "personal" as const,
+    body: "Namaste {{contact}} ji,\n\nChecking in from Mahek Marketing. Do you need any thinner stock this week?\n\n— {{owner}}" },
 ];
 
-const HELP: Array<{
-  title: string;
-  category: string;
-  role: string;
-  isScript: boolean;
-  scriptBody?: string;
-  body: string;
-}> = [
-  {
-    title: "Opening a cold call",
-    category: "Call scripts",
-    role: "Telecaller",
-    isScript: true,
-    scriptBody:
-      "Namaste, am I speaking to {contact name}? This is {your name} calling from " +
-      "Mahek Marketing India, Nashik. We supply thinners and coatings.\n\n" +
-      "Is this a good time to speak for two minutes?",
-    body:
-      "Say the company name in the first sentence. Most shopkeepers take the call if " +
-      "they recognise the supplier.\n\nIf they say it is a bad time, ask for a specific " +
-      "time later the same day and set a reminder before you hang up. Do not leave it " +
-      "at 'I will call back'.",
-  },
-  {
-    title: "Asking for an overdue payment",
-    category: "Call scripts",
-    role: "Telecaller",
-    isScript: true,
-    scriptBody:
-      "Namaste {contact name} ji. I am calling about bill {bill number} for " +
-      "{amount}, which was due on {due date}.\n\nCan you tell me a date by which we can " +
-      "expect the payment?",
-    body:
-      "Never ask 'when can you pay'. Ask for a date, and repeat it back. A date is a " +
-      "promise you can record; 'soon' is not.\n\nAlways record the promise in the app " +
-      "before the call ends — it creates the chase reminder for the day after.",
-  },
-  {
-    title: "Handling a short supply complaint",
-    category: "Call scripts",
-    role: "Telecaller",
-    isScript: true,
-    scriptBody:
-      "I am sorry that happened. Let me note exactly what was short — which " +
-      "product and how many drums?\n\nI am logging it now and our operations team will " +
-      "come back to you. You will hear from us either way.",
-    body:
-      "Log the complaint while the customer is still on the line, in their words. Do " +
-      "not promise a resolution date you cannot control — promise a call back instead.",
-  },
-  {
-    title: "When to hold a customer back from the queue",
-    category: "SOPs",
-    role: "Telecaller",
-    isScript: false,
-    body:
-      "A customer is held back from today's calling queue when:\n\n" +
-      "· a WhatsApp message was sent to them in the last two days\n" +
-      "· a reminder for them falls on a later date\n" +
-      "· a manager has paused the account\n\n" +
-      "Held-back customers are listed under the queue so nothing disappears silently. " +
-      "Open that list if you think somebody is missing.",
-  },
-  {
-    title: "Closing the day properly",
-    category: "SOPs",
-    role: "Telecaller",
-    isScript: false,
-    body:
-      "Before you submit the EOD report:\n\n" +
-      "1. Every reminder due today must be closed or carried forward.\n" +
-      "2. Every call you made must have an outcome — not just a note.\n" +
-      "3. Any order taken must have a value against it.\n\n" +
-      "The EOD text is generated from what you logged, so a thin report means a thin " +
-      "day of logging, not a thin day of work. Fix the logging.",
-  },
-  {
-    title: "Deciding on an inactive customer",
-    category: "SOPs",
-    role: "Manager",
-    isScript: false,
-    body:
-      "A customer reaches the inactive watch after twice their own buying cycle with " +
-      "no order. That is deliberate — a 14-day buyer going quiet for a month matters " +
-      "more than a 45-day buyer doing the same.\n\n" +
-      "Decide within two weeks: reassign, re-price, or deactivate. An account sitting " +
-      "on the watch without a decision is the one that quietly leaves.",
-  },
-  {
-    title: "Setting monthly targets",
-    category: "SOPs",
-    role: "Manager",
-    isScript: false,
-    body:
-      "Where no target is set, the system applies the customer's own run rate — their " +
-      "average order spread over a month — and marks the row 'Default'.\n\n" +
-      "Defaults are honest but unambitious. Review them at the start of the month and " +
-      "set real numbers on the accounts that can grow.",
-  },
-  {
-    title: "Reading the payment stages",
-    category: "SOPs",
-    role: "Telecaller",
-    isScript: false,
-    body:
-      "Reminder due → nothing sent yet. Send the stage 1 message.\n" +
-      "Stage 1 sent → call and confirm they saw it.\n" +
-      "Stage 2 sent → get a dated promise, not a vague one.\n" +
-      "Promise made → do not chase before the date. It annoys good payers.\n" +
-      "Promise broken → call the same day. This is the one that decides whether you " +
-      "get paid.\n" +
-      "Escalate → over 90 days. Hand it to the manager with the full history.",
-  },
+const HELP = [
+  { title: "Opening a cold call", category: "Call scripts", type: "call_script" as const, roles: ["telecaller", "manager"],
+    scriptBody: "Namaste, am I speaking to {contact name}? This is {your name} calling from Mahek Marketing India, Nashik. We supply thinners and coatings.\n\nIs this a good time to speak for two minutes?",
+    body: "Say the company name in the first sentence. Most shopkeepers take the call if they recognise the supplier.\n\nIf they say it is a bad time, ask for a specific time later the same day and set a reminder before you hang up. Do not leave it at 'I will call back'." },
+  { title: "Asking for an overdue payment", category: "Call scripts", type: "call_script" as const, roles: ["telecaller", "manager"],
+    scriptBody: "Namaste {contact name} ji. I am calling about bill {bill number} for {amount}, which was due on {due date}.\n\nCan you tell me a date by which we can expect the payment?",
+    body: "Never ask 'when can you pay'. Ask for a date, and repeat it back. A date is a promise you can record; 'soon' is not.\n\nAlways record the promise in the app before the call ends — it creates the chase reminder for the day after." },
+  { title: "Handling a short supply complaint", category: "Call scripts", type: "call_script" as const, roles: ["telecaller", "manager"],
+    scriptBody: "I am sorry that happened. Let me note exactly what was short — which product and how many drums?\n\nI am logging it now and our operations team will come back to you. You will hear from us either way.",
+    body: "Log the complaint while the customer is still on the line, in their words. Do not promise a resolution date you cannot control — promise a call back instead." },
+  { title: "Why a customer is held back from the queue", category: "SOPs", type: "sop" as const, roles: ["telecaller", "manager"],
+    body: "A customer is held back when:\n\n· a WhatsApp message was CONFIRMED sent inside the cooldown window\n· they were already called today, by anybody\n· they are active in the order system\n· they are marked do not contact\n\nA message you copied but never confirmed does NOT hold anyone back — the system cannot know it was sent. Held-back customers are always listed under the queue with the reason." },
+  { title: "Closing the day properly", category: "SOPs", type: "sop" as const, roles: ["telecaller", "manager"],
+    body: "Before you submit the EOD report:\n\n1. Every reminder due today must be closed or carried forward.\n2. Every call you made must have an outcome.\n3. Any order taken must have a value against it.\n\nThe EOD text is generated from what you logged, so a thin report means thin logging, not a thin day." },
+  { title: "Reading the payment stages", category: "SOPs", type: "sop" as const, roles: ["telecaller", "manager"],
+    body: "Stage 1 → WhatsApp only. The system will refuse a call attempt at this stage.\nStage 2 → alternates. If the last touch was WhatsApp, call; otherwise message.\nStage 3 → call.\n\nA disputed account holds at its current stage rather than escalating." },
+  { title: "Deciding on an inactive customer", category: "SOPs", type: "sop" as const, roles: ["manager"],
+    body: "A customer reaches the watch after twice their OWN buying cycle with no order. A 14-day buyer going quiet for a month matters more than a 45-day buyer doing the same.\n\nDecide within two weeks: contact, set a reminder, request deactivation, or mark them not actually inactive. A row sitting without a decision is the one that quietly leaves." },
+  { title: "Setting monthly targets", category: "SOPs", type: "sop" as const, roles: ["manager"],
+    body: "Where no target is set, the trailing average of recent achievement is applied and the row is badged 'Default'.\n\nDefaults are honest but unambitious. Review them at the start of the month and set real numbers on the accounts that can grow." },
 ];
 
 async function main() {
-  console.log("Clearing existing data…");
-  // Child tables first — foreign keys are enforced.
-  await db.delete(auditLog);
-  await db.delete(attendance);
-  await db.delete(appAccess);
-  await db.delete(notifications);
-  await db.delete(eodReports);
-  await db.delete(waRuns);
-  await db.delete(waReplies);
-  await db.delete(waMessages);
-  await db.delete(waTemplates);
-  await db.delete(complaintEvents);
-  await db.delete(complaints);
-  await db.delete(promises);
-  await db.delete(reminders);
-  await db.delete(orders);
-  await db.delete(interactions);
-  await db.delete(queueItems);
-  await db.delete(payments);
-  await db.delete(bills);
-  await db.delete(targets);
-  await db.delete(customers);
-  await db.delete(sessions);
-  await db.delete(users);
-  await db.delete(settings);
-  await db.delete(helpArticles);
+  console.log("Clearing…");
+  for (const table of [
+    auditLog, jobRuns, notifications, eodReports, bugReports, attendance,
+    waReplies, waMessages, waRuns, waTemplates,
+    complaintStatusHistory, complaints, inactiveWatchItems,
+    followUpAttempts, followUpStates, reminders, calls, orders,
+    payments, bills, monthlyTargets, customers, appAccess, sessions, users,
+    helpArticles, appSettings,
+  ]) {
+    await db.delete(table);
+  }
 
-  console.log("Creating team…");
+  console.log("Seeding configuration…");
+  await db.insert(appSettings).values(
+    SETTINGS.map((s) => ({
+      key: s.key,
+      value: s.default as never,
+      valueType: s.type,
+      category: s.category,
+      label: s.label,
+      description: s.description,
+    })),
+  );
+
+  console.log("Creating the team…");
   const passwordHash = await hashPassword("mahek1234");
+  const managerId = id("usr");
   const userRows = TEAM.map((t) => ({
-    id: id("usr"),
+    id: t.role === "manager" ? managerId : id("usr"),
     name: t.name,
     email: t.email,
     phone: t.phone,
     passwordHash,
     role: t.role,
     initials: initialsOf(t.name),
+    reportsToId: null as string | null,
   }));
+  // Telecallers report to the manager, which is what a manager's scope reads.
+  for (const u of userRows) if (u.id !== managerId) u.reportsToId = managerId;
   await db.insert(users).values(userRows);
 
-  console.log("Granting app access…");
   await db.insert(appAccess).values(
     TEAM.flatMap((t, i) =>
       t.apps.map((app) => ({
         id: id("acc"),
         userId: userRows[i].id,
-        app: app as "crm" | "field" | "orders" | "people" | "reports" | "admin",
-        grantedById: userRows[5].id,
+        app: app as never,
+        grantedById: managerId,
       })),
     ),
   );
 
   console.log("Creating customers…");
-  const customerRows = CUSTOMERS.map((c) => {
-    const slow = c.paysIn > 45;
-    return {
+  const crmUsers = userRows.filter((u) => u.name !== "Mahesh Parab");
+  type SeedCustomer = typeof customers.$inferInsert & { cycle: number; paysIn: number };
+  const customerRows: SeedCustomer[] = [];
+
+  for (let i = 0; i < 52; i++) {
+    const [city, route] = CITIES[i % CITIES.length];
+    const cycle = pick([14, 18, 21, 25, 28, 30, 35, 45, 60]);
+    const paysIn = between(18, 70);
+    const avg = between(45, 380) * 1000;
+    const owner = crmUsers[i % crmUsers.length];
+    const usesGroup = i % 5 === 0;
+
+    customerRows.push({
       id: id("cus"),
-      name: c.name,
-      contactPerson: c.contact,
-      phone: c.phone,
-      city: c.city,
-      ownerId: userRows[c.owner].id,
-      status: slow ? ("Slow payer" as const) : ("Active" as const),
-      gstin: `27AAB${c.phone.slice(0, 4)}M1Z${c.owner}`,
+      externalCode: `MM-C${String(1000 + i)}`,
+      name: `${PREFIX[i % PREFIX.length]} ${SUFFIX[i % SUFFIX.length]}`,
+      contactPerson: `${FIRST[i % FIRST.length]} ${LAST[(i * 3) % LAST.length]}`,
+      phone: `9${between(600000000, 899999999)}`,
+      city,
+      region: route,
+      route,
+      status: "active",
+      ownerId: owner.id,
+      gstin: `27AAB${String(1000 + i)}M1Z${i % 10}`,
       creditTermDays: 30,
-      route: c.route,
-      cycleDays: c.cycle,
-      lastOrderDate: iso(-c.lastOrderDaysAgo),
-      lastOrderValue: rupees(c.lastOrderValue),
-      lastContactAt: at(-Math.min(c.lastOrderDaysAgo, 6), 11, 20),
-      outstanding: 0,
-      avgOrderValue: rupees(c.avgOrder),
-      orders6m: Math.max(1, Math.round(180 / c.cycle)),
-      paysInDays: c.paysIn,
-      slowPayer: slow,
-      whatsappGroupName: c.group ?? null,
-      whatsappDest: (c.group ? "group" : "personal") as "group" | "personal",
-      customerSince: iso(-(400 + c.owner * 90)),
-    };
-  });
-  await db.insert(customers).values(customerRows);
-  const byIndex = (i: number) => customerRows[i];
+      customerSince: iso(-between(200, 1500)),
+      cycleDays: cycle,
+      cycleIsDefault: true,
+      avgOrderValue: rupees(avg),
+      whatsappGroupName: usesGroup ? `${PREFIX[i % PREFIX.length]} order group` : null,
+      whatsappDest: usesGroup ? "group" : "personal",
+      // A handful are live in the order system, to exercise suppression.
+      activeInOrderSystem: i % 17 === 0,
+      doNotContact: i === 33,
+      cycle,
+      paysIn,
+    });
+  }
+  await db.insert(customers).values(
+    customerRows.map((c) => {
+      const { cycle, paysIn, ...rest } = c;
+      void cycle;
+      void paysIn;
+      return rest;
+    }),
+  );
+
+  console.log("Creating six months of orders…");
+  const orderRows: Array<typeof orders.$inferInsert> = [];
+  for (const c of customerRows) {
+    // Walk backwards at roughly their cycle; a quarter are deliberately stale.
+    let offset = -between(1, Math.max(2, Math.round(c.cycle * (rand() < 0.25 ? 2.6 : 0.8))));
+    for (let n = 0; n < 12 && offset > -190; n++) {
+      const avgRupees = Math.round((c.avgOrderValue ?? 10_000_000) / 100);
+      orderRows.push({
+        id: id("ord"),
+        customerId: c.id!,
+        userId: c.ownerId,
+        source: n % 6 === 0 ? "external" : "crm",
+        externalRef: n % 6 === 0 ? `EXT-${randomUUID().slice(0, 8)}` : null,
+        orderedAt: at(offset, between(10, 17), between(0, 59)),
+        totalAmount: rupees(between(Math.round(avgRupees * 0.6), Math.round(avgRupees * 1.4))),
+        status: "confirmed",
+        lineItems: [
+          { product: pick(PRODUCTS), quantity: between(2, 12), unitPrice: 0, amount: 0 },
+        ],
+      });
+      offset -= Math.max(5, c.cycle + between(-3, 3));
+    }
+  }
+  await db.insert(orders).values(orderRows);
 
   console.log("Creating bills and payments…");
   const billRows: Array<typeof bills.$inferInsert> = [];
   const paymentRows: Array<typeof payments.$inferInsert> = [];
-  let billSeq = 4100;
+  let billSeq = 4000;
 
-  customerRows.forEach((c, i) => {
-    const source = CUSTOMERS[i];
-    // Three to five bills each, spread across the aging buckets.
-    const count = 3 + (i % 3);
-    for (let n = 0; n < count; n++) {
-      const raisedDaysAgo = 8 + n * 26 + (i % 7) * 3;
-      const amount = rupees(Math.round(source.avgOrder * (0.6 + ((i + n) % 5) * 0.2)));
-      // Older bills are more likely to be settled; slow payers less so.
-      const settled = n === 0 ? false : source.paysIn < 40 ? n > 1 : n > 2;
-      const paid = settled
-        ? amount
-        : n === 1 && i % 3 === 0
-          ? Math.round(amount * 0.4)
-          : 0;
-
+  for (const c of customerRows) {
+    const avgRupees = Math.round((c.avgOrderValue ?? 10_000_000) / 100);
+    for (let n = 0; n < between(3, 6); n++) {
+      const raisedDaysAgo = between(5, 150);
+      const amount = rupees(between(Math.round(avgRupees * 0.5), Math.round(avgRupees * 1.3)));
       const billId = id("bil");
+      const settled = raisedDaysAgo > c.paysIn && rand() > (c.paysIn > 45 ? 0.55 : 0.2);
+      const partial = !settled && rand() > 0.8;
+      const paid = settled ? amount : partial ? Math.round(amount * 0.4) : 0;
+
       billRows.push({
         id: billId,
-        billNo: `MM/${PERIOD.slice(0, 4)}/${++billSeq}`,
-        customerId: c.id,
+        customerId: c.id!,
+        billNo: `MM/${TODAY.slice(0, 4)}/${++billSeq}`,
         billDate: iso(-raisedDaysAgo),
-        dueDate: iso(-raisedDaysAgo + 30),
+        // Some bills carry no due date, so the default credit period is used.
+        dueDate: n % 9 === 0 ? null : iso(-raisedDaysAgo + 30),
         amount,
-        paid,
+        paidAmount: paid,
+        disputed: rand() > 0.97,
+        externalRef: `EXT-B${billSeq}`,
       });
 
       if (paid > 0) {
         paymentRows.push({
           id: id("pay"),
           billId,
-          customerId: c.id,
+          customerId: c.id!,
           amount: paid,
-          mode: n % 2 === 0 ? "Bank transfer" : "Cheque",
+          paidAt: iso(-Math.max(0, raisedDaysAgo - c.paysIn)),
+          mode: pick(["Bank transfer", "Cheque", "UPI", "Cash"]),
           reference: `UTR${900000 + billSeq}`,
-          receivedOn: iso(-raisedDaysAgo + source.paysIn),
-          recordedById: userRows[source.owner].id,
+          recordedById: c.ownerId,
         });
       }
     }
-  });
+  }
   await db.insert(bills).values(billRows);
   await db.insert(payments).values(paymentRows);
 
-  console.log("Rolling up outstanding…");
-  await client`
-    update customers c
-    set outstanding = coalesce((
-      select sum(b.amount - b.paid) from bills b where b.customer_id = c.id
-    ), 0)
-  `;
-
-  console.log("Creating targets…");
-  await db.insert(targets).values(
-    customerRows.map((c, i) => ({
-      id: id("tgt"),
-      customerId: c.id,
-      period: PERIOD,
-      amount: rupees(Math.round((CUSTOMERS[i].avgOrder * 30) / CUSTOMERS[i].cycle)),
-      // Two thirds have been reviewed; the rest sit on the auto default.
-      isDefault: i % 3 === 2,
-      setById: i % 3 === 2 ? null : userRows[5].id,
-    })),
-  );
-
-  console.log("Creating interactions, orders and reminders…");
-  const interactionRows: Array<typeof interactions.$inferInsert> = [];
-  const orderRows: Array<typeof orders.$inferInsert> = [];
-  const reminderRows: Array<typeof reminders.$inferInsert> = [];
-
-  const OUTCOMES = [
-    "Order placed",
-    "Will order later",
-    "Payment promised",
-    "Call back later",
-    "Not interested",
-  ];
+  console.log("Creating calls…");
+  const CONNECTIONS = ["connected", "connected", "connected", "no_answer", "busy", "switched_off"] as const;
+  const OUTCOMES = ["order_placed", "will_order_later", "no_requirement_now", "payment_promised", "call_back_requested"] as const;
   const NOTES = [
     "Wants the revised 200L drum rate before committing.",
     "Stock is sufficient until month end, will reorder after that.",
     "Cheque ready, asked us to collect on Friday.",
-    "Complained about the last delivery being two drums short.",
     "Comparing rates with another supplier, wants a call on Monday.",
     "Confirmed the usual quantity, dispatch this week.",
     "Owner was travelling — spoke to the accountant instead.",
   ];
 
-  customerRows.forEach((c, i) => {
-    const source = CUSTOMERS[i];
-    const owner = userRows[source.owner].id;
-
-    // A short history for every customer, and today's activity for the team.
-    for (let n = 0; n < 4; n++) {
-      const daysAgo = n === 0 ? 0 : n * 4 + (i % 5);
-      const outcome = OUTCOMES[(i + n) % OUTCOMES.length];
-      const connected = (i + n) % 5 !== 3;
-
-      // Today's calls: only some customers, so the queue still has work in it.
-      if (daysAgo === 0 && i % 3 !== 0) continue;
-
-      interactionRows.push({
-        id: id("int"),
-        customerId: c.id,
-        userId: owner,
-        channel: "Call",
-        connection: connected
-          ? "Connected"
-          : (i + n) % 2 === 0
-            ? "Missed"
-            : "Not reachable",
-        outcome: connected ? outcome : "No answer",
-        note: connected ? NOTES[(i + n) % NOTES.length] : "Rang out, will retry.",
-        produced: connected && outcome === "Order placed" ? "Order captured" : null,
-        occurredAt: at(-daysAgo, 10 + (n % 6), (i * 7) % 60),
+  const callRows: Array<typeof calls.$inferInsert> = [];
+  for (const c of customerRows) {
+    for (let n = 0; n < between(2, 7); n++) {
+      const daysAgo = n === 0 && rand() > 0.6 ? 0 : between(1, 45);
+      const connection = pick([...CONNECTIONS]);
+      callRows.push({
+        id: id("call"),
+        customerId: c.id!,
+        userId: c.ownerId!,
+        direction: "outbound",
+        startedAt: at(-daysAgo, between(10, 18), between(0, 59)),
+        durationSeconds: connection === "connected" ? between(45, 420) : 0,
+        connectionStatus: connection,
+        outcome: connection === "connected" ? pick([...OUTCOMES]) : "not_reachable",
+        notes: connection === "connected" ? pick(NOTES) : "Rang out, will retry.",
+        sourceModule: pick(["call_queue", "call_queue", "payment_follow_up", "ad_hoc"] as const),
       });
-
-      if (connected && outcome === "Order placed") {
-        orderRows.push({
-          id: id("ord"),
-          customerId: c.id,
-          userId: owner,
-          product: ["NC thinner 20L", "MTO thinner 200L", "Low-odour thinner 20L"][
-            (i + n) % 3
-          ],
-          quantity: 2 + ((i + n) % 6),
-          value: rupees(Math.round(source.avgOrder * (0.7 + ((i + n) % 4) * 0.15))),
-          expectedDispatch: iso(-daysAgo + 3),
-          placedAt: at(-daysAgo, 11 + (n % 4), 15),
-        });
-      }
     }
+  }
+  await db.insert(calls).values(callRows);
 
-    // Reminders: a mix of overdue, due today and upcoming.
-    const remOffsets = i % 4 === 0 ? [-3, 0, 4] : i % 4 === 1 ? [0] : i % 4 === 2 ? [2] : [];
-    for (const offset of remOffsets) {
+  console.log("Creating reminders, complaints and messages…");
+  const reminderRows: Array<typeof reminders.$inferInsert> = [];
+  for (const [i, c] of customerRows.entries()) {
+    const offsets = i % 4 === 0 ? [-4, 0, 5] : i % 4 === 1 ? [0] : i % 4 === 2 ? [3] : [];
+    for (const offset of offsets) {
       reminderRows.push({
         id: id("rem"),
-        customerId: c.id,
-        userId: owner,
+        customerId: c.id!,
+        createdByUserId: c.ownerId!,
+        assignedUserId: c.ownerId!,
         dueDate: iso(offset),
         note:
           offset < 0
-            ? `Chase the cheque promised for ${shortDate(iso(offset))}`
+            ? "Chase the cheque promised last week"
             : offset === 0
               ? "Call back with the revised drum rate"
               : "Confirm the dispatch schedule for next week",
-        source: offset < 0 ? "promise" : "call",
-        status: "open" as const,
+        type: offset < 0 ? "payment_promise" : "call_back",
+        status: "pending",
         createdAt: at(offset - 5, 12),
       });
     }
-
-    // Some closed ones so the "done" tab is not empty.
-    if (i % 5 === 0) {
+    if (i % 7 === 0) {
       reminderRows.push({
         id: id("rem"),
-        customerId: c.id,
-        userId: owner,
-        dueDate: iso(-2),
+        customerId: c.id!,
+        createdByUserId: c.ownerId!,
+        assignedUserId: c.ownerId!,
+        dueDate: iso(-3),
         note: "Sent the rate list as promised",
-        source: "call",
-        status: "done" as const,
-        completedAt: at(-2, 16),
-        createdAt: at(-6, 10),
+        type: "send_information",
+        status: "completed",
+        closedAt: at(-3, 16),
+        closedById: c.ownerId,
+        createdAt: at(-8, 10),
       });
     }
-  });
-
-  await db.insert(interactions).values(interactionRows);
-  await db.insert(orders).values(orderRows);
+  }
   await db.insert(reminders).values(reminderRows);
 
-  console.log("Creating promises, complaints and the queue…");
-  await db.insert(promises).values(
-    customerRows
-      .filter((_, i) => CUSTOMERS[i].paysIn > 45)
-      .slice(0, 5)
-      .map((c, n) => ({
-        id: id("prm"),
-        customerId: c.id,
-        userId: userRows[0].id,
-        amount: rupees(60000 + n * 25000),
-        // Two of them are already broken — those are the calls that matter.
-        promisedBy: iso(n < 2 ? -3 - n : 2 + n),
-        note: "Owner confirmed the cheque would be handed over.",
-        kept: null,
-      })),
-  );
+  const COMPLAINTS = [
+    { cat: "delivery" as const, sev: "high" as const, desc: "Last consignment was two drums short of the invoice.", status: "open" as const, ago: 9 },
+    { cat: "product_quality" as const, sev: "medium" as const, desc: "NC thinner from the last batch is drying too slowly.", status: "in_progress" as const, ago: 6 },
+    { cat: "billing" as const, sev: "medium" as const, desc: "GST rate on the bill is 18% but the order was quoted at 12%.", status: "open" as const, ago: 3 },
+    { cat: "pricing" as const, sev: "low" as const, desc: "Competitor is quoting eight rupees per litre less on 200L drums.", status: "open" as const, ago: 14 },
+    { cat: "service" as const, sev: "low" as const, desc: "Nobody called back after the last complaint was raised.", status: "resolved" as const, ago: 20 },
+    { cat: "shortage" as const, sev: "high" as const, desc: "Delivery arrived a day late and the shop was shut.", status: "in_progress" as const, ago: 4 },
+    { cat: "packaging" as const, sev: "medium" as const, desc: "Two drums had damaged seals on arrival.", status: "open" as const, ago: 11 },
+  ];
+  const SLA = { low: 120, medium: 48, high: 24 };
 
   const complaintRows: Array<typeof complaints.$inferInsert> = [];
-  const complaintEventRows: Array<typeof complaintEvents.$inferInsert> = [];
-  const COMPLAINTS = [
-    { cat: "Delivery", desc: "Last consignment was two drums short of the invoice.", status: "Open" as const, ago: 9 },
-    { cat: "Product quality", desc: "NC thinner from the last batch is drying too slowly.", status: "In progress" as const, ago: 6 },
-    { cat: "Billing", desc: "GST rate on bill is 18% but the order was quoted at 12%.", status: "Open" as const, ago: 3 },
-    { cat: "Pricing", desc: "Competitor is quoting ₹8 per litre less on 200L drums.", status: "Open" as const, ago: 12 },
-    { cat: "Service", desc: "Nobody called back after the last complaint was raised.", status: "Resolved" as const, ago: 15 },
-    { cat: "Delivery", desc: "Delivery arrived a day late and the shop was shut.", status: "In progress" as const, ago: 4 },
-  ];
-
-  COMPLAINTS.forEach((c, n) => {
-    const customer = byIndex(n * 4);
-    const complaintId = id("cmp");
+  const historyRows: Array<typeof complaintStatusHistory.$inferInsert> = [];
+  COMPLAINTS.forEach((cm, n) => {
+    const customer = customerRows[n * 6];
+    const cid = id("cmp");
+    const created = at(-cm.ago, 11);
     complaintRows.push({
-      id: complaintId,
-      customerId: customer.id,
-      category: c.cat,
-      description: c.desc,
-      loggedById: userRows[n % 5].id,
+      id: cid,
+      customerId: customer.id!,
+      loggedByUserId: customer.ownerId!,
+      category: cm.cat,
+      description: cm.desc,
+      severity: cm.sev,
       assignedTo: n % 2 === 0 ? "Operations" : "Accounts",
-      status: c.status,
-      resolutionNote:
-        c.status === "Resolved" ? "Called the owner and agreed a credit note." : null,
-      customerTold: c.status === "Resolved",
-      loggedOn: iso(-c.ago),
-      resolvedAt: c.status === "Resolved" ? at(-2, 15) : null,
+      status: cm.status,
+      resolutionNotes: cm.status === "resolved" ? "Called the owner and agreed a credit note." : null,
+      customerInformed: cm.status === "resolved",
+      resolvedAt: cm.status === "resolved" ? at(-2, 15) : null,
+      resolvedById: cm.status === "resolved" ? managerId : null,
+      slaDueAt: new Date(created.getTime() + SLA[cm.sev] * 3_600_000),
+      createdAt: created,
     });
-    complaintEventRows.push({
-      id: id("cev"),
-      complaintId,
-      note: `Logged by ${userRows[n % 5].name}`,
-      at: at(-c.ago, 11),
+    historyRows.push({
+      id: id("csh"),
+      complaintId: cid,
+      fromStatus: null,
+      toStatus: "open",
+      changedById: customer.ownerId,
+      note: "Logged during a call",
+      at: created,
     });
-    if (c.status !== "Open") {
-      complaintEventRows.push({
-        id: id("cev"),
-        complaintId,
-        note: `Assigned to ${n % 2 === 0 ? "Operations" : "Accounts"}`,
-        at: at(-c.ago + 1, 10),
-      });
-    }
   });
   await db.insert(complaints).values(complaintRows);
-  await db.insert(complaintEvents).values(complaintEventRows);
+  await db.insert(complaintStatusHistory).values(historyRows);
 
-  // Today's queue, one per owner, built by the same rules the app uses.
-  const openComplaintCustomers = new Set(
-    complaintRows.filter((c) => c.status !== "Resolved").map((c) => c.customerId),
-  );
-  const dueReminderCustomers = new Set(
-    reminderRows.filter((r) => r.status === "open" && r.dueDate <= TODAY).map((r) => r.customerId),
-  );
-
-  const queueRows = customerRows
-    .map((c, i) => {
-      const source = CUSTOMERS[i];
-      let reason: string | null = null;
-      let priority = 100;
-
-      if (openComplaintCustomers.has(c.id)) {
-        reason = "Open complaint";
-        priority = 10;
-      } else if (dueReminderCustomers.has(c.id)) {
-        reason = "Reminder due";
-        priority = 20;
-      } else if (c.outstanding !== 0 && source.paysIn > 45) {
-        reason = "Payment overdue";
-        priority = 30;
-      } else if (source.lastOrderDaysAgo > source.cycle * 2) {
-        reason = "Gone quiet";
-        priority = 50;
-      } else if (source.lastOrderDaysAgo > source.cycle) {
-        reason = "Due to reorder";
-        priority = 60;
-      } else {
-        reason = "Payment follow-up";
-        priority = 40;
-      }
-
-      return {
-        id: id("qi"),
-        day: TODAY,
-        customerId: c.id,
-        ownerId: c.ownerId!,
-        reason,
-        priority,
-        // Roughly a third already worked, matching the day being underway.
-        worked: i % 3 === 0,
-        skipped: i === 7 || i === 18,
-        heldBackReason:
-          i === 7 || i === 18 ? "WhatsApp message sent in the last two days" : null,
-      };
-    })
-    .filter(Boolean);
-  await db.insert(queueItems).values(queueRows);
-
-  console.log("Creating WhatsApp templates, messages and replies…");
   const templateRows = TEMPLATES.map((t, i) => ({
     id: id("tpl"),
     name: t.name,
     category: t.category,
+    escalationStage: t.stage,
     body: t.body,
     appliesTo: t.appliesTo,
-    uses: 12 + i * 9,
-    archived: false,
+    usageCount: between(5, 60),
     updatedAt: at(-14 + i, 12),
   }));
   await db.insert(waTemplates).values(templateRows);
 
+  // A spread of states, including copies never confirmed — the watch metric.
   const messageRows: Array<typeof waMessages.$inferInsert> = [];
-  customerRows.slice(0, 14).forEach((c, i) => {
+  customerRows.slice(0, 22).forEach((c, i) => {
     const template = templateRows[i % templateRows.length];
-    const statuses = ["Sent", "Delivered", "Read", "Copied"] as const;
+    const state = i % 6;
+    const confirmed = state < 3;
+    const sentAt = at(-(i % 5), 9 + (i % 8), (i * 11) % 60);
     messageRows.push({
       id: id("wam"),
-      customerId: c.id,
+      customerId: c.id!,
       templateId: template.id,
       templateName: template.name,
-      body: template.body,
-      edited: i % 5 === 0,
-      destination: c.whatsappGroupName ?? c.phone,
-      destKind: c.whatsappGroupName ? "group" : "personal",
+      userId: c.ownerId!,
       mode: "manual",
-      // A few never got confirmed — that is the point of the "Copied" state.
-      status: statuses[i % statuses.length],
-      sentById: c.ownerId!,
-      createdAt: at(-(i % 5), 9 + (i % 8), (i * 11) % 60),
+      destKind: c.whatsappGroupName ? "group" : "personal",
+      resolvedDestination: c.whatsappGroupName ?? c.phone!,
+      body: template.body,
+      edited: i % 7 === 0,
+      status: confirmed
+        ? "sent_manually"
+        : state === 3
+          ? "copied"
+          : state === 4
+            ? "prepared"
+            : "cancelled",
+      preparedAt: sentAt,
+      copiedAt: state <= 3 ? sentAt : null,
+      confirmedSentAt: confirmed ? sentAt : null,
     });
   });
   await db.insert(waMessages).values(messageRows);
 
+  // Only CONFIRMED sends drive suppression, so only those touch the customer.
+  for (const m of messageRows) {
+    if (m.confirmedSentAt) {
+      await client`
+        update customers
+           set last_confirmed_whatsapp_date = ${m.confirmedSentAt.toISOString().slice(0, 10)}
+         where id = ${m.customerId}`;
+    }
+  }
+
   await db.insert(waReplies).values(
-    [
-      { i: 1, msg: "Send the rate list for 200L drums please." },
-      { i: 5, msg: "Payment done today, ₹1,20,000 by NEFT." },
-      { i: 9, msg: "Delivery still not received. Please check." },
-      { i: 12, msg: "Call me after 4 pm tomorrow." },
-    ].map((r, n) => ({
+    [0, 5, 9, 12].map((i, n) => ({
       id: id("rep"),
-      customerId: byIndex(r.i).id,
-      message: r.msg,
-      actioned: false,
+      customerId: customerRows[i].id!,
+      message: [
+        "Send the rate list for 200L drums please.",
+        "Payment done today by NEFT.",
+        "Delivery still not received. Please check.",
+        "Call me after 4 pm tomorrow.",
+      ][n],
       receivedAt: at(0, 8 + n * 2, 15),
     })),
   );
-
-  await db.insert(settings).values({ key: "whatsapp_mode", value: { mode: "manual" } });
 
   console.log("Creating help articles and notifications…");
   await db.insert(helpArticles).values(
     HELP.map((h) => ({
       id: id("hlp"),
       title: h.title,
-      category: h.category,
-      role: h.role,
-      isScript: h.isScript,
-      scriptBody: h.scriptBody ?? null,
       body: h.body,
-      updatedOn: iso(-30),
+      category: h.category,
+      type: h.type,
+      roles: h.roles,
+      scriptBody: h.scriptBody ?? null,
     })),
   );
 
   await db.insert(notifications).values([
-    {
-      id: id("ntf"),
-      userId: userRows[0].id,
-      title: "Promise date passed",
-      body: `${customerRows[1].name} promised payment three days ago. Nothing has arrived.`,
-      kind: "warn",
-      href: "/crm/payments",
-      createdAt: at(0, 8, 5),
-    },
-    {
-      id: id("ntf"),
-      userId: userRows[0].id,
-      title: "Reply needs action",
+    { id: id("ntf"), userId: userRows[0].id, title: "Promise date passed",
+      body: `${customerRows[1].name} promised payment and nothing has arrived.`,
+      kind: "warn", href: "/crm/payments", createdAt: at(0, 8, 5) },
+    { id: id("ntf"), userId: userRows[0].id, title: "Reply needs action",
       body: `${customerRows[9].name} says delivery has still not arrived.`,
-      kind: "danger",
-      href: "/crm/whatsapp",
-      createdAt: at(0, 8, 30),
-    },
-    {
-      id: id("ntf"),
-      userId: userRows[0].id,
-      title: "Queue rebuilt",
-      body: "Today's calling queue is ready. Six rows carried over from yesterday.",
-      kind: "info",
-      href: "/crm/queue",
-      read: true,
-      createdAt: at(0, 8, 0),
-    },
-    {
-      id: id("ntf"),
-      userId: userRows[5].id,
-      title: "Complaint ageing",
-      body: "A pricing complaint has been open for 12 days without a decision.",
-      kind: "danger",
-      href: "/crm/complaints",
-      createdAt: at(0, 9, 15),
-    },
+      kind: "danger", href: "/crm/whatsapp", createdAt: at(0, 8, 30) },
+    { id: id("ntf"), userId: managerId, title: "Complaint ageing",
+      body: "A pricing complaint has been open for 14 days without a decision.",
+      kind: "danger", href: "/crm/complaints", createdAt: at(0, 9, 15) },
   ]);
 
-  const counts = {
-    users: userRows.length,
-    customers: customerRows.length,
-    bills: billRows.length,
-    payments: paymentRows.length,
-    interactions: interactionRows.length,
-    orders: orderRows.length,
-    reminders: reminderRows.length,
-    complaints: complaintRows.length,
-    queue: queueRows.length,
-    messages: messageRows.length,
-    templates: templateRows.length,
-  };
+  console.log("\nRunning the engines over the seeded book…");
+  const { recomputeEverything } = await import("../lib/recompute");
+  const counts = await recomputeEverything();
 
   console.log("\nSeeded:");
+  console.log(`  users          ${userRows.length}`);
+  console.log(`  customers      ${customerRows.length}`);
+  console.log(`  orders         ${orderRows.length}`);
+  console.log(`  bills          ${billRows.length}`);
+  console.log(`  payments       ${paymentRows.length}`);
+  console.log(`  calls          ${callRows.length}`);
+  console.log(`  reminders      ${reminderRows.length}`);
+  console.log(`  complaints     ${complaintRows.length}`);
+  console.log(`  messages       ${messageRows.length}`);
+  console.log("\nEngines:");
   for (const [k, v] of Object.entries(counts)) console.log(`  ${k.padEnd(14)} ${v}`);
-  console.log("\nSign in with any of (email or work number):");
+
+  console.log("\nSign in with the email or the work number:");
   for (const u of TEAM) {
-    console.log(
-      `  ${u.email.padEnd(20)} ${u.phone}  ${u.role.padEnd(11)} ${u.apps.join(", ")}`,
-    );
+    console.log(`  ${u.email.padEnd(20)} ${u.phone}  ${u.role.padEnd(11)} ${u.apps.join(", ")}`);
   }
   console.log("\nPassword for every seeded account: mahek1234\n");
 

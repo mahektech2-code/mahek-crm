@@ -1,6 +1,6 @@
 import { isManager, requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
-import { listBills, listPaymentFollowUps } from "@/lib/queries";
+import { getFollowUpWorklist, listBills, agingSummary } from "@/lib/services/payment-service";
 import { PaymentsScreen } from "./payments-screen";
 
 export const metadata = { title: "Payment follow-up — MahekOne CRM" };
@@ -9,11 +9,14 @@ export default async function PaymentsPage() {
   const user = await requireUser();
   const scope = await getScope(user);
 
-  const [rows, bills] = await Promise.all([
-    listPaymentFollowUps(user, scope),
-    listBills(user, scope),
+  const [rows, bills, aging] = await Promise.all([
+    getFollowUpWorklist(),
+    listBills(),
+    agingSummary(),
   ]);
 
+  // Attach each customer's open bills so a payment can be booked against a
+  // specific bill without a second round trip when the modal opens.
   const openBillsByCustomer = new Map<
     string,
     Array<{ id: string; billNo: string; balance: number; dueDate: string }>
@@ -29,20 +32,10 @@ export default async function PaymentsPage() {
     <PaymentsScreen
       scopeLabel={scopeLabel(scope, user)}
       isManager={isManager(user)}
+      aging={aging}
       rows={rows.map((r) => ({
-        customerId: r.customer.id,
-        name: r.customer.name,
-        slowPayer: r.customer.slowPayer,
-        ownerName: r.ownerName,
-        outstanding: r.outstanding,
-        billsOverdue: r.billsOverdue,
-        oldestDays: r.oldestDays,
-        lastFollowUp: r.lastFollowUp,
-        stage: r.stage,
-        nextAction: r.nextAction,
-        promiseAmount: r.promiseAmount,
-        promiseBy: r.promiseBy,
-        openBills: openBillsByCustomer.get(r.customer.id) ?? [],
+        ...r,
+        openBills: openBillsByCustomer.get(r.customerId) ?? [],
       }))}
     />
   );

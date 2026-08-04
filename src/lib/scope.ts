@@ -14,16 +14,27 @@ const DENSITY_COOKIE = "mahekone_density";
  */
 export async function getScope(user: User): Promise<Scope> {
   if (!isManager(user)) return "mine";
-  const jar = await cookies();
-  const chosen = jar.get(SCOPE_COOKIE)?.value;
-  // Managers carry few accounts of their own, so the team is the useful default.
-  if (chosen === "mine") return "mine";
-  return "team";
+  // Managers carry few accounts of their own, so the team is the useful
+  // default — including outside a request, where there is no cookie to read.
+  const chosen = await readCookie(SCOPE_COOKIE);
+  return chosen === "mine" ? "mine" : "team";
 }
 
 export async function getDensity(): Promise<"comfortable" | "compact"> {
-  const jar = await cookies();
-  return jar.get(DENSITY_COOKIE)?.value === "compact" ? "compact" : "comfortable";
+  return (await readCookie(DENSITY_COOKIE)) === "compact" ? "compact" : "comfortable";
+}
+
+/**
+ * These two cookies are display preferences, not permissions — nothing here can
+ * widen what a user may read. Outside a request (jobs, scripts, tests) there is
+ * no jar, and falling back to the default is correct rather than fatal.
+ */
+async function readCookie(name: string): Promise<string | undefined> {
+  try {
+    return (await cookies()).get(name)?.value;
+  } catch {
+    return undefined;
+  }
 }
 
 export function scopeLabel(scope: Scope, user: User): string {

@@ -66,6 +66,10 @@ export const NAV: NavGroup[] = [
   },
   {
     label: "Support",
-    items: [{ href: at("/help"), label: "Help Center", icon: "book" }],
+    items: [
+      { href: at("/help"), label: "Help Center", icon: "book" },
+      // Managers only, but the page explains itself rather than 403-ing.
+      { href: at("/settings"), label: "Configuration", icon: "settings" },
+    ],
   },
 ];

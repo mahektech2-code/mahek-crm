@@ -10,7 +10,7 @@ export default async function CustomersPage() {
   const scope = await getScope(user);
 
   const [rows, team] = await Promise.all([
-    listCustomers(user, scope),
+    listCustomers(),
     listTeam(),
   ]);
 
@@ -29,7 +29,7 @@ export default async function CustomersPage() {
         ownerName: c.ownerName,
         status: c.status,
         lastOrderDate: c.lastOrderDate,
-        lastContactAt: c.lastContactAt ? c.lastContactAt.toISOString() : null,
+        lastContactAt: c.lastContactDate,
         outstanding: c.outstanding,
         slowPayer: c.slowPayer,
         openComplaints: c.openComplaints,

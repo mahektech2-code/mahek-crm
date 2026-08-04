@@ -4,8 +4,13 @@ import { z } from "zod";
 import { db } from "@/db";
 import { bills, customers } from "@/db/schema";
 import { isManager, requireUser } from "@/lib/auth";
-import { audit, fail, newId, ok, recomputeOutstanding, type ActionResult } from "./core";
-import { today } from "@/lib/format";
+import { randomUUID } from "node:crypto";
+import { auditLog } from "@/db/schema";
+import { recomputeOutstanding } from "@/lib/recompute";
+import { err as fail, ok, type Result as ActionResult } from "@/lib/result";
+import { today } from "@/lib/recompute";
+
+const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
 /* ---------------------------------------------------------------------------
  * CSV import — how real Mahek data gets in.
@@ -92,24 +97,24 @@ export async function importCustomers(
       const id = newId("cus");
       await db
         .insert(customers)
-        .values({ ...values, id, status: "New", customerSince: today() });
+        .values({ ...values, id, status: "active", cycleIsDefault: true, customerSince: await today() });
       byPhone.set(d.phone, id);
       summary.created += 1;
     }
   }
 
-  await audit(
-    user,
-    "import",
-    "customer",
-    null,
-    `${summary.created} created, ${summary.updated} updated, ${summary.skipped.length} skipped`,
-  );
+  await db.insert(auditLog).values({
+    id: newId("aud"),
+    actorId: user.id,
+    action: "import.customers",
+    entityType: "customer",
+    afterState: summary as never,
+  });
 
   return ok(
+    summary,
     `${summary.created} created, ${summary.updated} updated` +
       (summary.skipped.length ? `, ${summary.skipped.length} skipped` : ""),
-    summary,
   );
 }
 
@@ -173,7 +178,7 @@ export async function importBills(
       billDate: d.billDate,
       dueDate: d.dueDate,
       amount: Math.round(d.amount * 100),
-      paid: Math.round(d.paid * 100),
+      paidAmount: Math.round(d.paid * 100),
     };
 
     const found = byNo.get(d.billNo);
@@ -191,18 +196,18 @@ export async function importBills(
 
   for (const customerId of touched) await recomputeOutstanding(customerId);
 
-  await audit(
-    user,
-    "import",
-    "bill",
-    null,
-    `${summary.created} created, ${summary.updated} updated, ${summary.skipped.length} skipped`,
-  );
+  await db.insert(auditLog).values({
+    id: newId("aud"),
+    actorId: user.id,
+    action: "import.bills",
+    entityType: "bill",
+    afterState: summary as never,
+  });
 
   return ok(
+    summary,
     `${summary.created} created, ${summary.updated} updated` +
       (summary.skipped.length ? `, ${summary.skipped.length} skipped` : ""),
-    summary,
   );
 }
 

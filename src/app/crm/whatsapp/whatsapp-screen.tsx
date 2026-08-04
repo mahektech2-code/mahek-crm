@@ -23,12 +23,12 @@ import {
 } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader, Modal, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { Icon } from "@/components/shell/icons";
 import {
   actionReply,
   advanceRun,
   archiveTemplate,
   cancelMessage,
+  markMessageCopied,
   clearRun,
   confirmMessageSent,
   pauseRun,
@@ -82,6 +82,22 @@ type Message = {
   sentByName: string;
   edited: boolean;
   createdAt: string;
+  /** Separate from confirmedSentAt on purpose — copying is not sending. */
+  copiedAt: string | null;
+  confirmedSentAt: string | null;
+};
+
+/** The message lifecycle, in the words a telecaller would use. */
+const STATUS_LABEL: Record<string, string> = {
+  prepared: "ready",
+  copied: "copied — not confirmed",
+  sent_manually: "sent",
+  sending: "sending",
+  sent: "sent",
+  delivered: "delivered",
+  read: "read",
+  failed: "failed",
+  cancelled: "skipped",
 };
 
 type Reply = {
@@ -92,13 +108,31 @@ type Reply = {
   receivedAt: string;
 };
 
+type RunRecipient = {
+  messageId: string;
+  customerName: string;
+  status: string;
+  done: boolean;
+};
+
 type Run = {
   id: string;
   templateId: string | null;
-  recipients: Array<{ customerId: string; state: "pending" | "sent" | "skipped" }>;
-  cursor: number;
   paused: boolean;
   startedAt: string;
+  sent: number;
+  skipped: number;
+  total: number;
+  recipients: RunRecipient[];
+  current: {
+    messageId: string;
+    customerId: string;
+    customerName: string;
+    destination: string;
+    destKind: "personal" | "group";
+    body: string;
+    status: string;
+  } | null;
 };
 
 type Tab = "send" | "run" | "templates" | "log";
@@ -106,7 +140,7 @@ type Tab = "send" | "run" | "templates" | "log";
 export function WhatsappScreen(props: {
   scopeLabel: string;
   isManager: boolean;
-  mode: "manual" | "connected" | "failing";
+  mode: "manual" | "automatic";
   initialCustomerId: string;
   initialTab: Tab;
   customers: Customer[];
@@ -114,11 +148,12 @@ export function WhatsappScreen(props: {
   messages: Message[];
   replies: Reply[];
   run: Run | null;
-  lastRun: { sent: number; skipped: number; minutes: number } | null;
   runElapsedMinutes: number;
   previewTime: string;
   messagesToday: number;
+  unconfirmedCount: number;
   followUpCounts: { stage1: number; slow: number; over60: number };
+  followUpIds: { stage1: string[]; slow: string[]; over60: string[] };
 }) {
   const {
     scopeLabel,
@@ -129,10 +164,11 @@ export function WhatsappScreen(props: {
     messages,
     replies,
     run,
-    lastRun,
     runElapsedMinutes,
     messagesToday,
+    unconfirmedCount,
     followUpCounts,
+    followUpIds,
   } = props;
 
   const router = useRouter();
@@ -143,7 +179,9 @@ export function WhatsappScreen(props: {
   const [groupOpen, setGroupOpen] = React.useState(false);
   const [editingTpl, setEditingTpl] = React.useState<Template | null>(null);
 
-  const unconfirmed = messages.filter((m) => m.status === "Copied");
+  // Copied but never confirmed. Counted from the server's own sweep for
+  // managers; telecallers see their own copies still sitting unconfirmed.
+  const unconfirmed = messages.filter((m) => m.status === "copied");
 
   return (
     <div className="px-6 pt-6 pb-10">
@@ -159,22 +197,14 @@ export function WhatsappScreen(props: {
               <span
                 className={cx(
                   "block h-2 w-2 rounded-full",
-                  mode === "connected"
-                    ? "bg-success"
-                    : mode === "failing"
-                      ? "bg-danger"
-                      : "bg-warn",
+                  mode === "automatic" ? "bg-success" : "bg-warn",
                 )}
               />
               <span className="text-[13px] font-medium text-ink">
-                {mode === "connected"
-                  ? "Connected"
-                  : mode === "failing"
-                    ? "API not responding"
-                    : "Manual sending"}
+                {mode === "automatic" ? "Connected" : "Manual sending"}
               </span>
               <span className="text-[13px] font-normal text-muted">
-                {mode === "connected" ? "sends automatically" : "copy and paste"}
+                {mode === "automatic" ? "sends automatically" : "copy and paste"}
               </span>
             </button>
           </span>
@@ -182,28 +212,16 @@ export function WhatsappScreen(props: {
         subtitle={`${scopeLabel} · every message is logged against the customer record, whichever way it is sent.`}
       />
 
-      {mode === "failing" ? (
-        <Callout tone="danger">
-          <Icon name="alert" size={16} className="flex-none text-danger" />
-          <span className="text-sm text-ink">
-            Automatic sending is unavailable — the API is configured but not responding.
-            The manual flow below is ready to use, so nothing is blocked.
-          </span>
-          <span className="flex-1" />
-          <Button size="sm" variant="secondary" onClick={() => setConnOpen(true)}>
-            Check connection
-          </Button>
-        </Callout>
-      ) : null}
-
       <MetricStrip
         metrics={[
           { label: "Sent today", value: String(messagesToday) },
           {
             label: "Copied, never confirmed",
-            value: String(unconfirmed.length),
-            tone: unconfirmed.length ? "danger" : "ink",
-            sub: unconfirmed.length ? "each one may or may not have been sent" : undefined,
+            value: String(isManager ? unconfirmedCount : unconfirmed.length),
+            tone: (isManager ? unconfirmedCount : unconfirmed.length) ? "danger" : "ink",
+            sub: (isManager ? unconfirmedCount : unconfirmed.length)
+              ? "each one may or may not have been sent"
+              : undefined,
           },
           { label: "Replies to action", value: String(replies.length), tone: replies.length ? "danger" : "ink" },
           { label: "Templates live", value: String(templates.filter((t) => !t.archived).length) },
@@ -234,12 +252,12 @@ export function WhatsappScreen(props: {
       {tab === "run" ? (
         <RunTab
           run={run}
-          lastRun={lastRun}
           elapsedMinutes={runElapsedMinutes}
           previewTime={props.previewTime}
           templates={templates.filter((t) => !t.archived)}
           customers={customers}
           counts={followUpCounts}
+          recipientIds={followUpIds}
         />
       ) : null}
 
@@ -350,7 +368,7 @@ type SendTabProps = {
   customers: Customer[];
   templates: Template[];
   replies: Reply[];
-  mode: "manual" | "connected" | "failing";
+  mode: "manual" | "automatic";
   initialCustomerId: string;
   previewTime: string;
   onOpenGroup: () => void;
@@ -456,11 +474,9 @@ function SendComposer({
           queueMessage({
             customerId: customer.id,
             templateId: template?.id ?? null,
-            templateName: template?.name ?? null,
             body,
             edited,
             destKind: dest,
-            destination: destinationName,
           }),
         );
         if (result.ok && result.data) setPendingId(result.data.id);
@@ -652,7 +668,7 @@ function SendComposer({
           </div>
         </Card>
 
-        {mode === "connected" ? (
+        {mode === "automatic" ? (
           <Card className="p-5">
             <Button
               variant="primary"
@@ -664,11 +680,9 @@ function SendComposer({
                   queueMessage({
                     customerId: customer.id,
                     templateId: template?.id ?? null,
-                    templateName: template?.name ?? null,
                     body,
                     edited,
                     destKind: dest,
-                    destination: destinationName,
                   }),
                 );
                 setBusy(false);
@@ -853,19 +867,20 @@ function Step({
 
 function RunTab({
   run,
-  lastRun,
   elapsedMinutes,
   templates,
   customers,
   counts,
+  recipientIds,
 }: {
   run: Run | null;
-  lastRun: { sent: number; skipped: number; minutes: number } | null;
   elapsedMinutes: number;
   previewTime: string;
   templates: Template[];
   customers: Customer[];
   counts: { stage1: number; slow: number; over60: number };
+  /** Resolved server-side from the same worklist the counts came from. */
+  recipientIds: { stage1: string[]; slow: string[]; over60: string[] };
 }) {
   const router = useRouter();
   const { run: act, push } = useToast();
@@ -873,11 +888,6 @@ function RunTab({
   const [templateId, setTemplateId] = React.useState(templates[0]?.id ?? "");
   const [filterKey, setFilterKey] = React.useState<"stage1" | "slow" | "over60">("stage1");
   const [copied, setCopied] = React.useState(false);
-
-  const byId = React.useMemo(
-    () => new Map(customers.map((c) => [c.id, c])),
-    [customers],
-  );
 
   if (!run) {
     const template = templates.find((t) => t.id === templateId);
@@ -951,19 +961,19 @@ function RunTab({
             className="mt-2 w-full"
             disabled={!templateId}
             onClick={async () => {
-              const result = await act(startRun({ templateId, filterKey }));
+              const result = await act(
+                startRun({
+                  templateId,
+                  customerIds: recipientIds[filterKey],
+                  filterKey,
+                }),
+              );
               if (result.ok) router.refresh();
             }}
           >
             Start the run
           </Button>
 
-          {lastRun ? (
-            <p className="mt-3 text-[13px] text-muted">
-              Last run: {lastRun.sent} sent, {lastRun.skipped} skipped, {lastRun.minutes}{" "}
-              min.
-            </p>
-          ) : null}
         </Card>
 
         <Card>
@@ -988,48 +998,22 @@ function RunTab({
     );
   }
 
-  const sent = run.recipients.filter((r) => r.state === "sent").length;
-  const skipped = run.recipients.filter((r) => r.state === "skipped").length;
-  const total = run.recipients.length;
-  const current = run.recipients[run.cursor];
-  const currentCustomer = current ? byId.get(current.customerId) : null;
-  const template = templates.find((t) => t.id === run.templateId);
-
-  const currentText =
-    template && currentCustomer
-      ? applyMerge(
-          template.body,
-          mergeValues({
-            name: currentCustomer.name,
-            contactPerson: currentCustomer.contactPerson,
-            city: currentCustomer.city,
-            phone: currentCustomer.phone,
-            outstanding: currentCustomer.outstanding,
-            lastOrderDate: currentCustomer.lastOrderDate,
-            lastOrderValue: currentCustomer.lastOrderValue,
-            oldestBillNo: currentCustomer.oldestBillNo,
-            oldestBillDue: currentCustomer.oldestBillDue,
-            ownerName: currentCustomer.ownerName,
-          }),
-        )
-      : "";
-
-  const destinationName = currentCustomer
-    ? (currentCustomer.groupName ?? phoneDisplay(currentCustomer.phone))
-    : "";
-
+  // Every recipient's message record was created up front, so the current
+  // recipient and its rendered body come from the server. A refresh resumes
+  // exactly here — nobody restarts a forty-customer run.
+  const { sent, skipped, total, current } = run;
+  const worked = sent + skipped;
+  const percent = total ? Math.round((worked / total) * 100) : 0;
   const elapsed = elapsedMinutes;
 
   return (
     <div>
       <Card className="mb-4 flex items-center gap-5 px-5 py-3.5">
         <span className="text-lg font-semibold text-ink">
-          {run.cursor} of {total} worked
+          {worked} of {total} worked
         </span>
-        <Progress value={Math.round((run.cursor / total) * 100)} className="max-w-[300px] flex-1" />
-        <span className="text-[13px] font-medium text-body">
-          {Math.round((run.cursor / total) * 100)}%
-        </span>
+        <Progress value={percent} className="max-w-[300px] flex-1" />
+        <span className="text-[13px] font-medium text-body">{percent}%</span>
         <span className="h-5 w-px bg-divider" />
         <span className="text-[13px] text-muted">
           {elapsed} min · {sent} sent · {skipped} skipped
@@ -1063,56 +1047,62 @@ function RunTab({
             Recipients
           </div>
           <div className="max-h-[420px] overflow-y-auto">
-            {run.recipients.map((r, i) => (
-              <div
-                key={r.customerId}
-                className={cx(
-                  "flex items-center justify-between gap-2 border-b border-divider px-3.5 py-2 last:border-0",
-                  i === run.cursor && "bg-brand-soft",
-                )}
-              >
-                <span
+            {run.recipients.map((r) => {
+              const isCurrent = r.messageId === current?.messageId;
+              return (
+                <div
+                  key={r.messageId}
                   className={cx(
-                    "truncate text-[13px]",
-                    i === run.cursor ? "font-medium text-ink" : "text-body",
+                    "flex items-center justify-between gap-2 border-b border-divider px-3.5 py-2 last:border-0",
+                    isCurrent && "bg-brand-soft",
                   )}
                 >
-                  {byId.get(r.customerId)?.name ?? "Unknown"}
-                </span>
-                <span
-                  className={cx(
-                    "flex-none text-[11px]",
-                    r.state === "sent"
-                      ? "text-success"
-                      : r.state === "skipped"
+                  <span
+                    className={cx(
+                      "truncate text-[13px]",
+                      isCurrent ? "font-medium text-ink" : "text-body",
+                    )}
+                  >
+                    {r.customerName}
+                  </span>
+                  <span
+                    className={cx(
+                      "flex-none text-[11px]",
+                      r.status === "cancelled"
                         ? "text-muted"
-                        : i === run.cursor
-                          ? "text-brand"
-                          : "text-line-strong",
-                  )}
-                >
-                  {r.state === "pending" && i === run.cursor ? "current" : r.state}
-                </span>
-              </div>
-            ))}
+                        : r.done
+                          ? "text-success"
+                          : isCurrent
+                            ? "text-brand"
+                            : "text-line-strong",
+                    )}
+                  >
+                    {isCurrent && !r.done ? "current" : STATUS_LABEL[r.status] ?? r.status}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </Card>
 
-        {currentCustomer ? (
+        {current ? (
           <div className="grid min-w-0 grid-cols-[1fr_320px] items-start gap-4">
             <Card>
               <div className="border-b border-divider px-5 py-3.5">
                 <div className="text-lg font-semibold text-ink">
-                  {currentCustomer.name}
+                  {current.customerName}
                 </div>
                 <div className="mt-0.5 text-[13px] text-muted">
-                  Paste into {destinationName} (
-                  {currentCustomer.groupName ? "customer group" : "personal number"})
+                  Paste into{" "}
+                  {current.destKind === "group"
+                    ? current.destination
+                    : phoneDisplay(current.destination)}{" "}
+                  ({current.destKind === "group" ? "customer group" : "personal number"})
                 </div>
               </div>
               <div className="flex justify-end rounded-b-[6px] bg-canvas p-5">
                 <div className="max-w-[340px] rounded-[6px_6px_2px_6px] border border-brand-softer bg-brand-soft px-3 py-2.5">
-                  {currentText.split("\n").map((line, i) => (
+                  {current.body.split("\n").map((line, i) => (
                     <span
                       key={i}
                       className="block min-h-[11px] text-[15px] leading-[22px] whitespace-pre-wrap text-ink"
@@ -1134,20 +1124,11 @@ function RunTab({
                   className="w-full"
                   onClick={async () => {
                     try {
-                      await navigator.clipboard.writeText(currentText);
+                      await navigator.clipboard.writeText(current.body);
                       setCopied(true);
-                      await act(
-                        queueMessage({
-                          customerId: currentCustomer.id,
-                          templateId: template?.id ?? null,
-                          templateName: template?.name ?? null,
-                          body: currentText,
-                          edited: false,
-                          destKind: currentCustomer.groupName ? "group" : "personal",
-                          destination: destinationName,
-                          runId: run.id,
-                        }),
-                      );
+                      // Recorded as copied, not as sent — the system does not
+                      // know it reached anybody until you say so.
+                      await act(markMessageCopied(current.messageId));
                     } catch {
                       push("The browser blocked the clipboard.", "error");
                     }
@@ -1163,9 +1144,9 @@ function RunTab({
                   disabled={!copied}
                   onClick={() =>
                     window.open(
-                      currentCustomer.groupName
+                      current.destKind === "group"
                         ? "https://web.whatsapp.com"
-                        : `https://wa.me/91${currentCustomer.phone.replace(/\D/g, "").slice(-10)}`,
+                        : `https://wa.me/91${current.destination.replace(/\D/g, "").slice(-10)}`,
                       "_blank",
                       "noopener",
                     )
@@ -1180,7 +1161,7 @@ function RunTab({
                   className="w-full"
                   disabled={!copied}
                   onClick={async () => {
-                    await act(advanceRun(run.id, "sent"));
+                    await act(advanceRun(run.id, current.messageId, "sent"));
                     setCopied(false);
                     router.refresh();
                   }}
@@ -1189,7 +1170,7 @@ function RunTab({
                 </Button>
                 <button
                   onClick={async () => {
-                    await act(advanceRun(run.id, "skipped"));
+                    await act(advanceRun(run.id, current.messageId, "skipped"));
                     setCopied(false);
                     router.refresh();
                   }}
@@ -1224,6 +1205,7 @@ function RunTab({
   );
 }
 
+
 /* ---------------------------------------------------------------- log tab */
 
 function LogTab({
@@ -1238,7 +1220,9 @@ function LogTab({
   const [modeFilter, setModeFilter] = React.useState("All modes");
   const [statusFilter, setStatusFilter] = React.useState("All statuses");
 
-  const unconfirmed = messages.filter((m) => m.status === "Copied");
+  // Copied but never confirmed. Counted from the server's own sweep for
+  // managers; telecallers see their own copies still sitting unconfirmed.
+  const unconfirmed = messages.filter((m) => m.status === "copied");
 
   const filtered = messages.filter((m) => {
     const q = query.trim().toLowerCase();
@@ -1326,6 +1310,7 @@ function LogTab({
                   m.edited ? "yes" : "no",
                 ]),
               ),
+              [statusFilter === "All statuses" ? null : statusFilter, query || null],
             );
             push(`Exported ${filtered.length} rows`);
           }}
@@ -1411,10 +1396,10 @@ function LogTab({
 
 type ConnectionProps = {
   open: boolean;
-  mode: "manual" | "connected" | "failing";
+  mode: "manual" | "automatic";
   isManager: boolean;
   onClose: () => void;
-  onSave: (mode: "manual" | "connected" | "failing") => Promise<void>;
+  onSave: (mode: "manual" | "automatic") => Promise<void>;
 };
 
 function ConnectionModal(props: ConnectionProps) {
@@ -1455,8 +1440,7 @@ function ConnectionModalBody({ open, mode, isManager, onClose, onSave }: Connect
         {(
           [
             { key: "manual" as const, label: "Manual", sub: "Copy and paste, confirm afterwards" },
-            { key: "connected" as const, label: "Connected", sub: "Sends automatically via the Business API" },
-            { key: "failing" as const, label: "API not responding", sub: "Simulates the API being down — the manual flow takes over" },
+            { key: "automatic" as const, label: "Connected", sub: "Sends automatically via the Business API" },
           ]
         ).map((o) => (
           <button

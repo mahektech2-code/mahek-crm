@@ -1,0 +1,200 @@
+import type { BusinessDate } from "../business-date";
+import { addDays, daysBetween } from "../business-date";
+import type { Config } from "../config/registry";
+
+/* ---------------------------------------------------------------------------
+ * E3 — Escalation Stage
+ *
+ * How overdue a customer is, and which channel to use next. Grouped by
+ * customer, never by bill: five overdue bills produce one worklist entry.
+ *
+ * Pure. Bills and the last attempt come in; a stage comes out, or nothing —
+ * meaning the customer leaves the collections worklist entirely.
+ * ------------------------------------------------------------------------- */
+
+export type EscalationBill = {
+  id: string;
+  billNo: string;
+  billDate: BusinessDate;
+  /** Null when the bill carries no due date; the default credit period applies. */
+  dueDate: BusinessDate | null;
+  amount: number;
+  paid: number;
+  disputed: boolean;
+};
+
+export type FollowUpAttempt = {
+  channel: "whatsapp" | "call";
+  attemptedAt: BusinessDate;
+};
+
+export type EscalationState = {
+  stage: 1 | 2 | 3;
+  daysOverdue: number;
+  totalOverdue: number;
+  overdueCount: number;
+  /** The bill the stage is measured from. */
+  anchorBillId: string;
+  anchorBillNo: string;
+  anchorDueDate: BusinessDate;
+  nextChannel: "whatsapp" | "call";
+  /** True when a dispute is holding the customer at their current stage. */
+  held: boolean;
+  heldReason: string | null;
+};
+
+export type EscalationConfig = Pick<
+  Config,
+  | "escalation.stage1Days"
+  | "escalation.stage2Days"
+  | "escalation.stage3Days"
+  | "escalation.stageDriver"
+  | "escalation.partialPaymentResetsClock"
+  | "escalation.disputeHoldsEscalation"
+  | "bills.defaultCreditDays"
+>;
+
+/** The stated due date, or the bill date plus the default credit period. */
+export function effectiveDueDate(
+  bill: EscalationBill,
+  config: Pick<Config, "bills.defaultCreditDays">,
+): BusinessDate {
+  return bill.dueDate ?? addDays(bill.billDate, config["bills.defaultCreditDays"]);
+}
+
+export function escalationStage(
+  bills: EscalationBill[],
+  lastAttempt: FollowUpAttempt | null,
+  today: BusinessDate,
+  config: EscalationConfig,
+  /** The stage the customer already sits at, so a dispute can hold it there. */
+  currentStage: 1 | 2 | 3 | null = null,
+): EscalationState | null {
+  const overdue = bills
+    .map((b) => ({ bill: b, due: effectiveDueDate(b, config), balance: b.amount - b.paid }))
+    .filter((x) => x.balance > 0 && x.due < today);
+
+  // Nothing overdue: the customer leaves the worklist. Full payment therefore
+  // removes them immediately, with no separate "close" step.
+  if (!overdue.length) return null;
+
+  const anchor =
+    config["escalation.stageDriver"] === "largest"
+      ? overdue.reduce((a, b) => (b.balance > a.balance ? b : a))
+      : overdue.reduce((a, b) => (b.due < a.due ? b : a));
+
+  // A part payment reduces the balance; whether it also resets the age is a
+  // business decision, not an implementation detail.
+  const ageFrom =
+    config["escalation.partialPaymentResetsClock"] && anchor.bill.paid > 0
+      ? maxDate(anchor.due, today)
+      : anchor.due;
+  const daysOverdue = Math.max(0, daysBetween(ageFrom, today));
+
+  const naturalStage = stageFor(daysOverdue, config);
+
+  const disputed = overdue.some((x) => x.bill.disputed);
+  const holding = disputed && config["escalation.disputeHoldsEscalation"];
+  const stage = holding ? (currentStage ?? naturalStage) : naturalStage;
+
+  return {
+    stage,
+    daysOverdue,
+    totalOverdue: overdue.reduce((sum, x) => sum + x.balance, 0),
+    overdueCount: overdue.length,
+    anchorBillId: anchor.bill.id,
+    anchorBillNo: anchor.bill.billNo,
+    anchorDueDate: anchor.due,
+    nextChannel: prescribeChannel(stage, lastAttempt),
+    held: holding,
+    heldReason: holding ? "An overdue bill is disputed — held at the current stage" : null,
+  };
+}
+
+function stageFor(daysOverdue: number, config: EscalationConfig): 1 | 2 | 3 {
+  if (daysOverdue >= config["escalation.stage3Days"]) return 3;
+  if (daysOverdue >= config["escalation.stage2Days"]) return 2;
+  return 1;
+}
+
+/**
+ * Stage 1 is a WhatsApp-only nudge, stage 3 is a call, and stage 2 alternates
+ * so a customer is not messaged twice running.
+ */
+export function prescribeChannel(
+  stage: 1 | 2 | 3,
+  lastAttempt: FollowUpAttempt | null,
+): "whatsapp" | "call" {
+  if (stage === 1) return "whatsapp";
+  if (stage === 3) return "call";
+  return lastAttempt?.channel === "whatsapp" ? "call" : "whatsapp";
+}
+
+/**
+ * Server-side enforcement of the stage 1 rule. A business rule that exists
+ * only in the interface is not a business rule.
+ */
+export function isAttemptAllowed(
+  stage: 1 | 2 | 3,
+  channel: "whatsapp" | "call",
+): { allowed: true } | { allowed: false; error: string } {
+  if (stage === 1 && channel === "call") {
+    return {
+      allowed: false,
+      error:
+        "Stage 1 is a WhatsApp-only nudge — a call cannot be logged against it. Send the stage 1 message, or wait for the account to reach stage 2.",
+    };
+  }
+  return { allowed: true };
+}
+
+/* ------------------------------------------------------------- slow payer */
+
+export type PaidBill = { dueDate: BusinessDate; paidOn: BusinessDate };
+
+/**
+ * Counts bills paid after their due date within the lookback. Evaluated
+ * nightly; the flag then appears beside the customer name everywhere.
+ */
+export function isSlowPayer(
+  paidBills: PaidBill[],
+  today: BusinessDate,
+  config: Pick<Config, "escalation.slowPayerLookbackMonths" | "escalation.slowPayerLateCount">,
+): { slowPayer: boolean; latePayments: number } {
+  const cutoff = addDays(today, -30 * config["escalation.slowPayerLookbackMonths"]);
+  const late = paidBills.filter(
+    (b) => b.paidOn >= cutoff && b.paidOn > b.dueDate,
+  ).length;
+  return {
+    slowPayer: late >= config["escalation.slowPayerLateCount"],
+    latePayments: late,
+  };
+}
+
+/* ----------------------------------------------------------------- aging */
+
+/**
+ * The bucket label for a balance. Boundaries come from configuration and must
+ * align with the escalation thresholds, or the bills screen and the follow-up
+ * screen will contradict each other about the same account.
+ */
+export function agingBucket(
+  daysOverdue: number,
+  config: Pick<Config, "bills.agingBuckets">,
+): string {
+  const bounds = config["bills.agingBuckets"];
+  if (daysOverdue <= 0) return "Not due";
+  for (let i = bounds.length - 1; i >= 0; i--) {
+    if (daysOverdue > bounds[i]) {
+      const next = bounds[i + 1];
+      return next === undefined
+        ? `${bounds[i]}+ days`
+        : `${bounds[i] + 1}–${next} days`;
+    }
+  }
+  return `0–${bounds[1] ?? 30} days`;
+}
+
+function maxDate(a: BusinessDate, b: BusinessDate): BusinessDate {
+  return a > b ? a : b;
+}

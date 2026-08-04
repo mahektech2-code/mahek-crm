@@ -1,12 +1,7 @@
 import { isManager, requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
-import {
-  dayActivity,
-  listInteractions,
-  listReminders,
-  listTeam,
-  today,
-} from "@/lib/queries";
+import { dayActivity, listInteractions, listTeam, today } from "@/lib/queries";
+import { listReminders } from "@/lib/services/worklist-services";
 import { nowMs } from "@/lib/format";
 import { HistoryScreen } from "./history-screen";
 
@@ -16,12 +11,13 @@ export default async function HistoryPage() {
   const user = await requireUser();
   const scope = await getScope(user);
   const teamView = scope === "team" && isManager(user);
+  const day = await today();
 
   const [rows, team, activity, reminders] = await Promise.all([
-    listInteractions(user, scope),
+    listInteractions(),
     listTeam(),
-    dayActivity(teamView ? null : user.id, today()),
-    listReminders(user, scope),
+    dayActivity(teamView ? null : user.id, day),
+    listReminders(),
   ]);
 
   return (
@@ -42,7 +38,7 @@ export default async function HistoryPage() {
         produced: r.produced,
       }))}
       openCommitments={reminders
-        .filter((r) => r.status === "open")
+        .filter((r) => r.status === "pending")
         .map((r) => ({
           customerId: r.customerId,
           note: r.note,
@@ -50,11 +46,11 @@ export default async function HistoryPage() {
         }))}
       nowMs={nowMs()}
       activity={{
-        attempted: activity.attempted,
-        connected: activity.connected,
-        missed: activity.missed,
+        attempted: activity.callsAttempted,
+        connected: activity.callsConnected,
+        missed: activity.callsMissed,
         connectRate: activity.connectRate,
-        messagesSent: activity.messagesSent,
+        messagesSent: activity.whatsappSent,
       }}
     />
   );

@@ -147,6 +147,11 @@ export function HistoryScreen({
                     r.produced ?? "",
                   ]),
                 ),
+                [
+                  channel === "All channels" ? null : channel,
+                  range,
+                  query || null,
+                ],
               );
               push(`Exported ${filtered.length} rows`);
             }}

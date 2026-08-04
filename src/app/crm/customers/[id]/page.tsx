@@ -1,16 +1,12 @@
 import { notFound } from "next/navigation";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { bills, orders } from "@/db/schema";
+import { orders, payments } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { getScope } from "@/lib/scope";
-import {
-  currentPeriod,
-  customerTimeline,
-  getCustomer,
-  listTargets,
-  today,
-} from "@/lib/queries";
+import { currentPeriod, customerTimeline, getCustomer, today } from "@/lib/queries";
+import { getFollowUpDetail } from "@/lib/services/payment-service";
+import { getConfig } from "@/lib/config/store";
+import { listTargets } from "@/lib/services/worklist-services";
 import { daysBetween } from "@/lib/format";
 import { RecordScreen } from "./record-screen";
 
@@ -30,54 +26,57 @@ export default async function CustomerRecordPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const user = await requireUser();
-  const scope = await getScope(user);
+  await requireUser();
 
   const customer = await getCustomer(id);
   if (!customer) notFound();
 
-  const [timeline, targets, openComplaint, ordersThisMonth, openPromise, oldestBill] =
-    await Promise.all([
-      customerTimeline(id),
-      listTargets(user, scope, currentPeriod()),
-      db.query.complaints.findFirst({
-        where: (c, { and, eq, inArray }) =>
-          and(eq(c.customerId, id), inArray(c.status, ["Open", "In progress"])),
-        orderBy: (c, { asc }) => asc(c.loggedOn),
-      }),
-      db
-        .select({
-          total: sql<number>`coalesce(sum(${orders.value}),0)::bigint`,
-        })
-        .from(orders)
-        .where(
-          and(
-            eq(orders.customerId, id),
-            sql`${orders.placedAt} >= date_trunc('month', current_date)`,
-          ),
-        )
-        .then((r) => Number(r[0]?.total ?? 0)),
-      db.query.promises.findFirst({
-        where: (p, { and, eq, isNull }) => and(eq(p.customerId, id), isNull(p.kept)),
-        orderBy: (p, { desc }) => desc(p.createdAt),
-      }),
-      db.query.bills.findFirst({
-        where: (b, { and, eq, sql: s }) =>
-          and(eq(b.customerId, id), s`${b.amount} > ${b.paid}`),
-        orderBy: (b, { asc }) => asc(b.dueDate),
-      }),
-    ]);
+  const day = await today();
+  const period = await currentPeriod();
+
+  const [config, timeline, targets, followUp, stats] = await Promise.all([
+    getConfig(),
+    customerTimeline(id),
+    listTargets(period),
+    getFollowUpDetail(id),
+    // Order count, month-to-date value and how long they actually take to pay,
+    // in one round trip.
+    db
+      .select({
+        orders6m: sql<number>`(
+          select count(*)::int from ${orders} o
+           where o.customer_id = ${id} and o.status <> 'cancelled'
+             and o.ordered_at >= now() - interval '6 months'
+        )`,
+        thisMonth: sql<number>`coalesce((
+          select sum(o.total_amount) from ${orders} o
+           where o.customer_id = ${id} and o.status <> 'cancelled'
+             and o.ordered_at >= date_trunc('month', current_date)
+        ), 0)`,
+        paysInDays: sql<number>`coalesce((
+          select round(avg(p.paid_at - b.bill_date))::int
+            from ${payments} p join bills b on b.id = p.bill_id
+           where p.customer_id = ${id}
+        ), 0)`,
+      })
+      .from(orders)
+      .where(and(eq(orders.customerId, id)))
+      .limit(1)
+      .then((r) => r[0]),
+  ]);
 
   const target = targets.find((t) => t.customerId === id);
-  const [billStats] = await db
-    .select({
-      count: sql<number>`count(*)::int`,
-      overdue: sql<number>`count(*) filter (where ${bills.amount} > ${bills.paid} and ${bills.dueDate} < current_date)::int`,
-    })
-    .from(bills)
-    .where(eq(bills.customerId, id));
-
   const totalTarget = targets.reduce((a, t) => a + t.target, 0);
+
+  const openComplaint = timeline.find(
+    (t) => t.kind === "Complaint" && !t.meta?.includes("resolved"),
+  );
+
+  // The latest dated promise from the follow-up attempt log.
+  const promise = followUp?.attempts.find((a) => a.promisedDate);
+
+  const bills = followUp?.bills ?? [];
+  const overdue = bills.filter((b) => b.balance > 0 && b.overdueDays > 0);
 
   return (
     <RecordScreen
@@ -94,9 +93,10 @@ export default async function CustomerRecordPage({
         lastOrderDate: customer.lastOrderDate,
         lastOrderValue: customer.lastOrderValue,
         cycleDays: customer.cycleDays,
+        cycleIsDefault: customer.cycleIsDefault,
         avgOrderValue: customer.avgOrderValue,
-        orders6m: customer.orders6m,
-        paysInDays: customer.paysInDays,
+        orders6m: Number(stats?.orders6m ?? 0),
+        paysInDays: Number(stats?.paysInDays ?? 0),
         creditTermDays: customer.creditTermDays,
         gstin: customer.gstin,
         route: customer.route,
@@ -105,11 +105,24 @@ export default async function CustomerRecordPage({
         deactivationReason: customer.deactivationReason,
       }}
       daysSinceOrder={
-        customer.lastOrderDate ? daysBetween(customer.lastOrderDate, today()) : null
+        customer.lastOrderDate ? daysBetween(customer.lastOrderDate, day) : null
+      }
+      // The escalation state, shown where the customer is looked at rather than
+      // only on the collections worklist.
+      followUpStage={
+        followUp?.state
+          ? {
+              stage: followUp.state.stage,
+              daysOverdue: followUp.state.daysOverdue,
+              nextChannel: followUp.state.nextChannel,
+              held: followUp.state.held,
+              heldReason: followUp.state.heldReason,
+            }
+          : null
       }
       target={{
         amount: target?.target ?? 0,
-        achieved: ordersThisMonth,
+        achieved: Number(stats?.thisMonth ?? 0),
         isDefault: target?.isDefault ?? true,
         shareOfBook: totalTarget
           ? Math.round(((target?.target ?? 0) / totalTarget) * 100)
@@ -117,19 +130,23 @@ export default async function CustomerRecordPage({
       }}
       openComplaint={
         openComplaint
-          ? { description: openComplaint.description, category: openComplaint.category }
+          ? {
+              description: openComplaint.content,
+              category: openComplaint.meta?.split(" · ")[0] ?? "Complaint",
+            }
           : null
       }
       openPromise={
-        openPromise
-          ? { amount: openPromise.amount, promisedBy: openPromise.promisedBy }
+        promise?.promisedDate
+          ? { amount: promise.promisedAmount ?? 0, promisedBy: promise.promisedDate }
           : null
       }
       billStats={{
-        total: billStats?.count ?? 0,
-        overdue: billStats?.overdue ?? 0,
-        oldestDueDate: oldestBill?.dueDate ?? null,
+        total: bills.length,
+        overdue: overdue.length,
+        oldestDueDate: overdue[0]?.effectiveDueDate ?? null,
       }}
+      categories={config["complaints.categories"]}
       timeline={timeline.map((t) => ({
         id: t.id,
         kind: t.kind,

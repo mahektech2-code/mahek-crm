@@ -33,8 +33,10 @@ export function EodScreen({
   lines,
   message,
   dueReminders,
+  blockingMessage,
   submittedAt,
   team,
+  teamMessage,
 }: {
   scopeLabel: string;
   day: string;
@@ -42,6 +44,8 @@ export function EodScreen({
   lines: Array<{ k: string; v: string }>;
   message: string;
   dueReminders: Due[];
+  /** The engine's own wording for why the report is blocked. */
+  blockingMessage: string;
   submittedAt: string | null;
   team: Array<{
     name: string;
@@ -52,6 +56,7 @@ export function EodScreen({
     value: number;
     percent: number;
   }>;
+  teamMessage: string | null;
 }) {
   const router = useRouter();
   const { run, push } = useToast();
@@ -121,9 +126,7 @@ export function EodScreen({
       {blocked ? (
         <div className="mb-4 rounded-[4px] border border-warn-line border-l-[3px] border-l-warn bg-warn-soft px-4 py-3">
           <div className="text-sm font-medium text-warn-ink">
-            {dueReminders.length} reminder{dueReminders.length === 1 ? "" : "s"} due today
-            {dueReminders.length === 1 ? " is" : " are"} still open. Close or carry
-            {dueReminders.length === 1 ? " it" : " them"} forward before you submit.
+            {blockingMessage}
           </div>
           <div className="mt-2.5 flex flex-col gap-2">
             {dueReminders.map((d) => (
@@ -187,6 +190,24 @@ export function EodScreen({
             </div>
           ) : (
             <div className="overflow-auto">
+              {teamMessage ? (
+                <div className="flex items-center gap-3 border-b border-divider px-5 py-2.5">
+                  <span className="text-[13px] text-muted">
+                    The same roll-up, formatted for the owners&rsquo; group.
+                  </span>
+                  <span className="flex-1" />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(teamMessage);
+                      push("Team roll-up copied");
+                    }}
+                  >
+                    Copy team roll-up
+                  </Button>
+                </div>
+              ) : null}
               <table>
                 <thead>
                   <tr>

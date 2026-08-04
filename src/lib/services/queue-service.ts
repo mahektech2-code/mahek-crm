@@ -1,0 +1,196 @@
+import "server-only";
+import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { db } from "@/db";
+import { calls, customers, monthlyTargets, orders, reminders } from "@/db/schema";
+import { getConfig } from "../config/store";
+import { resolveScope, scopedUserIds } from "../access-control";
+import { buildQueue, type QueueCandidate, type QueueResult } from "../engines/queue";
+import { today } from "../recompute";
+import { dayBoundaryWindow, monthKey } from "../business-date";
+
+/* ---------------------------------------------------------------------------
+ * E2 wiring.
+ *
+ * The queue is COMPUTED ON REQUEST and never persisted. It changes
+ * continuously as calls are logged through the day, and a stale stored queue
+ * is worse than a slow computed one.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * A queue entry plus the customer detail the row and its call panel need.
+ * Carried through from the candidate scan so opening a panel costs nothing.
+ */
+export type QueueRow = QueueResult["entries"][number] & {
+  contactPerson: string;
+  phone: string;
+  city: string;
+  ownerName: string | null;
+  slowPayer: boolean;
+  lastOrderDate: string | null;
+  lastOrderValue: number;
+  creditTermDays: number;
+  openComplaint: string | null;
+  lastNote: string | null;
+};
+
+export type QueueView = Omit<QueueResult, "entries"> & {
+  entries: QueueRow[];
+  /** Progress figures for the header strip. */
+  progress: { worked: number; total: number; percent: number };
+  scopeLabel: string;
+};
+
+export async function getQueue(): Promise<QueueView> {
+  const config = await getConfig();
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const day = await today();
+  const window = dayBoundaryWindow(day, {
+    timezone: config["workingDay.timezone"],
+    dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+    workingDays: config["workingDay.workingDays"],
+  });
+
+  const ownerFilter = ids ? inArray(customers.ownerId, ids) : undefined;
+
+  // Deactivated customers are never candidates.
+  const rows = await db
+    .select({
+      customer: customers,
+      calledToday: sql<boolean>`exists (
+        select 1 from ${calls} c
+         where c.customer_id = customers.id
+           and c.started_at >= ${window.start}::timestamptz
+           and c.started_at <  ${window.end}::timestamptz
+      )`,
+      ownerName: sql<string | null>`(select name from users u where u.id = customers.owner_id)`,
+      openComplaint: sql<string | null>`(
+        select c.description from complaints c
+         where c.customer_id = customers.id
+           and c.status in ('open','in_progress','awaiting_customer')
+         order by c.created_at desc limit 1
+      )`,
+      lastNote: sql<string | null>`(
+        select c.notes from ${calls} c
+         where c.customer_id = customers.id and c.notes is not null
+         order by c.started_at desc limit 1
+      )`,
+      targetGap: sql<number>`coalesce((
+        select greatest(0, t.target_amount - coalesce((
+          select sum(o.total_amount) from ${orders} o
+           where o.customer_id = customers.id
+             and o.status <> 'cancelled'
+             and extract(year  from o.ordered_at) = t.year
+             and extract(month from o.ordered_at) = t.month
+        ), 0))
+        from ${monthlyTargets} t
+        where t.customer_id = customers.id
+          and t.year = ${Number(monthKey(day).slice(0, 4))}
+          and t.month = ${Number(monthKey(day).slice(5, 7))}
+      ), 0)`,
+    })
+    .from(customers)
+    .where(and(eq(customers.status, "active"), ownerFilter));
+
+  // Pending reminders assigned to whoever is asking, in one query.
+  const reminderRows = await db
+    .select({
+      id: reminders.id,
+      customerId: reminders.customerId,
+      dueDate: reminders.dueDate,
+      note: reminders.note,
+    })
+    .from(reminders)
+    .where(
+      and(
+        eq(reminders.status, "pending"),
+        ids ? inArray(reminders.assignedUserId, ids) : undefined,
+      ),
+    );
+
+  const remindersByCustomer = new Map<string, QueueCandidate["reminders"]>();
+  for (const r of reminderRows) {
+    const list = remindersByCustomer.get(r.customerId) ?? [];
+    list.push({ id: r.id, dueDate: r.dueDate, note: r.note });
+    remindersByCustomer.set(r.customerId, list);
+  }
+
+  // Skips are recorded in the audit log rather than as queue rows — there is
+  // no stored queue to mark. They last for the business day only.
+  const skips = await db.execute<{ entity_id: string; reason: string }>(sql`
+    select distinct on (entity_id) entity_id, after_state->>'reason' as reason
+      from audit_log
+     where action = 'queue.skip'
+       and after_state->>'day' = ${day}
+     order by entity_id, at desc
+  `);
+  const skipReason = new Map(skips.map((s) => [s.entity_id, s.reason]));
+
+  const detail = new Map(rows.map((r) => [r.customer.id, r]));
+
+  const candidates: QueueCandidate[] = rows.map(({ customer: c, calledToday, targetGap }) => ({
+    customerId: c.id,
+    name: c.name,
+    ownerId: c.ownerId,
+    lastOrderDate: c.lastOrderDate,
+    cycleDays: c.cycleDays,
+    cycleIsDefault: c.cycleIsDefault,
+    lastContactDate: c.lastContactDate,
+    createdDate: c.createdAt.toISOString().slice(0, 10),
+    reminders: remindersByCustomer.get(c.id) ?? [],
+    lastConfirmedWhatsappDate: c.lastConfirmedWhatsappDate,
+    activeInOrderSystem: c.activeInOrderSystem,
+    calledToday: Boolean(calledToday),
+    doNotContact: c.doNotContact,
+    skippedTodayReason: skipReason.get(c.id) ?? null,
+    outstanding: c.outstanding,
+    targetGap: Number(targetGap ?? 0),
+  }));
+
+  const result = buildQueue(candidates, day, config);
+
+  // "Worked" is how many of today's candidates have already been called —
+  // derived from the calls table, not from a stored queue row.
+  const worked = candidates.filter((c) => c.calledToday).length;
+  const total = result.totalQualified + worked;
+
+  // Re-attach the customer detail the screen and call panel need. The scan
+  // already read these rows, so this costs nothing extra.
+  const entries: QueueRow[] = result.entries.map((e) => {
+    const row = detail.get(e.customerId)!;
+    const c = row.customer;
+    return {
+      ...e,
+      contactPerson: c.contactPerson,
+      phone: c.phone,
+      city: c.city,
+      ownerName: row.ownerName,
+      slowPayer: c.slowPayer,
+      lastOrderDate: c.lastOrderDate,
+      lastOrderValue: c.lastOrderValue,
+      creditTermDays: c.creditTermDays,
+      openComplaint: row.openComplaint,
+      lastNote: row.lastNote,
+    };
+  });
+
+  return {
+    ...result,
+    entries,
+    progress: {
+      worked,
+      total,
+      percent: total ? Math.round((worked / total) * 100) : 0,
+    },
+    scopeLabel:
+      ctx.scope.kind === "own" ? `${ctx.user.name}'s book` : "Whole team",
+  };
+}
+
+/** Everything the call panel needs for one queue customer. */
+export async function getQueueCustomer(customerId: string) {
+  const [row] = await db.select().from(customers).where(eq(customers.id, customerId));
+  return row ?? null;
+}
+
+export { gte, lte };

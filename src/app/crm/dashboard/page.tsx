@@ -3,15 +3,12 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { isManager, requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
-import {
-  currentPeriod,
-  dayActivity,
-  listInactive,
-  listPaymentFollowUps,
-  listTargets,
-  teamDay,
-  today,
-} from "@/lib/queries";
+import { currentPeriod, dayActivity, teamDay, today } from "@/lib/queries";
+import { getQueue } from "@/lib/services/queue-service";
+import { getFollowUpWorklist } from "@/lib/services/payment-service";
+import { listInactiveWatch, listTargets } from "@/lib/services/worklist-services";
+import { getConfig } from "@/lib/config/store";
+import { isWorkingDay } from "@/lib/business-date";
 import { money, moneyShort, pct } from "@/lib/format";
 import {
   Card,
@@ -34,16 +31,19 @@ export default async function DashboardPage() {
   const scope = await getScope(user);
   const manager = isManager(user);
   const teamView = manager && scope === "team";
-  const day = today();
+  const day = await today();
+  const period = await currentPeriod();
+  const config = await getConfig();
 
   // One wave, not three. Each of these is a round trip to a database in another
   // continent, so waiting on them in sequence shows up directly as page load.
-  const [activity, followUps, inactive, targets, counts, team, over60] =
+  const [activity, queue, followUps, inactive, targets, counts, team, over60] =
     await Promise.all([
       dayActivity(teamView ? null : user.id, day),
-      listPaymentFollowUps(user, scope),
-      listInactive(user, scope),
-      listTargets(user, scope),
+      getQueue(),
+      getFollowUpWorklist(),
+      listInactiveWatch(),
+      listTargets(period),
       dashboardCounts(teamView ? null : user.id, day),
       teamView ? teamDay(day) : Promise.resolve([]),
       teamView ? overSixtyDays() : Promise.resolve(0),
@@ -78,7 +78,7 @@ export default async function DashboardPage() {
     {
       href: "/crm/payments",
       title: "Payment follow-ups open",
-      sub: `${money(followUps.reduce((a, f) => a + f.outstanding, 0))} collectable`,
+      sub: `${money(followUps.reduce((a, f) => a + f.totalOverdue, 0))} collectable`,
       count: followUps.length,
       tone: "warn",
     },
@@ -100,7 +100,7 @@ export default async function DashboardPage() {
       href: "/crm/queue",
       title: "Queue still to work",
       sub: "Worked top to bottom, most urgent first",
-      count: Math.max(0, activity.queueTotal - activity.queueWorked),
+      count: queue.entries.length,
       tone: "brand",
     },
   ] as const;
@@ -126,8 +126,8 @@ export default async function DashboardPage() {
       />
 
       <DayStages
-        worked={activity.queueWorked}
-        total={activity.queueTotal}
+        worked={queue.progress.worked}
+        total={queue.progress.total}
         dueReminders={dueReminders}
         followUps={followUps.length}
         complaints={openComplaints}
@@ -138,7 +138,7 @@ export default async function DashboardPage() {
           activity={activity}
           overdueReminders={overdueReminders}
           openComplaints={openComplaints}
-          outstanding={followUps.reduce((a, f) => a + f.outstanding, 0)}
+          outstanding={followUps.reduce((a, f) => a + f.totalOverdue, 0)}
           targetPct={targetPct}
           rows={team}
           over60={over60}
@@ -149,33 +149,33 @@ export default async function DashboardPage() {
             <StatCard
               href="/crm/queue"
               label="Calling progress"
-              value={`${activity.queueWorked}`}
-              suffix={`/${activity.queueTotal}`}
-              foot={`${Math.max(0, activity.queueTotal - activity.queueWorked)} still to work`}
-              progress={pct(activity.queueWorked, activity.queueTotal)}
+              value={`${queue.progress.worked}`}
+              suffix={`/${queue.progress.total}`}
+              foot={`${queue.entries.length} still to work`}
+              progress={queue.progress.percent}
             />
             <StatCard
               href="/crm/history"
               label="Calls connected"
-              value={String(activity.connected)}
-              foot={`of ${activity.attempted} attempted`}
+              value={String(activity.callsConnected)}
+              foot={`of ${activity.callsAttempted} attempted`}
               foot2={`${activity.connectRate}% connect rate`}
             />
             <StatCard
               href="/crm/history"
               label="Orders taken"
-              value={String(activity.orders)}
-              foot={`${money(activity.orderValue)} booked today`}
+              value={String(activity.ordersCount)}
+              foot={`${money(activity.ordersValue)} booked today`}
               foot2={
-                activity.orders
-                  ? `${money(Math.round(activity.orderValue / activity.orders))} average`
+                activity.ordersCount
+                  ? `${money(Math.round(activity.ordersValue / activity.ordersCount))} average`
                   : "No orders yet today"
               }
             />
             <StatCard
               href="/crm/history"
               label="Missed calls"
-              value={String(activity.missed)}
+              value={String(activity.callsMissed)}
               tone="danger"
               foot="Not reachable — retry after 4 pm"
               foot2="fewer is better"
@@ -239,7 +239,7 @@ export default async function DashboardPage() {
 
             <div className="flex flex-col gap-4">
               <Card className="p-5">
-                <SectionLabel>Monthly target — {currentPeriod()}</SectionLabel>
+                <SectionLabel>Monthly target — {period}</SectionLabel>
                 <div className="mt-2 flex items-baseline gap-2">
                   <span className="text-[32px] leading-9 font-semibold text-ink">
                     {money(achieved)}
@@ -256,7 +256,7 @@ export default async function DashboardPage() {
                 </div>
                 <div className="mt-3 flex justify-between text-[13px] text-muted">
                   <span>Gap {money(Math.max(0, targetTotal - achieved))}</span>
-                  <span>{workingDaysLeft()} working days left</span>
+                  <span>{workingDaysLeft(day, config["workingDay.workingDays"])} working days left</span>
                 </div>
                 <Link
                   href="/crm/targets"
@@ -318,7 +318,7 @@ function TeamView({
         <span className="text-xs font-medium tracking-[0.04em] text-warn-ink uppercase">
           Red flags
         </span>
-        <Flag value={activity.missed} label="missed calls today" />
+        <Flag value={activity.callsMissed} label="missed calls today" />
         <Divider />
         <Flag value={overdueReminders} label="reminders overdue" />
         <Divider />
@@ -343,20 +343,20 @@ function TeamView({
         <Card className="p-5">
           <SectionLabel>Team calls today</SectionLabel>
           <div className="mt-2 text-[32px] leading-9 font-semibold text-ink">
-            {activity.attempted}
+            {activity.callsAttempted}
           </div>
           <div className="mt-1.5 text-[13px] text-muted">
-            {activity.connected} connected ·{" "}
-            <span className="text-danger">{activity.missed} missed</span>
+            {activity.callsConnected} connected ·{" "}
+            <span className="text-danger">{activity.callsMissed} missed</span>
           </div>
         </Card>
         <Card className="p-5">
           <SectionLabel>Orders booked</SectionLabel>
           <div className="mt-2 text-[32px] leading-9 font-semibold text-ink">
-            {money(activity.orderValue)}
+            {money(activity.ordersValue)}
           </div>
           <div className="mt-1.5 text-[13px] text-muted">
-            {activity.orders} orders today
+            {activity.ordersCount} orders today
           </div>
         </Card>
         <Card className="p-5">
@@ -401,7 +401,7 @@ function TeamView({
                 <Tr key={r.user.id} className="hover:bg-canvas">
                   <Td className="font-medium text-ink">{r.user.name}</Td>
                   <Td align="right">
-                    {r.activity.queueWorked}/{r.activity.queueTotal}
+                    {r.activity.queueWorked}/{r.activity.queueServed}
                   </Td>
                   <Td
                     align="right"
@@ -409,15 +409,15 @@ function TeamView({
                   >
                     {r.overdueReminders}
                   </Td>
-                  <Td align="right">{r.activity.connected}</Td>
-                  <Td align="right" className={r.activity.missed > 5 ? "text-danger" : ""}>
-                    {r.activity.missed}
+                  <Td align="right">{r.activity.callsConnected}</Td>
+                  <Td align="right" className={r.activity.callsMissed > 5 ? "text-danger" : ""}>
+                    {r.activity.callsMissed}
                   </Td>
-                  <Td align="right">{r.activity.orders}</Td>
+                  <Td align="right">{r.activity.ordersCount}</Td>
                   <Td align="right" className="font-medium text-ink">
-                    {moneyShort(r.activity.orderValue)}
+                    {moneyShort(r.activity.ordersValue)}
                   </Td>
-                  <Td align="right">{moneyShort(r.activity.collected)}</Td>
+                  <Td align="right">{moneyShort(r.activity.paymentsConfirmed)}</Td>
                   <Td>
                     <span className="flex items-center gap-2">
                       <Progress value={r.targetPercent} className="flex-1" />
@@ -431,25 +431,25 @@ function TeamView({
               <tr className="border-t border-line bg-canvas">
                 <Td className="font-semibold text-ink">Team average</Td>
                 <Td align="right" className="font-medium text-ink">
-                  {avg((r) => r.activity.queueWorked)}/{avg((r) => r.activity.queueTotal)}
+                  {avg((r) => r.activity.queueWorked)}/{avg((r) => r.activity.queueServed)}
                 </Td>
                 <Td align="right" className="font-medium text-ink">
                   {avg((r) => r.overdueReminders)}
                 </Td>
                 <Td align="right" className="font-medium text-ink">
-                  {avg((r) => r.activity.connected)}
+                  {avg((r) => r.activity.callsConnected)}
                 </Td>
                 <Td align="right" className="font-medium text-ink">
-                  {avg((r) => r.activity.missed)}
+                  {avg((r) => r.activity.callsMissed)}
                 </Td>
                 <Td align="right" className="font-medium text-ink">
-                  {avg((r) => r.activity.orders)}
+                  {avg((r) => r.activity.ordersCount)}
                 </Td>
                 <Td align="right" className="font-semibold text-ink">
-                  {moneyShort(avg((r) => r.activity.orderValue))}
+                  {moneyShort(avg((r) => r.activity.ordersValue))}
                 </Td>
                 <Td align="right" className="font-medium text-ink">
-                  {moneyShort(avg((r) => r.activity.collected))}
+                  {moneyShort(avg((r) => r.activity.paymentsConfirmed))}
                 </Td>
                 <Td className="text-[13px] text-muted">
                   {avg((r) => r.targetPercent)}% of team target
@@ -535,14 +535,14 @@ async function dashboardCounts(userId: string | null, day: string) {
   }>(sql`
     select
       (select count(*) from reminders r
-        where r.status = 'open' and r.due_date <= ${day}::date
-          and (${userId}::text is null or r.user_id = ${userId}))::int as due,
+        where r.status = 'pending' and r.due_date <= ${day}::date
+          and (${userId}::text is null or r.assigned_user_id = ${userId}))::int as due,
       (select count(*) from reminders r
-        where r.status = 'open' and r.due_date < ${day}::date
-          and (${userId}::text is null or r.user_id = ${userId}))::int as overdue,
+        where r.status = 'pending' and r.due_date < ${day}::date
+          and (${userId}::text is null or r.assigned_user_id = ${userId}))::int as overdue,
       (select count(*) from complaints c
         join customers cu on cu.id = c.customer_id
-        where c.status in ('Open','In progress')
+        where c.status in ('open','in_progress','awaiting_customer')
           and (${userId}::text is null or cu.owner_id = ${userId}))::int as complaints
   `);
   return {
@@ -554,21 +554,26 @@ async function dashboardCounts(userId: string | null, day: string) {
 
 async function overSixtyDays(): Promise<number> {
   const [row] = await db.execute<{ total: string }>(sql`
-    select coalesce(sum(b.amount - b.paid), 0) as total from bills b
-     where b.amount > b.paid and b.due_date < current_date - interval '60 days'
+    select coalesce(sum(b.amount - b.paid_amount), 0) as total from bills b
+     where b.amount > b.paid_amount
+       and b.due_date < current_date - interval '60 days'
   `);
   return Number(row?.total ?? 0);
 }
 
-/** Working days left this month, Monday–Saturday. */
-function workingDaysLeft(): number {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const lastDay = new Date(year, month + 1, 0).getDate();
+/**
+ * Working days left this month, against the configured working week rather
+ * than a hardcoded one — which is the whole point of having it in settings.
+ */
+function workingDaysLeft(day: string, workingDays: number[]): number {
+  const [year, month] = day.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   let count = 0;
-  for (let d = now.getDate(); d <= lastDay; d++) {
-    if (new Date(year, month, d).getDay() !== 0) count++;
+  for (let d = Number(day.slice(8)); d <= lastDay; d++) {
+    const date = `${day.slice(0, 8)}${String(d).padStart(2, "0")}`;
+    if (isWorkingDay(date, { timezone: "Asia/Kolkata", dayBoundaryHour: 5, workingDays })) {
+      count++;
+    }
   }
   return count;
 }

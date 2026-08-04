@@ -123,8 +123,47 @@ data. An explicitly set `DATABASE_URL` takes precedence over `.env.local`.
 | `npm run db:generate` / `db:migrate` | create and apply schema migrations |
 | `npm run db:seed` | reset local demo data |
 | `npm run db:studio` | browse the database |
+| `npm run test` | engine unit tests — pure, no database |
+| `npm run test:db` | (re)create `mahekone_test` from the committed migrations |
+| `npm run test:integration` | the six §11 journeys against a real database |
+| `npm run jobs -- <nightly\|hourly\|day-boundary>` | run a scheduled task by hand |
 | `npm run check:links` | crawl the running app and assert every internal link resolves |
 | `npx eslint src` | lint, including the React Compiler rules |
+
+## Testing
+
+Two layers, and they catch different things.
+
+**`npm run test`** exercises the six derived-state engines. They are pure
+functions — configuration and the business date go in, a result comes out — so
+these run in under a second with no database at all. This is where the rules
+themselves are pinned down: what suppresses a customer from the queue, when a
+payment escalates, how a buying cycle is derived.
+
+**`npm run test:integration`** runs the real services against a real database:
+scope resolution, capability checks, recompute paths, the lot. It proves the
+wiring between the engines and the data holds — which unit tests structurally
+cannot, and which is where the bugs actually live. It uses its own database:
+
+```bash
+npm run test:db            # once, and after any schema change
+npm run test:integration
+```
+
+`mahekone_test` is separate from your development database and is truncated
+between tests, so a test run can never touch the data you are looking at. The
+runner refuses to start against any database whose name is not `mahekone_test`.
+
+## Configuration, not constants
+
+Every business threshold — queue intervals, escalation timing, ageing buckets,
+the working week, the 5am day boundary — is a stored setting, not a number in
+the code. A manager changes them at **Configuration** in the sidebar; the change
+takes effect on the next read, with no restart and no redeploy, and is recorded
+against their name.
+
+The shipped defaults are placeholders. Every one of them is expected to be
+tuned against real Mahek data during migration.
 
 ## Before you push
 

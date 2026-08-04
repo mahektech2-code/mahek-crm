@@ -25,8 +25,6 @@ import { useToast } from "@/components/ui/toast";
 import { recordPayment } from "@/lib/actions/crm";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import {
-  AGING_BUCKETS,
-  BUCKET_COLOURS,
   ageLabel,
   money,
   shortDate,
@@ -45,8 +43,18 @@ type Row = {
   balance: number;
   overdueDays: number;
   bucket: string;
-  status: "Unpaid" | "Partly paid" | "Paid";
+  status: "unpaid" | "partially_paid" | "paid";
+  disputed: boolean;
 };
+
+const STATUS_LABEL: Record<Row["status"], string> = {
+  unpaid: "Unpaid",
+  partially_paid: "Partly paid",
+  paid: "Paid",
+};
+
+/** Buckets are configurable, so colour by position rather than by label. */
+const BUCKET_RAMP = ["#6835FB", "#B77B08", "#D97706", "#B3261E", "#7F1D1D"];
 
 type SortKey =
   | "billNo"
@@ -73,11 +81,13 @@ export function BillsScreen({
   scopeLabel,
   isManager,
   rows,
+  aging,
   customerFilter,
 }: {
   scopeLabel: string;
   isManager: boolean;
   rows: Row[];
+  aging: { total: number; buckets: Array<{ label: string; amount: number }> };
   customerFilter: { id: string; name: string } | null;
 }) {
   const router = useRouter();
@@ -108,7 +118,9 @@ export function BillsScreen({
   }, [scoped, status, bucket, sort]);
 
   const outstanding = scoped.reduce((a, r) => a + r.balance, 0);
-  const buckets = AGING_BUCKETS.map((label) => ({
+  // Bucket labels come from configuration via the server; the screen only
+  // re-totals them for whatever is currently filtered in.
+  const buckets = aging.buckets.map(({ label }) => ({
     label,
     amount: scoped
       .filter((r) => r.balance > 0 && r.bucket === label)
@@ -147,9 +159,14 @@ export function BillsScreen({
                     Math.round(r.balance / 100),
                     r.overdueDays,
                     r.bucket,
-                    r.status,
+                    STATUS_LABEL[r.status],
                   ]),
                 ),
+                [
+                  status === "All" ? null : STATUS_LABEL[status as Row["status"]],
+                  bucket === "All" ? null : bucket,
+                  customerFilter?.name ?? null,
+                ],
               );
               push(`Exported ${filtered.length} rows`);
             }}
@@ -165,9 +182,9 @@ export function BillsScreen({
           { label: "Outstanding", value: money(outstanding), tone: outstanding ? "danger" : "ink" },
           { label: "Overdue bills", value: String(overdueCount), tone: overdueCount ? "danger" : "ink" },
           {
-            label: "Over 90 days",
-            value: money(buckets[3]?.amount ?? 0),
-            tone: buckets[3]?.amount ? "danger" : "ink",
+            label: `Over ${buckets.at(-1)?.label ?? "90 days"}`,
+            value: money(buckets.at(-1)?.amount ?? 0),
+            tone: buckets.at(-1)?.amount ? "danger" : "ink",
           },
           {
             label: "Collected",
@@ -194,19 +211,19 @@ export function BillsScreen({
           <span className="text-lg font-semibold text-ink">{money(outstanding)}</span>
         </div>
         <div className="flex h-2.5 w-full overflow-hidden rounded-[2px] bg-divider">
-          {buckets.map((b) => (
+          {buckets.map((b, i) => (
             <span
               key={b.label}
               title={`${b.label}: ${money(b.amount)}`}
               style={{
                 width: bucketTotal ? `${(b.amount / bucketTotal) * 100}%` : "0%",
-                background: BUCKET_COLOURS[b.label],
+                background: BUCKET_RAMP[i] ?? BUCKET_RAMP.at(-1),
               }}
             />
           ))}
         </div>
         <div className="mt-2.5 flex gap-6">
-          {buckets.map((b) => (
+          {buckets.map((b, i) => (
             <button
               key={b.label}
               onClick={() => setBucket(bucket === b.label ? "All" : b.label)}
@@ -217,7 +234,7 @@ export function BillsScreen({
             >
               <span
                 className="block h-2 w-2 rounded-full"
-                style={{ background: BUCKET_COLOURS[b.label] }}
+                style={{ background: BUCKET_RAMP[i] ?? BUCKET_RAMP.at(-1) }}
               />
               {b.label}
               <span className="font-medium text-ink">{money(b.amount)}</span>
@@ -232,8 +249,11 @@ export function BillsScreen({
           onChange={(e) => setStatus(e.target.value)}
           className="h-8"
         >
-          {["All", "Unpaid", "Partly paid", "Paid"].map((s) => (
-            <option key={s}>{s}</option>
+          <option value="All">All</option>
+          {(Object.keys(STATUS_LABEL) as Array<Row["status"]>).map((s) => (
+            <option key={s} value={s}>
+              {STATUS_LABEL[s]}
+            </option>
           ))}
         </Select>
         <Select
@@ -242,8 +262,8 @@ export function BillsScreen({
           className="h-8"
         >
           <option>All</option>
-          {AGING_BUCKETS.map((b) => (
-            <option key={b}>{b}</option>
+          {buckets.map((b) => (
+            <option key={b.label}>{b.label}</option>
           ))}
         </Select>
         {status !== "All" || bucket !== "All" ? (
@@ -317,15 +337,20 @@ export function BillsScreen({
                   <Td>
                     <Badge
                       tone={
-                        r.status === "Paid"
+                        r.status === "paid"
                           ? "success"
-                          : r.status === "Partly paid"
+                          : r.status === "partially_paid"
                             ? "warn"
                             : "danger"
                       }
                     >
-                      {r.status}
+                      {STATUS_LABEL[r.status]}
                     </Badge>
+                    {r.disputed ? (
+                      <Badge tone="warn" className="ml-1.5">
+                        Disputed
+                      </Badge>
+                    ) : null}
                   </Td>
                   <Td align="right">
                     <span className="flex justify-end">
