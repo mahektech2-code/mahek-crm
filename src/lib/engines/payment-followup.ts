@@ -1,0 +1,228 @@
+import type { BusinessDate } from "../business-date";
+import { addDays, daysBetween } from "../business-date";
+import type { Config } from "../config/registry";
+
+/* ---------------------------------------------------------------------------
+ * E7 — Payment Follow-up Cadence
+ *
+ * WHEN an overdue customer is contacted, and by which channel. E3 answers how
+ * overdue they are and how hard to push; this answers whether anything is due
+ * from them today.
+ *
+ * The policy in one paragraph: a bill falls due, and for the length of the
+ * quiet window nobody rings — a bill a few days late is usually paperwork,
+ * not refusal. A reminder message goes every few days through that window,
+ * counted from the due date. The day the window closes, calling opens, and
+ * from then on the customer returns to the calling list on their own rest
+ * interval. Messages do not stop when calling starts; the two run alongside.
+ *
+ * Pure. Overdue customers and the business date come in; three lists go out.
+ * Held-back customers are RETURNED, never filtered away — a telecaller must
+ * always be able to find out why somebody they expected is missing.
+ * ------------------------------------------------------------------------- */
+
+export type FollowUpSubject = {
+  customerId: string;
+  name: string;
+  /** The effective due date of the bill anchoring the account — from E3. */
+  anchorDueDate: BusinessDate;
+  totalOverdue: number;
+  overdueBillCount: number;
+
+  /** Last payment reminder actually sent. Null means none since the bill fell due. */
+  lastMessageOn: BusinessDate | null;
+  /** Last payment call logged. Null means none since the bill fell due. */
+  lastCallOn: BusinessDate | null;
+
+  doNotContact: boolean;
+  /** Already spoken to today, on any module. One call a day is the limit. */
+  contactedToday: boolean;
+  /** E3 holds a disputed account at its stage; it also stops the chasing. */
+  held: boolean;
+  heldReason: string | null;
+  /** A live dated promise. Chasing resumes the day after it passes. */
+  promisedDate: BusinessDate | null;
+};
+
+export type FollowUpConfig = Pick<
+  Config,
+  | "escalation.quietCallDays"
+  | "escalation.messageIntervalDays"
+  | "escalation.callIntervalDays"
+>;
+
+/** Where the account sits relative to the quiet window. */
+export type FollowUpPhase = "quiet" | "calling";
+
+export type FollowUpDue = {
+  customerId: string;
+  name: string;
+  phase: FollowUpPhase;
+  daysOverdue: number;
+  totalOverdue: number;
+  overdueBillCount: number;
+  /** Plain language, shown verbatim beside the name. */
+  reason: string;
+  /** Days since the last contact of this channel, or since the due date. */
+  daysSinceLast: number;
+};
+
+export type FollowUpHeldBack = {
+  customerId: string;
+  name: string;
+  channel: "whatsapp" | "call";
+  /** Plain language, for the held-back strip. */
+  reason: string;
+};
+
+export type FollowUpPlan = {
+  /** Customers to call today, oldest debt first. */
+  calls: FollowUpDue[];
+  /** Customers to message today, oldest debt first. */
+  messages: FollowUpDue[];
+  /** Everybody due something who is not being contacted, and why. */
+  heldBack: FollowUpHeldBack[];
+};
+
+/**
+ * The first day a payment call may be made. The quiet window is measured from
+ * the due date, so a 15-day window on a bill due the 1st opens calling on the
+ * 16th.
+ */
+export function callingOpensOn(
+  anchorDueDate: BusinessDate,
+  config: Pick<Config, "escalation.quietCallDays">,
+): BusinessDate {
+  return addDays(anchorDueDate, config["escalation.quietCallDays"] + 1);
+}
+
+/**
+ * The day the next reminder message is due. Counted from the last message
+ * actually sent, or from the due date when none has been — which puts the
+ * first reminder one interval after the bill fell due, not the morning after.
+ */
+export function nextMessageOn(
+  subject: Pick<FollowUpSubject, "anchorDueDate" | "lastMessageOn">,
+  config: Pick<Config, "escalation.messageIntervalDays">,
+): BusinessDate {
+  const from = subject.lastMessageOn ?? subject.anchorDueDate;
+  return addDays(from, config["escalation.messageIntervalDays"]);
+}
+
+/**
+ * The day the customer next appears on the calling list. Never before calling
+ * opens, and never inside the rest interval that follows a logged call.
+ */
+export function nextCallOn(
+  subject: Pick<FollowUpSubject, "anchorDueDate" | "lastCallOn">,
+  config: Pick<Config, "escalation.quietCallDays" | "escalation.callIntervalDays">,
+): BusinessDate {
+  const opens = callingOpensOn(subject.anchorDueDate, config);
+  if (!subject.lastCallOn) return opens;
+  const rested = addDays(subject.lastCallOn, config["escalation.callIntervalDays"]);
+  return rested > opens ? rested : opens;
+}
+
+export function planPaymentFollowUps(
+  subjects: FollowUpSubject[],
+  today: BusinessDate,
+  config: FollowUpConfig,
+): FollowUpPlan {
+  const calls: FollowUpDue[] = [];
+  const messages: FollowUpDue[] = [];
+  const heldBack: FollowUpHeldBack[] = [];
+
+  for (const s of subjects) {
+    const daysOverdue = daysBetween(s.anchorDueDate, today);
+    // Not yet due is not this engine's business. E3 has already dropped these,
+    // but the guard keeps the function honest when called with anything.
+    if (daysOverdue <= 0) continue;
+
+    const phase: FollowUpPhase =
+      daysOverdue > config["escalation.quietCallDays"] ? "calling" : "quiet";
+
+    const messageDue = today >= nextMessageOn(s, config);
+    const callDue = phase === "calling" && today >= nextCallOn(s, config);
+
+    // Whatever stops the chasing stops both channels, and says so once per
+    // channel the customer would otherwise have appeared on.
+    const block = blockingReason(s, today);
+    if (block) {
+      if (messageDue) {
+        heldBack.push({ customerId: s.customerId, name: s.name, channel: "whatsapp", reason: block });
+      }
+      if (callDue) {
+        heldBack.push({ customerId: s.customerId, name: s.name, channel: "call", reason: block });
+      }
+      continue;
+    }
+
+    if (messageDue) {
+      const since = daysBetween(s.lastMessageOn ?? s.anchorDueDate, today);
+      messages.push({
+        customerId: s.customerId,
+        name: s.name,
+        phase,
+        daysOverdue,
+        totalOverdue: s.totalOverdue,
+        overdueBillCount: s.overdueBillCount,
+        daysSinceLast: since,
+        reason: s.lastMessageOn
+          ? `Last reminded ${since} ${since === 1 ? "day" : "days"} ago`
+          : `${daysOverdue} ${daysOverdue === 1 ? "day" : "days"} overdue, not yet reminded`,
+      });
+    }
+
+    if (callDue) {
+      const since = s.lastCallOn ? daysBetween(s.lastCallOn, today) : daysOverdue;
+      calls.push({
+        customerId: s.customerId,
+        name: s.name,
+        phase,
+        daysOverdue,
+        totalOverdue: s.totalOverdue,
+        overdueBillCount: s.overdueBillCount,
+        daysSinceLast: since,
+        reason: s.lastCallOn
+          ? `Last called ${since} ${since === 1 ? "day" : "days"} ago, still unpaid`
+          : `${daysOverdue} days overdue — the quiet window has closed`,
+      });
+    } else {
+      // Not a problem, but the reason somebody expected on the calling list is
+      // not there. Said plainly rather than left to be guessed at.
+      heldBack.push({
+        customerId: s.customerId,
+        name: s.name,
+        channel: "call",
+        reason:
+          phase === "quiet"
+            ? `Only ${daysOverdue} ${daysOverdue === 1 ? "day" : "days"} overdue — messages only until ${callingOpensOn(s.anchorDueDate, config)}`
+            : `Called ${daysBetween(s.lastCallOn!, today)} ${daysBetween(s.lastCallOn!, today) === 1 ? "day" : "days"} ago — due again on ${nextCallOn(s, config)}`,
+      });
+    }
+  }
+
+  const byDebtAge = (a: FollowUpDue, b: FollowUpDue) =>
+    b.daysOverdue - a.daysOverdue || b.totalOverdue - a.totalOverdue;
+
+  return {
+    calls: calls.sort(byDebtAge),
+    messages: messages.sort(byDebtAge),
+    heldBack,
+  };
+}
+
+/**
+ * The reasons nobody is contacted today, in the order they win. Do-not-contact
+ * is absolute; a promise the customer made and has not yet broken is next,
+ * because chasing inside it is what breaks it.
+ */
+function blockingReason(s: FollowUpSubject, today: BusinessDate): string | null {
+  if (s.doNotContact) return "Marked do not contact";
+  if (s.held) return s.heldReason ?? "Held — a bill is disputed";
+  if (s.promisedDate && s.promisedDate >= today) {
+    return `Payment promised by ${s.promisedDate} — not chased until it passes`;
+  }
+  if (s.contactedToday) return "Already contacted today";
+  return null;
+}

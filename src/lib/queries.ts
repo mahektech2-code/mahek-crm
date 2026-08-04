@@ -11,7 +11,7 @@ import {
   orders,
   users,
 } from "@/db/schema";
-import { resolveScope, scopedUserIds } from "./access-control";
+import { ASSIGNED_TO_SQL, resolveScope, scopedUserIds } from "./access-control";
 import { today as businessToday } from "./recompute";
 import { daysBetween, monthKey } from "./business-date";
 import { eodMetricsFor } from "./services/eod-service";
@@ -33,7 +33,9 @@ export async function listTeam() {
   return db
     .select()
     .from(users)
-    .where(and(eq(users.active, true), ids ? inArray(users.id, ids) : undefined))
+    .where(
+      and(eq(users.active, true), ids ? inArray(users.id, ids) : undefined),
+    )
     .orderBy(asc(users.name));
 }
 
@@ -41,6 +43,8 @@ export async function listTeam() {
 
 export type CustomerRow = typeof customers.$inferSelect & {
   ownerName: string | null;
+  salesAmName: string | null;
+  backOfficeAmName: string | null;
   openComplaints: number;
 };
 
@@ -52,6 +56,14 @@ export async function listCustomers(): Promise<CustomerRow[]> {
     .select({
       customer: customers,
       ownerName: users.name,
+      // Subqueries rather than two more joins: three left joins to the same
+      // table on one row is where column aliasing starts going wrong quietly.
+      salesAmName: sql<string | null>`(
+        select name from users u where u.id = customers.sales_am_id
+      )`,
+      backOfficeAmName: sql<string | null>`(
+        select name from users u where u.id = customers.back_office_am_id
+      )`,
       openComplaints: sql<number>`(
         select count(*)::int from ${complaints}
          where complaints.customer_id = customers.id
@@ -60,12 +72,14 @@ export async function listCustomers(): Promise<CustomerRow[]> {
     })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
-    .where(ids ? inArray(customers.ownerId, ids) : undefined)
+    .where(ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined)
     .orderBy(asc(customers.name));
 
   return rows.map((r) => ({
     ...r.customer,
     ownerName: r.ownerName,
+    salesAmName: r.salesAmName,
+    backOfficeAmName: r.backOfficeAmName,
     openComplaints: Number(r.openComplaints),
   }));
 }
@@ -85,7 +99,14 @@ export async function getCustomer(customerId: string) {
 
 export type TimelineEntry = {
   id: string;
-  kind: "Call" | "WhatsApp" | "Order" | "Reminder" | "Complaint" | "Payment" | "Bill";
+  kind:
+    | "Call"
+    | "WhatsApp"
+    | "Order"
+    | "Reminder"
+    | "Complaint"
+    | "Payment"
+    | "Bill";
   at: Date;
   actor: string;
   content: string;
@@ -93,7 +114,9 @@ export type TimelineEntry = {
 };
 
 /** The unified customer timeline, in one round trip. */
-export async function customerTimeline(customerId: string): Promise<TimelineEntry[]> {
+export async function customerTimeline(
+  customerId: string,
+): Promise<TimelineEntry[]> {
   const rows = await db.execute<{
     id: string;
     kind: TimelineEntry["kind"];
@@ -192,7 +215,11 @@ export async function listInteractions(limit = 400): Promise<InteractionRow[]> {
     outcome: c.outcome,
     note: c.notes,
     produced:
-      [c.orderId && "Order", c.reminderId && "Reminder", c.complaintId && "Complaint"]
+      [
+        c.orderId && "Order",
+        c.reminderId && "Reminder",
+        c.complaintId && "Complaint",
+      ]
         .filter(Boolean)
         .join(" · ") || null,
     sourceModule: c.sourceModule,
@@ -206,11 +233,26 @@ export type DayActivity = Awaited<ReturnType<typeof eodMetricsFor>> & {
 };
 
 const ZERO_METRICS = () => ({
-  callsAttempted: 0, callsConnected: 0, callsInbound: 0, callsMissed: 0, ordersWithoutCall: 0,
-  queueServed: 0, queueWorked: 0,
-  ordersCount: 0, ordersValue: 0, followUpsMade: 0, promisesCount: 0, promisesValue: 0,
-  paymentsConfirmed: 0, remindersClosed: 0, remindersCreated: 0, remindersCarriedForward: 0,
-  complaintsLogged: 0, whatsappSent: 0, targetAchieved: 0, targetAmount: 0,
+  callsAttempted: 0,
+  callsConnected: 0,
+  callsInbound: 0,
+  callsMissed: 0,
+  ordersWithoutCall: 0,
+  queueServed: 0,
+  queueWorked: 0,
+  ordersCount: 0,
+  ordersValue: 0,
+  followUpsMade: 0,
+  promisesCount: 0,
+  promisesValue: 0,
+  paymentsConfirmed: 0,
+  remindersClosed: 0,
+  remindersCreated: 0,
+  remindersCarriedForward: 0,
+  complaintsLogged: 0,
+  whatsappSent: 0,
+  targetAchieved: 0,
+  targetAmount: 0,
 });
 
 export async function dayActivity(
@@ -221,13 +263,15 @@ export async function dayActivity(
 
   const metrics = userId
     ? await eodMetricsFor(userId, target)
-    : (await Promise.all((await listTeam()).map((u) => eodMetricsFor(u.id, target)))).reduce(
-        (acc, m) => {
-          for (const k of Object.keys(acc) as Array<keyof typeof acc>) acc[k] += m[k];
-          return acc;
-        },
-        ZERO_METRICS(),
-      );
+    : (
+        await Promise.all(
+          (await listTeam()).map((u) => eodMetricsFor(u.id, target)),
+        )
+      ).reduce((acc, m) => {
+        for (const k of Object.keys(acc) as Array<keyof typeof acc>)
+          acc[k] += m[k];
+        return acc;
+      }, ZERO_METRICS());
 
   return {
     ...metrics,
@@ -294,7 +338,9 @@ export async function listHelpArticles() {
     .where(eq(helpArticles.active, true))
     .orderBy(asc(helpArticles.category), asc(helpArticles.title));
   // Filtered to the caller's role.
-  return rows.filter((a) => a.roles.includes(ctx.role) || a.roles.includes("all"));
+  return rows.filter(
+    (a) => a.roles.includes(ctx.role) || a.roles.includes("all"),
+  );
 }
 
 /* ---------------------------------------------------------------- search */

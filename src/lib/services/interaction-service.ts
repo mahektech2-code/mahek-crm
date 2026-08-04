@@ -28,7 +28,7 @@ import {
   today,
 } from "../recompute";
 import { isAttemptAllowed } from "../engines/escalation";
-import { onOrAfterWorkingDay } from "../business-date";
+import { addDays, onOrAfterWorkingDay } from "../business-date";
 import { err, ok, type Result } from "../result";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -89,6 +89,13 @@ export const saveInteractionSchema = z.object({
   /** Order-received only. User-entered, may be in the past, never the future. */
   orderDate: z.string().optional(),
 
+  /**
+   * The payment term agreed on this order, in days. Offered as a short list of
+   * choices, but any number is accepted — terms get negotiated one customer at
+   * a time. Omitted means the customer's standing term applies.
+   */
+  creditDays: z.coerce.number().int().min(0).max(365).optional(),
+
   sourceModule: z
     .enum([
       "call_queue",
@@ -142,7 +149,7 @@ export async function saveInteraction(
     .from(customers)
     .where(eq(customers.id, input.customerId));
   if (!customer) return err("That customer no longer exists.", "not_found");
-  await assertCustomerInScope(customer.ownerId);
+  await assertCustomerInScope(customer);
 
   /* ------------------------------------------------------------ validation */
 
@@ -310,6 +317,13 @@ export async function saveInteraction(
       orderValue = 0;
       orderId = id("ord");
       const orderedOn = isOrderReceived ? input.orderDate! : day;
+      // The term the telecaller agreed, or the one the customer already has.
+      // Recorded on the order so the bill raised against it inherits a due
+      // date nobody has to remember or retype.
+      const creditDays =
+        input.creditDays ??
+        customer.creditDays ??
+        config["customers.defaultCreditDays"];
       await tx.insert(orders).values({
         id: orderId,
         customerId: customer.id,
@@ -318,6 +332,8 @@ export async function saveInteraction(
         orderedAt: new Date(`${orderedOn}T09:00:00+05:30`),
         totalAmount: orderValue,
         status: "captured",
+        creditDays,
+        paymentDueDate: addDays(orderedOn, creditDays),
       });
       produced.push("order");
       warnings.push(
@@ -458,6 +474,7 @@ export async function saveInteraction(
 
     /* ---------------------------------------------- customer date rollups */
     const set: Partial<typeof customers.$inferInsert> = { updatedAt: now };
+    let converted = false;
     if (updatesLastCall) set.lastCallDate = day;
     if (updatesLastContact) set.lastContactDate = day;
 
@@ -468,8 +485,40 @@ export async function saveInteraction(
       if (!customer.lastOrderDate || orderedOn > customer.lastOrderDate) {
         set.lastOrderDate = orderedOn;
       }
+
+      // A lead becomes a customer the moment it orders. That is the whole
+      // definition of the difference, so it converts here rather than waiting
+      // for somebody to remember to change a dropdown — a lead with orders
+      // against it would keep showing the lead notice and hiding the very
+      // purchase history it had just started building.
+      //
+      // The person who found them becomes the sales account manager. Back
+      // office is deliberately left unassigned: who handles the dispatch and
+      // billing is a decision, not something to guess at on first order.
+      if (customer.kind === "lead") {
+        set.kind = "customer";
+        set.salesAmId = customer.salesAmId ?? customer.ownerId;
+        set.customerSince = orderedOn;
+        converted = true;
+      }
     }
     await tx.update(customers).set(set).where(eq(customers.id, customer.id));
+
+    // Converting a lead changes who the record answers to and what every
+    // screen shows for it. That is worth its own audit line rather than
+    // hiding inside the interaction's.
+    if (converted) {
+      produced.push("converted-to-customer");
+      await tx.insert(auditLog).values({
+        id: id("aud"),
+        actorId: ctx.user.id,
+        action: "customer.convertedFromLead",
+        entityType: "customer",
+        entityId: customer.id,
+        beforeState: { kind: "lead", leadSource: customer.leadSource } as never,
+        afterState: { kind: "customer", salesAmId: set.salesAmId } as never,
+      });
+    }
 
     /* ----------------------------------------------------- quick note use */
     if (input.quickNoteIds.length) {

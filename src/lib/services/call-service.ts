@@ -87,7 +87,7 @@ export async function handoverSummary(customerId: string): Promise<Handover | nu
     .from(customers)
     .where(eq(customers.id, customerId));
   if (!customer) return null;
-  await assertCustomerInScope(customer.ownerId);
+  await assertCustomerInScope(customer);
 
   const history = await customerHistory(customerId, 3);
 

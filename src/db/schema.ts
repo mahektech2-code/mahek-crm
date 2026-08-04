@@ -578,6 +578,18 @@ export const orders = pgTable(
     status: orderStatusEnum("status").notNull().default("captured"),
     callId: text("call_id"),
     lineItems: jsonb("line_items").$type<OrderLine[]>(),
+    /**
+     * The payment term agreed when the order was taken, in days from the bill
+     * date. Null means nobody stated one, and the customer's own term — then
+     * the configured default — applies to the bill instead.
+     */
+    creditDays: integer("credit_days"),
+    /**
+     * What that term means in dates, measured from the order. Derived, and
+     * kept so the telecaller and the customer are looking at the same day
+     * before any bill exists. The bill's own due date supersedes it.
+     */
+    paymentDueDate: date("payment_due_date"),
     expectedDispatch: date("expected_dispatch"),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

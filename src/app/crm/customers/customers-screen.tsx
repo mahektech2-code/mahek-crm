@@ -44,6 +44,10 @@ type Row = {
   city: string;
   ownerId: string | null;
   ownerName: string | null;
+  kind: "lead" | "customer";
+  leadSource: string | null;
+  salesAmName: string | null;
+  backOfficeAmName: string | null;
   status: string;
   lastOrderDate: string | null;
   lastContactAt: string | null;
@@ -99,8 +103,12 @@ export function CustomersScreen({
   }, [rows, query, status, owner]);
 
   const chips = [
-    status !== STATUSES[0] ? { label: `Status: ${status}`, clear: () => setStatus(STATUSES[0]) } : null,
-    owner !== "All owners" ? { label: `Owner: ${owner}`, clear: () => setOwner("All owners") } : null,
+    status !== STATUSES[0]
+      ? { label: `Status: ${status}`, clear: () => setStatus(STATUSES[0]) }
+      : null,
+    owner !== "All owners"
+      ? { label: `Owner: ${owner}`, clear: () => setOwner("All owners") }
+      : null,
     query ? { label: `Search: ${query}`, clear: () => setQuery("") } : null,
   ].filter(Boolean) as Array<{ label: string; clear: () => void }>;
 
@@ -127,13 +135,30 @@ export function CustomersScreen({
     downloadCsv(
       "mahek-customers",
       toCsv(
-        ["Customer", "Contact", "Phone", "City", "Owner", "Status", "Last order", "Outstanding (₹)"],
+        [
+          "Customer",
+          "Contact",
+          "Phone",
+          "City",
+          "Type",
+          "Owner",
+          "Sales AM",
+          "Back office AM",
+          "Lead source",
+          "Status",
+          "Last order",
+          "Outstanding (₹)",
+        ],
         subset.map((r) => [
           r.name,
           r.contactPerson,
           r.phone,
           r.city,
+          r.kind === "lead" ? "Lead" : "Customer",
           r.ownerName ?? "",
+          r.salesAmName ?? "",
+          r.backOfficeAmName ?? "",
+          r.leadSource ?? "",
           r.status,
           r.lastOrderDate ?? "",
           Math.round(r.outstanding / 100),
@@ -162,7 +187,9 @@ export function CustomersScreen({
             <Button
               variant="secondary"
               disabled={!isManager}
-              title={isManager ? "Download as CSV" : "Export is a manager action"}
+              title={
+                isManager ? "Download as CSV" : "Export is a manager action"
+              }
               onClick={() => exportCsv(filtered)}
             >
               Export
@@ -176,7 +203,7 @@ export function CustomersScreen({
               </Link>
             ) : null}
             <Button variant="primary" onClick={() => setAddOpen(true)}>
-              Add customer
+              Add lead
             </Button>
           </>
         }
@@ -184,13 +211,29 @@ export function CustomersScreen({
 
       <MetricStrip
         metrics={[
-          { label: "Customers", value: String(filtered.length), sub: `of ${rows.length} in the book` },
-          { label: "Outstanding", value: money(totalOutstanding), tone: totalOutstanding > 0 ? "danger" : "ink" },
-          { label: "Slow payers", value: String(slow), tone: slow ? "danger" : "ink" },
+          {
+            label: "Customers",
+            value: String(filtered.length),
+            sub: `of ${rows.length} in the book`,
+          },
+          {
+            label: "Outstanding",
+            value: money(totalOutstanding),
+            tone: totalOutstanding > 0 ? "danger" : "ink",
+          },
+          {
+            label: "Slow payers",
+            value: String(slow),
+            tone: slow ? "danger" : "ink",
+          },
           { label: "With open complaints", value: String(withComplaints) },
           {
             label: "Average outstanding",
-            value: money(filtered.length ? Math.round(totalOutstanding / filtered.length) : 0),
+            value: money(
+              filtered.length
+                ? Math.round(totalOutstanding / filtered.length)
+                : 0,
+            ),
           },
         ]}
       />
@@ -275,10 +318,14 @@ export function CustomersScreen({
                     type="checkbox"
                     aria-label="Select all"
                     className="accent-[#6835FB]"
-                    checked={filtered.length > 0 && selected.size === filtered.length}
+                    checked={
+                      filtered.length > 0 && selected.size === filtered.length
+                    }
                     onChange={(e) =>
                       setSelected(
-                        e.target.checked ? new Set(filtered.map((r) => r.id)) : new Set(),
+                        e.target.checked
+                          ? new Set(filtered.map((r) => r.id))
+                          : new Set(),
                       )
                     }
                   />
@@ -286,7 +333,8 @@ export function CustomersScreen({
                 <Th>Customer</Th>
                 <Th>Contact person</Th>
                 <Th>Phone</Th>
-                <Th>Owner</Th>
+                <Th>Type</Th>
+                <Th>Owner / account managers</Th>
                 <Th>Status</Th>
                 <Th>Last order</Th>
                 <Th>Last contact</Th>
@@ -308,7 +356,10 @@ export function CustomersScreen({
                     />
                   </Td>
                   <Td className="font-medium text-ink">
-                    <Link href={`/crm/customers/${r.id}`} className="no-underline hover:underline">
+                    <Link
+                      href={`/crm/customers/${r.id}`}
+                      className="no-underline hover:underline"
+                    >
                       {r.name}
                     </Link>
                     {r.slowPayer ? (
@@ -324,7 +375,26 @@ export function CustomersScreen({
                   </Td>
                   <Td>{r.contactPerson}</Td>
                   <Td>{phoneDisplay(r.phone)}</Td>
-                  <Td>{r.ownerName ?? "—"}</Td>
+                  <Td>
+                    <Badge tone={r.kind === "lead" ? "brand" : "neutral"}>
+                      {r.kind === "lead" ? "Lead" : "Customer"}
+                    </Badge>
+                  </Td>
+                  {/* Two lines, because a customer answers to two people and a
+                      lead to one. Flattening them into a single name would hide
+                      whichever one you did not pick. */}
+                  <Td>
+                    <span className="block text-sm text-body">
+                      {r.kind === "lead"
+                        ? (r.ownerName ?? "Unassigned")
+                        : (r.salesAmName ?? r.ownerName ?? "Unassigned")}
+                    </span>
+                    <span className="block text-xs text-muted">
+                      {r.kind === "lead"
+                        ? (r.leadSource ?? "Source not recorded")
+                        : `Back office: ${r.backOfficeAmName ?? "unassigned"}`}
+                    </span>
+                  </Td>
                   <Td>
                     <Badge
                       tone={
@@ -344,7 +414,9 @@ export function CustomersScreen({
                   <Td>{r.lastContactAt ? stamp(r.lastContactAt) : "—"}</Td>
                   <Td
                     align="right"
-                    className={r.outstanding > 0 ? "font-medium text-danger" : ""}
+                    className={
+                      r.outstanding > 0 ? "font-medium text-danger" : ""
+                    }
                   >
                     {money(r.outstanding)}
                   </Td>
@@ -355,16 +427,22 @@ export function CustomersScreen({
                         items={[
                           {
                             label: "Open record",
-                            onSelect: () => router.push(`/crm/customers/${r.id}`),
+                            onSelect: () =>
+                              router.push(`/crm/customers/${r.id}`),
                           },
-                          { label: "Edit details", onSelect: () => setEditing(r) },
+                          {
+                            label: "Edit details",
+                            onSelect: () => setEditing(r),
+                          },
                           {
                             label: "Send WhatsApp",
-                            onSelect: () => router.push(`/crm/whatsapp?customer=${r.id}`),
+                            onSelect: () =>
+                              router.push(`/crm/whatsapp?customer=${r.id}`),
                           },
                           {
                             label: "See their bills",
-                            onSelect: () => router.push(`/crm/bills?customer=${r.id}`),
+                            onSelect: () =>
+                              router.push(`/crm/bills?customer=${r.id}`),
                           },
                           {
                             label: "Request deactivation",
@@ -395,7 +473,10 @@ export function CustomersScreen({
         )}
       </Card>
 
-      <SelectionBar count={selected.size} onClear={() => setSelected(new Set())}>
+      <SelectionBar
+        count={selected.size}
+        onClear={() => setSelected(new Set())}
+      >
         <Button variant="dark" size="sm" onClick={() => setBulkRemind(true)}>
           Set reminder
         </Button>
@@ -425,7 +506,7 @@ export function CustomersScreen({
 
       <CustomerForm
         open={addOpen}
-        title="Add customer"
+        title="Add lead"
         team={team}
         onClose={() => setAddOpen(false)}
         onSubmit={async (values) => {
@@ -460,7 +541,9 @@ export function CustomersScreen({
         count={selected.size}
         onClose={() => setBulkRemind(false)}
         onSubmit={async (dueDate, note) => {
-          const result = await run(createRemindersBulk([...selected], dueDate, note));
+          const result = await run(
+            createRemindersBulk([...selected], dueDate, note),
+          );
           if (result.ok) {
             setBulkRemind(false);
             setSelected(new Set());
@@ -525,8 +608,10 @@ function CustomerFormBody({
     route: initial?.route ?? "",
   });
 
-  const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-    setValues((v) => ({ ...v, [k]: e.target.value }));
+  const set =
+    (k: string) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+      setValues((v) => ({ ...v, [k]: e.target.value }));
 
   return (
     <Modal
@@ -558,13 +643,25 @@ function CustomerFormBody({
     >
       <div className="grid grid-cols-2 gap-3">
         <Field label="Business name · required" className="col-span-2">
-          <Input value={values.name ?? ""} onChange={set("name")} placeholder="As it appears on the bill" />
+          <Input
+            value={values.name ?? ""}
+            onChange={set("name")}
+            placeholder="As it appears on the bill"
+          />
         </Field>
         <Field label="Contact person · required">
-          <Input value={values.contactPerson ?? ""} onChange={set("contactPerson")} />
+          <Input
+            value={values.contactPerson ?? ""}
+            onChange={set("contactPerson")}
+          />
         </Field>
         <Field label="Telephone · required" hint="10 digits, no country code">
-          <Input value={values.phone ?? ""} onChange={set("phone")} inputMode="numeric" maxLength={10} />
+          <Input
+            value={values.phone ?? ""}
+            onChange={set("phone")}
+            inputMode="numeric"
+            maxLength={10}
+          />
         </Field>
         <Field label="City · required">
           <Input value={values.city ?? ""} onChange={set("city")} />
@@ -585,13 +682,21 @@ function CustomerFormBody({
           <Input value={values.route ?? ""} onChange={set("route")} />
         </Field>
         <Field label="Credit terms (days)">
-          <Input type="number" value={values.creditTermDays ?? ""} onChange={set("creditTermDays")} />
+          <Input
+            type="number"
+            value={values.creditTermDays ?? ""}
+            onChange={set("creditTermDays")}
+          />
         </Field>
         <Field
           label="Buying cycle (days)"
           hint="Twice this without an order puts them on the inactive watch"
         >
-          <Input type="number" value={values.cycleDays ?? ""} onChange={set("cycleDays")} />
+          <Input
+            type="number"
+            value={values.cycleDays ?? ""}
+            onChange={set("cycleDays")}
+          />
         </Field>
       </div>
     </Modal>

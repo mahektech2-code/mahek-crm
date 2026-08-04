@@ -57,6 +57,7 @@ import {
 } from "@/db/schema";
 import {
   getFollowUpWorklist,
+  getPaymentFollowUpPlan,
   recordFollowUpAttempt,
   recordPayment,
 } from "@/lib/services/payment-service";
@@ -1368,6 +1369,54 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     );
   });
 
+  test("a lead becomes a customer the moment it orders", async () => {
+    const lead = await makeCustomer(priya.id, {
+      kind: "lead",
+      leadSource: "Walk-in",
+      salesAmId: null,
+      lastOrderDate: null,
+    });
+    const [product] = await db.select().from(productsTable).limit(1);
+
+    const saved = await saveInteraction({
+      customerId: lead.id,
+      interactionType: "outbound_call",
+      outcome: "order_taken",
+      productQuantities: { [product.id]: 4 },
+      idempotencyKey: randomUUID(),
+    });
+    assert.ok(saved.ok, JSON.stringify(saved));
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, lead.id));
+    assert.equal(
+      after.kind,
+      "customer",
+      "ordering IS the definition of a customer",
+    );
+    assert.equal(
+      after.salesAmId,
+      priya.id,
+      "whoever found them runs the account",
+    );
+    assert.equal(
+      after.backOfficeAmId,
+      null,
+      "back office is a decision, not a guess on first order",
+    );
+
+    // And the Information tab stops hiding the purchase history it just began.
+    const { customerInformation } =
+      await import("@/lib/services/customer-info-service");
+    const info = await customerInformation(lead.id);
+    assert.ok(
+      info?.purchase,
+      "the purchase section appears once they have ordered",
+    );
+  });
+
   test("a lead is scoped by its owner, a customer by its sales account manager", async () => {
     const lead = await makeCustomer(priya.id, {
       kind: "lead",
@@ -1508,5 +1557,213 @@ describe("Cross-cutting rules", () => {
     const held = queue.suppressed.find((s) => s.customerId === customer.id);
     assert.ok(held);
     assert.match(held.reason, /already called today/i);
+  });
+});
+
+/* ------------------------------------- journey: the payment follow-up cycle */
+
+describe("The payment follow-up cycle — term, quiet window, messages, calls", () => {
+  /**
+   * A bill with no due date of its own, so what governs it is the term agreed
+   * when the order was taken.
+   */
+  async function orderedThenBilled(
+    creditDays: number,
+    billedDaysAgo: number,
+    over: Partial<typeof customers.$inferInsert> = {},
+  ) {
+    const customer = await makeCustomer(priya.id, over);
+    await db.insert(orders).values({
+      id: id("ord"),
+      customerId: customer.id,
+      userId: priya.id,
+      orderedAt: new Date(`${addDays(TODAY, -billedDaysAgo)}T06:00:00+05:30`),
+      totalAmount: 1_00_000_00,
+      status: "confirmed",
+      creditDays,
+      paymentDueDate: addDays(TODAY, -billedDaysAgo + creditDays),
+    });
+    await db.insert(bills).values({
+      id: id("bil"),
+      customerId: customer.id,
+      billNo: `MMI/${randomUUID().slice(0, 6)}`,
+      billDate: addDays(TODAY, -billedDaysAgo),
+      dueDate: null,
+      amount: 1_00_000_00,
+      paidAmount: 0,
+    });
+    await recomputeBillStatuses();
+    await recomputeOutstanding(customer.id);
+    await recomputeFollowUpState(customer.id);
+    return customer;
+  }
+
+  test("the bill takes its due date from the term agreed on the order", async () => {
+    // 45 days agreed, billed 50 days ago: five days overdue, not twenty as the
+    // 30-day configured default would have made it.
+    const customer = await orderedThenBilled(45, 50);
+
+    const [state] = await db
+      .select()
+      .from(followUpStates)
+      .where(eq(followUpStates.customerId, customer.id));
+    assert.ok(state, "an overdue bill must put the customer on the worklist");
+    assert.equal(state.daysOverdue, 5);
+    assert.equal(state.oldestOverdueBillDate, addDays(TODAY, -5));
+  });
+
+  test("taking an order records the term, and the panel's default is the customer's own", async () => {
+    const customer = await makeCustomer(priya.id, { creditDays: 15 });
+    const [product] = await db.select().from(productsTable).limit(1);
+
+    const saved = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "order_taken",
+      productQuantities: { [product.id]: 4 },
+      creditDays: 45,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true);
+
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(eq(orders.customerId, customer.id));
+    assert.equal(order.creditDays, 45, "the term the telecaller agreed wins");
+    assert.equal(order.paymentDueDate, addDays(TODAY, 45));
+
+    // Left unstated, the customer's own standing term applies instead.
+    const second = await makeCustomer(priya.id, { creditDays: 15 });
+    await saveInteraction({
+      customerId: second.id,
+      interactionType: "outbound_call",
+      outcome: "order_taken",
+      productQuantities: { [product.id]: 1 },
+      idempotencyKey: randomUUID(),
+    });
+    const [fallback] = await db
+      .select()
+      .from(orders)
+      .where(eq(orders.customerId, second.id));
+    assert.equal(fallback.creditDays, 15);
+  });
+
+  test("inside the quiet window they are messaged, never called", async () => {
+    // Billed 36 days ago on 30-day terms: six days overdue.
+    const customer = await orderedThenBilled(30, 36);
+
+    const plan = await getPaymentFollowUpPlan();
+    assert.ok(
+      plan.messages.some((m) => m.customerId === customer.id),
+      "six days overdue is past the four-day reminder interval",
+    );
+    assert.equal(
+      plan.calls.some((c) => c.customerId === customer.id),
+      false,
+      "nobody is called inside the quiet window",
+    );
+
+    const held = plan.heldBack.find(
+      (h) => h.customerId === customer.id && h.channel === "call",
+    );
+    assert.ok(
+      held,
+      "a customer kept off the calling list must be accounted for",
+    );
+    assert.match(held.reason, /messages only until/);
+  });
+
+  test("the day the quiet window closes, the calling list picks them up", async () => {
+    // Sixteen days overdue: the first calling day.
+    const customer = await orderedThenBilled(30, 46);
+
+    const plan = await getPaymentFollowUpPlan();
+    const due = plan.calls.find((c) => c.customerId === customer.id);
+    assert.ok(due, "day sixteen is the first day a payment call is due");
+    assert.equal(due.daysOverdue, 16);
+    assert.equal(due.phase, "calling");
+
+    // And the call the list offers is one the server will actually accept.
+    const attempt = await recordFollowUpAttempt({
+      customerId: customer.id,
+      channel: "call",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(
+      attempt.ok,
+      true,
+      `the calling list must never offer a call the rules refuse: ${attempt.ok ? "" : attempt.error}`,
+    );
+  });
+
+  test("a logged call rests them, and the rest is visible rather than silent", async () => {
+    const customer = await orderedThenBilled(30, 46);
+    await recordFollowUpAttempt({
+      customerId: customer.id,
+      channel: "call",
+      idempotencyKey: randomUUID(),
+    });
+
+    const plan = await getPaymentFollowUpPlan();
+    assert.equal(
+      plan.calls.some((c) => c.customerId === customer.id),
+      false,
+      "a customer called today does not return to the list today",
+    );
+    assert.ok(
+      plan.heldBack.some(
+        (h) => h.customerId === customer.id && /due again on/.test(h.reason),
+      ),
+    );
+  });
+
+  test("do not contact keeps them off both lists, and says so", async () => {
+    const customer = await orderedThenBilled(30, 46, { doNotContact: true });
+
+    const plan = await getPaymentFollowUpPlan();
+    assert.equal(
+      plan.calls.some((c) => c.customerId === customer.id),
+      false,
+    );
+    assert.equal(
+      plan.messages.some((m) => m.customerId === customer.id),
+      false,
+    );
+    assert.ok(
+      plan.heldBack.some(
+        (h) => h.customerId === customer.id && /do not contact/i.test(h.reason),
+      ),
+    );
+  });
+
+  test("paying the bill takes them off the follow-up entirely", async () => {
+    const customer = await orderedThenBilled(30, 46);
+    const [bill] = await db
+      .select()
+      .from(bills)
+      .where(eq(bills.customerId, customer.id));
+
+    const paid = await recordPayment({
+      billId: bill.id,
+      amount: bill.amount,
+      paidAt: TODAY,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(paid.ok, true);
+
+    const plan = await getPaymentFollowUpPlan();
+    assert.equal(
+      plan.calls.some((c) => c.customerId === customer.id),
+      false,
+    );
+    assert.equal(
+      plan.messages.some((m) => m.customerId === customer.id),
+      false,
+    );
+    assert.equal(
+      plan.heldBack.some((h) => h.customerId === customer.id),
+      false,
+    );
   });
 });

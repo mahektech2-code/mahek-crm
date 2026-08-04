@@ -1,6 +1,11 @@
 import { isManager, requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
-import { getFollowUpWorklist, listBills, agingSummary } from "@/lib/services/payment-service";
+import {
+  getFollowUpWorklist,
+  getPaymentFollowUpPlan,
+  listBills,
+  agingSummary,
+} from "@/lib/services/payment-service";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/queries";
 import { addDays, daysInMonth, isWorkingDay } from "@/lib/business-date";
@@ -12,12 +17,13 @@ export default async function PaymentsPage() {
   const user = await requireUser();
   const scope = await getScope(user);
 
-  const [rows, bills, aging, config, day] = await Promise.all([
+  const [rows, bills, aging, config, day, plan] = await Promise.all([
     getFollowUpWorklist(),
     listBills(),
     agingSummary(),
     getConfig(),
     today(),
+    getPaymentFollowUpPlan(),
   ]);
 
   // Working days, from configuration — a collections push measured in calendar
@@ -55,6 +61,7 @@ export default async function PaymentsPage() {
       isManager={isManager(user)}
       aging={aging}
       workingDaysLeft={workingDaysLeft}
+      plan={plan}
       rows={rows.map((r) => ({
         ...r,
         openBills: openBillsByCustomer.get(r.customerId) ?? [],

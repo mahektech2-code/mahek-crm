@@ -175,6 +175,7 @@ export type CustomerInfo = {
   outstanding: number;
   creditDays: number;
   creditDaysIsDefault: boolean;
+  creditDayOptions: number[];
   recentCalls: Array<{
     id: string;
     at: string;
@@ -333,6 +334,11 @@ function CallPanelForm({
     complaintCategories[0]?.value ?? "other",
   );
   const [orderDate, setOrderDate] = React.useState(today());
+  // Empty means "whatever this customer's standing term is". Left as the
+  // telecaller's own field rather than seeded from the information strip,
+  // which arrives later — state synced to fetched data is the effect the
+  // React Compiler rules exist to prevent.
+  const [creditDays, setCreditDays] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [saved, setSaved] = React.useState<string | null>(null);
@@ -370,6 +376,10 @@ function CallPanelForm({
   const chosen = isOrderReceived || Boolean(outcome);
 
   const needsProducts = isOrderReceived || outcome === "order_taken";
+  // The term actually in force: what was typed, or the customer's standing one.
+  const termDays =
+    creditDays.trim() === "" ? (info?.creditDays ?? null) : Number(creditDays);
+  const termIsValid = termDays !== null && Number.isInteger(termDays) && termDays >= 0;
   const needsFollowUp = outcome === "follow_up";
   const needsPayDate =
     type === "inbound_call" && outcome === "payment_promised";
@@ -463,6 +473,12 @@ function CallPanelForm({
           paymentPromiseDate: showPayDate ? payDate || undefined : undefined,
           complaintCategory: needsCategory ? category : undefined,
           orderDate: isOrderReceived ? orderDate : undefined,
+          // Sent only when the telecaller stated one. Left out, the server
+          // falls back to the customer's own term rather than guessing here.
+          creditDays:
+            needsProducts && creditDays.trim() !== ""
+              ? Number(creditDays)
+              : undefined,
           sourceModule: target.sourceModule ?? "ad_hoc",
           queuePosition: target.queuePosition,
           idempotencyKey: idempotencyKey.current,
@@ -1209,6 +1225,64 @@ function CallPanelForm({
                             value={orderDate}
                             max={today()}
                             onChange={(e) => setOrderDate(e.target.value)}
+                          />
+                        </Field>
+                      ) : null}
+
+                      {needsProducts ? (
+                        <Field
+                          label="Payment term"
+                          hint={
+                            termIsValid
+                              ? `Payment due ${shortDate(addDays(isOrderReceived ? orderDate : today(), termDays))} — ${termDays} days from the bill. Reminders start after that; calls only once the quiet window closes.`
+                              : "Days from the bill date. Leave it alone to use this customer's standing term."
+                          }
+                          error={errors.creditDays ?? null}
+                        >
+                          {/* Most orders take one of the usual terms; the rest
+                              get negotiated one customer at a time, so the box
+                              accepts any number of days. */}
+                          <div className="mb-1.5 flex flex-wrap gap-1.5">
+                            {(info?.creditDayOptions ?? []).map((days) => (
+                              <button
+                                key={days}
+                                type="button"
+                                onClick={() => setCreditDays(String(days))}
+                                className={cx(
+                                  "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+                                  termDays === days
+                                    ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                                    : "border-line bg-surface text-body hover:bg-canvas",
+                                )}
+                              >
+                                {days} days
+                              </button>
+                            ))}
+                            {info && !info.creditDaysIsDefault ? (
+                              <button
+                                type="button"
+                                onClick={() => setCreditDays("")}
+                                className={cx(
+                                  "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+                                  creditDays.trim() === ""
+                                    ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                                    : "border-line bg-surface text-body hover:bg-canvas",
+                                )}
+                              >
+                                Their usual · {info.creditDays} days
+                              </button>
+                            ) : null}
+                          </div>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={365}
+                            inputMode="numeric"
+                            placeholder={
+                              info ? `${info.creditDays} (their usual)` : "Days"
+                            }
+                            value={creditDays}
+                            onChange={(e) => setCreditDays(e.target.value)}
                           />
                         </Field>
                       ) : null}

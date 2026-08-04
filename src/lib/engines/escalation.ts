@@ -16,8 +16,14 @@ export type EscalationBill = {
   id: string;
   billNo: string;
   billDate: BusinessDate;
-  /** Null when the bill carries no due date; the default credit period applies. */
+  /** Null when the bill carries no due date; the credit period applies instead. */
   dueDate: BusinessDate | null;
+  /**
+   * The credit period in force for this bill: the term agreed on the order
+   * that produced it, or the customer's standing term. Null when neither
+   * exists, and the configured default is the last word.
+   */
+  creditDays?: number | null;
   amount: number;
   paid: number;
   disputed: boolean;
@@ -54,12 +60,22 @@ export type EscalationConfig = Pick<
   | "bills.defaultCreditDays"
 >;
 
-/** The stated due date, or the bill date plus the default credit period. */
+/**
+ * The stated due date, or the bill date plus the credit period in force.
+ *
+ * The term is settled when the order is taken, which is where the customer
+ * agreed to it — so an order on 45 days does not quietly become 30 because
+ * nobody typed a due date onto the bill.
+ */
 export function effectiveDueDate(
   bill: EscalationBill,
   config: Pick<Config, "bills.defaultCreditDays">,
 ): BusinessDate {
-  return bill.dueDate ?? addDays(bill.billDate, config["bills.defaultCreditDays"]);
+  if (bill.dueDate) return bill.dueDate;
+  return addDays(
+    bill.billDate,
+    bill.creditDays ?? config["bills.defaultCreditDays"],
+  );
 }
 
 export function escalationStage(

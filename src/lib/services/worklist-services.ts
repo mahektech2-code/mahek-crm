@@ -149,7 +149,7 @@ export async function createReminder(
     .from(customers)
     .where(eq(customers.id, input.customerId));
   if (!customer) return err("That customer no longer exists.", "not_found");
-  await assertCustomerInScope(customer.ownerId);
+  await assertCustomerInScope(customer);
 
   const due = config["reminders.rollForwardOnNonWorkingDays"]
     ? onOrAfterWorkingDay(input.dueDate, {
@@ -501,7 +501,7 @@ export async function recordWatchOutcome(
   const ctx = await resolveScope();
   const [customer] = await db.select().from(customers).where(eq(customers.id, customerId));
   if (!customer) return err("That customer no longer exists.", "not_found");
-  await assertCustomerInScope(customer.ownerId);
+  await assertCustomerInScope(customer);
 
   await db
     .update(inactiveWatchItems)

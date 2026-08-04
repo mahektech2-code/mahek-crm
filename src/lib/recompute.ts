@@ -16,7 +16,13 @@ import {
 import { getConfig } from "./config/store";
 import type { Config } from "./config/registry";
 import { buyingCycle } from "./engines/buying-cycle";
-import { escalationStage, isSlowPayer, type EscalationBill } from "./engines/escalation";
+import {
+  escalationStage,
+  effectiveDueDate,
+  isSlowPayer,
+  type EscalationBill,
+} from "./engines/escalation";
+import { billCreditDaysSql } from "./bill-terms";
 import { evaluateInactivity } from "./engines/inactivity";
 import { resolveTarget } from "./engines/targets";
 import { businessDate, monthKey, addMonths, type BusinessDate } from "./business-date";
@@ -152,12 +158,16 @@ export async function recomputeBillStatuses(): Promise<number> {
 /* ------------------------------------------------------- E3 follow-up state */
 
 async function escalationBillsFor(customerId: string): Promise<EscalationBill[]> {
-  const rows = await db.select().from(bills).where(eq(bills.customerId, customerId));
-  return rows.map((b) => ({
+  const rows = await db
+    .select({ bill: bills, creditDays: billCreditDaysSql })
+    .from(bills)
+    .where(eq(bills.customerId, customerId));
+  return rows.map(({ bill: b, creditDays }) => ({
     id: b.id,
     billNo: b.billNo,
     billDate: b.billDate,
     dueDate: b.dueDate,
+    creditDays: creditDays === null ? null : Number(creditDays),
     amount: b.amount,
     paid: b.paidAmount,
     disputed: b.disputed,
@@ -251,6 +261,7 @@ export async function recomputeSlowPayers(): Promise<number> {
       customerId: bills.customerId,
       dueDate: bills.dueDate,
       billDate: bills.billDate,
+      creditDays: billCreditDaysSql,
       paidAt: payments.paidAt,
     })
     .from(payments)
@@ -258,14 +269,21 @@ export async function recomputeSlowPayers(): Promise<number> {
 
   const byCustomer = new Map<string, Array<{ dueDate: string; paidOn: string }>>();
   for (const r of rows) {
-    const due =
-      r.dueDate ??
-      new Date(
-        new Date(r.billDate).getTime() +
-          config["bills.defaultCreditDays"] * 86_400_000,
-      )
-        .toISOString()
-        .slice(0, 10);
+    // The same fallback chain the worklist uses, or a customer could be a slow
+    // payer on one screen and not on another.
+    const due = effectiveDueDate(
+      {
+        id: "",
+        billNo: "",
+        billDate: r.billDate,
+        dueDate: r.dueDate,
+        creditDays: r.creditDays === null ? null : Number(r.creditDays),
+        amount: 0,
+        paid: 0,
+        disputed: false,
+      },
+      config,
+    );
     (byCustomer.get(r.customerId) ?? byCustomer.set(r.customerId, []).get(r.customerId)!)
       .push({ dueDate: due, paidOn: r.paidAt });
   }

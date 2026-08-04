@@ -26,7 +26,7 @@ import { recordPayment, recordPromise } from "@/lib/actions/crm";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { addDays, ageLabel, money, shortDate, stamp, today } from "@/lib/format";
 
-import type { WorklistRow } from "@/lib/services/payment-service";
+import type { WorklistRow, PaymentFollowUpPlan } from "@/lib/services/payment-service";
 
 type Row = WorklistRow & {
   openBills: Array<{ id: string; billNo: string; balance: number; dueDate: string }>;
@@ -44,7 +44,7 @@ const STAGE_TONE: Record<number, "danger" | "warn" | "brand"> = {
   3: "danger",
 };
 
-type Tab = "all" | "chase" | "promised" | "escalate";
+type Tab = "calls" | "messages" | "all" | "chase" | "promised" | "escalate";
 
 export function PaymentsScreen({
   scopeLabel,
@@ -52,24 +52,41 @@ export function PaymentsScreen({
   rows,
   aging,
   workingDaysLeft,
+  plan,
 }: {
   scopeLabel: string;
   isManager: boolean;
   rows: Row[];
   aging: { total: number; buckets: Array<{ label: string; amount: number }> };
   workingDaysLeft: number;
+  /** Today's cadence, from E7 — who is due a call, a message, or neither. */
+  plan: PaymentFollowUpPlan;
 }) {
   const router = useRouter();
   const { run, push } = useToast();
 
-  const [tab, setTab] = React.useState<Tab>("all");
+  // Opens on the calling list: it is the one list with work on it today.
+  const [tab, setTab] = React.useState<Tab>("calls");
   const [query, setQuery] = React.useState("");
   const [slowOnly, setSlowOnly] = React.useState(false);
   const [monthEnd, setMonthEnd] = React.useState(false);
   const [promising, setPromising] = React.useState<Row | null>(null);
   const [paying, setPaying] = React.useState<Row | null>(null);
+  const [heldOpen, setHeldOpen] = React.useState(false);
+
+  // The engine decides who is due; this only says why, beside the name.
+  const callReason = new Map(plan.calls.map((c) => [c.customerId, c.reason]));
+  const messageReason = new Map(plan.messages.map((m) => [m.customerId, m.reason]));
+  const dueReason = tab === "messages" ? messageReason : callReason;
+  const onCadenceTab = tab === "calls" || tab === "messages";
+  // Held back from the channel being looked at, not from both at once.
+  const heldBack = plan.heldBack.filter((h) =>
+    tab === "messages" ? h.channel === "whatsapp" : h.channel === "call",
+  );
 
   const buckets = {
+    calls: rows.filter((r) => callReason.has(r.customerId)),
+    messages: rows.filter((r) => messageReason.has(r.customerId)),
     all: rows,
     chase: rows.filter((r) => !r.held && !r.promisedDate && r.stage < 3),
     promised: rows.filter((r) => Boolean(r.promisedDate)),
@@ -131,6 +148,17 @@ export function PaymentsScreen({
         metrics={[
           { label: "Collectable", value: money(total), tone: "danger" },
           { label: "Customers", value: String(visible.length) },
+          {
+            label: "To call today",
+            value: String(buckets.calls.length),
+            tone: buckets.calls.length ? "danger" : "ink",
+            sub: buckets.calls.length ? "past the quiet window" : "nobody is due",
+          },
+          {
+            label: "To message today",
+            value: String(buckets.messages.length),
+            sub: buckets.messages.length ? "payment reminders" : undefined,
+          },
           {
             label: "Promises broken",
             value: String(broken),
@@ -219,12 +247,54 @@ export function PaymentsScreen({
         </span>
       </Card>
 
+      {onCadenceTab && heldBack.length ? (
+        <Card className="mb-3">
+          <button
+            onClick={() => setHeldOpen((o) => !o)}
+            className="flex w-full cursor-pointer items-center gap-2 px-4 py-2.5 text-left"
+          >
+            <span className="text-sm text-muted">
+              {heldBack.length} customer{heldBack.length === 1 ? "" : "s"} held
+              back from {tab === "messages" ? "today's messages" : "today's calls"}
+            </span>
+            <span className="flex-1" />
+            <span className="text-[13px] text-muted">
+              Nothing disappears silently — open this if somebody is missing
+            </span>
+          </button>
+          {heldOpen ? (
+            <div className="border-t border-divider py-1 pr-4 pl-10">
+              {heldBack.map((h) => (
+                <div
+                  key={h.customerId}
+                  className="flex items-center gap-3 border-b border-canvas py-1.5 last:border-0"
+                >
+                  <Link
+                    href={`/crm/customers/${h.customerId}`}
+                    className="w-[260px] text-sm text-body no-underline"
+                  >
+                    {h.name}
+                  </Link>
+                  <span className="text-[13px] text-muted">{h.reason}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
+
       <Card className="overflow-hidden rounded-t-none">
         <Tabs
           value={tab}
           onChange={setTab}
           className="px-5"
           tabs={[
+            { key: "calls", label: "Call today", count: buckets.calls.length },
+            {
+              key: "messages",
+              label: "Message today",
+              count: buckets.messages.length,
+            },
             { key: "all", label: "All", count: buckets.all.length },
             { key: "chase", label: "To chase", count: buckets.chase.length },
             { key: "promised", label: "Promised", count: buckets.promised.length },
@@ -263,6 +333,12 @@ export function PaymentsScreen({
                       : ""}
                     {r.heldReason ? ` · ${r.heldReason}` : ""}
                   </div>
+                  {dueReason.get(r.customerId) &&
+                  (tab === "calls" || tab === "messages") ? (
+                    <div className="mt-0.5 text-[13px] text-brand">
+                      {dueReason.get(r.customerId)}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="w-[130px] flex-none text-right">

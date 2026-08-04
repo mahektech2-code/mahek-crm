@@ -22,6 +22,7 @@ import { getConfig } from "../config/store";
 import { recomputeLastContact, today } from "../recompute";
 import { err, ok, okVoid, type Result } from "../result";
 import { effectiveDueDate } from "../engines/escalation";
+import { billCreditDaysSql } from "../bill-terms";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -68,12 +69,13 @@ async function mergeValuesFor(customerId: string): Promise<MergeValues> {
   if (!c) return {};
 
   const billRows = await db
-    .select()
+    .select({ bill: bills, creditDays: billCreditDaysSql })
     .from(bills)
     .where(and(eq(bills.customerId, customerId), sql`${bills.amount} > ${bills.paidAmount}`))
     .orderBy(asc(bills.billDate));
 
-  const oldest = billRows[0];
+  const oldest = billRows[0]?.bill;
+  const oldestCreditDays = billRows[0]?.creditDays ?? null;
   const ownerName = c.ownerId
     ? (
         await db.execute<{ name: string }>(
@@ -95,7 +97,9 @@ async function mergeValuesFor(customerId: string): Promise<MergeValues> {
       ? effectiveDueDate(
           {
             id: oldest.id, billNo: oldest.billNo, billDate: oldest.billDate,
-            dueDate: oldest.dueDate, amount: oldest.amount,
+            dueDate: oldest.dueDate,
+            creditDays: oldestCreditDays === null ? null : Number(oldestCreditDays),
+            amount: oldest.amount,
             paid: oldest.paidAmount, disputed: oldest.disputed,
           },
           config,
@@ -165,7 +169,7 @@ export async function prepareMessage(
     .from(customers)
     .where(eq(customers.id, input.customerId));
   if (!customer) return err("That customer no longer exists.", "not_found");
-  await assertCustomerInScope(customer.ownerId);
+  await assertCustomerInScope(customer);
 
   if (customer.doNotContact) {
     return err(`${customer.name} is marked do not contact.`, "rule_violation");

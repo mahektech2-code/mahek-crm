@@ -140,6 +140,8 @@ export type SaveInteractionActionInput = {
   paymentPromiseDate?: string;
   complaintCategory?: string;
   orderDate?: string;
+  /** The payment term agreed on this order, in days from the bill date. */
+  creditDays?: number;
   sourceModule?:
     | "call_queue"
     | "payment_follow_up"
@@ -169,6 +171,7 @@ export async function saveInteractionAction(
       paymentPromiseDate: raw.paymentPromiseDate,
       complaintCategory: raw.complaintCategory as never,
       orderDate: raw.orderDate,
+      creditDays: raw.creditDays,
       sourceModule: raw.sourceModule ?? "ad_hoc",
       queuePosition: raw.queuePosition,
       idempotencyKey: raw.idempotencyKey ?? randomUUID(),
@@ -464,7 +467,7 @@ export async function updateCustomer(
 
     const [existing] = await db.select().from(customers).where(eq(customers.id, customerId));
     if (!existing) return err("That customer no longer exists.", "not_found");
-    await assertCustomerInScope(existing.ownerId);
+    await assertCustomerInScope(existing);
 
     await db
       .update(customers)

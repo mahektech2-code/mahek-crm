@@ -86,6 +86,8 @@ export type CustomerInformation = {
   creditDays: number;
   /** True when it fell back to the configured default. */
   creditDaysIsDefault: boolean;
+  /** The terms offered when taking an order. Any other number may be typed. */
+  creditDayOptions: number[];
   recentCalls: RecentCall[];
   productHistory: ProductHistoryRow[];
   /** Which system produced the product history, so the screen can say so. */
@@ -109,7 +111,7 @@ export async function customerInformation(
     .from(customers)
     .where(eq(customers.id, customerId));
   if (!customer) return null;
-  await assertCustomerInScope(customer.ownerId);
+  await assertCustomerInScope(customer);
 
   const isLead = customer.kind === "lead";
 
@@ -280,6 +282,8 @@ export async function customerInformation(
     outstanding: customer.outstanding,
     creditDays: customer.creditDays ?? config["customers.defaultCreditDays"],
     creditDaysIsDefault: customer.creditDays === null,
+    /** The terms offered when taking an order. Any other number may be typed. */
+    creditDayOptions: config["bills.creditDayOptions"],
     recentCalls: recent.map((r) => ({
       id: r.id,
       at: r.at.toISOString(),

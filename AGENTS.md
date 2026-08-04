@@ -197,6 +197,22 @@ having already called them today.
 customer past their call day returns to the top of the list every single day
 until they order, which punishes the telecaller for working it.
 
+**A payment term is agreed when the order is taken, and the bill inherits it.**
+The telecaller picks 15, 30, 45 or anything else, and it is stored on the
+order. A bill with no due date of its own resolves one from that term, then
+from the customer's standing term, then from the configured default — so an
+order agreed on 45 days never quietly becomes 30 because nobody typed a date
+onto the bill.
+
+**A late bill is messaged before it is called.** For the quiet window — 15 days
+past the due date — the customer gets a reminder message every four days and no
+call at all, because a bill a few days late is usually paperwork rather than
+refusal. Calls open the day the window closes, and from then the customer rests
+three days after each logged call. Messages do not stop when calling starts.
+The window and the stage-2 threshold are two statements of the same fact, so
+`checkConsistency` refuses to let them drift: if the list offered a call on a
+day `isAttemptAllowed` still called stage 1, saving it would be rejected.
+
 **Suppression is a return value, not a filter.** `buildQueue()` returns held-
 back customers alongside the queue, and the screen shows them. A telecaller
 must always be able to find out why somebody they expected is missing.

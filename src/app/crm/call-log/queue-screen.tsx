@@ -48,7 +48,8 @@ type Row = {
 
 type Suppressed = { customerId: string; name: string; reason: string };
 
-type Filter = "all" | "orders" | "complaints" | "reminders";
+type Filter =
+  "all" | "orders" | "complaints" | "reminders" | "checkins" | "leads";
 
 /** The engine's own reason kinds — nothing here invents a category. */
 const REASON_TONE: Record<string, "danger" | "warn" | "brand" | "neutral"> = {
@@ -63,6 +64,7 @@ const REASON_TONE: Record<string, "danger" | "warn" | "brand" | "neutral"> = {
 
 const REMINDER_KINDS = ["reminderOverdue", "reminderDueToday"];
 const ORDER_KINDS = ["orderOverdueFullCycle", "orderDue", "orderDueSoon"];
+const CHECKIN_KINDS = ["checkInOverdue", "checkInDue"];
 
 export function QueueScreen({
   scopeLabel,
@@ -122,6 +124,10 @@ export function QueueScreen({
         return rows.filter((r) => r.hasComplaint);
       case "reminders":
         return rows.filter((r) => hasAny(r, REMINDER_KINDS));
+      case "checkins":
+        return rows.filter((r) => hasAny(r, CHECKIN_KINDS));
+      case "leads":
+        return rows.filter((r) => r.kind === "lead");
       default:
         return rows;
     }
@@ -269,6 +275,16 @@ export function QueueScreen({
               key: "orders",
               label: "Due to reorder",
               count: rows.filter((r) => hasAny(r, ORDER_KINDS)).length,
+            },
+            {
+              key: "checkins",
+              label: "Check-in due",
+              count: rows.filter((r) => hasAny(r, CHECKIN_KINDS)).length,
+            },
+            {
+              key: "leads",
+              label: "Leads",
+              count: rows.filter((r) => r.kind === "lead").length,
             },
             {
               key: "complaints",

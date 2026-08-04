@@ -22,6 +22,13 @@ import {
   effectiveDueDate,
   type EscalationBill,
 } from "./escalation";
+import {
+  planPaymentFollowUps,
+  callingOpensOn,
+  nextMessageOn,
+  nextCallOn,
+  type FollowUpSubject,
+} from "./payment-followup";
 import { evaluateInactivity, watchAge } from "./inactivity";
 import { resolveTarget, classifyShortfall } from "./targets";
 import { aggregateEod, eodPreflight, formatMoney } from "./eod";
@@ -57,23 +64,26 @@ describe("configuration", () => {
     assert.deepEqual(r, { ok: true, value: 21 });
   });
 
-  test("the shipped defaults carry exactly one known, deliberate conflict", () => {
-    // The requirements give aging buckets as 0/30/60/90 AND state they must
-    // align with the escalation thresholds of 7/21/45. Those two placeholders
-    // contradict each other, which is precisely the open decision raised in
-    // Section 12.4: the bills screen and the follow-up screen would disagree
-    // about how overdue the same account is.
-    //
-    // The conflict is left in place rather than papered over, and asserted
-    // here so it stays visible. Once the business confirms real boundaries,
-    // this test should fail and be replaced with `deepEqual(…, [])`.
-    const problems = checkConsistency(C);
-    assert.equal(
-      problems.length,
-      1,
-      `unexpected extra problems: ${problems.join(" | ")}`,
+  test("the shipped defaults agree with each other", () => {
+    // The aging buckets used to be 0/30/60/90 against escalation thresholds of
+    // 7/21/45, which meant the bills screen and the follow-up screen disagreed
+    // about how overdue the same account was. The payment follow-up policy
+    // settled it: the buckets now trace the quiet window, then calling, then
+    // urgent, and stage 2 is the day the quiet window closes.
+    assert.deepEqual(checkConsistency(C), []);
+  });
+
+  test("catches a quiet window that disagrees with when calling opens", () => {
+    const bad = { ...C, "escalation.quietCallDays": 20 };
+    assert.ok(
+      checkConsistency(bad).some((p) => p.includes("quiet window")),
+      "a 20-day quiet window against stage 2 on day 16 must be reported",
     );
-    assert.match(problems[0], /share no boundary/);
+  });
+
+  test("catches an empty list of payment terms", () => {
+    const bad = { ...C, "bills.creditDayOptions": [] };
+    assert.ok(checkConsistency(bad).some((p) => p.includes("payment term")));
   });
 
   test("aligned boundaries produce no problems at all", () => {
@@ -734,8 +744,11 @@ describe("E3 escalation", () => {
         TODAY,
         C,
       )!.stage;
-    assert.equal(at(20), 1);
-    assert.equal(at(21), 2, "stage 2 begins exactly at its threshold");
+    // Stage 2 begins the day the quiet window closes: the same day the
+    // calling list first offers the customer, and the first day a call may be
+    // logged against them.
+    assert.equal(at(15), 1);
+    assert.equal(at(16), 2, "stage 2 begins exactly at its threshold");
     assert.equal(at(44), 2);
     assert.equal(at(45), 3, "stage 3 begins exactly at its threshold");
   });
@@ -1170,5 +1183,206 @@ describe("E6 EOD aggregator", () => {
       { id: "r", customerName: "X", note: "n", dueDate: TODAY },
     ]) as { message: string };
     assert.match(one.message, /^1 reminder due today is still open/);
+  });
+});
+
+/* =================================================== E7 payment follow-up */
+
+function subject(over: Partial<FollowUpSubject> = {}): FollowUpSubject {
+  return {
+    customerId: "c1",
+    name: "Shree Paints",
+    anchorDueDate: addDays(TODAY, -20),
+    totalOverdue: 250_000,
+    overdueBillCount: 2,
+    lastMessageOn: null,
+    lastCallOn: null,
+    doNotContact: false,
+    contactedToday: false,
+    held: false,
+    heldReason: null,
+    promisedDate: null,
+    ...over,
+  };
+}
+
+describe("E7 payment follow-up cadence", () => {
+  test("the quiet window silences calls for fifteen days after the due date", () => {
+    // Day 15 is the last quiet day; day 16 is the first calling day.
+    const lastQuiet = planPaymentFollowUps(
+      [subject({ anchorDueDate: addDays(TODAY, -15) })],
+      TODAY,
+      C,
+    );
+    assert.equal(lastQuiet.calls.length, 0);
+
+    const firstCalling = planPaymentFollowUps(
+      [subject({ anchorDueDate: addDays(TODAY, -16) })],
+      TODAY,
+      C,
+    );
+    assert.equal(firstCalling.calls.length, 1);
+    assert.equal(firstCalling.calls[0].phase, "calling");
+  });
+
+  test("a customer held back inside the quiet window says so, and says until when", () => {
+    const plan = planPaymentFollowUps(
+      [subject({ anchorDueDate: addDays(TODAY, -2) })],
+      TODAY,
+      C,
+    );
+    const held = plan.heldBack.find((h) => h.channel === "call");
+    assert.ok(held, "somebody expected on the calling list must be accounted for");
+    assert.match(held.reason, /messages only until 2026-08-17/);
+  });
+
+  test("the first reminder goes one interval after the due date, not the morning after", () => {
+    const dayThree = planPaymentFollowUps(
+      [subject({ anchorDueDate: addDays(TODAY, -3) })],
+      TODAY,
+      C,
+    );
+    assert.equal(dayThree.messages.length, 0);
+
+    const dayFour = planPaymentFollowUps(
+      [subject({ anchorDueDate: addDays(TODAY, -4) })],
+      TODAY,
+      C,
+    );
+    assert.equal(dayFour.messages.length, 1);
+  });
+
+  test("reminders then run every four days from the last one actually sent", () => {
+    const resting = planPaymentFollowUps(
+      [subject({ lastMessageOn: addDays(TODAY, -3) })],
+      TODAY,
+      C,
+    );
+    assert.equal(resting.messages.length, 0);
+
+    const due = planPaymentFollowUps(
+      [subject({ lastMessageOn: addDays(TODAY, -4) })],
+      TODAY,
+      C,
+    );
+    assert.equal(due.messages.length, 1);
+    assert.equal(due.messages[0].daysSinceLast, 4);
+  });
+
+  test("messages do not stop when calling begins — the two run alongside", () => {
+    const plan = planPaymentFollowUps(
+      [
+        subject({
+          anchorDueDate: addDays(TODAY, -30),
+          lastMessageOn: addDays(TODAY, -5),
+          lastCallOn: addDays(TODAY, -4),
+        }),
+      ],
+      TODAY,
+      C,
+    );
+    assert.equal(plan.calls.length, 1);
+    assert.equal(plan.messages.length, 1);
+  });
+
+  test("a logged call buys three days of rest, and the rest is explained", () => {
+    const resting = planPaymentFollowUps(
+      [subject({ anchorDueDate: addDays(TODAY, -30), lastCallOn: addDays(TODAY, -2) })],
+      TODAY,
+      C,
+    );
+    assert.equal(resting.calls.length, 0);
+    const restingHold = resting.heldBack.find((h) => h.channel === "call");
+    assert.ok(restingHold, "a held-back call must say why");
+    assert.match(restingHold.reason, /due again on 2026-08-04/);
+
+    const due = planPaymentFollowUps(
+      [subject({ anchorDueDate: addDays(TODAY, -30), lastCallOn: addDays(TODAY, -3) })],
+      TODAY,
+      C,
+    );
+    assert.equal(due.calls.length, 1);
+  });
+
+  test("resting after a call never brings a customer back before calling opens", () => {
+    // Called on day 12 of the quiet window: three days later is day 15, which
+    // is still quiet. The window wins.
+    const s = subject({
+      anchorDueDate: addDays(TODAY, -15),
+      lastCallOn: addDays(TODAY, -3),
+    });
+    assert.equal(nextCallOn(s, C), addDays(TODAY, 1));
+    assert.equal(planPaymentFollowUps([s], TODAY, C).calls.length, 0);
+  });
+
+  test("a live promise stops both channels; a broken one does not", () => {
+    const live = planPaymentFollowUps(
+      [subject({ anchorDueDate: addDays(TODAY, -30), promisedDate: addDays(TODAY, 2) })],
+      TODAY,
+      C,
+    );
+    assert.equal(live.calls.length, 0);
+    assert.equal(live.messages.length, 0);
+    assert.match(live.heldBack[0].reason, /promised by 2026-08-05/);
+
+    const broken = planPaymentFollowUps(
+      [subject({ anchorDueDate: addDays(TODAY, -30), promisedDate: addDays(TODAY, -1) })],
+      TODAY,
+      C,
+    );
+    assert.equal(broken.calls.length, 1);
+  });
+
+  test("a promise made for today is still live — chasing it is what breaks it", () => {
+    const plan = planPaymentFollowUps(
+      [subject({ anchorDueDate: addDays(TODAY, -30), promisedDate: TODAY })],
+      TODAY,
+      C,
+    );
+    assert.equal(plan.calls.length, 0);
+  });
+
+  test("do not contact, a dispute and today's call each stop the chasing", () => {
+    const base = { anchorDueDate: addDays(TODAY, -30) };
+    for (const [over, pattern] of [
+      [{ doNotContact: true }, /do not contact/i],
+      [{ held: true, heldReason: "Bill MM/44 is disputed" }, /disputed/],
+      [{ contactedToday: true }, /already contacted today/i],
+    ] as const) {
+      const plan = planPaymentFollowUps([subject({ ...base, ...over })], TODAY, C);
+      assert.equal(plan.calls.length, 0, JSON.stringify(over));
+      assert.equal(plan.messages.length, 0, JSON.stringify(over));
+      assert.match(plan.heldBack[0].reason, pattern);
+    }
+  });
+
+  test("a customer not yet due appears nowhere at all", () => {
+    const plan = planPaymentFollowUps(
+      [subject({ anchorDueDate: addDays(TODAY, 5) })],
+      TODAY,
+      C,
+    );
+    assert.deepEqual(plan, { calls: [], messages: [], heldBack: [] });
+  });
+
+  test("the oldest debt leads the calling list", () => {
+    const plan = planPaymentFollowUps(
+      [
+        subject({ customerId: "young", name: "A", anchorDueDate: addDays(TODAY, -20) }),
+        subject({ customerId: "old", name: "B", anchorDueDate: addDays(TODAY, -90) }),
+      ],
+      TODAY,
+      C,
+    );
+    assert.deepEqual(plan.calls.map((c) => c.customerId), ["old", "young"]);
+  });
+
+  test("the dates the cadence is built from are stated, not implied", () => {
+    assert.equal(callingOpensOn("2026-07-01", C), "2026-07-17");
+    assert.equal(nextMessageOn({ anchorDueDate: "2026-07-01", lastMessageOn: null }, C), "2026-07-05");
+    assert.equal(
+      nextMessageOn({ anchorDueDate: "2026-07-01", lastMessageOn: "2026-07-10" }, C),
+      "2026-07-14",
+    );
   });
 });

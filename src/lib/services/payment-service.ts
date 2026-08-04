@@ -15,6 +15,12 @@ import {
 import { resolveScope, scopedUserIds, assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
 import { isAttemptAllowed, agingBucket, effectiveDueDate } from "../engines/escalation";
+import { billCreditDaysSql } from "../bill-terms";
+import {
+  planPaymentFollowUps,
+  type FollowUpDue,
+  type FollowUpHeldBack,
+} from "../engines/payment-followup";
 import { recomputeFollowUpState, recomputeOutstanding, recomputeBillStatuses, today } from "../recompute";
 import { addDays, daysBetween, onOrAfterWorkingDay } from "../business-date";
 import { err, ok, type Result } from "../result";
@@ -125,10 +131,86 @@ export async function getFollowUpWorklist(filters?: {
     : mapped.sort((a, b) => b.daysOverdue - a.daysOverdue);
 }
 
+/* --------------------------------------------------- today's follow-up plan */
+
+export type PaymentFollowUpPlan = {
+  calls: FollowUpDue[];
+  messages: FollowUpDue[];
+  heldBack: FollowUpHeldBack[];
+};
+
+/**
+ * Who to ring and who to message today, and everybody deliberately left off
+ * both lists. E3 says how overdue an account is; E7 says whether anything is
+ * owed from it today.
+ *
+ * Every column of the outer table is written out in full inside the
+ * subqueries — see AGENTS.md.
+ */
+export async function getPaymentFollowUpPlan(): Promise<PaymentFollowUpPlan> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const config = await getConfig();
+  const day = await today();
+
+  const rows = await db
+    .select({
+      state: followUpStates,
+      customer: customers,
+      // The last attempt of each channel, as business dates. A reminder sent
+      // at 11pm belongs to that working day, not the next one.
+      lastMessageOn: sql<string | null>`(
+        select max((a.attempted_at at time zone 'Asia/Kolkata')::date)
+          from follow_up_attempts a
+         where a.customer_id = customers.id and a.channel = 'whatsapp'
+      )`,
+      lastCallOn: sql<string | null>`(
+        select max((a.attempted_at at time zone 'Asia/Kolkata')::date)
+          from follow_up_attempts a
+         where a.customer_id = customers.id and a.channel = 'call'
+      )`,
+      promisedDate: sql<string | null>`(
+        select a.promised_date from follow_up_attempts a
+         where a.customer_id = customers.id and a.promised_date is not null
+         order by a.attempted_at desc limit 1
+      )`,
+    })
+    .from(followUpStates)
+    .innerJoin(customers, eq(customers.id, followUpStates.customerId))
+    .where(ids ? inArray(customers.ownerId, ids) : undefined);
+
+  const plan = planPaymentFollowUps(
+    rows.map(({ state, customer, ...last }) => ({
+      customerId: customer.id,
+      name: customer.name,
+      // E3 already resolved which bill anchors the account and what its
+      // effective due date is. Re-deriving it here is how two screens start
+      // disagreeing about the same customer.
+      anchorDueDate: state.oldestOverdueBillDate ?? addDays(day, -state.daysOverdue),
+      totalOverdue: state.totalOverdue,
+      overdueBillCount: state.overdueBillCount,
+      lastMessageOn: last.lastMessageOn,
+      lastCallOn: last.lastCallOn,
+      doNotContact: customer.doNotContact,
+      // A call today is a call today, whoever made it and whichever module
+      // they made it from.
+      contactedToday:
+        customer.lastContactDate === day || customer.lastCallDate === day,
+      held: state.held,
+      heldReason: state.heldReason,
+      promisedDate: last.promisedDate,
+    })),
+    day,
+    config,
+  );
+
+  return plan;
+}
+
 export async function getFollowUpDetail(customerId: string) {
   const [customer] = await db.select().from(customers).where(eq(customers.id, customerId));
   if (!customer) return null;
-  await assertCustomerInScope(customer.ownerId);
+  await assertCustomerInScope(customer);
 
   const config = await getConfig();
   const day = await today();
@@ -139,7 +221,7 @@ export async function getFollowUpDetail(customerId: string) {
     .where(eq(followUpStates.customerId, customerId));
 
   const billRows = await db
-    .select()
+    .select({ bill: bills, creditDays: billCreditDaysSql })
     .from(bills)
     .where(eq(bills.customerId, customerId))
     .orderBy(asc(bills.billDate));
@@ -155,10 +237,11 @@ export async function getFollowUpDetail(customerId: string) {
     customer,
     state: state ?? null,
     attempts,
-    bills: billRows.map((b) => {
+    bills: billRows.map(({ bill: b, creditDays }) => {
       const due = effectiveDueDate(
         {
           id: b.id, billNo: b.billNo, billDate: b.billDate, dueDate: b.dueDate,
+          creditDays: creditDays === null ? null : Number(creditDays),
           amount: b.amount, paid: b.paidAmount, disputed: b.disputed,
         },
         config,
@@ -208,7 +291,7 @@ export async function recordFollowUpAttempt(
     .from(customers)
     .where(eq(customers.id, input.customerId));
   if (!customer) return err("That customer no longer exists.", "not_found");
-  await assertCustomerInScope(customer.ownerId);
+  await assertCustomerInScope(customer);
 
   const [existingAttempt] = await db
     .select({ id: followUpAttempts.id })
@@ -331,7 +414,7 @@ export async function recordPayment(
     .select()
     .from(customers)
     .where(eq(customers.id, bill.customerId));
-  await assertCustomerInScope(customer?.ownerId ?? null);
+  await assertCustomerInScope(customer ?? null);
 
   const balance = bill.amount - bill.paidAmount;
   if (input.amount > balance) {
@@ -395,7 +478,12 @@ export async function listBills(filters?: { customerId?: string; status?: string
   const day = await today();
 
   const rows = await db
-    .select({ bill: bills, customerName: customers.name, customerId: customers.id })
+    .select({
+      bill: bills,
+      customerName: customers.name,
+      customerId: customers.id,
+      creditDays: billCreditDaysSql,
+    })
     .from(bills)
     .innerJoin(customers, eq(customers.id, bills.customerId))
     .where(
@@ -406,9 +494,10 @@ export async function listBills(filters?: { customerId?: string; status?: string
     )
     .orderBy(desc(bills.billDate));
 
-  return rows.map(({ bill: b, customerName, customerId }) => {
+  return rows.map(({ bill: b, customerName, customerId, creditDays }) => {
     const due = effectiveDueDate(
       { id: b.id, billNo: b.billNo, billDate: b.billDate, dueDate: b.dueDate,
+        creditDays: creditDays === null ? null : Number(creditDays),
         amount: b.amount, paid: b.paidAmount, disputed: b.disputed },
       config,
     );

@@ -182,11 +182,24 @@ export async function checkCapability(capability: Capability) {
 }
 
 /** Guard for a single customer, used by detail routes. */
-export async function assertCustomerInScope(ownerId: string | null) {
+/**
+ * Takes the record, not an owner id, so it goes through assignedUserId like
+ * every list query does. Passing ownerId here while the lists filtered on the
+ * sales account manager is how a customer becomes visible in a list and then
+ * refuses to open.
+ */
+export async function assertCustomerInScope(
+  customer: {
+    kind: "lead" | "customer";
+    ownerId: string | null;
+    salesAmId: string | null;
+  } | null,
+) {
   const { scope } = await resolveScope();
   const ids = scopedUserIds(scope);
   if (ids === null) return;
-  if (!ownerId || !ids.includes(ownerId)) {
+  const assigned = customer && assignedUserId(customer);
+  if (!assigned || !ids.includes(assigned)) {
     throw new NotPermittedError("customer.read");
   }
 }

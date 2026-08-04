@@ -286,8 +286,9 @@ export const SETTINGS = [
     type: "integer",
     category: "escalation",
     label: "Stage 2 threshold",
-    description: "Days overdue at which alternating channels begin.",
-    default: 21,
+    description:
+      "Days overdue at which calling begins and channels start alternating. This is the first day a payment call may be logged, so it must be the day after the quiet window closes.",
+    default: 16,
     min: 0,
     max: 365,
   },
@@ -327,6 +328,39 @@ export const SETTINGS = [
     default: true,
   },
   {
+    key: "escalation.quietCallDays",
+    type: "integer",
+    category: "escalation",
+    label: "Quiet days after the due date",
+    description:
+      "Days after a bill falls due during which the customer is messaged but never called. A bill one day late is usually paperwork, not refusal, and a call that early costs goodwill. Calls begin the day after this window closes.",
+    default: 15,
+    min: 0,
+    max: 180,
+  },
+  {
+    key: "escalation.messageIntervalDays",
+    type: "integer",
+    category: "escalation",
+    label: "Payment reminder interval",
+    description:
+      "Days between payment reminder messages, counted from the due date and then from each message actually sent. Messages continue after calling begins.",
+    default: 4,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "escalation.callIntervalDays",
+    type: "integer",
+    category: "escalation",
+    label: "Payment call interval",
+    description:
+      "Days a customer rests after a logged payment call before returning to the calling list. Without it a customer past the quiet window is called every single day.",
+    default: 3,
+    min: 1,
+    max: 90,
+  },
+  {
     key: "escalation.slowPayerLookbackMonths",
     type: "integer",
     category: "escalation",
@@ -354,18 +388,28 @@ export const SETTINGS = [
     category: "bills",
     label: "Aging bucket boundaries",
     description:
-      "Lower bounds in days overdue. MUST align with the escalation thresholds, or the bills screen and the follow-up screen will disagree about how overdue an account is.",
-    default: [0, 30, 60, 90],
+      "Lower bounds in days overdue. MUST align with the escalation thresholds, or the bills screen and the follow-up screen will disagree about how overdue an account is. The defaults trace the follow-up policy: the quiet window, then calling, then urgent.",
+    default: [0, 15, 45, 90],
   },
   {
     key: "bills.defaultCreditDays",
     type: "integer",
     category: "bills",
     label: "Default credit period",
-    description: "Applied when a bill carries no due date.",
+    description:
+      "The last fallback for a bill with no due date, used when neither the order that produced it nor the customer's record states a term.",
     default: 30,
     min: 0,
     max: 365,
+  },
+  {
+    key: "bills.creditDayOptions",
+    type: "structured",
+    category: "bills",
+    label: "Payment terms offered",
+    description:
+      "The terms a telecaller can pick from when taking an order, in days. Any other number can still be typed in — this list is the shortcut, not the limit.",
+    default: [15, 30, 45],
   },
 
   /* --------------------------------------------------------------- targets */
@@ -709,6 +753,24 @@ export function checkConsistency(config: Config): string[] {
     );
   }
 
+  // The quiet window and stage 2 are two statements of the same fact: the day
+  // a payment call may first be made. The calling list reads one, the
+  // server-side stage-1 rule reads the other. Let them drift and the list
+  // offers calls that saving them rejects.
+  const quiet = config["escalation.quietCallDays"];
+  if (stage2Days !== quiet + 1) {
+    problems.push(
+      `Calling opens on day ${stage2Days} (stage 2) but the quiet window runs to day ${quiet}. Stage 2 must be the day after the quiet window closes — set it to ${quiet + 1}, or shorten the window to ${stage2Days - 1}.`,
+    );
+  }
+
+  const terms = config["bills.creditDayOptions"];
+  if (!Array.isArray(terms) || terms.length === 0) {
+    problems.push("At least one payment term must be offered when taking an order.");
+  } else if (terms.some((d) => !Number.isInteger(d) || d < 0)) {
+    problems.push("Payment terms must be whole numbers of days, none of them negative.");
+  }
+
   if (config["buyingCycle.minDays"] > config["buyingCycle.maxDays"]) {
     problems.push("Minimum buying cycle cannot exceed the maximum.");
   }
@@ -767,11 +829,15 @@ export type Config = {
   "escalation.stageDriver": "oldest" | "largest";
   "escalation.partialPaymentResetsClock": boolean;
   "escalation.disputeHoldsEscalation": boolean;
+  "escalation.quietCallDays": number;
+  "escalation.messageIntervalDays": number;
+  "escalation.callIntervalDays": number;
   "escalation.slowPayerLookbackMonths": number;
   "escalation.slowPayerLateCount": number;
 
   "bills.agingBuckets": number[];
   "bills.defaultCreditDays": number;
+  "bills.creditDayOptions": number[];
 
   "targets.defaultMethod": "trailing-average" | "last-month" | "fixed";
   "targets.trailingMonths": number;
