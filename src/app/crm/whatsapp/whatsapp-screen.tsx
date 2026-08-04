@@ -499,7 +499,7 @@ function SendComposer({
   }
 
   return (
-    <div className="grid grid-cols-[60fr_40fr] items-start gap-4">
+    <div className="grid grid-cols-[minmax(0,58fr)_minmax(340px,42fr)] items-start gap-4">
       <div className="flex min-w-0 flex-col gap-4">
         <Card className="p-5">
           <Field label="Customer">
@@ -919,7 +919,7 @@ function RunTab({
     }));
 
     return (
-      <div className="grid grid-cols-2 items-start gap-4">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(380px,1fr))] items-start gap-4">
         <Card className="p-5">
           <div className="mb-1 text-lg font-semibold text-ink">Set up a send run</div>
           <p className="mb-4 text-[13px] text-muted">
@@ -1041,7 +1041,7 @@ function RunTab({
         </Button>
       </Card>
 
-      <div className="grid grid-cols-[280px_1fr] items-start gap-4">
+      <div className="grid grid-cols-[clamp(220px,20%,300px)_minmax(0,1fr)] items-start gap-4">
         <Card className="overflow-hidden">
           <div className="border-b border-line px-3.5 py-3 text-xs font-medium tracking-[0.04em] text-muted uppercase">
             Recipients
@@ -1086,7 +1086,7 @@ function RunTab({
         </Card>
 
         {current ? (
-          <div className="grid min-w-0 grid-cols-[1fr_320px] items-start gap-4">
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_clamp(280px,26%,340px)] items-start gap-4">
             <Card>
               <div className="border-b border-divider px-5 py-3.5">
                 <div className="text-lg font-semibold text-ink">

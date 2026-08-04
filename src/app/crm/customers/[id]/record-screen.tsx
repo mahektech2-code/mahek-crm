@@ -151,7 +151,7 @@ export function RecordScreen({
   };
 
   return (
-    <div className="max-w-[1400px] px-6 pt-6 pb-10">
+    <div className="max-w-[1440px] px-6 pt-6 pb-10">
       <Link
         href="/crm/customers"
         className="mb-2.5 inline-flex items-center gap-1.5 text-[13px] text-muted no-underline hover:no-underline hover:text-body"
@@ -210,7 +210,7 @@ export function RecordScreen({
         </div>
       ) : null}
 
-      <div className="grid grid-cols-[1fr_320px] items-start gap-4">
+      <div className="grid grid-cols-[minmax(0,1fr)_clamp(280px,24%,380px)] items-start gap-4">
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-divider px-5 py-3.5">
             <span className="text-lg leading-6 font-semibold text-ink">Timeline</span>

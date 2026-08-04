@@ -65,7 +65,7 @@ export function InactiveScreen({
   }
 
   return (
-    <div className="max-w-[1400px] px-6 pt-6 pb-10">
+    <div className="max-w-[1440px] px-6 pt-6 pb-10">
       <PageHeader
         title="Inactive watch"
         subtitle={`${scopeLabel} · Customers who have gone at least twice their own buying cycle without ordering.`}

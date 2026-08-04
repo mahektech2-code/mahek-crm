@@ -90,7 +90,7 @@ export function PaymentsScreen({
   const held = rows.filter((r) => r.held).length;
 
   return (
-    <div className="max-w-[1400px] px-6 pt-6 pb-10">
+    <div className="max-w-[1440px] px-6 pt-6 pb-10">
       <PageHeader
         title="Payment follow-up"
         subtitle={`${scopeLabel} · One row per customer. The stage tells you what to do — do that, then log it.`}

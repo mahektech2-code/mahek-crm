@@ -126,7 +126,7 @@ export function ComponentsScreen() {
       </Section>
 
       <Section title="Inputs">
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-4">
           <Field label="Text">
             <Input placeholder="Shree Paints & Hardware" />
           </Field>
@@ -344,7 +344,7 @@ export function ComponentsScreen() {
           </>
         }
       >
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3">
           <Field label="Amount promised">
             <MoneyInput placeholder="2,00,000" />
           </Field>

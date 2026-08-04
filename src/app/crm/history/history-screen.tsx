@@ -210,7 +210,7 @@ export function HistoryScreen({
             </Button>
           </div>
         </div>
-        <div className="grid grid-cols-[1fr_320px] gap-5 px-5 py-4">
+        <div className="grid grid-cols-[minmax(0,1fr)_clamp(260px,30%,340px)] gap-5 px-5 py-4">
           <div>
             <SectionLabel>Last three interactions</SectionLabel>
             <div className="mt-1.5">
