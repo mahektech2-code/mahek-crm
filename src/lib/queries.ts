@@ -86,13 +86,27 @@ export async function listCustomers(): Promise<CustomerRow[]> {
 
 export async function getCustomer(customerId: string) {
   const rows = await db
-    .select({ customer: customers, ownerName: users.name })
+    .select({
+      customer: customers,
+      ownerName: users.name,
+      salesAmName: sql<string | null>`(
+        select name from users u where u.id = customers.sales_am_id
+      )`,
+      backOfficeAmName: sql<string | null>`(
+        select name from users u where u.id = customers.back_office_am_id
+      )`,
+    })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
     .where(eq(customers.id, customerId))
     .limit(1);
   if (!rows[0]) return null;
-  return { ...rows[0].customer, ownerName: rows[0].ownerName };
+  return {
+    ...rows[0].customer,
+    ownerName: rows[0].ownerName,
+    salesAmName: rows[0].salesAmName,
+    backOfficeAmName: rows[0].backOfficeAmName,
+  };
 }
 
 /* -------------------------------------------------------------- timeline */

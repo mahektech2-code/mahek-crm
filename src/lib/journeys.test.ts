@@ -1369,6 +1369,59 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     );
   });
 
+  test("adding from the Customers screen creates a lead, not a customer", async () => {
+    const { createCustomer } = await import("@/lib/actions/crm");
+    const result = await createCustomer({
+      name: "Konkan Paints",
+      contactPerson: "Sameer Joshi",
+      phone: "9812345678",
+      city: "Ratnagiri",
+      leadSource: "Exhibition",
+    });
+    assert.ok(result.ok, JSON.stringify(result));
+
+    const [row] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, result.data.id));
+    assert.equal(row.kind, "lead", "nobody is a customer until they order");
+    assert.equal(row.leadSource, "Exhibition");
+    assert.equal(
+      row.salesAmId,
+      null,
+      "no account manager for an account that does not exist",
+    );
+    assert.equal(row.customerSince, null);
+  });
+
+  test("only a manager can set the back office account manager", async () => {
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -10),
+    });
+    const { updateCustomer } = await import("@/lib/actions/crm");
+
+    // Priya is a telecaller. The form disables the field; the action refuses it.
+    await updateCustomer(customer.id, { backOfficeAmId: rakesh.id });
+    const [afterTelecaller] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(
+      afterTelecaller.backOfficeAmId,
+      null,
+      "a disabled input is not a permission check",
+    );
+
+    setTestUser(manager);
+    await updateCustomer(customer.id, { backOfficeAmId: rakesh.id });
+    setTestUser(priya);
+    const [afterManager] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(afterManager.backOfficeAmId, rakesh.id);
+  });
+
   test("a lead becomes a customer the moment it orders", async () => {
     const lead = await makeCustomer(priya.id, {
       kind: "lead",

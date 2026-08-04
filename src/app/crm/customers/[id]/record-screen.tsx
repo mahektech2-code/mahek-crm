@@ -47,7 +47,10 @@ type Entry = {
   meta: string | null;
 };
 
-const KIND_TONE: Record<string, "brand" | "success" | "warn" | "danger" | "neutral"> = {
+const KIND_TONE: Record<
+  string,
+  "brand" | "success" | "warn" | "danger" | "neutral"
+> = {
   Call: "brand",
   WhatsApp: "success",
   Order: "success",
@@ -79,6 +82,11 @@ export function RecordScreen({
     phone: string;
     city: string;
     ownerName: string | null;
+    kind: "lead" | "customer";
+    leadSource: string | null;
+    createdAt: string;
+    salesAmName: string | null;
+    backOfficeAmName: string | null;
     status: string;
     slowPayer: boolean;
     outstanding: number;
@@ -105,7 +113,12 @@ export function RecordScreen({
     held: boolean;
     heldReason: string | null;
   } | null;
-  target: { amount: number; achieved: number; isDefault: boolean; shareOfBook: number };
+  target: {
+    amount: number;
+    achieved: number;
+    isDefault: boolean;
+    shareOfBook: number;
+  };
   openComplaint: { description: string; category: string } | null;
   openPromise: { amount: number; promisedBy: string } | null;
   billStats: { total: number; overdue: number; oldestDueDate: string | null };
@@ -127,22 +140,24 @@ export function RecordScreen({
   const [cmpOpen, setCmpOpen] = React.useState(false);
 
   const kinds = ["All", ...Array.from(new Set(timeline.map((t) => t.kind)))];
-  const visible = filter === "All" ? timeline : timeline.filter((t) => t.kind === filter);
+  const visible =
+    filter === "All" ? timeline : timeline.filter((t) => t.kind === filter);
 
-  const overCycle = daysSinceOrder !== null && daysSinceOrder > customer.cycleDays;
+  const overCycle =
+    daysSinceOrder !== null && daysSinceOrder > customer.cycleDays;
   const paysLate = customer.paysInDays > customer.creditTermDays;
 
   const alert = followUpStage?.held
     ? `Held at stage ${followUpStage.stage} — ${followUpStage.heldReason ?? "a dispute is open"}.`
     : openComplaint
-    ? `Open ${openComplaint.category.toLowerCase()} complaint — mention it before anything else.`
-    : openPromise && openPromise.promisedBy < today()
-      ? `${money(openPromise.amount)} was promised for ${shortDate(openPromise.promisedBy)} and has not arrived.`
-      : customer.deactivationRequested
-        ? `Deactivation requested — ${customer.deactivationReason ?? "no reason recorded"}. Waiting on a manager.`
-        : overCycle
-          ? `${daysSinceOrder} days since the last order, against a ${customer.cycleDays}-day buying cycle.`
-          : null;
+      ? `Open ${openComplaint.category.toLowerCase()} complaint — mention it before anything else.`
+      : openPromise && openPromise.promisedBy < today()
+        ? `${money(openPromise.amount)} was promised for ${shortDate(openPromise.promisedBy)} and has not arrived.`
+        : customer.deactivationRequested
+          ? `Deactivation requested — ${customer.deactivationReason ?? "no reason recorded"}. Waiting on a manager.`
+          : overCycle
+            ? `${daysSinceOrder} days since the last order, against a ${customer.cycleDays}-day buying cycle.`
+            : null;
 
   const callTarget: CallTarget = {
     customerId: customer.id,
@@ -200,7 +215,9 @@ export function RecordScreen({
           <>
             <Button
               variant="secondary"
-              onClick={() => router.push(`/crm/whatsapp?customer=${customer.id}`)}
+              onClick={() =>
+                router.push(`/crm/whatsapp?customer=${customer.id}`)
+              }
             >
               WhatsApp
             </Button>
@@ -228,21 +245,29 @@ export function RecordScreen({
       <div className="grid grid-cols-[minmax(0,1fr)_clamp(280px,24%,380px)] items-start gap-4">
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-divider px-5 py-3.5">
-            <span className="text-lg leading-6 font-semibold text-ink">Timeline</span>
+            <span className="text-lg leading-6 font-semibold text-ink">
+              Timeline
+            </span>
             <FilterPills
               value={filter}
               onChange={setFilter}
               options={kinds.map((k) => ({
                 key: k,
                 label: k,
-                count: k === "All" ? timeline.length : timeline.filter((t) => t.kind === k).length,
+                count:
+                  k === "All"
+                    ? timeline.length
+                    : timeline.filter((t) => t.kind === k).length,
               }))}
             />
           </div>
           <div className="px-5 py-4">
             {visible.length ? (
               visible.map((t) => (
-                <div key={t.id} className="relative border-l border-divider pb-4 pl-5 last:pb-0">
+                <div
+                  key={t.id}
+                  className="relative border-l border-divider pb-4 pl-5 last:pb-0"
+                >
                   <span
                     className={cx(
                       "absolute top-1 -left-[4.5px] block h-2 w-2 rounded-full",
@@ -258,13 +283,19 @@ export function RecordScreen({
                     )}
                   />
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone={KIND_TONE[t.kind] ?? "neutral"}>{t.kind}</Badge>
-                    <span className="text-[11px] text-muted">{stamp(t.at)}</span>
+                    <Badge tone={KIND_TONE[t.kind] ?? "neutral"}>
+                      {t.kind}
+                    </Badge>
+                    <span className="text-[11px] text-muted">
+                      {stamp(t.at)}
+                    </span>
                     <span className="text-[11px] text-muted">· {t.actor}</span>
                   </div>
                   <div className="mt-1 text-sm text-ink">{t.content}</div>
                   {t.meta ? (
-                    <div className="mt-0.5 text-[13px] text-muted">{t.meta}</div>
+                    <div className="mt-0.5 text-[13px] text-muted">
+                      {t.meta}
+                    </div>
                   ) : null}
                 </div>
               ))
@@ -280,16 +311,27 @@ export function RecordScreen({
           <Card className="p-5">
             <SectionLabel>Key figures</SectionLabel>
             <div className="mt-3">
-              <Figure label="Outstanding" tone={customer.outstanding > 0 ? "danger" : undefined}>
+              <Figure
+                label="Outstanding"
+                tone={customer.outstanding > 0 ? "danger" : undefined}
+              >
                 {money(customer.outstanding)}
               </Figure>
-              <Figure label="Bills overdue" tone={billStats.overdue ? "danger" : undefined}>
+              <Figure
+                label="Bills overdue"
+                tone={billStats.overdue ? "danger" : undefined}
+              >
                 {billStats.overdue} of {billStats.total}
               </Figure>
               <Figure label="Last order">
-                {customer.lastOrderDate ? shortDate(customer.lastOrderDate) : "Never"}
+                {customer.lastOrderDate
+                  ? shortDate(customer.lastOrderDate)
+                  : "Never"}
               </Figure>
-              <Figure label="Days since order" tone={overCycle ? "danger" : undefined}>
+              <Figure
+                label="Days since order"
+                tone={overCycle ? "danger" : undefined}
+              >
                 {daysSinceOrder === null ? "—" : ageLabel(daysSinceOrder)}
               </Figure>
               <Figure label="Buying cycle">
@@ -312,9 +354,14 @@ export function RecordScreen({
                   </span>
                 </Figure>
               ) : null}
-              <Figure label="Average order">{money(customer.avgOrderValue)}</Figure>
+              <Figure label="Average order">
+                {money(customer.avgOrderValue)}
+              </Figure>
               <Figure label="Orders, last 6 months">{customer.orders6m}</Figure>
-              <Figure label="Pays on average" tone={paysLate ? "danger" : "success"}>
+              <Figure
+                label="Pays on average"
+                tone={paysLate ? "danger" : "success"}
+              >
                 {customer.paysInDays} days
                 <span className="ml-1 text-[11px] font-normal text-muted">
                   (terms {customer.creditTermDays})
@@ -334,17 +381,24 @@ export function RecordScreen({
 
           <Card className="p-5">
             <div className="flex items-center justify-between">
-              <SectionLabel>Target vs achieved — {monthLabel(period)}</SectionLabel>
+              <SectionLabel>
+                Target vs achieved — {monthLabel(period)}
+              </SectionLabel>
               {target.isDefault ? <Badge tone="muted">Default</Badge> : null}
             </div>
             <div className="mt-2 flex items-baseline gap-2">
               <span className="text-[32px] leading-9 font-semibold text-ink">
                 {money(target.achieved)}
               </span>
-              <span className="text-[13px] text-muted">of {money(target.amount)}</span>
+              <span className="text-[13px] text-muted">
+                of {money(target.amount)}
+              </span>
             </div>
             <div className="mt-3 flex items-center gap-2.5">
-              <Progress value={pct(target.achieved, target.amount)} className="flex-1" />
+              <Progress
+                value={pct(target.achieved, target.amount)}
+                className="flex-1"
+              />
               <span className="text-[13px] font-medium text-ink">
                 {pct(target.achieved, target.amount)}%
               </span>
@@ -360,8 +414,28 @@ export function RecordScreen({
               <br />
               Route {customer.route ?? "not set"}
               <br />
-              Customer since{" "}
-              {customer.customerSince ? shortDate(customer.customerSince) : "unknown"}
+              {customer.kind === "lead" ? (
+                <>
+                  Lead since {shortDate(customer.createdAt)}
+                  <br />
+                  Source {customer.leadSource ?? "not recorded"}
+                </>
+              ) : (
+                <>
+                  Customer since{" "}
+                  {customer.customerSince
+                    ? shortDate(customer.customerSince)
+                    : "unknown"}
+                  <br />
+                  Sales{" "}
+                  {customer.salesAmName ?? customer.ownerName ?? "unassigned"}
+                  <br />
+                  {/* Named plainly, because an unassigned back office is who a
+                      dispatch or billing question has to go to and there is
+                      nobody. */}
+                  Back office {customer.backOfficeAmName ?? "unassigned"}
+                </>
+              )}
             </div>
           </Card>
         </div>
@@ -433,7 +507,11 @@ function Figure({
       <span
         className={cx(
           "text-sm font-medium",
-          tone === "danger" ? "text-danger" : tone === "success" ? "text-success" : "text-ink",
+          tone === "danger"
+            ? "text-danger"
+            : tone === "success"
+              ? "text-success"
+              : "text-ink",
         )}
       >
         {children}
@@ -523,7 +601,9 @@ export function QuickComplaint({
   onClose: () => void;
   onSubmit: (category: string, description: string) => Promise<void>;
 }) {
-  const [category, setCategory] = React.useState<string>(categories[0] ?? "Other");
+  const [category, setCategory] = React.useState<string>(
+    categories[0] ?? "Other",
+  );
   const [description, setDescription] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
@@ -557,7 +637,10 @@ export function QuickComplaint({
       <div className="mb-3 text-sm text-muted">{customerName}</div>
       <div className="grid gap-3">
         <Field label="Category">
-          <Select value={category} onChange={(e) => setCategory(e.target.value)}>
+          <Select
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+          >
             {categories.map((c) => (
               <option key={c}>{c}</option>
             ))}

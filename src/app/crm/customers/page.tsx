@@ -30,6 +30,7 @@ export default async function CustomersPage() {
         kind: c.kind,
         leadSource: c.leadSource,
         salesAmName: c.salesAmName,
+        backOfficeAmId: c.backOfficeAmId,
         backOfficeAmName: c.backOfficeAmName,
         status: c.status,
         lastOrderDate: c.lastOrderDate,

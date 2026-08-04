@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
+import { isManager } from "../auth";
 import { db } from "@/db";
 import {
   auditLog,
@@ -53,7 +54,11 @@ import {
   sendAutomatic,
   setRunStatus,
 } from "@/lib/services/whatsapp-service";
-import { recomputeInactivity, recomputeLastContact, today } from "@/lib/recompute";
+import {
+  recomputeInactivity,
+  recomputeLastContact,
+  today,
+} from "@/lib/recompute";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
 import { initialsOf } from "@/lib/format";
 
@@ -61,9 +66,18 @@ const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
 /** Screens that read shared numbers — refresh them together after any write. */
 const SHARED = [
-  "/crm/dashboard", "/crm/call-log", "/crm/reminders", "/crm/history",
-  "/crm/payments", "/crm/bills", "/crm/inactive", "/crm/customers",
-  "/crm/complaints", "/crm/targets", "/crm/eod", "/crm/whatsapp",
+  "/crm/dashboard",
+  "/crm/call-log",
+  "/crm/reminders",
+  "/crm/history",
+  "/crm/payments",
+  "/crm/bills",
+  "/crm/inactive",
+  "/crm/customers",
+  "/crm/complaints",
+  "/crm/targets",
+  "/crm/eod",
+  "/crm/whatsapp",
 ];
 
 /**
@@ -93,7 +107,10 @@ export async function setScope(scope: "mine" | "team") {
 
 export async function setDensity(density: "comfortable" | "compact") {
   const jar = await cookies();
-  jar.set(DENSITY_COOKIE_NAME, density, { path: "/", maxAge: 60 * 60 * 24 * 365 });
+  jar.set(DENSITY_COOKIE_NAME, density, {
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+  });
 }
 
 /* -------------------------------------------------------------- the call */
@@ -207,7 +224,10 @@ export async function restoreWorkedRows(): Promise<Result> {
 }
 
 /** Skipping is a do-not-contact-today note recorded against the customer. */
-export async function skipQueueItem(customerId: string, reason: string): Promise<Result> {
+export async function skipQueueItem(
+  customerId: string,
+  reason: string,
+): Promise<Result> {
   try {
     if (!reason.trim()) return err("A reason is required.", "validation");
     const ctx = await resolveScope();
@@ -248,7 +268,8 @@ export async function createRemindersBulk(
   note: string,
 ): Promise<Result> {
   try {
-    if (!customerIds.length) return err("Select at least one customer.", "validation");
+    if (!customerIds.length)
+      return err("Select at least one customer.", "validation");
     for (const customerId of customerIds) {
       const r = await createReminderService({ customerId, dueDate, note });
       // One bad customer must not leave a half-finished bulk behind silently.
@@ -298,7 +319,9 @@ export async function rescheduleReminder(
   }
 }
 
-export async function carryReminderForward(reminderId: string): Promise<Result> {
+export async function carryReminderForward(
+  reminderId: string,
+): Promise<Result> {
   try {
     const r = await carryForward(reminderId);
     refreshAll();
@@ -388,15 +411,23 @@ export async function recordFollowUp(input: {
 /* -------------------------------------------------------------- customers */
 
 const customerSchema = z.object({
-  name: z.string().trim().min(2, "Enter the business name as it appears on the bill."),
+  name: z
+    .string()
+    .trim()
+    .min(2, "Enter the business name as it appears on the bill."),
   contactPerson: z.string().trim().min(2, "Enter the contact person."),
-  phone: z.string().trim().regex(/^[6-9]\d{9}$/, "Enter a valid 10-digit telephone number."),
+  phone: z
+    .string()
+    .trim()
+    .regex(/^[6-9]\d{9}$/, "Enter a valid 10-digit telephone number."),
   city: z.string().trim().min(2, "Enter the city."),
   ownerId: z.string().optional(),
   gstin: z.string().trim().optional(),
   creditTermDays: z.coerce.number().int().min(0).max(180).default(30),
   cycleDays: z.coerce.number().int().min(1).max(365).default(30),
   route: z.string().trim().optional(),
+  leadSource: z.string().trim().max(120).optional(),
+  backOfficeAmId: z.string().optional(),
 });
 
 export async function createCustomer(
@@ -433,13 +464,20 @@ export async function createCustomer(
       contactPerson: parsed.data.contactPerson,
       phone: parsed.data.phone,
       city: parsed.data.city,
+      // Adding from this screen creates a LEAD. Nobody is a customer until
+      // they order — that is what the conversion in saveInteraction is for.
+      kind: "lead",
+      leadSource: parsed.data.leadSource || null,
       ownerId: parsed.data.ownerId || ctx.user.id,
+      // No sales account manager yet: that is assigned when the lead converts,
+      // and naming one now would claim an account that does not exist.
+      salesAmId: null,
       gstin: parsed.data.gstin || null,
       creditTermDays: parsed.data.creditTermDays,
       cycleDays: parsed.data.cycleDays,
       cycleIsDefault: true,
       route: parsed.data.route || null,
-      customerSince: await today(),
+      customerSince: null,
       createdById: ctx.user.id,
       updatedById: ctx.user.id,
     });
@@ -465,7 +503,10 @@ export async function updateCustomer(
       ]);
     }
 
-    const [existing] = await db.select().from(customers).where(eq(customers.id, customerId));
+    const [existing] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customerId));
     if (!existing) return err("That customer no longer exists.", "not_found");
     await assertCustomerInScope(existing);
 
@@ -473,16 +514,32 @@ export async function updateCustomer(
       .update(customers)
       .set({
         ...(parsed.data.name ? { name: parsed.data.name } : {}),
-        ...(parsed.data.contactPerson ? { contactPerson: parsed.data.contactPerson } : {}),
+        ...(parsed.data.contactPerson
+          ? { contactPerson: parsed.data.contactPerson }
+          : {}),
         ...(parsed.data.phone ? { phone: parsed.data.phone } : {}),
         ...(parsed.data.city ? { city: parsed.data.city } : {}),
         ...(parsed.data.ownerId ? { ownerId: parsed.data.ownerId } : {}),
-        ...(parsed.data.gstin !== undefined ? { gstin: parsed.data.gstin || null } : {}),
+        ...(parsed.data.gstin !== undefined
+          ? { gstin: parsed.data.gstin || null }
+          : {}),
         ...(parsed.data.creditTermDays !== undefined
           ? { creditTermDays: parsed.data.creditTermDays }
           : {}),
-        ...(parsed.data.cycleDays !== undefined ? { cycleDays: parsed.data.cycleDays } : {}),
-        ...(parsed.data.route !== undefined ? { route: parsed.data.route || null } : {}),
+        ...(parsed.data.cycleDays !== undefined
+          ? { cycleDays: parsed.data.cycleDays }
+          : {}),
+        ...(parsed.data.leadSource !== undefined
+          ? { leadSource: parsed.data.leadSource || null }
+          : {}),
+        // Who handles dispatch and billing is a manager's call, checked here
+        // and not merely disabled in the form.
+        ...(parsed.data.backOfficeAmId !== undefined && isManager(ctx.user)
+          ? { backOfficeAmId: parsed.data.backOfficeAmId || null }
+          : {}),
+        ...(parsed.data.route !== undefined
+          ? { route: parsed.data.route || null }
+          : {}),
         updatedAt: new Date(),
         updatedById: ctx.user.id,
       })
@@ -511,7 +568,8 @@ export async function requestDeactivation(
 ): Promise<Result> {
   try {
     if (!reason.trim()) return err("A reason is required.", "validation");
-    if (!customerIds.length) return err("Select at least one customer.", "validation");
+    if (!customerIds.length)
+      return err("Select at least one customer.", "validation");
     const ctx = await resolveScope();
 
     await db
@@ -549,11 +607,17 @@ export async function decideDeactivation(
 ): Promise<Result> {
   try {
     const ctx = await requireCapability("customer.deactivate");
-    const [existing] = await db.select().from(customers).where(eq(customers.id, customerId));
+    const [existing] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customerId));
     if (!existing) return err("That customer no longer exists.", "not_found");
 
     if (approve && !(reason ?? existing.deactivationReason)) {
-      return err("A reason is required to deactivate a customer.", "validation");
+      return err(
+        "A reason is required to deactivate a customer.",
+        "validation",
+      );
     }
 
     await db
@@ -581,11 +645,15 @@ export async function decideDeactivation(
     await db.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
-      action: approve ? "customer.deactivate" : "customer.deactivation_rejected",
+      action: approve
+        ? "customer.deactivate"
+        : "customer.deactivation_rejected",
       entityType: "customer",
       entityId: customerId,
       beforeState: { status: existing.status } as never,
-      afterState: { status: approve ? "deactivated" : existing.status } as never,
+      afterState: {
+        status: approve ? "deactivated" : existing.status,
+      } as never,
     });
 
     await recomputeInactivity();
@@ -615,14 +683,24 @@ export async function logComplaint(input: {
 }): Promise<Result> {
   try {
     if (!input.description.trim()) {
-      return err("Describe the complaint in the customer's words.", "validation", [
-        { field: "description", message: "Describe the complaint in the customer's words." },
-      ]);
+      return err(
+        "Describe the complaint in the customer's words.",
+        "validation",
+        [
+          {
+            field: "description",
+            message: "Describe the complaint in the customer's words.",
+          },
+        ],
+      );
     }
     // A credit note with no bill behind it is not actionable by accounts.
     if (input.requestCn && !input.billId) {
       return err("Pick the bill this credit note relates to.", "validation", [
-        { field: "billId", message: "Pick the bill this credit note relates to." },
+        {
+          field: "billId",
+          message: "Pick the bill this credit note relates to.",
+        },
       ]);
     }
 
@@ -664,8 +742,6 @@ export async function logComplaint(input: {
       });
     });
 
-
-
     // Storage has no backend yet (see lib/storage.ts), so attaching images is
     // best-effort — the complaint itself must always save.
     let imagesAttached = false;
@@ -677,9 +753,11 @@ export async function logComplaint(input: {
         u.status === "fulfilled" ? [u.value] : [],
       );
       if (succeeded.length) {
-        await db.insert(complaintImages).values(
-          succeeded.map((u) => ({ id: id("cim"), complaintId, url: u.url })),
-        );
+        await db
+          .insert(complaintImages)
+          .values(
+            succeeded.map((u) => ({ id: id("cim"), complaintId, url: u.url })),
+          );
         imagesAttached = true;
       }
     }
@@ -745,7 +823,11 @@ export async function reassignComplaint(
 
 export async function recordInactiveOutcome(
   customerId: string,
-  outcome: "contacted" | "reminder_set" | "deactivation_requested" | "not_actually_inactive",
+  outcome:
+    | "contacted"
+    | "reminder_set"
+    | "deactivation_requested"
+    | "not_actually_inactive",
   reason?: string,
 ): Promise<Result> {
   try {
@@ -766,7 +848,8 @@ export async function setTarget(
 ): Promise<Result> {
   try {
     const paise = parseRupees(amount);
-    if (paise === null) return err("Enter the monthly target in rupees.", "validation");
+    if (paise === null)
+      return err("Enter the monthly target in rupees.", "validation");
     const r = await setTargetService(customerId, paise, period);
     refreshAll();
     return r;
@@ -810,7 +893,9 @@ export async function setWaMode(mode: "manual" | "automatic"): Promise<Result> {
     const r = await updateSetting("whatsapp.mode", mode, ctx.user.id);
     invalidateConfig();
     refreshAll();
-    return r.ok ? okVoid(`WhatsApp set to ${mode}`) : err(r.error, "validation");
+    return r.ok
+      ? okVoid(`WhatsApp set to ${mode}`)
+      : err(r.error, "validation");
   } catch (e) {
     return fromThrown(e);
   }
@@ -988,7 +1073,10 @@ export async function advanceRun(
   }
 }
 
-export async function pauseRun(runId: string, paused: boolean): Promise<Result> {
+export async function pauseRun(
+  runId: string,
+  paused: boolean,
+): Promise<Result> {
   try {
     const r = await setRunStatus(runId, paused ? "paused" : "active");
     refreshAll();
@@ -1012,7 +1100,8 @@ export async function clearRun(runId: string): Promise<Result> {
 
 export async function submitEod(body: string): Promise<Result> {
   try {
-    const { eodPreflightFor, eodFor } = await import("@/lib/services/eod-service");
+    const { eodPreflightFor, eodFor } =
+      await import("@/lib/services/eod-service");
     const ctx = await resolveScope();
     const day = await today();
 
@@ -1062,7 +1151,9 @@ export async function markNotificationsRead(): Promise<Result> {
   return okVoid();
 }
 
-export async function markNotificationRead(notificationId: string): Promise<Result> {
+export async function markNotificationRead(
+  notificationId: string,
+): Promise<Result> {
   await resolveScope();
   await db
     .update(notifications)
@@ -1081,7 +1172,8 @@ export async function updateConfigSetting(
   try {
     const ctx = await requireCapability("config.write");
     const r = await updateSetting(key, value, ctx.user.id);
-    if (!r.ok) return err(r.error, "validation", [{ field: key, message: r.error }]);
+    if (!r.ok)
+      return err(r.error, "validation", [{ field: key, message: r.error }]);
     refreshAll();
     revalidatePath("/crm/settings");
     return ok({ warnings: r.warnings }, "Setting saved");
@@ -1089,7 +1181,6 @@ export async function updateConfigSetting(
     return fromThrown(e);
   }
 }
-
 
 /**
  * §7 requires every scheduled task to be triggerable by hand — a missed

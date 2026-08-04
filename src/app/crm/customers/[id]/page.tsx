@@ -3,7 +3,12 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { orders, payments } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { currentPeriod, customerTimeline, getCustomer, today } from "@/lib/queries";
+import {
+  currentPeriod,
+  customerTimeline,
+  getCustomer,
+  today,
+} from "@/lib/queries";
 import { getFollowUpDetail } from "@/lib/services/payment-service";
 import { getConfig } from "@/lib/config/store";
 import { listActiveProducts } from "@/db/seed-catalogue";
@@ -94,6 +99,11 @@ export default async function CustomerRecordPage({
         phone: customer.phone,
         city: customer.city,
         ownerName: customer.ownerName,
+        kind: customer.kind,
+        leadSource: customer.leadSource,
+        createdAt: customer.createdAt.toISOString().slice(0, 10),
+        salesAmName: customer.salesAmName,
+        backOfficeAmName: customer.backOfficeAmName,
         status: customer.status,
         slowPayer: customer.slowPayer,
         outstanding: customer.outstanding,
@@ -145,7 +155,10 @@ export default async function CustomerRecordPage({
       }
       openPromise={
         promise?.promisedDate
-          ? { amount: promise.promisedAmount ?? 0, promisedBy: promise.promisedDate }
+          ? {
+              amount: promise.promisedAmount ?? 0,
+              promisedBy: promise.promisedDate,
+            }
           : null
       }
       billStats={{

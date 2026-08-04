@@ -47,6 +47,7 @@ type Row = {
   kind: "lead" | "customer";
   leadSource: string | null;
   salesAmName: string | null;
+  backOfficeAmId: string | null;
   backOfficeAmName: string | null;
   status: string;
   lastOrderDate: string | null;
@@ -508,6 +509,8 @@ export function CustomersScreen({
         open={addOpen}
         title="Add lead"
         team={team}
+        kind="lead"
+        isManager={isManager}
         onClose={() => setAddOpen(false)}
         onSubmit={async (values) => {
           const result = await run(createCustomer(values));
@@ -523,6 +526,8 @@ export function CustomersScreen({
         open={Boolean(editing)}
         title={`Edit ${editing?.name ?? ""}`}
         team={team}
+        kind={editing?.kind ?? "customer"}
+        isManager={isManager}
         initial={editing ?? undefined}
         onClose={() => setEditing(null)}
         onSubmit={async (values) => {
@@ -572,10 +577,23 @@ export function CustomersScreen({
   );
 }
 
+/** Common ways a lead reaches Mahek. Free text underneath — this is a shortcut. */
+const LEAD_SOURCES = [
+  "Walk-in",
+  "Referral",
+  "Exhibition",
+  "Cold list",
+  "Existing customer's contact",
+  "Phone enquiry",
+];
+
 type CustomerFormProps = {
   open: boolean;
   title: string;
   team: Array<{ id: string; name: string }>;
+  /** A new record is a lead. An existing one is whatever it already is. */
+  kind: "lead" | "customer";
+  isManager: boolean;
   initial?: Partial<Row>;
   onClose: () => void;
   onSubmit: (values: Record<string, unknown>) => Promise<boolean>;
@@ -591,10 +609,13 @@ function CustomerFormBody({
   open,
   title,
   team,
+  kind,
+  isManager,
   initial,
   onClose,
   onSubmit,
 }: CustomerFormProps) {
+  const isLead = kind === "lead";
   const [busy, setBusy] = React.useState(false);
   const [values, setValues] = React.useState<Record<string, string>>({
     name: initial?.name ?? "",
@@ -606,6 +627,8 @@ function CustomerFormBody({
     creditTermDays: String(initial?.creditTermDays ?? 30),
     cycleDays: String(initial?.cycleDays ?? 30),
     route: initial?.route ?? "",
+    leadSource: initial?.leadSource ?? "",
+    backOfficeAmId: initial?.backOfficeAmId ?? "",
   });
 
   const set =
@@ -675,6 +698,47 @@ function CustomerFormBody({
             ))}
           </Select>
         </Field>
+        {isLead ? (
+          <Field
+            label="Source"
+            hint="Where they came from. It is the only thing that explains a lead months later."
+            className="col-span-2"
+          >
+            <Input
+              value={values.leadSource ?? ""}
+              onChange={set("leadSource")}
+              list="lead-sources"
+              placeholder="Walk-in, referral, exhibition…"
+            />
+            <datalist id="lead-sources">
+              {LEAD_SOURCES.map((source) => (
+                <option key={source} value={source} />
+              ))}
+            </datalist>
+          </Field>
+        ) : (
+          <Field
+            label="Account manager · back office"
+            hint={
+              isManager
+                ? "Dispatch, billing and paperwork for this account."
+                : "Only a manager can change this."
+            }
+          >
+            <Select
+              value={values.backOfficeAmId ?? ""}
+              onChange={set("backOfficeAmId")}
+              disabled={!isManager}
+            >
+              <option value="">Unassigned</option>
+              {team.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
         <Field label="GSTIN">
           <Input value={values.gstin ?? ""} onChange={set("gstin")} />
         </Field>
@@ -688,16 +752,20 @@ function CustomerFormBody({
             onChange={set("creditTermDays")}
           />
         </Field>
-        <Field
-          label="Buying cycle (days)"
-          hint="Twice this without an order puts them on the inactive watch"
-        >
-          <Input
-            type="number"
-            value={values.cycleDays ?? ""}
-            onChange={set("cycleDays")}
-          />
-        </Field>
+        {/* A buying cycle is measured from orders. Asking for one on a record
+            that has never ordered invites a number that then looks measured. */}
+        {isLead ? null : (
+          <Field
+            label="Buying cycle (days)"
+            hint="Twice this without an order puts them on the inactive watch"
+          >
+            <Input
+              type="number"
+              value={values.cycleDays ?? ""}
+              onChange={set("cycleDays")}
+            />
+          </Field>
+        )}
       </div>
     </Modal>
   );
