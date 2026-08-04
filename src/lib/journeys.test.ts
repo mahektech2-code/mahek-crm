@@ -31,7 +31,12 @@ import {
   waTemplates,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
-import { seedConfig, updateSetting, invalidateConfig, getConfig } from "@/lib/config/store";
+import {
+  seedConfig,
+  updateSetting,
+  invalidateConfig,
+  getConfig,
+} from "@/lib/config/store";
 import { NotPermittedError } from "@/lib/access-control";
 import { today } from "@/lib/recompute";
 import {
@@ -45,7 +50,11 @@ import { addDays } from "@/lib/business-date";
 import { getQueue } from "@/lib/services/queue-service";
 import { saveInteraction } from "@/lib/services/interaction-service";
 import { seedCatalogue } from "@/db/seed-catalogue";
-import { products as productsTable, quickNotes as quickNotesTable, interactionProductLines } from "@/db/schema";
+import {
+  products as productsTable,
+  quickNotes as quickNotesTable,
+  interactionProductLines,
+} from "@/db/schema";
 import {
   getFollowUpWorklist,
   recordFollowUpAttempt,
@@ -162,7 +171,10 @@ describe("Journey 1 — a new customer earns their own buying cycle", () => {
 
     // With no history at all, the cycle is the configured default and says so.
     await recomputeBuyingCycle(customer.id);
-    let [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    let [row] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
     const config = await getConfig();
     assert.equal(row.cycleIsDefault, true);
     assert.equal(row.cycleDays, config["buyingCycle.defaultDays"]);
@@ -180,15 +192,25 @@ describe("Journey 1 — a new customer earns their own buying cycle", () => {
     }
     await recomputeBuyingCycle(customer.id);
 
-    [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
-    assert.equal(row.cycleIsDefault, false, "four orders is enough to derive a cycle");
+    [row] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(
+      row.cycleIsDefault,
+      false,
+      "four orders is enough to derive a cycle",
+    );
     assert.equal(row.cycleDays, 20);
     assert.equal(row.avgOrderValue, 50_000_00);
 
     // Twenty days since the last order, so they are due to reorder.
     const queue = await getQueue();
     const entry = queue.entries.find((e) => e.customerId === customer.id);
-    assert.ok(entry, "a customer at their cycle length must appear in the queue");
+    assert.ok(
+      entry,
+      "a customer at their cycle length must appear in the queue",
+    );
     assert.ok(
       entry.reasons.some((r) => r.kind.startsWith("order")),
       `expected an order-due reason, got ${entry.reasons.map((r) => r.kind).join(", ")}`,
@@ -265,7 +287,10 @@ describe("Journey 2 — an overdue bill escalates, is chased, and is paid", () =
     assert.equal(promised?.promiseBroken, false);
 
     // The money arrives.
-    const [bill] = await db.select().from(bills).where(eq(bills.customerId, customer.id));
+    const [bill] = await db
+      .select()
+      .from(bills)
+      .where(eq(bills.customerId, customer.id));
     const paid = await recordPayment({
       billId: bill.id,
       amount: 1_00_000_00,
@@ -286,7 +311,11 @@ describe("Journey 2 — an overdue bill escalates, is chased, and is paid", () =
     const stillListed = (await getFollowUpWorklist()).find(
       (r) => r.customerId === customer.id,
     );
-    assert.equal(stillListed, undefined, "a paid-up customer leaves the worklist");
+    assert.equal(
+      stillListed,
+      undefined,
+      "a paid-up customer leaves the worklist",
+    );
   });
 
   test("a disputed bill holds the customer instead of escalating them", async () => {
@@ -297,7 +326,9 @@ describe("Journey 2 — an overdue bill escalates, is chased, and is paid", () =
       .where(eq(bills.customerId, customer.id));
     await recomputeFollowUpState(customer.id);
 
-    const row = (await getFollowUpWorklist()).find((r) => r.customerId === customer.id);
+    const row = (await getFollowUpWorklist()).find(
+      (r) => r.customerId === customer.id,
+    );
     assert.ok(row);
     assert.equal(row.held, true);
     assert.ok(row.heldReason, "a hold must carry a reason a human can read");
@@ -361,7 +392,10 @@ describe("Journey 3 — copying is not sending", () => {
     const confirmed = await confirmSent(messageId);
     assert.equal(confirmed.ok, true, confirmed.ok ? "" : confirmed.error);
 
-    const [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    const [row] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
     assert.equal(row.lastConfirmedWhatsappDate, TODAY);
 
     const queue = await getQueue();
@@ -433,12 +467,16 @@ describe("Journey 4 — the EOD gate", () => {
     });
     assert.ok(created.ok);
 
-    const { dismissReminder } = await import("@/lib/services/worklist-services");
+    const { dismissReminder } =
+      await import("@/lib/services/worklist-services");
 
     const noReason = await dismissReminder(created.data.id, "   ");
     assert.equal(noReason.ok, false, "dismissal without a reason is refused");
 
-    const done = await dismissReminder(created.data.id, "Cheque already banked");
+    const done = await dismissReminder(
+      created.data.id,
+      "Cheque already banked",
+    );
     assert.equal(done.ok, true);
 
     const [row] = await db
@@ -450,7 +488,11 @@ describe("Journey 4 — the EOD gate", () => {
 
     // Three statuses and no more — "cancelled" is not one of them.
     const all = await listReminders();
-    assert.ok(all.every((r) => ["pending", "completed", "dismissed"].includes(r.status)));
+    assert.ok(
+      all.every((r) =>
+        ["pending", "completed", "dismissed"].includes(r.status),
+      ),
+    );
   });
 });
 
@@ -472,7 +514,10 @@ describe("Journey 5 — a customer goes quiet and gets a decision", () => {
     const row = watch.find((w) => w.customerId === customer.id);
     assert.ok(row, "three and a half cycles of silence must reach the watch");
     assert.ok(Number(row.cyclesElapsed) >= 3);
-    assert.ok(row.valueAtRisk > 0, "the watch is about money, so it must carry a figure");
+    assert.ok(
+      row.valueAtRisk > 0,
+      "the watch is about money, so it must carry a figure",
+    );
     assert.equal(row.outcome, null);
 
     const decided = await recordWatchOutcome(
@@ -484,7 +529,11 @@ describe("Journey 5 — a customer goes quiet and gets a decision", () => {
 
     const after = await listInactiveWatch();
     const stillOpen = after.find((w) => w.customerId === customer.id);
-    assert.equal(stillOpen?.needsDecision, false, "a decided item stops nagging");
+    assert.equal(
+      stillOpen?.needsDecision,
+      false,
+      "a decided item stops nagging",
+    );
   });
 });
 
@@ -544,7 +593,10 @@ describe("Journey 6 — a telecaller sees their own book and nothing else", () =
     const [denial] = await db.execute<{ n: number }>(sql`
       select count(*)::int as n from audit_log where action = 'access.denied'
     `);
-    assert.ok(Number(denial.n) >= 1, "a refusal is a security event, so it is recorded");
+    assert.ok(
+      Number(denial.n) >= 1,
+      "a refusal is a security event, so it is recorded",
+    );
 
     setTestUser(manager);
     const allowed = await setTarget(customer.id, 500000, TODAY.slice(0, 7));
@@ -554,7 +606,11 @@ describe("Journey 6 — a telecaller sees their own book and nothing else", () =
       .select()
       .from(monthlyTargets)
       .where(eq(monthlyTargets.customerId, customer.id));
-    assert.equal(target.isDefault, false, "a hand-set target is no longer a default");
+    assert.equal(
+      target.isDefault,
+      false,
+      "a hand-set target is no longer a default",
+    );
   });
 });
 
@@ -582,15 +638,26 @@ describe("Journey 7 — a complaint carries its SLA and its credit-note request"
     assert.equal(row.status, "open");
     assert.equal(row.mobileNumber, "9820055555");
     // The SLA deadline is derived from configured hours, never typed in.
-    assert.ok(row.slaDueAt > new Date(), "an open complaint has a future deadline");
+    assert.ok(
+      row.slaDueAt > new Date(),
+      "an open complaint has a future deadline",
+    );
     assert.equal(row.requestCn, false);
-    assert.equal(row.billId, null, "no credit note asked for, so no bill attached");
+    assert.equal(
+      row.billId,
+      null,
+      "no credit note asked for, so no bill attached",
+    );
 
     const history = await db
       .select()
       .from(complaintStatusHistory)
       .where(eq(complaintStatusHistory.complaintId, row.id));
-    assert.equal(history.length, 1, "opening the complaint is itself a history line");
+    assert.equal(
+      history.length,
+      1,
+      "opening the complaint is itself a history line",
+    );
     assert.equal(history[0].toStatus, "open");
   });
 
@@ -646,7 +713,10 @@ describe("Journey 7 — a complaint carries its SLA and its credit-note request"
 
   test("the category list is configuration, so a manager can change it", async () => {
     const before = (await getConfig())["complaints.categories"];
-    assert.ok(before.includes("Packaging"), "ships with Mahek's own vocabulary");
+    assert.ok(
+      before.includes("Packaging"),
+      "ships with Mahek's own vocabulary",
+    );
 
     const changed = await updateSetting(
       "complaints.categories",
@@ -661,7 +731,6 @@ describe("Journey 7 — a complaint carries its SLA and its credit-note request"
     ]);
   });
 });
-
 
 /* ------------------- journey 8: interactions, and the three hazards */
 
@@ -685,7 +754,10 @@ describe("Journey 8 — the interaction log", () => {
     });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
 
-    const [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    const [row] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
     assert.equal(row.lastCallDate, TODAY, "we did dial them");
     assert.equal(
       row.lastContactDate,
@@ -712,11 +784,17 @@ describe("Journey 8 — the interaction log", () => {
     assert.equal(m.callsAttempted, 0, "nobody spoke to anybody");
     assert.equal(m.callsConnected, 0);
     assert.equal(m.callsMissed, 0);
-    assert.equal(m.ordersWithoutCall, 1, "but it is real work and counted separately");
+    assert.equal(
+      m.ordersWithoutCall,
+      1,
+      "but it is real work and counted separately",
+    );
   });
 
   test("a backdated Order Received uses the entered date, not the log timestamp", async () => {
-    const customer = await makeCustomer(priya.id, { lastOrderDate: addDays(TODAY, -30) });
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -30),
+    });
     const product = await firstProduct();
     const friday = addDays(TODAY, -3);
 
@@ -728,8 +806,15 @@ describe("Journey 8 — the interaction log", () => {
       idempotencyKey: randomUUID(),
     });
 
-    const [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
-    assert.equal(row.lastOrderDate, friday, "the date they entered is the order date");
+    const [row] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(
+      row.lastOrderDate,
+      friday,
+      "the date they entered is the order date",
+    );
   });
 
   test("a backdated order older than the last one does not drag it backwards", async () => {
@@ -756,7 +841,10 @@ describe("Journey 8 — the interaction log", () => {
       idempotencyKey: randomUUID(),
     });
 
-    const [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    const [row] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
     assert.equal(row.lastOrderDate, recent, "last order never moves backwards");
   });
 
@@ -833,7 +921,10 @@ describe("Journey 8 — the interaction log", () => {
     });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
 
-    const [row] = await db.select().from(calls).where(eq(calls.customerId, customer.id));
+    const [row] = await db
+      .select()
+      .from(calls)
+      .where(eq(calls.customerId, customer.id));
     assert.deepEqual(
       row.quickNoteIds.sort(),
       [chips[0].id, chips[1].id].sort(),
@@ -876,7 +967,11 @@ describe("Journey 8 — the interaction log", () => {
       outcome: "order_taken",
       idempotencyKey: randomUUID(),
     });
-    assert.equal(empty.ok, false, "an order with nothing ordered is not an order");
+    assert.equal(
+      empty.ok,
+      false,
+      "an order with nothing ordered is not an order",
+    );
 
     const r = await saveInteraction({
       customerId: customer.id,
@@ -967,14 +1062,14 @@ describe("Journey 8 — the interaction log", () => {
   });
 });
 
-
 /* ------------------------- journey 9: the information tab (§7) */
 
 describe("Journey 9 — the Information tab", () => {
   test("last call ignores Order Received, because that was not a call", async () => {
     const customer = await makeCustomer(priya.id);
     const [product] = await db.select().from(productsTable).limit(1);
-    const { customerInformation } = await import("@/lib/services/customer-info-service");
+    const { customerInformation } =
+      await import("@/lib/services/customer-info-service");
 
     await saveInteraction({
       customerId: customer.id,
@@ -993,7 +1088,11 @@ describe("Journey 9 — the Information tab", () => {
     const info = await customerInformation(customer.id);
     assert.ok(info);
     assert.equal(info.purchase.lastCallDate, TODAY, "the call counts");
-    assert.equal(info.recentCalls.length, 1, "the order does not appear under Last 3 calls");
+    assert.equal(
+      info.recentCalls.length,
+      1,
+      "the order does not appear under Last 3 calls",
+    );
     assert.equal(info.recentCalls[0].outcome, "no_order");
   });
 
@@ -1003,25 +1102,32 @@ describe("Journey 9 — the Information tab", () => {
       cycleDays: 21,
       cycleIsDefault: false,
     });
-    const { customerInformation } = await import("@/lib/services/customer-info-service");
+    const { customerInformation } =
+      await import("@/lib/services/customer-info-service");
 
     const info = await customerInformation(customer.id);
     assert.ok(info);
     assert.equal(info.purchase.nextOrderDate, addDays(TODAY, 11));
     assert.equal(info.purchase.lastOrderDaysAgo, 10);
-    assert.equal(info.purchase.cycleIsDefault, false, "a real cycle, not a fallback");
+    assert.equal(
+      info.purchase.cycleIsDefault,
+      false,
+      "a real cycle, not a fallback",
+    );
   });
 
   test("a default cycle is flagged as one", async () => {
     const customer = await makeCustomer(priya.id, { cycleIsDefault: true });
-    const { customerInformation } = await import("@/lib/services/customer-info-service");
+    const { customerInformation } =
+      await import("@/lib/services/customer-info-service");
     const info = await customerInformation(customer.id);
     assert.equal(info?.purchase.cycleIsDefault, true);
   });
 
   test("run rate divides the gap over WORKING days, and survives a zero target", async () => {
     const customer = await makeCustomer(priya.id);
-    const { customerInformation } = await import("@/lib/services/customer-info-service");
+    const { customerInformation } =
+      await import("@/lib/services/customer-info-service");
 
     // No target set at all — the maths must not divide by zero.
     const bare = await customerInformation(customer.id);
@@ -1052,10 +1158,14 @@ describe("Journey 9 — the Information tab", () => {
   test("credit days fall back to the configured default, and say so", async () => {
     const plain = await makeCustomer(priya.id);
     const own = await makeCustomer(priya.id, { creditDays: 45 });
-    const { customerInformation } = await import("@/lib/services/customer-info-service");
+    const { customerInformation } =
+      await import("@/lib/services/customer-info-service");
 
     const a = await customerInformation(plain.id);
-    assert.equal(a?.creditDays, (await getConfig())["customers.defaultCreditDays"]);
+    assert.equal(
+      a?.creditDays,
+      (await getConfig())["customers.defaultCreditDays"],
+    );
     assert.equal(a?.creditDaysIsDefault, true);
 
     const b = await customerInformation(own.id);
@@ -1066,7 +1176,8 @@ describe("Journey 9 — the Information tab", () => {
   test("product history comes from the CRM and is labelled as such", async () => {
     const customer = await makeCustomer(priya.id);
     const [product] = await db.select().from(productsTable).limit(1);
-    const { customerInformation } = await import("@/lib/services/customer-info-service");
+    const { customerInformation } =
+      await import("@/lib/services/customer-info-service");
 
     await saveInteraction({
       customerId: customer.id,
@@ -1088,15 +1199,150 @@ describe("Journey 9 — the Information tab", () => {
   });
 });
 
+/* ------------------------------------------------ the calling rules, end to end */
+
+describe("Who the Call Log puts in front of a telecaller", () => {
+  test("a customer reordering inside the quiet window is left alone", async () => {
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -6),
+      lastContactDate: addDays(TODAY, -90),
+      cycleDays: 8,
+      cycleIsDefault: false,
+    });
+    const q = await getQueue();
+    assert.equal(
+      q.entries.some((e) => e.customerId === customer.id),
+      false,
+      "they order every 8 days on their own — a call adds nothing",
+    );
+  });
+
+  test("late by their own cycle but inside the quiet window is held back visibly", async () => {
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -12),
+      cycleDays: 8,
+      cycleIsDefault: false,
+    });
+    const q = await getQueue();
+    assert.equal(
+      q.entries.some((e) => e.customerId === customer.id),
+      false,
+    );
+    const held = q.suppressed.find((x) => x.customerId === customer.id);
+    assert.ok(held, "held back customers are shown, never silently dropped");
+    assert.match(held.reason, /quiet for/);
+  });
+
+  test("a 22-day cycle is called on day 18, not day 17", async () => {
+    const early = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -17),
+      cycleDays: 22,
+      cycleIsDefault: false,
+    });
+    const due = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -18),
+      cycleDays: 22,
+      cycleIsDefault: false,
+    });
+    const q = await getQueue();
+    assert.equal(
+      q.entries.some((e) => e.customerId === early.id),
+      false,
+    );
+    assert.ok(q.entries.some((e) => e.customerId === due.id));
+  });
+
+  test("saying no does not put the same customer back tomorrow", async () => {
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      cycleIsDefault: false,
+    });
+
+    const before = await getQueue();
+    assert.ok(
+      before.entries.some((e) => e.customerId === customer.id),
+      "past their call day, so they start on the list",
+    );
+
+    const saved = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      notes: "Still has stock",
+      sourceModule: "call_queue",
+      idempotencyKey: "j-no-order-1",
+    });
+    assert.ok(saved.ok, JSON.stringify(saved));
+
+    // "Already called today" would mask the cooldown, and it expires at
+    // midnight. Turning it off is how this test asks the question it means:
+    // what holds them back TOMORROW.
+    await updateSetting("queue.excludeCalledToday", false, manager.id);
+    const after = await getQueue();
+    assert.equal(
+      after.entries.some((e) => e.customerId === customer.id),
+      false,
+    );
+    const held = after.suppressed.find((x) => x.customerId === customer.id);
+    assert.ok(held, "and the telecaller can see why");
+    assert.match(held.reason, /asking again in/);
+  });
+
+  test("a promised callback beats both the quiet window and the cooldown", async () => {
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -1),
+      cycleDays: 8,
+      cycleIsDefault: false,
+    });
+    const saved = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "follow_up",
+      followUpDate: TODAY,
+      notes: "Asked us to ring back today about the rate",
+      sourceModule: "call_queue",
+      idempotencyKey: "j-followup-1",
+    });
+    assert.ok(saved.ok, JSON.stringify(saved));
+
+    // Same reason as above: they were called a moment ago, and that rule is
+    // not the one under test.
+    await updateSetting("queue.excludeCalledToday", false, manager.id);
+    const q = await getQueue();
+    assert.ok(
+      q.entries.some((e) => e.customerId === customer.id),
+      "a promise the telecaller made outranks leaving a good customer alone",
+    );
+  });
+
+  test("a customer who has never ordered is worked as a prospect", async () => {
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: null,
+      lastContactDate: addDays(TODAY, -4),
+    });
+    const q = await getQueue();
+    const entry = q.entries.find((e) => e.customerId === customer.id);
+    assert.ok(
+      entry,
+      "never-ordered customers are the growth work, not an omission",
+    );
+    assert.equal(entry.reasons[0].kind, "prospect");
+  });
+});
+
 /* ------------------------------------ cross-cutting: config, idempotency, audit */
 
 describe("Cross-cutting rules", () => {
   test("a threshold change takes effect on the next read, with no restart", async () => {
+    // The check-in interval governs customers whose cycle could NOT be
+    // measured, so that is what this exercises. The last order is well past
+    // the quiet window, or the customer would be held back for that instead.
     const customer = await makeCustomer(priya.id, {
       lastContactDate: addDays(TODAY, -10),
-      lastOrderDate: addDays(TODAY, -10),
+      lastOrderDate: addDays(TODAY, -40),
       cycleDays: 90,
-      cycleIsDefault: false,
+      cycleIsDefault: true,
     });
 
     await updateSetting("queue.checkInIntervalDays", 30, manager.id);
@@ -1116,7 +1362,11 @@ describe("Cross-cutting rules", () => {
   });
 
   test("an out-of-range setting is refused with the bound in the message", async () => {
-    const result = await updateSetting("queue.checkInIntervalDays", 4000, manager.id);
+    const result = await updateSetting(
+      "queue.checkInIntervalDays",
+      4000,
+      manager.id,
+    );
     assert.equal(result.ok, false);
     assert.match(result.error, /365/);
   });
@@ -1158,7 +1408,9 @@ describe("Cross-cutting rules", () => {
       cycleIsDefault: false,
     });
 
-    assert.ok((await getQueue()).entries.some((e) => e.customerId === customer.id));
+    assert.ok(
+      (await getQueue()).entries.some((e) => e.customerId === customer.id),
+    );
 
     const logged = await saveInteraction({
       customerId: customer.id,

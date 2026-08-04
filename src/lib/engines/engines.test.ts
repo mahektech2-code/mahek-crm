@@ -1,7 +1,11 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { defaultConfig, validateSetting, checkConsistency } from "../config/registry";
+import {
+  defaultConfig,
+  validateSetting,
+  checkConsistency,
+} from "../config/registry";
 import {
   businessDate,
   isWorkingDay,
@@ -64,7 +68,11 @@ describe("configuration", () => {
     // here so it stays visible. Once the business confirms real boundaries,
     // this test should fail and be replaced with `deepEqual(…, [])`.
     const problems = checkConsistency(C);
-    assert.equal(problems.length, 1, `unexpected extra problems: ${problems.join(" | ")}`);
+    assert.equal(
+      problems.length,
+      1,
+      `unexpected extra problems: ${problems.join(" | ")}`,
+    );
     assert.match(problems[0], /share no boundary/);
   });
 
@@ -75,12 +83,16 @@ describe("configuration", () => {
 
   test("catches escalation thresholds that do not increase", () => {
     const bad = { ...C, "escalation.stage2Days": 5 };
-    assert.ok(checkConsistency(bad).some((p) => p.includes("stage 1 < stage 2")));
+    assert.ok(
+      checkConsistency(bad).some((p) => p.includes("stage 1 < stage 2")),
+    );
   });
 
   test("catches aging buckets that disagree with escalation thresholds", () => {
     const bad = { ...C, "bills.agingBuckets": [0, 17, 34, 51] };
-    assert.ok(checkConsistency(bad).some((p) => p.includes("share no boundary")));
+    assert.ok(
+      checkConsistency(bad).some((p) => p.includes("share no boundary")),
+    );
   });
 });
 
@@ -95,11 +107,17 @@ describe("business dates", () => {
 
   test("2 am IST still belongs to the previous working day", () => {
     // 2026-08-03T20:35Z is 2026-08-04T02:05 IST — before the 5 am boundary.
-    assert.equal(businessDate(new Date("2026-08-03T20:35:00Z"), wd), "2026-08-03");
+    assert.equal(
+      businessDate(new Date("2026-08-03T20:35:00Z"), wd),
+      "2026-08-03",
+    );
   });
 
   test("6 am IST belongs to the new day", () => {
-    assert.equal(businessDate(new Date("2026-08-04T00:35:00Z"), wd), "2026-08-04");
+    assert.equal(
+      businessDate(new Date("2026-08-04T00:35:00Z"), wd),
+      "2026-08-04",
+    );
   });
 
   test("Sunday is not a working day; Saturday is", () => {
@@ -132,20 +150,38 @@ describe("E1 buying cycle", () => {
 
   test("a single outlier interval does not distort a median-based cycle", () => {
     // Intervals: 14, 14, 14, 200 — a festival gap.
-    const dates = ["2026-01-01", "2026-01-15", "2026-01-29", "2026-02-12", "2026-08-31"];
+    const dates = [
+      "2026-01-01",
+      "2026-01-15",
+      "2026-01-29",
+      "2026-02-12",
+      "2026-08-31",
+    ];
     const r = buyingCycle(dates, C);
     assert.equal(r.isDefault, false);
     assert.equal(r.days, 14, "median should ignore the 200-day outlier");
   });
 
   test("the same outlier does distort a mean, which is why median is the default", () => {
-    const dates = ["2026-01-01", "2026-01-15", "2026-01-29", "2026-02-12", "2026-08-31"];
+    const dates = [
+      "2026-01-01",
+      "2026-01-15",
+      "2026-01-29",
+      "2026-02-12",
+      "2026-08-31",
+    ];
     const r = buyingCycle(dates, { ...C, "buyingCycle.method": "mean" });
     assert.ok(r.days > 50, `mean was ${r.days}`);
   });
 
   test("results clamp to the configured minimum", () => {
-    const dates = ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05"];
+    const dates = [
+      "2026-08-01",
+      "2026-08-02",
+      "2026-08-03",
+      "2026-08-04",
+      "2026-08-05",
+    ];
     assert.equal(buyingCycle(dates, C).days, C["buyingCycle.minDays"]);
   });
 
@@ -155,7 +191,13 @@ describe("E1 buying cycle", () => {
   });
 
   test("two orders on the same day are not an interval of zero", () => {
-    const dates = ["2026-01-01", "2026-01-01", "2026-01-15", "2026-01-29", "2026-02-12"];
+    const dates = [
+      "2026-01-01",
+      "2026-01-01",
+      "2026-01-15",
+      "2026-01-29",
+      "2026-02-12",
+    ];
     assert.equal(buyingCycle(dates, C).days, 14);
   });
 
@@ -163,8 +205,13 @@ describe("E1 buying cycle", () => {
     const config = { ...C, "buyingCycle.lookbackOrders": 4 };
     // Old cadence 60 days, recent cadence 10 days. Lookback 4 = last 3 intervals.
     const dates = [
-      "2025-01-01", "2025-03-02", "2025-05-01",
-      "2026-01-01", "2026-01-11", "2026-01-21", "2026-01-31",
+      "2025-01-01",
+      "2025-03-02",
+      "2025-05-01",
+      "2026-01-01",
+      "2026-01-11",
+      "2026-01-21",
+      "2026-01-31",
     ];
     assert.equal(buyingCycle(dates, config).days, 10);
   });
@@ -188,6 +235,7 @@ function candidate(over: Partial<QueueCandidate> = {}): QueueCandidate {
     calledToday: false,
     doNotContact: false,
     skippedTodayReason: null,
+    lastNoOrderDate: null,
     outstanding: 0,
     targetGap: 0,
     ...over,
@@ -196,21 +244,29 @@ function candidate(over: Partial<QueueCandidate> = {}): QueueCandidate {
 
 describe("E2 queue builder", () => {
   test("a customer qualifying under three reasons returns ONE entry with all three", () => {
+    // Check-in is deliberately NOT one of them: it applies only where the
+    // cycle could not be measured, so it cannot stack on an order reason.
     const c = candidate({
       // order overdue by a full cycle
       lastOrderDate: addDays(TODAY, -70),
       cycleDays: 30,
-      // check-in overdue
       lastContactDate: addDays(TODAY, -40),
-      // reminder overdue
-      reminders: [{ id: "r1", dueDate: addDays(TODAY, -2), note: "Call back" }],
+      // one reminder overdue, one due today
+      reminders: [
+        { id: "r1", dueDate: addDays(TODAY, -2), note: "Call back" },
+        { id: "r2", dueDate: TODAY, note: "Send the rate list" },
+      ],
     });
     const { entries } = buildQueue([c], TODAY, C);
 
     assert.equal(entries.length, 1, "one entry, not three");
     assert.equal(entries[0].reasons.length, 3);
     assert.equal(entries[0].score, C["queue.tierWeights"].reminderOverdue);
-    assert.equal(entries[0].reasons[0].kind, "reminderOverdue", "highest first");
+    assert.equal(
+      entries[0].reasons[0].kind,
+      "reminderOverdue",
+      "highest first",
+    );
   });
 
   test("a customer active in the order system is SUPPRESSED, not omitted", () => {
@@ -260,58 +316,250 @@ describe("E2 queue builder", () => {
   test("a confirmed WhatsApp beyond the cooldown no longer suppresses", () => {
     const c = candidate({
       lastContactDate: addDays(TODAY, -40),
-      lastConfirmedWhatsappDate: addDays(TODAY, -C["queue.whatsappCooldownDays"]),
+      lastConfirmedWhatsappDate: addDays(
+        TODAY,
+        -C["queue.whatsappCooldownDays"],
+      ),
     });
     assert.equal(buildQueue([c], TODAY, C).entries.length, 1);
   });
 
   test("a customer already called today never appears", () => {
-    const c = candidate({ lastContactDate: addDays(TODAY, -40), calledToday: true });
+    const c = candidate({
+      lastContactDate: addDays(TODAY, -40),
+      calledToday: true,
+    });
     const r = buildQueue([c], TODAY, C);
     assert.equal(r.entries.length, 0);
     assert.match(r.suppressed[0].reason, /already called/i);
   });
 
   test("do-not-contact suppresses", () => {
-    const c = candidate({ lastContactDate: addDays(TODAY, -40), doNotContact: true });
-    assert.match(buildQueue([c], TODAY, C).suppressed[0].reason, /do not contact/i);
+    const c = candidate({
+      lastContactDate: addDays(TODAY, -40),
+      doNotContact: true,
+    });
+    assert.match(
+      buildQueue([c], TODAY, C).suppressed[0].reason,
+      /do not contact/i,
+    );
   });
 
   test("a customer with no reason does not appear at all", () => {
     const r = buildQueue([candidate({ lastContactDate: TODAY })], TODAY, C);
     assert.equal(r.entries.length, 0);
-    assert.equal(r.suppressed.length, 0, "no reason means not a candidate, not suppressed");
+    assert.equal(
+      r.suppressed.length,
+      0,
+      "no reason means not a candidate, not suppressed",
+    );
   });
 
-  test("a customer who has never ordered falls through to check-in", () => {
-    const c = candidate({ lastOrderDate: null, lastContactDate: addDays(TODAY, -40) });
+  test("a customer who has never ordered is a PROSPECT, not a check-in", () => {
+    const c = candidate({
+      lastOrderDate: null,
+      lastContactDate: addDays(TODAY, -40),
+    });
     const { entries } = buildQueue([c], TODAY, C);
     assert.equal(entries.length, 1);
-    assert.ok(entries[0].reasons.every((r) => r.kind.startsWith("checkIn")));
+    assert.equal(entries[0].reasons[0].kind, "prospect");
+  });
+
+  /* -------------------------------------------------- the quiet window */
+
+  test("a customer ordering faster than the quiet window is left alone", () => {
+    // Orders every 8 days, ordered 6 days ago. They are serving themselves.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -6),
+      cycleDays: 8,
+      lastContactDate: addDays(TODAY, -90),
+    });
+    const r = buildQueue([c], TODAY, C);
+    assert.equal(r.entries.length, 0, "not called");
+  });
+
+  test("late by their own cycle but inside the quiet window is SUPPRESSED, not omitted", () => {
+    // Cycle 8, ordered 12 days ago: overdue by their reckoning, but under 15.
+    // The telecaller must be able to find out why they are missing.
+    const c = candidate({ lastOrderDate: addDays(TODAY, -12), cycleDays: 8 });
+    const r = buildQueue([c], TODAY, C);
+    assert.equal(r.entries.length, 0);
+    assert.equal(r.suppressed.length, 1);
+    assert.match(r.suppressed[0].reason, /quiet for 3 more days/);
+  });
+
+  test("past the quiet window, a fast-cycling customer is called", () => {
+    const c = candidate({ lastOrderDate: addDays(TODAY, -15), cycleDays: 8 });
+    assert.equal(buildQueue([c], TODAY, C).entries.length, 1);
+  });
+
+  test("a reminder overrides the quiet window", () => {
+    // Ordered yesterday, but they asked to be called back today. A promise
+    // the telecaller made outranks leaving a good customer alone.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -1),
+      cycleDays: 8,
+      reminders: [{ id: "r1", dueDate: TODAY, note: "Send the rate list" }],
+    });
+    const r = buildQueue([c], TODAY, C);
+    assert.equal(r.entries.length, 1);
+    assert.equal(r.suppressed.length, 0);
+  });
+
+  /* ------------------------------------------------------- the call day */
+
+  test("a 22-day cycle is called on day 18", () => {
+    const on17 = candidate({
+      lastOrderDate: addDays(TODAY, -17),
+      cycleDays: 22,
+    });
+    const on18 = candidate({
+      lastOrderDate: addDays(TODAY, -18),
+      cycleDays: 22,
+    });
+    assert.equal(
+      buildQueue([on17], TODAY, C).entries.length,
+      0,
+      "day 17: too early",
+    );
+    assert.equal(
+      buildQueue([on18], TODAY, C).entries.length,
+      1,
+      "day 18: called",
+    );
+  });
+
+  test("the lead scales with the cycle and is capped at both ends", () => {
+    const called = (cycleDays: number, sinceOrder: number) =>
+      buildQueue(
+        [candidate({ lastOrderDate: addDays(TODAY, -sinceOrder), cycleDays })],
+        TODAY,
+        C,
+      ).entries.length === 1;
+
+    // 20% of 30 = 6 → day 24.
+    assert.equal(called(30, 23), false);
+    assert.equal(called(30, 24), true);
+    // 20% of 60 = 12, capped to 10 → day 50, not day 48.
+    assert.equal(called(60, 49), false);
+    assert.equal(called(60, 50), true);
+    // 20% of 18 = 3.6 → 4 → day 14, but the quiet window floors it at 15.
+    assert.equal(called(18, 14), false);
+    assert.equal(called(18, 15), true);
+  });
+
+  test("a GUESSED cycle does not earn a call day", () => {
+    // One order is not a pattern. Applying "call on day 18" to a cycle we
+    // inferred would present a guess as a measurement.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -25),
+      cycleDays: 30,
+      cycleIsDefault: true,
+      lastContactDate: addDays(TODAY, -2),
+    });
+    const r = buildQueue([c], TODAY, C);
+    assert.equal(r.entries.length, 0, "no order reason from a guessed cycle");
+  });
+
+  test("a customer with a guessed cycle falls through to check-in", () => {
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -60),
+      cycleIsDefault: true,
+      lastContactDate: addDays(TODAY, -20),
+    });
+    const { entries } = buildQueue([c], TODAY, C);
+    assert.equal(entries.length, 1);
+    assert.ok(entries[0].reasons[0].kind.startsWith("checkIn"));
+  });
+
+  /* -------------------------------------------------- no-order cooldown */
+
+  test("a customer told us no is not asked again the next day", () => {
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      lastNoOrderDate: addDays(TODAY, -1),
+    });
+    const r = buildQueue([c], TODAY, C);
+    assert.equal(r.entries.length, 0);
+    assert.match(r.suppressed[0].reason, /asking again in 6 days/);
+  });
+
+  test("the no-order cooldown expires", () => {
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      lastNoOrderDate: addDays(TODAY, -C["queue.noOrderCooldownDays"]),
+    });
+    assert.equal(buildQueue([c], TODAY, C).entries.length, 1);
+  });
+
+  test("a reminder overrides the no-order cooldown too", () => {
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      lastNoOrderDate: addDays(TODAY, -1),
+      reminders: [{ id: "r1", dueDate: TODAY, note: "They said call today" }],
+    });
+    assert.equal(buildQueue([c], TODAY, C).entries.length, 1);
   });
 
   test("tie-breakers apply in order: outstanding, then target gap, then contact age", () => {
     const base = {
       lastContactDate: addDays(TODAY, -40), // same reason and weight for all
     };
-    const low = candidate({ ...base, customerId: "low", name: "Low", outstanding: 100 });
-    const high = candidate({ ...base, customerId: "high", name: "High", outstanding: 900 });
-    const mid = candidate({ ...base, customerId: "mid", name: "Mid", outstanding: 500 });
+    const low = candidate({
+      ...base,
+      customerId: "low",
+      name: "Low",
+      outstanding: 100,
+    });
+    const high = candidate({
+      ...base,
+      customerId: "high",
+      name: "High",
+      outstanding: 900,
+    });
+    const mid = candidate({
+      ...base,
+      customerId: "mid",
+      name: "Mid",
+      outstanding: 500,
+    });
 
     const { entries } = buildQueue([low, high, mid], TODAY, C);
-    assert.deepEqual(entries.map((e) => e.customerId), ["high", "mid", "low"]);
+    assert.deepEqual(
+      entries.map((e) => e.customerId),
+      ["high", "mid", "low"],
+    );
 
     // Equal outstanding falls through to target gap.
-    const a = candidate({ ...base, customerId: "a", outstanding: 100, targetGap: 10 });
-    const b = candidate({ ...base, customerId: "b", outstanding: 100, targetGap: 90 });
+    const a = candidate({
+      ...base,
+      customerId: "a",
+      outstanding: 100,
+      targetGap: 10,
+    });
+    const b = candidate({
+      ...base,
+      customerId: "b",
+      outstanding: 100,
+      targetGap: 90,
+    });
     assert.deepEqual(
       buildQueue([a, b], TODAY, C).entries.map((e) => e.customerId),
       ["b", "a"],
     );
 
     // Equal on both falls through to days since contact, oldest first.
-    const recent = candidate({ customerId: "recent", lastContactDate: addDays(TODAY, -30) });
-    const stale = candidate({ customerId: "stale", lastContactDate: addDays(TODAY, -90) });
+    const recent = candidate({
+      customerId: "recent",
+      lastContactDate: addDays(TODAY, -30),
+    });
+    const stale = candidate({
+      customerId: "stale",
+      lastContactDate: addDays(TODAY, -90),
+    });
     assert.deepEqual(
       buildQueue([recent, stale], TODAY, C).entries.map((e) => e.customerId),
       ["stale", "recent"],
@@ -348,7 +596,8 @@ describe("E2 queue builder", () => {
       candidate({ customerId: `c${i}`, lastContactDate: addDays(TODAY, -40) }),
     );
     assert.equal(
-      buildQueue(many, TODAY, { ...C, "queue.maxSizePerUser": 0 }).entries.length,
+      buildQueue(many, TODAY, { ...C, "queue.maxSizePerUser": 0 }).entries
+        .length,
       10,
     );
   });
@@ -400,13 +649,19 @@ describe("E3 escalation", () => {
   test("stage 2 alternates channel across consecutive attempts", () => {
     const b = bill({ dueDate: addDays(TODAY, -25) }); // stage 2 (21..44)
     const afterWhatsapp = escalationStage(
-      [b], { channel: "whatsapp", attemptedAt: addDays(TODAY, -1) }, TODAY, C,
+      [b],
+      { channel: "whatsapp", attemptedAt: addDays(TODAY, -1) },
+      TODAY,
+      C,
     )!;
     assert.equal(afterWhatsapp.stage, 2);
     assert.equal(afterWhatsapp.nextChannel, "call");
 
     const afterCall = escalationStage(
-      [b], { channel: "call", attemptedAt: addDays(TODAY, -1) }, TODAY, C,
+      [b],
+      { channel: "call", attemptedAt: addDays(TODAY, -1) },
+      TODAY,
+      C,
     )!;
     assert.equal(afterCall.nextChannel, "whatsapp");
   });
@@ -418,7 +673,12 @@ describe("E3 escalation", () => {
 
   test("boundaries are inclusive at the configured thresholds", () => {
     const at = (days: number) =>
-      escalationStage([bill({ dueDate: addDays(TODAY, -days) })], null, TODAY, C)!.stage;
+      escalationStage(
+        [bill({ dueDate: addDays(TODAY, -days) })],
+        null,
+        TODAY,
+        C,
+      )!.stage;
     assert.equal(at(20), 1);
     assert.equal(at(21), 2, "stage 2 begins exactly at its threshold");
     assert.equal(at(44), 2);
@@ -427,7 +687,12 @@ describe("E3 escalation", () => {
 
   test("a customer with five overdue bills produces ONE entry", () => {
     const bills = Array.from({ length: 5 }, (_, i) =>
-      bill({ id: `b${i}`, billNo: `MM/${i}`, dueDate: addDays(TODAY, -10 - i), amount: 50_000 }),
+      bill({
+        id: `b${i}`,
+        billNo: `MM/${i}`,
+        dueDate: addDays(TODAY, -10 - i),
+        amount: 50_000,
+      }),
     );
     const s = escalationStage(bills, null, TODAY, C)!;
     assert.equal(s.overdueCount, 5);
@@ -458,10 +723,16 @@ describe("E3 escalation", () => {
 
   test("a dispute does not hold when configuration says it should not", () => {
     const b = bill({ dueDate: addDays(TODAY, -60), disputed: true });
-    const s = escalationStage([b], null, TODAY, {
-      ...C,
-      "escalation.disputeHoldsEscalation": false,
-    }, 1)!;
+    const s = escalationStage(
+      [b],
+      null,
+      TODAY,
+      {
+        ...C,
+        "escalation.disputeHoldsEscalation": false,
+      },
+      1,
+    )!;
     assert.equal(s.stage, 3);
     assert.equal(s.held, false);
   });
@@ -472,7 +743,11 @@ describe("E3 escalation", () => {
   });
 
   test("partial payment keeps the clock running by default", () => {
-    const b = bill({ dueDate: addDays(TODAY, -30), amount: 100_000, paid: 40_000 });
+    const b = bill({
+      dueDate: addDays(TODAY, -30),
+      amount: 100_000,
+      paid: 40_000,
+    });
     const s = escalationStage([b], null, TODAY, C)!;
     assert.equal(s.daysOverdue, 30);
     assert.equal(s.totalOverdue, 60_000, "balance reduced, age unchanged");
@@ -486,7 +761,10 @@ describe("E3 escalation", () => {
 
   test("on-time payments never earn the flag", () => {
     const onTime = { dueDate: "2026-07-20", paidOn: "2026-07-01" };
-    assert.equal(isSlowPayer([onTime, onTime, onTime, onTime], TODAY, C).slowPayer, false);
+    assert.equal(
+      isSlowPayer([onTime, onTime, onTime, onTime], TODAY, C).slowPayer,
+      false,
+    );
   });
 });
 
@@ -513,13 +791,25 @@ describe("E4 inactivity", () => {
   });
 
   test("a 15-day-cycle customer flags at 30", () => {
-    assert.equal(evaluateInactivity(cust(15, addDays(TODAY, -29)), TODAY, C).inactive, false);
-    assert.equal(evaluateInactivity(cust(15, addDays(TODAY, -30)), TODAY, C).inactive, true);
+    assert.equal(
+      evaluateInactivity(cust(15, addDays(TODAY, -29)), TODAY, C).inactive,
+      false,
+    );
+    assert.equal(
+      evaluateInactivity(cust(15, addDays(TODAY, -30)), TODAY, C).inactive,
+      true,
+    );
   });
 
   test("a 90-day-cycle customer flags at 180", () => {
-    assert.equal(evaluateInactivity(cust(90, addDays(TODAY, -179)), TODAY, C).inactive, false);
-    assert.equal(evaluateInactivity(cust(90, addDays(TODAY, -180)), TODAY, C).inactive, true);
+    assert.equal(
+      evaluateInactivity(cust(90, addDays(TODAY, -179)), TODAY, C).inactive,
+      false,
+    );
+    assert.equal(
+      evaluateInactivity(cust(90, addDays(TODAY, -180)), TODAY, C).inactive,
+      true,
+    );
   });
 
   test("the threshold is per customer, never global", () => {
@@ -537,7 +827,8 @@ describe("E4 inactivity", () => {
   test("a deactivated customer is never flagged", () => {
     const r = evaluateInactivity(
       { ...cust(30, addDays(TODAY, -300)), status: "deactivated" },
-      TODAY, C,
+      TODAY,
+      C,
     );
     assert.equal(r.inactive, false);
   });
@@ -556,9 +847,18 @@ describe("E4 inactivity", () => {
   });
 
   test("a watch record past the warning age needs a decision", () => {
-    assert.equal(watchAge(addDays(TODAY, -20), false, TODAY, C).needsDecision, true);
-    assert.equal(watchAge(addDays(TODAY, -20), true, TODAY, C).needsDecision, false);
-    assert.equal(watchAge(addDays(TODAY, -3), false, TODAY, C).needsDecision, false);
+    assert.equal(
+      watchAge(addDays(TODAY, -20), false, TODAY, C).needsDecision,
+      true,
+    );
+    assert.equal(
+      watchAge(addDays(TODAY, -20), true, TODAY, C).needsDecision,
+      false,
+    );
+    assert.equal(
+      watchAge(addDays(TODAY, -3), false, TODAY, C).needsDecision,
+      false,
+    );
   });
 });
 
@@ -567,15 +867,29 @@ describe("E4 inactivity", () => {
 describe("E5 target resolver", () => {
   test("a manual target wins and is not marked as a default", () => {
     const r = resolveTarget(
-      { manualAmount: 500_000, trailingAchievement: [1, 2, 3], customerSince: null, month: TODAY },
+      {
+        manualAmount: 500_000,
+        trailingAchievement: [1, 2, 3],
+        customerSince: null,
+        month: TODAY,
+      },
       C,
     );
-    assert.deepEqual(r, { amount: 500_000, isDefault: false, method: "manual" });
+    assert.deepEqual(r, {
+      amount: 500_000,
+      isDefault: false,
+      method: "manual",
+    });
   });
 
   test("an unset target defaults to the trailing average, marked as default", () => {
     const r = resolveTarget(
-      { manualAmount: null, trailingAchievement: [300, 200, 100], customerSince: null, month: TODAY },
+      {
+        manualAmount: null,
+        trailingAchievement: [300, 200, 100],
+        customerSince: null,
+        month: TODAY,
+      },
       C,
     );
     assert.equal(r.amount, 200);
@@ -584,7 +898,12 @@ describe("E5 target resolver", () => {
 
   test("the uplift percentage applies to a defaulted target", () => {
     const r = resolveTarget(
-      { manualAmount: null, trailingAchievement: [1000], customerSince: null, month: TODAY },
+      {
+        manualAmount: null,
+        trailingAchievement: [1000],
+        customerSince: null,
+        month: TODAY,
+      },
       { ...C, "targets.defaultUpliftPercent": 10 },
     );
     assert.equal(r.amount, 1100);
@@ -592,7 +911,12 @@ describe("E5 target resolver", () => {
 
   test("a customer with no history defaults to zero rather than blank", () => {
     const r = resolveTarget(
-      { manualAmount: null, trailingAchievement: [], customerSince: null, month: TODAY },
+      {
+        manualAmount: null,
+        trailingAchievement: [],
+        customerSince: null,
+        month: TODAY,
+      },
       C,
     );
     assert.equal(r.amount, 0);
@@ -601,46 +925,91 @@ describe("E5 target resolver", () => {
 
   test("a customer who joined mid-month is pro-rated", () => {
     const full = resolveTarget(
-      { manualAmount: null, trailingAchievement: [3100], customerSince: null, month: "2026-08-03" },
+      {
+        manualAmount: null,
+        trailingAchievement: [3100],
+        customerSince: null,
+        month: "2026-08-03",
+      },
       C,
     );
     const half = resolveTarget(
-      { manualAmount: null, trailingAchievement: [3100], customerSince: "2026-08-16", month: "2026-08-03" },
+      {
+        manualAmount: null,
+        trailingAchievement: [3100],
+        customerSince: "2026-08-16",
+        month: "2026-08-03",
+      },
       C,
     );
-    assert.ok(half.amount < full.amount, `${half.amount} should be under ${full.amount}`);
+    assert.ok(
+      half.amount < full.amount,
+      `${half.amount} should be under ${full.amount}`,
+    );
   });
 
   test("shortfall splits a coverage gap from a customer gap", () => {
     const onSchedule = {
-      customerId: "contacted", name: "Contacted On Schedule",
-      target: 1000, achieved: 200, contactsThisMonth: 10, cycleDays: 7,
+      customerId: "contacted",
+      name: "Contacted On Schedule",
+      target: 1000,
+      achieved: 200,
+      contactsThisMonth: 10,
+      cycleDays: 7,
     };
     const neglected = {
-      customerId: "neglected", name: "Barely Contacted",
-      target: 1000, achieved: 200, contactsThisMonth: 0, cycleDays: 7,
+      customerId: "neglected",
+      name: "Barely Contacted",
+      target: 1000,
+      achieved: 200,
+      contactsThisMonth: 0,
+      cycleDays: 7,
     };
     const r = classifyShortfall([onSchedule, neglected], TODAY);
 
-    assert.deepEqual(r.customerGap.map((c) => c.customerId), ["contacted"]);
-    assert.deepEqual(r.coverageGap.map((c) => c.customerId), ["neglected"]);
+    assert.deepEqual(
+      r.customerGap.map((c) => c.customerId),
+      ["contacted"],
+    );
+    assert.deepEqual(
+      r.coverageGap.map((c) => c.customerId),
+      ["neglected"],
+    );
     assert.equal(r.totalShortfall, 1600);
   });
 
   test("customers on or above target are excluded from both groups", () => {
-    const r = classifyShortfall([
-      { customerId: "ok", name: "On Target", target: 1000, achieved: 1000, contactsThisMonth: 0, cycleDays: 7 },
-    ], TODAY);
+    const r = classifyShortfall(
+      [
+        {
+          customerId: "ok",
+          name: "On Target",
+          target: 1000,
+          achieved: 1000,
+          contactsThisMonth: 0,
+          cycleDays: 7,
+        },
+      ],
+      TODAY,
+    );
     assert.equal(r.coverageGap.length, 0);
     assert.equal(r.customerGap.length, 0);
   });
 
   test("groups are ordered by the size of the gap", () => {
     const mk = (id: string, achieved: number) => ({
-      customerId: id, name: id, target: 1000, achieved, contactsThisMonth: 99, cycleDays: 7,
+      customerId: id,
+      name: id,
+      target: 1000,
+      achieved,
+      contactsThisMonth: 99,
+      cycleDays: 7,
     });
     const r = classifyShortfall([mk("small", 900), mk("big", 100)], TODAY);
-    assert.deepEqual(r.customerGap.map((c) => c.customerId), ["big", "small"]);
+    assert.deepEqual(
+      r.customerGap.map((c) => c.customerId),
+      ["big", "small"],
+    );
   });
 });
 
@@ -650,13 +1019,26 @@ describe("E6 EOD aggregator", () => {
   const input = {
     userName: "Priya Sharma",
     date: TODAY,
-    callsAttempted: 42, callsConnected: 31, callsInbound: 5, callsMissed: 11,
-    queueServed: 45, queueWorked: 42,
-    ordersCount: 6, ordersValue: 18_450_000,
-    followUpsMade: 12, promisesCount: 4, promisesValue: 6_200_000, paymentsConfirmed: 0,
-    remindersClosed: 8, remindersCreated: 5, remindersCarriedForward: 3,
-    complaintsLogged: 1, whatsappSent: 9, ordersWithoutCall: 0,
-    targetAchieved: 84_000_000, targetAmount: 120_000_000,
+    callsAttempted: 42,
+    callsConnected: 31,
+    callsInbound: 5,
+    callsMissed: 11,
+    queueServed: 45,
+    queueWorked: 42,
+    ordersCount: 6,
+    ordersValue: 18_450_000,
+    followUpsMade: 12,
+    promisesCount: 4,
+    promisesValue: 6_200_000,
+    paymentsConfirmed: 0,
+    remindersClosed: 8,
+    remindersCreated: 5,
+    remindersCarriedForward: 3,
+    complaintsLogged: 1,
+    whatsappSent: 9,
+    ordersWithoutCall: 0,
+    targetAchieved: 84_000_000,
+    targetAmount: 120_000_000,
   };
 
   test("money uses Indian digit grouping", () => {
@@ -698,8 +1080,14 @@ describe("E6 EOD aggregator", () => {
   test("a zero-activity day still produces a report", () => {
     const zero = aggregateEod({
       ...input,
-      callsAttempted: 0, callsConnected: 0, callsInbound: 0, callsMissed: 0, ordersWithoutCall: 0,
-      ordersCount: 0, ordersValue: 0, targetAchieved: 0,
+      callsAttempted: 0,
+      callsConnected: 0,
+      callsInbound: 0,
+      callsMissed: 0,
+      ordersWithoutCall: 0,
+      ordersCount: 0,
+      ordersValue: 0,
+      targetAchieved: 0,
     });
     assert.match(zero.whatsappText, /Calls: 0 attempted/);
     assert.match(zero.whatsappText, /\(0%\)/);
@@ -707,7 +1095,12 @@ describe("E6 EOD aggregator", () => {
 
   test("the pre-flight gate blocks while reminders due today are open", () => {
     const blocked = eodPreflight([
-      { id: "r1", customerName: "Shree Paints", note: "Call back", dueDate: TODAY },
+      {
+        id: "r1",
+        customerName: "Shree Paints",
+        note: "Call back",
+        dueDate: TODAY,
+      },
     ]);
     assert.equal(blocked.canFinalise, false);
     assert.match((blocked as { message: string }).message, /still open/i);

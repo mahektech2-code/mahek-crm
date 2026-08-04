@@ -38,6 +38,8 @@ export type QueueCandidate = {
   doNotContact: boolean;
   /** Skipped by hand today, with the reason the telecaller gave. */
   skippedTodayReason: string | null;
+  /** Last call that ended in no order. Starts the re-ask cooldown. */
+  lastNoOrderDate: BusinessDate | null;
 
   /** Tie-breakers. */
   outstanding: number;
@@ -79,8 +81,13 @@ export type QueueResult = {
 export type QueueConfig = Pick<
   Config,
   | "queue.checkInIntervalDays"
+  | "queue.prospectIntervalDays"
   | "queue.whatsappCooldownDays"
-  | "queue.orderDueLeadDays"
+  | "queue.quietDaysAfterOrder"
+  | "queue.leadPercent"
+  | "queue.leadMinDays"
+  | "queue.leadMaxDays"
+  | "queue.noOrderCooldownDays"
   | "queue.excludeActiveInOrderSystem"
   | "queue.excludeCalledToday"
   | "queue.maxSizePerUser"
@@ -104,7 +111,12 @@ export function buildQueue(
     // and it is a return value, not a filter. The interface has a strip that
     // explains who is missing and why; silently dropping them would remove a
     // telecaller's ability to understand their own queue.
-    const held = suppressionReason(c, today, config);
+    // A reminder is a promise the telecaller made. It overrides the quiet
+    // window and the no-order cooldown, but not do-not-contact.
+    const hasReminderReason = reasons.some(
+      (r) => r.kind === "reminderOverdue" || r.kind === "reminderDueToday",
+    );
+    const held = suppressionReason(c, today, config, hasReminderReason);
     if (held) {
       suppressed.push({ customerId: c.customerId, name: c.name, reason: held });
       continue;
@@ -172,73 +184,123 @@ function reasonsFor(
   }
 
   /* ---- order due ---- */
-  // A customer who has never ordered has no expected next order; skip this
-  // reason entirely and let the check-in rule carry them.
-  if (c.lastOrderDate) {
+  //
+  // The call day comes from the customer's OWN cycle, not from a fixed lead:
+  // a 60-day bulk buyer needs more notice than a 20-day one, because their
+  // reorder date is less precise to begin with. Capped at both ends so a very
+  // short cycle still gets some warning and a very long one is not chased
+  // three weeks early.
+  //
+  // Only a MEASURED cycle earns this treatment. Applying "call on day 18" to
+  // a cycle we guessed from one order is false precision — those customers
+  // fall through to the check-in rule below.
+  if (c.lastOrderDate && !c.cycleIsDefault) {
     const expected = addDays(c.lastOrderDate, c.cycleDays);
-    const lead = config["queue.orderDueLeadDays"];
+    const sinceOrder = daysBetween(c.lastOrderDate, today);
 
-    if (today > expected) {
-      const overdueDays = daysBetween(expected, today);
-      const cyclesMissed = Math.floor(overdueDays / Math.max(1, c.cycleDays));
-      if (cyclesMissed >= 1) {
-        reasons.push({
-          kind: "orderOverdueFullCycle",
-          label: `Order overdue by ${cyclesMissed} full cycle${cyclesMissed === 1 ? "" : "s"} — expected ${expected}`,
-          weight: weights.orderOverdueFullCycle,
-        });
-      } else {
+    if (sinceOrder >= callDayFor(c.cycleDays, config)) {
+      if (today > expected) {
+        const overdueDays = daysBetween(expected, today);
+        const cyclesMissed = Math.floor(overdueDays / Math.max(1, c.cycleDays));
+        if (cyclesMissed >= 1) {
+          reasons.push({
+            kind: "orderOverdueFullCycle",
+            label: `Order overdue by ${cyclesMissed} full cycle${cyclesMissed === 1 ? "" : "s"} — expected ${expected}`,
+            weight: weights.orderOverdueFullCycle,
+          });
+        } else {
+          reasons.push({
+            kind: "orderDue",
+            label: `Order overdue by ${overdueDays} day${overdueDays === 1 ? "" : "s"} — expected ${expected}`,
+            weight: weights.orderDue,
+          });
+        }
+      } else if (today === expected) {
         reasons.push({
           kind: "orderDue",
-          label: `Order overdue by ${overdueDays} day${overdueDays === 1 ? "" : "s"} — expected ${expected}`,
+          label: `Order due today — ${c.cycleDays}-day cycle`,
           weight: weights.orderDue,
         });
+      } else {
+        const inDays = daysBetween(today, expected);
+        reasons.push({
+          kind: "orderDueSoon",
+          label: `Orders every ${c.cycleDays} days — next one due in ${inDays} day${inDays === 1 ? "" : "s"}`,
+          weight: weights.orderDueSoon,
+        });
       }
-    } else if (today === expected) {
+    }
+  }
+
+  /* ---- prospect ---- */
+  // Never ordered. Worked on its own short cadence, because converting a
+  // first order is the growth work and there is no cycle to wait for.
+  if (!c.lastOrderDate) {
+    const since = c.lastContactDate ?? c.createdDate;
+    const daysSince = daysBetween(since, today);
+    if (daysSince >= config["queue.prospectIntervalDays"]) {
       reasons.push({
-        kind: "orderDue",
-        label: `Order due today — ${c.cycleDays}-day cycle${c.cycleIsDefault ? " (default)" : ""}`,
-        weight: weights.orderDue,
-      });
-    } else if (daysBetween(today, expected) <= lead) {
-      reasons.push({
-        kind: "orderDueSoon",
-        label: `Order due ${expected}`,
-        weight: weights.orderDueSoon,
+        kind: "prospect",
+        label: c.lastContactDate
+          ? `Never ordered — ${daysSince} days since last contact`
+          : `Never ordered — on the book ${daysSince} days, never contacted`,
+        weight: weights.prospect,
       });
     }
   }
 
   /* ---- check-in due ---- */
-  const since = c.lastContactDate ?? c.createdDate;
-  const daysSince = daysBetween(since, today);
-  const interval = config["queue.checkInIntervalDays"];
+  // Only for customers who HAVE ordered but whose cycle could not be
+  // measured. Once the cycle is real it drives the call instead, and running
+  // both would drag a fast-cycling customer back in on the check-in interval
+  // — exactly what the quiet window exists to prevent.
+  if (c.lastOrderDate && c.cycleIsDefault) {
+    const since = c.lastContactDate ?? c.createdDate;
+    const daysSince = daysBetween(since, today);
+    const interval = config["queue.checkInIntervalDays"];
 
-  if (daysSince > interval * 1.5) {
-    reasons.push({
-      kind: "checkInOverdue",
-      label: c.lastContactDate
-        ? `No contact for ${daysSince} days`
-        : `Never contacted — on the book ${daysSince} days`,
-      weight: weights.checkInOverdue,
-    });
-  } else if (daysSince > interval) {
-    reasons.push({
-      kind: "checkInDue",
-      label: c.lastContactDate
-        ? `Check-in due — ${daysSince} days since last contact`
-        : `Check-in due — never contacted`,
-      weight: weights.checkInDue,
-    });
+    if (daysSince > interval * 1.5) {
+      reasons.push({
+        kind: "checkInOverdue",
+        label: `No contact for ${daysSince} days — cycle not established yet`,
+        weight: weights.checkInOverdue,
+      });
+    } else if (daysSince >= interval) {
+      reasons.push({
+        kind: "checkInDue",
+        label: `Check-in due — ${daysSince} days since last contact`,
+        weight: weights.checkInDue,
+      });
+    }
   }
 
   return reasons;
+}
+
+/**
+ * How many days after an order the customer becomes worth calling.
+ *
+ * Lead scales with the cycle and is clamped at both ends. The quiet window is
+ * NOT folded in here on purpose — see suppressionReason. Keeping it separate
+ * is what lets the screen say "held back until day 15" instead of silently
+ * omitting a customer who is late by their own reckoning.
+ */
+function callDayFor(cycleDays: number, config: QueueConfig): number {
+  const lead = Math.min(
+    config["queue.leadMaxDays"],
+    Math.max(
+      config["queue.leadMinDays"],
+      Math.round((cycleDays * config["queue.leadPercent"]) / 100),
+    ),
+  );
+  return Math.max(0, cycleDays - lead);
 }
 
 function suppressionReason(
   c: QueueCandidate,
   today: BusinessDate,
   config: QueueConfig,
+  hasReminderReason: boolean,
 ): string | null {
   if (c.doNotContact) return "Marked do not contact";
 
@@ -250,6 +312,34 @@ function suppressionReason(
 
   if (config["queue.excludeActiveInOrderSystem"] && c.activeInOrderSystem) {
     return "Active in the order system";
+  }
+
+  // The quiet window. A customer who reorders faster than this is serving
+  // themselves and a call adds nothing — but they can still be LATE by their
+  // own cycle while inside it, which is why this is a suppression rather than
+  // part of callDayFor: the strip says why they are missing.
+  //
+  // Reminders are exempt. A callback the customer asked for is not chasing,
+  // and not making it is worse than any wasted call.
+  const quiet = config["queue.quietDaysAfterOrder"];
+  if (c.lastOrderDate && !hasReminderReason) {
+    const sinceOrder = daysBetween(c.lastOrderDate, today);
+    if (sinceOrder < quiet) {
+      const left = quiet - sinceOrder;
+      return `Orders every ${c.cycleDays} days · ordered ${sinceOrder === 0 ? "today" : `${sinceOrder} day${sinceOrder === 1 ? "" : "s"} ago`} — quiet for ${left} more day${left === 1 ? "" : "s"}`;
+    }
+  }
+
+  // Asked for an order and told no. Without this a customer past their call
+  // day returns to the top of the list every single day until they order,
+  // which punishes the telecaller for working it.
+  if (c.lastNoOrderDate && !hasReminderReason) {
+    const cooldown = config["queue.noOrderCooldownDays"];
+    const elapsed = daysBetween(c.lastNoOrderDate, today);
+    if (elapsed < cooldown) {
+      const left = cooldown - elapsed;
+      return `No order ${elapsed === 0 ? "today" : `${elapsed} day${elapsed === 1 ? "" : "s"} ago`} — asking again in ${left} day${left === 1 ? "" : "s"}`;
+    }
   }
 
   // Only a CONFIRMED send suppresses. A copied-but-unconfirmed message means

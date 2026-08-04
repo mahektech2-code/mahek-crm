@@ -170,6 +170,26 @@ copied-but-unconfirmed message is a customer who may or may not have been
 contacted, and it is shown as exactly that rather than assumed either way.
 There is a test for each half of this; do not collapse them.
 
+**The Call Log chases orders, not contact.** A customer with a measured
+buying cycle is called on `cycle − lead`, where the lead is a percentage of
+their own cycle, clamped: a 22-day cycle is called on day 18, a 60-day cycle
+on day 50. Underneath it all sits a quiet window — no order is chased inside
+15 days of the last one, because a customer reordering faster than that is
+serving themselves. Customers who have never ordered are prospects, worked on
+their own short cadence; customers whose cycle could not yet be measured fall
+to the check-in interval. The check-in rule does NOT apply once a cycle is
+real, or it would drag a fast-cycling customer back in and defeat the quiet
+window.
+
+**A reminder outranks the quiet window and the no-order cooldown.** A callback
+the customer asked for is not chasing, and not making it is worse than any
+wasted call. It does not outrank do-not-contact, and it does not outrank
+having already called them today.
+
+**Asking for an order and being told no buys quiet.** Without the cooldown, a
+customer past their call day returns to the top of the list every single day
+until they order, which punishes the telecaller for working it.
+
 **Suppression is a return value, not a filter.** `buildQueue()` returns held-
 back customers alongside the queue, and the screen shows them. A telecaller
 must always be able to find out why somebody they expected is missing.

@@ -47,8 +47,9 @@ export const SETTINGS = [
     type: "integer",
     category: "queue",
     label: "Routine check-in interval",
-    description: "Days since last contact before a check-in becomes due.",
-    default: 14,
+    description:
+      "Days since last contact before a check-in becomes due. Applies only to customers whose buying cycle could not be measured \u2014 once there is enough order history, the cycle drives the call instead.",
+    default: 7,
     min: 1,
     max: 365,
   },
@@ -64,14 +65,69 @@ export const SETTINGS = [
     max: 60,
   },
   {
-    key: "queue.orderDueLeadDays",
+    key: "queue.quietDaysAfterOrder",
     type: "integer",
     category: "queue",
-    label: "Order due lead time",
-    description: "Surface an expected order this many days before it is due.",
-    default: 2,
+    label: "Quiet days after an order",
+    description:
+      "Never chase an order inside this many days of the last one. A customer reordering faster than this is serving themselves, and a call adds nothing. Reminders still fire \u2014 a callback the customer asked for is not chasing.",
+    default: 15,
+    min: 0,
+    max: 90,
+  },
+  {
+    key: "queue.leadPercent",
+    type: "integer",
+    category: "queue",
+    label: "Call this far before the expected order",
+    description:
+      "As a percentage of the customer's own cycle, so a slow bulk buyer gets more notice than a fast one. A 22-day cycle at 20% is called on day 18.",
+    default: 20,
+    min: 0,
+    max: 60,
+  },
+  {
+    key: "queue.leadMinDays",
+    type: "integer",
+    category: "queue",
+    label: "Shortest lead",
+    description: "Floor for the percentage above, so short cycles still get some notice.",
+    default: 3,
     min: 0,
     max: 30,
+  },
+  {
+    key: "queue.leadMaxDays",
+    type: "integer",
+    category: "queue",
+    label: "Longest lead",
+    description:
+      "Ceiling for the percentage above. Without it a 90-day cycle would be called nearly three weeks early.",
+    default: 10,
+    min: 1,
+    max: 60,
+  },
+  {
+    key: "queue.noOrderCooldownDays",
+    type: "integer",
+    category: "queue",
+    label: "Quiet days after \u201cno order\u201d",
+    description:
+      "Hold a customer back for this many days after a call that produced no order. Without it, a customer past their call day returns to the top of the list every single day until they order \u2014 which punishes the telecaller for working it.",
+    default: 7,
+    min: 0,
+    max: 60,
+  },
+  {
+    key: "queue.prospectIntervalDays",
+    type: "integer",
+    category: "queue",
+    label: "Prospect calling interval",
+    description:
+      "Days between calls to a customer who has never ordered. Deliberately shorter than the check-in interval: converting a first order is the growth work.",
+    default: 3,
+    min: 1,
+    max: 90,
   },
   {
     key: "queue.excludeActiveInOrderSystem",
@@ -123,6 +179,7 @@ export const SETTINGS = [
       orderOverdueFullCycle: 80,
       orderDue: 70,
       orderDueSoon: 60,
+      prospect: 55,
       checkInOverdue: 50,
       checkInDue: 40,
     },
@@ -683,7 +740,12 @@ export type Config = {
   "queue.checkInIntervalDays": number;
   "queue.snapshotHour": number;
   "queue.whatsappCooldownDays": number;
-  "queue.orderDueLeadDays": number;
+  "queue.quietDaysAfterOrder": number;
+  "queue.leadPercent": number;
+  "queue.leadMinDays": number;
+  "queue.leadMaxDays": number;
+  "queue.noOrderCooldownDays": number;
+  "queue.prospectIntervalDays": number;
   "queue.excludeActiveInOrderSystem": boolean;
   "queue.excludeCalledToday": boolean;
   "queue.maxSizePerUser": number;
@@ -745,5 +807,6 @@ export type QueueReasonKind =
   | "orderOverdueFullCycle"
   | "orderDue"
   | "orderDueSoon"
+  | "prospect"
   | "checkInOverdue"
   | "checkInDue";

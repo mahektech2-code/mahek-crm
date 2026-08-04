@@ -2,12 +2,31 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Field, Input, Select, Textarea, cx } from "@/components/ui/primitives";
+import {
+  Badge,
+  Button,
+  Field,
+  Input,
+  Select,
+  Textarea,
+  cx,
+} from "@/components/ui/primitives";
 import { useEscape } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { saveInteractionAction } from "@/lib/actions/crm";
-import { money, phoneDisplay, shortDate, today } from "@/lib/format";
+import { addDays, money, phoneDisplay, shortDate, today } from "@/lib/format";
+
+/**
+ * The dates customers actually ask for, as one tap each. Anything else still
+ * goes through the picker underneath.
+ */
+const FOLLOW_UP_PRESETS = [
+  { label: "Tomorrow", days: 1 },
+  { label: "In 3 days", days: 3 },
+  { label: "Next week", days: 7 },
+  { label: "In 2 weeks", days: 14 },
+] as const;
 
 export type CallTarget = {
   customerId: string;
@@ -41,7 +60,8 @@ export type HistoryEntry = {
   content: string;
 };
 
-export type InteractionType = "outbound_call" | "inbound_call" | "order_received";
+export type InteractionType =
+  "outbound_call" | "inbound_call" | "order_received";
 
 export type QuickNoteOption = {
   id: string;
@@ -50,7 +70,11 @@ export type QuickNoteOption = {
   label: string;
 };
 
-export type ProductOption = { id: string; name: string; packSize: string | null };
+export type ProductOption = {
+  id: string;
+  name: string;
+  packSize: string | null;
+};
 
 /** A call script from the help centre, matched to the chosen outcome. */
 export type ScriptOption = {
@@ -130,9 +154,24 @@ export type CustomerInfo = {
   productHistorySource: "external" | "crm";
 };
 
-const TYPES: Array<{ key: InteractionType; label: string; sub: string; icon: string }> = [
-  { key: "outbound_call", label: "We Called Them", sub: "An outbound call you made", icon: "phone" },
-  { key: "inbound_call", label: "They Called Us", sub: "The customer rang in", icon: "phone" },
+const TYPES: Array<{
+  key: InteractionType;
+  label: string;
+  sub: string;
+  icon: string;
+}> = [
+  {
+    key: "outbound_call",
+    label: "We Called Them",
+    sub: "An outbound call you made",
+    icon: "phone",
+  },
+  {
+    key: "inbound_call",
+    label: "They Called Us",
+    sub: "The customer rang in",
+    icon: "phone",
+  },
   {
     key: "order_received",
     label: "Order Received",
@@ -207,7 +246,9 @@ export function CallPanel(props: CallPanelProps) {
   // The form is keyed on the customer so an outcome can never carry over. The
   // TAB is not — stepping to the next customer while reading Information
   // should leave you on Information, not throw you back a tab.
-  const [tab, setTab] = React.useState<"log" | "information" | "script">("information");
+  const [tab, setTab] = React.useState<"log" | "information" | "script">(
+    "information",
+  );
   if (!props.target) return null;
   return (
     <CallPanelForm
@@ -245,10 +286,14 @@ function CallPanelForm({
   const [outcome, setOutcome] = React.useState<string | null>(null);
   const [notes, setNotes] = React.useState("");
   const [picked, setPicked] = React.useState<string[]>([]);
-  const [quantities, setQuantities] = React.useState<Record<string, string>>({});
+  const [quantities, setQuantities] = React.useState<Record<string, string>>(
+    {},
+  );
   const [followUpDate, setFollowUpDate] = React.useState("");
   const [payDate, setPayDate] = React.useState("");
-  const [category, setCategory] = React.useState(complaintCategories[0]?.value ?? "other");
+  const [category, setCategory] = React.useState(
+    complaintCategories[0]?.value ?? "other",
+  );
   const [orderDate, setOrderDate] = React.useState(today());
   const [busy, setBusy] = React.useState(false);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
@@ -288,14 +333,17 @@ function CallPanelForm({
 
   const needsProducts = isOrderReceived || outcome === "order_taken";
   const needsFollowUp = outcome === "follow_up";
-  const needsPayDate = type === "inbound_call" && outcome === "payment_promised";
+  const needsPayDate =
+    type === "inbound_call" && outcome === "payment_promised";
   const showPayDate = outcome === "payment_promised";
   const needsCategory = outcome === "complaint";
 
   const chips = React.useMemo(
     () =>
       quickNotes.filter(
-        (n) => n.interactionType === type && (n.outcome ?? null) === (outcome ?? null),
+        (n) =>
+          n.interactionType === type &&
+          (n.outcome ?? null) === (outcome ?? null),
       ),
     [quickNotes, type, outcome],
   );
@@ -306,7 +354,9 @@ function CallPanelForm({
 
   // The script follows the outcome unless the telecaller has picked another.
   const matchedScript =
-    scripts.find((x) => x.outcome && x.outcome === outcome) ?? scripts[0] ?? null;
+    scripts.find((x) => x.outcome && x.outcome === outcome) ??
+    scripts[0] ??
+    null;
   const script = scriptId
     ? (scripts.find((x) => x.id === scriptId) ?? matchedScript)
     : matchedScript;
@@ -392,7 +442,11 @@ function CallPanelForm({
         if (advance) onSaved?.(true);
       } else if (result.fieldErrors?.length) {
         // The server names the field, so the message lands next to it.
-        setErrors(Object.fromEntries(result.fieldErrors.map((f) => [f.field, f.message])));
+        setErrors(
+          Object.fromEntries(
+            result.fieldErrors.map((f) => [f.field, f.message]),
+          ),
+        );
       }
     } finally {
       setBusy(false);
@@ -430,11 +484,16 @@ function CallPanelForm({
         {/* ------------------------------------------------------- header */}
         <div className="flex items-start gap-4 border-b border-divider px-6 py-4">
           <div className="min-w-0 flex-1">
-            <div className="text-lg leading-6 font-semibold text-ink">{target.name}</div>
+            <div className="text-lg leading-6 font-semibold text-ink">
+              {target.name}
+            </div>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-[13px] text-muted">
               <span>{target.contactPerson}</span>
               <span>·</span>
-              <a href={`tel:${target.phone}`} className="font-medium text-ink no-underline">
+              <a
+                href={`tel:${target.phone}`}
+                className="font-medium text-ink no-underline"
+              >
                 {phoneDisplay(target.phone)}
               </a>
               <button
@@ -509,667 +568,746 @@ function CallPanelForm({
           </div>
         ) : (
           <>
-        {/* ---------------------------------------------------- the tabs */}
-        <div className="flex items-center gap-1 border-b border-divider px-6">
-          {(
-            [
-              { key: "information" as const, label: "Information" },
-              { key: "log" as const, label: "Call Log" },
-              { key: "script" as const, label: "Script" },
-            ]
-          ).map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={cx(
-                "cursor-pointer border-b-2 px-3 py-2.5 text-sm",
-                tab === t.key
-                  ? "border-brand font-medium text-ink"
-                  : "border-transparent text-muted hover:text-body",
-              )}
-            >
-              {t.label}
-              {/* The dot marks the tab still holding unfinished work. */}
-              {t.key === "log" && chosen && !saved ? (
-                <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-brand align-middle" />
-              ) : null}
-            </button>
-          ))}
-        </div>
+            {/* ---------------------------------------------------- the tabs */}
+            <div className="flex items-center gap-1 border-b border-divider px-6">
+              {[
+                { key: "information" as const, label: "Information" },
+                { key: "log" as const, label: "Call Log" },
+                { key: "script" as const, label: "Script" },
+              ].map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => setTab(t.key)}
+                  className={cx(
+                    "cursor-pointer border-b-2 px-3 py-2.5 text-sm",
+                    tab === t.key
+                      ? "border-brand font-medium text-ink"
+                      : "border-transparent text-muted hover:text-body",
+                  )}
+                >
+                  {t.label}
+                  {/* The dot marks the tab still holding unfinished work. */}
+                  {t.key === "log" && chosen && !saved ? (
+                    <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-brand align-middle" />
+                  ) : null}
+                </button>
+              ))}
+            </div>
 
-        <div className="min-h-0 flex-1">
-          <div
-            className={cx(
-              // No padding here — the Information sections are full-bleed and
-              // separated by rules, so they carry their own.
-              "h-full min-h-0 overflow-y-auto",
-              tab === "information" ? "block" : "hidden",
-            )}
-          >
-            {loading ? (
-              // Only this pane waits — the tabs and the form stay put, so
-              // stepping to the next customer does not blank the modal.
-              <div className="p-6">
-                {[0, 1, 2, 3, 4, 5].map((i) => (
-                  <div key={i} className="mb-3 flex items-center gap-3 last:mb-0">
-                    <span className="block h-2.5 w-[180px] rounded-[2px] bg-divider" />
-                    <span className="block h-2.5 w-[120px] rounded-[2px] bg-divider" />
-                    <span className="flex-1" />
-                    <span className="block h-2.5 w-[90px] rounded-[2px] bg-divider" />
+            <div className="min-h-0 flex-1">
+              <div
+                className={cx(
+                  // No padding here — the Information sections are full-bleed and
+                  // separated by rules, so they carry their own.
+                  "h-full min-h-0 overflow-y-auto",
+                  tab === "information" ? "block" : "hidden",
+                )}
+              >
+                {loading ? (
+                  // Only this pane waits — the tabs and the form stay put, so
+                  // stepping to the next customer does not blank the modal.
+                  <div className="p-6">
+                    {[0, 1, 2, 3, 4, 5].map((i) => (
+                      <div
+                        key={i}
+                        className="mb-3 flex items-center gap-3 last:mb-0"
+                      >
+                        <span className="block h-2.5 w-[180px] rounded-[2px] bg-divider" />
+                        <span className="block h-2.5 w-[120px] rounded-[2px] bg-divider" />
+                        <span className="flex-1" />
+                        <span className="block h-2.5 w-[90px] rounded-[2px] bg-divider" />
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            ) : info ? (
-<>
-              {/* Three columns, not four: the design folds the next expected
+                ) : info ? (
+                  <>
+                    {/* Three columns, not four: the design folds the next expected
                   order into the purchase cycle as its sub-line, because the
                   cycle is what predicts the date and reading them apart makes
                   the reader do the arithmetic. */}
-              <InfoSection label="Purchase summary">
-                <Figure
-                  label="Last order"
-                  value={
-                    info.purchase.lastOrderDate
-                      ? shortDate(info.purchase.lastOrderDate)
-                      : "Never"
-                  }
-                  sub={
-                    info.purchase.lastOrderDaysAgo === null
-                      ? "No order recorded"
-                      : `${info.purchase.lastOrderDaysAgo}d ago`
-                  }
-                />
-                <Figure
-                  label="Purchase cycle"
-                  value={`${info.purchase.cycleDays} days`}
-                  sub={
-                    info.purchase.nextOrderDate
-                      ? `Next order ${shortDate(info.purchase.nextOrderDate)}`
-                      : info.purchase.cycleIsDefault
-                        ? "Default — too little history"
-                        : "No order to count from"
-                  }
-                  subTone="brand"
-                />
-                <Figure
-                  label="Last call"
-                  value={
-                    info.purchase.lastCallDate
-                      ? shortDate(info.purchase.lastCallDate)
-                      : "Never"
-                  }
-                  sub={
-                    info.purchase.lastCallDaysAgo === null
-                      ? "Never spoken to"
-                      : `${info.purchase.lastCallDaysAgo}d ago`
-                  }
-                />
-              </InfoSection>
+                    <InfoSection label="Purchase summary">
+                      <Figure
+                        label="Last order"
+                        value={
+                          info.purchase.lastOrderDate
+                            ? shortDate(info.purchase.lastOrderDate)
+                            : "Never"
+                        }
+                        sub={
+                          info.purchase.lastOrderDaysAgo === null
+                            ? "No order recorded"
+                            : `${info.purchase.lastOrderDaysAgo}d ago`
+                        }
+                      />
+                      <Figure
+                        label="Purchase cycle"
+                        value={`${info.purchase.cycleDays} days`}
+                        sub={
+                          info.purchase.nextOrderDate
+                            ? `Next order ${shortDate(info.purchase.nextOrderDate)}`
+                            : info.purchase.cycleIsDefault
+                              ? "Default — too little history"
+                              : "No order to count from"
+                        }
+                        subTone="brand"
+                      />
+                      <Figure
+                        label="Last call"
+                        value={
+                          info.purchase.lastCallDate
+                            ? shortDate(info.purchase.lastCallDate)
+                            : "Never"
+                        }
+                        sub={
+                          info.purchase.lastCallDaysAgo === null
+                            ? "Never spoken to"
+                            : `${info.purchase.lastCallDaysAgo}d ago`
+                        }
+                      />
+                    </InfoSection>
 
-              <InfoSection label="Monthly performance">
-                {/* The percentage leads and the rupees explain it. A target of
+                    <InfoSection label="Monthly performance">
+                      {/* The percentage leads and the rupees explain it. A target of
                     ₹2,47,079 tells you nothing on its own; 0% does. */}
-                <Figure
-                  label="Monthly target"
-                  value={`${info.monthly.achievementPercent}%`}
-                  sub={`${money(info.monthly.achieved)} of ${money(info.monthly.target)}`}
-                />
-                <Figure
-                  label="Target gap this month"
-                  value={money(info.monthly.gap)}
-                  sub={`${info.monthly.workingDaysRemaining} working days left`}
-                />
-                {/* Boxed, and tinted when behind — this is the one figure on
+                      <Figure
+                        label="Monthly target"
+                        value={`${info.monthly.achievementPercent}%`}
+                        sub={`${money(info.monthly.achieved)} of ${money(info.monthly.target)}`}
+                      />
+                      <Figure
+                        label="Target gap this month"
+                        value={money(info.monthly.gap)}
+                        sub={`${info.monthly.workingDaysRemaining} working days left`}
+                      />
+                      {/* Boxed, and tinted when behind — this is the one figure on
                     the tab that says do something differently today. */}
-                <div
-                  className={cx(
-                    "rounded-[4px] border px-2.5 py-2",
-                    info.monthly.shortfallPerDay > 0
-                      ? "border-danger-soft bg-danger-soft"
-                      : "border-line bg-canvas",
-                  )}
-                >
-                  <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                    Run rate
-                  </span>
-                  <span
-                    className={cx(
-                      "mt-0.5 block text-lg leading-6 font-semibold",
-                      info.monthly.shortfallPerDay > 0 ? "text-danger" : "text-ink",
-                    )}
-                  >
-                    {info.monthly.shortfallPerDay > 0
-                      ? `Short ${money(info.monthly.shortfallPerDay)}/day`
-                      : "On track"}
-                  </span>
-                  <span className="block text-[13px] text-body">
-                    Need {money(info.monthly.requiredPerDay)}/day
-                  </span>
-                </div>
-              </InfoSection>
+                      <div
+                        className={cx(
+                          "rounded-[4px] border px-2.5 py-2",
+                          info.monthly.shortfallPerDay > 0
+                            ? "border-danger-soft bg-danger-soft"
+                            : "border-line bg-canvas",
+                        )}
+                      >
+                        <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                          Run rate
+                        </span>
+                        <span
+                          className={cx(
+                            "mt-0.5 block text-lg leading-6 font-semibold",
+                            info.monthly.shortfallPerDay > 0
+                              ? "text-danger"
+                              : "text-ink",
+                          )}
+                        >
+                          {info.monthly.shortfallPerDay > 0
+                            ? `Short ${money(info.monthly.shortfallPerDay)}/day`
+                            : "On track"}
+                        </span>
+                        <span className="block text-[13px] text-body">
+                          Need {money(info.monthly.requiredPerDay)}/day
+                        </span>
+                      </div>
+                    </InfoSection>
 
-              {/* No heading in the design — two figures that need no naming as
+                    {/* No heading in the design — two figures that need no naming as
                   a group, and a heading would only add a line. */}
-              <InfoSection>
-                <Figure
-                  label="Outstanding"
-                  value={money(info.outstanding)}
-                  tone={info.outstanding > 0 ? "danger" : undefined}
-                />
-                <Figure
-                  label="Credit days"
-                  value={`${info.creditDays}${info.creditDaysIsDefault ? " (default)" : ""}`}
-                />
-              </InfoSection>
+                    <InfoSection>
+                      <Figure
+                        label="Outstanding"
+                        value={money(info.outstanding)}
+                        tone={info.outstanding > 0 ? "danger" : undefined}
+                      />
+                      <Figure
+                        label="Credit days"
+                        value={`${info.creditDays}${info.creditDaysIsDefault ? " (default)" : ""}`}
+                      />
+                    </InfoSection>
 
-              <InfoSection label="Last 3 calls" plain>
-                {info.recentCalls.length ? (
-                  info.recentCalls.map((c) => (
-                    <div
-                      key={c.id}
-                      className="flex gap-3 border-t border-canvas py-2 first:border-0"
-                    >
-                      <span className="w-[58px] flex-none text-[13px] font-medium text-ink">
-                        {shortDate(c.at.slice(0, 10))}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <Badge tone={outcomeTone(c.outcome)}>
-                          {c.outcome ? (OUTCOME_LABEL[c.outcome] ?? c.outcome) : "Logged"}
-                        </Badge>
-                        {c.notes ? (
-                          <span
-                            title={c.notes}
-                            className="mt-[3px] block truncate text-[13px] text-muted"
+                    <InfoSection label="Last 3 calls" plain>
+                      {info.recentCalls.length ? (
+                        info.recentCalls.map((c) => (
+                          <div
+                            key={c.id}
+                            className="flex gap-3 border-t border-canvas py-2 first:border-0"
                           >
-                            {c.notes}
-                          </span>
-                        ) : null}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <p className="py-4 text-sm text-muted">
-                    No calls logged against this customer yet. The first one you save
-                    appears here.
-                  </p>
-                )}
-              </InfoSection>
+                            <span className="w-[58px] flex-none text-[13px] font-medium text-ink">
+                              {shortDate(c.at.slice(0, 10))}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <Badge tone={outcomeTone(c.outcome)}>
+                                {c.outcome
+                                  ? (OUTCOME_LABEL[c.outcome] ?? c.outcome)
+                                  : "Logged"}
+                              </Badge>
+                              {c.notes ? (
+                                <span
+                                  title={c.notes}
+                                  className="mt-[3px] block truncate text-[13px] text-muted"
+                                >
+                                  {c.notes}
+                                </span>
+                              ) : null}
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="py-4 text-sm text-muted">
+                          No calls logged against this customer yet. The first
+                          one you save appears here.
+                        </p>
+                      )}
+                    </InfoSection>
 
-              <div className="px-6 py-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <span className="text-xs font-medium tracking-[0.04em] text-muted uppercase">
-                    Order status
-                  </span>
-                  {/* The design's chip says "From ERP · read-only". Ours says
+                    <div className="px-6 py-4">
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="text-xs font-medium tracking-[0.04em] text-muted uppercase">
+                          Order status
+                        </span>
+                        {/* The design's chip says "From ERP · read-only". Ours says
                       where the rows actually came from, because the ERP is not
                       connected and a chip claiming otherwise would be a lie
                       about the freshness of the numbers underneath it. */}
-                  <span className="inline-flex h-5 items-center rounded-[4px] border border-line bg-canvas px-1.5 text-[11px] font-medium text-muted">
-                    {info.productHistorySource === "external"
-                      ? "From ERP · read-only"
-                      : "From CRM orders · ERP not connected"}
-                  </span>
-                </div>
-                {info.productHistory.length ? (
-                  <div className="overflow-hidden rounded-[4px] border border-line">
-                    {info.productHistory.map((p) => (
-                      <div
-                        key={p.productName}
-                        className="flex items-center gap-3 border-b border-divider px-3 py-2 last:border-0"
-                      >
-                        <span className="min-w-0 flex-1 truncate text-sm text-ink" title={p.productName}>
-                          {p.productName}
-                        </span>
-                        <span className="flex-none text-[13px] text-muted">
-                          {p.lastPurchaseDate ? shortDate(p.lastPurchaseDate) : "—"}
-                        </span>
-                        <span className="w-[78px] flex-none text-right text-[13px] font-medium text-ink">
-                          {p.totalOrderCount}
-                          {p.totalOrderCount === 1 ? " order" : " orders"}
+                        <span className="inline-flex h-5 items-center rounded-[4px] border border-line bg-canvas px-1.5 text-[11px] font-medium text-muted">
+                          {info.productHistorySource === "external"
+                            ? "From ERP · read-only"
+                            : "From CRM orders · ERP not connected"}
                         </span>
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="rounded-[4px] border border-line px-3 py-5 text-center text-sm text-muted">
-                    No order history for this customer yet. It appears once an order is
-                    captured against them.
-                  </p>
-                )}
-              </div>
-            </>
-            ) : (
-              <p className="p-6 text-[13px] text-muted">
-                Nothing recorded against this customer yet.
-              </p>
-            )}
-
-          </div>
-
-          <div
-            className={cx(
-              "h-full min-h-0 overflow-y-auto p-5",
-              tab === "script" ? "block" : "hidden",
-            )}
-          >
-            {scripts.length ? (
-              <div className="-mx-5 -mt-5 mb-4 border-b border-divider px-5 py-3.5">
-                <div className="flex flex-wrap gap-1.5">
-                  {scripts.map((x) => (
-                    <button
-                      key={x.id}
-                      onClick={() => setScriptId(x.id)}
-                      className={cx(
-                        "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
-                        script?.id === x.id
-                          ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
-                          : "border-line bg-surface text-body hover:border-brand",
-                      )}
-                    >
-                      {x.title}
-                    </button>
-                  ))}
-                </div>
-                {script?.guidance ? (
-                  <p className="mt-2 text-[13px] text-muted">
-                    {script.guidance.split(/\n+/)[0]}
-                  </p>
-                ) : null}
-                {scriptMissing ? (
-                  <div className="mt-2.5 rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-2 text-[13px] text-warn-ink">
-                    Nothing is written for {OUTCOME_LABEL[outcome!] ?? "this outcome"} yet —
-                    this is the closest script we have.
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {script ? (
-              <div className="max-w-[420px]">
-                {scriptBlocks(script).map((b, bi) => (
-                  <div key={bi} className="mb-4">
-                    <span className="mb-1.5 block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                      {b.label}
-                    </span>
-                    {b.parsed.map((line, li) => (
-                      <div
-                        key={li}
-                        className="mb-1.5 text-base leading-7 text-ink"
-                        style={{ textWrap: "pretty" }}
-                      >
-                        {line.map((part, pi) => (
-                          <span
-                            key={pi}
-                            className={
-                              part.placeholder
-                                ? "rounded-[3px] bg-brand-soft px-1 font-medium text-[#5223E0]"
-                                : undefined
-                            }
-                          >
-                            {part.text}
-                          </span>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                ))}
-                <a href="/crm/help" className="text-sm font-medium text-brand">
-                  More scripts and procedures →
-                </a>
-              </div>
-            ) : (
-              <div className="px-6 py-10 text-center">
-                <p className="text-[15px] text-muted">
-                  No script has been written for this situation yet.
-                </p>
-                <a
-                  href="/crm/help"
-                  className="mt-3.5 inline-flex h-8.5 items-center rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
-                >
-                  Open the Help Center
-                </a>
-              </div>
-            )}
-          </div>
-
-          <div
-            className={cx(
-              "h-full min-h-0 overflow-y-auto px-6 py-5",
-              tab === "log" ? "block" : "hidden",
-            )}
-          >
-            <div className="mx-auto max-w-[720px]">
-        {saved ? (
-          <div className="rounded-[6px] border border-line bg-surface p-5 text-center">
-            <div className="text-lg font-semibold text-ink">Log saved</div>
-            <div className="mt-1 text-sm text-muted">{saved}</div>
-            <div className="mt-4 flex flex-wrap justify-center gap-2">
-              {hasNext ? (
-                <Button variant="primary" onClick={() => onSaved?.(true)}>
-                  Next customer
-                </Button>
-              ) : null}
-              <Button variant="secondary" onClick={reset}>
-                Log another interaction
-              </Button>
-              <Button variant="secondary" onClick={onClose}>
-                Close
-              </Button>
-            </div>
-          </div>
-        ) : !type ? (
-          <>
-            <div className="text-[15px] font-semibold text-ink">
-              How did this interaction happen?
-            </div>
-            <p className="mt-1 mb-3.5 text-[13px] text-muted">
-              Pick one to start. Everything after this depends on it.
-            </p>
-            <div className="flex flex-col gap-2">
-              {TYPES.map((t) => (
-                <button
-                  key={t.key}
-                  onClick={() => setType(t.key)}
-                  className="flex cursor-pointer items-center gap-3 rounded-[4px] border border-line bg-surface px-3 py-2.5 text-left hover:border-brand"
-                >
-                  <span className="flex h-8 w-8 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[#5223E0]">
-                    <Icon name={t.icon} size={18} />
-                  </span>
-                  <span>
-                    <span className="block text-sm font-medium text-ink">{t.label}</span>
-                    <span className="block text-[13px] text-muted">{t.sub}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </>
-        ) : !chosen ? (
-          <>
-            <button
-              onClick={() => setType(null)}
-              className="mb-3 cursor-pointer text-[13px] text-brand"
-            >
-              ← {TYPES.find((t) => t.key === type)?.label}
-            </button>
-            {script ? (
-              <div className="mb-3 rounded-[4px] border border-line bg-canvas px-3 py-2">
-                <div className="flex items-baseline gap-2">
-                  <button
-                    onClick={() => setStripOpen((o) => !o)}
-                    className="flex cursor-pointer items-center gap-1.5"
-                  >
-                    <Icon
-                      name="chevron"
-                      size={12}
-                      className={cx(
-                        "text-muted transition-transform",
-                        stripOpen && "rotate-90",
-                      )}
-                    />
-                    <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                      {script.title}
-                    </span>
-                  </button>
-                  <span className="flex-1" />
-                  <button
-                    onClick={() => setTab("script")}
-                    className="cursor-pointer text-[13px] text-brand"
-                  >
-                    Read full script →
-                  </button>
-                </div>
-                {stripOpen ? (
-                  <div className="mt-1.5">
-                    {scriptBlocks(script)
-                      .slice(0, 1)
-                      .map((b, bi) => (
-                        <div key={bi}>
-                          {b.parsed.map((line, li) => (
-                            <div key={li} className="text-[13px] leading-5 text-body">
-                              {line.map((part, pi) => (
-                                <span
-                                  key={pi}
-                                  className={
-                                    part.placeholder
-                                      ? "font-medium text-[#5223E0]"
-                                      : undefined
-                                  }
-                                >
-                                  {part.text}
-                                </span>
-                              ))}
+                      {info.productHistory.length ? (
+                        <div className="overflow-hidden rounded-[4px] border border-line">
+                          {info.productHistory.map((p) => (
+                            <div
+                              key={p.productName}
+                              className="flex items-center gap-3 border-b border-divider px-3 py-2 last:border-0"
+                            >
+                              <span
+                                className="min-w-0 flex-1 truncate text-sm text-ink"
+                                title={p.productName}
+                              >
+                                {p.productName}
+                              </span>
+                              <span className="flex-none text-[13px] text-muted">
+                                {p.lastPurchaseDate
+                                  ? shortDate(p.lastPurchaseDate)
+                                  : "—"}
+                              </span>
+                              <span className="w-[78px] flex-none text-right text-[13px] font-medium text-ink">
+                                {p.totalOrderCount}
+                                {p.totalOrderCount === 1 ? " order" : " orders"}
+                              </span>
                             </div>
                           ))}
                         </div>
-                      ))}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            <div className="text-[15px] font-semibold text-ink">What was the outcome?</div>
-            <div className="mt-3 flex flex-col gap-2">
-              {OUTCOMES[type as Exclude<InteractionType, "order_received">].map((o) => (
-                <button
-                  key={o}
-                  onClick={() => setOutcome(o)}
-                  className="cursor-pointer rounded-[4px] border border-line bg-surface px-3 py-2.5 text-left text-sm font-medium text-ink hover:border-brand"
-                >
-                  {OUTCOME_LABEL[o]}
-                </button>
-              ))}
-            </div>
-          </>
-        ) : (
-          <>
-            <button
-              onClick={() => (isOrderReceived ? setType(null) : setOutcome(null))}
-              className="mb-3 cursor-pointer text-[13px] text-brand"
-            >
-              ← {TYPES.find((t) => t.key === type)?.label}
-              {outcome ? ` · ${OUTCOME_LABEL[outcome]}` : ""}
-            </button>
-
-            {isOrderReceived ? (
-              <Field
-                label="Order date"
-                hint="Choose the date the order came in."
-                error={errors.orderDate ?? null}
-              >
-                <Input
-                  type="date"
-                  value={orderDate}
-                  max={today()}
-                  onChange={(e) => setOrderDate(e.target.value)}
-                />
-              </Field>
-            ) : null}
-
-            {needsFollowUp ? (
-              <Field
-                label="Follow-up date"
-                hint="Pick the follow-up date — it becomes a reminder you will see on the day."
-                error={errors.followUpDate ?? null}
-              >
-                <Input
-                  type="date"
-                  value={followUpDate}
-                  min={today()}
-                  onChange={(e) => setFollowUpDate(e.target.value)}
-                />
-              </Field>
-            ) : null}
-
-            {showPayDate ? (
-              <Field
-                label={needsPayDate ? "Payment date" : "Payment date (optional)"}
-                hint="Enter the date they committed to."
-                error={errors.paymentPromiseDate ?? null}
-              >
-                <Input
-                  type="date"
-                  value={payDate}
-                  onChange={(e) => setPayDate(e.target.value)}
-                />
-              </Field>
-            ) : null}
-
-            {needsCategory ? (
-              <Field label="Complaint category" error={errors.complaintCategory ?? null}>
-                <Select value={category} onChange={(e) => setCategory(e.target.value)}>
-                  {complaintCategories.map((c) => (
-                    <option key={c.value} value={c.value}>
-                      {c.label}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            ) : null}
-
-            {needsProducts ? (
-              <div className="mb-3.5">
-                <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                  Products and quantity
-                </span>
-                {frequent.length ? (
-                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    <span className="text-[13px] text-muted">Usually buys</span>
-                    {frequent.map((p) => (
-                      <button
-                        key={p.id}
-                        onClick={() =>
-                          setQuantities((q) => ({ ...q, [p.id]: q[p.id] || "1" }))
-                        }
-                        className="cursor-pointer rounded-full border border-line bg-surface px-2.5 py-1 text-[13px] text-body hover:border-brand"
-                      >
-                        {productLabel(p)}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-                <div className="relative mt-2">
-                  <Input
-                    value={productQuery}
-                    onChange={(e) => setProductQuery(e.target.value)}
-                    placeholder={`Search ${products.length} products by name or code`}
-                  />
-                  {productQuery ? (
-                    <button
-                      onClick={() => setProductQuery("")}
-                      title="Clear the search"
-                      className="absolute top-1/2 right-2 -translate-y-1/2 cursor-pointer text-[13px] text-muted hover:text-body"
-                    >
-                      Clear
-                    </button>
-                  ) : null}
-                </div>
-
-                {needsProducts && !onThisOrder.length ? (
-                  <div className="mt-2 rounded-[4px] border border-dashed border-warn-line bg-warn-soft px-3 py-5 text-center text-sm text-warn-ink">
-                    At least one product is needed to log this as an order. Search above,
-                    or tap one this customer usually buys.
-                  </div>
-                ) : null}
-
-                {onThisOrder.length ? (
-                  <div className="mt-2 rounded-[4px] border border-brand-softer bg-brand-soft px-3 py-2">
-                    <span className="text-[11px] font-medium tracking-[0.04em] text-[#5223E0] uppercase">
-                      On this order
-                    </span>
-                    <div className="mt-1 flex flex-col gap-0.5">
-                      {onThisOrder.map((l) => (
-                        <span key={l.product.id} className="text-[13px] text-ink">
-                          {productLabel(l.product)} × {l.qty}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-
-                <div className="mt-2 max-h-56 overflow-y-auto rounded-[4px] border border-line">
-                  {matches.length === 0 ? (
-                    <p className="px-3 py-6 text-center text-[13px] text-muted">
-                      No product matches that. Try the family name, like
-                      &ldquo;epoxy&rdquo;, or the pack size.
-                    </p>
-                  ) : null}
-                  {visibleProducts.map((p) => (
-                    <div
-                      key={p.id}
-                      className="flex items-center gap-3 border-b border-divider px-3 py-2 last:border-0"
-                    >
-                      <span className="min-w-0 flex-1 truncate text-sm text-body">
-                        {productLabel(p)}
-                      </span>
-                      <input
-                        type="number"
-                        min={0}
-                        inputMode="numeric"
-                        value={quantities[p.id] ?? ""}
-                        onChange={(e) =>
-                          setQuantities((q) => ({ ...q, [p.id]: e.target.value }))
-                        }
-                        placeholder="Qty"
-                        className="h-8 w-[70px] rounded-[4px] border border-line px-2 text-right text-sm"
-                      />
-                    </div>
-                  ))}
-                </div>
-                {hasMoreProducts ? (
-                  <button
-                    onClick={() => setShowAllProducts(true)}
-                    className="mt-1.5 cursor-pointer text-[13px] text-brand"
-                  >
-                    Show all {matches.length} matches
-                  </button>
-                ) : null}
-                {errors.productQuantities ? (
-                  <p className="mt-1 text-[13px] text-danger">{errors.productQuantities}</p>
-                ) : null}
-              </div>
-            ) : null}
-
-            {chips.length ? (
-              <div className="mb-3.5">
-                <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                  Quick notes
-                </span>
-                <div className="mt-1.5 flex flex-wrap gap-2">
-                  {chips.map((c) => (
-                    <button
-                      key={c.id}
-                      onClick={() => applyChip(c)}
-                      className={cx(
-                        "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
-                        picked.includes(c.id)
-                          ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
-                          : "border-line bg-surface text-body hover:border-brand",
+                      ) : (
+                        <p className="rounded-[4px] border border-line px-3 py-5 text-center text-sm text-muted">
+                          No order history for this customer yet. It appears
+                          once an order is captured against them.
+                        </p>
                       )}
+                    </div>
+                  </>
+                ) : (
+                  <p className="p-6 text-[13px] text-muted">
+                    Nothing recorded against this customer yet.
+                  </p>
+                )}
+              </div>
+
+              <div
+                className={cx(
+                  "h-full min-h-0 overflow-y-auto p-5",
+                  tab === "script" ? "block" : "hidden",
+                )}
+              >
+                {scripts.length ? (
+                  <div className="-mx-5 -mt-5 mb-4 border-b border-divider px-5 py-3.5">
+                    <div className="flex flex-wrap gap-1.5">
+                      {scripts.map((x) => (
+                        <button
+                          key={x.id}
+                          onClick={() => setScriptId(x.id)}
+                          className={cx(
+                            "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
+                            script?.id === x.id
+                              ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                              : "border-line bg-surface text-body hover:border-brand",
+                          )}
+                        >
+                          {x.title}
+                        </button>
+                      ))}
+                    </div>
+                    {script?.guidance ? (
+                      <p className="mt-2 text-[13px] text-muted">
+                        {script.guidance.split(/\n+/)[0]}
+                      </p>
+                    ) : null}
+                    {scriptMissing ? (
+                      <div className="mt-2.5 rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-2 text-[13px] text-warn-ink">
+                        Nothing is written for{" "}
+                        {OUTCOME_LABEL[outcome!] ?? "this outcome"} yet — this
+                        is the closest script we have.
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {script ? (
+                  <div className="max-w-[420px]">
+                    {scriptBlocks(script).map((b, bi) => (
+                      <div key={bi} className="mb-4">
+                        <span className="mb-1.5 block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                          {b.label}
+                        </span>
+                        {b.parsed.map((line, li) => (
+                          <div
+                            key={li}
+                            className="mb-1.5 text-base leading-7 text-ink"
+                            style={{ textWrap: "pretty" }}
+                          >
+                            {line.map((part, pi) => (
+                              <span
+                                key={pi}
+                                className={
+                                  part.placeholder
+                                    ? "rounded-[3px] bg-brand-soft px-1 font-medium text-[#5223E0]"
+                                    : undefined
+                                }
+                              >
+                                {part.text}
+                              </span>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                    <a
+                      href="/crm/help"
+                      className="text-sm font-medium text-brand"
                     >
-                      {c.label}
-                    </button>
-                  ))}
+                      More scripts and procedures →
+                    </a>
+                  </div>
+                ) : (
+                  <div className="px-6 py-10 text-center">
+                    <p className="text-[15px] text-muted">
+                      No script has been written for this situation yet.
+                    </p>
+                    <a
+                      href="/crm/help"
+                      className="mt-3.5 inline-flex h-8.5 items-center rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
+                    >
+                      Open the Help Center
+                    </a>
+                  </div>
+                )}
+              </div>
+
+              <div
+                className={cx(
+                  "h-full min-h-0 overflow-y-auto px-6 py-5",
+                  tab === "log" ? "block" : "hidden",
+                )}
+              >
+                <div className="mx-auto max-w-[720px]">
+                  {saved ? (
+                    <div className="rounded-[6px] border border-line bg-surface p-5 text-center">
+                      <div className="text-lg font-semibold text-ink">
+                        Log saved
+                      </div>
+                      <div className="mt-1 text-sm text-muted">{saved}</div>
+                      <div className="mt-4 flex flex-wrap justify-center gap-2">
+                        {hasNext ? (
+                          <Button
+                            variant="primary"
+                            onClick={() => onSaved?.(true)}
+                          >
+                            Next customer
+                          </Button>
+                        ) : null}
+                        <Button variant="secondary" onClick={reset}>
+                          Log another interaction
+                        </Button>
+                        <Button variant="secondary" onClick={onClose}>
+                          Close
+                        </Button>
+                      </div>
+                    </div>
+                  ) : !type ? (
+                    <>
+                      <div className="text-[15px] font-semibold text-ink">
+                        How did this interaction happen?
+                      </div>
+                      <p className="mt-1 mb-3.5 text-[13px] text-muted">
+                        Pick one to start. Everything after this depends on it.
+                      </p>
+                      <div className="flex flex-col gap-2">
+                        {TYPES.map((t) => (
+                          <button
+                            key={t.key}
+                            onClick={() => setType(t.key)}
+                            className="flex cursor-pointer items-center gap-3 rounded-[4px] border border-line bg-surface px-3 py-2.5 text-left hover:border-brand"
+                          >
+                            <span className="flex h-8 w-8 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[#5223E0]">
+                              <Icon name={t.icon} size={18} />
+                            </span>
+                            <span>
+                              <span className="block text-sm font-medium text-ink">
+                                {t.label}
+                              </span>
+                              <span className="block text-[13px] text-muted">
+                                {t.sub}
+                              </span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : !chosen ? (
+                    <>
+                      <button
+                        onClick={() => setType(null)}
+                        className="mb-3 cursor-pointer text-[13px] text-brand"
+                      >
+                        ← {TYPES.find((t) => t.key === type)?.label}
+                      </button>
+                      {script ? (
+                        <div className="mb-3 rounded-[4px] border border-line bg-canvas px-3 py-2">
+                          <div className="flex items-baseline gap-2">
+                            <button
+                              onClick={() => setStripOpen((o) => !o)}
+                              className="flex cursor-pointer items-center gap-1.5"
+                            >
+                              <Icon
+                                name="chevron"
+                                size={12}
+                                className={cx(
+                                  "text-muted transition-transform",
+                                  stripOpen && "rotate-90",
+                                )}
+                              />
+                              <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                                {script.title}
+                              </span>
+                            </button>
+                            <span className="flex-1" />
+                            <button
+                              onClick={() => setTab("script")}
+                              className="cursor-pointer text-[13px] text-brand"
+                            >
+                              Read full script →
+                            </button>
+                          </div>
+                          {stripOpen ? (
+                            <div className="mt-1.5">
+                              {scriptBlocks(script)
+                                .slice(0, 1)
+                                .map((b, bi) => (
+                                  <div key={bi}>
+                                    {b.parsed.map((line, li) => (
+                                      <div
+                                        key={li}
+                                        className="text-[13px] leading-5 text-body"
+                                      >
+                                        {line.map((part, pi) => (
+                                          <span
+                                            key={pi}
+                                            className={
+                                              part.placeholder
+                                                ? "font-medium text-[#5223E0]"
+                                                : undefined
+                                            }
+                                          >
+                                            {part.text}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      <div className="text-[15px] font-semibold text-ink">
+                        What was the outcome?
+                      </div>
+                      <div className="mt-3 flex flex-col gap-2">
+                        {OUTCOMES[
+                          type as Exclude<InteractionType, "order_received">
+                        ].map((o) => (
+                          <button
+                            key={o}
+                            onClick={() => setOutcome(o)}
+                            className="cursor-pointer rounded-[4px] border border-line bg-surface px-3 py-2.5 text-left text-sm font-medium text-ink hover:border-brand"
+                          >
+                            {OUTCOME_LABEL[o]}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() =>
+                          isOrderReceived ? setType(null) : setOutcome(null)
+                        }
+                        className="mb-3 cursor-pointer text-[13px] text-brand"
+                      >
+                        ← {TYPES.find((t) => t.key === type)?.label}
+                        {outcome ? ` · ${OUTCOME_LABEL[outcome]}` : ""}
+                      </button>
+
+                      {isOrderReceived ? (
+                        <Field
+                          label="Order date"
+                          hint="Choose the date the order came in."
+                          error={errors.orderDate ?? null}
+                        >
+                          <Input
+                            type="date"
+                            value={orderDate}
+                            max={today()}
+                            onChange={(e) => setOrderDate(e.target.value)}
+                          />
+                        </Field>
+                      ) : null}
+
+                      {needsFollowUp ? (
+                        <Field
+                          label="Follow-up date"
+                          hint="Pick the follow-up date — it becomes a reminder you will see on the day."
+                          error={errors.followUpDate ?? null}
+                        >
+                          {/* "Call me tomorrow" and "call me after three days" are what
+                    customers actually say, and both were three taps through a
+                    date picker. The chips write the same date into the same
+                    field, so the picker still wins for anything unusual. */}
+                          <div className="mb-1.5 flex flex-wrap gap-1.5">
+                            {FOLLOW_UP_PRESETS.map((preset) => {
+                              const date = addDays(today(), preset.days);
+                              return (
+                                <button
+                                  key={preset.label}
+                                  type="button"
+                                  onClick={() => setFollowUpDate(date)}
+                                  className={cx(
+                                    "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+                                    followUpDate === date
+                                      ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                                      : "border-line bg-surface text-body hover:bg-canvas",
+                                  )}
+                                >
+                                  {preset.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <Input
+                            type="date"
+                            value={followUpDate}
+                            min={today()}
+                            onChange={(e) => setFollowUpDate(e.target.value)}
+                          />
+                        </Field>
+                      ) : null}
+
+                      {showPayDate ? (
+                        <Field
+                          label={
+                            needsPayDate
+                              ? "Payment date"
+                              : "Payment date (optional)"
+                          }
+                          hint="Enter the date they committed to."
+                          error={errors.paymentPromiseDate ?? null}
+                        >
+                          <Input
+                            type="date"
+                            value={payDate}
+                            onChange={(e) => setPayDate(e.target.value)}
+                          />
+                        </Field>
+                      ) : null}
+
+                      {needsCategory ? (
+                        <Field
+                          label="Complaint category"
+                          error={errors.complaintCategory ?? null}
+                        >
+                          <Select
+                            value={category}
+                            onChange={(e) => setCategory(e.target.value)}
+                          >
+                            {complaintCategories.map((c) => (
+                              <option key={c.value} value={c.value}>
+                                {c.label}
+                              </option>
+                            ))}
+                          </Select>
+                        </Field>
+                      ) : null}
+
+                      {needsProducts ? (
+                        <div className="mb-3.5">
+                          <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                            Products and quantity
+                          </span>
+                          {frequent.length ? (
+                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                              <span className="text-[13px] text-muted">
+                                Usually buys
+                              </span>
+                              {frequent.map((p) => (
+                                <button
+                                  key={p.id}
+                                  onClick={() =>
+                                    setQuantities((q) => ({
+                                      ...q,
+                                      [p.id]: q[p.id] || "1",
+                                    }))
+                                  }
+                                  className="cursor-pointer rounded-full border border-line bg-surface px-2.5 py-1 text-[13px] text-body hover:border-brand"
+                                >
+                                  {productLabel(p)}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                          <div className="relative mt-2">
+                            <Input
+                              value={productQuery}
+                              onChange={(e) => setProductQuery(e.target.value)}
+                              placeholder={`Search ${products.length} products by name or code`}
+                            />
+                            {productQuery ? (
+                              <button
+                                onClick={() => setProductQuery("")}
+                                title="Clear the search"
+                                className="absolute top-1/2 right-2 -translate-y-1/2 cursor-pointer text-[13px] text-muted hover:text-body"
+                              >
+                                Clear
+                              </button>
+                            ) : null}
+                          </div>
+
+                          {needsProducts && !onThisOrder.length ? (
+                            <div className="mt-2 rounded-[4px] border border-dashed border-warn-line bg-warn-soft px-3 py-5 text-center text-sm text-warn-ink">
+                              At least one product is needed to log this as an
+                              order. Search above, or tap one this customer
+                              usually buys.
+                            </div>
+                          ) : null}
+
+                          {onThisOrder.length ? (
+                            <div className="mt-2 rounded-[4px] border border-brand-softer bg-brand-soft px-3 py-2">
+                              <span className="text-[11px] font-medium tracking-[0.04em] text-[#5223E0] uppercase">
+                                On this order
+                              </span>
+                              <div className="mt-1 flex flex-col gap-0.5">
+                                {onThisOrder.map((l) => (
+                                  <span
+                                    key={l.product.id}
+                                    className="text-[13px] text-ink"
+                                  >
+                                    {productLabel(l.product)} × {l.qty}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+
+                          <div className="mt-2 max-h-56 overflow-y-auto rounded-[4px] border border-line">
+                            {matches.length === 0 ? (
+                              <p className="px-3 py-6 text-center text-[13px] text-muted">
+                                No product matches that. Try the family name,
+                                like &ldquo;epoxy&rdquo;, or the pack size.
+                              </p>
+                            ) : null}
+                            {visibleProducts.map((p) => (
+                              <div
+                                key={p.id}
+                                className="flex items-center gap-3 border-b border-divider px-3 py-2 last:border-0"
+                              >
+                                <span className="min-w-0 flex-1 truncate text-sm text-body">
+                                  {productLabel(p)}
+                                </span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  inputMode="numeric"
+                                  value={quantities[p.id] ?? ""}
+                                  onChange={(e) =>
+                                    setQuantities((q) => ({
+                                      ...q,
+                                      [p.id]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder="Qty"
+                                  className="h-8 w-[70px] rounded-[4px] border border-line px-2 text-right text-sm"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                          {hasMoreProducts ? (
+                            <button
+                              onClick={() => setShowAllProducts(true)}
+                              className="mt-1.5 cursor-pointer text-[13px] text-brand"
+                            >
+                              Show all {matches.length} matches
+                            </button>
+                          ) : null}
+                          {errors.productQuantities ? (
+                            <p className="mt-1 text-[13px] text-danger">
+                              {errors.productQuantities}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {chips.length ? (
+                        <div className="mb-3.5">
+                          <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                            Quick notes
+                          </span>
+                          <div className="mt-1.5 flex flex-wrap gap-2">
+                            {chips.map((c) => (
+                              <button
+                                key={c.id}
+                                onClick={() => applyChip(c)}
+                                className={cx(
+                                  "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
+                                  picked.includes(c.id)
+                                    ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                                    : "border-line bg-surface text-body hover:border-brand",
+                                )}
+                              >
+                                {c.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <Field
+                        label="Notes"
+                        hint="Quick notes add to this — you can still edit or type your own."
+                        error={errors.notes ?? null}
+                      >
+                        <Textarea
+                          value={notes}
+                          onChange={(e) => setNotes(e.target.value)}
+                          className="h-20"
+                          placeholder="What was said, in your own words"
+                        />
+                      </Field>
+                    </>
+                  )}
                 </div>
               </div>
-            ) : null}
-
-            <Field
-              label="Notes"
-              hint="Quick notes add to this — you can still edit or type your own."
-              error={errors.notes ?? null}
-            >
-              <Textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                className="h-20"
-                placeholder="What was said, in your own words"
-              />
-            </Field>
-          </>
-        )}
             </div>
-          </div>
-        </div>
           </>
         )}
 
@@ -1182,7 +1320,9 @@ function CallPanelForm({
               <span className="text-[13px] text-muted">{position}</span>
               <button
                 disabled={!hasPrevious}
-                title={hasPrevious ? "Previous customer" : "This is the first row"}
+                title={
+                  hasPrevious ? "Previous customer" : "This is the first row"
+                }
                 onClick={() => onPrevious?.()}
                 className="h-8 cursor-pointer rounded-[4px] px-2 text-[13px] text-body hover:bg-canvas disabled:cursor-not-allowed disabled:text-line-strong"
               >
@@ -1202,7 +1342,9 @@ function CallPanelForm({
 
           {chosen && !saved ? (
             <button
-              onClick={() => (isOrderReceived ? setType(null) : setOutcome(null))}
+              onClick={() =>
+                isOrderReceived ? setType(null) : setOutcome(null)
+              }
               className="inline-flex h-8 cursor-pointer items-center gap-1.5 px-2.5 text-[13px] text-muted hover:text-body"
             >
               ◀ {isOrderReceived ? "Change type" : "Change outcome"}
@@ -1212,7 +1354,9 @@ function CallPanelForm({
           <span className="flex-1" />
 
           {saved ? (
-            <span className="animate-fade-in text-sm font-medium text-success">Saved</span>
+            <span className="animate-fade-in text-sm font-medium text-success">
+              Saved
+            </span>
           ) : null}
 
           <Button variant="secondary" onClick={onClose}>
@@ -1225,11 +1369,19 @@ function CallPanelForm({
             </Button>
           ) : chosen && !saved ? (
             <>
-              <Button variant="primary" disabled={busy} onClick={() => save(false)}>
+              <Button
+                variant="primary"
+                disabled={busy}
+                onClick={() => save(false)}
+              >
                 Save log
               </Button>
               {hasNext ? (
-                <Button variant="secondary" disabled={busy} onClick={() => save(true)}>
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => save(true)}
+                >
                   Save &amp; next ▸
                 </Button>
               ) : null}

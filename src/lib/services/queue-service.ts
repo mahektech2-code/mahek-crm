@@ -11,9 +11,17 @@ import {
 } from "@/db/schema";
 import { getConfig } from "../config/store";
 import { resolveScope, scopedUserIds } from "../access-control";
-import { buildQueue, type QueueCandidate, type QueueResult } from "../engines/queue";
+import {
+  buildQueue,
+  type QueueCandidate,
+  type QueueResult,
+} from "../engines/queue";
 import { today } from "../recompute";
-import { dayBoundaryWindow, monthKey, previousWorkingDay } from "../business-date";
+import {
+  dayBoundaryWindow,
+  monthKey,
+  previousWorkingDay,
+} from "../business-date";
 
 /* ---------------------------------------------------------------------------
  * E2 wiring.
@@ -83,12 +91,23 @@ async function queueInputs(ids: string[] | null, day: string) {
            and c.started_at >= ${window.start}::timestamptz
            and c.started_at <  ${window.end}::timestamptz
       )`,
-      ownerName: sql<string | null>`(select name from users u where u.id = customers.owner_id)`,
+      ownerName: sql<
+        string | null
+      >`(select name from users u where u.id = customers.owner_id)`,
       openComplaint: sql<string | null>`(
         select c.description from complaints c
          where c.customer_id = customers.id
            and c.status in ('open','in_progress','awaiting_customer')
          order by c.created_at desc limit 1
+      )`,
+      // The last call that ended in no order, for the re-ask cooldown. Note
+      // customers.id spelled out: Drizzle renders ${customers.id} as a bare
+      // "id", which inside this correlated subquery would bind to the INNER
+      // table and quietly match every row.
+      lastNoOrder: sql<string | null>`(
+        select c.started_at::date::text from ${calls} c
+         where c.customer_id = customers.id and c.outcome = 'no_order'
+         order by c.started_at desc limit 1
       )`,
       lastNote: sql<string | null>`(
         select c.notes from ${calls} c
@@ -148,24 +167,27 @@ async function queueInputs(ids: string[] | null, day: string) {
 
   const detail = new Map(rows.map((r) => [r.customer.id, r]));
 
-  const candidates: QueueCandidate[] = rows.map(({ customer: c, calledToday, targetGap }) => ({
-    customerId: c.id,
-    name: c.name,
-    ownerId: c.ownerId,
-    lastOrderDate: c.lastOrderDate,
-    cycleDays: c.cycleDays,
-    cycleIsDefault: c.cycleIsDefault,
-    lastContactDate: c.lastContactDate,
-    createdDate: c.createdAt.toISOString().slice(0, 10),
-    reminders: remindersByCustomer.get(c.id) ?? [],
-    lastConfirmedWhatsappDate: c.lastConfirmedWhatsappDate,
-    activeInOrderSystem: c.activeInOrderSystem,
-    calledToday: Boolean(calledToday),
-    doNotContact: c.doNotContact,
-    skippedTodayReason: skipReason.get(c.id) ?? null,
-    outstanding: c.outstanding,
-    targetGap: Number(targetGap ?? 0),
-  }));
+  const candidates: QueueCandidate[] = rows.map(
+    ({ customer: c, calledToday, targetGap, lastNoOrder }) => ({
+      customerId: c.id,
+      name: c.name,
+      ownerId: c.ownerId,
+      lastOrderDate: c.lastOrderDate,
+      cycleDays: c.cycleDays,
+      cycleIsDefault: c.cycleIsDefault,
+      lastContactDate: c.lastContactDate,
+      createdDate: c.createdAt.toISOString().slice(0, 10),
+      reminders: remindersByCustomer.get(c.id) ?? [],
+      lastConfirmedWhatsappDate: c.lastConfirmedWhatsappDate,
+      activeInOrderSystem: c.activeInOrderSystem,
+      calledToday: Boolean(calledToday),
+      doNotContact: c.doNotContact,
+      skippedTodayReason: skipReason.get(c.id) ?? null,
+      outstanding: c.outstanding,
+      targetGap: Number(targetGap ?? 0),
+      lastNoOrderDate: lastNoOrder ?? null,
+    }),
+  );
 
   return { config, rows, detail, candidates };
 }
@@ -222,7 +244,10 @@ export async function getQueue(): Promise<QueueView> {
     .from(queueSnapshots)
     .where(
       ids
-        ? and(eq(queueSnapshots.day, previous), inArray(queueSnapshots.userId, ids))
+        ? and(
+            eq(queueSnapshots.day, previous),
+            inArray(queueSnapshots.userId, ids),
+          )
         : eq(queueSnapshots.day, previous),
     );
   const yesterdaysList = new Set(snapshotRows.map((r) => r.customerId));
@@ -246,7 +271,10 @@ export async function getQueue(): Promise<QueueView> {
 
 /** Everything the call panel needs for one queue customer. */
 export async function getQueueCustomer(customerId: string) {
-  const [row] = await db.select().from(customers).where(eq(customers.id, customerId));
+  const [row] = await db
+    .select()
+    .from(customers)
+    .where(eq(customers.id, customerId));
   return row ?? null;
 }
 
