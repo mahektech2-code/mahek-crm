@@ -38,13 +38,14 @@ import {
   recomputeBuyingCycle,
   recomputeFollowUpState,
   recomputeInactivity,
-  recomputeLastContact,
   recomputeOutstanding,
   recomputeBillStatuses,
 } from "@/lib/recompute";
 import { addDays } from "@/lib/business-date";
 import { getQueue } from "@/lib/services/queue-service";
-import { logCall } from "@/lib/services/call-service";
+import { saveInteraction } from "@/lib/services/interaction-service";
+import { seedCatalogue } from "@/db/seed-catalogue";
+import { products as productsTable, quickNotes as quickNotesTable, interactionProductLines } from "@/db/schema";
 import {
   getFollowUpWorklist,
   recordFollowUpAttempt,
@@ -130,6 +131,7 @@ beforeEach(async () => {
       audit_log, job_runs, bug_reports, help_articles, notifications,
       inactive_watch_items, monthly_targets, wa_runs, wa_replies, wa_messages,
       wa_templates, complaint_status_history, complaints, reminders,
+      interaction_product_lines, products, quick_notes, migration_exceptions,
       follow_up_attempts, follow_up_states, payments, bills,
       orders, calls, eod_reports, attendance, app_access, sessions,
       customers, users, app_settings
@@ -137,6 +139,7 @@ beforeEach(async () => {
   `);
   invalidateConfig();
   await seedConfig();
+  await seedCatalogue();
 
   manager = await makeUser("Vikram", "manager");
   priya = await makeUser("Priya", "telecaller", manager.id);
@@ -659,6 +662,311 @@ describe("Journey 7 — a complaint carries its SLA and its credit-note request"
   });
 });
 
+
+/* ------------------- journey 8: interactions, and the three hazards */
+
+describe("Journey 8 — the interaction log", () => {
+  async function firstProduct() {
+    const [p] = await db.select().from(productsTable).limit(1);
+    return p;
+  }
+
+  test("No Answer moves last CALL but never last CONTACT", async () => {
+    const customer = await makeCustomer(priya.id, {
+      lastContactDate: addDays(TODAY, -40),
+      lastCallDate: addDays(TODAY, -40),
+    });
+
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_answer",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    const [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(row.lastCallDate, TODAY, "we did dial them");
+    assert.equal(
+      row.lastContactDate,
+      addDays(TODAY, -40),
+      "a ringing phone is not contact — the check-in timer must not reset",
+    );
+  });
+
+  test("Order Received is not a call: attempted, connected and missed all ignore it", async () => {
+    const customer = await makeCustomer(priya.id);
+    const product = await firstProduct();
+
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "order_received",
+      productQuantities: { [product.id]: 4 },
+      orderDate: TODAY,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    const { eodMetricsFor } = await import("@/lib/services/eod-service");
+    const m = await eodMetricsFor(priya.id, TODAY);
+    assert.equal(m.callsAttempted, 0, "nobody spoke to anybody");
+    assert.equal(m.callsConnected, 0);
+    assert.equal(m.callsMissed, 0);
+    assert.equal(m.ordersWithoutCall, 1, "but it is real work and counted separately");
+  });
+
+  test("a backdated Order Received uses the entered date, not the log timestamp", async () => {
+    const customer = await makeCustomer(priya.id, { lastOrderDate: addDays(TODAY, -30) });
+    const product = await firstProduct();
+    const friday = addDays(TODAY, -3);
+
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "order_received",
+      productQuantities: { [product.id]: 2 },
+      orderDate: friday,
+      idempotencyKey: randomUUID(),
+    });
+
+    const [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(row.lastOrderDate, friday, "the date they entered is the order date");
+  });
+
+  test("a backdated order older than the last one does not drag it backwards", async () => {
+    const recent = addDays(TODAY, -2);
+    const customer = await makeCustomer(priya.id, { lastOrderDate: recent });
+    const product = await firstProduct();
+
+    // A real order behind the date — last order is derived from the order
+    // book, so the fixture has to be one the recompute can rebuild.
+    await db.insert(orders).values({
+      id: id("ord"),
+      customerId: customer.id,
+      userId: priya.id,
+      orderedAt: new Date(`${recent}T09:00:00+05:30`),
+      totalAmount: 25_000_00,
+      status: "confirmed",
+    });
+
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "order_received",
+      productQuantities: { [product.id]: 1 },
+      orderDate: addDays(TODAY, -20),
+      idempotencyKey: randomUUID(),
+    });
+
+    const [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(row.lastOrderDate, recent, "last order never moves backwards");
+  });
+
+  test("an outcome from the wrong set is refused", async () => {
+    const customer = await makeCustomer(priya.id);
+    const wrong = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      outcome: "not_interested",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(wrong.ok, false, "not_interested is outbound-only");
+    assert.match(wrong.error, /outcome/i);
+  });
+
+  test("follow-up needs a date; inbound payment promise needs one; outbound does not", async () => {
+    const customer = await makeCustomer(priya.id);
+
+    const noDate = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "follow_up",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(noDate.ok, false);
+    assert.equal(noDate.fieldErrors?.[0].field, "followUpDate");
+
+    const past = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "follow_up",
+      followUpDate: addDays(TODAY, -1),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(past.ok, false, "a reminder in the past would never be seen");
+
+    const inbound = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      outcome: "payment_promised",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(inbound.ok, false);
+    assert.equal(inbound.fieldErrors?.[0].field, "paymentPromiseDate");
+
+    const outbound = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "payment_promised",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(outbound.ok, true, "outbound may promise without a date");
+  });
+
+  test("quick notes are stored as references and accumulate in the text", async () => {
+    const customer = await makeCustomer(priya.id);
+    const chips = await db
+      .select()
+      .from(quickNotesTable)
+      .where(
+        sql`${quickNotesTable.interactionType} = 'outbound_call'
+            and ${quickNotesTable.outcome} = 'no_order'`,
+      )
+      .limit(2);
+    assert.equal(chips.length, 2, "the seeded lists must be there");
+
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      notes: `${chips[0].label} ${chips[1].label}`,
+      quickNoteIds: [chips[0].id, chips[1].id],
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    const [row] = await db.select().from(calls).where(eq(calls.customerId, customer.id));
+    assert.deepEqual(
+      row.quickNoteIds.sort(),
+      [chips[0].id, chips[1].id].sort(),
+      "the identifiers are what makes them analysable — free text cannot be",
+    );
+
+    const [used] = await db
+      .select()
+      .from(quickNotesTable)
+      .where(eq(quickNotesTable.id, chips[0].id));
+    assert.equal(used.usageCount, 1);
+  });
+
+  test("a quick note from another outcome is refused", async () => {
+    const customer = await makeCustomer(priya.id);
+    const [foreign] = await db
+      .select()
+      .from(quickNotesTable)
+      .where(sql`${quickNotesTable.interactionType} = 'order_received'`)
+      .limit(1);
+
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      quickNoteIds: [foreign.id],
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /does not belong/i);
+  });
+
+  test("Order Taken with no quantities is refused, and with them writes lines", async () => {
+    const customer = await makeCustomer(priya.id);
+    const product = await firstProduct();
+
+    const empty = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "order_taken",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(empty.ok, false, "an order with nothing ordered is not an order");
+
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "order_taken",
+      productQuantities: { [product.id]: 3 },
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    const lines = await db
+      .select()
+      .from(interactionProductLines)
+      .where(eq(interactionProductLines.interactionId, r.data.interactionId));
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0].quantity, 3);
+
+    // Rates are not held yet, so the order saves quantities and a zero value.
+    assert.ok(
+      r.warnings?.some((w) => /rates/i.test(w)),
+      "the missing-rate problem must be surfaced, not silent",
+    );
+  });
+
+  test("an inbound complaint on an existing open one updates rather than duplicates", async () => {
+    const customer = await makeCustomer(priya.id);
+
+    const first = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      outcome: "complaint",
+      complaintCategory: "delivery",
+      notes: "Consignment short by two drums",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(first.ok, true, first.ok ? "" : first.error);
+    assert.equal(first.data.complaintUpdated, false);
+
+    const again = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "inbound_call",
+      outcome: "complaint",
+      complaintCategory: "delivery",
+      notes: "Still not resolved",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(again.ok, true, again.ok ? "" : again.error);
+    assert.equal(again.data.complaintUpdated, true, "one complaint, not two");
+    assert.equal(again.data.complaintId, first.data.complaintId);
+
+    const [{ n }] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from complaints where customer_id = ${customer.id}
+    `);
+    assert.equal(Number(n), 1);
+  });
+
+  test("a call payment attempt on a stage-1 customer saves but warns", async () => {
+    const customer = await makeCustomer(priya.id);
+    await db.insert(bills).values({
+      id: id("bil"),
+      customerId: customer.id,
+      billNo: `MMI/${randomUUID().slice(0, 6)}`,
+      billDate: addDays(TODAY, -40),
+      dueDate: addDays(TODAY, -10),
+      amount: 60_000_00,
+      paidAmount: 0,
+    });
+    await recomputeOutstanding(customer.id);
+    await recomputeFollowUpState(customer.id);
+
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "payment_promised",
+      paymentPromiseDate: addDays(TODAY, 3),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, "the interaction is still recorded");
+    assert.ok(
+      r.warnings?.some((w) => /stage 1/i.test(w)),
+      "the stage rule must not be broken silently",
+    );
+
+    const attempts = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from follow_up_attempts where customer_id = ${customer.id}
+    `);
+    assert.equal(Number(attempts[0].n), 0, "no stage-1 attempt was recorded");
+  });
+});
+
 /* ------------------------------------ cross-cutting: config, idempotency, audit */
 
 describe("Cross-cutting rules", () => {
@@ -698,21 +1006,21 @@ describe("Cross-cutting rules", () => {
 
     const input = {
       customerId: customer.id,
-      connectionStatus: "connected" as const,
-      outcome: "will_order_later" as const,
+      interactionType: "outbound_call" as const,
+      outcome: "no_order" as const,
       notes: "Asked us to call back next week",
       sourceModule: "call_queue" as const,
       idempotencyKey: key,
     };
 
-    const first = await logCall(input);
-    const second = await logCall(input);
+    const first = await saveInteraction(input);
+    const second = await saveInteraction(input);
     assert.equal(first.ok, true, first.ok ? "" : first.error);
     assert.equal(second.ok, true, second.ok ? "" : second.error);
     assert.equal(
-      first.data.callId,
-      second.data.callId,
-      "a retried submit must return the original call, not create a second",
+      first.data.interactionId,
+      second.data.interactionId,
+      "a retried submit must return the original, not create a second",
     );
 
     const [row] = await db.execute<{ n: number }>(sql`
@@ -731,16 +1039,14 @@ describe("Cross-cutting rules", () => {
 
     assert.ok((await getQueue()).entries.some((e) => e.customerId === customer.id));
 
-    const logged = await logCall({
+    const logged = await saveInteraction({
       customerId: customer.id,
-      connectionStatus: "connected",
-      outcome: "will_order_later",
+      interactionType: "outbound_call",
+      outcome: "no_order",
       notes: "Will confirm quantities tomorrow",
       idempotencyKey: randomUUID(),
     });
     assert.equal(logged.ok, true, logged.ok ? "" : logged.error);
-
-    await recomputeLastContact(customer.id);
 
     const queue = await getQueue();
     assert.equal(
@@ -751,24 +1057,5 @@ describe("Cross-cutting rules", () => {
     const held = queue.suppressed.find((s) => s.customerId === customer.id);
     assert.ok(held);
     assert.match(held.reason, /already called today/i);
-  });
-
-  test("a missed call is derived from the connection status, never typed in", async () => {
-    const customer = await makeCustomer(priya.id);
-    await logCall({
-      customerId: customer.id,
-      connectionStatus: "no_answer",
-      outcome: "not_reachable",
-      idempotencyKey: randomUUID(),
-    });
-
-    const [row] = await db.select().from(calls).where(eq(calls.customerId, customer.id));
-    assert.equal(row.connectionStatus, "no_answer");
-
-    const { eodMetricsFor } = await import("@/lib/services/eod-service");
-    const metrics = await eodMetricsFor(priya.id, TODAY);
-    assert.equal(metrics.callsAttempted, 1);
-    assert.equal(metrics.callsConnected, 0);
-    assert.equal(metrics.callsMissed, 1);
   });
 });

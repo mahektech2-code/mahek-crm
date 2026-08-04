@@ -22,7 +22,7 @@ export function DayStages({
 }) {
   const stages = [
     {
-      href: "/crm/queue",
+      href: "/crm/call-log",
       label: "Work the queue",
       done: total > 0 && worked >= total,
       active: total > 0 && worked < total,

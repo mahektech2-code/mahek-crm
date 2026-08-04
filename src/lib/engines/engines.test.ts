@@ -655,7 +655,7 @@ describe("E6 EOD aggregator", () => {
     ordersCount: 6, ordersValue: 18_450_000,
     followUpsMade: 12, promisesCount: 4, promisesValue: 6_200_000, paymentsConfirmed: 0,
     remindersClosed: 8, remindersCreated: 5, remindersCarriedForward: 3,
-    complaintsLogged: 1, whatsappSent: 9,
+    complaintsLogged: 1, whatsappSent: 9, ordersWithoutCall: 0,
     targetAchieved: 84_000_000, targetAmount: 120_000_000,
   };
 
@@ -698,7 +698,7 @@ describe("E6 EOD aggregator", () => {
   test("a zero-activity day still produces a report", () => {
     const zero = aggregateEod({
       ...input,
-      callsAttempted: 0, callsConnected: 0, callsMissed: 0,
+      callsAttempted: 0, callsConnected: 0, callsMissed: 0, ordersWithoutCall: 0,
       ordersCount: 0, ordersValue: 0, targetAchieved: 0,
     });
     assert.match(zero.whatsappText, /Calls: 0 attempted/);

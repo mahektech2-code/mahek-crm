@@ -28,7 +28,7 @@ export const NAV: NavGroup[] = [
   {
     label: "Daily calling",
     items: [
-      { href: at("/queue"), label: "Call Queue", icon: "phone" },
+      { href: at("/call-log"), label: "Call Log", icon: "phone" },
       { href: at("/reminders"), label: "Reminders", icon: "bell", badge: "reminders" },
       { href: at("/history"), label: "Call History", icon: "history" },
     ],

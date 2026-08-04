@@ -775,7 +775,7 @@ function SendComposer({
             </Step>
 
             <div className="bg-canvas px-4 py-2.5 text-[13px] text-muted">
-              Confirming is what holds this customer back in the call queue, so nobody
+              Confirming is what holds this customer back in the call log, so nobody
               rings them straight after your message.
             </div>
           </Card>

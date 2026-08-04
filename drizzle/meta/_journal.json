@@ -8,6 +8,13 @@
       "when": 1785820316658,
       "tag": "0000_fluffy_jack_flag",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785837714521,
+      "tag": "0001_interaction_log",
+      "breakpoints": true
     }
   ]
 }

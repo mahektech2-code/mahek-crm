@@ -50,15 +50,27 @@ export async function eodMetricsFor(
 
   const [row] = await db.execute<Record<string, string>>(sql`
     select
+      -- Order Received is NOT a call. Counting it here would inflate calls
+      -- attempted, the connect rate and every per-call conversion metric.
       (select count(*) from calls c where c.user_id = ${userId}
+        and c.interaction_type in ('outbound_call','inbound_call')
         and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as calls_attempted,
+      -- Connected = every inbound, plus outbound that was actually answered.
       (select count(*) from calls c where c.user_id = ${userId}
-        and c.connection_status = 'connected'
+        and (c.interaction_type = 'inbound_call'
+             or (c.interaction_type = 'outbound_call' and c.outcome <> 'no_answer'))
         and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as calls_connected,
+      -- Missed reads the OUTCOME. connection_status is retired; reading it
+      -- would have quietly made this number zero.
       (select count(*) from calls c where c.user_id = ${userId}
-        and c.connection_status = 'no_answer'
+        and c.interaction_type = 'outbound_call' and c.outcome = 'no_answer'
         and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as calls_missed,
+      -- Real work, but it must not hide inside the call count.
+      (select count(*) from calls c where c.user_id = ${userId}
+        and c.interaction_type = 'order_received'
+        and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as orders_without_call,
       (select count(distinct c.customer_id) from calls c where c.user_id = ${userId}
+        and c.source_module = 'call_queue'
         and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as queue_worked,
       (select count(*) from orders o where o.user_id = ${userId}
         and o.ordered_at >= ${w.start}::timestamptz and o.ordered_at < ${w.end}::timestamptz
@@ -106,6 +118,7 @@ export async function eodMetricsFor(
     callsAttempted: n("calls_attempted"),
     callsConnected: n("calls_connected"),
     callsMissed: n("calls_missed"),
+    ordersWithoutCall: n("orders_without_call"),
     queueServed: n("queue_served"),
     queueWorked: n("queue_worked"),
     ordersCount: n("orders_count"),

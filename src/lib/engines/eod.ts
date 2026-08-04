@@ -35,6 +35,8 @@ export type EodInput = {
   remindersCarriedForward: number;
 
   complaintsLogged: number;
+  /** Orders logged with no call at all — real work, counted separately. */
+  ordersWithoutCall: number;
   whatsappSent: number;
 
   targetAchieved: number;
@@ -78,6 +80,7 @@ export function aggregateEod(input: EodInput): EodReport {
     { label: "Connected", value: String(input.callsConnected) },
     { label: "Missed", value: String(input.callsMissed) },
     { label: "Orders", value: `${input.ordersCount} · ${formatMoney(input.ordersValue)}` },
+    { label: "Orders received without a call", value: String(input.ordersWithoutCall) },
     { label: "Payment follow-ups", value: String(input.followUpsMade) },
     { label: "Promises obtained", value: `${input.promisesCount} · ${formatMoney(input.promisesValue)}` },
     { label: "Payments confirmed", value: formatMoney(input.paymentsConfirmed) },
@@ -100,6 +103,9 @@ export function aggregateEod(input: EodInput): EodReport {
     "",
     `Calls: ${input.callsAttempted} attempted · ${input.callsConnected} connected · ${input.callsMissed} missed`,
     `Orders: ${input.ordersCount} (${formatMoney(input.ordersValue)})`,
+    ...(input.ordersWithoutCall
+      ? [`Orders received without a call: ${input.ordersWithoutCall}`]
+      : []),
     `Payments: ${input.followUpsMade} followed up · ${formatMoney(input.promisesValue)} promised`,
     `Reminders: ${input.remindersClosed} closed · ${input.remindersCarriedForward} carried forward`,
     `Complaints: ${input.complaintsLogged} logged`,
@@ -159,7 +165,7 @@ export function aggregateTeamEod(
   rows: TeamRow[],
 ): TeamRollup {
   const zero = (): Omit<EodInput, "userName" | "date"> => ({
-    callsAttempted: 0, callsConnected: 0, callsMissed: 0,
+    callsAttempted: 0, callsConnected: 0, callsMissed: 0, ordersWithoutCall: 0,
     queueServed: 0, queueWorked: 0,
     ordersCount: 0, ordersValue: 0,
     followUpsMade: 0, promisesCount: 0, promisesValue: 0, paymentsConfirmed: 0,
@@ -188,6 +194,9 @@ export function aggregateTeamEod(
     "",
     `Calls: ${totals.callsAttempted} attempted · ${totals.callsConnected} connected · ${totals.callsMissed} missed`,
     `Orders: ${totals.ordersCount} (${formatMoney(totals.ordersValue)})`,
+    ...(totals.ordersWithoutCall
+      ? [`Orders received without a call: ${totals.ordersWithoutCall}`]
+      : []),
     `Payments: ${totals.followUpsMade} followed up · ${formatMoney(totals.promisesValue)} promised`,
     "",
     ...withPercent.map(

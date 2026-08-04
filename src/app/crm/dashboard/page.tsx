@@ -97,7 +97,7 @@ export default async function DashboardPage() {
       tone: "muted",
     },
     {
-      href: "/crm/queue",
+      href: "/crm/call-log",
       title: "Queue still to work",
       sub: "Worked top to bottom, most urgent first",
       count: queue.entries.length,
@@ -116,7 +116,7 @@ export default async function DashboardPage() {
         }`}
         actions={
           <Link
-            href="/crm/queue"
+            href="/crm/call-log"
             className="inline-flex h-9 items-center gap-2 rounded-[4px] border border-brand bg-brand px-4 text-sm font-medium text-white no-underline hover:border-brand-hover hover:bg-brand-hover hover:no-underline"
           >
             <Icon name="phone" size={16} />
@@ -147,7 +147,7 @@ export default async function DashboardPage() {
         <>
           <div className="mb-4 grid grid-cols-[repeat(auto-fit,minmax(216px,1fr))] gap-4">
             <StatCard
-              href="/crm/queue"
+              href="/crm/call-log"
               label="Calling progress"
               value={`${queue.progress.worked}`}
               suffix={`/${queue.progress.total}`}

@@ -17,7 +17,12 @@ import {
 import { ConfirmDialog, FilterPills, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
-import { CallPanel, type CallTarget } from "@/components/crm/call-panel";
+import {
+  CallPanel,
+  type CallTarget,
+  type ProductOption,
+  type QuickNoteOption,
+} from "@/components/crm/call-panel";
 import { rebuildQueue, skipQueueItem } from "@/lib/actions/crm";
 import { money, phoneDisplay, shortDate } from "@/lib/format";
 
@@ -65,6 +70,8 @@ export function QueueScreen({
   callTargets,
   activity,
   categories,
+  quickNotes,
+  products,
 }: {
   scopeLabel: string;
   rows: Row[];
@@ -72,7 +79,9 @@ export function QueueScreen({
   progress: { worked: number; total: number; percent: number };
   callTargets: Record<string, CallTarget>;
   /** Complaint categories, from configuration rather than a constant. */
-  categories: string[];
+  categories: Array<{ value: string; label: string }>;
+  quickNotes: QuickNoteOption[];
+  products: ProductOption[];
   activity: {
     connected: number;
     attempted: number;
@@ -156,8 +165,8 @@ export function QueueScreen({
   return (
     <div className="max-w-[1440px] px-6 pt-6 pb-10">
       <PageHeader
-        title="Call queue"
-        subtitle={`${scopeLabel} · Worked top to bottom. The first row is your next call.`}
+        title="Call Log"
+        subtitle={`${scopeLabel} · Worked top to bottom. The first row is your next call — log an inbound call or an order that arrived without one from any row.`}
         actions={
           <>
             <Button
@@ -414,7 +423,9 @@ export function QueueScreen({
 
       <CallPanel
         target={openTarget}
-        categories={categories}
+        complaintCategories={categories}
+        quickNotes={quickNotes}
+        products={products}
         hasNext={nextUnworked !== -1}
         onClose={() => setOpenId(null)}
         onSaved={(advanceNext) => {
