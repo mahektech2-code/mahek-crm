@@ -442,6 +442,7 @@ export function QueueScreen({
         hasPrevious={hasPrevious}
         onPrevious={() => goTo(openIndex - 1)}
         onNext={() => goTo(openIndex + 1)}
+        position={openIndex >= 0 ? `${openIndex + 1} of ${visible.length}` : undefined}
         onClose={() => setOpenId(null)}
         onSaved={(advanceNext) => {
           if (advanceNext) advance();

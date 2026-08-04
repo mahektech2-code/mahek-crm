@@ -155,6 +155,8 @@ type CallPanelProps = {
   hasPrevious?: boolean;
   onPrevious?: () => void;
   onNext?: () => void;
+  /** "3 of 12" — where this customer sits in the queue. */
+  position?: string;
 };
 
 /**
@@ -180,6 +182,7 @@ function CallPanelForm({
   hasPrevious,
   onPrevious,
   onNext,
+  position,
 }: CallPanelProps) {
   useEscape(onClose);
   const router = useRouter();
@@ -200,6 +203,7 @@ function CallPanelForm({
   // Three tabs, per the design. Logging is what the telecaller opened this to
   // do, so that is where it starts; the other two are one click away.
   const [tab, setTab] = React.useState<"log" | "information" | "script">("log");
+  const [productQuery, setProductQuery] = React.useState("");
 
   // One key per opening, so a double-click logs one interaction, not two.
   const idempotencyKey = React.useRef(crypto.randomUUID());
@@ -246,6 +250,22 @@ function CallPanelForm({
   const frequent = products.filter((p) => frequentProductIds.includes(p.id));
   const productLabel = (p: ProductOption) =>
     p.packSize ? `${p.name} — ${p.packSize}` : p.name;
+
+  // A real catalogue is far too long to scroll mid-call, so the list is
+  // searchable by name, pack size or code.
+  const matches = React.useMemo(() => {
+    const q = productQuery.trim().toLowerCase();
+    if (!q) return products;
+    return products.filter((p) =>
+      `${p.name} ${p.packSize ?? ""}`.toLowerCase().includes(q),
+    );
+  }, [products, productQuery]);
+
+  // What has actually been put on the order, read back so nothing is added by
+  // accident and left unnoticed.
+  const onThisOrder = products
+    .map((p) => ({ product: p, qty: Number(quantities[p.id]) }))
+    .filter((l) => Number.isFinite(l.qty) && l.qty > 0);
 
   function applyChip(n: QuickNoteOption) {
     // Chips accumulate. Clicking three appends three, and the text stays
@@ -626,6 +646,24 @@ function CallPanelForm({
             >
               ← {TYPES.find((t) => t.key === type)?.label}
             </button>
+            {script ? (
+              <div className="mb-3 rounded-[4px] border border-line bg-canvas px-3 py-2">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                    {script.title}
+                  </span>
+                  <span className="flex-1" />
+                  <button
+                    onClick={() => setTab("script")}
+                    className="cursor-pointer text-[13px] text-brand"
+                  >
+                    Read full script →
+                  </button>
+                </div>
+                <p className="mt-1 line-clamp-2 text-[13px] text-body">{script.body}</p>
+              </div>
+            ) : null}
+
             <div className="text-[15px] font-semibold text-ink">What was the outcome?</div>
             <div className="mt-3 flex flex-col gap-2">
               {OUTCOMES[type as Exclude<InteractionType, "order_received">].map((o) => (
@@ -726,8 +764,36 @@ function CallPanelForm({
                     ))}
                   </div>
                 ) : null}
+                <Input
+                  value={productQuery}
+                  onChange={(e) => setProductQuery(e.target.value)}
+                  placeholder={`Search ${products.length} products by name or code`}
+                  className="mt-2"
+                />
+
+                {onThisOrder.length ? (
+                  <div className="mt-2 rounded-[4px] border border-brand-softer bg-brand-soft px-3 py-2">
+                    <span className="text-[11px] font-medium tracking-[0.04em] text-[#5223E0] uppercase">
+                      On this order
+                    </span>
+                    <div className="mt-1 flex flex-col gap-0.5">
+                      {onThisOrder.map((l) => (
+                        <span key={l.product.id} className="text-[13px] text-ink">
+                          {productLabel(l.product)} × {l.qty}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="mt-2 max-h-56 overflow-y-auto rounded-[4px] border border-line">
-                  {products.map((p) => (
+                  {matches.length === 0 ? (
+                    <p className="px-3 py-6 text-center text-[13px] text-muted">
+                      No product matches that. Try the family name, like
+                      &ldquo;epoxy&rdquo;, or the pack size.
+                    </p>
+                  ) : null}
+                  {matches.map((p) => (
                     <div
                       key={p.id}
                       className="flex items-center gap-3 border-b border-divider px-3 py-2 last:border-0"
@@ -816,8 +882,16 @@ function CallPanelForm({
           >
             Next ▶
           </Button>
+          {position ? (
+            <span className="text-[13px] text-muted">{position}</span>
+          ) : null}
           <span className="flex-1" />
-          {chosen && !saved ? (
+          {tab !== "log" ? (
+            // From Information or Script, the way back to the job is one click.
+            <Button variant="primary" onClick={() => setTab("log")}>
+              Log this call ▸
+            </Button>
+          ) : chosen && !saved ? (
             <>
               <Button variant="primary" disabled={busy} onClick={() => save(false)}>
                 Save log
