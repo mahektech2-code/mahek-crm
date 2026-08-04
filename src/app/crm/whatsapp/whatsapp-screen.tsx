@@ -141,6 +141,7 @@ export function WhatsappScreen(props: {
   scopeLabel: string;
   isManager: boolean;
   mode: "manual" | "automatic";
+  sendingFailing: boolean;
   initialCustomerId: string;
   initialTab: Tab;
   customers: Customer[];
@@ -159,6 +160,7 @@ export function WhatsappScreen(props: {
     scopeLabel,
     isManager,
     mode,
+    sendingFailing,
     customers,
     templates,
     messages,
@@ -211,6 +213,23 @@ export function WhatsappScreen(props: {
         }
         subtitle={`${scopeLabel} · every message is logged against the customer record, whichever way it is sent.`}
       />
+
+      {/* Automatic sending is on but not working. Said plainly, and paired
+          with the reassurance that the manual flow below still works — the
+          screen is not blocked, only one route through it is. */}
+      {sendingFailing ? (
+        <Callout tone="danger">
+          <span className="text-sm text-ink">
+            Automatic sending is unavailable — the API is configured but not
+            responding. The manual flow below is ready to use, so nothing is
+            blocked.
+          </span>
+          <span className="flex-1" />
+          <Button size="sm" variant="secondary" onClick={() => setConnOpen(true)}>
+            Check connection
+          </Button>
+        </Callout>
+      ) : null}
 
       {/* A copy waiting on confirmation, surfaced at screen level — it is easy
           to send the message and walk away from the step that records it. */}

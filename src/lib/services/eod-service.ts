@@ -52,14 +52,21 @@ export async function eodMetricsFor(
     select
       -- Order Received is NOT a call. Counting it here would inflate calls
       -- attempted, the connect rate and every per-call conversion metric.
+      --
+      -- Neither is an INBOUND call. You cannot fail to connect a call that
+      -- rang your own phone, so counting inbound as "attempted and connected"
+      -- moves the connect rate towards 100% on a day the telecaller made
+      -- fewer calls, not more. Attempted and connected are both outbound
+      -- only; inbound is counted separately and shown separately.
       (select count(*) from calls c where c.user_id = ${userId}
-        and c.interaction_type in ('outbound_call','inbound_call')
+        and c.interaction_type = 'outbound_call'
         and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as calls_attempted,
-      -- Connected = every inbound, plus outbound that was actually answered.
       (select count(*) from calls c where c.user_id = ${userId}
-        and (c.interaction_type = 'inbound_call'
-             or (c.interaction_type = 'outbound_call' and c.outcome <> 'no_answer'))
+        and c.interaction_type = 'outbound_call' and c.outcome <> 'no_answer'
         and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as calls_connected,
+      (select count(*) from calls c where c.user_id = ${userId}
+        and c.interaction_type = 'inbound_call'
+        and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as calls_inbound,
       -- Missed reads the OUTCOME. connection_status is retired; reading it
       -- would have quietly made this number zero.
       (select count(*) from calls c where c.user_id = ${userId}
@@ -117,6 +124,7 @@ export async function eodMetricsFor(
   return {
     callsAttempted: n("calls_attempted"),
     callsConnected: n("calls_connected"),
+    callsInbound: n("calls_inbound"),
     callsMissed: n("calls_missed"),
     ordersWithoutCall: n("orders_without_call"),
     queueServed: n("queue_served"),

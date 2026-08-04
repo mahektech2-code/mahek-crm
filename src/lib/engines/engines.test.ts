@@ -650,7 +650,7 @@ describe("E6 EOD aggregator", () => {
   const input = {
     userName: "Priya Sharma",
     date: TODAY,
-    callsAttempted: 42, callsConnected: 31, callsMissed: 11,
+    callsAttempted: 42, callsConnected: 31, callsInbound: 5, callsMissed: 11,
     queueServed: 45, queueWorked: 42,
     ordersCount: 6, ordersValue: 18_450_000,
     followUpsMade: 12, promisesCount: 4, promisesValue: 6_200_000, paymentsConfirmed: 0,
@@ -674,7 +674,7 @@ describe("E6 EOD aggregator", () => {
         "*EOD — Priya Sharma*",
         "03 Aug 2026",
         "",
-        "Calls: 42 attempted · 31 connected · 11 missed",
+        "Calls: 42 attempted · 31 connected · 11 missed · 5 inbound",
         "Orders: 6 (₹1,84,500)",
         "Payments: 12 followed up · ₹62,000 promised",
         "Reminders: 8 closed · 3 carried forward",
@@ -698,7 +698,7 @@ describe("E6 EOD aggregator", () => {
   test("a zero-activity day still produces a report", () => {
     const zero = aggregateEod({
       ...input,
-      callsAttempted: 0, callsConnected: 0, callsMissed: 0, ordersWithoutCall: 0,
+      callsAttempted: 0, callsConnected: 0, callsInbound: 0, callsMissed: 0, ordersWithoutCall: 0,
       ordersCount: 0, ordersValue: 0, targetAchieved: 0,
     });
     assert.match(zero.whatsappText, /Calls: 0 attempted/);

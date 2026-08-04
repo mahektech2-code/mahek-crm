@@ -17,6 +17,8 @@ export type EodInput = {
   /** Calls. `missed` is DERIVED from the no-answer connection status. */
   callsAttempted: number;
   callsConnected: number;
+  /** Calls the customer placed to us. Never counted as attempted. */
+  callsInbound: number;
   callsMissed: number;
 
   queueServed: number;
@@ -78,6 +80,7 @@ export function aggregateEod(input: EodInput): EodReport {
     { label: "Queue worked", value: `${input.queueWorked} of ${input.queueServed}` },
     { label: "Calls attempted", value: String(input.callsAttempted) },
     { label: "Connected", value: String(input.callsConnected) },
+    { label: "Inbound received", value: String(input.callsInbound) },
     { label: "Missed", value: String(input.callsMissed) },
     { label: "Orders", value: `${input.ordersCount} · ${formatMoney(input.ordersValue)}` },
     { label: "Orders received without a call", value: String(input.ordersWithoutCall) },
@@ -101,7 +104,7 @@ export function aggregateEod(input: EodInput): EodReport {
     `*EOD — ${input.userName}*`,
     formatDate(input.date),
     "",
-    `Calls: ${input.callsAttempted} attempted · ${input.callsConnected} connected · ${input.callsMissed} missed`,
+    `Calls: ${input.callsAttempted} attempted · ${input.callsConnected} connected · ${input.callsMissed} missed · ${input.callsInbound} inbound`,
     `Orders: ${input.ordersCount} (${formatMoney(input.ordersValue)})`,
     ...(input.ordersWithoutCall
       ? [`Orders received without a call: ${input.ordersWithoutCall}`]
@@ -165,7 +168,7 @@ export function aggregateTeamEod(
   rows: TeamRow[],
 ): TeamRollup {
   const zero = (): Omit<EodInput, "userName" | "date"> => ({
-    callsAttempted: 0, callsConnected: 0, callsMissed: 0, ordersWithoutCall: 0,
+    callsAttempted: 0, callsConnected: 0, callsInbound: 0, callsMissed: 0, ordersWithoutCall: 0,
     queueServed: 0, queueWorked: 0,
     ordersCount: 0, ordersValue: 0,
     followUpsMade: 0, promisesCount: 0, promisesValue: 0, paymentsConfirmed: 0,
@@ -192,7 +195,7 @@ export function aggregateTeamEod(
     `*EOD — Team*`,
     formatDate(date),
     "",
-    `Calls: ${totals.callsAttempted} attempted · ${totals.callsConnected} connected · ${totals.callsMissed} missed`,
+    `Calls: ${totals.callsAttempted} attempted · ${totals.callsConnected} connected · ${totals.callsMissed} missed · ${totals.callsInbound} inbound`,
     `Orders: ${totals.ordersCount} (${formatMoney(totals.ordersValue)})`,
     ...(totals.ordersWithoutCall
       ? [`Orders received without a call: ${totals.ordersWithoutCall}`]

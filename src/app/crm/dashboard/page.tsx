@@ -43,7 +43,7 @@ export default async function DashboardPage() {
     workingDays: config["workingDay.workingDays"],
   });
 
-  const [activity, yesterday, queue, followUps, inactive, targets, counts, team, over60] =
+  const [activity, yesterday, queue, followUps, inactive, targets, counts, team, over60, teamActivity] =
     await Promise.all([
       dayActivity(teamView ? null : user.id, day),
       // The last working day, so Monday compares against Saturday.
@@ -58,6 +58,9 @@ export default async function DashboardPage() {
       }),
       teamView ? teamDay(day) : Promise.resolve([]),
       teamView ? overSixtyDays() : Promise.resolve(0),
+      // The team's own day, so a telecaller's connect rate has something to sit
+      // beside. A rate with nothing to compare it to tells nobody anything.
+      teamView ? Promise.resolve(null) : dayActivity(null, day),
     ]);
 
   const { dueReminders, overdueReminders, openComplaints } = counts;
@@ -171,15 +174,26 @@ export default async function DashboardPage() {
               foot={`${queue.entries.length} still to work`}
               progress={queue.progress.percent}
               delta={
-                <Delta today={queue.progress.worked} yesterday={yesterday.queueWorked} />
+                <Delta
+                  today={queue.progress.worked}
+                  yesterday={yesterday.queueWorked}
+                  suffix="ahead of yesterday"
+                />
               }
             />
             <StatCard
               href="/crm/history"
               label="Calls connected"
               value={String(activity.callsConnected)}
-              foot={`of ${activity.callsAttempted} attempted`}
+              foot={`of ${activity.callsAttempted} placed${
+                activity.callsInbound
+                  ? ` · ${activity.callsInbound} inbound received separately`
+                  : ""
+              }`}
               foot2={`${activity.connectRate}% connect rate`}
+              foot3={
+                teamActivity ? `team ${teamActivity.connectRate}%` : undefined
+              }
               delta={
                 <Delta
                   today={activity.callsConnected}
@@ -406,8 +420,8 @@ function TeamView({
           <div className="mt-2 text-[32px] leading-9 font-semibold text-ink">
             {money(activity.ordersValue)}
           </div>
-          <div className="mt-1.5 text-[13px] text-muted">
-            {activity.ordersCount} orders today
+          <div className="mt-1.5 text-[13px]">
+            <PercentDelta today={activity.ordersValue} yesterday={yesterday.ordersValue} />
           </div>
         </Card>
         <Card className="p-5">
@@ -545,6 +559,28 @@ function Delta({
   );
 }
 
+/**
+ * Movement as a percentage rather than a count. Money moves in numbers too big
+ * for "+₹1,54,200 vs yesterday" to mean anything at a glance.
+ */
+function PercentDelta({ today, yesterday }: { today: number; yesterday: number }) {
+  if (!yesterday) {
+    return (
+      <span className="text-muted">
+        {today ? "no figure for the previous day" : "nothing booked yet"}
+      </span>
+    );
+  }
+  const change = Math.round(((today - yesterday) / yesterday) * 100);
+  if (change === 0) return <span className="text-muted">level with the previous day</span>;
+  return (
+    <span className={cx("font-medium", change > 0 ? "text-success" : "text-danger")}>
+      {change > 0 ? "+" : "−"}
+      {Math.abs(change)}% vs previous day
+    </span>
+  );
+}
+
 function Divider() {
   return <span className="h-4 w-px bg-warn-line" />;
 }
@@ -556,6 +592,7 @@ function StatCard({
   suffix,
   foot,
   foot2,
+  foot3,
   progress,
   tone,
   delta,
@@ -566,6 +603,8 @@ function StatCard({
   suffix?: string;
   foot?: string;
   foot2?: string;
+  /** A comparison figure, shown in muted type beside foot2. */
+  foot3?: string;
   progress?: number;
   tone?: "danger";
   delta?: React.ReactNode;
@@ -596,7 +635,10 @@ function StatCard({
         </div>
       ) : null}
       {foot2 ? (
-        <div className="mt-1 text-[13px] font-medium text-success">{foot2}</div>
+        <div className="mt-1 flex items-baseline gap-2">
+          <span className="text-[13px] font-medium text-success">{foot2}</span>
+          {foot3 ? <span className="text-[13px] text-muted">{foot3}</span> : null}
+        </div>
       ) : null}
     </Link>
   );

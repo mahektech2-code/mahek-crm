@@ -89,6 +89,14 @@ export default async function WhatsappPage({
       // Manual is the default and stays fully usable — automatic sending is an
       // addition, never a replacement.
       mode={config["whatsapp.mode"]}
+      // Automatic sending is configured but the last attempts failed. Derived
+      // from the messages themselves rather than a health-check endpoint we do
+      // not have — a banner that cannot be wrong is better than one that is
+      // green because nothing has been asked of it.
+      sendingFailing={
+        config["whatsapp.mode"] === "automatic" &&
+        messages.some((m) => m.status === "failed")
+      }
       initialCustomerId={customer ?? customerPayload[0]?.id ?? ""}
       initialTab={tab === "run" || tab === "templates" || tab === "log" ? tab : "send"}
       customers={customerPayload}

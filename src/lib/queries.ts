@@ -206,7 +206,7 @@ export type DayActivity = Awaited<ReturnType<typeof eodMetricsFor>> & {
 };
 
 const ZERO_METRICS = () => ({
-  callsAttempted: 0, callsConnected: 0, callsMissed: 0, ordersWithoutCall: 0,
+  callsAttempted: 0, callsConnected: 0, callsInbound: 0, callsMissed: 0, ordersWithoutCall: 0,
   queueServed: 0, queueWorked: 0,
   ordersCount: 0, ordersValue: 0, followUpsMade: 0, promisesCount: 0, promisesValue: 0,
   paymentsConfirmed: 0, remindersClosed: 0, remindersCreated: 0, remindersCarriedForward: 0,
