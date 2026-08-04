@@ -104,6 +104,7 @@ export default async function QueuePage() {
         id: a.id,
         title: a.title,
         body: a.scriptBody ?? a.body,
+        guidance: a.scriptBody ? a.body : "",
         outcome: null,
       }))}
       activity={{

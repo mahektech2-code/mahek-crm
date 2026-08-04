@@ -56,10 +56,42 @@ export type ProductOption = { id: string; name: string; packSize: string | null 
 export type ScriptOption = {
   id: string;
   title: string;
+  /** The words to say. */
   body: string;
+  /** Why it is written this way — shown under the chips. */
+  guidance: string;
   /** Which outcome it belongs to; null means it applies generally. */
   outcome: string | null;
 };
+
+/**
+ * A script rendered as the design shows it: labelled blocks of lines, each
+ * line split so a {placeholder} can be styled apart from the words around it.
+ * Someone reading this aloud needs to see instantly what to substitute.
+ */
+function scriptBlocks(script: ScriptOption) {
+  const parts = (line: string) =>
+    line
+      .split(/(\{[^}]+\})/g)
+      .filter(Boolean)
+      .map((text) => ({ text, placeholder: text.startsWith("{") }));
+
+  const blocks: Array<{ label: string; lines: string[] }> = [];
+  const said = script.body.split(/\n\s*\n/).filter((p) => p.trim());
+  said.forEach((para, i) => {
+    blocks.push({
+      label: i === 0 ? "Say this" : "Then",
+      lines: para.split("\n").filter(Boolean),
+    });
+  });
+  if (script.guidance.trim()) {
+    blocks.push({
+      label: "Why it is written this way",
+      lines: script.guidance.split(/\n+/).filter(Boolean),
+    });
+  }
+  return blocks.map((b) => ({ ...b, parsed: b.lines.map(parts) }));
+}
 
 /** §7 — what the information strip shows. Derived server-side. */
 export type CustomerInfo = {
@@ -157,6 +189,8 @@ type CallPanelProps = {
   onNext?: () => void;
   /** "3 of 12" — where this customer sits in the queue. */
   position?: string;
+  /** True once the last row has been worked. */
+  queueComplete?: boolean;
 };
 
 /**
@@ -183,6 +217,7 @@ function CallPanelForm({
   onPrevious,
   onNext,
   position,
+  queueComplete,
 }: CallPanelProps) {
   useEscape(onClose);
   const router = useRouter();
@@ -203,7 +238,13 @@ function CallPanelForm({
   // Opens on Information: read who you are about to speak to before speaking.
   // "Log this call" in the footer is the way through to the form.
   const [tab, setTab] = React.useState<"log" | "information" | "script">("information");
+  // The strip starts open — a telecaller mid-call should not have to expand
+  // something to see the line they are about to say.
+  const [stripOpen, setStripOpen] = React.useState(true);
   const [productQuery, setProductQuery] = React.useState("");
+  // The design caps the visible list and offers the rest behind "show more" —
+  // a full catalogue scrolling under the cursor mid-call is unusable.
+  const [showAllProducts, setShowAllProducts] = React.useState(false);
 
   // One key per opening, so a double-click logs one interaction, not two.
   const idempotencyKey = React.useRef(crypto.randomUUID());
@@ -211,6 +252,7 @@ function CallPanelForm({
   // The information strip loads with the panel rather than being prefetched
   // for every row behind it — most rows are never opened.
   const [info, setInfo] = React.useState<CustomerInfo | null>(null);
+  const [loading, setLoading] = React.useState(true);
   React.useEffect(() => {
     if (!target) return;
     const controller = new AbortController();
@@ -219,7 +261,8 @@ function CallPanelForm({
     })
       .then((r) => (r.ok ? r.json() : { info: null }))
       .then((d) => setInfo(d.info))
-      .catch(() => setInfo(null));
+      .catch(() => setInfo(null))
+      .finally(() => setLoading(false));
     return () => controller.abort();
   }, [target]);
 
@@ -242,10 +285,20 @@ function CallPanelForm({
 
   // The script follows the outcome once one is chosen; before that, whatever
   // general guidance exists.
-  const script =
-    scripts.find((x) => x.outcome && x.outcome === outcome) ??
-    scripts.find((x) => !x.outcome) ??
-    null;
+  const [scriptId, setScriptId] = React.useState<string | null>(null);
+
+  // The script follows the outcome unless the telecaller has picked another.
+  const matchedScript =
+    scripts.find((x) => x.outcome && x.outcome === outcome) ?? scripts[0] ?? null;
+  const script = scriptId
+    ? (scripts.find((x) => x.id === scriptId) ?? matchedScript)
+    : matchedScript;
+
+  // No script covers this outcome — say so rather than showing a general one
+  // as though it were written for the situation.
+  const scriptMissing = Boolean(
+    outcome && !scripts.some((x) => x.outcome === outcome),
+  );
 
   const frequent = products.filter((p) => frequentProductIds.includes(p.id));
   const productLabel = (p: ProductOption) =>
@@ -260,6 +313,15 @@ function CallPanelForm({
       `${p.name} ${p.packSize ?? ""}`.toLowerCase().includes(q),
     );
   }, [products, productQuery]);
+
+  // Long lists are capped until asked for — the design shows a handful and
+  // keeps the rest one click away.
+  const PRODUCT_PREVIEW = 8;
+  const visibleProducts =
+    showAllProducts || matches.length <= PRODUCT_PREVIEW
+      ? matches
+      : matches.slice(0, PRODUCT_PREVIEW);
+  const hasMoreProducts = visibleProducts.length < matches.length;
 
   // What has actually been put on the order, read back so nothing is added by
   // accident and left unnoticed.
@@ -404,6 +466,45 @@ function CallPanelForm({
         </div>
 
         {/* --------------------------------------- information | the form */}
+        {loading ? (
+          // Skeleton rather than an empty pane: the figures arrive a moment
+          // after the modal, and a blank Information tab reads as "no history".
+          <div className="flex-1 p-6">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="mb-3 flex items-center gap-3 last:mb-0">
+                <span className="block h-2.5 w-[180px] rounded-[2px] bg-divider" />
+                <span className="block h-2.5 w-[120px] rounded-[2px] bg-divider" />
+                <span className="flex-1" />
+                <span className="block h-2.5 w-[90px] rounded-[2px] bg-divider" />
+              </div>
+            ))}
+          </div>
+        ) : queueComplete ? (
+          // The last row has been worked. The design ends the run here rather
+          // than dropping the telecaller back onto an empty list.
+          <div className="flex flex-1 items-center justify-center p-6">
+            <div className="max-w-[420px] text-center">
+              <div className="text-[22px] leading-7 font-semibold text-ink">
+                Queue complete
+              </div>
+              <p className="mt-1.5 text-[15px] text-muted">
+                Every customer due today has been worked.
+              </p>
+              <div className="mt-4 flex justify-center gap-2">
+                <Button variant="secondary" onClick={onClose}>
+                  Close
+                </Button>
+                <a
+                  href="/crm/payments"
+                  className="inline-flex h-9 items-center rounded-[4px] border border-brand bg-brand px-4 text-sm font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
+                >
+                  Go to payment follow-up ▸
+                </a>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
         {/* ---------------------------------------------------- the tabs */}
         <div className="flex items-center gap-1 border-b border-divider px-6">
           {(
@@ -564,29 +665,84 @@ function CallPanelForm({
               tab === "script" ? "block" : "hidden",
             )}
           >
+            {scripts.length ? (
+              <div className="-mx-5 -mt-5 mb-4 border-b border-divider px-5 py-3.5">
+                <div className="flex flex-wrap gap-1.5">
+                  {scripts.map((x) => (
+                    <button
+                      key={x.id}
+                      onClick={() => setScriptId(x.id)}
+                      className={cx(
+                        "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
+                        script?.id === x.id
+                          ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                          : "border-line bg-surface text-body hover:border-brand",
+                      )}
+                    >
+                      {x.title}
+                    </button>
+                  ))}
+                </div>
+                {script?.guidance ? (
+                  <p className="mt-2 text-[13px] text-muted">
+                    {script.guidance.split(/\n+/)[0]}
+                  </p>
+                ) : null}
+                {scriptMissing ? (
+                  <div className="mt-2.5 rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-2 text-[13px] text-warn-ink">
+                    Nothing is written for {OUTCOME_LABEL[outcome!] ?? "this outcome"} yet —
+                    this is the closest script we have.
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             {script ? (
-              <>
-                <div className="text-[15px] font-semibold text-ink">{script.title}</div>
-                <p className="mt-2 text-sm leading-[22px] whitespace-pre-wrap text-body">
-                  {script.body}
-                </p>
-              </>
+              <div className="max-w-[420px]">
+                {scriptBlocks(script).map((b, bi) => (
+                  <div key={bi} className="mb-4">
+                    <span className="mb-1.5 block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                      {b.label}
+                    </span>
+                    {b.parsed.map((line, li) => (
+                      <div
+                        key={li}
+                        className="mb-1.5 text-base leading-7 text-ink"
+                        style={{ textWrap: "pretty" }}
+                      >
+                        {line.map((part, pi) => (
+                          <span
+                            key={pi}
+                            className={
+                              part.placeholder
+                                ? "rounded-[3px] bg-brand-soft px-1 font-medium text-[#5223E0]"
+                                : undefined
+                            }
+                          >
+                            {part.text}
+                          </span>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                <a href="/crm/help" className="text-sm font-medium text-brand">
+                  More scripts and procedures →
+                </a>
+              </div>
             ) : (
-              <div className="rounded-[4px] border border-dashed border-line px-3 py-6 text-center">
-                <p className="text-sm text-muted">
+              <div className="px-6 py-10 text-center">
+                <p className="text-[15px] text-muted">
                   No script has been written for this situation yet.
                 </p>
-                <a href="/crm/help" className="mt-1 inline-block text-[13px] text-brand">
+                <a
+                  href="/crm/help"
+                  className="mt-3.5 inline-flex h-8.5 items-center rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
+                >
                   Open the Help Center
                 </a>
               </div>
             )}
-            <a
-              href="/crm/help"
-              className="mt-4 inline-block text-[13px] text-brand"
-            >
-              More scripts and procedures →
-            </a>
           </div>
 
           <div
@@ -595,6 +751,7 @@ function CallPanelForm({
               tab === "log" ? "block" : "hidden",
             )}
           >
+            <div className="mx-auto max-w-[720px]">
         {saved ? (
           <div className="rounded-[6px] border border-line bg-surface p-5 text-center">
             <div className="text-lg font-semibold text-ink">Log saved</div>
@@ -650,9 +807,22 @@ function CallPanelForm({
             {script ? (
               <div className="mb-3 rounded-[4px] border border-line bg-canvas px-3 py-2">
                 <div className="flex items-baseline gap-2">
-                  <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                    {script.title}
-                  </span>
+                  <button
+                    onClick={() => setStripOpen((o) => !o)}
+                    className="flex cursor-pointer items-center gap-1.5"
+                  >
+                    <Icon
+                      name="chevron"
+                      size={12}
+                      className={cx(
+                        "text-muted transition-transform",
+                        stripOpen && "rotate-90",
+                      )}
+                    />
+                    <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                      {script.title}
+                    </span>
+                  </button>
                   <span className="flex-1" />
                   <button
                     onClick={() => setTab("script")}
@@ -661,7 +831,32 @@ function CallPanelForm({
                     Read full script →
                   </button>
                 </div>
-                <p className="mt-1 line-clamp-2 text-[13px] text-body">{script.body}</p>
+                {stripOpen ? (
+                  <div className="mt-1.5">
+                    {scriptBlocks(script)
+                      .slice(0, 1)
+                      .map((b, bi) => (
+                        <div key={bi}>
+                          {b.parsed.map((line, li) => (
+                            <div key={li} className="text-[13px] leading-5 text-body">
+                              {line.map((part, pi) => (
+                                <span
+                                  key={pi}
+                                  className={
+                                    part.placeholder
+                                      ? "font-medium text-[#5223E0]"
+                                      : undefined
+                                  }
+                                >
+                                  {part.text}
+                                </span>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -765,12 +960,22 @@ function CallPanelForm({
                     ))}
                   </div>
                 ) : null}
-                <Input
-                  value={productQuery}
-                  onChange={(e) => setProductQuery(e.target.value)}
-                  placeholder={`Search ${products.length} products by name or code`}
-                  className="mt-2"
-                />
+                <div className="relative mt-2">
+                  <Input
+                    value={productQuery}
+                    onChange={(e) => setProductQuery(e.target.value)}
+                    placeholder={`Search ${products.length} products by name or code`}
+                  />
+                  {productQuery ? (
+                    <button
+                      onClick={() => setProductQuery("")}
+                      title="Clear the search"
+                      className="absolute top-1/2 right-2 -translate-y-1/2 cursor-pointer text-[13px] text-muted hover:text-body"
+                    >
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
 
                 {needsProducts && !onThisOrder.length ? (
                   <div className="mt-2 rounded-[4px] border border-dashed border-warn-line bg-warn-soft px-3 py-5 text-center text-sm text-warn-ink">
@@ -801,7 +1006,7 @@ function CallPanelForm({
                       &ldquo;epoxy&rdquo;, or the pack size.
                     </p>
                   ) : null}
-                  {matches.map((p) => (
+                  {visibleProducts.map((p) => (
                     <div
                       key={p.id}
                       className="flex items-center gap-3 border-b border-divider px-3 py-2 last:border-0"
@@ -823,6 +1028,14 @@ function CallPanelForm({
                     </div>
                   ))}
                 </div>
+                {hasMoreProducts ? (
+                  <button
+                    onClick={() => setShowAllProducts(true)}
+                    className="mt-1.5 cursor-pointer text-[13px] text-brand"
+                  >
+                    Show all {matches.length} matches
+                  </button>
+                ) : null}
                 {errors.productQuantities ? (
                   <p className="mt-1 text-[13px] text-danger">{errors.productQuantities}</p>
                 ) : null}
@@ -867,8 +1080,11 @@ function CallPanelForm({
             </Field>
           </>
         )}
-      </div>
+            </div>
+          </div>
         </div>
+          </>
+        )}
 
         {/* ------------------------------------------------------- footer */}
         <div className="flex items-center gap-2.5 border-t border-divider px-6 py-3">
@@ -890,6 +1106,17 @@ function CallPanelForm({
           >
             Next ▶
           </Button>
+          {/* Back steps out of the form to the outcomes, then to the types —
+              the same journey the crumb makes, but where the hands already are. */}
+          {chosen && !saved ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => (isOrderReceived ? setType(null) : setOutcome(null))}
+            >
+              ← {isOrderReceived ? "Change type" : "Change outcome"}
+            </Button>
+          ) : null}
           {position ? (
             <span className="text-[13px] text-muted">{position}</span>
           ) : null}
@@ -911,9 +1138,14 @@ function CallPanelForm({
               ) : null}
             </>
           ) : (
-            <span className="text-[13px] text-muted">
-              {saved ? "Saved" : "Pick how the interaction happened to begin"}
-            </span>
+            <>
+              <span className="text-[13px] text-muted">
+                {saved ? "Saved" : "Pick how the interaction happened to begin"}
+              </span>
+              <Button variant="secondary" size="sm" onClick={onClose}>
+                Close
+              </Button>
+            </>
           )}
         </div>
       </div>

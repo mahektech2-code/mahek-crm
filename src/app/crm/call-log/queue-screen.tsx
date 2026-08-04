@@ -443,6 +443,7 @@ export function QueueScreen({
         onPrevious={() => goTo(openIndex - 1)}
         onNext={() => goTo(openIndex + 1)}
         position={openIndex >= 0 ? `${openIndex + 1} of ${visible.length}` : undefined}
+        queueComplete={visible.length === 0}
         onClose={() => setOpenId(null)}
         onSaved={(advanceNext) => {
           if (advanceNext) advance();
