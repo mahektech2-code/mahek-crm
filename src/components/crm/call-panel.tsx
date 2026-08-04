@@ -772,6 +772,13 @@ function CallPanelForm({
                   className="mt-2"
                 />
 
+                {needsProducts && !onThisOrder.length ? (
+                  <div className="mt-2 rounded-[4px] border border-dashed border-warn-line bg-warn-soft px-3 py-5 text-center text-sm text-warn-ink">
+                    At least one product is needed to log this as an order. Search above,
+                    or tap one this customer usually buys.
+                  </div>
+                ) : null}
+
                 {onThisOrder.length ? (
                   <div className="mt-2 rounded-[4px] border border-brand-softer bg-brand-soft px-3 py-2">
                     <span className="text-[11px] font-medium tracking-[0.04em] text-[#5223E0] uppercase">

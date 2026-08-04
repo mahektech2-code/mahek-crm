@@ -57,12 +57,22 @@ export function HelpScreen({
         title="Help center"
         subtitle="SOPs and call scripts, filtered to your role."
         actions={
+          <>
           <Link
             href="/crm/components"
             className="inline-flex h-9 items-center rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
           >
             Component library
           </Link>
+          <a
+            href="https://wa.me/919820011000"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-9 items-center rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
+          >
+            Report a problem on WhatsApp
+          </a>
+          </>
         }
       />
 

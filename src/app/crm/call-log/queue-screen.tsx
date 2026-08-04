@@ -191,7 +191,7 @@ export function QueueScreen({
                 router.refresh();
               }}
             >
-              Refresh
+              Re-prioritise
             </Button>
             <Button
               variant="primary"
@@ -405,7 +405,7 @@ export function QueueScreen({
         ) : filter === "all" ? (
           <EmptyState
             icon={<Icon name="check" size={24} className="text-success" />}
-            title="Queue complete"
+            title="Queue cleared for today"
             body="Every customer due today has been worked. Suggested next work: the payment follow-up list, and the customers sitting on the inactive watch without a decision."
             action={
               <>
@@ -413,7 +413,7 @@ export function QueueScreen({
                   href="/crm/payments"
                   className="inline-flex h-9 items-center rounded-[4px] border border-brand bg-brand px-4 text-sm font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
                 >
-                  Go to payment follow-up ▸
+                  Open payment follow-up
                 </Link>
                 <Link
                   href="/crm/inactive"

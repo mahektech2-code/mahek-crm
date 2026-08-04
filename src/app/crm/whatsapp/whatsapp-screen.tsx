@@ -212,6 +212,40 @@ export function WhatsappScreen(props: {
         subtitle={`${scopeLabel} · every message is logged against the customer record, whichever way it is sent.`}
       />
 
+      {/* A copy waiting on confirmation, surfaced at screen level — it is easy
+          to send the message and walk away from the step that records it. */}
+      {unconfirmed.length ? (
+        <Callout tone="warn">
+          <span className="text-sm font-medium text-warn-ink">
+            {unconfirmed.length} awaiting confirmation
+          </span>
+          <span className="text-[13px] text-body">
+            The call log will not hold them back until this is confirmed.
+          </span>
+          <span className="flex-1" />
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={async () => {
+              const r = await act(confirmMessageSent(unconfirmed[0].id));
+              if (r.ok) router.refresh();
+            }}
+          >
+            Confirm sent
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={async () => {
+              const r = await act(cancelMessage(unconfirmed[0].id));
+              if (r.ok) router.refresh();
+            }}
+          >
+            Discard
+          </Button>
+        </Callout>
+      ) : null}
+
       <MetricStrip
         metrics={[
           { label: "Sent today", value: String(messagesToday) },
