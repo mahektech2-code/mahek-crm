@@ -135,7 +135,9 @@ export function QueueScreen({
       const el = e.target as HTMLElement | null;
       if (
         el &&
-        (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.isContentEditable)
       ) {
         return;
       }
@@ -205,9 +207,13 @@ export function QueueScreen({
                   ? "Open the selected row"
                   : "Nothing left in this filter"
               }
-              onClick={() => visible[selected] && setOpenId(visible[selected].customerId)}
+              onClick={() =>
+                visible[selected] && setOpenId(visible[selected].customerId)
+              }
             >
-              {visible[selected] ? `Call ${visible[selected].name}` : "Queue clear"}
+              {visible[selected]
+                ? `Call ${visible[selected].name}`
+                : "Queue clear"}
             </Button>
           </>
         }
@@ -218,7 +224,9 @@ export function QueueScreen({
           {progress.worked} of {progress.total} worked
         </span>
         <Progress value={progress.percent} className="max-w-[320px] flex-1" />
-        <span className="text-[13px] font-medium text-body">{progress.percent}%</span>
+        <span className="text-[13px] font-medium text-body">
+          {progress.percent}%
+        </span>
         <span className="h-5 w-px bg-divider" />
         <span className="text-[13px] text-muted">
           {carriedOver === null
@@ -229,9 +237,17 @@ export function QueueScreen({
 
       <MetricStrip
         metrics={[
-          { label: "Connected today", value: String(activity.connected), sub: `of ${activity.attempted} attempted` },
+          {
+            label: "Connected today",
+            value: String(activity.connected),
+            sub: `of ${activity.attempted} attempted`,
+          },
           { label: "Connect rate", value: `${activity.connectRate}%` },
-          { label: "Missed", value: String(activity.missed), tone: activity.missed > 5 ? "danger" : "ink" },
+          {
+            label: "Missed",
+            value: String(activity.missed),
+            tone: activity.missed > 5 ? "danger" : "ink",
+          },
           { label: "Orders today", value: String(activity.orders) },
           { label: "Booked today", value: money(activity.orderValue) },
         ]}
@@ -275,11 +291,14 @@ export function QueueScreen({
             <Icon
               name="chevron"
               size={16}
-              className={cx("text-muted transition-transform", heldOpen && "rotate-90")}
+              className={cx(
+                "text-muted transition-transform",
+                heldOpen && "rotate-90",
+              )}
             />
             <span className="text-sm text-muted">
-              {suppressed.length} customer{suppressed.length === 1 ? "" : "s"} held
-              back today
+              {suppressed.length} customer{suppressed.length === 1 ? "" : "s"}{" "}
+              held back today
             </span>
             <span className="flex-1" />
             <span className="text-[13px] text-muted">
@@ -299,9 +318,7 @@ export function QueueScreen({
                   >
                     {h.name}
                   </Link>
-                  <span className="text-[13px] text-muted">
-                    {h.reason}
-                  </span>
+                  <span className="text-[13px] text-muted">{h.reason}</span>
                 </div>
               ))}
             </div>
@@ -331,7 +348,10 @@ export function QueueScreen({
                     {r.name}
                   </Link>
                   {r.reasons.map((reason) => (
-                    <Badge key={reason.kind} tone={REASON_TONE[reason.kind] ?? "neutral"}>
+                    <Badge
+                      key={reason.kind}
+                      tone={REASON_TONE[reason.kind] ?? "neutral"}
+                    >
                       {reason.label}
                     </Badge>
                   ))}
@@ -387,7 +407,8 @@ export function QueueScreen({
                   items={[
                     {
                       label: "Open customer record",
-                      onSelect: () => router.push(`/crm/customers/${r.customerId}`),
+                      onSelect: () =>
+                        router.push(`/crm/customers/${r.customerId}`),
                     },
                     {
                       label: "Send WhatsApp instead",
@@ -396,7 +417,8 @@ export function QueueScreen({
                     },
                     {
                       label: "See their bills",
-                      onSelect: () => router.push(`/crm/bills?customer=${r.customerId}`),
+                      onSelect: () =>
+                        router.push(`/crm/bills?customer=${r.customerId}`),
                     },
                     {
                       label: "Skip for today",
@@ -448,7 +470,12 @@ export function QueueScreen({
         hasPrevious={hasPrevious}
         onPrevious={() => goTo(openIndex - 1)}
         onNext={() => goTo(openIndex + 1)}
-        position={openIndex >= 0 ? `${openIndex + 1} of ${visible.length}` : undefined}
+        position={
+          openIndex >= 0
+            ? `Customer ${openIndex + 1} of ${visible.length}`
+            : undefined
+        }
+        queueTotal={progress.worked}
         queueComplete={visible.length === 0}
         onClose={() => setOpenId(null)}
         onSaved={(advanceNext) => {

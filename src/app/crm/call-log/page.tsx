@@ -59,6 +59,7 @@ export default async function QueuePage() {
         city: r.city,
         ownerName: r.ownerName,
         reason: r.reasons[0]?.label,
+        reasonKind: r.reasons[0]?.kind,
         outstanding: r.outstanding,
         lastOrderDate: r.lastOrderDate,
         lastOrderValue: r.lastOrderValue,

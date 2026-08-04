@@ -201,10 +201,15 @@ export function initialsOf(name: string): string {
 }
 
 /** Indian phone display: 98765 43210 */
+/**
+ * "+91 98470 55318". The country code is shown because every number here is an
+ * Indian mobile and a telecaller reading one aloud, or pasting it into
+ * WhatsApp, needs it in full. Storage stays as ten digits.
+ */
 export function phoneDisplay(phone: string): string {
   const digits = phone.replace(/\D/g, "").slice(-10);
   if (digits.length !== 10) return phone;
-  return `${digits.slice(0, 5)} ${digits.slice(5)}`;
+  return `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
 }
 
 export function ageLabel(days: number): string {

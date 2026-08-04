@@ -28,6 +28,29 @@ const FOLLOW_UP_PRESETS = [
   { label: "In 2 weeks", days: 14 },
 ] as const;
 
+/** The queue's reason kinds, as the badge on the modal header reads them. */
+const REASON_BADGE: Record<string, string> = {
+  reminderOverdue: "Reminder overdue",
+  reminderDueToday: "Reminder due today",
+  orderOverdueFullCycle: "Order overdue",
+  orderDue: "Order due",
+  orderDueSoon: "Order due soon",
+  prospect: "Never ordered",
+  checkInOverdue: "Check-in overdue",
+  checkInDue: "Check-in due",
+};
+
+const REASON_TONE: Record<string, "danger" | "warn" | "brand" | "neutral"> = {
+  reminderOverdue: "danger",
+  reminderDueToday: "warn",
+  orderOverdueFullCycle: "danger",
+  orderDue: "brand",
+  orderDueSoon: "brand",
+  prospect: "brand",
+  checkInOverdue: "warn",
+  checkInDue: "neutral",
+};
+
 export type CallTarget = {
   customerId: string;
   /** Where this was started from — kept on the interaction record. */
@@ -44,6 +67,8 @@ export type CallTarget = {
   city: string;
   ownerName: string | null;
   reason?: string;
+  /** The engine's kind for the top reason, shown as the badge on the right. */
+  reasonKind?: string;
   outstanding: number;
   lastOrderDate: string | null;
   lastOrderValue: number;
@@ -228,6 +253,8 @@ type CallPanelProps = {
   onNext?: () => void;
   /** "3 of 12" — where this customer sits in the queue. */
   position?: string;
+  /** Total worked, for the end-of-run summary. */
+  queueTotal?: number;
   /** True once the last row has been worked. */
   queueComplete?: boolean;
 };
@@ -274,6 +301,7 @@ function CallPanelForm({
   onPrevious,
   onNext,
   position,
+  queueTotal,
   queueComplete,
   tab,
   setTab,
@@ -469,6 +497,15 @@ function CallPanelForm({
 
   if (!target) return null;
 
+  // The Reminder figure carries the reminder, not whatever reason put them in
+  // the queue. Showing "Order due today" under a heading that says Reminder is
+  // how a telecaller ends up looking for a promise nobody made.
+  const reminderText =
+    target.reasonKind === "reminderOverdue" ||
+    target.reasonKind === "reminderDueToday"
+      ? target.reason
+      : null;
+
   return (
     <div
       onClick={onClose}
@@ -484,10 +521,10 @@ function CallPanelForm({
         {/* ------------------------------------------------------- header */}
         <div className="flex items-start gap-4 border-b border-divider px-6 py-4">
           <div className="min-w-0 flex-1">
-            <div className="text-lg leading-6 font-semibold text-ink">
+            <div className="text-[22px] leading-7 font-semibold text-ink">
               {target.name}
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-[13px] text-muted">
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
               <span>{target.contactPerson}</span>
               <span>·</span>
               <a
@@ -512,33 +549,71 @@ function CallPanelForm({
               </button>
               <span>·</span>
               <span>{target.city}</span>
+              {target.ownerName ? (
+                <>
+                  <span>·</span>
+                  {/* Whose book this is. A manager working the team queue is
+                      otherwise calling on somebody else's relationship without
+                      being told so. */}
+                  <span>Owner {target.ownerName}</span>
+                </>
+              ) : null}
             </div>
           </div>
           <button
             onClick={onClose}
             title="Close"
-            className="inline-flex h-5.5 w-5.5 flex-none cursor-pointer items-center justify-center rounded-[4px] border border-line text-muted hover:bg-canvas hover:text-body"
+            className="inline-flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
           >
-            <Icon name="close" size={12} strokeWidth={1.8} />
+            <Icon name="close" size={14} strokeWidth={1.8} />
           </button>
         </div>
 
-        {/* The four figures a telecaller needs before they speak. */}
-        <div className="grid grid-cols-[repeat(4,minmax(0,1fr))] gap-4 border-b border-divider bg-canvas px-6 py-3">
+        {/* What a telecaller needs before they speak.
+            A row with dividers rather than a grid, because the figures are not
+            all present: an empty "Open complaint — None" column takes space to
+            say nothing, and reads as a thing to check when it is not. Each
+            figure appears only when it has something to report. */}
+        <div className="flex items-center gap-5 border-y border-divider bg-canvas px-6 py-2.5">
           <Stat
             label="Outstanding"
             tone={target.outstanding > 0 ? "danger" : undefined}
           >
             {money(target.outstanding)}
           </Stat>
+          <StatDivider />
           <Stat label="Target gap">{money(target.targetGap)}</Stat>
-          <Stat label="Reminder">{target.reason ?? "—"}</Stat>
-          <Stat
-            label="Open complaint"
-            tone={target.openComplaint ? "danger" : undefined}
-          >
-            {target.openComplaint ? "Yes — mention it first" : "None"}
-          </Stat>
+          {reminderText ? (
+            <>
+              <StatDivider />
+              <Stat label="Reminder" tone="warn">
+                {reminderText}
+              </Stat>
+            </>
+          ) : null}
+          {target.openComplaint ? (
+            <>
+              <StatDivider />
+              {/* Clickable: the complaint is the thing to raise first, so it
+                  jumps to it rather than only announcing that it exists. */}
+              <button
+                onClick={() => setTab("information")}
+                title={target.openComplaint}
+                className="cursor-pointer border-none bg-transparent p-0 text-sm font-medium text-danger"
+              >
+                Open complaint
+              </button>
+            </>
+          ) : null}
+          <span className="flex-1" />
+          {/* Why this customer is in front of you, in the queue's own words. */}
+          {target.reasonKind ? (
+            <Badge tone={REASON_TONE[target.reasonKind] ?? "neutral"}>
+              {(
+                REASON_BADGE[target.reasonKind] ?? target.reasonKind
+              ).toUpperCase()}
+            </Badge>
+          ) : null}
         </div>
 
         {/* --------------------------------------- information | the form */}
@@ -551,7 +626,9 @@ function CallPanelForm({
                 Queue complete
               </div>
               <p className="mt-1.5 text-[15px] text-muted">
-                Every customer due today has been worked.
+                {queueTotal
+                  ? `${queueTotal} of ${queueTotal} customers worked today.`
+                  : "Every customer due today has been worked."}
               </p>
               <div className="mt-4 flex justify-center gap-2">
                 <Button variant="secondary" onClick={onClose}>
@@ -572,7 +649,7 @@ function CallPanelForm({
             <div className="flex items-center gap-1 border-b border-divider px-6">
               {[
                 { key: "information" as const, label: "Information" },
-                { key: "log" as const, label: "Call Log" },
+                { key: "log" as const, label: "Call log" },
                 { key: "script" as const, label: "Script" },
               ].map((t) => (
                 <button
@@ -636,7 +713,7 @@ function CallPanelForm({
                         sub={
                           info.purchase.lastOrderDaysAgo === null
                             ? "No order recorded"
-                            : `${info.purchase.lastOrderDaysAgo}d ago`
+                            : daysAgoLabel(info.purchase.lastOrderDaysAgo)
                         }
                       />
                       <Figure
@@ -644,7 +721,7 @@ function CallPanelForm({
                         value={`${info.purchase.cycleDays} days`}
                         sub={
                           info.purchase.nextOrderDate
-                            ? `Next order ${shortDate(info.purchase.nextOrderDate)}`
+                            ? `Next order: ${shortDate(info.purchase.nextOrderDate)}`
                             : info.purchase.cycleIsDefault
                               ? "Default — too little history"
                               : "No order to count from"
@@ -661,7 +738,7 @@ function CallPanelForm({
                         sub={
                           info.purchase.lastCallDaysAgo === null
                             ? "Never spoken to"
-                            : `${info.purchase.lastCallDaysAgo}d ago`
+                            : daysAgoLabel(info.purchase.lastCallDaysAgo)
                         }
                       />
                     </InfoSection>
@@ -672,7 +749,7 @@ function CallPanelForm({
                       <Figure
                         label="Monthly target"
                         value={`${info.monthly.achievementPercent}%`}
-                        sub={`${money(info.monthly.achieved)} of ${money(info.monthly.target)}`}
+                        sub={`${money(info.monthly.achieved)} achieved`}
                       />
                       <Figure
                         label="Target gap this month"
@@ -696,12 +773,12 @@ function CallPanelForm({
                           className={cx(
                             "mt-0.5 block text-lg leading-6 font-semibold",
                             info.monthly.shortfallPerDay > 0
-                              ? "text-danger"
+                              ? "text-warn-ink"
                               : "text-ink",
                           )}
                         >
                           {info.monthly.shortfallPerDay > 0
-                            ? `Short ${money(info.monthly.shortfallPerDay)}/day`
+                            ? `Short by ${money(info.monthly.shortfallPerDay)}/day`
                             : "On track"}
                         </span>
                         <span className="block text-[13px] text-body">
@@ -720,7 +797,7 @@ function CallPanelForm({
                       />
                       <Figure
                         label="Credit days"
-                        value={`${info.creditDays}${info.creditDaysIsDefault ? " (default)" : ""}`}
+                        value={`${info.creditDays} days`}
                       />
                     </InfoSection>
 
@@ -1465,6 +1542,15 @@ function Figure({
   );
 }
 
+/**
+ * "Today" / "1 day ago" / "27 days ago". Written out rather than "27d ago":
+ * this tab is read aloud while the phone is ringing.
+ */
+function daysAgoLabel(days: number): string {
+  if (days === 0) return "Today";
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
 /** Outcomes carry the same colour here as everywhere else in the CRM. */
 function outcomeTone(outcome: string | null) {
   switch (outcome) {
@@ -1483,13 +1569,17 @@ function outcomeTone(outcome: string | null) {
 }
 
 /** One figure in the header strip. */
+function StatDivider() {
+  return <span className="h-7 w-px flex-none bg-line" />;
+}
+
 function Stat({
   label,
   tone,
   children,
 }: {
   label: string;
-  tone?: "danger";
+  tone?: "danger" | "warn";
   children: React.ReactNode;
 }) {
   return (
@@ -1500,7 +1590,11 @@ function Stat({
       <span
         className={cx(
           "block truncate text-sm font-medium",
-          tone === "danger" ? "text-danger" : "text-ink",
+          tone === "danger"
+            ? "text-danger"
+            : tone === "warn"
+              ? "text-warn-ink"
+              : "text-ink",
         )}
       >
         {children}
