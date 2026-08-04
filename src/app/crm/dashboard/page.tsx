@@ -8,7 +8,7 @@ import { getQueue } from "@/lib/services/queue-service";
 import { getFollowUpWorklist } from "@/lib/services/payment-service";
 import { listInactiveWatch, listTargets } from "@/lib/services/worklist-services";
 import { getConfig } from "@/lib/config/store";
-import { isWorkingDay } from "@/lib/business-date";
+import { isWorkingDay, previousWorkingDay } from "@/lib/business-date";
 import { money, moneyShort, monthLabel, pct } from "@/lib/format";
 import {
   Card,
@@ -37,14 +37,25 @@ export default async function DashboardPage() {
 
   // One wave, not three. Each of these is a round trip to a database in another
   // continent, so waiting on them in sequence shows up directly as page load.
-  const [activity, queue, followUps, inactive, targets, counts, team, over60] =
+  const previousDay = previousWorkingDay(day, {
+    timezone: config["workingDay.timezone"],
+    dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+    workingDays: config["workingDay.workingDays"],
+  });
+
+  const [activity, yesterday, queue, followUps, inactive, targets, counts, team, over60] =
     await Promise.all([
       dayActivity(teamView ? null : user.id, day),
+      // The last working day, so Monday compares against Saturday.
+      dayActivity(teamView ? null : user.id, previousDay),
       getQueue(),
       getFollowUpWorklist(),
       listInactiveWatch(),
       listTargets(period),
-      dashboardCounts(teamView ? null : user.id, day),
+      dashboardCounts(teamView ? null : user.id, day, {
+        reminders: config["dashboard.reminderOverdueFlagDays"],
+        complaints: config["dashboard.complaintUnresolvedFlagDays"],
+      }),
       teamView ? teamDay(day) : Promise.resolve([]),
       teamView ? overSixtyDays() : Promise.resolve(0),
     ]);
@@ -136,8 +147,14 @@ export default async function DashboardPage() {
       {teamView ? (
         <TeamView
           activity={activity}
-          overdueReminders={overdueReminders}
-          openComplaints={openComplaints}
+          yesterday={yesterday}
+          remindersFlagged={counts.remindersFlagged}
+          complaintsFlagged={counts.complaintsFlagged}
+          overdueGrowth={counts.overdueGrowth}
+          flagDays={{
+            reminders: config["dashboard.reminderOverdueFlagDays"],
+            complaints: config["dashboard.complaintUnresolvedFlagDays"],
+          }}
           outstanding={followUps.reduce((a, f) => a + f.totalOverdue, 0)}
           targetPct={targetPct}
           rows={team}
@@ -153,6 +170,9 @@ export default async function DashboardPage() {
               suffix={`/${queue.progress.total}`}
               foot={`${queue.entries.length} still to work`}
               progress={queue.progress.percent}
+              delta={
+                <Delta today={queue.progress.worked} yesterday={yesterday.queueWorked} />
+              }
             />
             <StatCard
               href="/crm/history"
@@ -160,6 +180,12 @@ export default async function DashboardPage() {
               value={String(activity.callsConnected)}
               foot={`of ${activity.callsAttempted} attempted`}
               foot2={`${activity.connectRate}% connect rate`}
+              delta={
+                <Delta
+                  today={activity.callsConnected}
+                  yesterday={yesterday.callsConnected}
+                />
+              }
             />
             <StatCard
               href="/crm/history"
@@ -171,6 +197,9 @@ export default async function DashboardPage() {
                   ? `${money(Math.round(activity.ordersValue / activity.ordersCount))} average`
                   : "No orders yet today"
               }
+              delta={
+                <Delta today={activity.ordersCount} yesterday={yesterday.ordersCount} />
+              }
             />
             <StatCard
               href="/crm/history"
@@ -179,6 +208,13 @@ export default async function DashboardPage() {
               tone="danger"
               foot="Not reachable — retry after 4 pm"
               foot2="fewer is better"
+              delta={
+                <Delta
+                  today={activity.callsMissed}
+                  yesterday={yesterday.callsMissed}
+                  moreIsBetter={false}
+                />
+              }
             />
           </div>
 
@@ -294,21 +330,28 @@ export default async function DashboardPage() {
 
 function TeamView({
   activity,
-  overdueReminders,
-  openComplaints,
+  yesterday,
+  remindersFlagged,
+  complaintsFlagged,
+  overdueGrowth,
+  flagDays,
   outstanding,
   targetPct,
   rows,
   over60,
 }: {
   activity: Awaited<ReturnType<typeof dayActivity>>;
-  overdueReminders: number;
-  openComplaints: number;
+  yesterday: Awaited<ReturnType<typeof dayActivity>>;
+  remindersFlagged: number;
+  complaintsFlagged: number;
+  overdueGrowth: number;
+  flagDays: { reminders: number; complaints: number };
   outstanding: number;
   targetPct: number;
   rows: Awaited<ReturnType<typeof teamDay>>;
   over60: number;
 }) {
+  const yesterdayMissed = yesterday.callsMissed;
   const avg = (pick: (r: (typeof rows)[number]) => number) =>
     rows.length ? Math.round(rows.reduce((a, r) => a + pick(r), 0) / rows.length) : 0;
 
@@ -318,17 +361,25 @@ function TeamView({
         <span className="text-xs font-medium tracking-[0.04em] text-warn-ink uppercase">
           Red flags
         </span>
-        <Flag value={activity.callsMissed} label="missed calls today" />
-        <Divider />
-        <Flag value={overdueReminders} label="reminders overdue" />
-        <Divider />
-        <Flag value={openComplaints} label="complaints unresolved" />
+        <span className="text-sm text-body">
+          <strong className="font-semibold text-danger">{activity.callsMissed}</strong>{" "}
+          missed calls yesterday, up from {yesterdayMissed}
+        </span>
         <Divider />
         <span className="text-sm text-body">
-          Over 60 days{" "}
-          <strong className="font-semibold text-danger">
-            {money(over60)}
-          </strong>
+          <strong className="font-semibold text-danger">{remindersFlagged}</strong>{" "}
+          reminders overdue more than {flagDays.reminders} days
+        </span>
+        <Divider />
+        <span className="text-sm text-body">
+          <strong className="font-semibold text-danger">{complaintsFlagged}</strong>{" "}
+          complaints unresolved past {flagDays.complaints} days
+        </span>
+        <Divider />
+        <span className="text-sm text-body">
+          Overdue balance grew{" "}
+          <strong className="font-semibold text-danger">{money(overdueGrowth)}</strong>{" "}
+          this week
         </span>
         <span className="flex-1" />
         <Link
@@ -341,7 +392,7 @@ function TeamView({
 
       <div className="mb-4 grid grid-cols-[repeat(auto-fit,minmax(216px,1fr))] gap-4">
         <Card className="p-5">
-          <SectionLabel>Team calls today</SectionLabel>
+          <SectionLabel>Team calls yesterday</SectionLabel>
           <div className="mt-2 text-[32px] leading-9 font-semibold text-ink">
             {activity.callsAttempted}
           </div>
@@ -379,7 +430,7 @@ function TeamView({
 
       <Card className="overflow-hidden">
         <div className="border-b border-divider px-5 py-3.5 text-lg leading-6 font-semibold text-ink">
-          Telecaller comparison — today
+          Telecaller comparison — yesterday
         </div>
         <div className="overflow-auto">
           <table>
@@ -463,15 +514,33 @@ function TeamView({
   );
 }
 
-function Flag({ value, label }: { value: number; label: string }) {
+/**
+ * "+2 vs yesterday". Nothing is shown when the two days match, because a
+ * delta of zero is noise, and "yesterday" means the last WORKING day.
+ */
+function Delta({
+  today,
+  yesterday,
+  moreIsBetter = true,
+  suffix = "vs yesterday",
+}: {
+  today: number;
+  yesterday: number;
+  moreIsBetter?: boolean;
+  suffix?: string;
+}) {
+  const diff = today - yesterday;
+  if (diff === 0) return null;
+  const good = moreIsBetter ? diff > 0 : diff < 0;
   return (
-    <span className="text-sm text-body">
-      <strong
-        className={cx("font-semibold", value > 0 ? "text-danger" : "text-success")}
-      >
-        {value}
-      </strong>{" "}
-      {label}
+    <span
+      className={cx(
+        "text-[13px] font-medium",
+        good ? "text-success" : "text-danger",
+      )}
+    >
+      {diff > 0 ? "+" : "−"}
+      {Math.abs(diff)} {suffix}
     </span>
   );
 }
@@ -489,6 +558,7 @@ function StatCard({
   foot2,
   progress,
   tone,
+  delta,
 }: {
   href: string;
   label: string;
@@ -498,6 +568,7 @@ function StatCard({
   foot2?: string;
   progress?: number;
   tone?: "danger";
+  delta?: React.ReactNode;
 }) {
   return (
     <Link
@@ -518,7 +589,12 @@ function StatCard({
         {suffix ? <span className="text-xl text-muted">{suffix}</span> : null}
       </div>
       {progress !== undefined ? <Progress value={progress} className="mt-3" /> : null}
-      {foot ? <div className="mt-2 text-[13px] text-muted">{foot}</div> : null}
+      {foot || delta ? (
+        <div className="mt-2 flex flex-wrap items-baseline gap-2">
+          {foot ? <span className="text-[13px] text-muted">{foot}</span> : null}
+          {delta}
+        </div>
+      ) : null}
       {foot2 ? (
         <div className="mt-1 text-[13px] font-medium text-success">{foot2}</div>
       ) : null}
@@ -526,12 +602,23 @@ function StatCard({
   );
 }
 
-/** The three "needs you today" figures in a single query. */
-async function dashboardCounts(userId: string | null, day: string) {
+/**
+ * The "needs you today" figures plus the manager's red flags, in one query.
+ * The flag ages are configuration — "more than three days" is a number Mahek
+ * may well want to move.
+ */
+async function dashboardCounts(
+  userId: string | null,
+  day: string,
+  flagDays: { reminders: number; complaints: number },
+) {
   const [row] = await db.execute<{
     due: number;
     overdue: number;
     complaints: number;
+    reminders_flagged: number;
+    complaints_flagged: number;
+    overdue_growth: string;
   }>(sql`
     select
       (select count(*) from reminders r
@@ -543,12 +630,32 @@ async function dashboardCounts(userId: string | null, day: string) {
       (select count(*) from complaints c
         join customers cu on cu.id = c.customer_id
         where c.status in ('open','in_progress','awaiting_customer')
-          and (${userId}::text is null or cu.owner_id = ${userId}))::int as complaints
+          and (${userId}::text is null or cu.owner_id = ${userId}))::int as complaints,
+      (select count(*) from reminders r
+        where r.status = 'pending'
+          and r.due_date < (${day}::date - ${flagDays.reminders}::int)
+          and (${userId}::text is null or r.assigned_user_id = ${userId}))::int as reminders_flagged,
+      (select count(*) from complaints c
+        join customers cu on cu.id = c.customer_id
+        where c.status in ('open','in_progress','awaiting_customer')
+          and c.created_at < (${day}::date - ${flagDays.complaints}::int)
+          and (${userId}::text is null or cu.owner_id = ${userId}))::int as complaints_flagged,
+      -- How much the overdue pile grew this week: bills that fell due in the
+      -- last seven days and are still unpaid.
+      (select coalesce(sum(b.amount - b.paid_amount), 0) from bills b
+        join customers cu on cu.id = b.customer_id
+        where b.amount > b.paid_amount
+          and b.due_date <= ${day}::date
+          and b.due_date > (${day}::date - 7)
+          and (${userId}::text is null or cu.owner_id = ${userId})) as overdue_growth
   `);
   return {
     dueReminders: row?.due ?? 0,
     overdueReminders: row?.overdue ?? 0,
     openComplaints: row?.complaints ?? 0,
+    remindersFlagged: row?.reminders_flagged ?? 0,
+    complaintsFlagged: row?.complaints_flagged ?? 0,
+    overdueGrowth: Number(row?.overdue_growth ?? 0),
   };
 }
 

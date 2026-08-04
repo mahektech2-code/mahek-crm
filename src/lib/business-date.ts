@@ -55,6 +55,24 @@ export function isWorkingDay(
   return config.workingDays.includes(isoWeekday(date));
 }
 
+/**
+ * The last working day strictly before `date`. Monday compares against
+ * Saturday, not Sunday — comparing a working day to a day nobody worked would
+ * make every Monday look like a collapse.
+ */
+export function previousWorkingDay(
+  date: BusinessDate,
+  config: WorkingDayConfig,
+): BusinessDate {
+  let cursor = addDays(date, -1);
+  // A fortnight is far more than any configured working week can skip.
+  for (let i = 0; i < 14; i++) {
+    if (isWorkingDay(cursor, config)) return cursor;
+    cursor = addDays(cursor, -1);
+  }
+  return cursor;
+}
+
 /** The next working day strictly after `date`. */
 export function nextWorkingDay(
   date: BusinessDate,

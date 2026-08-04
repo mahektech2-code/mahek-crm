@@ -444,6 +444,28 @@ export const SETTINGS = [
     max: 180,
   },
   {
+    key: "dashboard.reminderOverdueFlagDays",
+    type: "integer",
+    category: "reminders",
+    label: "Reminder red-flag age",
+    description:
+      "A reminder overdue by more than this many days is counted on the manager's red-flag strip.",
+    default: 3,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "dashboard.complaintUnresolvedFlagDays",
+    type: "integer",
+    category: "complaints",
+    label: "Complaint red-flag age",
+    description:
+      "A complaint still open after this many days is counted on the manager's red-flag strip.",
+    default: 5,
+    min: 1,
+    max: 60,
+  },
+  {
     key: "complaints.categories",
     type: "structured",
     category: "complaints",
@@ -693,6 +715,8 @@ export type Config = {
 
   "complaints.slaHours": { low: number; medium: number; high: number };
   "complaints.categories": string[];
+  "dashboard.reminderOverdueFlagDays": number;
+  "dashboard.complaintUnresolvedFlagDays": number;
   "complaints.defaultSeverity": "low" | "medium" | "high";
   "interactions.maxNotesLength": number;
   "customers.defaultCreditDays": number;
