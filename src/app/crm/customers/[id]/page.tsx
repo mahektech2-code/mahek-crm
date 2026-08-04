@@ -154,6 +154,7 @@ export default async function CustomerRecordPage({
         oldestDueDate: overdue[0]?.effectiveDueDate ?? null,
       }}
       categories={config["complaints.categories"]}
+      period={period}
       complaintCategories={config["complaints.categories"].map((c) => ({
         value: c
           .toLowerCase()

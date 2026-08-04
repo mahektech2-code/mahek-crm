@@ -889,6 +889,41 @@ function RunTab({
   const [filterKey, setFilterKey] = React.useState<"stage1" | "slow" | "over60">("stage1");
   const [copied, setCopied] = React.useState(false);
 
+  // The hint in the header promises these, so they have to work. Ignored while
+  // a field has focus, or typing "s" in a note would skip the customer.
+  React.useEffect(() => {
+    if (!run?.current) return;
+    const current = run.current;
+    const handler = async (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+
+      const key = e.key.toLowerCase();
+      if (key === "c") {
+        e.preventDefault();
+        try {
+          await navigator.clipboard.writeText(current.body);
+          setCopied(true);
+          await act(markMessageCopied(current.messageId));
+        } catch {
+          push("The browser blocked the clipboard.", "error");
+        }
+      } else if (e.key === "Enter" && copied) {
+        e.preventDefault();
+        await act(advanceRun(run.id, current.messageId, "sent"));
+        setCopied(false);
+        router.refresh();
+      } else if (key === "s") {
+        e.preventDefault();
+        await act(advanceRun(run.id, current.messageId, "skipped"));
+        setCopied(false);
+        router.refresh();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [run, copied, act, push, router]);
+
   if (!run) {
     const template = templates.find((t) => t.id === templateId);
     const filters = [
@@ -1016,7 +1051,17 @@ function RunTab({
         <span className="text-[13px] font-medium text-body">{percent}%</span>
         <span className="h-5 w-px bg-divider" />
         <span className="text-[13px] text-muted">
-          {elapsed} min · {sent} sent · {skipped} skipped
+          {sent} sent · {skipped} skipped
+        </span>
+        <span className="h-5 w-px bg-divider" />
+        <span>
+          <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+            Time taken
+          </span>
+          <span className="text-[13px] font-medium text-ink">{elapsed} min</span>
+        </span>
+        <span className="font-mono text-[12px] text-muted">
+          C copy · Enter mark sent · S skip
         </span>
         <span className="flex-1" />
         <Button

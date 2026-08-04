@@ -405,7 +405,7 @@ export function QueueScreen({
         ) : filter === "all" ? (
           <EmptyState
             icon={<Icon name="check" size={24} className="text-success" />}
-            title="Queue cleared for today"
+            title="Queue complete"
             body="Every customer due today has been worked. Suggested next work: the payment follow-up list, and the customers sitting on the inactive watch without a decision."
             action={
               <>
@@ -413,7 +413,7 @@ export function QueueScreen({
                   href="/crm/payments"
                   className="inline-flex h-9 items-center rounded-[4px] border border-brand bg-brand px-4 text-sm font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
                 >
-                  Open payment follow-up
+                  Go to payment follow-up ▸
                 </Link>
                 <Link
                   href="/crm/inactive"
@@ -426,8 +426,8 @@ export function QueueScreen({
           />
         ) : (
           <EmptyState
-            title="Nothing in this filter"
-            body="Nobody in your book matches it right now. Press Re-prioritise to rebuild the queue from the current state of the book."
+            title="Nothing in the log matches that filter"
+            body="Clear it to see everyone still to work today."
           />
         )}
       </Card>

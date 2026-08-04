@@ -29,6 +29,7 @@ import {
 import { createReminder, logComplaint } from "@/lib/actions/crm";
 import {
   ageLabel,
+  monthLabel,
   money,
   pct,
   phoneDisplay,
@@ -66,6 +67,7 @@ export function RecordScreen({
   billStats,
   timeline,
   categories,
+  period,
   complaintCategories,
   quickNotes,
   products,
@@ -110,6 +112,8 @@ export function RecordScreen({
   timeline: Entry[];
   /** Complaint categories, from configuration rather than a constant. */
   categories: string[];
+  /** "2026-08" — the month the target figures belong to. */
+  period: string;
   complaintCategories: Array<{ value: string; label: string }>;
   quickNotes: QuickNoteOption[];
   products: ProductOption[];
@@ -330,7 +334,7 @@ export function RecordScreen({
 
           <Card className="p-5">
             <div className="flex items-center justify-between">
-              <SectionLabel>Target vs achieved — this month</SectionLabel>
+              <SectionLabel>Target vs achieved — {monthLabel(period)}</SectionLabel>
               {target.isDefault ? <Badge tone="muted">Default</Badge> : null}
             </div>
             <div className="mt-2 flex items-baseline gap-2">

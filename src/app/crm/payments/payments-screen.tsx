@@ -51,11 +51,13 @@ export function PaymentsScreen({
   isManager,
   rows,
   aging,
+  workingDaysLeft,
 }: {
   scopeLabel: string;
   isManager: boolean;
   rows: Row[];
   aging: { total: number; buckets: Array<{ label: string; amount: number }> };
+  workingDaysLeft: number;
 }) {
   const router = useRouter();
   const { run, push } = useToast();
@@ -167,7 +169,7 @@ export function PaymentsScreen({
       {monthEnd ? (
         <Callout tone="warn">
           <span className="text-sm font-medium text-warn-ink">
-            Month-end push
+            Month-end push · {workingDaysLeft} working days left
           </span>
           <span className="text-sm text-body">
             Sorted by collectable value. Total collectable {money(total)} — chase the top

@@ -545,8 +545,9 @@ function CallPanelForm({
                     ))}
                   </div>
                 ) : (
-                  <p className="mt-1 text-[13px] text-muted">
-                    Nothing bought through the CRM yet.
+                  <p className="mt-1 rounded-[4px] border border-line px-3 py-5 text-center text-sm text-muted">
+                    No ERP order history for this customer yet. It appears once the
+                    office raises their first order.
                   </p>
                 )}
               </div>
@@ -809,7 +810,7 @@ function CallPanelForm({
                         onChange={(e) =>
                           setQuantities((q) => ({ ...q, [p.id]: e.target.value }))
                         }
-                        placeholder="0"
+                        placeholder="Qty"
                         className="h-8 w-[70px] rounded-[4px] border border-line px-2 text-right text-sm"
                       />
                     </div>
@@ -847,7 +848,7 @@ function CallPanelForm({
 
             <Field
               label="Notes"
-              hint="Quick notes add to this — you can edit it freely afterwards."
+              hint="Quick notes add to this — you can still edit or type your own."
               error={errors.notes ?? null}
             >
               <Textarea
@@ -898,7 +899,7 @@ function CallPanelForm({
               </Button>
               {hasNext ? (
                 <Button variant="secondary" disabled={busy} onClick={() => save(true)}>
-                  Save &amp; next ▶
+                  Save &amp; next ▸
                 </Button>
               ) : null}
             </>

@@ -116,7 +116,7 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
 export const reminderSchema = z.object({
   customerId: z.string().min(1),
   dueDate: z.string().min(1, "Pick a due date."),
-  note: z.string().min(1, "Write what was promised."),
+  note: z.string().min(1, "Write what was promised — this is what you will read back later."),
   type: z
     .enum([
       "call_back",

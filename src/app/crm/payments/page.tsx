@@ -1,6 +1,9 @@
 import { isManager, requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { getFollowUpWorklist, listBills, agingSummary } from "@/lib/services/payment-service";
+import { getConfig } from "@/lib/config/store";
+import { today } from "@/lib/queries";
+import { addDays, daysInMonth, isWorkingDay } from "@/lib/business-date";
 import { PaymentsScreen } from "./payments-screen";
 
 export const metadata = { title: "Payment follow-up — MahekOne CRM" };
@@ -9,11 +12,29 @@ export default async function PaymentsPage() {
   const user = await requireUser();
   const scope = await getScope(user);
 
-  const [rows, bills, aging] = await Promise.all([
+  const [rows, bills, aging, config, day] = await Promise.all([
     getFollowUpWorklist(),
     listBills(),
     agingSummary(),
+    getConfig(),
+    today(),
   ]);
+
+  // Working days, from configuration — a collections push measured in calendar
+  // days counts Sundays nobody is going to call on.
+  const lastDay = `${day.slice(0, 8)}${String(daysInMonth(day)).padStart(2, "0")}`;
+  let workingDaysLeft = 0;
+  for (let d = day; d <= lastDay; d = addDays(d, 1)) {
+    if (
+      isWorkingDay(d, {
+        timezone: config["workingDay.timezone"],
+        dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+        workingDays: config["workingDay.workingDays"],
+      })
+    ) {
+      workingDaysLeft++;
+    }
+  }
 
   // Attach each customer's open bills so a payment can be booked against a
   // specific bill without a second round trip when the modal opens.
@@ -33,6 +54,7 @@ export default async function PaymentsPage() {
       scopeLabel={scopeLabel(scope, user)}
       isManager={isManager(user)}
       aging={aging}
+      workingDaysLeft={workingDaysLeft}
       rows={rows.map((r) => ({
         ...r,
         openBills: openBillsByCustomer.get(r.customerId) ?? [],

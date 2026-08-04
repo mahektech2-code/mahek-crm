@@ -274,7 +274,7 @@ export function ComplaintsScreen({
         ) : (
           <EmptyState
             title="No complaints in this tab"
-            body="Complaints logged on a call appear here until they are closed."
+            body="Complaints logged on a call will appear here until they are closed."
           />
         )}
       </Card>

@@ -87,6 +87,12 @@ export function shortDate(iso: string | Date | null | undefined): string {
 }
 
 /** "2026-08-12" -> "12 Aug 2026" */
+/** "2026-08" → "August". The design names the month rather than numbering it. */
+export function monthLabel(period: string): string {
+  const m = Number(period.slice(5, 7));
+  return MONTHS_LONG[m - 1] ?? period;
+}
+
 export function longDate(iso: string | Date | null | undefined): string {
   if (!iso) return "—";
   const d = typeof iso === "string" ? parseISODate(iso) : iso;

@@ -9,7 +9,7 @@ import { getFollowUpWorklist } from "@/lib/services/payment-service";
 import { listInactiveWatch, listTargets } from "@/lib/services/worklist-services";
 import { getConfig } from "@/lib/config/store";
 import { isWorkingDay } from "@/lib/business-date";
-import { money, moneyShort, pct } from "@/lib/format";
+import { money, moneyShort, monthLabel, pct } from "@/lib/format";
 import {
   Card,
   CardHeader,
@@ -239,7 +239,7 @@ export default async function DashboardPage() {
 
             <div className="flex flex-col gap-4">
               <Card className="p-5">
-                <SectionLabel>Monthly target — {period}</SectionLabel>
+                <SectionLabel>Monthly target — {monthLabel(period)}</SectionLabel>
                 <div className="mt-2 flex items-baseline gap-2">
                   <span className="text-[32px] leading-9 font-semibold text-ink">
                     {money(achieved)}
