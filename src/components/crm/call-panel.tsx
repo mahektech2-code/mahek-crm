@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Button, Field, Input, Select, Textarea, cx } from "@/components/ui/primitives";
+import { Badge, Button, Field, Input, Select, Textarea, cx } from "@/components/ui/primitives";
 import { useEscape } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
@@ -540,14 +540,16 @@ function CallPanelForm({
         <div className="min-h-0 flex-1">
           <div
             className={cx(
-              "h-full min-h-0 overflow-y-auto p-5",
+              // No padding here — the Information sections are full-bleed and
+              // separated by rules, so they carry their own.
+              "h-full min-h-0 overflow-y-auto",
               tab === "information" ? "block" : "hidden",
             )}
           >
             {loading ? (
               // Only this pane waits — the tabs and the form stay put, so
               // stepping to the next customer does not blank the modal.
-              <div>
+              <div className="p-6">
                 {[0, 1, 2, 3, 4, 5].map((i) => (
                   <div key={i} className="mb-3 flex items-center gap-3 last:mb-0">
                     <span className="block h-2.5 w-[180px] rounded-[2px] bg-divider" />
@@ -559,119 +561,185 @@ function CallPanelForm({
               </div>
             ) : info ? (
 <>
-              <InfoRow label="Purchase summary">
-                <Figure label="Last order">
-                  {info.purchase.lastOrderDate
-                    ? `${shortDate(info.purchase.lastOrderDate)} · ${info.purchase.lastOrderDaysAgo}d ago`
-                    : "Never"}
-                </Figure>
-                <Figure label="Purchase cycle">
-                  {info.purchase.cycleDays} days
-                  {info.purchase.cycleIsDefault ? " (default)" : ""}
-                </Figure>
-                <Figure label="Next order">
-                  {info.purchase.nextOrderDate
-                    ? shortDate(info.purchase.nextOrderDate)
-                    : "—"}
-                </Figure>
-                <Figure label="Last call">
-                  {info.purchase.lastCallDate
-                    ? `${shortDate(info.purchase.lastCallDate)} · ${info.purchase.lastCallDaysAgo}d ago`
-                    : "Never"}
-                </Figure>
-              </InfoRow>
+              {/* Three columns, not four: the design folds the next expected
+                  order into the purchase cycle as its sub-line, because the
+                  cycle is what predicts the date and reading them apart makes
+                  the reader do the arithmetic. */}
+              <InfoSection label="Purchase summary">
+                <Figure
+                  label="Last order"
+                  value={
+                    info.purchase.lastOrderDate
+                      ? shortDate(info.purchase.lastOrderDate)
+                      : "Never"
+                  }
+                  sub={
+                    info.purchase.lastOrderDaysAgo === null
+                      ? "No order recorded"
+                      : `${info.purchase.lastOrderDaysAgo}d ago`
+                  }
+                />
+                <Figure
+                  label="Purchase cycle"
+                  value={`${info.purchase.cycleDays} days`}
+                  sub={
+                    info.purchase.nextOrderDate
+                      ? `Next order ${shortDate(info.purchase.nextOrderDate)}`
+                      : info.purchase.cycleIsDefault
+                        ? "Default — too little history"
+                        : "No order to count from"
+                  }
+                  subTone="brand"
+                />
+                <Figure
+                  label="Last call"
+                  value={
+                    info.purchase.lastCallDate
+                      ? shortDate(info.purchase.lastCallDate)
+                      : "Never"
+                  }
+                  sub={
+                    info.purchase.lastCallDaysAgo === null
+                      ? "Never spoken to"
+                      : `${info.purchase.lastCallDaysAgo}d ago`
+                  }
+                />
+              </InfoSection>
 
-              <InfoRow label="Monthly performance">
-                <Figure label="Monthly target">{money(info.monthly.target)}</Figure>
-                <Figure label="Achieved">
-                  {money(info.monthly.achieved)} · {info.monthly.achievementPercent}%
-                </Figure>
-                <Figure label="Target gap this month">
-                  {money(info.monthly.gap)}
-                  <span className="ml-1 text-[11px] font-normal text-muted">
-                    {info.monthly.workingDaysRemaining} working days left
+              <InfoSection label="Monthly performance">
+                {/* The percentage leads and the rupees explain it. A target of
+                    ₹2,47,079 tells you nothing on its own; 0% does. */}
+                <Figure
+                  label="Monthly target"
+                  value={`${info.monthly.achievementPercent}%`}
+                  sub={`${money(info.monthly.achieved)} of ${money(info.monthly.target)}`}
+                />
+                <Figure
+                  label="Target gap this month"
+                  value={money(info.monthly.gap)}
+                  sub={`${info.monthly.workingDaysRemaining} working days left`}
+                />
+                {/* Boxed, and tinted when behind — this is the one figure on
+                    the tab that says do something differently today. */}
+                <div
+                  className={cx(
+                    "rounded-[4px] border px-2.5 py-2",
+                    info.monthly.shortfallPerDay > 0
+                      ? "border-danger-soft bg-danger-soft"
+                      : "border-line bg-canvas",
+                  )}
+                >
+                  <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                    Run rate
                   </span>
-                </Figure>
-                <Figure label="Run rate">
-                  Need {money(info.monthly.requiredPerDay)}/day
-                  {info.monthly.shortfallPerDay > 0 ? (
-                    <span className="ml-1 text-[11px] font-normal text-danger">
-                      Short by {money(info.monthly.shortfallPerDay)}/day
-                    </span>
-                  ) : null}
-                </Figure>
-              </InfoRow>
+                  <span
+                    className={cx(
+                      "mt-0.5 block text-lg leading-6 font-semibold",
+                      info.monthly.shortfallPerDay > 0 ? "text-danger" : "text-ink",
+                    )}
+                  >
+                    {info.monthly.shortfallPerDay > 0
+                      ? `Short ${money(info.monthly.shortfallPerDay)}/day`
+                      : "On track"}
+                  </span>
+                  <span className="block text-[13px] text-body">
+                    Need {money(info.monthly.requiredPerDay)}/day
+                  </span>
+                </div>
+              </InfoSection>
 
-              <InfoRow label="Account">
-                <Figure label="Outstanding">{money(info.outstanding)}</Figure>
-                <Figure label="Credit days">
-                  {info.creditDays}
-                  {info.creditDaysIsDefault ? " (default)" : ""}
-                </Figure>
-              </InfoRow>
+              {/* No heading in the design — two figures that need no naming as
+                  a group, and a heading would only add a line. */}
+              <InfoSection>
+                <Figure
+                  label="Outstanding"
+                  value={money(info.outstanding)}
+                  tone={info.outstanding > 0 ? "danger" : undefined}
+                />
+                <Figure
+                  label="Credit days"
+                  value={`${info.creditDays}${info.creditDaysIsDefault ? " (default)" : ""}`}
+                />
+              </InfoSection>
 
-              <div className="mt-3">
-                <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                  Last 3 calls
-                </span>
+              <InfoSection label="Last 3 calls" plain>
                 {info.recentCalls.length ? (
-                  <div className="mt-1">
-                    {info.recentCalls.map((c) => (
-                      <div key={c.id} className="border-b border-divider py-1.5 last:border-0">
-                        <div className="text-[13px] text-body">
-                          {shortDate(c.at.slice(0, 10))} ·{" "}
-                          {c.outcome ? (OUTCOME_LABEL[c.outcome] ?? c.outcome) : "—"}
-                        </div>
+                  info.recentCalls.map((c) => (
+                    <div
+                      key={c.id}
+                      className="flex gap-3 border-t border-canvas py-2 first:border-0"
+                    >
+                      <span className="w-[58px] flex-none text-[13px] font-medium text-ink">
+                        {shortDate(c.at.slice(0, 10))}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <Badge tone={outcomeTone(c.outcome)}>
+                          {c.outcome ? (OUTCOME_LABEL[c.outcome] ?? c.outcome) : "Logged"}
+                        </Badge>
                         {c.notes ? (
-                          <div className="text-[13px] text-muted">{c.notes}</div>
+                          <span
+                            title={c.notes}
+                            className="mt-[3px] block truncate text-[13px] text-muted"
+                          >
+                            {c.notes}
+                          </span>
                         ) : null}
-                      </div>
-                    ))}
-                  </div>
+                      </span>
+                    </div>
+                  ))
                 ) : (
-                  <p className="mt-1 text-[13px] text-muted">
+                  <p className="py-4 text-sm text-muted">
                     No calls logged against this customer yet. The first one you save
                     appears here.
                   </p>
                 )}
-              </div>
+              </InfoSection>
 
-              <div className="mt-3">
-                <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                  Order status
-                </span>
-                <span className="ml-1.5 text-[11px] text-muted">
-                  {info.productHistorySource === "external"
-                    ? "From ERP · read-only"
-                    : "From orders captured in the CRM — the ERP is not connected"}
-                </span>
+              <div className="px-6 py-4">
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="text-xs font-medium tracking-[0.04em] text-muted uppercase">
+                    Order status
+                  </span>
+                  {/* The design's chip says "From ERP · read-only". Ours says
+                      where the rows actually came from, because the ERP is not
+                      connected and a chip claiming otherwise would be a lie
+                      about the freshness of the numbers underneath it. */}
+                  <span className="inline-flex h-5 items-center rounded-[4px] border border-line bg-canvas px-1.5 text-[11px] font-medium text-muted">
+                    {info.productHistorySource === "external"
+                      ? "From ERP · read-only"
+                      : "From CRM orders · ERP not connected"}
+                  </span>
+                </div>
                 {info.productHistory.length ? (
-                  <div className="mt-1">
+                  <div className="overflow-hidden rounded-[4px] border border-line">
                     {info.productHistory.map((p) => (
                       <div
                         key={p.productName}
-                        className="flex items-center gap-3 border-b border-divider py-1.5 text-[13px] last:border-0"
+                        className="flex items-center gap-3 border-b border-divider px-3 py-2 last:border-0"
                       >
-                        <span className="min-w-0 flex-1 truncate text-body">
+                        <span className="min-w-0 flex-1 truncate text-sm text-ink" title={p.productName}>
                           {p.productName}
                         </span>
-                        <span className="text-muted">
+                        <span className="flex-none text-[13px] text-muted">
                           {p.lastPurchaseDate ? shortDate(p.lastPurchaseDate) : "—"}
                         </span>
-                        <span className="w-8 text-right text-ink">{p.totalOrderCount}</span>
+                        <span className="w-[78px] flex-none text-right text-[13px] font-medium text-ink">
+                          {p.totalOrderCount}
+                          {p.totalOrderCount === 1 ? " order" : " orders"}
+                        </span>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <p className="mt-1 rounded-[4px] border border-line px-3 py-5 text-center text-sm text-muted">
-                    No ERP order history for this customer yet. It appears once the
-                    office raises their first order.
+                  <p className="rounded-[4px] border border-line px-3 py-5 text-center text-sm text-muted">
+                    No order history for this customer yet. It appears once an order is
+                    captured against them.
                   </p>
                 )}
               </div>
             </>
             ) : (
-              <p className="text-[13px] text-muted">
+              <p className="p-6 text-[13px] text-muted">
                 Nothing recorded against this customer yet.
               </p>
             )}
@@ -1173,26 +1241,93 @@ function CallPanelForm({
   );
 }
 
-function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
+/**
+ * One band of the Information tab: full-bleed, separated by a rule rather
+ * than by whitespace, so a long tab still reads as a stack of distinct facts.
+ * `plain` opts out of the figure grid for sections that lay out their own rows.
+ */
+function InfoSection({
+  label,
+  plain,
+  children,
+}: {
+  label?: string;
+  plain?: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="mb-3">
-      <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-        {label}
-      </span>
-      <div className="mt-1 grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-x-4 gap-y-1.5">
-        {children}
-      </div>
+    <div className="border-b border-divider px-6 py-4">
+      {label ? (
+        <div className="mb-2.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
+          {label}
+        </div>
+      ) : null}
+      {plain ? (
+        children
+      ) : (
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] items-start gap-4">
+          {children}
+        </div>
+      )}
     </div>
   );
 }
 
-function Figure({ label, children }: { label: string; children: React.ReactNode }) {
+function Figure({
+  label,
+  value,
+  sub,
+  subTone,
+  tone,
+}: {
+  label: string;
+  value: React.ReactNode;
+  sub?: React.ReactNode;
+  subTone?: "brand";
+  tone?: "danger";
+}) {
   return (
     <span className="block">
-      <span className="block text-[11px] text-muted">{label}</span>
-      <span className="block text-[13px] font-medium text-ink">{children}</span>
+      <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+        {label}
+      </span>
+      <span
+        className={cx(
+          "mt-0.5 block text-lg leading-6 font-semibold",
+          tone === "danger" ? "text-danger" : "text-ink",
+        )}
+      >
+        {value}
+      </span>
+      {sub ? (
+        <span
+          className={cx(
+            "block text-xs",
+            subTone === "brand" ? "font-medium text-brand-hover" : "text-muted",
+          )}
+        >
+          {sub}
+        </span>
+      ) : null}
     </span>
   );
+}
+
+/** Outcomes carry the same colour here as everywhere else in the CRM. */
+function outcomeTone(outcome: string | null) {
+  switch (outcome) {
+    case "order_taken":
+      return "success" as const;
+    case "no_answer":
+    case "not_interested":
+      return "danger" as const;
+    case "payment_promised":
+    case "follow_up":
+    case "complaint":
+      return "warn" as const;
+    default:
+      return "neutral" as const;
+  }
 }
 
 /** One figure in the header strip. */
