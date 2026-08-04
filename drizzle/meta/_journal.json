@@ -5,22 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1785706472601,
-      "tag": "0000_init",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1785746858487,
-      "tag": "0001_strong_miss_america",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1785755228533,
-      "tag": "0002_absurd_lady_ursula",
+      "when": 1785820316658,
+      "tag": "0000_fluffy_jack_flag",
       "breakpoints": true
     }
   ]

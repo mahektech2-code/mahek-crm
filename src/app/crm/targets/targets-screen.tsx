@@ -23,7 +23,7 @@ import {
 import { Modal, RowMenu, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { setTarget, setTargetsBulk } from "@/lib/actions/crm";
-import { ageLabel, money, moneyShort, pct, periodLabel } from "@/lib/format";
+import { money, moneyShort, pct, periodLabel } from "@/lib/format";
 
 type Row = {
   customerId: string;
@@ -35,8 +35,25 @@ type Row = {
   percent: number;
   isDefault: boolean;
   cycleDays: number;
-  daysSinceContact: number | null;
+  contactsThisMonth: number;
 };
+
+type Classified = {
+  customerId: string;
+  name: string;
+  gap: number;
+  cycleDays: number;
+  contactsThisMonth: number;
+  expectedContacts: number;
+};
+
+type Shortfall = {
+  coverageGap: Classified[];
+  customerGap: Classified[];
+  coverageGapValue: number;
+  customerGapValue: number;
+  totalShortfall: number;
+} | null;
 
 type Tab = "targets" | "shortfall";
 
@@ -45,11 +62,13 @@ export function TargetsScreen({
   isManager,
   period,
   rows,
+  shortfall,
 }: {
   scopeLabel: string;
   isManager: boolean;
   period: string;
   rows: Row[];
+  shortfall: Shortfall;
 }) {
   const router = useRouter();
   const { run } = useToast();
@@ -64,26 +83,32 @@ export function TargetsScreen({
   const percent = pct(achieved, total);
   const defaults = rows.filter((r) => r.isDefault).length;
 
-  // The two shortfall groups a manager actually acts on differently.
-  const shortfall = rows.filter((r) => r.gap > 0);
-  const groups = [
+  // The engine classifies the shortfall — the screen only lays it out. The
+  // distinction is the point of the tab: a coverage gap is the telecaller's to
+  // fix, a customer gap is a price, stock or terms conversation.
+  const behind = rows.filter((r) => r.gap > 0);
+  const groups: Array<{
+    title: string;
+    accent: string;
+    blurb: string;
+    rows: Classified[];
+    value: number;
+  }> = [
     {
-      title: "Gone quiet",
+      title: "Coverage gap",
       accent: "#B3261E",
       blurb:
-        "Behind target and not spoken to recently. These need a call before anything else.",
-      rows: shortfall
-        .filter((r) => r.daysSinceContact === null || r.daysSinceContact > r.cycleDays)
-        .sort((a, b) => b.gap - a.gap),
+        "Behind target and contacted less often than their own buying cycle implies. Call these before anything else.",
+      rows: shortfall?.coverageGap ?? [],
+      value: shortfall?.coverageGapValue ?? 0,
     },
     {
-      title: "In contact but behind",
+      title: "Customer gap",
       accent: "#B77B08",
       blurb:
-        "You are talking to them and the number still is not moving. Look at price, stock or terms.",
-      rows: shortfall
-        .filter((r) => r.daysSinceContact !== null && r.daysSinceContact <= r.cycleDays)
-        .sort((a, b) => b.gap - a.gap),
+        "Contacted often enough and the number still is not moving. Look at price, stock or terms.",
+      rows: shortfall?.customerGap ?? [],
+      value: shortfall?.customerGapValue ?? 0,
     },
   ];
 
@@ -151,10 +176,10 @@ export function TargetsScreen({
         metrics={[
           { label: "Customers", value: String(rows.length) },
           { label: "On or above target", value: String(rows.filter((r) => r.percent >= 100).length), tone: "success" },
-          { label: "Behind", value: String(shortfall.length), tone: shortfall.length ? "danger" : "ink" },
+          { label: "Behind", value: String(behind.length), tone: behind.length ? "danger" : "ink" },
           {
             label: "Biggest single gap",
-            value: shortfall.length ? moneyShort(Math.max(...shortfall.map((r) => r.gap))) : "—",
+            value: behind.length ? moneyShort(Math.max(...behind.map((r) => r.gap))) : "—",
           },
         ]}
       />
@@ -165,7 +190,7 @@ export function TargetsScreen({
         className="mb-4"
         tabs={[
           { key: "targets", label: "Targets", count: rows.length },
-          { key: "shortfall", label: "Where the shortfall is", count: shortfall.length },
+          { key: "shortfall", label: "Where the shortfall is", count: behind.length },
         ]}
       />
 
@@ -189,7 +214,7 @@ export function TargetsScreen({
                   <span>
                     <SectionLabel>Value shortfall</SectionLabel>
                     <span className="text-[22px] font-semibold text-danger">
-                      {money(g.rows.reduce((a, r) => a + r.gap, 0))}
+                      {money(g.value)}
                     </span>
                   </span>
                 </div>
@@ -199,7 +224,7 @@ export function TargetsScreen({
                   <tr>
                     <Th>Customer</Th>
                     <Th align="right">Shortfall</Th>
-                    <Th align="right">Last contact</Th>
+                    <Th align="right">Contacts</Th>
                     <Th align="right">Cycle</Th>
                   </tr>
                 </thead>
@@ -211,16 +236,14 @@ export function TargetsScreen({
                           href={`/crm/customers/${r.customerId}`}
                           className="no-underline hover:underline"
                         >
-                          {r.customerName}
+                          {r.name}
                         </Link>
                       </Td>
                       <Td align="right" className="font-medium text-danger">
                         {money(r.gap)}
                       </Td>
                       <Td align="right">
-                        {r.daysSinceContact === null
-                          ? "Never"
-                          : ageLabel(r.daysSinceContact)}
+                        {r.contactsThisMonth} of {r.expectedContacts}
                       </Td>
                       <Td align="right">{r.cycleDays} days</Td>
                     </Tr>

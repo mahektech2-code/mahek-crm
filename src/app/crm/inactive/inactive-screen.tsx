@@ -31,23 +31,9 @@ import {
   requestDeactivation,
 } from "@/lib/actions/crm";
 import { toCsv, downloadCsv } from "@/lib/csv";
-import { ageLabel, money, shortDate, stamp, today } from "@/lib/format";
+import { ageLabel, money, shortDate, today } from "@/lib/format";
 
-type Row = {
-  id: string;
-  name: string;
-  phone: string;
-  city: string;
-  lastOrderDate: string | null;
-  daysSince: number;
-  cycleDays: number;
-  multiple: number;
-  valueAtRisk: number;
-  lastContact: string | null;
-  ageWithoutDecision: number;
-  deactivationRequested: boolean;
-  deactivationReason: string | null;
-};
+import type { WatchRow as Row } from "@/lib/services/worklist-services";
 
 export function InactiveScreen({
   scopeLabel,
@@ -66,7 +52,7 @@ export function InactiveScreen({
   const [deactOpen, setDeactOpen] = React.useState(false);
 
   const atRisk = rows.reduce((a, r) => a + r.valueAtRisk, 0);
-  const stale = rows.filter((r) => r.ageWithoutDecision > 14).length;
+  const stale = rows.filter((r) => r.ageDays > 14).length;
   const pending = rows.filter((r) => r.deactivationRequested).length;
 
   function toggle(id: string) {
@@ -97,13 +83,14 @@ export function InactiveScreen({
                     r.name,
                     r.city,
                     r.lastOrderDate ?? "",
-                    r.daysSince,
+                    r.daysSinceLastOrder,
                     r.cycleDays,
-                    `${r.multiple}×`,
+                    `${Number(r.cyclesElapsed)}×`,
                     Math.round(r.valueAtRisk / 100),
-                    r.ageWithoutDecision,
+                    r.ageDays,
                   ]),
                 ),
+                ["all-on-watch"],
               );
               push(`Exported ${rows.length} rows`);
             }}
@@ -126,7 +113,7 @@ export function InactiveScreen({
           { label: "Deactivation pending", value: String(pending) },
           {
             label: "Deepest lapse",
-            value: rows.length ? `${Math.max(...rows.map((r) => r.multiple))}×` : "—",
+            value: rows.length ? `${Math.max(...rows.map((r) => Number(r.cyclesElapsed)))}×` : "—",
           },
         ]}
       />
@@ -143,7 +130,7 @@ export function InactiveScreen({
                     className="accent-[#6835FB]"
                     checked={rows.length > 0 && selected.size === rows.length}
                     onChange={(e) =>
-                      setSelected(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())
+                      setSelected(e.target.checked ? new Set(rows.map((r) => r.customerId)) : new Set())
                     }
                   />
                 </Th>
@@ -160,18 +147,18 @@ export function InactiveScreen({
             </thead>
             <tbody>
               {rows.map((r) => (
-                <Tr key={r.id} className="hover:bg-canvas">
+                <Tr key={r.customerId} className="hover:bg-canvas">
                   <Td>
                     <input
                       type="checkbox"
                       aria-label={`Select ${r.name}`}
                       className="accent-[#6835FB]"
-                      checked={selected.has(r.id)}
-                      onChange={() => toggle(r.id)}
+                      checked={selected.has(r.customerId)}
+                      onChange={() => toggle(r.customerId)}
                     />
                   </Td>
                   <Td className="font-medium text-ink">
-                    <Link href={`/crm/customers/${r.id}`} className="no-underline hover:underline">
+                    <Link href={`/crm/customers/${r.customerId}`} className="no-underline hover:underline">
                       {r.name}
                     </Link>
                     {r.deactivationRequested ? (
@@ -181,29 +168,29 @@ export function InactiveScreen({
                     ) : null}
                   </Td>
                   <Td>{r.lastOrderDate ? shortDate(r.lastOrderDate) : "Never"}</Td>
-                  <Td align="right">{r.daysSince}</Td>
+                  <Td align="right">{r.daysSinceLastOrder}</Td>
                   <Td align="right">{r.cycleDays} days</Td>
                   <Td>
-                    <Badge tone={r.multiple >= 3 ? "danger" : "warn"}>{r.multiple}×</Badge>
+                    <Badge tone={Number(r.cyclesElapsed) >= 3 ? "danger" : "warn"}>{Number(r.cyclesElapsed)}×</Badge>
                   </Td>
                   <Td align="right" className="font-medium text-ink">
                     {money(r.valueAtRisk)}
                   </Td>
-                  <Td>{r.lastContact ? stamp(r.lastContact) : "—"}</Td>
+                  <Td>{r.lastContactDate ? shortDate(r.lastContactDate) : "—"}</Td>
                   <Td
                     align="right"
                     className={cx(
-                      r.ageWithoutDecision > 14 ? "font-medium text-danger" : "",
+                      r.ageDays > 14 ? "font-medium text-danger" : "",
                     )}
                   >
-                    {ageLabel(r.ageWithoutDecision)}
+                    {ageLabel(r.ageDays)}
                   </Td>
                   <Td align="right">
                     <span className="flex items-center justify-end gap-1.5">
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() => router.push(`/crm/customers/${r.id}`)}
+                        onClick={() => router.push(`/crm/customers/${r.customerId}`)}
                       >
                         Call now
                       </Button>
@@ -211,11 +198,11 @@ export function InactiveScreen({
                         items={[
                           {
                             label: "Send a reorder nudge",
-                            onSelect: () => router.push(`/crm/whatsapp?customer=${r.id}`),
+                            onSelect: () => router.push(`/crm/whatsapp?customer=${r.customerId}`),
                           },
                           {
                             label: "See their bills",
-                            onSelect: () => router.push(`/crm/bills?customer=${r.id}`),
+                            onSelect: () => router.push(`/crm/bills?customer=${r.customerId}`),
                           },
                           ...(isManager && r.deactivationRequested
                             ? [
@@ -223,14 +210,14 @@ export function InactiveScreen({
                                   label: "Approve deactivation",
                                   destructive: true,
                                   onSelect: async () => {
-                                    await run(decideDeactivation(r.id, true));
+                                    await run(decideDeactivation(r.customerId, true));
                                     router.refresh();
                                   },
                                 },
                                 {
                                   label: "Reject the request",
                                   onSelect: async () => {
-                                    await run(decideDeactivation(r.id, false));
+                                    await run(decideDeactivation(r.customerId, false));
                                     router.refresh();
                                   },
                                 },
@@ -240,7 +227,7 @@ export function InactiveScreen({
                                   label: "Request deactivation",
                                   destructive: true,
                                   onSelect: () => {
-                                    setSelected(new Set([r.id]));
+                                    setSelected(new Set([r.customerId]));
                                     setDeactOpen(true);
                                   },
                                 },

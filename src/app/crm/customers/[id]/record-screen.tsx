@@ -22,7 +22,6 @@ import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { CallPanel, type CallTarget } from "@/components/crm/call-panel";
 import { createReminder, logComplaint } from "@/lib/actions/crm";
-import { COMPLAINT_CATEGORIES } from "@/lib/constants";
 import {
   ageLabel,
   money,
@@ -55,11 +54,13 @@ const KIND_TONE: Record<string, "brand" | "success" | "warn" | "danger" | "neutr
 export function RecordScreen({
   customer,
   daysSinceOrder,
+  followUpStage,
   target,
   openComplaint,
   openPromise,
   billStats,
   timeline,
+  categories,
 }: {
   customer: {
     id: string;
@@ -74,6 +75,8 @@ export function RecordScreen({
     lastOrderDate: string | null;
     lastOrderValue: number;
     cycleDays: number;
+    /** True while the cycle is the configured fallback, not their own history. */
+    cycleIsDefault: boolean;
     avgOrderValue: number;
     orders6m: number;
     paysInDays: number;
@@ -85,11 +88,20 @@ export function RecordScreen({
     deactivationReason: string | null;
   };
   daysSinceOrder: number | null;
+  followUpStage: {
+    stage: number;
+    daysOverdue: number;
+    nextChannel: "whatsapp" | "call";
+    held: boolean;
+    heldReason: string | null;
+  } | null;
   target: { amount: number; achieved: number; isDefault: boolean; shareOfBook: number };
   openComplaint: { description: string; category: string } | null;
   openPromise: { amount: number; promisedBy: string } | null;
   billStats: { total: number; overdue: number; oldestDueDate: string | null };
   timeline: Entry[];
+  /** Complaint categories, from configuration rather than a constant. */
+  categories: string[];
 }) {
   const router = useRouter();
   const { run } = useToast();
@@ -105,7 +117,9 @@ export function RecordScreen({
   const overCycle = daysSinceOrder !== null && daysSinceOrder > customer.cycleDays;
   const paysLate = customer.paysInDays > customer.creditTermDays;
 
-  const alert = openComplaint
+  const alert = followUpStage?.held
+    ? `Held at stage ${followUpStage.stage} — ${followUpStage.heldReason ?? "a dispute is open"}.`
+    : openComplaint
     ? `Open ${openComplaint.category.toLowerCase()} complaint — mention it before anything else.`
     : openPromise && openPromise.promisedBy < today()
       ? `${money(openPromise.amount)} was promised for ${shortDate(openPromise.promisedBy)} and has not arrived.`
@@ -263,7 +277,26 @@ export function RecordScreen({
               <Figure label="Days since order" tone={overCycle ? "danger" : undefined}>
                 {daysSinceOrder === null ? "—" : ageLabel(daysSinceOrder)}
               </Figure>
-              <Figure label="Buying cycle">{customer.cycleDays} days</Figure>
+              <Figure label="Buying cycle">
+                {customer.cycleDays} days
+                {customer.cycleIsDefault ? (
+                  <span className="ml-1 text-[11px] font-normal text-muted">
+                    (default — not enough order history)
+                  </span>
+                ) : null}
+              </Figure>
+              {followUpStage ? (
+                <Figure
+                  label="Collections stage"
+                  tone={followUpStage.stage >= 3 ? "danger" : undefined}
+                >
+                  Stage {followUpStage.stage}
+                  <span className="ml-1 text-[11px] font-normal text-muted">
+                    ({followUpStage.daysOverdue} days overdue · next by{" "}
+                    {followUpStage.nextChannel})
+                  </span>
+                </Figure>
+              ) : null}
               <Figure label="Average order">{money(customer.avgOrderValue)}</Figure>
               <Figure label="Orders, last 6 months">{customer.orders6m}</Figure>
               <Figure label="Pays on average" tone={paysLate ? "danger" : "success"}>
@@ -320,7 +353,11 @@ export function RecordScreen({
       </div>
 
       {calling ? (
-        <CallPanel target={callTarget} onClose={() => setCalling(false)} />
+        <CallPanel
+          target={callTarget}
+          categories={categories}
+          onClose={() => setCalling(false)}
+        />
       ) : null}
 
       <QuickReminder
@@ -339,6 +376,7 @@ export function RecordScreen({
       />
 
       <QuickComplaint
+        categories={categories}
         open={cmpOpen}
         customerName={customer.name}
         onClose={() => setCmpOpen(false)}
@@ -458,15 +496,17 @@ export function QuickReminder({
 export function QuickComplaint({
   open,
   customerName,
+  categories,
   onClose,
   onSubmit,
 }: {
   open: boolean;
   customerName: string;
+  categories: string[];
   onClose: () => void;
   onSubmit: (category: string, description: string) => Promise<void>;
 }) {
-  const [category, setCategory] = React.useState<string>(COMPLAINT_CATEGORIES[0]);
+  const [category, setCategory] = React.useState<string>(categories[0] ?? "Other");
   const [description, setDescription] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
@@ -501,7 +541,7 @@ export function QuickComplaint({
       <div className="grid gap-3">
         <Field label="Category">
           <Select value={category} onChange={(e) => setCategory(e.target.value)}>
-            {COMPLAINT_CATEGORIES.map((c) => (
+            {categories.map((c) => (
               <option key={c}>{c}</option>
             ))}
           </Select>

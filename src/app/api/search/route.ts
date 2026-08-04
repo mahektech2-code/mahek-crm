@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { getScope } from "@/lib/scope";
 import { globalSearch } from "@/lib/queries";
 
 export async function GET(request: Request) {
@@ -8,8 +7,7 @@ export async function GET(request: Request) {
   if (!user) return NextResponse.json({ customers: [], bills: [] }, { status: 401 });
 
   const q = new URL(request.url).searchParams.get("q") ?? "";
-  const scope = await getScope(user);
-  const results = await globalSearch(user, scope, q);
+  const results = await globalSearch(q);
 
   return NextResponse.json(results);
 }

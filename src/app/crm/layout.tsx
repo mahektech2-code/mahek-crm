@@ -47,16 +47,16 @@ export default async function AppLayout({
 async function sidebarBadges(user: Awaited<ReturnType<typeof requireUser>>) {
   const scope = await getScope(user);
   const teamWide = scope === "team" && isManager(user);
-  const day = today();
+  const day = await today();
 
   const [row] = await db.execute<{ reminders: number; complaints: number }>(sql`
     select
       (select count(*) from reminders r
-        where r.status = 'open' and r.due_date <= ${day}::date
-          and (${teamWide} or r.user_id = ${user.id}))::int as reminders,
+        where r.status = 'pending' and r.due_date <= ${day}::date
+          and (${teamWide} or r.assigned_user_id = ${user.id}))::int as reminders,
       (select count(*) from complaints c
         join customers cu on cu.id = c.customer_id
-        where c.status in ('Open','In progress')
+        where c.status in ('open','in_progress','awaiting_customer')
           and (${teamWide} or cu.owner_id = ${user.id}))::int as complaints
   `);
 

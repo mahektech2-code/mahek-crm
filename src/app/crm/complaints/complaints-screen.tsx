@@ -25,8 +25,15 @@ import {
 import { Drawer, DrawerHeader, Modal, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { logComplaint, reassignComplaint, resolveComplaint } from "@/lib/actions/crm";
-import { COMPLAINT_CATEGORIES } from "@/lib/constants";
 import { ageLabel, shortDate, stamp } from "@/lib/format";
+
+type Status =
+  | "open"
+  | "in_progress"
+  | "awaiting_customer"
+  | "resolved"
+  | "closed"
+  | "rejected";
 
 type Row = {
   id: string;
@@ -35,20 +42,38 @@ type Row = {
   category: string;
   description: string;
   loggedByName: string;
-  loggedOn: string;
+  createdAt: Date;
   assignedTo: string;
-  status: "Open" | "In progress" | "Resolved" | "Closed";
+  severity: "low" | "medium" | "high" | "critical";
+  status: Status;
   ageDays: number;
-  resolutionNote: string | null;
-  customerTold: boolean;
+  slaDueAt: Date;
+  slaBreached: boolean;
+  resolutionNotes: string | null;
+  customerInformed: boolean;
 };
+
+const STATUS_LABEL: Record<Status, string> = {
+  open: "Open",
+  in_progress: "In progress",
+  awaiting_customer: "Awaiting customer",
+  resolved: "Resolved",
+  closed: "Closed",
+  rejected: "Rejected",
+};
+
+const CLOSED: Status[] = ["resolved", "closed", "rejected"];
+
+function statusTone(s: Status) {
+  if (CLOSED.includes(s)) return "success" as const;
+  return s === "open" ? ("danger" as const) : ("warn" as const);
+}
 
 type Event = { at: string; note: string };
 type Tab = "open" | "progress" | "resolved" | "all";
 type BillOption = { id: string; billNo: string; billDate: string };
 
 const RESOLVERS = ["Operations", "Accounts", "Dispatch", "Quality", "Management"];
-const CATEGORIES = COMPLAINT_CATEGORIES;
 
 export function ComplaintsScreen({
   scopeLabel,
@@ -58,6 +83,7 @@ export function ComplaintsScreen({
   events,
   billsByCustomer,
   loggedInUserName,
+  categories,
 }: {
   scopeLabel: string;
   isManager: boolean;
@@ -66,6 +92,8 @@ export function ComplaintsScreen({
   events: Record<string, Event[]>;
   billsByCustomer: Record<string, BillOption[]>;
   loggedInUserName: string;
+  /** From configuration, so a manager can change the list without a deploy. */
+  categories: string[];
 }) {
   const router = useRouter();
   const { run } = useToast();
@@ -80,9 +108,11 @@ export function ComplaintsScreen({
   const [logging, setLogging] = React.useState(false);
 
   const buckets = {
-    open: rows.filter((r) => r.status === "Open"),
-    progress: rows.filter((r) => r.status === "In progress"),
-    resolved: rows.filter((r) => r.status === "Resolved" || r.status === "Closed"),
+    open: rows.filter((r) => r.status === "open"),
+    progress: rows.filter(
+      (r) => r.status === "in_progress" || r.status === "awaiting_customer",
+    ),
+    resolved: rows.filter((r) => CLOSED.includes(r.status)),
     all: rows,
   };
   const visible = buckets[tab];
@@ -100,8 +130,8 @@ export function ComplaintsScreen({
 
   function open(row: Row) {
     setCurrent(row);
-    setNotes(row.resolutionNote ?? "");
-    setTold(row.customerTold);
+    setNotes(row.resolutionNotes ?? "");
+    setTold(row.customerInformed);
     setNotesError(false);
   }
 
@@ -130,7 +160,7 @@ export function ComplaintsScreen({
           },
           {
             label: "Customer told",
-            value: `${buckets.resolved.filter((r) => r.customerTold).length}/${buckets.resolved.length}`,
+            value: `${buckets.resolved.filter((r) => r.customerInformed).length}/${buckets.resolved.length}`,
           },
         ]}
       />
@@ -211,25 +241,25 @@ export function ComplaintsScreen({
                       {r.description}
                     </Td>
                     <Td>{r.loggedByName}</Td>
-                    <Td>{shortDate(r.loggedOn)}</Td>
+                    <Td>{shortDate(r.createdAt.toISOString())}</Td>
                     <Td>{r.assignedTo}</Td>
                     <Td>
                       <Badge
                         tone={
-                          r.status === "Open"
+                          r.status === "open"
                             ? "danger"
-                            : r.status === "In progress"
+                            : r.status === "in_progress"
                               ? "warn"
                               : "success"
                         }
                       >
-                        {r.status}
+                        {STATUS_LABEL[r.status]}
                       </Badge>
                     </Td>
                     <Td
                       align="right"
                       className={
-                        r.status !== "Resolved" && r.ageDays > 7
+                        !CLOSED.includes(r.status) && r.slaBreached
                           ? "font-medium text-danger"
                           : ""
                       }
@@ -268,15 +298,15 @@ export function ComplaintsScreen({
               </div>
               <div className="mt-1.5 flex items-center gap-2">
                 <Badge
-                  tone={
-                    current.status === "Open"
-                      ? "danger"
-                      : current.status === "In progress"
-                        ? "warn"
-                        : "success"
-                  }
+                  tone={statusTone(current.status)}
                 >
-                  {current.status}
+                  {STATUS_LABEL[current.status]}
+                </Badge>
+                <Badge tone={current.slaBreached ? "danger" : "neutral"}>
+                  {current.slaBreached ? "SLA breached" : `SLA ${stamp(current.slaDueAt.toISOString())}`}
+                </Badge>
+                <Badge tone={current.severity === "critical" || current.severity === "high" ? "danger" : "neutral"}>
+                  {current.severity}
                 </Badge>
                 <span className="text-[13px] text-muted">
                   {current.category} · open {ageLabel(current.ageDays)}
@@ -332,11 +362,11 @@ export function ComplaintsScreen({
             <div className="flex gap-2.5 border-t border-line px-5 py-3">
               <Button
                 variant="primary"
-                disabled={busy || !isManager || current.status === "Resolved"}
+                disabled={busy || !isManager || CLOSED.includes(current.status)}
                 title={
                   !isManager
                     ? "Closing a complaint is a manager action"
-                    : current.status === "Resolved"
+                    : CLOSED.includes(current.status)
                       ? "Already resolved"
                       : undefined
                 }
@@ -360,7 +390,7 @@ export function ComplaintsScreen({
                   }
                 }}
               >
-                {current.status === "Resolved" ? "Resolved" : "Mark resolved"}
+                {CLOSED.includes(current.status) ? "Resolved" : "Mark resolved"}
               </Button>
               <Button variant="secondary" onClick={() => setReassigning(true)}>
                 Reassign
@@ -390,6 +420,7 @@ export function ComplaintsScreen({
         onClose={() => setLogging(false)}
         billsByCustomer={billsByCustomer}
         employeeName={loggedInUserName}
+        categories={categories}
         onSubmit={async (input) => {
           const result = await run(logComplaint(input));
           if (result.ok) {
@@ -479,12 +510,14 @@ function LogComplaintModal({
   onClose,
   billsByCustomer,
   employeeName,
+  categories,
   onSubmit,
 }: {
   open: boolean;
   onClose: () => void;
   billsByCustomer: Record<string, BillOption[]>;
   employeeName: string;
+  categories: string[];
   onSubmit: (input: LogComplaintInput) => Promise<void>;
 }) {
   if (!open) return null;
@@ -492,6 +525,7 @@ function LogComplaintModal({
     <LogComplaintModalBody
       billsByCustomer={billsByCustomer}
       employeeName={employeeName}
+      categories={categories}
       onClose={onClose}
       onSubmit={onSubmit}
     />
@@ -501,11 +535,13 @@ function LogComplaintModal({
 function LogComplaintModalBody({
   billsByCustomer,
   employeeName,
+  categories,
   onClose,
   onSubmit,
 }: {
   billsByCustomer: Record<string, BillOption[]>;
   employeeName: string;
+  categories: string[];
   onClose: () => void;
   onSubmit: (input: LogComplaintInput) => Promise<void>;
 }) {
@@ -514,7 +550,7 @@ function LogComplaintModalBody({
   const [customer, setCustomer] = React.useState<
     { id: string; name: string; phone: string } | null
   >(null);
-  const [category, setCategory] = React.useState<string>(CATEGORIES[0]);
+  const [category, setCategory] = React.useState<string>(categories[0] ?? "Other");
   const [description, setDescription] = React.useState("");
   const [images, setImages] = React.useState<File[]>([]);
   const [imageError, setImageError] = React.useState<string | null>(null);
@@ -522,7 +558,11 @@ function LogComplaintModalBody({
   const [billId, setBillId] = React.useState("");
   const [goodsDescription, setGoodsDescription] = React.useState("");
   const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  const [errors, setErrors] = React.useState<{
+    customer?: string;
+    description?: string;
+    bill?: string;
+  }>({});
 
   const searchActive = !customer && customerQuery.trim().length >= 2;
 
@@ -579,18 +619,20 @@ function LogComplaintModalBody({
             disabled={busy}
             onClick={async () => {
               if (!customer) {
-                setError("Pick the customer this complaint is about.");
+                setErrors({ customer: "Pick the customer this complaint is about." });
                 return;
               }
               if (!description.trim()) {
-                setError("Describe the complaint in the customer's words.");
+                setErrors({
+                  description: "Describe the complaint in the customer's words.",
+                });
                 return;
               }
               if (requestCn && !billId) {
-                setError("Pick the bill this credit note relates to.");
+                setErrors({ bill: "Pick the bill this credit note relates to." });
                 return;
               }
-              setError(null);
+              setErrors({});
               setBusy(true);
               try {
                 await onSubmit({
@@ -618,7 +660,7 @@ function LogComplaintModalBody({
           <Input value={employeeName} readOnly disabled />
         </Field>
 
-        <Field label="Company / Customer Name" error={!customer ? error : null}>
+        <Field label="Company / Customer Name" error={errors.customer ?? null}>
           {customer ? (
             <div className="flex h-8.5 items-center justify-between rounded-[4px] border border-line bg-canvas px-2.5 text-sm text-ink">
               <span>{customer.name}</span>
@@ -676,7 +718,7 @@ function LogComplaintModalBody({
 
         <Field label="Category">
           <Select value={category} onChange={(e) => setCategory(e.target.value)}>
-            {CATEGORIES.map((c) => (
+            {categories.map((c) => (
               <option key={c}>{c}</option>
             ))}
           </Select>
@@ -684,13 +726,13 @@ function LogComplaintModalBody({
 
         <Field
           label="Complaint description"
-          error={!description.trim() ? error : null}
+          error={errors.description ?? null}
         >
           <Textarea
             value={description}
             onChange={(e) => {
               setDescription(e.target.value);
-              setError(null);
+              setErrors({});
             }}
             className="h-24"
             placeholder="Describe the complaint in detail."
@@ -752,12 +794,12 @@ function LogComplaintModalBody({
 
         {requestCn ? (
           <div className="grid gap-3 rounded-[4px] border border-line bg-canvas p-3">
-            <Field label="Bill number" error={requestCn && !billId ? error : null}>
+            <Field label="Bill number" error={errors.bill ?? null}>
               <Select
                 value={billId}
                 onChange={(e) => {
                   setBillId(e.target.value);
-                  setError(null);
+                  setErrors({});
                 }}
                 disabled={!customer}
               >

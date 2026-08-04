@@ -1,19 +1,15 @@
-import { db } from "@/db";
-import { bills } from "@/db/schema";
 import { isManager, requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
+import { dayActivity, listCustomers, today } from "@/lib/queries";
+import { getConfig } from "@/lib/config/store";
+import { getFollowUpWorklist, listBills } from "@/lib/services/payment-service";
 import {
-  dayActivity,
-  getActiveRun,
-  getLastFinishedRun,
-  getWaMode,
-  listCustomers,
+  findResumableRun,
   listMessages,
-  listPaymentFollowUps,
   listReplies,
   listTemplates,
-  today,
-} from "@/lib/queries";
+  listUnconfirmedCopies,
+} from "@/lib/services/whatsapp-service";
 import { clock, nowMs } from "@/lib/format";
 import { WhatsappScreen } from "./whatsapp-screen";
 
@@ -34,34 +30,36 @@ export default async function WhatsappPage({
   const user = await requireUser();
   const scope = await getScope(user);
   const now = nowMs();
+  const day = await today();
 
-  const [customers, templates, messages, replies, mode, activeRun, lastRun, activity, followUps] =
-    await Promise.all([
-      listCustomers(user, scope),
-      listTemplates(),
-      listMessages(user, scope),
-      listReplies(user, scope),
-      getWaMode(),
-      getActiveRun(user.id),
-      getLastFinishedRun(user.id),
-      dayActivity(user.id, today()),
-      listPaymentFollowUps(user, scope),
-    ]);
+  const [
+    config,
+    customers,
+    templates,
+    messages,
+    replies,
+    activeRun,
+    activity,
+    followUps,
+    bills,
+    unconfirmed,
+  ] = await Promise.all([
+    getConfig(),
+    listCustomers(),
+    listTemplates(),
+    listMessages(),
+    listReplies(),
+    findResumableRun(user.id),
+    dayActivity(user.id, day),
+    getFollowUpWorklist(),
+    listBills(),
+    isManager(user) ? listUnconfirmedCopies() : Promise.resolve([]),
+  ]);
 
   // Oldest open bill per customer feeds the {{bill_no}} / {{bill_due}} fields.
-  const openBills = await db
-    .select({
-      customerId: bills.customerId,
-      billNo: bills.billNo,
-      dueDate: bills.dueDate,
-      amount: bills.amount,
-      paid: bills.paid,
-    })
-    .from(bills);
-
   const oldestBill = new Map<string, { billNo: string; dueDate: string }>();
-  for (const b of openBills.sort((a, z) => a.dueDate.localeCompare(z.dueDate))) {
-    if (b.amount <= b.paid) continue;
+  for (const b of [...bills].sort((a, z) => a.dueDate.localeCompare(z.dueDate))) {
+    if (b.balance <= 0) continue;
     if (!oldestBill.has(b.customerId)) {
       oldestBill.set(b.customerId, { billNo: b.billNo, dueDate: b.dueDate });
     }
@@ -78,7 +76,7 @@ export default async function WhatsappPage({
     lastOrderValue: c.lastOrderValue,
     ownerName: c.ownerName,
     groupName: c.whatsappGroupName,
-    destKind: c.whatsappDest as "personal" | "group",
+    destKind: c.whatsappDest,
     oldestBillNo: oldestBill.get(c.id)?.billNo ?? null,
     oldestBillDue: oldestBill.get(c.id)?.dueDate ?? null,
     slowPayer: c.slowPayer,
@@ -88,7 +86,9 @@ export default async function WhatsappPage({
     <WhatsappScreen
       scopeLabel={scopeLabel(scope, user)}
       isManager={isManager(user)}
-      mode={mode}
+      // Manual is the default and stays fully usable — automatic sending is an
+      // addition, never a replacement.
+      mode={config["whatsapp.mode"]}
       initialCustomerId={customer ?? customerPayload[0]?.id ?? ""}
       initialTab={tab === "run" || tab === "templates" || tab === "log" ? tab : "send"}
       customers={customerPayload}
@@ -97,9 +97,9 @@ export default async function WhatsappPage({
         name: t.name,
         category: t.category,
         body: t.body,
-        appliesTo: t.appliesTo as "personal" | "group",
-        uses: t.uses,
-        archived: t.archived,
+        appliesTo: t.appliesTo,
+        uses: t.usageCount,
+        archived: !t.active,
         updatedAt: t.updatedAt.toISOString(),
       }))}
       messages={messages.map((m) => ({
@@ -107,13 +107,15 @@ export default async function WhatsappPage({
         customerId: m.customerId,
         customerName: m.customerName,
         templateName: m.templateName,
-        destination: m.destination,
+        destination: m.resolvedDestination,
         destKind: m.destKind,
         mode: m.mode,
         status: m.status,
-        sentByName: m.sentByName,
+        sentByName: m.userName ?? "—",
         edited: m.edited,
-        createdAt: m.createdAt.toISOString(),
+        createdAt: m.preparedAt.toISOString(),
+        copiedAt: m.copiedAt?.toISOString() ?? null,
+        confirmedSentAt: m.confirmedSentAt?.toISOString() ?? null,
       }))}
       replies={replies.map((r) => ({
         id: r.id,
@@ -122,36 +124,52 @@ export default async function WhatsappPage({
         message: r.message,
         receivedAt: r.receivedAt.toISOString(),
       }))}
-      runElapsedMinutes={
-        activeRun ? runMinutes(activeRun.startedAt, new Date(now)) : 0
-      }
+      runElapsedMinutes={activeRun ? runMinutes(activeRun.run.startedAt, new Date(now)) : 0}
       run={
         activeRun
           ? {
-              id: activeRun.id,
-              templateId: activeRun.templateId,
-              recipients: activeRun.recipients,
-              cursor: activeRun.cursor,
-              paused: activeRun.paused,
-              startedAt: activeRun.startedAt.toISOString(),
-            }
-          : null
-      }
-      lastRun={
-        lastRun
-          ? {
-              sent: lastRun.recipients.filter((r) => r.state === "sent").length,
-              skipped: lastRun.recipients.filter((r) => r.state === "skipped").length,
-              minutes: runMinutes(lastRun.startedAt, lastRun.finishedAt),
+              id: activeRun.run.id,
+              templateId: activeRun.run.templateId,
+              paused: activeRun.run.status === "paused",
+              startedAt: activeRun.run.startedAt.toISOString(),
+              sent: activeRun.sent,
+              skipped: activeRun.skipped,
+              total: activeRun.recipients.length,
+              recipients: activeRun.recipients.map((r) => ({
+                messageId: r.id,
+                customerName: r.customerName,
+                status: r.status,
+                done: r.done,
+              })),
+              // The record set is the state, so a refresh resumes exactly here.
+              current: activeRun.current
+                ? {
+                    messageId: activeRun.current.id,
+                    customerId: activeRun.current.customerId,
+                    customerName: activeRun.current.customerName,
+                    destination: activeRun.current.resolvedDestination,
+                    destKind: activeRun.current.destKind,
+                    body: activeRun.current.body,
+                    status: activeRun.current.status,
+                  }
+                : null,
             }
           : null
       }
       previewTime={clock(new Date(now))}
-      messagesToday={activity.messagesSent}
+      messagesToday={activity.whatsappSent}
+      // Copied but never confirmed: each one is a customer who may or may not
+      // have been contacted. Managers get the number; nobody gets a guess.
+      unconfirmedCount={unconfirmed.length}
       followUpCounts={{
-        stage1: followUps.filter((f) => f.stage === "Reminder due").length,
-        slow: followUps.filter((f) => f.customer.slowPayer).length,
-        over60: followUps.filter((f) => f.oldestDays > 60).length,
+        stage1: followUps.filter((f) => f.stage === 1).length,
+        slow: followUps.filter((f) => f.slowPayer).length,
+        over60: followUps.filter((f) => f.daysOverdue > 60).length,
+      }}
+      followUpIds={{
+        stage1: followUps.filter((f) => f.stage === 1).map((f) => f.customerId),
+        slow: followUps.filter((f) => f.slowPayer).map((f) => f.customerId),
+        over60: followUps.filter((f) => f.daysOverdue > 60).map((f) => f.customerId),
       }}
     />
   );

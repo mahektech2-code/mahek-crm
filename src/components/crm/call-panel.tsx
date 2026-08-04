@@ -16,12 +16,12 @@ import {
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { saveCall } from "@/lib/actions/crm";
-import { COMPLAINT_CATEGORIES } from "@/lib/constants";
 import { money, phoneDisplay, shortDate, stamp, today } from "@/lib/format";
 
 export type CallTarget = {
   customerId: string;
-  queueItemId?: string | null;
+  /** Where the call was started from — kept on the call record. */
+  sourceModule?: "call_queue" | "payment_follow_up" | "inactive_watch" | "ad_hoc";
   name: string;
   contactPerson: string;
   phone: string;
@@ -67,6 +67,8 @@ const PRODUCTS = ["NC thinner 20L", "MTO thinner 200L", "Low-odour thinner 20L"]
 
 type CallPanelProps = {
   target: CallTarget | null;
+  /** Complaint categories, from configuration rather than a constant. */
+  categories: string[];
   onClose: () => void;
   onSaved?: (advance: boolean) => void;
   hasNext?: boolean;
@@ -82,7 +84,7 @@ export function CallPanel(props: CallPanelProps) {
   return <CallPanelForm key={props.target.customerId} {...props} />;
 }
 
-function CallPanelForm({ target, onClose, onSaved, hasNext }: CallPanelProps) {
+function CallPanelForm({ target, categories, onClose, onSaved, hasNext }: CallPanelProps) {
   const router = useRouter();
   const { run, push } = useToast();
 
@@ -92,6 +94,10 @@ function CallPanelForm({ target, onClose, onSaved, hasNext }: CallPanelProps) {
   const [outcomeError, setOutcomeError] = React.useState(false);
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+
+  // The panel is keyed on the customer, so this is generated once per opening
+  // and rejected by the server on a second submit of the same call.
+  const idempotencyKey = React.useRef(crypto.randomUUID());
 
   const [orderOpen, setOrderOpen] = React.useState(false);
   const [orderProduct, setOrderProduct] = React.useState(PRODUCTS[0]);
@@ -104,7 +110,7 @@ function CallPanelForm({ target, onClose, onSaved, hasNext }: CallPanelProps) {
   const [remNote, setRemNote] = React.useState("");
 
   const [cmpOpen, setCmpOpen] = React.useState(false);
-  const [cmpCat, setCmpCat] = React.useState<string>(COMPLAINT_CATEGORIES[0]);
+  const [cmpCat, setCmpCat] = React.useState<string>(categories[0] ?? "Other");
   const [cmpDesc, setCmpDesc] = React.useState("");
 
   // The last three interactions load with the panel rather than being
@@ -137,7 +143,10 @@ function CallPanelForm({ target, onClose, onSaved, hasNext }: CallPanelProps) {
         const result = await run(
           saveCall({
             customerId: target.customerId,
-            queueItemId: target.queueItemId ?? null,
+            sourceModule: target.sourceModule ?? "ad_hoc",
+            // Stable for as long as the panel is open on this customer, so a
+            // double-click or a retried submit logs one call, not two.
+            idempotencyKey: idempotencyKey.current,
             connection,
             outcome,
             note,
@@ -411,7 +420,7 @@ function CallPanelForm({ target, onClose, onSaved, hasNext }: CallPanelProps) {
             <div className="grid grid-cols-[180px_1fr] gap-3">
               <Field label="Category">
                 <Select value={cmpCat} onChange={(e) => setCmpCat(e.target.value)}>
-                  {COMPLAINT_CATEGORIES.map((c) => (
+                  {categories.map((c) => (
                     <option key={c}>{c}</option>
                   ))}
                 </Select>

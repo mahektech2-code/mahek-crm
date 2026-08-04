@@ -1,1 +1,0 @@
-ALTER TABLE "complaints" ADD COLUMN "mobile_number" text;

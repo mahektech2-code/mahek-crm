@@ -1,7 +1,6 @@
 import "server-only";
 import { cache } from "react";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 import { randomUUID } from "node:crypto";
 import { eq, and, gt } from "drizzle-orm";
 import { db } from "@/db";
@@ -48,7 +47,25 @@ export async function destroySession() {
  * both ask for it, and against a distant database each extra lookup is another
  * 300 ms.
  */
+/**
+ * Test-only seam. Integration tests run the real services — scope resolution,
+ * capability checks and all — outside a request, where there is no cookie jar.
+ * Guarded on NODE_ENV so it cannot be reached from a running server.
+ */
+const globalForTestUser = globalThis as unknown as { __mahekTestUser?: User | null };
+
+export function setTestUser(user: User | null) {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("setTestUser is only available under NODE_ENV=test.");
+  }
+  globalForTestUser.__mahekTestUser = user;
+}
+
 export const getCurrentUser = cache(async function getCurrentUser(): Promise<User | null> {
+  if (process.env.NODE_ENV === "test") {
+    return globalForTestUser.__mahekTestUser ?? null;
+  }
+
   const jar = await cookies();
   const id = jar.get(SESSION_COOKIE)?.value;
   if (!id) return null;
@@ -67,7 +84,13 @@ export const getCurrentUser = cache(async function getCurrentUser(): Promise<Use
 /** Use in every page and action that requires a signed-in user. */
 export async function requireUser(): Promise<User> {
   const user = await getCurrentUser();
-  if (!user) redirect("/login");
+  if (!user) {
+    // Imported lazily: next/navigation pulls in the client React runtime, which
+    // the integration tests cannot load outside a request.
+    const { redirect } = await import("next/navigation");
+    redirect("/login");
+    throw new Error("unreachable"); // redirect() never returns
+  }
   return user;
 }
 

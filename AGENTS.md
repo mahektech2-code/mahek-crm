@@ -23,14 +23,20 @@ managers. Dispatch, inventory and accounts join later on the same schema.
 ```bash
 npm run dev          # localhost:3000
 npm run build        # production build (runs tsc)
-npm run db:push      # push schema changes to Neon
+npm run test         # engine tests — pure, no database
+npm run test:db      # (re)create mahekone_test from the migrations
+npm run test:integration   # the six §11 journeys, end to end
+npm run db:generate  # write a migration after editing src/db/schema.ts
+npm run db:migrate   # apply migrations locally
 npm run db:seed      # wipe and reseed with demo data (also clears sessions)
 npm run db:studio    # Drizzle Studio
+npm run jobs -- nightly    # run a scheduled task by hand
+npm run check:links  # crawl the running app for broken links
 npx eslint src       # lint, including the React Compiler rules
 ```
 
-Environment comes from `.env.local`, pulled with `vercel env pull`. Only
-`DATABASE_URL` is required.
+Development runs against your own local Postgres — `npm run db:setup` gets a
+fresh clone from nothing to running. Only `DATABASE_URL` is required.
 
 ## Seeded accounts
 
@@ -84,7 +90,8 @@ src/
       payments/  bills/  inactive/
       customers/  customers/[id]  customers/import
       complaints/  targets/  eod/  whatsapp/
-      help/  components/   SOPs and the live design system
+      help/  settings/     SOPs and the manager configuration screen
+      components/          the live design system
     api/search/            global search endpoint
   components/
     ui/                    primitives + overlays + toasts
@@ -94,13 +101,39 @@ src/
   db/                      schema, client, seed
   lib/
     apps.ts                the MahekOne app registry
-    access.ts              who can open what + attendance
-    queries.ts             every read
+    config/                registry.ts (every setting + validation) and
+                           store.ts (cached reads, audited writes)
+    engines/               the six derived-state engines — PURE, no I/O:
+                           buying-cycle, queue, escalation, inactivity,
+                           targets, eod  + engines.test.ts
+    services/              engines wired to data — one file per module
+    access-control.ts      scope resolution + capabilities (§8)
+    recompute.ts           the rebuild path for every cached derived value
+    business-date.ts       Asia/Kolkata, configurable day boundary
+    jobs.ts                scheduled work, idempotent and hand-triggerable
+    result.ts              the Result type every action returns
+    queries.ts             every scope-aware read
     actions/               every write
-    format.ts merge.ts eod.ts csv.ts scope.ts auth.ts
+    journeys.test.ts       the six §11 journeys, end to end
+    format.ts merge.ts csv.ts scope.ts auth.ts
 ```
 
 ## Rules that keep the data honest
+
+**Nothing business-critical is a constant.** Every threshold lives in
+`lib/config/registry.ts` and is stored in `app_settings`. If you find yourself
+typing a number that a manager might one day want to change, it belongs there
+instead. Reads go through `getConfig()`, which caches for 30 seconds.
+
+**The engines are pure.** Everything in `lib/engines/` takes configuration and
+the business date as arguments and performs no I/O. That is what makes the
+rules testable without a database — keep it that way, and put the data
+fetching in `lib/services/` instead.
+
+**Derived values are never hand-edited.** Buying cycles, outstanding, follow-up
+stages, slow-payer flags and last-contact dates are all caches. If one is
+wrong, the fix is to re-run the matching function in `lib/recompute.ts`, never
+to update the row.
 
 **Money is paise.** Integers everywhere; formatted only in `lib/format.ts` on
 the way to the screen. Never store rupees.
@@ -112,9 +145,12 @@ function, so they cannot drift apart.
 **Outstanding is derived, never typed.** `recomputeOutstanding()` rebuilds it
 from bills after anything that touches a bill or a payment.
 
-**The working day is Asia/Kolkata.** `today()` in `lib/format.ts` is the only
-source. Day windows in SQL carry an explicit `+05:30` — without it Postgres
-reads them in the server's timezone and a 9 am call falls outside "today".
+**The working day is Asia/Kolkata, and it does not start at midnight.**
+`today()` in `lib/recompute.ts` applies the configured day boundary (5am by
+default), so a call logged at 2am belongs to the shift that started yesterday.
+Day windows in SQL carry an explicit `+05:30` — without it Postgres reads them
+in the server's timezone and a 9am call falls outside "today". The sync
+`today()` in `lib/format.ts` is for client components only.
 
 **Scope, not roles, filters lists.** `getScope()` returns `mine` or `team`.
 Telecallers are pinned to `mine`; the cookie cannot widen it. Managers default
@@ -127,9 +163,36 @@ disabled in the UI. Disabled buttons always carry a `title` saying why.
 complaint it produced, the queue row and the customer's rolled-up figures.
 Half-saved calls are how telecaller data goes wrong.
 
-**A WhatsApp message is only "Sent" when a human confirms it.** Until then it
-sits as `Copied`, and the log counts those separately — a customer who may or
-may not have been contacted is visible rather than assumed.
+**A WhatsApp message is only sent when a human confirms it.** Until then it
+sits as `copied`, and only a *confirmed* send sets
+`lastConfirmedWhatsappDate` or suppresses the customer from the queue. A
+copied-but-unconfirmed message is a customer who may or may not have been
+contacted, and it is shown as exactly that rather than assumed either way.
+There is a test for each half of this; do not collapse them.
+
+**Suppression is a return value, not a filter.** `buildQueue()` returns held-
+back customers alongside the queue, and the screen shows them. A telecaller
+must always be able to find out why somebody they expected is missing.
+
+**In raw SQL, qualify every column of the outer table.** Drizzle renders
+`${customers.id}` as a bare `"id"`. Inside a correlated subquery that binds to
+the *inner* table and the condition silently becomes false — types and unit
+tests both pass. Write `customers.id` in the string instead. This one shipped
+once; the integration tests exist partly to catch it.
+
+## Testing
+
+`npm run test` runs the engine tests: pure, fast, no database. They pin the
+business rules themselves.
+
+`npm run test:integration` runs the six §11 journeys against `mahekone_test`
+using the real services. Create it with `npm run test:db` first, and again
+after any schema change. The runner refuses to start against a database not
+named `mahekone_test`, and truncates between tests.
+
+Integration tests sign in through `setTestUser()`, a seam in `lib/auth.ts`
+that only exists under `NODE_ENV=test`. Everything downstream — scope,
+capabilities, audit — is the real thing.
 
 ## React Compiler
 

@@ -139,6 +139,11 @@ export function CustomersScreen({
           Math.round(r.outstanding / 100),
         ]),
       ),
+      [
+        status === STATUSES[0] ? null : status,
+        owner === "All owners" ? null : owner,
+        query || null,
+      ],
     );
     push(`Exported ${subset.length} rows`);
   }

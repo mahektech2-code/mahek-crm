@@ -15,7 +15,28 @@ import {
 } from "@/lib/auth";
 import { listUserApps, recordSignIn, recordSignOut } from "@/lib/access";
 import { getApp, APP_IDS, type AppId } from "@/lib/apps";
-import { audit, fail, newId, ok, type ActionResult } from "./core";
+import { randomUUID } from "node:crypto";
+import { auditLog } from "@/db/schema";
+import { err as fail, okVoid as ok, type Result as ActionResult } from "@/lib/result";
+
+const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
+
+async function audit(
+  user: { id: string } | null,
+  action: string,
+  entityType: string,
+  entityId?: string | null,
+  detail?: string | null,
+) {
+  await db.insert(auditLog).values({
+    id: newId("aud"),
+    actorId: user?.id ?? null,
+    action,
+    entityType,
+    entityId: entityId ?? null,
+    afterState: detail ? ({ detail } as never) : null,
+  });
+}
 import { initialsOf } from "@/lib/format";
 
 /* ---------------------------------------------------------------------------
