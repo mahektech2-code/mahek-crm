@@ -10,8 +10,10 @@ import {
   Checkbox,
   EmptyState,
   Field,
+  Input,
   MetricStrip,
   PageHeader,
+  Radio,
   SectionLabel,
   Select,
   Td,
@@ -22,7 +24,8 @@ import {
 } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader, Modal, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { reassignComplaint, resolveComplaint } from "@/lib/actions/crm";
+import { logComplaint, reassignComplaint, resolveComplaint } from "@/lib/actions/crm";
+import { COMPLAINT_CATEGORIES } from "@/lib/constants";
 import { ageLabel, shortDate, stamp } from "@/lib/format";
 
 type Row = {
@@ -42,8 +45,10 @@ type Row = {
 
 type Event = { at: string; note: string };
 type Tab = "open" | "progress" | "resolved" | "all";
+type BillOption = { id: string; billNo: string; billDate: string };
 
 const RESOLVERS = ["Operations", "Accounts", "Dispatch", "Quality", "Management"];
+const CATEGORIES = COMPLAINT_CATEGORIES;
 
 export function ComplaintsScreen({
   scopeLabel,
@@ -51,12 +56,16 @@ export function ComplaintsScreen({
   isTeamView,
   rows,
   events,
+  billsByCustomer,
+  loggedInUserName,
 }: {
   scopeLabel: string;
   isManager: boolean;
   isTeamView: boolean;
   rows: Row[];
   events: Record<string, Event[]>;
+  billsByCustomer: Record<string, BillOption[]>;
+  loggedInUserName: string;
 }) {
   const router = useRouter();
   const { run } = useToast();
@@ -68,6 +77,7 @@ export function ComplaintsScreen({
   const [notesError, setNotesError] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [reassigning, setReassigning] = React.useState(false);
+  const [logging, setLogging] = React.useState(false);
 
   const buckets = {
     open: rows.filter((r) => r.status === "Open"),
@@ -100,6 +110,11 @@ export function ComplaintsScreen({
       <PageHeader
         title="Complaints"
         subtitle={`${scopeLabel} · Logged at the point they are raised, routed to a resolver, visible on the customer record.`}
+        actions={
+          <Button variant="primary" onClick={() => setLogging(true)}>
+            Log complaint
+          </Button>
+        }
       />
 
       <MetricStrip
@@ -369,6 +384,20 @@ export function ComplaintsScreen({
           }
         }}
       />
+
+      <LogComplaintModal
+        open={logging}
+        onClose={() => setLogging(false)}
+        billsByCustomer={billsByCustomer}
+        employeeName={loggedInUserName}
+        onSubmit={async (input) => {
+          const result = await run(logComplaint(input));
+          if (result.ok) {
+            setLogging(false);
+            router.refresh();
+          }
+        }}
+      />
     </div>
   );
 }
@@ -427,6 +456,345 @@ function ReassignModalBody({ open, current, onClose, onSubmit }: ReassignProps) 
           ))}
         </Select>
       </Field>
+    </Modal>
+  );
+}
+
+type LogComplaintInput = {
+  customerId: string;
+  category: string;
+  description: string;
+  mobileNumber: string;
+  requestCn: boolean;
+  billId: string | null;
+  goodsDescription: string;
+  images: File[];
+};
+
+type CustomerHit = { id: string; name: string; city: string; phone: string };
+const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+function LogComplaintModal({
+  open,
+  onClose,
+  billsByCustomer,
+  employeeName,
+  onSubmit,
+}: {
+  open: boolean;
+  onClose: () => void;
+  billsByCustomer: Record<string, BillOption[]>;
+  employeeName: string;
+  onSubmit: (input: LogComplaintInput) => Promise<void>;
+}) {
+  if (!open) return null;
+  return (
+    <LogComplaintModalBody
+      billsByCustomer={billsByCustomer}
+      employeeName={employeeName}
+      onClose={onClose}
+      onSubmit={onSubmit}
+    />
+  );
+}
+
+function LogComplaintModalBody({
+  billsByCustomer,
+  employeeName,
+  onClose,
+  onSubmit,
+}: {
+  billsByCustomer: Record<string, BillOption[]>;
+  employeeName: string;
+  onClose: () => void;
+  onSubmit: (input: LogComplaintInput) => Promise<void>;
+}) {
+  const [customerQuery, setCustomerQuery] = React.useState("");
+  const [customerHits, setCustomerHits] = React.useState<CustomerHit[]>([]);
+  const [customer, setCustomer] = React.useState<
+    { id: string; name: string; phone: string } | null
+  >(null);
+  const [category, setCategory] = React.useState<string>(CATEGORIES[0]);
+  const [description, setDescription] = React.useState("");
+  const [images, setImages] = React.useState<File[]>([]);
+  const [imageError, setImageError] = React.useState<string | null>(null);
+  const [requestCn, setRequestCn] = React.useState(false);
+  const [billId, setBillId] = React.useState("");
+  const [goodsDescription, setGoodsDescription] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const searchActive = !customer && customerQuery.trim().length >= 2;
+
+  // Stale hits from a previous query must never show once search is inactive.
+  const visibleHits = searchActive ? customerHits : [];
+
+  React.useEffect(() => {
+    if (!searchActive) return;
+    const term = customerQuery.trim();
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(term)}`, {
+          signal: controller.signal,
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setCustomerHits(data.customers ?? []);
+        }
+      } catch {
+        /* aborted */
+      }
+    }, 180);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [customerQuery, searchActive]);
+
+  const previews = React.useMemo(
+    () => images.map((f) => URL.createObjectURL(f)),
+    [images],
+  );
+  React.useEffect(() => {
+    return () => previews.forEach((u) => URL.revokeObjectURL(u));
+  }, [previews]);
+
+  const bills = customer ? (billsByCustomer[customer.id] ?? []) : [];
+  const selectedBill = bills.find((b) => b.id === billId) ?? null;
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Log complaint"
+      width={480}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={busy}
+            onClick={async () => {
+              if (!customer) {
+                setError("Pick the customer this complaint is about.");
+                return;
+              }
+              if (!description.trim()) {
+                setError("Describe the complaint in the customer's words.");
+                return;
+              }
+              if (requestCn && !billId) {
+                setError("Pick the bill this credit note relates to.");
+                return;
+              }
+              setError(null);
+              setBusy(true);
+              try {
+                await onSubmit({
+                  customerId: customer.id,
+                  category,
+                  description,
+                  mobileNumber: customer.phone,
+                  requestCn,
+                  billId: requestCn ? billId : null,
+                  goodsDescription,
+                  images,
+                });
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Save
+          </Button>
+        </>
+      }
+    >
+      <div className="grid gap-3">
+        <Field label="Employee name">
+          <Input value={employeeName} readOnly disabled />
+        </Field>
+
+        <Field label="Company / Customer Name" error={!customer ? error : null}>
+          {customer ? (
+            <div className="flex h-8.5 items-center justify-between rounded-[4px] border border-line bg-canvas px-2.5 text-sm text-ink">
+              <span>{customer.name}</span>
+              <button
+                type="button"
+                className="cursor-pointer text-[13px] text-muted hover:text-ink"
+                onClick={() => {
+                  setCustomer(null);
+                  setCustomerQuery("");
+                  setBillId("");
+                }}
+              >
+                Change
+              </button>
+            </div>
+          ) : (
+            <div className="relative">
+              <Input
+                value={customerQuery}
+                onChange={(e) => setCustomerQuery(e.target.value)}
+                placeholder="Search by company, customer name or mobile number…"
+              />
+              {visibleHits.length ? (
+                <div className="absolute top-9 right-0 left-0 z-10 max-h-48 overflow-auto rounded-[6px] border border-line bg-surface py-1 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
+                  {visibleHits.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className="flex w-full cursor-pointer items-center justify-between gap-3 px-3 py-[7px] text-left hover:bg-canvas"
+                      onClick={() => {
+                        setCustomer({ id: c.id, name: c.name, phone: c.phone });
+                        setCustomerHits([]);
+                        setCustomerQuery("");
+                        setBillId("");
+                      }}
+                    >
+                      <span className="text-sm font-medium text-ink">{c.name}</span>
+                      <span className="text-[13px] text-muted">{c.city}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          )}
+        </Field>
+
+        <Field label="Mobile number">
+          <Input
+            value={customer?.phone ?? ""}
+            readOnly
+            disabled
+            placeholder="Pick a customer first"
+          />
+        </Field>
+
+        <Field label="Category">
+          <Select value={category} onChange={(e) => setCategory(e.target.value)}>
+            {CATEGORIES.map((c) => (
+              <option key={c}>{c}</option>
+            ))}
+          </Select>
+        </Field>
+
+        <Field
+          label="Complaint description"
+          error={!description.trim() ? error : null}
+        >
+          <Textarea
+            value={description}
+            onChange={(e) => {
+              setDescription(e.target.value);
+              setError(null);
+            }}
+            className="h-24"
+            placeholder="Describe the complaint in detail."
+          />
+        </Field>
+
+        <Field
+          label="Upload picture"
+          hint="JPG, JPEG, PNG or WEBP — photos of the damaged or short goods, if any."
+          error={imageError}
+        >
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+            onChange={(e) => {
+              const picked = Array.from(e.target.files ?? []);
+              const accepted = picked.filter((f) => ACCEPTED_IMAGE_TYPES.includes(f.type));
+              setImages(accepted);
+              setImageError(
+                accepted.length < picked.length
+                  ? "Only JPG, JPEG, PNG or WEBP images are allowed."
+                  : null,
+              );
+            }}
+            className="block w-full text-sm text-body file:mr-3 file:cursor-pointer file:rounded-[4px] file:border file:border-line file:bg-surface file:px-2.5 file:py-1.5 file:text-sm file:text-ink"
+          />
+          {previews.length ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {previews.map((src, i) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={i}
+                  src={src}
+                  alt=""
+                  className="h-14 w-14 rounded-[4px] border border-line object-cover"
+                />
+              ))}
+            </div>
+          ) : null}
+        </Field>
+
+        <Field label="Request CN">
+          <div className="flex items-center gap-4">
+            <Radio
+              name="requestCn"
+              label="No"
+              checked={!requestCn}
+              onChange={() => setRequestCn(false)}
+            />
+            <Radio
+              name="requestCn"
+              label="Yes"
+              checked={requestCn}
+              onChange={() => setRequestCn(true)}
+            />
+          </div>
+        </Field>
+
+        {requestCn ? (
+          <div className="grid gap-3 rounded-[4px] border border-line bg-canvas p-3">
+            <Field label="Bill number" error={requestCn && !billId ? error : null}>
+              <Select
+                value={billId}
+                onChange={(e) => {
+                  setBillId(e.target.value);
+                  setError(null);
+                }}
+                disabled={!customer}
+              >
+                <option value="">
+                  {customer ? "Select a bill" : "Pick a customer first"}
+                </option>
+                {bills.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.billNo} · {shortDate(b.billDate)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            <Field label="Bill date">
+              <Input
+                value={selectedBill ? shortDate(selectedBill.billDate) : ""}
+                readOnly
+                disabled
+                placeholder="Pick a bill number first"
+              />
+            </Field>
+
+            <Field
+              label="Description of goods"
+              hint="Not on the bill record — filled in manually."
+            >
+              <Textarea
+                value={goodsDescription}
+                onChange={(e) => setGoodsDescription(e.target.value)}
+                className="h-16"
+                placeholder="What was billed"
+              />
+            </Field>
+          </div>
+        ) : null}
+      </div>
     </Modal>
   );
 }

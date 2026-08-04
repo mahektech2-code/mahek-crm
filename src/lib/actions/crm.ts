@@ -8,6 +8,7 @@ import { db } from "@/db";
 import {
   bills,
   complaintEvents,
+  complaintImages,
   complaints,
   customers,
   eodReports,
@@ -37,6 +38,7 @@ import {
   today,
 } from "@/lib/queries";
 import { addDays, money, parseRupees, shortDate } from "@/lib/format";
+import { fileStorage } from "@/lib/storage";
 import {
   audit,
   fail,
@@ -714,10 +716,18 @@ export async function logComplaint(input: {
   customerId: string;
   category: string;
   description: string;
+  mobileNumber?: string;
+  requestCn?: boolean;
+  billId?: string | null;
+  goodsDescription?: string;
+  images?: File[];
 }): Promise<ActionResult> {
   const user = await requireUser();
   if (!input.description.trim()) {
     return fail("Describe the complaint in the customer's words.");
+  }
+  if (input.requestCn && !input.billId) {
+    return fail("Pick the bill this credit note relates to.");
   }
 
   const id = newId("cmp");
@@ -729,6 +739,12 @@ export async function logComplaint(input: {
       description: input.description.trim(),
       loggedById: user.id,
       loggedOn: today(),
+      mobileNumber: input.mobileNumber || null,
+      requestCn: input.requestCn ?? false,
+      billId: input.requestCn ? input.billId : null,
+      goodsDescription: input.requestCn
+        ? input.goodsDescription?.trim() || null
+        : null,
     });
     await tx.insert(complaintEvents).values({
       id: newId("cev"),
@@ -737,9 +753,31 @@ export async function logComplaint(input: {
     });
   });
 
+  // Storage has no backend yet (see lib/storage.ts) — attaching images is
+  // best-effort so the complaint itself always saves.
+  let imagesAttached = false;
+  if (input.images?.length) {
+    const uploads = await Promise.allSettled(
+      input.images.map((file) => fileStorage.upload(file)),
+    );
+    const succeeded = uploads.flatMap((r) =>
+      r.status === "fulfilled" ? [r.value] : [],
+    );
+    if (succeeded.length) {
+      await db.insert(complaintImages).values(
+        succeeded.map((u) => ({ id: newId("cim"), complaintId: id, url: u.url })),
+      );
+      imagesAttached = true;
+    }
+  }
+
   await audit(user, "create", "complaint", id, input.category);
   refreshAll();
-  return ok("Complaint logged");
+  return ok(
+    input.images?.length && !imagesAttached
+      ? "Complaint logged — image attachments aren't available until storage is configured"
+      : "Complaint logged",
+  );
 }
 
 export async function resolveComplaint(input: {

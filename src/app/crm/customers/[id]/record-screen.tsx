@@ -22,6 +22,7 @@ import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { CallPanel, type CallTarget } from "@/components/crm/call-panel";
 import { createReminder, logComplaint } from "@/lib/actions/crm";
+import { COMPLAINT_CATEGORIES } from "@/lib/constants";
 import {
   ageLabel,
   money,
@@ -465,7 +466,7 @@ export function QuickComplaint({
   onClose: () => void;
   onSubmit: (category: string, description: string) => Promise<void>;
 }) {
-  const [category, setCategory] = React.useState("Delivery");
+  const [category, setCategory] = React.useState<string>(COMPLAINT_CATEGORIES[0]);
   const [description, setDescription] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
@@ -500,11 +501,9 @@ export function QuickComplaint({
       <div className="grid gap-3">
         <Field label="Category">
           <Select value={category} onChange={(e) => setCategory(e.target.value)}>
-            {["Delivery", "Product quality", "Billing", "Pricing", "Service", "Other"].map(
-              (c) => (
-                <option key={c}>{c}</option>
-              ),
-            )}
+            {COMPLAINT_CATEGORIES.map((c) => (
+              <option key={c}>{c}</option>
+            ))}
           </Select>
         </Field>
         <Field

@@ -16,6 +16,7 @@ import {
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { saveCall } from "@/lib/actions/crm";
+import { COMPLAINT_CATEGORIES } from "@/lib/constants";
 import { money, phoneDisplay, shortDate, stamp, today } from "@/lib/format";
 
 export type CallTarget = {
@@ -63,14 +64,6 @@ const CONNECTIONS = [
 ] as const;
 
 const PRODUCTS = ["NC thinner 20L", "MTO thinner 200L", "Low-odour thinner 20L"];
-const COMPLAINT_CATEGORIES = [
-  "Delivery",
-  "Product quality",
-  "Billing",
-  "Pricing",
-  "Service",
-  "Other",
-];
 
 type CallPanelProps = {
   target: CallTarget | null;
@@ -111,7 +104,7 @@ function CallPanelForm({ target, onClose, onSaved, hasNext }: CallPanelProps) {
   const [remNote, setRemNote] = React.useState("");
 
   const [cmpOpen, setCmpOpen] = React.useState(false);
-  const [cmpCat, setCmpCat] = React.useState(COMPLAINT_CATEGORIES[0]);
+  const [cmpCat, setCmpCat] = React.useState<string>(COMPLAINT_CATEGORIES[0]);
   const [cmpDesc, setCmpDesc] = React.useState("");
 
   // The last three interactions load with the panel rather than being
