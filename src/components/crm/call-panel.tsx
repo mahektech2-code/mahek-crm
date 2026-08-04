@@ -193,14 +193,30 @@ type CallPanelProps = {
   queueComplete?: boolean;
 };
 
+type FormProps = CallPanelProps & {
+  tab: "log" | "information" | "script";
+  setTab: (t: "log" | "information" | "script") => void;
+};
+
 /**
  * Keyed on the customer, so moving to the next call always opens a blank form.
  * Carrying one customer's outcome into the next is the worst bug this screen
  * could have.
  */
 export function CallPanel(props: CallPanelProps) {
+  // The form is keyed on the customer so an outcome can never carry over. The
+  // TAB is not — stepping to the next customer while reading Information
+  // should leave you on Information, not throw you back a tab.
+  const [tab, setTab] = React.useState<"log" | "information" | "script">("information");
   if (!props.target) return null;
-  return <CallPanelForm key={props.target.customerId} {...props} />;
+  return (
+    <CallPanelForm
+      key={props.target.customerId}
+      {...props}
+      tab={tab}
+      setTab={setTab}
+    />
+  );
 }
 
 function CallPanelForm({
@@ -218,7 +234,9 @@ function CallPanelForm({
   onNext,
   position,
   queueComplete,
-}: CallPanelProps) {
+  tab,
+  setTab,
+}: FormProps) {
   useEscape(onClose);
   const router = useRouter();
   const { run, push } = useToast();
@@ -237,7 +255,6 @@ function CallPanelForm({
   const [saved, setSaved] = React.useState<string | null>(null);
   // Opens on Information: read who you are about to speak to before speaking.
   // "Log this call" in the footer is the way through to the form.
-  const [tab, setTab] = React.useState<"log" | "information" | "script">("information");
   // The strip starts open — a telecaller mid-call should not have to expand
   // something to see the line they are about to say.
   const [stripOpen, setStripOpen] = React.useState(true);
@@ -466,20 +483,7 @@ function CallPanelForm({
         </div>
 
         {/* --------------------------------------- information | the form */}
-        {loading ? (
-          // Skeleton rather than an empty pane: the figures arrive a moment
-          // after the modal, and a blank Information tab reads as "no history".
-          <div className="flex-1 p-6">
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="mb-3 flex items-center gap-3 last:mb-0">
-                <span className="block h-2.5 w-[180px] rounded-[2px] bg-divider" />
-                <span className="block h-2.5 w-[120px] rounded-[2px] bg-divider" />
-                <span className="flex-1" />
-                <span className="block h-2.5 w-[90px] rounded-[2px] bg-divider" />
-              </div>
-            ))}
-          </div>
-        ) : queueComplete ? (
+        {queueComplete ? (
           // The last row has been worked. The design ends the run here rather
           // than dropping the telecaller back onto an empty list.
           <div className="flex flex-1 items-center justify-center p-6">
@@ -540,7 +544,20 @@ function CallPanelForm({
               tab === "information" ? "block" : "hidden",
             )}
           >
-            {info ? (
+            {loading ? (
+              // Only this pane waits — the tabs and the form stay put, so
+              // stepping to the next customer does not blank the modal.
+              <div>
+                {[0, 1, 2, 3, 4, 5].map((i) => (
+                  <div key={i} className="mb-3 flex items-center gap-3 last:mb-0">
+                    <span className="block h-2.5 w-[180px] rounded-[2px] bg-divider" />
+                    <span className="block h-2.5 w-[120px] rounded-[2px] bg-divider" />
+                    <span className="flex-1" />
+                    <span className="block h-2.5 w-[90px] rounded-[2px] bg-divider" />
+                  </div>
+                ))}
+              </div>
+            ) : info ? (
 <>
               <InfoRow label="Purchase summary">
                 <Figure label="Last order">
@@ -654,7 +671,9 @@ function CallPanelForm({
               </div>
             </>
             ) : (
-              <p className="text-[13px] text-muted">Loading this customer&rsquo;s history…</p>
+              <p className="text-[13px] text-muted">
+                Nothing recorded against this customer yet.
+              </p>
             )}
 
           </div>
@@ -1088,41 +1107,51 @@ function CallPanelForm({
 
         {/* ------------------------------------------------------- footer */}
         <div className="flex items-center gap-2.5 border-t border-divider px-6 py-3">
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={!hasPrevious}
-            title={hasPrevious ? "Previous customer" : "This is the first row"}
-            onClick={() => onPrevious?.()}
-          >
-            ◀ Previous
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={!hasNext}
-            title={hasNext ? "Next customer" : "This is the last row"}
-            onClick={() => onNext?.()}
-          >
-            Next ▶
-          </Button>
-          {/* Back steps out of the form to the outcomes, then to the types —
-              the same journey the crumb makes, but where the hands already are. */}
-          {chosen && !saved ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => (isOrderReceived ? setType(null) : setOutcome(null))}
-            >
-              ← {isOrderReceived ? "Change type" : "Change outcome"}
-            </Button>
-          ) : null}
+          {/* Position first, then the steppers around a divider — the design's
+              order, and it reads as one control rather than three. */}
           {position ? (
-            <span className="text-[13px] text-muted">{position}</span>
+            <span className="flex items-center gap-1.5">
+              <span className="text-[13px] text-muted">{position}</span>
+              <button
+                disabled={!hasPrevious}
+                title={hasPrevious ? "Previous customer" : "This is the first row"}
+                onClick={() => onPrevious?.()}
+                className="h-8 cursor-pointer rounded-[4px] px-2 text-[13px] text-body hover:bg-canvas disabled:cursor-not-allowed disabled:text-line-strong"
+              >
+                ◀ Previous
+              </button>
+              <span className="text-line">|</span>
+              <button
+                disabled={!hasNext}
+                title={hasNext ? "Next customer" : "This is the last row"}
+                onClick={() => onNext?.()}
+                className="h-8 cursor-pointer rounded-[4px] px-2 text-[13px] text-body hover:bg-canvas disabled:cursor-not-allowed disabled:text-line-strong"
+              >
+                Next ▶
+              </button>
+            </span>
           ) : null}
+
+          {chosen && !saved ? (
+            <button
+              onClick={() => (isOrderReceived ? setType(null) : setOutcome(null))}
+              className="inline-flex h-8 cursor-pointer items-center gap-1.5 px-2.5 text-[13px] text-muted hover:text-body"
+            >
+              ◀ {isOrderReceived ? "Change type" : "Change outcome"}
+            </button>
+          ) : null}
+
           <span className="flex-1" />
+
+          {saved ? (
+            <span className="animate-fade-in text-sm font-medium text-success">Saved</span>
+          ) : null}
+
+          <Button variant="secondary" onClick={onClose}>
+            {saved ? "Done" : "Close"}
+          </Button>
+
           {tab !== "log" ? (
-            // From Information or Script, the way back to the job is one click.
             <Button variant="primary" onClick={() => setTab("log")}>
               Log this call ▸
             </Button>
@@ -1137,20 +1166,10 @@ function CallPanelForm({
                 </Button>
               ) : null}
             </>
-          ) : (
-            <>
-              <span className="text-[13px] text-muted">
-                {saved ? "Saved" : "Pick how the interaction happened to begin"}
-              </span>
-              <Button variant="secondary" size="sm" onClick={onClose}>
-                Close
-              </Button>
-            </>
-          )}
+          ) : null}
         </div>
       </div>
     </div>
-
   );
 }
 
