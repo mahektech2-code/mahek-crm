@@ -1,0 +1,133 @@
+# Every push and every pull request runs what a developer runs before pushing:
+# lint, the pure engine tests, a production build, and the six §11 journeys
+# against a real Postgres. Nothing here talks to Neon — CI gets its own
+# throwaway database, the same way each developer does.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mahek
+          POSTGRES_PASSWORD: mahek
+          POSTGRES_DB: mahekone
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mahek -d mahekone"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://mahek:mahek@127.0.0.1:5432/mahekone
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The db:* and test:* scripts read .env.local, which is never committed.
+      # Writing it here keeps CI running the same commands as a developer
+      # rather than a second set that could drift.
+      - name: Write .env.local
+        run: echo "DATABASE_URL=\"$DATABASE_URL\"" > .env.local
+
+      - run: npm run lint
+
+      - name: Engine tests
+        run: npm run test
+
+      - name: Apply migrations
+        run: npm run db:migrate
+
+      - run: npm run build
+
+      - name: Create mahekone_test
+        run: npm run test:db
+
+      - name: Journey tests
+        run: npm run test:integration
+
+  # The link crawler needs something no other check does: a *running* app on a
+  # *seeded* database. That is why it is a second job rather than more steps on
+  # the first — it costs a duplicate install and build, and buys a signal that
+  # says "a link is broken" instead of a red tick shared with the tests.
+  links:
+    runs-on: ubuntu-latest
+
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mahek
+          POSTGRES_PASSWORD: mahek
+          POSTGRES_DB: mahekone
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mahek -d mahekone"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://mahek:mahek@127.0.0.1:5432/mahekone
+      BASE_URL: http://127.0.0.1:3000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Write .env.local
+        run: echo "DATABASE_URL=\"$DATABASE_URL\"" > .env.local
+
+      - name: Apply migrations
+        run: npm run db:migrate
+
+      # The crawler signs in as a seeded user, so the demo data is a
+      # prerequisite and not a convenience.
+      - run: npm run db:seed
+
+      - run: npm run build
+
+      - name: Start the app
+        run: npm start &
+
+      - name: Wait for it to answer
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null "$BASE_URL/login"; then
+              echo "up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "the app never answered on $BASE_URL"
+          exit 1
+
+      - run: npm run check:links
