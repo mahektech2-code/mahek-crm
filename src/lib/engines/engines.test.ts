@@ -892,6 +892,29 @@ describe("E4 inactivity", () => {
     assert.match(r.skippedReason!, /no order history/i);
   });
 
+  test("a customer already marked inactive stays flagged", () => {
+    // The status is written from this result, so reading it back as a reason
+    // to skip would make every flag erase itself the following night.
+    const marked = {
+      ...cust(30, addDays(TODAY, -90)),
+      status: "inactive" as const,
+    };
+    const r = evaluateInactivity(marked, TODAY, C);
+    assert.equal(r.inactive, true);
+    assert.equal(r.skippedReason, null);
+  });
+
+  test("an order un-marks them — the same evaluation, a newer date", () => {
+    const marked = {
+      ...cust(30, addDays(TODAY, -90)),
+      status: "inactive" as const,
+    };
+    assert.equal(
+      evaluateInactivity({ ...marked, lastOrderDate: TODAY }, TODAY, C).inactive,
+      false,
+    );
+  });
+
   test("a deactivated customer is never flagged", () => {
     const r = evaluateInactivity(
       { ...cust(30, addDays(TODAY, -300)), status: "deactivated" },

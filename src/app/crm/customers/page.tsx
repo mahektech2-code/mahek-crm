@@ -1,6 +1,7 @@
 import { isManager, requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { listCustomers, listTeam } from "@/lib/queries";
+import { customerStatusLabel } from "@/lib/format";
 import { CustomersScreen } from "./customers-screen";
 
 export const metadata = { title: "Customers — MahekOne CRM" };
@@ -32,7 +33,7 @@ export default async function CustomersPage() {
         salesAmName: c.salesAmName,
         backOfficeAmId: c.backOfficeAmId,
         backOfficeAmName: c.backOfficeAmName,
-        status: c.status,
+        status: customerStatusLabel(c),
         lastOrderDate: c.lastOrderDate,
         lastContactAt: c.lastContactDate,
         outstanding: c.outstanding,

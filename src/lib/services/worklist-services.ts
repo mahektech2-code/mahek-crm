@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -576,7 +576,14 @@ export async function listTargets(period?: string) {
         eq(monthlyTargets.month, month),
       ),
     )
-    .where(and(eq(customers.status, "active"), ids ? inArray(customers.ownerId, ids) : undefined))
+    .where(
+      and(
+        // A customer who has gone quiet still carries a target — that is the
+        // gap the month has to explain. Only deactivation removes them.
+        ne(customers.status, "deactivated"),
+        ids ? inArray(customers.ownerId, ids) : undefined,
+      ),
+    )
     .orderBy(asc(customers.name));
 
   return rows.map((r) => {

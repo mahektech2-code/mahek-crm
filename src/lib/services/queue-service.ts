@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   calls,
@@ -132,7 +132,10 @@ async function queueInputs(ids: string[] | null, day: string) {
       ), 0)`,
     })
     .from(customers)
-    .where(and(eq(customers.status, "active"), ownerFilter));
+    // Not `status = 'active'`: going quiet marks a customer inactive, and the
+    // one thing you must still be able to do with them is call. Only a
+    // deactivated customer leaves the queue.
+    .where(and(ne(customers.status, "deactivated"), ownerFilter));
 
   // Pending reminders assigned to whoever is asking, in one query.
   const reminderRows = await db

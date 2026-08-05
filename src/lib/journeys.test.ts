@@ -546,6 +546,72 @@ describe("Journey 5 — a customer goes quiet and gets a decision", () => {
       "a decided item stops nagging",
     );
   });
+
+  test("the status is marked inactive automatically, and an order undoes it", async () => {
+    const customer = await makeCustomer(priya.id, {
+      cycleDays: 20,
+      cycleIsDefault: false,
+      lastOrderDate: addDays(TODAY, -70),
+      avgOrderValue: 80_000_00,
+    });
+
+    const status = async () => {
+      const [row] = await db
+        .select({ status: customers.status })
+        .from(customers)
+        .where(eq(customers.id, customer.id));
+      return row.status;
+    };
+
+    assert.equal(await status(), "active", "they start active");
+
+    await recomputeInactivity();
+    assert.equal(await status(), "inactive", "twice the cycle marks them");
+
+    // Running again must not undo itself — the status is this engine's own
+    // output, and reading it back as a reason to skip would clear the flag.
+    await recomputeInactivity();
+    assert.equal(await status(), "inactive");
+    const watch = await listInactiveWatch();
+    assert.ok(watch.find((w) => w.customerId === customer.id));
+
+    // They are still callable: an inactive customer is on the queue, because
+    // calling them is the entire point.
+    const queue = await getQueue();
+    assert.ok(
+      [...queue.entries, ...queue.suppressed].some(
+        (q) => q.customerId === customer.id,
+      ),
+      "an inactive customer must not vanish from the calling list",
+    );
+
+    await db
+      .update(customers)
+      .set({ lastOrderDate: TODAY })
+      .where(eq(customers.id, customer.id));
+    await recomputeInactivity();
+    assert.equal(await status(), "active", "an order puts them back");
+  });
+
+  test("deactivation is a decision, and no recompute reverses it", async () => {
+    const customer = await makeCustomer(priya.id, {
+      cycleDays: 20,
+      cycleIsDefault: false,
+      lastOrderDate: TODAY,
+    });
+    await db
+      .update(customers)
+      .set({ status: "deactivated" })
+      .where(eq(customers.id, customer.id));
+
+    await recomputeInactivity();
+
+    const [row] = await db
+      .select({ status: customers.status })
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(row.status, "deactivated", "an order does not undo a decision");
+  });
 });
 
 /* -------------------------------------------------- journey 6: who sees what */
