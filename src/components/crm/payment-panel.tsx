@@ -7,6 +7,8 @@ import {
   Button,
   Field,
   Input,
+  MoneyInput,
+  Select,
   SlowPayerBadge,
   Textarea,
   cx,
@@ -507,28 +509,95 @@ function RecordPaymentForm({
 
   useEscape(onClose);
 
+  // What the bill will read after this is saved, shown while it is typed —
+  // the same "here is what happens next" the panel's context bar gives.
+  const entered = Number(amount.replace(/[^0-9]/g, "")) * 100;
+  const leftOpen = bill.balance - entered;
+
   return (
     <div
       onClick={onClose}
       className="animate-fade-in fixed inset-0 z-[80] flex items-center justify-center bg-[rgba(22,22,22,0.35)] p-6"
       role="dialog"
       aria-modal="true"
+      aria-label="Record payment"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-[520px] overflow-hidden rounded-[6px] bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+        className="w-[620px] max-w-[calc(100vw-48px)] overflow-hidden rounded-[6px] bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
       >
-        <div className="border-b border-divider px-5 py-4 text-lg font-semibold text-ink">
-          Record payment · {bill.billNo}
-        </div>
-        <div className="px-5 py-4">
-          <div className="mb-3 text-sm text-muted">
-            {customerName} · {money(bill.balance)} open on this bill
+        {/* ------------------------------------------------------- header */}
+        <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-3.5">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="text-[22px] leading-7 font-semibold text-ink">
+                Record payment
+              </span>
+              <Badge tone="neutral">{bill.billNo}</Badge>
+              {bill.disputed ? <Badge tone="warn">Disputed</Badge> : null}
+            </div>
+            <div className="mt-1 flex items-center gap-2 text-sm text-muted">
+              <span className="font-medium text-ink">{customerName}</span>
+              <span>·</span>
+              <span>due {shortDate(bill.dueDate)}</span>
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="h-7 w-7 flex-none cursor-pointer rounded-[4px] border-none bg-transparent text-muted hover:bg-canvas hover:text-body"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </button>
+        </div>
+
+        {/* -------------------------------------------------- context bar */}
+        <div className="flex items-center gap-5 border-y border-line bg-canvas px-6 py-2.5">
+          <Stat label="Bill amount">{money(bill.amount)}</Stat>
+          <Rule />
+          <Stat label="Already paid">{money(bill.paid)}</Stat>
+          <Rule />
+          <Stat label="Open now" tone={bill.overdueDays > 45 ? "danger" : undefined}>
+            {money(bill.balance)}
+          </Stat>
+          <Rule />
+          <Stat
+            label="Overdue"
+            tone={
+              bill.overdueDays > 45 ? "danger" : bill.overdueDays > 15 ? "warn" : undefined
+            }
+          >
+            {bill.overdueDays > 0 ? ageLabel(bill.overdueDays) : "Not due"}
+          </Stat>
+          <span className="flex-1" />
+          <div className="text-right">
+            <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+              Leaves open
+            </div>
+            <div
+              className={cx(
+                "text-sm font-semibold",
+                leftOpen < 0 ? "text-danger" : "text-brand-hover",
+              )}
+            >
+              {leftOpen < 0 ? `${money(-leftOpen)} over` : money(leftOpen)}
+            </div>
+          </div>
+        </div>
+
+        {/* --------------------------------------------------------- body */}
+        <div className="px-6 py-4">
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Amount received" error={error}>
-              <Input
-                inputMode="numeric"
+            <Field
+              label="Amount received"
+              error={error}
+              hint={error ? undefined : `Up to ${money(bill.balance)} on this bill`}
+            >
+              <MoneyInput
+                invalid={Boolean(error) || leftOpen < 0}
                 value={amount}
                 onChange={(e) => {
                   setAmount(e.target.value.replace(/[^0-9]/g, ""));
@@ -544,17 +613,39 @@ function RecordPaymentForm({
               />
             </Field>
             <Field label="Mode">
-              <Input value={mode} onChange={(e) => setMode(e.target.value)} />
+              <Select
+                className="w-full"
+                value={mode}
+                onChange={(e) => setMode(e.target.value)}
+              >
+                {["Bank transfer", "Cheque", "Cash", "UPI"].map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
+              </Select>
             </Field>
             <Field label="Reference" hint="UTR, cheque number — optional">
               <Input
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
+                placeholder="UTR or cheque number"
               />
             </Field>
           </div>
+
+          {leftOpen < 0 ? (
+            <div className="mt-3 rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-2 text-[13px] text-warn-ink">
+              That is {money(-leftOpen)} more than {bill.billNo} has open. Record what
+              landed against this bill, and the rest against the next one.
+            </div>
+          ) : null}
         </div>
-        <div className="flex justify-end gap-2.5 border-t border-divider px-5 py-3">
+
+        {/* ------------------------------------------------------- footer */}
+        <div className="flex items-center gap-2.5 border-t border-line bg-surface px-6 py-3">
+          <span className="text-[13px] text-muted">
+            Outstanding is rebuilt from the bills after this.
+          </span>
+          <span className="flex-1" />
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
@@ -652,12 +743,12 @@ function AccountTab({
         {panel.bills.length ? (
           <div className="overflow-hidden rounded-[4px] border border-line">
             <div className="flex items-center gap-3 bg-canvas px-3 py-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-              <span className="w-[88px] flex-none">Bill</span>
+              <span className="w-[132px] flex-none">Bill</span>
               <span className="w-[76px] flex-none">Due</span>
               <span className="flex-1">Amount</span>
               <span className="w-24 flex-none text-right">Balance</span>
               <span className="w-[76px] flex-none text-right">Overdue</span>
-              <span className="w-[120px] flex-none" />
+              <span className="w-[132px] flex-none" />
             </div>
             {panel.bills.map((b, i) => (
               <div
@@ -668,10 +759,13 @@ function AccountTab({
                   b.overdueDays > 45 ? "bg-danger-soft" : "bg-surface",
                 )}
               >
-                <span className="w-[88px] flex-none text-sm font-medium text-ink">
+                <span
+                  title={b.billNo}
+                  className="w-[132px] flex-none truncate text-sm font-medium text-ink"
+                >
                   {b.billNo}
                 </span>
-                <span className="w-[76px] flex-none text-[13px] text-muted">
+                <span className="w-[76px] flex-none whitespace-nowrap text-[13px] text-muted">
                   {shortDate(b.dueDate)}
                 </span>
                 <span className="flex-1 text-sm text-body">
@@ -693,7 +787,7 @@ function AccountTab({
                 >
                   {b.overdueDays > 0 ? ageLabel(b.overdueDays) : "Not due"}
                 </span>
-                <span className="w-[120px] flex-none text-right">
+                <span className="w-[132px] flex-none text-right">
                   <Button size="sm" variant="secondary" onClick={() => onRecordPayment(b.id)}>
                     Record payment
                   </Button>
@@ -741,7 +835,7 @@ function AccountTab({
         {panel.recent.length ? (
           panel.recent.map((h, i) => (
             <div key={i} className="flex gap-3 border-t border-canvas py-2 first:border-0">
-              <span className="w-[110px] flex-none text-[13px] text-muted">
+              <span className="w-[110px] flex-none whitespace-nowrap text-[13px] text-muted">
                 {stamp(h.at)}
               </span>
               <span className="min-w-0 flex-1">
