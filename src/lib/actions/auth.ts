@@ -1,10 +1,10 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { eq, or } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { appAccess, users } from "@/db/schema";
+import { appAccess, passwordResets, sessions, users } from "@/db/schema";
 import {
   createSession,
   destroySession,
@@ -17,7 +17,20 @@ import { listUserApps, recordSignIn, recordSignOut } from "@/lib/access";
 import { getApp, APP_IDS, type AppId } from "@/lib/apps";
 import { randomUUID } from "node:crypto";
 import { auditLog } from "@/db/schema";
-import { err as fail, okVoid as ok, type Result as ActionResult } from "@/lib/result";
+import {
+  err as fail,
+  ok as ok2,
+  okVoid as ok,
+  type Result as ActionResult,
+} from "@/lib/result";
+import { mailConfigured, sendMail } from "@/lib/mailer";
+import {
+  appOrigin,
+  findLiveReset,
+  hashResetToken,
+  newResetToken,
+  RESET_TTL_MINUTES,
+} from "@/lib/password-reset";
 
 const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -116,6 +129,143 @@ export async function signOut() {
   }
   await destroySession();
   redirect("/login");
+}
+
+/* ------------------------------------------------------- password resets */
+
+const resetRequest = z.object({
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .min(1, "Enter the work email your account was created with.")
+    .email("That does not look like an email address."),
+});
+
+/**
+ * Nobody can be told whether an address has an account here — that would turn
+ * this form into a staff directory — so the answer is the same either way and
+ * the work happens only when there is somebody to send it to.
+ */
+export async function requestPasswordReset(
+  _prev: ActionResult<string> | null,
+  formData: FormData,
+): Promise<ActionResult<string>> {
+  const parsed = resetRequest.safeParse({ email: formData.get("email") });
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  const { email } = parsed.data;
+
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1);
+
+  if (user && user.active) {
+    const token = newResetToken();
+    const expiresAt = new Date(Date.now() + RESET_TTL_MINUTES * 60_000);
+
+    await db.transaction(async (tx) => {
+      // Sending a new link kills the old one, which is what the screen says.
+      await tx
+        .update(passwordResets)
+        .set({ usedAt: new Date() })
+        .where(
+          and(
+            eq(passwordResets.userId, user.id),
+            isNull(passwordResets.usedAt),
+          ),
+        );
+      await tx.insert(passwordResets).values({
+        id: newId("rst"),
+        userId: user.id,
+        tokenHash: hashResetToken(token),
+        expiresAt,
+      });
+    });
+
+    const link = `${await appOrigin()}/login/reset?token=${token}`;
+    await sendMail({
+      to: user.email,
+      subject: "Set a new MahekOne password",
+      text: [
+        `Hello ${user.name.split(" ")[0]},`,
+        "",
+        "Somebody asked to reset the password on your MahekOne account.",
+        `Open this link to set a new one — it works once and expires in ${RESET_TTL_MINUTES} minutes:`,
+        "",
+        link,
+        "",
+        "If that was not you, ignore this email. Your password has not changed.",
+      ].join("\n"),
+    });
+
+    await audit(user, "request-password-reset", "user", user.id);
+  }
+
+  // Said regardless of whether an account was found, so the notice cannot be
+  // read as an answer to "does this address have an account?".
+  return ok2(
+    email,
+    "If that account exists, a reset link is on its way.",
+    mailConfigured()
+      ? undefined
+      : [
+          "No mail provider is configured, so the link was written to the server log instead of sent. Set RESEND_API_KEY and MAIL_FROM to send it for real.",
+        ],
+  );
+}
+
+const resetSubmission = z
+  .object({
+    token: z.string().trim().min(1),
+    password: z.string().min(8, "Passwords must be at least 8 characters."),
+    confirm: z.string(),
+  })
+  .refine((v) => v.password === v.confirm, {
+    message: "The two passwords do not match.",
+    path: ["confirm"],
+  });
+
+/**
+ * Consuming the link is one transaction: the new password, the link marked
+ * spent and every session that account had. A password changed because it may
+ * have leaked has to end the sessions opened with the old one, or the change
+ * bought nothing.
+ */
+export async function resetPassword(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const parsed = resetSubmission.safeParse({
+    token: formData.get("token"),
+    password: formData.get("password"),
+    confirm: formData.get("confirm"),
+  });
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+
+  const row = await findLiveReset(parsed.data.token);
+  if (!row) {
+    return fail(
+      "That link has expired or has already been used. Ask for a new one.",
+    );
+  }
+
+  const passwordHash = await hashPassword(parsed.data.password);
+  await db.transaction(async (tx) => {
+    await tx
+      .update(users)
+      .set({ passwordHash, updatedAt: new Date() })
+      .where(eq(users.id, row.userId));
+    await tx
+      .update(passwordResets)
+      .set({ usedAt: new Date() })
+      .where(eq(passwordResets.id, row.id));
+    await tx.delete(sessions).where(eq(sessions.userId, row.userId));
+  });
+
+  await audit({ id: row.userId }, "reset-password", "user", row.userId);
+  redirect("/login?reset=1");
 }
 
 /* ------------------------------------------------------------- accounts */

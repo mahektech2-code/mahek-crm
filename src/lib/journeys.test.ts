@@ -153,7 +153,7 @@ beforeEach(async () => {
       wa_templates, complaint_status_history, complaints, reminders,
       interaction_product_lines, products, quick_notes, migration_exceptions,
       follow_up_attempts, follow_up_states, payments, bills,
-      orders, calls, eod_reports, attendance, app_access, sessions,
+      orders, calls, eod_reports, attendance, app_access, sessions, password_resets,
       customers, users, app_settings
     restart identity cascade
   `);

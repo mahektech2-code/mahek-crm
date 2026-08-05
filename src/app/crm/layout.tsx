@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { redirect } from "next/navigation";
 import { isManager, requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
+import { APPS } from "@/lib/apps";
 import { getDensity, getScope } from "@/lib/scope";
 import { listNotifications, today } from "@/lib/queries";
 import { AppShell } from "@/components/shell/app-shell";
@@ -36,7 +37,7 @@ export default async function AppLayout({
       density={density}
       notifications={notifications}
       badges={badges}
-      appCount={apps.length}
+      apps={APPS.filter((a) => apps.includes(a.id))}
     >
       {children}
     </AppShell>

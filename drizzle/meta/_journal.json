@@ -43,6 +43,13 @@
       "when": 1785907573335,
       "tag": "0005_glamorous_mauler",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785931879118,
+      "tag": "0006_password_resets",
+      "breakpoints": true
     }
   ]
 }

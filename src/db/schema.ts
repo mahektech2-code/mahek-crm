@@ -318,6 +318,30 @@ export const sessions = pgTable(
   (t) => [index("sessions_user_idx").on(t.userId)],
 );
 
+/**
+ * Reset links. Only the SHA-256 of the token is stored, so a copy of this table
+ * cannot be turned into a working link — the same reason `users` keeps a hash
+ * rather than a password. A link works once and expires; requesting a new one
+ * marks every earlier link for that account used, so only the newest works.
+ */
+export const passwordResets = pgTable(
+  "password_resets",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("password_resets_token_key").on(t.tokenHash),
+    index("password_resets_user_idx").on(t.userId),
+  ],
+);
+
 /* -------------------------------------------------------------- §3.3 customer */
 
 /** A record is one or the other, and the difference decides what is shown. */

@@ -126,6 +126,26 @@ const PATHS: Record<string, React.ReactNode> = {
       <path d="m16 17 5-5-5-5M21 12H9" />
     </>
   ),
+  mail: (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="m3 7 9 6 9-6" />
+    </>
+  ),
+  lock: (
+    <>
+      <rect x="4" y="11" width="16" height="9" rx="2" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    </>
+  ),
+  arrowRight: <path d="M5 12h13M13 6l6 6-6 6" />,
+  tick: <path d="m5 13 4 4L19 7" />,
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </>
+  ),
 };
 
 export function Icon({
