@@ -22,15 +22,37 @@ import {
 } from "@/components/ui/primitives";
 import { Modal, RowMenu, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { recordPayment, recordPromise } from "@/lib/actions/crm";
+import {
+  recordPayment,
+  recordPromise,
+  startStageOneBatch,
+} from "@/lib/actions/crm";
 import { toCsv, downloadCsv } from "@/lib/csv";
-import { addDays, ageLabel, money, shortDate, stamp, today } from "@/lib/format";
+import {
+  addDays,
+  ageLabel,
+  money,
+  shortDate,
+  signedMoney,
+  stamp,
+  today,
+} from "@/lib/format";
 
-import type { WorklistRow, PaymentFollowUpPlan } from "@/lib/services/payment-service";
+import { PaymentPanel } from "@/components/crm/payment-panel";
+import type {
+  WorklistRow,
+  PaymentFollowUpPlan,
+  CollectionsMetrics,
+} from "@/lib/services/payment-service";
+import type { PayOutcomeDefinition } from "@/lib/services/payment-followup-service";
 
 type Row = WorklistRow & {
   openBills: Array<{ id: string; billNo: string; balance: number; dueDate: string }>;
 };
+
+function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
 
 /** Stage is the engine's, not the interface's — 1, 2, 3 and nothing else. */
 const STAGE_LABEL: Record<number, string> = {
@@ -44,7 +66,14 @@ const STAGE_TONE: Record<number, "danger" | "warn" | "brand"> = {
   3: "danger",
 };
 
-type Tab = "calls" | "messages" | "all" | "chase" | "promised" | "escalate";
+type Tab =
+  | "calls"
+  | "messages"
+  | "all"
+  | "stage1"
+  | "stage2"
+  | "stage3"
+  | "promised";
 
 export function PaymentsScreen({
   scopeLabel,
@@ -53,6 +82,9 @@ export function PaymentsScreen({
   aging,
   workingDaysLeft,
   plan,
+  outcomes,
+  metrics,
+  batchCount,
 }: {
   scopeLabel: string;
   isManager: boolean;
@@ -61,6 +93,12 @@ export function PaymentsScreen({
   workingDaysLeft: number;
   /** Today's cadence, from E7 — who is due a call, a message, or neither. */
   plan: PaymentFollowUpPlan;
+  /** Declared server-side, so the form and the action cannot disagree. */
+  outcomes: PayOutcomeDefinition[];
+  /** Derived from bills, payments and promises — nothing stored. */
+  metrics: CollectionsMetrics;
+  /** How many stage 1 customers a batch would actually go to today. */
+  batchCount: number;
 }) {
   const router = useRouter();
   const { run, push } = useToast();
@@ -73,6 +111,16 @@ export function PaymentsScreen({
   const [promising, setPromising] = React.useState<Row | null>(null);
   const [paying, setPaying] = React.useState<Row | null>(null);
   const [heldOpen, setHeldOpen] = React.useState(false);
+  // The whole follow-up happens in the panel — a telecaller working a list of
+  // twelve should not lose their place to look at a bill.
+  const [openAt, setOpenAt] = React.useState<number | null>(null);
+
+  // Only a real comparison: with no promise judged in the previous window
+  // there is no trend, and inventing one would be worse than showing none.
+  const keptDelta =
+    metrics.promisesKeptPercent === null || metrics.promisesKeptPreviousPercent === null
+      ? null
+      : metrics.promisesKeptPercent - metrics.promisesKeptPreviousPercent;
 
   // The engine decides who is due; this only says why, beside the name.
   const callReason = new Map(plan.calls.map((c) => [c.customerId, c.reason]));
@@ -88,9 +136,10 @@ export function PaymentsScreen({
     calls: rows.filter((r) => callReason.has(r.customerId)),
     messages: rows.filter((r) => messageReason.has(r.customerId)),
     all: rows,
-    chase: rows.filter((r) => !r.held && !r.promisedDate && r.stage < 3),
+    stage1: rows.filter((r) => r.stage === 1),
+    stage2: rows.filter((r) => r.stage === 2),
+    stage3: rows.filter((r) => r.stage === 3),
     promised: rows.filter((r) => Boolean(r.promisedDate)),
-    escalate: rows.filter((r) => r.stage === 3 || r.promiseBroken),
   };
 
   const visible = React.useMemo(() => {
@@ -105,7 +154,6 @@ export function PaymentsScreen({
   }, [tab, query, slowOnly, monthEnd, rows]);
 
   const total = visible.reduce((a, r) => a + r.totalOverdue, 0);
-  const broken = rows.filter((r) => r.promiseBroken).length;
   const held = rows.filter((r) => r.held).length;
 
   return (
@@ -114,6 +162,26 @@ export function PaymentsScreen({
         title="Payment follow-up"
         subtitle={`${scopeLabel} · One row per customer. The stage tells you what to do — do that, then log it.`}
         actions={
+          <>
+          <Button
+            variant="secondary"
+            disabled={!isManager || batchCount === 0}
+            title={
+              !isManager
+                ? "Bulk sending is a manager action"
+                : batchCount === 0
+                  ? "Nobody at stage 1 is due a reminder today — the four-day interval runs from the last one actually sent"
+                  : `Queue the stage 1 reminder for ${plural(batchCount, "customer")}`
+            }
+            onClick={async () => {
+              const result = await run(startStageOneBatch());
+              // A batch is still sent one confirmed message at a time, on the
+              // screen built for exactly that.
+              if (result.ok) router.push("/crm/whatsapp");
+            }}
+          >
+            Send stage 1 batch{batchCount ? ` · ${batchCount}` : ""}
+          </Button>
           <Button
             variant="secondary"
             disabled={!isManager}
@@ -141,13 +209,65 @@ export function PaymentsScreen({
           >
             Export
           </Button>
+          </>
         }
       />
 
       <MetricStrip
         metrics={[
-          { label: "Collectable", value: money(total), tone: "danger" },
-          { label: "Customers", value: String(visible.length) },
+          {
+            label: "Outstanding",
+            value: money(metrics.outstanding),
+            tone: "danger",
+            sub: plural(metrics.outstandingCustomers, "customer"),
+            // Bills raised this week less what came in — the direction the
+            // book actually moved, not a figure typed by hand.
+            delta:
+              metrics.outstandingChange === 0
+                ? undefined
+                : `${signedMoney(metrics.outstandingChange)} this week`,
+            deltaTone: metrics.outstandingChange > 0 ? "danger" : "success",
+          },
+          {
+            label: "Urgent stage",
+            value: money(metrics.urgent),
+            tone: "danger",
+            sub: `${plural(metrics.urgentCustomers, "customer")} over ${metrics.urgentThresholdDays} days`,
+          },
+          {
+            label: "Promised, still open",
+            value: money(metrics.promisedOpen),
+            sub: `${plural(metrics.promisedCount, "promise")} not yet due`,
+          },
+          {
+            label: "Promises kept",
+            value:
+              metrics.promisesKeptPercent === null
+                ? "—"
+                : `${metrics.promisesKeptPercent}%`,
+            tone:
+              metrics.promisesKeptPercent !== null && metrics.promisesKeptPercent < 60
+                ? "danger"
+                : "ink",
+            sub:
+              metrics.promisesKeptPercent === null
+                ? "no promise has come due yet"
+                : `Last 30 days · ${plural(metrics.promisesJudged, "promise")}`,
+            // Only shown when there is a previous window to compare with.
+            delta: keptDelta === null ? undefined : `${keptDelta > 0 ? "+" : "−"}${Math.abs(keptDelta)} pts`,
+            deltaTone: keptDelta !== null && keptDelta < 0 ? "danger" : "success",
+          },
+          {
+            label: "Collected this month",
+            value: money(metrics.collectedThisMonth),
+            tone: "success",
+            sub: `Against ${money(metrics.dueThisMonth)} due`,
+            delta:
+              metrics.collectedThisWeek > 0
+                ? `+${money(metrics.collectedThisWeek)} this week`
+                : undefined,
+            deltaTone: "success",
+          },
           {
             label: "To call today",
             value: String(buckets.calls.length),
@@ -160,20 +280,10 @@ export function PaymentsScreen({
             sub: buckets.messages.length ? "payment reminders" : undefined,
           },
           {
-            label: "Promises broken",
-            value: String(broken),
-            tone: broken ? "danger" : "ink",
-            sub: broken ? "call these today" : undefined,
-          },
-          {
             label: "Held (disputed)",
             value: String(held),
             tone: held ? "danger" : "ink",
             sub: held ? "not escalating" : undefined,
-          },
-          {
-            label: "Average per customer",
-            value: money(visible.length ? Math.round(total / visible.length) : 0),
           },
         ]}
       />
@@ -295,10 +405,11 @@ export function PaymentsScreen({
               label: "Message today",
               count: buckets.messages.length,
             },
-            { key: "all", label: "All", count: buckets.all.length },
-            { key: "chase", label: "To chase", count: buckets.chase.length },
+            { key: "all", label: "All customers", count: buckets.all.length },
+            { key: "stage1", label: "Stage 1 · WhatsApp nudge", count: buckets.stage1.length },
+            { key: "stage2", label: "Stage 2 · WhatsApp and calls", count: buckets.stage2.length },
+            { key: "stage3", label: "Stage 3 · Urgent", count: buckets.stage3.length },
             { key: "promised", label: "Promised", count: buckets.promised.length },
-            { key: "escalate", label: "Escalate", count: buckets.escalate.length },
           ]}
         />
 
@@ -307,7 +418,8 @@ export function PaymentsScreen({
             {visible.map((r) => (
               <div
                 key={r.customerId}
-                className="flex items-center gap-4 border-b border-divider px-5 py-3.5 last:border-0 hover:bg-canvas"
+                onClick={() => setOpenAt(visible.indexOf(r))}
+                className="flex cursor-pointer items-center gap-4 border-b border-divider px-5 py-3.5 last:border-0 hover:bg-canvas"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-2.5">
@@ -359,33 +471,39 @@ export function PaymentsScreen({
                   </div>
                 </div>
 
-                <div className="flex flex-none items-center gap-2">
+                <div
+                  className="flex flex-none items-center gap-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <Button
                     size="sm"
                     variant={r.promiseBroken || r.stage === 3 ? "danger" : "primary"}
                     disabled={r.held}
                     title={r.held ? (r.heldReason ?? "Held while the dispute is open") : undefined}
-                    onClick={() =>
-                      // Stage 1 is WhatsApp-only. The engine rejects a stage-1
-                      // call attempt, so the button must not offer one.
-                      r.nextChannel === "whatsapp"
-                        ? router.push(`/crm/whatsapp?customer=${r.customerId}`)
-                        : setPromising(r)
-                    }
+                    // Stage 1 is WhatsApp-only, so that stage opens on the
+                    // message; everything else opens on the log. Either way the
+                    // work happens here rather than on another screen.
+                    onClick={() => setOpenAt(visible.indexOf(r))}
                   >
-                    {r.nextChannel === "whatsapp" ? "Send reminder" : "Record promise"}
+                    {r.nextChannel === "whatsapp" ? "Send reminder" : "Log follow-up"}
                   </Button>
                   <RowMenu
                     items={[
                       {
-                        label: "Record a payment",
+                        label: "Open follow-up",
+                        onSelect: () => setOpenAt(visible.indexOf(r)),
+                      },
+                      {
+                        label: "Record a payment against a bill",
                         onSelect: () => setPaying(r),
                         disabled: !r.openBills.length,
                         title: r.openBills.length ? undefined : "No open bills",
                       },
                       {
-                        label: "Send WhatsApp reminder",
-                        onSelect: () => router.push(`/crm/whatsapp?customer=${r.customerId}`),
+                        label: "Record a promise",
+                        onSelect: () => setPromising(r),
+                        disabled: r.held,
+                        title: r.held ? (r.heldReason ?? undefined) : undefined,
                       },
                       {
                         label: "See their bills",
@@ -411,6 +529,39 @@ export function PaymentsScreen({
           />
         )}
       </Card>
+
+      <PaymentPanel
+        target={
+          openAt === null || !visible[openAt]
+            ? null
+            : {
+                customerId: visible[openAt].customerId,
+                index: openAt,
+                total: visible.length,
+              }
+        }
+        outcomes={outcomes}
+        onClose={() => setOpenAt(null)}
+        onMove={(delta) =>
+          setOpenAt((at) =>
+            at === null ? null : Math.min(visible.length - 1, Math.max(0, at + delta)),
+          )
+        }
+        onSaved={() => {
+          setOpenAt(null);
+          router.refresh();
+        }}
+        onRefresh={() => router.refresh()}
+        onSavedNext={() => {
+          // The row just worked usually leaves the list on the next load, so
+          // staying put lands on the following customer rather than skipping
+          // one. At the end of the list, close.
+          setOpenAt((at) =>
+            at === null ? null : at >= visible.length - 1 ? null : at + 1,
+          );
+          router.refresh();
+        }}
+      />
 
       <PromiseModal
         row={promising}

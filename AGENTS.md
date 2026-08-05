@@ -204,6 +204,24 @@ from the customer's standing term, then from the configured default — so an
 order agreed on 45 days never quietly becomes 30 because nobody typed a date
 onto the bill.
 
+**A collections call is logged in one place, and it is one transaction.** The
+follow-up panel opens over the worklist and never navigates away — a
+telecaller working a list of twelve should not lose their place to look at a
+bill. One outcome can produce a promise, its reminder, a payment spread over
+the oldest bills first, a billing complaint and a raised stage floor; a
+half-saved one leaves the account describing something that never happened.
+The seven outcomes and what each requires are declared once, in
+`lib/services/payment-followup-service.ts`, and the screen reads that list —
+so the form and the action cannot disagree about which fields are mandatory.
+
+**The stage is derived, but it has a floor.** A customer who refuses to commit
+or cannot be reached has told you something their bill dates have not, so that
+outcome raises `manualStageFloor`. `recomputeFollowUpState` takes the higher of
+the derived stage and the floor: the stage still rises with the age of the
+debt, and never reads below what the refusal earned. The floor leaves with the
+row when nothing is overdue, because it described a debt that no longer exists.
+A floor a recompute erases is not a floor, and there is a test saying so.
+
 **A late bill is messaged before it is called.** For the quiet window — 15 days
 past the due date — the customer gets a reminder message every four days and no
 call at all, because a bill a few days late is usually paperwork rather than

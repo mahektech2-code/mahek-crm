@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -22,7 +22,12 @@ import {
   type FollowUpHeldBack,
 } from "../engines/payment-followup";
 import { recomputeFollowUpState, recomputeOutstanding, recomputeBillStatuses, today } from "../recompute";
-import { addDays, daysBetween, onOrAfterWorkingDay } from "../business-date";
+import {
+  addDays,
+  daysBetween,
+  daysInMonth,
+  onOrAfterWorkingDay,
+} from "../business-date";
 import { err, ok, type Result } from "../result";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -533,5 +538,192 @@ export async function agingSummary() {
   return {
     total: rows.reduce((a, r) => a + r.balance, 0),
     buckets: [...buckets.entries()].map(([label, amount]) => ({ label, amount })),
+  };
+}
+
+/* --------------------------------------------------------- collections figures */
+
+export type CollectionsMetrics = {
+  /** Open balance across the book, and how many customers carry it. */
+  outstanding: number;
+  outstandingCustomers: number;
+  /** How the open balance moved over the last seven days: new bills less payments. */
+  outstandingChange: number;
+  /** The urgent stage, and the threshold that defines it. */
+  urgent: number;
+  urgentCustomers: number;
+  urgentThresholdDays: number;
+  /** Dated promises that have not yet come due. */
+  promisedOpen: number;
+  promisedCount: number;
+  /** Promises whose date fell in the last 30 days, and how many were met. */
+  promisesKeptPercent: number | null;
+  promisesJudged: number;
+  /** The same figure for the 30 days before, so the trend is real and not a guess. */
+  promisesKeptPreviousPercent: number | null;
+  /** Money in this month, against what fell due in it. */
+  collectedThisMonth: number;
+  dueThisMonth: number;
+  collectedThisWeek: number;
+};
+
+/**
+ * The figures across the top of the payment screen. Every one is derived from
+ * bills, payments and recorded promises — there is no stored collections
+ * summary to drift out of date.
+ *
+ * Scope-aware, like every other read here: a telecaller sees their own book.
+ */
+export async function collectionsMetrics(): Promise<CollectionsMetrics> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const config = await getConfig();
+  const day = await today();
+
+  const weekAgo = addDays(day, -7);
+  const monthStart = `${day.slice(0, 7)}-01`;
+  // addMonths works on month keys, not dates — the last day comes from the
+  // month's own length.
+  const monthEnd = `${day.slice(0, 8)}${String(daysInMonth(day)).padStart(2, "0")}`;
+
+  const inScope = (ownerId: string | null) =>
+    !ids || (ownerId !== null && ids.includes(ownerId));
+
+  /* ---- bills: the open balance, and what falls due this month ---- */
+
+  const billRows = await db
+    .select({
+      customerId: bills.customerId,
+      ownerId: customers.ownerId,
+      billDate: bills.billDate,
+      dueDate: bills.dueDate,
+      creditDays: billCreditDaysSql,
+      amount: bills.amount,
+      paid: bills.paidAmount,
+      disputed: bills.disputed,
+      billNo: bills.billNo,
+      id: bills.id,
+    })
+    .from(bills)
+    .innerJoin(customers, eq(customers.id, bills.customerId));
+
+  const mine = billRows.filter((b) => inScope(b.ownerId));
+
+  let outstanding = 0;
+  let dueThisMonth = 0;
+  let raisedThisWeek = 0;
+  const owing = new Set<string>();
+
+  for (const b of mine) {
+    const balance = b.amount - b.paid;
+    if (balance > 0) {
+      outstanding += balance;
+      owing.add(b.customerId);
+    }
+    const due = effectiveDueDate(
+      {
+        id: b.id,
+        billNo: b.billNo,
+        billDate: b.billDate,
+        dueDate: b.dueDate,
+        creditDays: b.creditDays === null ? null : Number(b.creditDays),
+        amount: b.amount,
+        paid: b.paid,
+        disputed: b.disputed,
+      },
+      config,
+    );
+    if (due >= monthStart && due <= monthEnd) dueThisMonth += b.amount;
+    if (b.billDate > weekAgo) raisedThisWeek += b.amount;
+  }
+
+  /* ---- payments: what came in ---- */
+
+  const paymentRows = await db
+    .select({
+      customerId: payments.customerId,
+      ownerId: customers.ownerId,
+      amount: payments.amount,
+      paidAt: payments.paidAt,
+    })
+    .from(payments)
+    .innerJoin(customers, eq(customers.id, payments.customerId));
+
+  const minePayments = paymentRows.filter((p) => inScope(p.ownerId));
+  const collectedThisMonth = minePayments
+    .filter((p) => p.paidAt >= monthStart && p.paidAt <= day)
+    .reduce((sum, p) => sum + p.amount, 0);
+  const collectedThisWeek = minePayments
+    .filter((p) => p.paidAt > weekAgo)
+    .reduce((sum, p) => sum + p.amount, 0);
+
+  /* ---- the urgent stage ---- */
+
+  const stateRows = await db
+    .select({ state: followUpStates, ownerId: customers.ownerId })
+    .from(followUpStates)
+    .innerJoin(customers, eq(customers.id, followUpStates.customerId));
+  const urgentRows = stateRows.filter((r) => inScope(r.ownerId) && r.state.stage === 3);
+
+  /* ---- promises: what is open, and what was kept ---- */
+
+  const promiseRows = await db
+    .select({
+      customerId: followUpAttempts.customerId,
+      ownerId: customers.ownerId,
+      amount: followUpAttempts.promisedAmount,
+      date: followUpAttempts.promisedDate,
+      at: followUpAttempts.attemptedAt,
+    })
+    .from(followUpAttempts)
+    .innerJoin(customers, eq(customers.id, followUpAttempts.customerId))
+    .where(and(isNotNull(followUpAttempts.promisedDate), isNotNull(followUpAttempts.promisedAmount)));
+
+  const promises = promiseRows
+    .filter((p) => inScope(p.ownerId))
+    .map((p) => ({
+      customerId: p.customerId,
+      amount: Number(p.amount),
+      date: p.date!,
+      madeOn: p.at.toISOString().slice(0, 10),
+    }));
+
+  const open = promises.filter((p) => p.date >= day);
+
+  // A promise was kept when at least the promised amount reached us between
+  // the day it was made and the day it was for. Judged only once the date has
+  // passed — an open promise is neither kept nor broken yet.
+  const keptRate = (from: string, to: string): { percent: number | null; judged: number } => {
+    const judged = promises.filter((p) => p.date >= from && p.date < to);
+    if (!judged.length) return { percent: null, judged: 0 };
+    const kept = judged.filter((p) => {
+      const paid = minePayments
+        .filter(
+          (q) => q.customerId === p.customerId && q.paidAt >= p.madeOn && q.paidAt <= p.date,
+        )
+        .reduce((sum, q) => sum + q.amount, 0);
+      return paid >= p.amount;
+    }).length;
+    return { percent: Math.round((kept / judged.length) * 100), judged: judged.length };
+  };
+
+  const last30 = keptRate(addDays(day, -30), day);
+  const previous30 = keptRate(addDays(day, -60), addDays(day, -30));
+
+  return {
+    outstanding,
+    outstandingCustomers: owing.size,
+    outstandingChange: raisedThisWeek - collectedThisWeek,
+    urgent: urgentRows.reduce((sum, r) => sum + r.state.totalOverdue, 0),
+    urgentCustomers: urgentRows.length,
+    urgentThresholdDays: config["escalation.stage3Days"],
+    promisedOpen: open.reduce((sum, p) => sum + p.amount, 0),
+    promisedCount: open.length,
+    promisesKeptPercent: last30.percent,
+    promisesJudged: last30.judged,
+    promisesKeptPreviousPercent: previous30.percent,
+    collectedThisMonth,
+    dueThisMonth,
+    collectedThisWeek,
   };
 }

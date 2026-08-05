@@ -194,9 +194,11 @@ export async function recomputeFollowUpState(customerId: string): Promise<void> 
     day,
     config,
     (existing?.stage as 1 | 2 | 3 | undefined) ?? null,
+    (existing?.manualStageFloor as 1 | 2 | 3 | null | undefined) ?? null,
   );
 
-  // Nothing overdue: the customer leaves the worklist entirely.
+  // Nothing overdue: the customer leaves the worklist entirely, and the hand-
+  // raised floor goes with the row — it described a debt that no longer exists.
   if (!state) {
     if (existing) {
       await db.delete(followUpStates).where(eq(followUpStates.customerId, customerId));

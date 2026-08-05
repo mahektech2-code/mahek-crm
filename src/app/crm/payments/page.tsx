@@ -3,12 +3,17 @@ import { getScope, scopeLabel } from "@/lib/scope";
 import {
   getFollowUpWorklist,
   getPaymentFollowUpPlan,
+  collectionsMetrics,
   listBills,
   agingSummary,
 } from "@/lib/services/payment-service";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/queries";
 import { addDays, daysInMonth, isWorkingDay } from "@/lib/business-date";
+import {
+  PAY_OUTCOMES,
+  stageOneBatch,
+} from "@/lib/services/payment-followup-service";
 import { PaymentsScreen } from "./payments-screen";
 
 export const metadata = { title: "Payment follow-up — MahekOne CRM" };
@@ -17,13 +22,15 @@ export default async function PaymentsPage() {
   const user = await requireUser();
   const scope = await getScope(user);
 
-  const [rows, bills, aging, config, day, plan] = await Promise.all([
+  const [rows, bills, aging, config, day, plan, metrics, batch] = await Promise.all([
     getFollowUpWorklist(),
     listBills(),
     agingSummary(),
     getConfig(),
     today(),
     getPaymentFollowUpPlan(),
+    collectionsMetrics(),
+    stageOneBatch(),
   ]);
 
   // Working days, from configuration — a collections push measured in calendar
@@ -62,6 +69,9 @@ export default async function PaymentsPage() {
       aging={aging}
       workingDaysLeft={workingDaysLeft}
       plan={plan}
+      outcomes={PAY_OUTCOMES}
+      metrics={metrics}
+      batchCount={batch.templateId ? batch.customerIds.length : 0}
       rows={rows.map((r) => ({
         ...r,
         openBills: openBillsByCustomer.get(r.customerId) ?? [],

@@ -691,6 +691,19 @@ export const followUpStates = pgTable(
     /** True while a dispute holds the customer at their current stage. */
     held: boolean("held").notNull().default(false),
     heldReason: text("held_reason"),
+    /**
+     * The stage is derived from how overdue the account is, and rebuilt
+     * nightly — but a customer who refuses to commit has told you something
+     * their bill dates have not. This is the floor a telecaller can raise by
+     * hand: the derived stage still moves, and never drops below this.
+     *
+     * Cleared when nothing is overdue, because the account has left the
+     * worklist and the refusal no longer describes anything.
+     */
+    manualStageFloor: integer("manual_stage_floor"),
+    floorReason: text("floor_reason"),
+    floorSetAt: timestamp("floor_set_at", { withTimezone: true }),
+    floorSetById: text("floor_set_by_id").references(() => users.id),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("follow_up_stage_idx").on(t.stage)],
