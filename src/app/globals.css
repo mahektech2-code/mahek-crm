@@ -19,6 +19,8 @@
 
   --color-brand: #6835fb;
   --color-brand-hover: #5223e0;
+  /* The sign-in and launcher hero panels — the darkest step of the brand. */
+  --color-brand-deep: #3d14a8;
   --color-brand-soft: #f1ecff;
   --color-brand-softer: #ddd2ff;
   --color-brand-lime: #c6ff34;
@@ -152,6 +154,162 @@
     transform: translateY(0);
     opacity: 1;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   The brand-panel motion set. Nothing here carries meaning — it is the ambient
+   life on the deep-purple panels of sign-in and the launcher — so every one of
+   them is switched off wholesale by the reduced-motion rule at the bottom.
+--------------------------------------------------------------------------- */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes drift {
+  0% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(10px, -14px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+@keyframes sweep {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+@keyframes beam {
+  0% {
+    opacity: 0;
+    transform: translate(-60%, -60%) rotate(18deg);
+  }
+  25%,
+  60% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(160%, 160%) rotate(18deg);
+  }
+}
+@keyframes orbit {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes pulse-ring {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+@keyframes mark-pop {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.18);
+  }
+}
+@keyframes underline-in {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.animate-rise {
+  animation: rise 300ms var(--ease-swift) both;
+}
+.animate-slide-in {
+  animation: slide-in 320ms var(--ease-swift) both;
+}
+.animate-slide-in-left {
+  animation: slide-in-left 420ms var(--ease-swift) both;
+}
+.animate-spin-swift {
+  animation: spin 700ms linear infinite;
+}
+.animate-drift {
+  animation: drift 24s ease-in-out infinite;
+}
+.animate-sweep {
+  animation: sweep 6s linear infinite;
+}
+.animate-beam {
+  animation: beam 7s ease-in-out infinite;
+}
+.animate-orbit {
+  animation: orbit 14s linear infinite;
+}
+.animate-pulse-ring {
+  animation: pulse-ring 2.6s var(--ease-swift) infinite;
+}
+.animate-mark-pop {
+  animation: mark-pop 900ms var(--ease-swift) 200ms both;
+}
+.animate-underline-in {
+  animation: underline-in 700ms var(--ease-swift) 700ms both;
+}
+.animate-float {
+  animation: float 4s ease-in-out infinite;
 }
 
 .animate-drawer-in {

@@ -2,13 +2,39 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
 import { getApp, APPS } from "@/lib/apps";
-import { Wordmark } from "@/components/shell/wordmark";
-import { AppChip } from "@/components/shell/app-chip";
+import {
+  BrandPanel,
+  BrandPanelHeading,
+  BrandUnderline,
+} from "@/components/shell/brand-panel";
+import { Icon } from "@/components/shell/icons";
+import { longDate, today } from "@/lib/format";
 import { LoginForm } from "./login-form";
 
 export const metadata = { title: "Sign in — MahekOne" };
 
-export default async function LoginPage() {
+/** Why the suite exists — written for the whole team, not one role. */
+const WHY = [
+  {
+    title: "One record per customer",
+    body: "Whoever picks up the account reads the same history, whichever tool they work in.",
+  },
+  {
+    title: "Nothing chased twice",
+    body: "A message, a promise or a visit logged once is visible to everyone who needs it.",
+  },
+  {
+    title: "The day already ordered",
+    body: "Each tool opens on the work that matters most, so nobody decides where to start.",
+  },
+];
+
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ reset?: string }>;
+}) {
+  const justReset = (await searchParams).reset === "1";
   const user = await getCurrentUser();
   if (user) {
     const apps = await listUserApps(user.id);
@@ -16,45 +42,90 @@ export default async function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-canvas p-6">
-      <div className="animate-fade-in grid w-[840px] max-w-full grid-cols-1 overflow-hidden rounded-[6px] border border-line bg-surface md:grid-cols-[1fr_380px]">
-        <div className="border-divider p-10 md:border-r">
-          <Wordmark size="lg" />
-          <p className="mt-1.5 text-[13px] text-muted">
-            Mahek Marketing India · paint thinners and solvents
-          </p>
-
-          <h1 className="mt-8 text-[28px] leading-[34px] font-semibold text-ink">
-            Sign in
-          </h1>
-          <p className="mt-1 text-sm text-muted">
-            Use the work number or email your manager set up for you.
-          </p>
-
-          <LoginForm />
-        </div>
-
-        <div className="bg-canvas px-8 py-10">
-          <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">
-            What you get access to
-          </div>
-          <p className="mt-2 text-sm leading-[21px] text-body">
-            One sign-in for every Mahek tool. You only see the apps your role
-            uses.
-          </p>
-
-          <div className="mt-5 flex flex-col gap-2.5">
-            {APPS.map((app) => (
-              <div key={app.id} className="flex items-center gap-2.5">
-                <AppChip app={app} />
-                <span className="text-sm text-body">{app.name}</span>
-              </div>
+    <div className="animate-fade-in grid min-h-screen grid-cols-1 md:grid-cols-2">
+      <BrandPanel
+        footer={
+          <div className="flex flex-wrap gap-2">
+            {APPS.map((app, i) => (
+              <span
+                key={app.id}
+                style={{ animationDelay: `${1600 + i * 90}ms` }}
+                className="animate-rise inline-flex h-6.5 items-center rounded-[4px] border border-white/20 px-2.5 text-xs whitespace-nowrap text-white/75"
+              >
+                {app.name}
+              </span>
             ))}
           </div>
+        }
+      >
+        <BrandPanelHeading eyebrow="One workspace">
+          Every tool the Mahek team works in, behind{" "}
+          <BrandUnderline>one sign-in</BrandUnderline>.
+        </BrandPanelHeading>
+        <p className="animate-rise mt-3.5 text-[15px] leading-6 text-balance text-white/70 [animation-delay:80ms]">
+          Calling, collections, orders, dispatch, targets and attendance were
+          separate books and separate WhatsApp threads. MahekOne puts them in one
+          place so a customer&rsquo;s history follows them wherever the work
+          happens.
+        </p>
 
-          <p className="mt-6 border-t border-line pt-4 text-[13px] leading-[19px] text-muted">
-            Signing in records your attendance for the day. Sign out when you
-            finish so your hours are right.
+        <div className="mt-8 flex flex-col gap-3.5">
+          {WHY.map((point, i) => (
+            <div
+              key={point.title}
+              style={{ animationDelay: `${900 + i * 220}ms` }}
+              className="animate-slide-in-left flex items-start gap-3"
+            >
+              <span
+                style={{ animationDelay: `${i * 500}ms` }}
+                className="animate-float mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-[4px] bg-brand-lime/15 text-brand-lime"
+              >
+                <Icon name="tick" size={12} strokeWidth={2.4} />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[15px] font-medium text-white">
+                  {point.title}
+                </span>
+                <span className="mt-0.5 block text-sm leading-[21px] text-white/65">
+                  {point.body}
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </BrandPanel>
+
+      <div className="flex min-w-0 items-center justify-center bg-canvas px-6 py-12">
+        <div className="animate-slide-in w-full max-w-[420px]">
+          <div className="text-[11px] font-medium tracking-[0.04em] text-brand uppercase">
+            {longDate(today())}
+          </div>
+          <h1 className="mt-2.5 text-[26px] leading-[34px] font-semibold text-ink">
+            Welcome back
+          </h1>
+          <p className="mt-1 text-[15px] leading-[23px] text-muted">
+            Sign in to pick up where you left off. Signing in opens your
+            attendance for the day.
+          </p>
+
+          {justReset ? (
+            <div className="mt-4 rounded-[4px] border border-success-soft border-l-[3px] border-l-success bg-success-soft px-3 py-2.5 text-sm text-ink">
+              Your password is set. Sign in with the new one.
+            </div>
+          ) : null}
+
+          <LoginForm />
+
+          <div className="mt-5 flex items-center gap-2.5">
+            <span className="h-px flex-1 bg-line" />
+            <span className="text-xs whitespace-nowrap text-muted">
+              Accounts are created by your manager
+            </span>
+            <span className="h-px flex-1 bg-line" />
+          </div>
+          <p className="mt-3 text-center text-[13px] leading-5 text-muted">
+            You see only the tools your role uses. No account?{" "}
+            <span className="font-medium text-ink">Ask your manager.</span>
           </p>
         </div>
       </div>
