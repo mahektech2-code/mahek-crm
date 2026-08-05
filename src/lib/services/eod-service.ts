@@ -108,7 +108,7 @@ export async function eodMetricsFor(
         and m.status in ('sent_manually','sent','delivered','read')
         and coalesce(m.confirmed_sent_at, m.sent_at) >= ${w.start}::timestamptz
         and coalesce(m.confirmed_sent_at, m.sent_at) <  ${w.end}::timestamptz)::int as whatsapp_sent,
-      (select count(*) from customers cu where cu.owner_id = ${userId} and cu.status = 'active')::int as queue_served,
+      (select count(*) from customers cu where cu.owner_id = ${userId} and cu.status <> 'deactivated')::int as queue_served,
       (select coalesce(sum(t.target_amount),0) from monthly_targets t
         join customers cu on cu.id = t.customer_id
         where cu.owner_id = ${userId} and t.year = ${year} and t.month = ${month}) as target_amount,

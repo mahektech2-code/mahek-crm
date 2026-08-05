@@ -62,7 +62,14 @@ type Row = {
   deactivationRequested: boolean;
 };
 
-const STATUSES = ["All statuses", "Active", "Slow payer", "Inactive", "New"];
+const STATUSES = [
+  "All statuses",
+  "Active",
+  "Slow payer",
+  "Inactive",
+  "New",
+  "Deactivated",
+];
 
 export function CustomersScreen({
   scopeLabel,

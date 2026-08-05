@@ -14,7 +14,7 @@ import { getConfig } from "@/lib/config/store";
 import { listActiveProducts } from "@/db/seed-catalogue";
 import { quickNotes as quickNotesTable } from "@/db/schema";
 import { listTargets } from "@/lib/services/worklist-services";
-import { daysBetween } from "@/lib/format";
+import { customerStatusLabel, daysBetween } from "@/lib/format";
 import { RecordScreen } from "./record-screen";
 
 export async function generateMetadata({
@@ -104,7 +104,7 @@ export default async function CustomerRecordPage({
         createdAt: customer.createdAt.toISOString().slice(0, 10),
         salesAmName: customer.salesAmName,
         backOfficeAmName: customer.backOfficeAmName,
-        status: customer.status,
+        status: customerStatusLabel(customer),
         slowPayer: customer.slowPayer,
         outstanding: customer.outstanding,
         lastOrderDate: customer.lastOrderDate,

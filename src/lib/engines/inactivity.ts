@@ -9,6 +9,10 @@ import type { Config } from "../config/registry";
  * times the multiplier — never a global number of days. A 15-day-cycle
  * customer flags at 30; a 90-day-cycle customer at 180.
  *
+ * Crossing it marks the customer inactive: `customers.status` is written from
+ * this result rather than typed by anybody, and an order writes it back to
+ * active. Deactivation stays a human decision and is never touched here.
+ *
  * Pure.
  * ------------------------------------------------------------------------- */
 
@@ -75,7 +79,11 @@ export function evaluateInactivity(
     );
   }
 
-  if (customer.status !== "active") {
+  // Only a deactivated customer is out of scope. An *inactive* one must still
+  // evaluate as inactive: the status is this engine's own output, written back
+  // by recomputeInactivity(), so treating it as a reason to skip would make
+  // every flag erase itself on the following night.
+  if (customer.status === "deactivated") {
     return NOT_INACTIVE(
       `Customer is ${customer.status}`,
       customer.cycleDays,

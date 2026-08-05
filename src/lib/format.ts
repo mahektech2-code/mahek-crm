@@ -212,6 +212,26 @@ export function phoneDisplay(phone: string): string {
   return `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
 }
 
+/**
+ * The status badge on the customer screens. The stored status is one lower-case
+ * word and says nothing about slow payment or a customer who has not started
+ * yet, so the label the screens were written against is derived here — in one
+ * place, so the list and the record cannot disagree.
+ */
+export function customerStatusLabel(customer: {
+  status: string;
+  slowPayer?: boolean;
+  lastOrderDate?: string | null;
+}): "Active" | "Inactive" | "Deactivated" | "Slow payer" | "New" {
+  if (customer.status === "deactivated") return "Deactivated";
+  // Inactive outranks slow payer: it is the one that says stop and think. The
+  // record screen still shows the slow-payer badge beside it.
+  if (customer.status === "inactive") return "Inactive";
+  if (!customer.lastOrderDate) return "New";
+  if (customer.slowPayer) return "Slow payer";
+  return "Active";
+}
+
 export function ageLabel(days: number): string {
   if (days <= 0) return "today";
   if (days === 1) return "1 day";

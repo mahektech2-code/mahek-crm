@@ -347,9 +347,30 @@ export async function recomputeInactivity(): Promise<number> {
           valueAtRisk: result.valueAtRisk,
         });
       }
-    } else if (existing) {
-      // An incoming order clears the flag automatically, with no manual action.
-      await db.delete(inactiveWatchItems).where(eq(inactiveWatchItems.customerId, c.id));
+      // The status is the flag, not a second opinion on it: crossing twice the
+      // cycle marks the customer inactive without anybody typing it.
+      if (c.status === "active") {
+        await db
+          .update(customers)
+          .set({ status: "inactive", updatedAt: new Date() })
+          .where(eq(customers.id, c.id));
+      }
+    } else {
+      if (existing) {
+        // An incoming order clears the flag automatically, with no manual action.
+        await db
+          .delete(inactiveWatchItems)
+          .where(eq(inactiveWatchItems.customerId, c.id));
+      }
+      // …and puts the customer back to active. Only "inactive" is reversed:
+      // deactivation was a decision somebody made, and an order does not undo
+      // it. A telecaller who wants them back asks for that separately.
+      if (c.status === "inactive") {
+        await db
+          .update(customers)
+          .set({ status: "active", updatedAt: new Date() })
+          .where(eq(customers.id, c.id));
+      }
     }
   }
 
