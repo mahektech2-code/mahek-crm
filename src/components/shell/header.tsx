@@ -5,12 +5,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "./icons";
 import { GlobalSearch } from "./global-search";
+import { AppSwitcher } from "./app-switcher";
 import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { setDensity, setScope, markNotificationsRead, markNotificationRead } from "@/lib/actions/crm";
 import { signOut } from "@/lib/actions/auth";
 import { stamp } from "@/lib/format";
 import type { Notification, User } from "@/db/schema";
+import type { AppDefinition } from "@/lib/apps";
 
 const SHORTCUTS = [
   { what: "Focus global search", key: "/" },
@@ -27,7 +29,7 @@ export function Header({
   scope,
   density,
   notifications,
-  appCount,
+  apps,
   onToggleSidebar,
 }: {
   user: User;
@@ -35,8 +37,8 @@ export function Header({
   scope: "mine" | "team";
   density: "comfortable" | "compact";
   notifications: Notification[];
-  /** More than one app means the switcher is worth showing. */
-  appCount: number;
+  /** Every app this account opens — the switcher lists them. */
+  apps: AppDefinition[];
   onToggleSidebar: () => void;
 }) {
   const router = useRouter();
@@ -84,16 +86,7 @@ export function Header({
   return (
     <header className="z-30 flex h-14 flex-none items-center gap-5 border-b border-line bg-surface px-4">
       <div className="flex w-[216px] flex-none items-center gap-2">
-        {appCount > 1 ? (
-          <Link
-            href="/apps"
-            title="Switch app"
-            aria-label="Switch app"
-            className="flex h-8 w-8 flex-none items-center justify-center rounded-[4px] border border-line bg-surface text-muted no-underline hover:bg-canvas hover:text-body hover:no-underline"
-          >
-            <Icon name="grid" size={16} />
-          </Link>
-        ) : null}
+        {apps.length > 1 ? <AppSwitcher apps={apps} current="crm" /> : null}
         <button
           onClick={onToggleSidebar}
           title="Collapse sidebar"

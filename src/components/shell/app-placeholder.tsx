@@ -2,9 +2,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
-import { getApp, wordmark, type AppId } from "@/lib/apps";
+import { APPS, getApp, wordmark, type AppId } from "@/lib/apps";
 import { Wordmark } from "./wordmark";
-import { Icon } from "./icons";
+import { AppSwitcher } from "./app-switcher";
 import { SignOutButton } from "./sign-out-button";
 
 /**
@@ -25,14 +25,10 @@ export async function AppPlaceholder({ app: appId }: { app: AppId }) {
     <div className="animate-fade-in flex min-h-screen flex-col bg-canvas">
       <header className="flex h-14 flex-none items-center gap-3 border-b border-line bg-surface px-4">
         {multi ? (
-          <Link
-            href="/apps"
-            title="Switch app"
-            aria-label="Switch app"
-            className="flex h-8 w-8 flex-none items-center justify-center rounded-[4px] border border-line bg-surface text-muted no-underline hover:bg-canvas hover:text-body hover:no-underline"
-          >
-            <Icon name="grid" size={16} />
-          </Link>
+          <AppSwitcher
+            apps={APPS.filter((a) => apps.includes(a.id))}
+            current={appId}
+          />
         ) : null}
         <Wordmark label={wordmark(app)} />
         <span className="flex-1" />
@@ -58,7 +54,7 @@ export async function AppPlaceholder({ app: appId }: { app: AppId }) {
                 href="/apps"
                 className="flex h-9 items-center rounded-[4px] border border-line-strong bg-surface px-4 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
               >
-                Switch app
+                All apps
               </Link>
             ) : (
               <SignOutButton />

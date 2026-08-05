@@ -5,6 +5,7 @@ import { Header } from "./header";
 import { Sidebar } from "./sidebar";
 import { ToastProvider } from "@/components/ui/toast";
 import type { Notification, User } from "@/db/schema";
+import type { AppDefinition } from "@/lib/apps";
 
 export function AppShell({
   user,
@@ -13,7 +14,7 @@ export function AppShell({
   density,
   notifications,
   badges,
-  appCount,
+  apps,
   children,
 }: {
   user: User;
@@ -22,7 +23,7 @@ export function AppShell({
   density: "comfortable" | "compact";
   notifications: Notification[];
   badges: { reminders: number; complaints: number };
-  appCount: number;
+  apps: AppDefinition[];
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = React.useState(false);
@@ -42,7 +43,7 @@ export function AppShell({
           scope={scope}
           density={density}
           notifications={notifications}
-          appCount={appCount}
+          apps={apps}
           onToggleSidebar={() => setCollapsed((c) => !c)}
         />
         <div className="flex min-h-0 flex-1">

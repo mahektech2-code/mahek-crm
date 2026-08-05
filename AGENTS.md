@@ -74,13 +74,23 @@ somebody who was never given it.
 second sign-in the same day reopens the same row, so a lunch break does not read
 as two shifts.
 
+**A forgotten password is the person's own problem to solve.** `/login/forgot`
+mails a link to the work email on the account; `/login/reset` spends it. Only
+the SHA-256 of the token is stored, it works once, it expires in 30 minutes,
+asking for a new one kills the old one, and using it deletes every session that
+account had. The reply is the same whether or not the address has an account —
+this form is not a staff directory. Without `RESEND_API_KEY` and `MAIL_FROM`
+the mail is written to the server log rather than sent, and the screen says so
+rather than claiming it went.
+
 ## Layout
 
 ```
 src/
   app/
     login/                 the global sign-in
-    apps/                  the launcher
+      forgot/  reset/      ask for a reset link, and spend it
+    apps/                  the launcher, 1–9 opens an app
     field/ orders/         placeholder shells for apps not built yet
     people/ reports/ admin/
     crm/                   the CRM — header, sidebar, toasts
@@ -96,7 +106,7 @@ src/
   components/
     ui/                    primitives + overlays + toasts
     shell/                 header, sidebar, icons, search, wordmark,
-                           app chip, app placeholder
+                           app chip, app placeholder, brand panel
     crm/call-panel.tsx     the call drawer, used by four screens
   db/                      schema, client, seed
   lib/
@@ -110,6 +120,8 @@ src/
     access-control.ts      scope resolution + capabilities (§8)
     recompute.ts           the rebuild path for every cached derived value
     business-date.ts       Asia/Kolkata, configurable day boundary
+    password-reset.ts      reset tokens: minted, hashed, read back
+    mailer.ts              the one place mail leaves MahekOne
     jobs.ts                scheduled work, idempotent and hand-triggerable
     result.ts              the Result type every action returns
     queries.ts             every scope-aware read
