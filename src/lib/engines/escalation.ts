@@ -47,6 +47,8 @@ export type EscalationState = {
   /** True when a dispute is holding the customer at their current stage. */
   held: boolean;
   heldReason: string | null;
+  /** True when the stage is the hand-raised floor rather than the account's age. */
+  floored: boolean;
 };
 
 export type EscalationConfig = Pick<
@@ -85,6 +87,12 @@ export function escalationStage(
   config: EscalationConfig,
   /** The stage the customer already sits at, so a dispute can hold it there. */
   currentStage: 1 | 2 | 3 | null = null,
+  /**
+   * Raised by hand when a customer refuses to commit or cannot be reached.
+   * The derived stage still moves with the account's age; it simply never
+   * reads below this.
+   */
+  manualFloor: 1 | 2 | 3 | null = null,
 ): EscalationState | null {
   const overdue = bills
     .map((b) => ({ bill: b, due: effectiveDueDate(b, config), balance: b.amount - b.paid }))
@@ -111,7 +119,13 @@ export function escalationStage(
 
   const disputed = overdue.some((x) => x.bill.disputed);
   const holding = disputed && config["escalation.disputeHoldsEscalation"];
-  const stage = holding ? (currentStage ?? naturalStage) : naturalStage;
+  const beforeFloor = holding ? (currentStage ?? naturalStage) : naturalStage;
+
+  // The floor raises, never lowers. An account that has aged past the floor is
+  // driven by its age again, and the floor stops mattering.
+  const stage = (manualFloor && manualFloor > beforeFloor
+    ? manualFloor
+    : beforeFloor) as 1 | 2 | 3;
 
   return {
     stage,
@@ -124,6 +138,7 @@ export function escalationStage(
     nextChannel: prescribeChannel(stage, lastAttempt),
     held: holding,
     heldReason: holding ? "An overdue bill is disputed — held at the current stage" : null,
+    floored: stage > beforeFloor,
   };
 }
 

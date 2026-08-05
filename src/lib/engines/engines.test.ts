@@ -1386,3 +1386,42 @@ describe("E7 payment follow-up cadence", () => {
     );
   });
 });
+
+/* ============================================ E3 manual stage floor */
+
+describe("E3 the hand-raised stage floor", () => {
+  const overdue = (days: number) => [bill({ dueDate: addDays(TODAY, -days) })];
+
+  test("a floor raises a young account to the stage a refusal earned it", () => {
+    // Ten days overdue is stage 1 on age alone.
+    assert.equal(escalationStage(overdue(10), null, TODAY, C)!.stage, 1);
+
+    const floored = escalationStage(overdue(10), null, TODAY, C, null, 2)!;
+    assert.equal(floored.stage, 2);
+    assert.equal(floored.floored, true, "the screen must be able to say why");
+  });
+
+  test("a floor never lowers a stage the account has aged into", () => {
+    // Fifty days overdue is stage 3; a floor of 2 must not pull it back.
+    const aged = escalationStage(overdue(50), null, TODAY, C, null, 2)!;
+    assert.equal(aged.stage, 3);
+    assert.equal(aged.floored, false, "age drove this, not the floor");
+  });
+
+  test("a floor changes what may be logged, not just what is shown", () => {
+    // The point of raising it: stage 1 refuses a call, stage 2 allows one.
+    const floored = escalationStage(overdue(3), null, TODAY, C, null, 2)!;
+    assert.equal(isAttemptAllowed(floored.stage, "call").allowed, true);
+    assert.equal(isAttemptAllowed(1, "call").allowed, false);
+  });
+
+  test("no floor leaves the derived stage exactly as it was", () => {
+    for (const days of [3, 10, 16, 30, 45, 90]) {
+      assert.equal(
+        escalationStage(overdue(days), null, TODAY, C, null, null)!.stage,
+        escalationStage(overdue(days), null, TODAY, C)!.stage,
+        `${days} days must be unaffected`,
+      );
+    }
+  });
+});

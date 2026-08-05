@@ -31,6 +31,10 @@ import {
   recordPayment as recordPaymentService,
 } from "@/lib/services/payment-service";
 import {
+  logPaymentFollowUp,
+  stageOneBatch,
+} from "@/lib/services/payment-followup-service";
+import {
   carryForward,
   changeComplaintStatus,
   completeReminder as completeReminderService,
@@ -391,6 +395,74 @@ export async function recordPayment(input: {
 }
 
 /** Stage-1 enforcement lives in the service; this surfaces its refusal. */
+export async function logPaymentFollowUpAction(input: {
+  customerId: string;
+  outcome:
+    | "promised"
+    | "part"
+    | "paid"
+    | "callback"
+    | "dispute"
+    | "refused"
+    | "noanswer";
+  amount?: number;
+  date?: string;
+  notes?: string;
+  chips?: string[];
+  idempotencyKey: string;
+}): Promise<Result<{ produced: string[]; cleared: boolean }>> {
+  try {
+    const r = await logPaymentFollowUp({ ...input, chips: input.chips ?? [] });
+    if (!r.ok) return r;
+    refreshAll();
+    return ok(
+      { produced: r.data.produced, cleared: r.data.cleared },
+      r.message,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Start the stage 1 reminder run. Manager-only, checked here rather than only
+ * disabled in the interface, and it reuses the ordinary WhatsApp run — a batch
+ * still goes out one confirmed message at a time.
+ */
+export async function startStageOneBatch(): Promise<
+  Result<{ runId: string; total: number }>
+> {
+  try {
+    await requireCapability("whatsapp.bulk");
+    const batch = await stageOneBatch();
+    if (!batch.templateId) {
+      return err(
+        "There is no active stage 1 payment reminder template. Write one on the WhatsApp screen first.",
+        "rule_violation",
+      );
+    }
+    if (!batch.customerIds.length) {
+      return err(
+        "Nobody at stage 1 is due a reminder today. The four-day interval is counted from the last one actually sent.",
+        "rule_violation",
+      );
+    }
+    const run = await createRun({
+      templateId: batch.templateId,
+      customerIds: batch.customerIds,
+      filterKey: "payment_stage_1",
+    });
+    if (!run.ok) return run;
+    refreshAll();
+    return ok(
+      { runId: run.data.runId, total: run.data.total },
+      `Stage 1 reminder queued for ${run.data.total} customer${run.data.total === 1 ? "" : "s"}`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 export async function recordFollowUp(input: {
   customerId: string;
   channel: "whatsapp" | "call";

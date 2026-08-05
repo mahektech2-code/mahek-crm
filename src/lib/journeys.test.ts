@@ -23,6 +23,7 @@ import {
   complaints,
   complaintStatusHistory,
   customers,
+  followUpAttempts,
   followUpStates,
   monthlyTargets,
   orders,
@@ -56,11 +57,17 @@ import {
   interactionProductLines,
 } from "@/db/schema";
 import {
+  collectionsMetrics,
   getFollowUpWorklist,
   getPaymentFollowUpPlan,
   recordFollowUpAttempt,
   recordPayment,
 } from "@/lib/services/payment-service";
+import {
+  logPaymentFollowUp,
+  stageOneBatch,
+} from "@/lib/services/payment-followup-service";
+import { startStageOneBatch } from "@/lib/actions/crm";
 import {
   createReminder,
   completeReminder,
@@ -1818,5 +1825,386 @@ describe("The payment follow-up cycle — term, quiet window, messages, calls", 
       plan.heldBack.some((h) => h.customerId === customer.id),
       false,
     );
+  });
+});
+
+/* ----------------------------------- journey: logging a collections call */
+
+describe("Logging a collections call — one outcome, one transaction", () => {
+  async function onTheWorklist(daysOverdue: number) {
+    const customer = await makeCustomer(priya.id);
+    await db.insert(bills).values({
+      id: id("bil"),
+      customerId: customer.id,
+      billNo: `MMI/${randomUUID().slice(0, 6)}`,
+      billDate: addDays(TODAY, -daysOverdue - 30),
+      dueDate: addDays(TODAY, -daysOverdue),
+      amount: 1_00_000_00,
+      paidAmount: 0,
+    });
+    await recomputeBillStatuses();
+    await recomputeOutstanding(customer.id);
+    await recomputeFollowUpState(customer.id);
+    return customer;
+  }
+
+  const stateOf = async (customerId: string) =>
+    (
+      await db
+        .select()
+        .from(followUpStates)
+        .where(eq(followUpStates.customerId, customerId))
+    )[0];
+
+  test("a promise creates the promise and the reminder that chases it", async () => {
+    const customer = await onTheWorklist(30);
+
+    const saved = await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "promised",
+      amount: 50_000,
+      date: addDays(TODAY, 3),
+      notes: "Cheque ready",
+      chips: ["Cheque ready"],
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
+    assert.ok(saved.data.produced.includes("reminder"));
+
+    const [rem] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.customerId, customer.id));
+    assert.ok(rem, "a promise nobody chases is just a note");
+    assert.equal(rem.type, "payment_promise");
+    assert.ok(rem.dueDate > addDays(TODAY, 3), "chased the day after, or later");
+  });
+
+  test("an amount is required where the outcome needs one, and it says which field", async () => {
+    const customer = await onTheWorklist(30);
+    const refused = await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "promised",
+      date: addDays(TODAY, 3),
+      chips: [],
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.fieldErrors?.[0].field, "amount");
+  });
+
+  test("Already paid clears the bills, the outstanding and the worklist row together", async () => {
+    const customer = await onTheWorklist(30);
+
+    const saved = await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "paid",
+      amount: 1_00_000,
+      chips: [],
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
+    assert.equal(saved.data.cleared, true, "paying in full leaves the worklist");
+
+    const [bill] = await db.select().from(bills).where(eq(bills.customerId, customer.id));
+    assert.equal(bill.paidAmount, 1_00_000_00);
+    assert.equal(bill.status, "paid");
+
+    const [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(row.outstanding, 0, "outstanding is derived, and it was rebuilt");
+    assert.equal(await stateOf(customer.id), undefined);
+  });
+
+  test("a part payment is applied to the oldest bill first", async () => {
+    const customer = await makeCustomer(priya.id);
+    for (const [no, days] of [["OLD", 60], ["NEW", 20]] as const) {
+      await db.insert(bills).values({
+        id: `bil_${no}_${randomUUID().slice(0, 6)}`,
+        customerId: customer.id,
+        billNo: `MMI/${no}/${randomUUID().slice(0, 4)}`,
+        billDate: addDays(TODAY, -days - 30),
+        dueDate: addDays(TODAY, -days),
+        amount: 50_000_00,
+        paidAmount: 0,
+      });
+    }
+    await recomputeBillStatuses();
+    await recomputeOutstanding(customer.id);
+    await recomputeFollowUpState(customer.id);
+
+    await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "paid",
+      amount: 50_000,
+      chips: [],
+      idempotencyKey: randomUUID(),
+    });
+
+    const rows = await db.select().from(bills).where(eq(bills.customerId, customer.id));
+    const oldest = rows.find((b) => b.billNo.includes("OLD"))!;
+    const newest = rows.find((b) => b.billNo.includes("NEW"))!;
+    assert.equal(oldest.paidAmount, 50_000_00, "the oldest debt is cleared first");
+    assert.equal(newest.paidAmount, 0);
+  });
+
+  test("a dispute raises a billing complaint and holds the account", async () => {
+    const customer = await onTheWorklist(30);
+
+    const saved = await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "dispute",
+      notes: "Rate charged is wrong",
+      chips: ["Rate charged is wrong"],
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
+
+    const [complaint] = await db
+      .select()
+      .from(complaints)
+      .where(eq(complaints.customerId, customer.id));
+    assert.ok(complaint, "a dispute is a complaint, not a note");
+    assert.equal(complaint.category, "billing_issue");
+
+    await recomputeFollowUpState(customer.id);
+    const state = await stateOf(customer.id);
+    assert.equal(state.held, true, "the disputed bill holds the escalation");
+  });
+
+  test("a refusal raises the stage floor, and the floor survives a recompute", async () => {
+    // Sixteen days overdue is stage 2 on age alone.
+    const customer = await onTheWorklist(16);
+    assert.equal((await stateOf(customer.id)).stage, 2);
+
+    const saved = await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "refused",
+      notes: "No date given",
+      chips: [],
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
+    assert.ok(saved.data.produced.includes("escalation"));
+
+    let state = await stateOf(customer.id);
+    assert.equal(state.manualStageFloor, 3);
+    assert.equal(state.stage, 3, "the refusal moved them, not the calendar");
+
+    // The nightly rebuild must not quietly undo it.
+    await recomputeFollowUpState(customer.id);
+    state = await stateOf(customer.id);
+    assert.equal(state.stage, 3, "a floor that a recompute erases is not a floor");
+    assert.match(state.floorReason ?? "", /Refused to commit/);
+  });
+
+  test("the floor goes when the debt does", async () => {
+    const customer = await onTheWorklist(16);
+    await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "refused",
+      chips: [],
+      idempotencyKey: randomUUID(),
+    });
+    await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "paid",
+      amount: 1_00_000,
+      chips: [],
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(
+      await stateOf(customer.id),
+      undefined,
+      "the row and its floor describe a debt that no longer exists",
+    );
+  });
+
+  test("stage 1 refuses a logged call, exactly as it refuses an attempt", async () => {
+    const customer = await onTheWorklist(10); // stage 1
+    const refused = await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "refused",
+      chips: [],
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(refused.ok, false);
+    assert.match(refused.error, /WhatsApp-only/i);
+  });
+
+  test("the same save submitted twice is logged once", async () => {
+    const customer = await onTheWorklist(30);
+    const key = randomUUID();
+    const first = await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "paid",
+      amount: 10_000,
+      chips: [],
+      idempotencyKey: key,
+    });
+    const second = await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "paid",
+      amount: 10_000,
+      chips: [],
+      idempotencyKey: key,
+    });
+    assert.equal(first.ok, true);
+    assert.equal(second.ok, true);
+    assert.equal(second.message, "Already recorded");
+
+    const [bill] = await db.select().from(bills).where(eq(bills.customerId, customer.id));
+    assert.equal(bill.paidAmount, 10_000_00, "a double-click must not pay twice");
+  });
+
+  test("a collections call is attributed to its module, not to routine calling", async () => {
+    const customer = await onTheWorklist(30);
+    await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "callback",
+      date: addDays(TODAY, 2),
+      chips: [],
+      idempotencyKey: randomUUID(),
+    });
+    const [call] = await db.select().from(calls).where(eq(calls.customerId, customer.id));
+    assert.ok(call, "the call belongs in the interaction log too");
+    assert.equal(call.sourceModule, "payment_follow_up");
+  });
+});
+
+/* ------------------------------ journey: the figures across the top */
+
+describe("Collections figures and the stage 1 batch", () => {
+  async function overdue(daysOverdue: number, amount = 1_00_000_00) {
+    const customer = await makeCustomer(priya.id);
+    const [bill] = await db
+      .insert(bills)
+      .values({
+        id: id("bil"),
+        customerId: customer.id,
+        billNo: `MMI/${randomUUID().slice(0, 6)}`,
+        billDate: addDays(TODAY, -daysOverdue - 30),
+        dueDate: addDays(TODAY, -daysOverdue),
+        amount,
+        paidAmount: 0,
+      })
+      .returning();
+    await recomputeBillStatuses();
+    await recomputeOutstanding(customer.id);
+    await recomputeFollowUpState(customer.id);
+    return { customer, bill };
+  }
+
+  test("outstanding, the urgent stage and collected all come from the same bills", async () => {
+    await overdue(50, 2_00_000_00); // stage 3
+    const { customer, bill } = await overdue(20, 1_00_000_00); // stage 2
+
+    await recordPayment({
+      billId: bill.id,
+      amount: 40_000_00,
+      paidAt: TODAY,
+      idempotencyKey: randomUUID(),
+    });
+
+    const m = await collectionsMetrics();
+    assert.equal(m.outstanding, 2_00_000_00 + 60_000_00, "open balance, not billed value");
+    assert.equal(m.outstandingCustomers, 2);
+    assert.equal(m.urgent, 2_00_000_00, "only the stage 3 account is urgent");
+    assert.equal(m.urgentCustomers, 1);
+    assert.equal(m.collectedThisMonth, 40_000_00);
+    assert.equal(m.collectedThisWeek, 40_000_00);
+    void customer;
+  });
+
+  test("a promise counts as kept only when the money arrived by the date", async () => {
+    // Promised ten days ago for five days ago, and paid in between: kept.
+    const kept = await overdue(60);
+    await db.insert(followUpAttempts).values({
+      id: id("fua"),
+      customerId: kept.customer.id,
+      stage: 3,
+      channel: "call",
+      attemptedAt: new Date(`${addDays(TODAY, -10)}T09:00:00+05:30`),
+      userId: priya.id,
+      promisedAmount: 50_000_00,
+      promisedDate: addDays(TODAY, -5),
+      idempotencyKey: randomUUID(),
+    });
+    await recordPayment({
+      billId: kept.bill.id,
+      amount: 50_000_00,
+      paidAt: addDays(TODAY, -6),
+      idempotencyKey: randomUUID(),
+    });
+
+    // Promised for five days ago and nothing arrived: broken.
+    const broken = await overdue(60);
+    await db.insert(followUpAttempts).values({
+      id: id("fua"),
+      customerId: broken.customer.id,
+      stage: 3,
+      channel: "call",
+      attemptedAt: new Date(`${addDays(TODAY, -10)}T09:00:00+05:30`),
+      userId: priya.id,
+      promisedAmount: 50_000_00,
+      promisedDate: addDays(TODAY, -5),
+      idempotencyKey: randomUUID(),
+    });
+
+    const m = await collectionsMetrics();
+    assert.equal(m.promisesJudged, 2);
+    assert.equal(m.promisesKeptPercent, 50);
+  });
+
+  test("a promise that has not come due is open, and is not judged either way", async () => {
+    const { customer } = await overdue(60);
+    await db.insert(followUpAttempts).values({
+      id: id("fua"),
+      customerId: customer.id,
+      stage: 3,
+      channel: "call",
+      attemptedAt: new Date(),
+      userId: priya.id,
+      promisedAmount: 75_000_00,
+      promisedDate: addDays(TODAY, 4),
+      idempotencyKey: randomUUID(),
+    });
+
+    const m = await collectionsMetrics();
+    assert.equal(m.promisedOpen, 75_000_00);
+    assert.equal(m.promisedCount, 1);
+    assert.equal(m.promisesJudged, 0);
+    assert.equal(m.promisesKeptPercent, null, "an open promise is neither kept nor broken");
+  });
+
+  test("the batch names the same people the Message today tab does", async () => {
+    // Stage 1, four days overdue: due a reminder today.
+    await overdue(4);
+    // Stage 3: overdue, but not stage 1.
+    await overdue(60);
+
+    await db.insert(waTemplates).values({
+      id: id("tpl"),
+      name: "Payment reminder · stage 1",
+      category: "payment_reminder",
+      escalationStage: 1,
+      body: "Namaste {{contact}}, {{outstanding}} is pending against {{customer}}.",
+      active: true,
+    });
+
+    const batch = await stageOneBatch();
+    const plan = await getPaymentFollowUpPlan();
+    assert.equal(batch.customerIds.length, 1, "only the stage 1 account is in the batch");
+    assert.ok(
+      batch.customerIds.every((cid) => plan.messages.some((m) => m.customerId === cid)),
+      "a batch must never message somebody the cadence is holding back",
+    );
+    assert.ok(batch.templateId, "the stage 1 template was found");
+  });
+
+  test("a telecaller cannot start the batch, and the denial is recorded", async () => {
+    setTestUser(priya);
+    const refused = await startStageOneBatch();
+    assert.equal(refused.ok, false);
+    assert.match(refused.error, /manager/i);
   });
 });

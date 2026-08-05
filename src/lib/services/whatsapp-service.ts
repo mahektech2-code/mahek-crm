@@ -666,3 +666,76 @@ export async function sweepUnconfirmed(): Promise<{ swept: number; autoConfirmed
 }
 
 export { isNull };
+
+/* ------------------------------------------- the payment reminder preview */
+
+export type ReminderPreview = {
+  templateId: string;
+  templateName: string;
+  destination: string;
+  destKind: "personal" | "group";
+  body: string;
+  mode: "manual" | "automatic";
+  /** Every merge field the template uses, and whether this customer has it. */
+  fields: Array<{ label: string; value: string; ok: boolean }>;
+  /** True when a field is empty, so the message would read badly. */
+  blocked: boolean;
+  blockedReason: string | null;
+};
+
+/**
+ * What the stage's reminder would say for this customer, without preparing
+ * anything. The follow-up modal shows this before the telecaller commits, so
+ * an empty merge field is caught by eye as well as by `prepareMessage`.
+ */
+export async function previewPaymentReminder(
+  customerId: string,
+  stage: number,
+): Promise<ReminderPreview | null> {
+  const config = await getConfig();
+  const [customer] = await db
+    .select()
+    .from(customers)
+    .where(eq(customers.id, customerId));
+  if (!customer) return null;
+  await assertCustomerInScope(customer);
+
+  // The stage's own template, falling back to any active payment reminder —
+  // a missing stage-3 template must not leave the telecaller with no message.
+  const templates = await db
+    .select()
+    .from(waTemplates)
+    .where(and(eq(waTemplates.category, "payment_reminder"), eq(waTemplates.active, true)));
+  const template =
+    templates.find((t) => t.escalationStage === stage) ?? templates[0];
+  if (!template) return null;
+
+  const values = await mergeValuesFor(customerId);
+  const fields = usedFields(template.body).map((f) => ({
+    label: f,
+    value: values[f] ?? "",
+    ok: Boolean(values[f]),
+  }));
+  const missing = fields.filter((f) => !f.ok);
+
+  const destKind =
+    customer.whatsappGroupName ? customer.whatsappDest : ("personal" as const);
+  const destination =
+    destKind === "group"
+      ? (customer.whatsappGroupName ?? "")
+      : (customer.whatsappPhone ?? customer.phone);
+
+  return {
+    templateId: template.id,
+    templateName: template.name,
+    destination,
+    destKind,
+    body: applyMerge(template.body, values),
+    mode: config["whatsapp.mode"],
+    fields,
+    blocked: missing.length > 0,
+    blockedReason: missing.length
+      ? `${missing.map((f) => f.label).join(", ")} ${missing.length === 1 ? "is" : "are"} empty for this customer, so the message would read badly. Log a call instead, or fill it on the customer record first.`
+      : null,
+  };
+}
