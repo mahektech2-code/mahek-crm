@@ -29,6 +29,7 @@ import {
   orders,
   reminders,
   users,
+  waMessages,
   waTemplates,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
@@ -79,6 +80,7 @@ import {
 import {
   confirmSent,
   markCopied,
+  prepareLegs,
   prepareMessage,
 } from "@/lib/services/whatsapp-service";
 import { eodPreflightFor } from "@/lib/services/eod-service";
@@ -442,6 +444,101 @@ describe("Journey 3 — copying is not sending", () => {
     });
     assert.equal(result.ok, false);
     assert.match(result.error, /bill_no/);
+  });
+
+  /* Both-ways: two destinations, two rows, two independent confirmations. */
+
+  async function bothWays(over: Partial<typeof customers.$inferInsert> = {}) {
+    const customer = await makeCustomer(priya.id, {
+      lastContactDate: addDays(TODAY, -60),
+      lastOrderDate: addDays(TODAY, -60),
+      cycleDays: 20,
+      cycleIsDefault: false,
+      whatsappDest: "both",
+      whatsappGroupName: "Balaji Traders — orders",
+      ...over,
+    });
+
+    const [template] = await db
+      .insert(waTemplates)
+      .values({
+        id: id("tpl"),
+        name: "Routine check-in",
+        category: "routine_check_in",
+        body: "Namaste {{contact}}, checking in from Mahek Marketing.",
+        appliesTo: "both",
+      })
+      .returning();
+
+    const legs = await prepareLegs({
+      customerId: customer.id,
+      templateId: template.id,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(legs.ok, true, legs.ok ? "" : legs.error);
+    return { customer, legs: legs.data };
+  }
+
+  test("a both-ways customer produces one row per destination", async () => {
+    const { legs } = await bothWays();
+
+    assert.equal(legs.length, 2);
+    assert.deepEqual(
+      legs.map((l) => l.destKind),
+      ["personal", "group"],
+      "the personal leg comes first — it is the one that can finish without a human",
+    );
+    assert.equal(legs[1].resolvedDestination, "Balaji Traders — orders");
+    assert.notEqual(
+      legs[0].messageId,
+      legs[1].messageId,
+      "two destinations are two pieces of work, not one row read twice",
+    );
+  });
+
+  test("confirming one leg leaves the other exactly where it was", async () => {
+    const { legs } = await bothWays();
+    const [personal, group] = legs;
+
+    await markCopied(personal.messageId);
+    await markCopied(group.messageId);
+    const confirmed = await confirmSent(group.messageId);
+    assert.equal(confirmed.ok, true, confirmed.ok ? "" : confirmed.error);
+
+    const [personalRow] = await db
+      .select()
+      .from(waMessages)
+      .where(eq(waMessages.id, personal.messageId));
+    assert.equal(
+      personalRow.status,
+      "copied",
+      "the group being posted says nothing about the owner's own number",
+    );
+    assert.equal(personalRow.confirmedSentAt, null);
+  });
+
+  test("either leg confirmed means the customer was reached", async () => {
+    const { customer, legs } = await bothWays();
+
+    await markCopied(legs[0].messageId);
+    await confirmSent(legs[0].messageId);
+
+    const [row] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(
+      row.lastConfirmedWhatsappDate,
+      TODAY,
+      "one confirmed route is contact; waiting for the second would chase a customer who already heard from us",
+    );
+  });
+
+  test("both ways with no group recorded falls back to the number alone", async () => {
+    const { legs } = await bothWays({ whatsappGroupName: null });
+
+    assert.equal(legs.length, 1);
+    assert.equal(legs[0].destKind, "personal");
   });
 });
 
