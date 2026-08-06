@@ -89,12 +89,6 @@ export const saveInteractionSchema = z.object({
   /** Order-received only. User-entered, may be in the past, never the future. */
   orderDate: z.string().optional(),
 
-  /**
-   * The payment term agreed on this order, in days. Offered as a short list of
-   * choices, but any number is accepted — terms get negotiated one customer at
-   * a time. Omitted means the customer's standing term applies.
-   */
-  creditDays: z.coerce.number().int().min(0).max(365).optional(),
 
   sourceModule: z
     .enum([
@@ -317,13 +311,12 @@ export async function saveInteraction(
       orderValue = 0;
       orderId = id("ord");
       const orderedOn = isOrderReceived ? input.orderDate! : day;
-      // The term the telecaller agreed, or the one the customer already has.
-      // Recorded on the order so the bill raised against it inherits a due
-      // date nobody has to remember or retype.
+      // The term is no longer agreed call by call — it comes from the standing
+      // one on the customer, or the configured default. Still recorded on the
+      // order, so the bill raised against it inherits a due date nobody has to
+      // remember or retype.
       const creditDays =
-        input.creditDays ??
-        customer.creditDays ??
-        config["customers.defaultCreditDays"];
+        customer.creditDays ?? config["customers.defaultCreditDays"];
       await tx.insert(orders).values({
         id: orderId,
         customerId: customer.id,

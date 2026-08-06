@@ -220,12 +220,15 @@ having already called them today.
 customer past their call day returns to the top of the list every single day
 until they order, which punishes the telecaller for working it.
 
-**A payment term is agreed when the order is taken, and the bill inherits it.**
-The telecaller picks 15, 30, 45 or anything else, and it is stored on the
-order. A bill with no due date of its own resolves one from that term, then
-from the customer's standing term, then from the configured default — so an
-order agreed on 45 days never quietly becomes 30 because nobody typed a date
-onto the bill.
+**A payment term belongs to the customer, and the bill inherits it.** The term
+is no longer agreed call by call — an order takes the customer's standing term,
+or the configured default. It is still stored on the order, so a bill with no
+due date of its own resolves one from that term, then from the customer's
+standing term, then from the default. A customer on 45 days never quietly
+becomes 30 because nobody typed a date onto the bill.
+
+Orders taken before this change carry the term the telecaller agreed at the
+time, and those values stand — the capture was removed, never the history.
 
 **A collections call is logged in one place, and it is one transaction.** The
 follow-up panel opens over the worklist and never navigates away — a

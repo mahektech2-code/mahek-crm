@@ -161,8 +161,6 @@ export type SaveInteractionActionInput = {
   paymentPromiseDate?: string;
   complaintCategory?: string;
   orderDate?: string;
-  /** The payment term agreed on this order, in days from the bill date. */
-  creditDays?: number;
   sourceModule?:
     | "call_queue"
     | "payment_follow_up"
@@ -192,7 +190,6 @@ export async function saveInteractionAction(
       paymentPromiseDate: raw.paymentPromiseDate,
       complaintCategory: raw.complaintCategory as never,
       orderDate: raw.orderDate,
-      creditDays: raw.creditDays,
       sourceModule: raw.sourceModule ?? "ad_hoc",
       queuePosition: raw.queuePosition,
       idempotencyKey: raw.idempotencyKey ?? randomUUID(),

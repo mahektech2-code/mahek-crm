@@ -1346,11 +1346,9 @@ describe("Journey 9 — the Information tab", () => {
       a?.creditDays,
       (await getConfig())["customers.defaultCreditDays"],
     );
-    assert.equal(a?.creditDaysIsDefault, true);
 
     const b = await customerInformation(own.id);
-    assert.equal(b?.creditDays, 45);
-    assert.equal(b?.creditDaysIsDefault, false);
+    assert.equal(b?.creditDays, 45, "their own term wins over the default");
   });
 
   test("product history comes from the CRM and is labelled as such", async () => {
@@ -1835,7 +1833,7 @@ describe("The payment follow-up cycle — term, quiet window, messages, calls", 
     assert.equal(state.oldestOverdueBillDate, addDays(TODAY, -5));
   });
 
-  test("taking an order records the term, and the panel's default is the customer's own", async () => {
+  test("an order inherits the customer's standing term, not one typed on the call", async () => {
     const customer = await makeCustomer(priya.id, { creditDays: 15 });
     const [product] = await db.select().from(productsTable).limit(1);
 
@@ -1844,7 +1842,6 @@ describe("The payment follow-up cycle — term, quiet window, messages, calls", 
       interactionType: "outbound_call",
       outcome: "order_taken",
       productQuantities: { [product.id]: 4 },
-      creditDays: 45,
       idempotencyKey: randomUUID(),
     });
     assert.equal(saved.ok, true);
@@ -1853,23 +1850,35 @@ describe("The payment follow-up cycle — term, quiet window, messages, calls", 
       .select()
       .from(orders)
       .where(eq(orders.customerId, customer.id));
-    assert.equal(order.creditDays, 45, "the term the telecaller agreed wins");
-    assert.equal(order.paymentDueDate, addDays(TODAY, 45));
+    assert.equal(
+      order.creditDays,
+      15,
+      "the term is no longer agreed call by call — it comes from the customer",
+    );
+    assert.equal(order.paymentDueDate, addDays(TODAY, 15));
+  });
 
-    // Left unstated, the customer's own standing term applies instead.
-    const second = await makeCustomer(priya.id, { creditDays: 15 });
+  test("a customer with no term of their own falls back to the configured one", async () => {
+    const customer = await makeCustomer(priya.id, { creditDays: null });
+    const [product] = await db.select().from(productsTable).limit(1);
+
     await saveInteraction({
-      customerId: second.id,
+      customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "order_taken",
       productQuantities: { [product.id]: 1 },
       idempotencyKey: randomUUID(),
     });
-    const [fallback] = await db
+
+    const [order] = await db
       .select()
       .from(orders)
-      .where(eq(orders.customerId, second.id));
-    assert.equal(fallback.creditDays, 15);
+      .where(eq(orders.customerId, customer.id));
+    assert.equal(
+      order.creditDays,
+      (await getConfig())["customers.defaultCreditDays"],
+      "a bill still resolves a due date; only the telecaller's override is gone",
+    );
   });
 
   test("inside the quiet window they are messaged, never called", async () => {
