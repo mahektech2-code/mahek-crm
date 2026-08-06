@@ -99,6 +99,7 @@ src/
       reminders/  history/
       payments/  bills/  inactive/
       customers/  customers/[id]  customers/import
+                           the record carries the full message history
       complaints/  targets/  eod/  whatsapp/
       help/  settings/     SOPs and the manager configuration screen
       components/          the live design system
@@ -181,6 +182,16 @@ sits as `copied`, and only a *confirmed* send sets
 copied-but-unconfirmed message is a customer who may or may not have been
 contacted, and it is shown as exactly that rather than assumed either way.
 There is a test for each half of this; do not collapse them.
+
+**A customer reached two ways is two pieces of work.** `both` is a standing
+instruction on a *customer*, never on a message: a message goes to exactly one
+place, so a both-ways customer produces two rows and `prepareLegs` splits them,
+personal leg first. The group can be pasted and confirmed while the personal
+message is still sitting copied, and neither leg may borrow the other's
+confirmation. One confirmed leg *does* set `lastConfirmedWhatsappDate` —
+waiting for the second would chase somebody who has already heard from us.
+`dest_kind` is shared with `wa_messages`, so read that column as
+personal-or-group only; nothing writes `both` to it.
 
 **The Call Log chases orders, not contact.** A customer with a measured
 buying cycle is called on `cycle − lead`, where the lead is a percentage of
