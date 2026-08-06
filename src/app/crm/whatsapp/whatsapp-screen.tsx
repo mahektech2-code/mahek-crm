@@ -53,7 +53,8 @@ type Customer = {
   lastOrderValue: number;
   ownerName: string | null;
   groupName: string | null;
-  destKind: "personal" | "group";
+  /** The customer's standing instruction — "both" reaches them twice. */
+  destKind: "personal" | "group" | "both";
   oldestBillNo: string | null;
   oldestBillDue: string | null;
   slowPayer: boolean;
@@ -64,7 +65,7 @@ type Template = {
   name: string;
   category: string;
   body: string;
-  appliesTo: "personal" | "group";
+  appliesTo: "personal" | "group" | "both";
   uses: number;
   archived: boolean;
   updatedAt: string;
@@ -339,7 +340,11 @@ export function WhatsappScreen(props: {
                       <Td className="font-medium text-ink">{t.name}</Td>
                       <Td>{t.category}</Td>
                       <Td>
-                        {t.appliesTo === "group" ? "Customer group" : "Personal number"}
+                        {t.appliesTo === "group"
+                          ? "Customer group"
+                          : t.appliesTo === "both"
+                            ? "Either destination"
+                            : "Personal number"}
                       </Td>
                       <Td>{stamp(t.updatedAt)}</Td>
                       <Td align="right">{t.uses}</Td>
@@ -383,8 +388,8 @@ export function WhatsappScreen(props: {
         customers={customers}
         initialId={props.initialCustomerId}
         onClose={() => setGroupOpen(false)}
-        onSave={async (customerId, name) => {
-          const result = await act(setCustomerGroup(customerId, name));
+        onSave={async (customerId, name, dest) => {
+          const result = await act(setCustomerGroup(customerId, name, dest));
           if (result.ok) {
             setGroupOpen(false);
             router.refresh();
@@ -485,25 +490,38 @@ function SendComposer({
       })
     : ({} as Record<string, string>);
 
-  const [dest, setDest] = React.useState<"personal" | "group">(
+  const [dest, setDest] = React.useState<"personal" | "group" | "both">(
     customer?.groupName ? customer.destKind : "personal",
   );
   const [body, setBody] = React.useState(
     template ? applyMerge(template.body, values) : "",
   );
   const [edited, setEdited] = React.useState(false);
-  const [pendingId, setPendingId] = React.useState<string | null>(null);
-  const [copied, setCopied] = React.useState(false);
+  // One entry per leg. A both-ways customer is two independent pieces of work:
+  // the group can be pasted and confirmed while the personal message is still
+  // sitting copied, and neither may borrow the other's confirmation.
+  const [legState, setLegState] = React.useState<
+    Record<string, { id: string | null; copied: boolean }>
+  >({});
+  const legOf = (leg: string) => legState[leg] ?? { id: null, copied: false };
   const [copyFallback, setCopyFallback] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
 
   const missing = template ? missingFields(template.body, values) : [];
   const used = template ? usedFields(template.body) : [];
 
-  const destinationName =
-    dest === "group"
+  const activeLegs: Array<"personal" | "group"> =
+    dest === "both" ? ["personal", "group"] : [dest];
+
+  const nameOfLeg = (leg: "personal" | "group") =>
+    leg === "group"
       ? (customer?.groupName ?? "No group recorded")
       : phoneDisplay(customer?.phone ?? "");
+
+  const destinationName =
+    dest === "both"
+      ? `${nameOfLeg("personal")} and ${nameOfLeg("group")}`
+      : nameOfLeg(dest);
 
   const grouped = React.useMemo(() => {
     const map = new Map<string, Template[]>();
@@ -515,24 +533,27 @@ function SendComposer({
     return [...map.entries()];
   }, [templates]);
 
-  async function copy() {
+  async function copy(leg: "personal" | "group") {
     try {
       await navigator.clipboard.writeText(body);
-      setCopied(true);
+      setLegState((s) => ({ ...s, [leg]: { ...legOf(leg), copied: true } }));
       setCopyFallback(null);
 
       // Log it as Copied so an unconfirmed message is visible, not invisible.
-      if (!pendingId && customer) {
+      if (!legOf(leg).id && customer) {
         const result = await act(
           queueMessage({
             customerId: customer.id,
             templateId: template?.id ?? null,
             body,
             edited,
-            destKind: dest,
+            destKind: leg,
           }),
         );
-        if (result.ok && result.data) setPendingId(result.data.id);
+        if (result.ok && result.data) {
+          const id = result.data.id;
+          setLegState((s) => ({ ...s, [leg]: { id, copied: true } }));
+        }
         onSent();
       }
     } catch {
@@ -567,35 +588,48 @@ function SendComposer({
           </Field>
 
           <div className="mt-4 mb-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
-            Where does this go
+            Where this goes
           </div>
           <div className="grid grid-cols-2 gap-2">
-            {(["personal", "group"] as const).map((d) => (
+            {(["personal", "group", "both"] as const).map((d) => (
               <button
                 key={d}
                 onClick={() => setDest(d)}
-                disabled={d === "group" && !customer.groupName}
+                disabled={d !== "personal" && !customer.groupName}
                 className={cx(
                   "rounded-[4px] border px-3 py-2 text-left",
+                  d === "both" ? "col-span-2" : "",
                   dest === d
                     ? "border-brand bg-brand-soft"
                     : "border-line bg-surface hover:bg-canvas",
-                  d === "group" && !customer.groupName
+                  d !== "personal" && !customer.groupName
                     ? "cursor-not-allowed opacity-60"
                     : "cursor-pointer",
                 )}
               >
                 <span className="block text-sm text-ink">
-                  {d === "personal" ? "Personal number" : "Customer group"}
+                  {d === "personal"
+                    ? "Their own number"
+                    : d === "group"
+                      ? "Their WhatsApp group"
+                      : "Send it both ways"}
                 </span>
                 <span className="block text-xs text-muted">
                   {d === "personal"
-                    ? phoneDisplay(customer.phone)
-                    : (customer.groupName ?? "No group recorded")}
+                    ? `${phoneDisplay(customer.phone)} · you paste it`
+                    : d === "group"
+                      ? `${customer.groupName ?? "No group recorded"} · you paste it`
+                      : "The same message to both, one at a time"}
                 </span>
               </button>
             ))}
           </div>
+          {dest === "both" ? (
+            <p className="mt-2 text-[13px] text-muted">
+              Both carry the same message. The number reaches the owner
+              directly; the group is where their staff actually read it.
+            </p>
+          ) : null}
           <button
             onClick={onOpenGroup}
             className="mt-2 cursor-pointer text-[13px] text-brand"
@@ -755,77 +789,116 @@ function SendComposer({
         ) : (
           <Card className="overflow-hidden">
             <div className="border-b border-line px-4 py-3 text-sm font-semibold text-ink">
-              Send it in three steps
+              {dest === "both" ? "Send it both ways" : "Send it in three steps"}
             </div>
 
-            <Step n={1} title="Copy the message">
-              <Button
-                variant={copied ? "secondary" : "primary"}
-                className="w-full"
-                onClick={copy}
-              >
-                {copied ? "Copied ✓" : "Copy the message"}
-              </Button>
-            </Step>
+            {activeLegs.map((leg, legIndex) => {
+              const state = legOf(leg);
+              const isCopied = state.copied;
+              return (
+                <div key={leg}>
+                  {dest === "both" ? (
+                    <div className="flex items-baseline gap-2 border-b border-divider bg-canvas px-4 py-2">
+                      <span className="flex h-5 w-5 flex-none items-center justify-center rounded-full bg-brand text-[11px] font-semibold text-white">
+                        {legIndex + 1}
+                      </span>
+                      <span className="text-sm font-medium text-ink">
+                        {leg === "personal" ? "To their number" : "To their group"}
+                      </span>
+                      <span className="text-[13px] text-muted">
+                        {nameOfLeg(leg)}
+                      </span>
+                    </div>
+                  ) : null}
 
-            <Step n={2} title="Send it from WhatsApp" dimmed={!copied}>
-              <Button
-                variant="secondary"
-                className="w-full"
-                disabled={!copied}
-                onClick={() =>
-                  window.open(
-                    dest === "personal"
-                      ? `https://wa.me/91${customer.phone.replace(/\D/g, "").slice(-10)}`
-                      : "https://web.whatsapp.com",
-                    "_blank",
-                    "noopener",
-                  )
-                }
-              >
-                Open WhatsApp Web ↗
-              </Button>
-              <p className="mt-1.5 text-[13px] text-muted">
-                Paste into: <span className="font-medium text-ink">{destinationName}</span>{" "}
-                ({dest === "personal" ? "personal number" : "customer group"})
-              </p>
-            </Step>
+                  <Step n={1} title="Copy the message">
+                    <Button
+                      variant={isCopied ? "secondary" : "primary"}
+                      className="w-full"
+                      onClick={() => copy(leg)}
+                    >
+                      {isCopied ? "Copied ✓" : "Copy the message"}
+                    </Button>
+                  </Step>
 
-            <Step n={3} title="Confirm" dimmed={!copied}>
-              <Button
-                variant="primary"
-                className="w-full"
-                disabled={!copied || !pendingId}
-                onClick={async () => {
-                  if (!pendingId) return;
-                  const result = await act(confirmMessageSent(pendingId));
-                  if (result.ok) {
-                    setPendingId(null);
-                    setCopied(false);
-                    onSent();
-                    router.refresh();
-                  }
-                }}
-              >
-                Mark as sent
-              </Button>
-              <span className="mt-1.5 flex items-center gap-1.5">
-                <span className="text-[13px] text-muted">Not sent?</span>
-                <button
-                  disabled={!pendingId}
-                  onClick={async () => {
-                    if (!pendingId) return;
-                    await act(cancelMessage(pendingId));
-                    setPendingId(null);
-                    setCopied(false);
-                    router.refresh();
-                  }}
-                  className="cursor-pointer text-[13px] text-brand disabled:cursor-not-allowed disabled:text-line-strong"
-                >
-                  Cancel
-                </button>
-              </span>
-            </Step>
+                  <Step n={2} title="Send it from WhatsApp" dimmed={!isCopied}>
+                    <Button
+                      variant="secondary"
+                      className="w-full"
+                      disabled={!isCopied}
+                      onClick={() =>
+                        window.open(
+                          leg === "personal"
+                            ? `https://wa.me/91${customer.phone.replace(/\D/g, "").slice(-10)}`
+                            : "https://web.whatsapp.com",
+                          "_blank",
+                          "noopener",
+                        )
+                      }
+                    >
+                      Open WhatsApp Web ↗
+                    </Button>
+                    <p className="mt-1.5 text-[13px] text-muted">
+                      Paste into:{" "}
+                      <span className="font-medium text-ink">{nameOfLeg(leg)}</span>{" "}
+                      ({leg === "personal" ? "personal number" : "customer group"})
+                    </p>
+                  </Step>
+
+                  <Step
+                    n={3}
+                    title={
+                      leg === "group" && dest === "both"
+                        ? "Confirm posted to the group"
+                        : "Confirm"
+                    }
+                    dimmed={!isCopied}
+                  >
+                    <Button
+                      variant="primary"
+                      className="w-full"
+                      disabled={!isCopied || !state.id}
+                      onClick={async () => {
+                        if (!state.id) return;
+                        const result = await act(confirmMessageSent(state.id));
+                        if (result.ok) {
+                          setLegState((s) => ({
+                            ...s,
+                            [leg]: { id: null, copied: false },
+                          }));
+                          onSent();
+                          router.refresh();
+                        }
+                      }}
+                    >
+                      Mark as sent
+                    </Button>
+                    <span className="mt-1.5 flex items-center gap-1.5">
+                      <span className="text-[13px] text-muted">
+                        {leg === "group" && dest === "both"
+                          ? "Did not post it?"
+                          : "Not sent?"}
+                      </span>
+                      <button
+                        disabled={!state.id}
+                        onClick={async () => {
+                          if (!state.id) return;
+                          await act(cancelMessage(state.id));
+                          setLegState((s) => ({
+                            ...s,
+                            [leg]: { id: null, copied: false },
+                          }));
+                          router.refresh();
+                        }}
+                        className="cursor-pointer text-[13px] text-brand disabled:cursor-not-allowed disabled:text-line-strong"
+                      >
+                        Cancel
+                      </button>
+                    </span>
+                  </Step>
+                </div>
+              );
+            })}
 
             <div className="bg-canvas px-4 py-2.5 text-[13px] text-muted">
               Confirming is what holds this customer back in the call log, so nobody
@@ -1565,7 +1638,11 @@ type GroupModalProps = {
   customers: Customer[];
   initialId: string;
   onClose: () => void;
-  onSave: (customerId: string, name: string) => Promise<void>;
+  onSave: (
+    customerId: string,
+    name: string,
+    dest: "personal" | "group" | "both",
+  ) => Promise<void>;
 };
 
 function GroupModal(props: GroupModalProps) {
@@ -1578,6 +1655,9 @@ function GroupModalBody({ open, customers, initialId, onClose, onSave }: GroupMo
   const [name, setName] = React.useState(
     customers.find((c) => c.id === initialId)?.groupName ?? "",
   );
+  const [dest, setDest] = React.useState<"personal" | "group" | "both">(
+    customers.find((c) => c.id === initialId)?.destKind ?? "group",
+  );
 
   return (
     <Modal
@@ -1589,7 +1669,7 @@ function GroupModalBody({ open, customers, initialId, onClose, onSave }: GroupMo
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={() => onSave(customerId, name)}>
+          <Button variant="primary" onClick={() => onSave(customerId, name, dest)}>
             Save group
           </Button>
         </>
@@ -1601,7 +1681,9 @@ function GroupModalBody({ open, customers, initialId, onClose, onSave }: GroupMo
             value={customerId}
             onChange={(e) => {
               setCustomerId(e.target.value);
-              setName(customers.find((c) => c.id === e.target.value)?.groupName ?? "");
+              const picked = customers.find((c) => c.id === e.target.value);
+              setName(picked?.groupName ?? "");
+              setDest(picked?.destKind ?? "group");
             }}
           >
             {customers.map((c) => (
@@ -1621,6 +1703,22 @@ function GroupModalBody({ open, customers, initialId, onClose, onSave }: GroupMo
             placeholder="Shree Paints order group"
           />
         </Field>
+        <Field
+          label="Where their messages go"
+          hint="Every customer has two points of contact. They can be the same person."
+        >
+          <Select
+            value={dest}
+            disabled={!name.trim()}
+            onChange={(e) =>
+              setDest(e.target.value as "personal" | "group" | "both")
+            }
+          >
+            <option value="group">Their WhatsApp group</option>
+            <option value="personal">Their own number</option>
+            <option value="both">Both — the same message to each</option>
+          </Select>
+        </Field>
       </div>
     </Modal>
   );
@@ -1635,7 +1733,7 @@ type TemplateDrawerProps = {
     name: string;
     category: string;
     body: string;
-    appliesTo: "personal" | "group";
+    appliesTo: "personal" | "group" | "both";
   }) => Promise<void>;
   onArchive: (id: string, archived: boolean) => Promise<void>;
 };
@@ -1655,7 +1753,7 @@ function TemplateDrawerBody({
   const [name, setName] = React.useState(template?.name ?? "");
   const [category, setCategory] = React.useState(template?.category ?? "Payments");
   const [body, setBody] = React.useState(template?.body ?? "");
-  const [appliesTo, setAppliesTo] = React.useState<"personal" | "group">(
+  const [appliesTo, setAppliesTo] = React.useState<"personal" | "group" | "both">(
     template?.appliesTo ?? "personal",
   );
 
@@ -1708,11 +1806,14 @@ function TemplateDrawerBody({
               <Field label="Applies to">
                 <Select
                   value={appliesTo}
-                  onChange={(e) => setAppliesTo(e.target.value as "personal" | "group")}
+                  onChange={(e) =>
+                    setAppliesTo(e.target.value as "personal" | "group" | "both")
+                  }
                   disabled={!isManager}
                 >
                   <option value="personal">Personal number</option>
                   <option value="group">Customer group</option>
+                  <option value="both">Either destination</option>
                 </Select>
               </Field>
               <Field

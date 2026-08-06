@@ -5,6 +5,7 @@ import { orders, payments } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import {
   currentPeriod,
+  customerMessages,
   customerTimeline,
   getCustomer,
   today,
@@ -41,9 +42,10 @@ export default async function CustomerRecordPage({
   const day = await today();
   const period = await currentPeriod();
 
-  const [config, timeline, targets, followUp, stats] = await Promise.all([
+  const [config, timeline, messages, targets, followUp, stats] = await Promise.all([
     getConfig(),
     customerTimeline(id),
+    customerMessages(id),
     listTargets(period),
     getFollowUpDetail(id),
     // Order count, month-to-date value and how long they actually take to pay,
@@ -193,6 +195,18 @@ export default async function CustomerRecordPage({
         actor: t.actor,
         content: t.content,
         meta: t.meta ?? null,
+      }))}
+      messages={messages.map((m) => ({
+        id: m.id,
+        at: m.at.toISOString(),
+        by: m.by,
+        status: m.status,
+        channelLabel: m.channelLabel,
+        destination: m.destination,
+        destKind: m.destKind,
+        templateName: m.templateName,
+        body: m.body,
+        edited: m.edited,
       }))}
     />
   );

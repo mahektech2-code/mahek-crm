@@ -156,7 +156,8 @@ export default async function WhatsappPage({
                     customerId: activeRun.current.customerId,
                     customerName: activeRun.current.customerName,
                     destination: activeRun.current.resolvedDestination,
-                    destKind: activeRun.current.destKind,
+                    // A prepared row is always one leg, never "both".
+                    destKind: activeRun.current.destKind as "personal" | "group",
                     body: activeRun.current.body,
                     status: activeRun.current.status,
                   }

@@ -53,7 +53,7 @@ import {
   confirmSent,
   createRun,
   markCopied,
-  prepareMessage,
+  prepareLegs,
   saveTemplate as saveTemplateService,
   sendAutomatic,
   setRunStatus,
@@ -976,20 +976,29 @@ export async function setWaMode(mode: "manual" | "automatic"): Promise<Result> {
 export async function setCustomerGroup(
   customerId: string,
   groupName: string,
+  dest?: "personal" | "group" | "both",
 ): Promise<Result> {
   try {
     const ctx = await resolveScope();
+    const named = groupName.trim();
+    // Without a group there is nowhere for the other legs to go, so clearing
+    // the name always returns the customer to their own number.
+    const whatsappDest = !named ? "personal" : (dest ?? "group");
     await db
       .update(customers)
       .set({
-        whatsappGroupName: groupName.trim() || null,
-        whatsappDest: groupName.trim() ? "group" : "personal",
+        whatsappGroupName: named || null,
+        whatsappDest,
         updatedAt: new Date(),
         updatedById: ctx.user.id,
       })
       .where(eq(customers.id, customerId));
     refreshAll();
-    return okVoid("Group name saved");
+    return okVoid(
+      whatsappDest === "both"
+        ? "Saved — this customer now gets both"
+        : "Group name saved",
+    );
   } catch (e) {
     return fromThrown(e);
   }
@@ -1000,12 +1009,17 @@ export async function queueMessage(input: {
   templateId?: string | null;
   body: string;
   edited: boolean;
-  destKind: "personal" | "group";
+  destKind: "personal" | "group" | "both";
   runId?: string | null;
-}): Promise<Result<{ id: string }>> {
+}): Promise<
+  Result<{
+    id: string;
+    legs: Array<{ id: string; destKind: "personal" | "group"; destination: string }>;
+  }>
+> {
   try {
     if (!input.templateId) return err("Pick a template.", "validation");
-    const prepared = await prepareMessage({
+    const prepared = await prepareLegs({
       customerId: input.customerId,
       templateId: input.templateId,
       bodyOverride: input.edited ? input.body : undefined,
@@ -1015,13 +1029,27 @@ export async function queueMessage(input: {
     });
     if (!prepared.ok) return prepared;
 
-    await markCopied(prepared.data.messageId);
+    const legs = prepared.data;
+    // Only the leg the telecaller actually copies is marked copied. A both-ways
+    // pair copied in one click would claim the group had been pasted into
+    // before anybody opened WhatsApp.
+    if (legs.length === 1) await markCopied(legs[0].messageId);
     refreshAll();
+
     return ok(
-      { id: prepared.data.messageId },
-      prepared.data.mode === "automatic"
-        ? "Ready to send"
-        : "Copied — confirm once you have sent it",
+      {
+        id: legs[0].messageId,
+        legs: legs.map((l) => ({
+          id: l.messageId,
+          destKind: l.destKind,
+          destination: l.resolvedDestination,
+        })),
+      },
+      legs.length > 1
+        ? "Both messages are ready — work them one at a time"
+        : legs[0].mode === "automatic"
+          ? "Ready to send"
+          : "Copied — confirm once you have sent it",
     );
   } catch (e) {
     return fromThrown(e);
@@ -1084,7 +1112,7 @@ export async function saveTemplate(input: {
   name: string;
   category: string;
   body: string;
-  appliesTo: "personal" | "group";
+  appliesTo: "personal" | "group" | "both";
 }): Promise<Result> {
   try {
     const r = await saveTemplateService({

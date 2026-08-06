@@ -116,7 +116,8 @@ export const prepareSchema = z.object({
   templateId: z.string().min(1),
   /** Overrides the template body when a telecaller edits before sending. */
   bodyOverride: z.string().optional(),
-  destKind: z.enum(["personal", "group"]).optional(),
+  /** "both" is resolved by `prepareLegs`; `prepareMessage` writes one leg. */
+  destKind: z.enum(["personal", "group", "both"]).optional(),
   runId: z.string().optional(),
   idempotencyKey: z.string().min(8),
 });
@@ -158,7 +159,8 @@ export async function prepareMessage(
       messageId: existing.id,
       body: existing.body,
       resolvedDestination: existing.resolvedDestination,
-      destKind: existing.destKind,
+      // Stored rows are always one leg; "both" never reaches this column.
+      destKind: existing.destKind as "personal" | "group",
       mode: existing.mode,
       edited: existing.edited,
     });
@@ -194,8 +196,12 @@ export async function prepareMessage(
     );
   }
 
-  const destKind =
+  // One row, one destination. A customer standing at "both" collapses to the
+  // personal leg here; splitting the pair is `prepareLegs`' job, and letting
+  // "both" through would write a destination no send path knows how to reach.
+  const requested =
     input.destKind ?? (customer.whatsappGroupName ? customer.whatsappDest : "personal");
+  const destKind: "personal" | "group" = requested === "both" ? "personal" : requested;
   const resolvedDestination =
     destKind === "group"
       ? (customer.whatsappGroupName ?? "")
@@ -238,6 +244,59 @@ export async function prepareMessage(
     mode: config["whatsapp.mode"],
     edited: Boolean(input.bodyOverride && input.bodyOverride !== template.body),
   });
+}
+
+/**
+ * Prepares every leg a customer is owed. A customer set to `both` is reached
+ * twice — the API carries it to the owner's own number, and a human pastes the
+ * same text into the group their staff actually read — so it produces two
+ * rows, each with its own state. One idempotency key still covers the pair:
+ * the legs derive their own from it, so a retried click cannot double-send
+ * either half.
+ *
+ * Order matters. The personal leg comes first because it is the one that can
+ * complete without a human, and the screen works down the list.
+ */
+export async function prepareLegs(
+  raw: z.input<typeof prepareSchema>,
+): Promise<Result<PreparedMessage[]>> {
+  const parsed = prepareSchema.safeParse(raw);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return err(issue.message, "validation", [
+      { field: issue.path.join("."), message: issue.message },
+    ]);
+  }
+  const input = parsed.data;
+
+  const [customer] = await db
+    .select()
+    .from(customers)
+    .where(eq(customers.id, input.customerId));
+  if (!customer) return err("That customer no longer exists.", "not_found");
+
+  const wanted = input.destKind ?? customer.whatsappDest;
+  const legs: Array<"personal" | "group"> =
+    wanted === "both"
+      ? customer.whatsappGroupName
+        ? ["personal", "group"]
+        : // Configured for both but nobody recorded the group. Reaching the
+          // owner is better than reaching nobody, and the screen says why.
+          ["personal"]
+      : [wanted === "group" && !customer.whatsappGroupName ? "personal" : wanted];
+
+  const prepared: PreparedMessage[] = [];
+  for (const leg of legs) {
+    const result = await prepareMessage({
+      ...input,
+      destKind: leg,
+      idempotencyKey: legs.length > 1 ? `${input.idempotencyKey}:${leg}` : input.idempotencyKey,
+    });
+    if (!result.ok) return result;
+    prepared.push(result.data);
+  }
+
+  return ok(prepared);
 }
 
 /* ------------------------------------------------------------ state changes */
@@ -452,7 +511,7 @@ export async function saveTemplate(input: {
   category: "order_confirmation" | "payment_reminder" | "routine_check_in" | "reactivation" | "other";
   escalationStage?: number | null;
   body: string;
-  appliesTo: "personal" | "group";
+  appliesTo: "personal" | "group" | "both";
   active?: boolean;
 }): Promise<Result> {
   const ctx = await requireCapability("whatsapp.template.write");
@@ -718,8 +777,11 @@ export async function previewPaymentReminder(
   }));
   const missing = fields.filter((f) => !f.ok);
 
-  const destKind =
-    customer.whatsappGroupName ? customer.whatsappDest : ("personal" as const);
+  // The preview describes the first leg. A both-ways customer still starts at
+  // their own number; the second leg is spelled out on the send screen, which
+  // is the only place it can actually be worked.
+  const standing = customer.whatsappGroupName ? customer.whatsappDest : "personal";
+  const destKind: "personal" | "group" = standing === "both" ? "personal" : standing;
   const destination =
     destKind === "group"
       ? (customer.whatsappGroupName ?? "")

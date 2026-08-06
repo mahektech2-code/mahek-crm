@@ -26,6 +26,7 @@ import {
   type ProductOption,
   type QuickNoteOption,
 } from "@/components/crm/call-panel";
+import { MessageHistory, type MessageEntry } from "./message-history";
 import { createReminder, logComplaint } from "@/lib/actions/crm";
 import {
   ageLabel,
@@ -69,6 +70,7 @@ export function RecordScreen({
   openPromise,
   billStats,
   timeline,
+  messages,
   categories,
   period,
   complaintCategories,
@@ -123,6 +125,8 @@ export function RecordScreen({
   openPromise: { amount: number; promisedBy: string } | null;
   billStats: { total: number; overdue: number; oldestDueDate: string | null };
   timeline: Entry[];
+  /** Every WhatsApp message prepared for this customer, newest first. */
+  messages: MessageEntry[];
   /** Complaint categories, from configuration rather than a constant. */
   categories: string[];
   /** "2026-08" — the month the target figures belong to. */
@@ -243,6 +247,9 @@ export function RecordScreen({
       ) : null}
 
       <div className="grid grid-cols-[minmax(0,1fr)_clamp(280px,24%,380px)] items-start gap-4">
+        <div className="flex flex-col gap-4">
+        <MessageHistory messages={messages} />
+
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-divider px-5 py-3.5">
             <span className="text-lg leading-6 font-semibold text-ink">
@@ -306,6 +313,7 @@ export function RecordScreen({
             )}
           </div>
         </Card>
+        </div>
 
         <div className="flex flex-col gap-4">
           <Card className="p-5">

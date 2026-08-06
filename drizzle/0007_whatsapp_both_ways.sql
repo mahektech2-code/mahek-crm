@@ -1,0 +1,1 @@
+ALTER TYPE "public"."dest_kind" ADD VALUE 'both';

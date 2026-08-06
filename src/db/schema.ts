@@ -175,7 +175,12 @@ export const messageStatusEnum = pgEnum("message_status", [
 ]);
 
 export const sendModeEnum = pgEnum("send_mode", ["manual", "automatic"]);
-export const destKindEnum = pgEnum("dest_kind", ["personal", "group"]);
+/**
+ * "both" is a standing instruction on a customer, never a message: a message
+ * goes to exactly one place, so a both-ways customer produces two rows. The
+ * enum is shared, so read `waMessages.destKind` as personal-or-group only.
+ */
+export const destKindEnum = pgEnum("dest_kind", ["personal", "group", "both"]);
 
 export const templateCategoryEnum = pgEnum("template_category", [
   "order_confirmation",
