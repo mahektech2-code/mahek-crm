@@ -279,6 +279,31 @@ describe("E2 queue builder", () => {
     );
   });
 
+  test("two overdue reminders are two reasons, each naming its own note", () => {
+    const c = candidate({
+      lastContactDate: addDays(TODAY, -40),
+      reminders: [
+        { id: "r1", dueDate: addDays(TODAY, -2), note: "Call back" },
+        { id: "r2", dueDate: addDays(TODAY, -5), note: "Chase the rate list" },
+      ],
+    });
+    const { entries } = buildQueue([c], TODAY, C);
+
+    const overdue = entries[0].reasons.filter(
+      (r) => r.kind === "reminderOverdue",
+    );
+    assert.equal(
+      overdue.length,
+      2,
+      "collapsing them would hide one of the two things the customer was promised",
+    );
+    assert.notEqual(
+      overdue[0].label,
+      overdue[1].label,
+      "each carries its own note and its own days overdue",
+    );
+  });
+
   test("a customer active in the order system is SUPPRESSED, not omitted", () => {
     const c = candidate({
       lastContactDate: addDays(TODAY, -40),

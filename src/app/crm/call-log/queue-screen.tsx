@@ -364,9 +364,11 @@ export function QueueScreen({
                   >
                     {r.name}
                   </Link>
-                  {r.reasons.map((reason) => (
+                  {/* Two overdue reminders are two reasons of the same kind,
+                      each naming its own note, so the kind alone is not a key. */}
+                  {r.reasons.map((reason, ri) => (
                     <Badge
-                      key={reason.kind}
+                      key={`${reason.kind}:${ri}`}
                       tone={REASON_TONE[reason.kind] ?? "neutral"}
                     >
                       {reason.label}
