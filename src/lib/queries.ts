@@ -189,6 +189,68 @@ export async function customerTimeline(
   }));
 }
 
+/* -------------------------------------------------------- message history */
+
+export type CustomerMessage = {
+  id: string;
+  at: Date;
+  by: string;
+  status: string;
+  /** Which route it took — the manual copy-paste path, or the API. */
+  channelLabel: string;
+  /** The number or group name it actually went to. */
+  destination: string;
+  destKind: "personal" | "group";
+  templateName: string | null;
+  /** Empty for older rows that recorded a template but no body. */
+  body: string;
+  edited: boolean;
+};
+
+/**
+ * Every message ever prepared for one customer, newest first. The timeline
+ * carries a one-line summary of each; this is the full text, because a
+ * telecaller asked what we actually said needs to read it, not infer it.
+ */
+export async function customerMessages(
+  customerId: string,
+): Promise<CustomerMessage[]> {
+  const rows = await db.execute<{
+    id: string;
+    at: Date;
+    by: string;
+    status: string;
+    mode: string;
+    destination: string;
+    dest_kind: "personal" | "group";
+    template_name: string | null;
+    body: string;
+    edited: boolean;
+  }>(sql`
+    select m.id,
+           coalesce(m.confirmed_sent_at, m.sent_at, m.copied_at, m.prepared_at) as at,
+           u.name as by, m.status::text as status, m.mode::text as mode,
+           m.resolved_destination as destination, m.dest_kind::text as dest_kind,
+           m.template_name, m.body, m.edited
+      from wa_messages m join users u on u.id = m.user_id
+     where m.customer_id = ${customerId}
+     order by at desc
+  `);
+
+  return rows.map((r) => ({
+    id: r.id,
+    at: new Date(r.at),
+    by: r.by,
+    status: r.status,
+    channelLabel: r.mode === "automatic" ? "Sent by API" : "Sent by hand",
+    destination: r.destination,
+    destKind: r.dest_kind,
+    templateName: r.template_name,
+    body: r.body ?? "",
+    edited: r.edited,
+  }));
+}
+
 /* ------------------------------------------------------------ interactions */
 
 export type InteractionRow = {
