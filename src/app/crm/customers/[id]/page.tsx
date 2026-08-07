@@ -34,7 +34,7 @@ export default async function CustomerRecordPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  await requireUser();
+  const user = await requireUser();
 
   const customer = await getCustomer(id);
   if (!customer) notFound();
@@ -185,6 +185,7 @@ export default async function CustomerRecordPage({
       }))}
       singleSelectOutcomes={config["interactions.singleSelectOutcomes"]}
       searchEnabled={config["products.searchOnOrderForms"]}
+      userName={user.name}
       products={productRows.map((p) => ({
         id: p.productId,
         name: p.name,

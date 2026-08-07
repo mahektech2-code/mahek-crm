@@ -1139,8 +1139,8 @@ describe("E6 EOD aggregator", () => {
     callsConnected: 31,
     callsInbound: 5,
     callsMissed: 11,
-    queueServed: 45,
     queueWorked: 42,
+    ordersCaptured: 6,
     ordersCount: 6,
     ordersValue: 18_450_000,
     followUpsMade: 12,
@@ -1182,6 +1182,33 @@ describe("E6 EOD aggregator", () => {
     );
   });
 
+  test("a day's work is not reported as nothing because accounts have not got to it", () => {
+    // Three orders taken, one approved so far. The telecaller pastes this
+    // into the team group as their record of the day.
+    const r = aggregateEod({ ...input, ordersCaptured: 3, ordersCount: 1, ordersValue: 40_000_00 });
+    const orders = r.lines.find((l) => l.label === "Orders");
+    assert.equal(orders?.value, "3 taken · 1 approved · ₹40,000");
+    assert.match(r.whatsappText, /Orders: 3 taken · 1 approved/);
+  });
+
+  test("a day where everything taken was approved reads as one number", () => {
+    // The split is worth showing only when it means something.
+    const r = aggregateEod({ ...input, ordersCaptured: 6, ordersCount: 6 });
+    assert.equal(r.lines.find((l) => l.label === "Orders")?.value, "6 · ₹1,84,500");
+    assert.match(r.whatsappText, /Orders: 6 \(₹1,84,500\)/);
+  });
+
+  test("the queue figure is a count of work done, not a second progress bar", () => {
+    // It used to read "x of y" with a y computed differently from the Call
+    // Log's, so the two screens disagreed about the same day.
+    const r = aggregateEod({ ...input, queueWorked: 4 });
+    assert.equal(
+      r.lines.find((l) => l.label === "Customers called from the queue")?.value,
+      "4",
+    );
+    assert.equal(r.lines.some((l) => l.value.includes(" of ")), true, "target line still reads 'of'");
+  });
+
   test("the WhatsApp text contains nothing that renders badly", () => {
     const { whatsappText } = aggregateEod(input);
     assert.ok(!whatsappText.includes("|"), "no table pipes");
@@ -1201,6 +1228,7 @@ describe("E6 EOD aggregator", () => {
       callsInbound: 0,
       callsMissed: 0,
       ordersWithoutCall: 0,
+      ordersCaptured: 0,
       ordersCount: 0,
       ordersValue: 0,
       targetAchieved: 0,

@@ -37,7 +37,7 @@ const TYPE_LABEL: Record<string, string> = {
   other: "other",
 };
 
-type Tab = "today" | "overdue" | "upcoming" | "done" | "all";
+type Tab = "due" | "today" | "overdue" | "upcoming" | "done" | "all";
 
 function overdueByPerson(overdue: Row[]) {
   const map = new Map<string, { name: string; overdue: number; oldest: number }>();
@@ -69,7 +69,7 @@ export function RemindersScreen({
   const { run } = useToast();
   const t = today();
 
-  const [tab, setTab] = React.useState<Tab>("today");
+  const [tab, setTab] = React.useState<Tab>("due");
   const [newOpen, setNewOpen] = React.useState(false);
   const [rescheduling, setRescheduling] = React.useState<Row | null>(null);
   const [dismissing, setDismissing] = React.useState<Row | null>(null);
@@ -77,6 +77,18 @@ export function RemindersScreen({
   // displayStatus is derived on the server against the business day. Deriving
   // it again here from a browser clock is how the two end up disagreeing.
   const buckets = {
+    /**
+     * Everything that needs doing today — overdue first, because a promise
+     * already broken is worse than one due in an hour.
+     *
+     * This is the count the sidebar badge carries, and it exists so that the
+     * two agree: a badge reading 6 that opened a list of 4 left a telecaller
+     * hunting for the other two.
+     */
+    due: [
+      ...rows.filter((r) => r.displayStatus === "overdue"),
+      ...rows.filter((r) => r.displayStatus === "due_today"),
+    ],
     today: rows.filter((r) => r.displayStatus === "due_today"),
     overdue: rows.filter((r) => r.displayStatus === "overdue"),
     upcoming: rows.filter((r) => r.displayStatus === "upcoming"),
@@ -158,6 +170,7 @@ export function RemindersScreen({
           onChange={setTab}
           className="px-5"
           tabs={[
+            { key: "due", label: "Needs action", count: buckets.due.length },
             { key: "today", label: "Due today", count: buckets.today.length },
             { key: "overdue", label: "Overdue", count: buckets.overdue.length },
             { key: "upcoming", label: "Upcoming", count: buckets.upcoming.length },

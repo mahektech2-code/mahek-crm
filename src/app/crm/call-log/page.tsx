@@ -36,7 +36,13 @@ export default async function QueuePage() {
     popularProducts(),
     // Call scripts live in the help centre, so there is one place they are
     // written and the panel simply shows the relevant one.
-    db.select().from(helpArticles).where(eq(helpArticles.type, "call_script")),
+    db
+      .select()
+      .from(helpArticles)
+      .where(eq(helpArticles.type, "call_script"))
+      // Ordered, or which script greets the telecaller is whatever the
+      // planner happened to return first.
+      .orderBy(helpArticles.title),
   ]);
   const quickNoteOptions = quickNoteRows.map((n) => ({
     id: n.id,
@@ -115,6 +121,7 @@ export default async function QueuePage() {
       quickNotes={quickNoteOptions}
       singleSelectOutcomes={config["interactions.singleSelectOutcomes"]}
       searchEnabled={config["products.searchOnOrderForms"]}
+      userName={user.name}
       products={productOptions}
       scripts={scriptRows.map((a) => ({
         id: a.id,
@@ -127,7 +134,8 @@ export default async function QueuePage() {
         connected: activity.callsConnected,
         attempted: activity.callsAttempted,
         missed: activity.callsMissed,
-        orders: activity.ordersCount,
+        // What the telecaller took today, whatever accounts have decided.
+        orders: activity.ordersCaptured,
         orderValue: activity.ordersValue,
         connectRate: activity.connectRate,
       }}

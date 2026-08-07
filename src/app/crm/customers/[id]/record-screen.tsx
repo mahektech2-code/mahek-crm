@@ -77,6 +77,7 @@ export function RecordScreen({
   quickNotes,
   singleSelectOutcomes,
   searchEnabled,
+  userName,
   products,
 }: {
   customer: {
@@ -138,6 +139,8 @@ export function RecordScreen({
   singleSelectOutcomes: string[];
   /** products.searchOnOrderForms — checked here as well as in the API. */
   searchEnabled: boolean;
+  /** The signed-in telecaller, for script placeholders. */
+  userName: string;
   products: ProductOption[];
 }) {
   const router = useRouter();
@@ -461,6 +464,7 @@ export function RecordScreen({
           quickNotes={quickNotes}
           singleSelectOutcomes={singleSelectOutcomes}
           searchEnabled={searchEnabled}
+          userName={userName}
           products={products}
           onClose={() => setCalling(false)}
         />

@@ -79,6 +79,7 @@ export function QueueScreen({
   quickNotes,
   singleSelectOutcomes,
   searchEnabled,
+  userName,
   products,
   scripts,
 }: {
@@ -95,6 +96,8 @@ export function QueueScreen({
   singleSelectOutcomes: string[];
   /** products.searchOnOrderForms — checked here as well as in the API. */
   searchEnabled: boolean;
+  /** The signed-in telecaller, for script placeholders. */
+  userName: string;
   products: ProductOption[];
   scripts: ScriptOption[];
   activity: {
@@ -496,6 +499,7 @@ export function QueueScreen({
         quickNotes={quickNotes}
         singleSelectOutcomes={singleSelectOutcomes}
         searchEnabled={searchEnabled}
+        userName={userName}
         products={products}
         scripts={scripts}
         hasNext={hasNext}

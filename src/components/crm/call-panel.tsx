@@ -139,12 +139,21 @@ export type ScriptOption = {
  * line split so a {placeholder} can be styled apart from the words around it.
  * Someone reading this aloud needs to see instantly what to substitute.
  */
-function scriptBlocks(script: ScriptOption) {
+function scriptBlocks(script: ScriptOption, fill: Record<string, string> = {}) {
+  // A placeholder the CRM can answer is answered. Reading "am I speaking to
+  // {contact name}?" aloud is a stumble the system could have prevented — it
+  // knows the name. What it cannot fill stays in braces, as the thing to say
+  // in your own words, and either way it keeps the highlight so the reader
+  // can see at a glance which words are about this customer.
   const parts = (line: string) =>
     line
       .split(/(\{[^}]+\})/g)
       .filter(Boolean)
-      .map((text) => ({ text, placeholder: text.startsWith("{") }));
+      .map((text) => {
+        if (!text.startsWith("{")) return { text, placeholder: false };
+        const key = text.slice(1, -1).trim().toLowerCase();
+        return { text: fill[key] ?? text, placeholder: true };
+      });
 
   const blocks: Array<{ label: string; lines: string[] }> = [];
   const said = script.body.split(/\n\s*\n/).filter((p) => p.trim());
@@ -272,6 +281,8 @@ type CallPanelProps = {
    * because a search box that finds nothing reads as a broken catalogue.
    */
   searchEnabled?: boolean;
+  /** The signed-in telecaller, so a script can say their name rather than {your name}. */
+  userName?: string;
   /** §3.2 — outcomes whose quick notes are one choice, from configuration. */
   singleSelectOutcomes?: string[];
   onClose: () => void;
@@ -324,6 +335,7 @@ function CallPanelForm({
   scripts = [],
   frequentProductIds = [],
   searchEnabled = true,
+  userName,
   singleSelectOutcomes = [],
   onClose,
   onSaved,
@@ -452,6 +464,17 @@ function CallPanelForm({
       controller.abort();
     };
   }, [productQuery, target, searchEnabled]);
+
+  /**
+   * What a script's placeholders resolve to for this call. Only what the CRM
+   * actually knows — anything absent stays in braces rather than becoming an
+   * empty gap in a sentence somebody is about to read aloud.
+   */
+  const scriptFill: Record<string, string> = {};
+  if (target?.contactPerson) scriptFill["contact name"] = target.contactPerson;
+  if (target?.name) scriptFill["customer"] = target.name;
+  if (userName) scriptFill["your name"] = userName;
+  if (target?.outstanding) scriptFill["outstanding"] = money(target.outstanding);
 
   const isOrderReceived = type === "order_received";
   const chosen = isOrderReceived || Boolean(outcome);
@@ -1295,7 +1318,7 @@ function CallPanelForm({
 
                 {script ? (
                   <div className="max-w-[420px]">
-                    {scriptBlocks(script).map((b, bi) => (
+                    {scriptBlocks(script, scriptFill).map((b, bi) => (
                       <div key={bi} className="mb-4">
                         <span className="mb-1.5 block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
                           {b.label}
@@ -1441,7 +1464,7 @@ function CallPanelForm({
                           </div>
                           {stripOpen ? (
                             <div className="mt-1.5">
-                              {scriptBlocks(script)
+                              {scriptBlocks(script, scriptFill)
                                 .slice(0, 1)
                                 .map((b, bi) => (
                                   <div key={bi}>
