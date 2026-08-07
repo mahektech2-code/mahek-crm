@@ -34,7 +34,7 @@ export interface FileStorage {
  * not be one the other rejects. This is the browser-side accept hint only —
  * the server decides for real, from the bytes.
  */
-export const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+export const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png"];
 
 /**
  * Magic numbers, because an extension is trivially renamed and the MIME type

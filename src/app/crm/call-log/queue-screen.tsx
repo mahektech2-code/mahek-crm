@@ -350,8 +350,13 @@ export function QueueScreen({
           visible.map((r, i) => (
             <div
               key={r.customerId}
-              onClick={() => setSelected(i)}
-              onDoubleClick={() => setOpenId(r.customerId)}
+              onClick={() => {
+                // One click opens the call, the way the payment worklist does.
+                // The row still becomes the selection, so j/k carries on from
+                // wherever the mouse left off.
+                setSelected(i);
+                setOpenId(r.customerId);
+              }}
               className={cx(
                 "flex cursor-pointer items-center gap-4 border-b border-divider px-5 py-3 last:border-0",
                 i === selected ? "bg-brand-soft/50" : "hover:bg-canvas",

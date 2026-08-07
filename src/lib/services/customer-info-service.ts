@@ -1,7 +1,7 @@
 import "server-only";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { calls, customers, orders } from "@/db/schema";
+import { bills, calls, customers, orders } from "@/db/schema";
 import { assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
 import { customerProducts, type FrequentProduct } from "./product-service";
@@ -86,6 +86,8 @@ export type CustomerInformation = {
   outstanding: number;
   creditDays: number;
   recentCalls: RecentCall[];
+  /** Newest first — what the Request CN bill picker offers. */
+  bills: Array<{ id: string; billNo: string; billDate: string }>;
   productHistory: ProductHistoryRow[];
   /** §2.1 — the order form's quick-pick container, same aggregation. */
   frequentProducts: FrequentProduct[];
@@ -242,6 +244,22 @@ export async function customerInformation(
     .orderBy(desc(calls.startedAt))
     .limit(3);
 
+  /* ------------------------------------------------------------- the bills */
+
+  // A credit note asked for mid-call has to name the bill it is against, so
+  // the panel needs the list the moment the complaint form opens — a second
+  // trip while the customer is still on the line is a trip too many.
+  const customerBills = await db
+    .select({
+      id: bills.id,
+      billNo: bills.billNo,
+      billDate: bills.billDate,
+    })
+    .from(bills)
+    .where(eq(bills.customerId, customerId))
+    .orderBy(desc(bills.billDate))
+    .limit(50);
+
   /* ------------------------------------------------------- product history */
 
   // §2.1 — one aggregation serves the Information tab and the order form's
@@ -276,6 +294,7 @@ export async function customerInformation(
       outcome: r.outcome,
       notes: r.notes,
     })),
+    bills: customerBills,
     productHistory: allProducts.map((r) => ({
       productName: r.displayName,
       lastPurchaseDate: r.lastPurchaseDate,
