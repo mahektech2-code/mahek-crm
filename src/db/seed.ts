@@ -127,6 +127,16 @@ const TEAM = [
     role: "telecaller" as const,
     apps: ["field"],
   },
+  {
+    // Accounts accept orders and do nothing else. Deliberately without the
+    // CRM: the person deciding whether a customer may take more credit is not
+    // the person chasing them for the next order.
+    name: "Deepa Nair",
+    email: "deepa@mahek.in",
+    phone: "9820011008",
+    role: "accounts" as const,
+    apps: ["orders"],
+  },
 ];
 
 const CITIES: Array<[string, string]> = [

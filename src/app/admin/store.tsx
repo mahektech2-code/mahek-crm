@@ -47,6 +47,7 @@ export type Drawer =
   | { kind: "registerApp"; id?: string }
   | { kind: "template"; id: string | null }
   | { kind: "bulkInvite" }
+  | { kind: "announcement"; id: string | null }
   | { kind: "team"; id: string };
 
 export type AdminNote = { text: string; by: string; t: string };

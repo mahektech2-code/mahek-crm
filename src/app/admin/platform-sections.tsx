@@ -21,6 +21,17 @@ import {
   PLATFORM_FACTS,
   type AuditKind,
 } from "./data";
+import {
+  AttentionTab,
+  ContractValidation,
+  DriftTab,
+  FeatureFlagsTab,
+  MigrationStatus,
+  PerAppDashboard,
+  SchemaInspector,
+  UnifiedAudit,
+  UsageTab,
+} from "./platform-extra";
 import { useAdmin } from "./store";
 
 /* ---------------------------------------------------------------------------
@@ -47,66 +58,20 @@ export function OverviewSection({
   tab: number;
   navigate: (section: string, tab: number) => void;
 }) {
-  if (tab === 0) return <Health navigate={navigate} />;
-  if (tab === 1) return <Integrations />;
-  if (tab === 2) return <RecentActivity navigate={navigate} />;
-  return <ScheduledJobs />;
+  if (tab === 0) return <AttentionTab navigate={navigate} />;
+  if (tab === 1) return <Health />;
+  if (tab === 2) return <Integrations />;
+  if (tab === 3) return <UsageTab />;
+  if (tab === 4) return <DriftTab navigate={navigate} />;
+  if (tab === 5) return <ScheduledJobs />;
+  return <RecentActivity navigate={navigate} />;
 }
 
-function Health({ navigate }: { navigate: (section: string, tab: number) => void }) {
-  const { users, requests, expiring, registry, notify } = useAdmin();
-
-  const failing = INTEGRATIONS.filter((i) => i.state === "Failing").length;
-  const jobsFailed = JOBS.filter((j) => !j.ok).length;
-
-  // Only what actually needs somebody today. A band that always shows eight
-  // chips is a band nobody reads.
-  const items = [
-    { n: failing, label: failing === 1 ? "integration failing" : "integrations failing", tone: "danger" as const, go: () => navigate("overview", 1) },
-    { n: jobsFailed, label: jobsFailed === 1 ? "scheduled job failed" : "scheduled jobs failed", tone: "danger" as const, go: () => navigate("overview", 3) },
-    { n: requests.length, label: requests.length === 1 ? "access request" : "access requests", tone: "warn" as const, go: () => navigate("people", 1) },
-    { n: users.filter((u) => u.status === "Locked").length, label: "accounts locked out", tone: "warn" as const, go: () => navigate("people", 3) },
-    { n: users.filter((u) => u.status === "Invited").length, label: "invited, never signed in", tone: "warn" as const, go: () => navigate("people", 4) },
-    { n: expiring.length, label: "access grants expiring", tone: "neutral" as const, go: () => navigate("people", 1) },
-    { n: registry.filter((a) => a.status === "Maintenance").length, label: "apps in maintenance", tone: "neutral" as const, go: () => navigate("apps", 1) },
-  ].filter((x) => x.n > 0);
+function Health() {
+  const { registry, notify } = useAdmin();
 
   return (
     <div>
-      {items.length ? (
-        <Card className="mt-5 px-5 py-4 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-          <div className="mb-2.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
-            Needs an admin today
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {items.map((a) => (
-              <button
-                key={a.label}
-                onClick={a.go}
-                className={cx(
-                  "inline-flex h-[34px] cursor-pointer items-baseline gap-2 rounded-[4px] border px-3 whitespace-nowrap",
-                  a.tone === "danger"
-                    ? "border-danger-soft bg-danger-soft"
-                    : a.tone === "warn"
-                      ? "border-warn-line bg-warn-soft"
-                      : "border-line bg-surface hover:bg-canvas",
-                )}
-              >
-                <span
-                  className={cx(
-                    "text-[15px] font-semibold",
-                    a.tone === "danger" ? "text-danger" : a.tone === "warn" ? "text-warn-ink" : "text-ink",
-                  )}
-                >
-                  {a.n}
-                </span>
-                <span className="text-[13px] text-body">{a.label}</span>
-              </button>
-            ))}
-          </div>
-        </Card>
-      ) : null}
-
       <div className="mt-5 grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(240px,1fr))]">
         {PLATFORM_FACTS.map((p) => (
           <Card key={p.label} className="p-5 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
@@ -335,6 +300,11 @@ export function AppsSection({ tab }: { tab: number }) {
     );
   }
 
+  if (tab === 3) return <PerAppDashboard />;
+  if (tab === 4) return <SchemaInspector />;
+  if (tab === 5) return <ContractValidation />;
+  if (tab === 6) return <FeatureFlagsTab />;
+
   if (tab === 1) {
     return (
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
@@ -410,6 +380,8 @@ export function AppsSection({ tab }: { tab: number }) {
 
 export function DataSection({ tab }: { tab: number }) {
   const { notify } = useAdmin();
+
+  if (tab === 2) return <MigrationStatus />;
 
   if (tab === 0) {
     return (
@@ -503,7 +475,8 @@ export function DataSection({ tab }: { tab: number }) {
 
 export function AuditSection({ tab }: { tab: number }) {
   const { audit } = useAdmin();
-  const kind: AuditKind = (["config", "access", "admin"] as const)[Math.min(tab, 2)];
+  if (tab === 0) return <UnifiedAudit />;
+  const kind: AuditKind = (["config", "access", "admin"] as const)[Math.min(tab - 1, 2)];
   const rows = audit.filter((r) => r.kind === kind);
 
   return (

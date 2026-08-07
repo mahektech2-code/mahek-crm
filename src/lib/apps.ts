@@ -54,10 +54,11 @@ export const APPS: AppDefinition[] = [
     id: "orders",
     name: "Order Management",
     initials: "OM",
-    description: "Order entry, dispatch and the bill register the CRM mirrors.",
+    description:
+      "Orders taken on a call wait here for accounts to accept them.",
     href: "/orders",
     tone: "neutral",
-    built: false,
+    built: true,
   },
   {
     id: "people",

@@ -24,6 +24,7 @@ import {
   type CrossError,
   type Values,
 } from "./settings-model";
+import { SettingHistory } from "./settings-tools";
 import { useAdmin } from "./store";
 
 /* ---------------------------------------------------------------------------
@@ -143,12 +144,15 @@ function FieldRow({
         {field.help ? (
           <div className="mt-0.5 text-[13px] leading-[19px] text-muted">{field.help}</div>
         ) : null}
-        <div className="mt-1.5 text-[11px] text-muted">
-          {dirty
-            ? `Unsaved — was ${readable(savedValue(values, field))}`
-            : values[field.key] !== undefined
-              ? "Changed on this screen, not yet reloaded"
-              : "Default · never changed"}
+        <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 text-[11px] text-muted">
+          <span>
+            {dirty
+              ? `Unsaved — was ${readable(savedValue(values, field))}`
+              : values[field.key] !== undefined
+                ? "Changed on this screen, not yet reloaded"
+                : "Default · never changed"}
+          </span>
+          <SettingHistory settingKey={field.key} label={field.label} />
         </div>
       </div>
 

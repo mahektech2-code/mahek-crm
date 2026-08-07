@@ -15,6 +15,7 @@ import { isManager } from "./auth";
 // The business day, not the calendar day — a 4am sign-in belongs to the shift
 // that started yesterday, and the boundary is configurable.
 import { today } from "./recompute";
+import { pendingOrderCount } from "./services/order-approval-service";
 
 /* ---------------------------------------------------------------------------
  * Who can open what, and what is waiting for them inside it.
@@ -61,6 +62,20 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
   const out: LauncherApp[] = [];
 
   for (const app of APPS.filter((a) => ids.includes(a.id))) {
+    // Orders waiting on accounts are the only thing that app holds today, and
+    // an order nobody has looked at is a customer nobody has confirmed to.
+    if (app.id === "orders") {
+      const waiting = await pendingOrderCount();
+      out.push({
+        ...app,
+        count: waiting,
+        status: waiting
+          ? `${waiting} order${waiting === 1 ? "" : "s"} waiting for approval`
+          : "Nothing waiting",
+      });
+      continue;
+    }
+
     if (app.id !== "crm") {
       out.push({
         ...app,

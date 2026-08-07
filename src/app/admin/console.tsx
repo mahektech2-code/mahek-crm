@@ -11,6 +11,8 @@ import {
   PLATFORM_TABS,
   schemaFor,
 } from "./data";
+import { PLATFORM_SCHEMA } from "./data-platform";
+import { NotificationsSection } from "./platform-extra";
 import {
   crossCheck,
   dirtyFields,
@@ -20,6 +22,7 @@ import {
   type Values,
 } from "./settings-model";
 import { SettingsSection } from "./settings-section";
+import { SettingsToolbar } from "./settings-tools";
 import { AppsSection, AuditSection, DataSection, OverviewSection } from "./platform-sections";
 import { PeopleSection } from "./people-section";
 import { UserDetail } from "./user-detail";
@@ -39,9 +42,13 @@ const PLATFORM_NAV = [
   { key: "overview", label: "Overview" },
   { key: "people", label: "People" },
   { key: "apps", label: "Apps" },
-  { key: "audit", label: "Audit" },
   { key: "data", label: "Data" },
+  { key: "notifications", label: "Notifications" },
+  { key: "audit", label: "Audit" },
 ] as const;
+
+/** Apps → the last sub-tab is MahekOne's own configuration, rendered by the same renderer. */
+const PLATFORM_SETTINGS_TAB = 7;
 
 export function AdminConsole() {
   return (
@@ -65,7 +72,10 @@ function ConsoleShell() {
   // whole section is saved — half the relationships only hold across fields.
   const [values, setValues] = React.useState<Values>({});
   const [drafts, setDrafts] = React.useState<Values>({});
-  const [impactOpen, setImpactOpen] = React.useState(false);
+  const [reviewOpen, setReviewOpen] = React.useState(false);
+  // What the last applied change set replaced, so it can be put back. Reset to
+  // default is a different question from reset to what it was before I broke it.
+  const [lastSet, setLastSet] = React.useState<null | { count: number; owner: string; before: Values }>(null);
   const [guard, setGuard] = React.useState<null | { count: number; go: () => void }>(null);
 
   const visibleApps = registry
@@ -76,7 +86,16 @@ function ConsoleShell() {
   const platformTabs = PLATFORM_TABS[section];
   const tabLabels = appDef ? (schema?.tabs.map((t) => t.label) ?? []) : (platformTabs ?? []);
   const tabIndex = Math.min(tab, Math.max(0, tabLabels.length - 1));
-  const tabDef = schema ? schema.tabs[Math.min(tabIndex, schema.tabs.length - 1)] : null;
+
+  // A settings surface is either a live app's schema tab or, on Apps, the
+  // platform's own schema. The renderer cannot tell the two apart.
+  const tabDef = schema
+    ? schema.tabs[Math.min(tabIndex, schema.tabs.length - 1)]
+    : section === "apps" && tabIndex === PLATFORM_SETTINGS_TAB
+      ? PLATFORM_SCHEMA.tabs[0]
+      : null;
+  const settingsOpen = !!tabDef && (appDef ? appDef.status === "Live" : true);
+  const settingsOwner = appDef?.name ?? "Platform";
 
   const dirty = dirtyFields(tabDef, values, drafts);
   const errors = tabDef ? crossCheck(tabDef, values, drafts) : [];
@@ -100,11 +119,16 @@ function ConsoleShell() {
     const next = { ...values };
     for (const f of dirty) {
       next[f.key] = drafts[f.key];
-      record("config", appDef?.name ?? "Platform", f.label, readable(savedValue(values, f)), readable(drafts[f.key]));
+      record("config", settingsOwner, f.label, readable(savedValue(values, f)), readable(drafts[f.key]));
     }
+    setLastSet({
+      count: dirty.length,
+      owner: settingsOwner,
+      before: Object.fromEntries(dirty.map((f) => [f.key, savedValue(values, f)])),
+    });
     setValues(next);
     setDrafts({});
-    setImpactOpen(false);
+    setReviewOpen(false);
     notify(
       dirty.length === 1
         ? "1 setting saved. It takes effect immediately."
@@ -115,8 +139,22 @@ function ConsoleShell() {
   function save() {
     if (errors.length) return notify("Fix the flagged relationships first");
     if (!dirty.length) return;
-    if (impact.length) return setImpactOpen(true);
+    // A change set is reviewed as one thing. A single change with no downstream
+    // effect does not need a modal in front of it.
+    if (impact.length || dirty.length > 1) return setReviewOpen(true);
     commit();
+  }
+
+  function rollback() {
+    if (!lastSet) return;
+    setValues((v) => ({ ...v, ...lastSet.before }));
+    record("config", lastSet.owner, "Change set rolled back", `${lastSet.count} settings`, "previous values");
+    notify(
+      lastSet.count === 1
+        ? "Change set rolled back. The setting is back to what it was."
+        : `Change set rolled back. ${lastSet.count} settings are back to what they were.`,
+    );
+    setLastSet(null);
   }
 
   const failing = INTEGRATIONS.filter((i) => i.state === "Failing").length;
@@ -259,12 +297,16 @@ function ConsoleShell() {
                   ))}
                 </div>
 
+                {settingsOpen && tabDef ? (
+                  <SettingsToolbar tab={tabDef} owner={settingsOwner} values={values} />
+                ) : null}
+
                 <SectionBody
                   section={section}
                   tabIndex={tabIndex}
                   navigate={navigate}
                   onOpenUser={setDetailId}
-                  appLive={!!appDef && appDef.status === "Live"}
+                  settingsOpen={settingsOpen}
                   comingSoon={appDef && appDef.status !== "Live" ? appDef : null}
                   tabDef={tabDef}
                   values={values}
@@ -274,7 +316,7 @@ function ConsoleShell() {
                   isPlatformAdmin={me.platform}
                 />
 
-                {tabDef && appDef?.status === "Live" ? (
+                {settingsOpen ? (
                   <div className="sticky bottom-0 mt-5 bg-canvas pt-4">
                     <Card className="flex items-center gap-3 px-5 py-3 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
                       <span className="text-sm text-body">
@@ -285,6 +327,11 @@ function ConsoleShell() {
                             : "No unsaved changes. Values take effect the moment they are saved."}
                       </span>
                       <span className="flex-1" />
+                      {!dirty.length && lastSet ? (
+                        <Button variant="ghost" onClick={rollback}>
+                          Undo the last change set
+                        </Button>
+                      ) : null}
                       {dirty.length ? (
                         <Button variant="secondary" onClick={() => setDrafts({})}>
                           Discard changes
@@ -314,39 +361,52 @@ function ConsoleShell() {
       </div>
 
       <Modal
-        open={impactOpen}
-        onClose={() => setImpactOpen(false)}
-        title="Before you save"
-        width={560}
+        open={reviewOpen}
+        onClose={() => setReviewOpen(false)}
+        title="Review this change set"
+        width={620}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setImpactOpen(false)}>
+            <Button variant="secondary" onClick={() => setReviewOpen(false)}>
               Keep editing
             </Button>
             <Button variant="primary" onClick={commit}>
-              Save changes
+              Apply {dirty.length} change{dirty.length === 1 ? "" : "s"}
             </Button>
           </>
         }
       >
         <div className="text-sm leading-[21px] text-body">
-          These changes alter who appears in a worklist tomorrow.
+          {impact.length
+            ? "Applied together, as one change. Some of these alter who appears in a worklist tomorrow."
+            : "Applied together, as one change, so the system is never briefly half-configured."}
         </div>
         <div className="mt-3.5 overflow-hidden rounded-[4px] border border-line">
-          {impact.map((row, i) => (
-            <div key={row.setting} className={cx("px-3.5 py-3", i ? "border-t border-canvas" : "")}>
-              <div className="text-sm font-medium text-ink">{row.setting}</div>
-              <div className="mt-0.5 text-[13px] text-muted">{row.change}</div>
-              <div
-                className={cx(
-                  "mt-1.5 text-sm font-medium",
-                  row.tone === "warn" ? "text-warn-ink" : row.tone === "ok" ? "text-success" : "text-body",
-                )}
-              >
-                {row.effect}
+          {dirty.map((f, i) => {
+            const row = impact.find((r) => r.setting === f.label);
+            return (
+              <div key={f.key} className={cx("px-3.5 py-3", i ? "border-t border-canvas" : "")}>
+                <div className="text-sm font-medium text-ink">{f.label}</div>
+                <div className="mt-0.5 font-mono text-[13px] text-muted">
+                  {readable(savedValue(values, f))} →{" "}
+                  <span className="text-ink">{readable(drafts[f.key])}</span>
+                </div>
+                {row?.effect ? (
+                  <div
+                    className={cx(
+                      "mt-1.5 text-sm font-medium",
+                      row.tone === "warn" ? "text-warn-ink" : row.tone === "ok" ? "text-success" : "text-body",
+                    )}
+                  >
+                    {row.effect}
+                  </div>
+                ) : null}
               </div>
-            </div>
-          ))}
+            );
+          })}
+        </div>
+        <div className="mt-3 text-[13px] text-muted">
+          Applying this can be undone in one action from the save bar.
         </div>
       </Modal>
 
@@ -381,7 +441,7 @@ function SectionBody({
   tabIndex,
   navigate,
   onOpenUser,
-  appLive,
+  settingsOpen,
   comingSoon,
   tabDef,
   values,
@@ -394,7 +454,7 @@ function SectionBody({
   tabIndex: number;
   navigate: (section: string, tab: number) => void;
   onOpenUser: (id: string) => void;
-  appLive: boolean;
+  settingsOpen: boolean;
   comingSoon: { name: string; desc: string } | null;
   tabDef: React.ComponentProps<typeof SettingsSection>["tab"] | null;
   values: Values;
@@ -419,7 +479,7 @@ function SectionBody({
     );
   }
 
-  if (appLive && tabDef) {
+  if (settingsOpen && tabDef) {
     return (
       <SettingsSection
         tab={tabDef}
@@ -436,6 +496,7 @@ function SectionBody({
   if (section === "people") return <PeopleSection tab={tabIndex} onOpenUser={onOpenUser} />;
   if (section === "apps") return <AppsSection tab={tabIndex} />;
   if (section === "data") return <DataSection tab={tabIndex} />;
+  if (section === "notifications") return <NotificationsSection tab={tabIndex} />;
   if (section === "audit") return <AuditSection tab={tabIndex} />;
   return null;
 }

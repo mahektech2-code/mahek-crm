@@ -53,6 +53,7 @@ Sign in with the email **or** the work number.
 | `neha@mahek.in` | 9820011005 | telecaller | CRM, Reports | the launcher |
 | `vikram@mahek.in` | 9820011006 | manager | CRM, Orders, Reports, People, Admin | the launcher |
 | `mahesh@mahek.in` | 9820011007 | field salesman | Salesman App | straight into that app |
+| `deepa@mahek.in` | 9820011008 | accounts | Orders | straight into order approvals |
 
 ## How sign-in works
 
@@ -306,6 +307,29 @@ complaint nobody asked a credit note for reads as an approved amount to whoever
 opens it next. Requests have nowhere to go yet — there is no Accounts app — so
 they surface on a manager's pending list rather than sitting invisible. That is
 interim, and a credit note has financial consequences.
+
+**An order taken on a call is the customer saying yes, not the business.**
+Accounts check who they are and what they already owe before it is accepted,
+so a new order sits at `pending_approval` until they decide. Two different
+questions get asked of the same row and they have different answers: "did the
+customer order" is true from the moment it is logged, and drives the calling
+queue; "did we sell anything" is true only once approved, and drives EOD value,
+targets, the buying cycle, the product history and outstanding. The second
+question is asked in eight places and they all read `lib/order-status.ts` —
+before that existed they said `status <> 'cancelled'`, which would have counted
+every pending and declined order.
+
+**`lastOrderDate` moves on capture, not on approval.** It is the signal that
+stops the queue chasing somebody who ordered this morning, and a telecaller
+must not ring them because approval is slow. A declined order drops out of it,
+so the customer returns to the list on their own cycle. The buying cycle uses
+approved orders only, which is why `writeCycle` takes the placed date
+separately — computing both from the same rows put them in conflict.
+
+**Approving is accounts' and nobody else's.** Not a manager by seniority: the
+person chasing the target must not sign off the orders that hit it. Declining
+requires a reason, and it lands on the customer timeline, because the telecaller
+has to ring back and say something.
 
 **A collections call is logged in one place, and it is one transaction.** The
 follow-up panel opens over the worklist and never navigates away — a

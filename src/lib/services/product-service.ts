@@ -77,7 +77,7 @@ export async function customerProducts(
           or lower(p.name || coalesce(' ' || p.pack_size, '')) = lower(li->>'product')
        where o.customer_id = ${customerId}
          and o.source = 'external'
-         and o.status <> 'cancelled'
+         and o.status in ('captured','confirmed','dispatched')
          and o.line_items is not null
     )
     select p.id as product_id, p.name, p.pack_size,

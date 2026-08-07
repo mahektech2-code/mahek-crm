@@ -14,7 +14,8 @@ import {
   cx,
   type Tone,
 } from "@/components/ui/primitives";
-import { FilterPills, RowMenu, SelectionBar } from "@/components/ui/overlays";
+import { FilterPills, Modal, RowMenu, SelectionBar } from "@/components/ui/overlays";
+import { LEAVER_CHECKLIST } from "./data-platform";
 import {
   CHECKLIST,
   RESETS,
@@ -232,6 +233,9 @@ function AppAccess() {
     revokeUnused,
     notify,
   } = useAdmin();
+  const [pending, setPending] = React.useState<null | {
+    userId: string; userName: string; appId: string; appName: string; grows: boolean; other: string;
+  }>(null);
 
   return (
     <div>
@@ -277,7 +281,18 @@ function AppAccess() {
                           label=""
                           aria-label={`${a.name} access for ${u.name}`}
                           checked={u.apps.includes(a.id)}
-                          onChange={() => toggleAppAccess(u.id, a.id)}
+                          onChange={() => {
+                            const had = u.apps.includes(a.id);
+                            const after = had ? u.apps.length - 1 : u.apps.length + 1;
+                            // Crossing one app either way changes where this
+                            // person lands at sign-in, which is a bigger change
+                            // than the checkbox looks.
+                            if ((u.apps.length === 1 && after === 2) || (u.apps.length === 2 && after === 1)) {
+                              setPending({ userId: u.id, userName: u.name, appId: a.id, appName: a.name, grows: !had, other: registry.find((x) => x.id === (had ? u.apps.find((z) => z !== a.id) : u.apps[0]))?.name ?? "" });
+                              return;
+                            }
+                            toggleAppAccess(u.id, a.id);
+                          }}
                         />
                       </Td>
                     ))}
@@ -402,6 +417,45 @@ function AppAccess() {
           </div>
         )}
       </Card>
+
+      <Modal
+        open={!!pending}
+        onClose={() => setPending(null)}
+        title="This changes how they sign in"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setPending(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                if (pending) toggleAppAccess(pending.userId, pending.appId);
+                setPending(null);
+              }}
+            >
+              {pending?.grows ? "Grant it anyway" : "Revoke it"}
+            </Button>
+          </>
+        }
+      >
+        {pending ? (
+          <div className="text-sm leading-[21px] text-body">
+            {pending.grows ? (
+              <>
+                {pending.userName} opens only {pending.other} today, so MahekOne takes them straight into it and hides
+                the app switcher. Granting {pending.appName} means they land on the launcher every morning instead, and
+                have to choose.
+              </>
+            ) : (
+              <>
+                {pending.userName} would be left with one app. MahekOne will stop showing them the launcher and take
+                them straight into it — a single option is not a choice.
+              </>
+            )}
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }
@@ -412,6 +466,7 @@ function RolesAndTeams() {
   const { users, registry, setRole, openDrawer } = useAdmin();
   const active = users.filter((u) => u.status !== "Deactivated");
   const [effUser, setEffUser] = React.useState(active[0]?.name ?? "");
+  const [handover, setHandover] = React.useState<string | null>(null);
   const eu = users.find((u) => u.name === effUser) ?? active[0];
 
   const roleRows = active.flatMap((u) =>
@@ -523,7 +578,7 @@ function RolesAndTeams() {
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <CardHeader
           title="Teams"
-          hint="One manager each. Removing a manager requires nominating a replacement."
+          hint="One manager each. Removing a manager requires nominating a replacement — a team without one has nobody its figures roll up to."
         />
         <div className="overflow-auto">
           <table>
@@ -533,6 +588,7 @@ function RolesAndTeams() {
                 <Th>App</Th>
                 <Th>Manager</Th>
                 <Th align="right">Members</Th>
+                <Th />
               </tr>
             </thead>
             <tbody>
@@ -546,12 +602,21 @@ function RolesAndTeams() {
                   <Td>{t.app}</Td>
                   <Td>{t.manager}</Td>
                   <Td align="right">{t.members.length}</Td>
+                  <Td>
+                    <span className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+                      <Button size="sm" variant="ghost" onClick={() => setHandover(t.id)}>
+                        Change manager
+                      </Button>
+                    </span>
+                  </Td>
                 </Tr>
               ))}
             </tbody>
           </table>
         </div>
       </Card>
+
+      <ManagerHandover teamId={handover} onClose={() => setHandover(null)} />
 
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <CardHeader
@@ -586,6 +651,71 @@ function RolesAndTeams() {
         ))}
       </Card>
     </div>
+  );
+}
+
+/**
+ * A manager cannot simply be removed. Their reports have to land on somebody,
+ * and the replacement is nominated before anything changes.
+ */
+function ManagerHandover({ teamId, onClose }: { teamId: string | null; onClose: () => void }) {
+  const { users, notify, record } = useAdmin();
+  const team = TEAMS.find((t) => t.id === teamId);
+  const candidates = users.filter(
+    (u) => u.status === "Active" && Object.values(u.roles).includes("Manager") && u.name !== team?.manager,
+  );
+  const [to, setTo] = React.useState("");
+
+  if (!team) return null;
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Change the manager of ${team.name}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!to}
+            title={to ? undefined : "Nominate a replacement first"}
+            onClick={() => {
+              record("access", "Platform", `Team manager — ${team.name}`, team.manager, to);
+              notify(`${team.name} now reports to ${to}. ${team.members.length} people moved with it.`);
+              onClose();
+            }}
+          >
+            Hand the team over
+          </Button>
+        </>
+      }
+    >
+      <div className="text-sm leading-[21px] text-body">
+        {team.manager} manages {team.members.length} {team.members.length === 1 ? "person" : "people"} on {team.app}.
+        They cannot simply be removed — their reports have to roll up to somebody.
+      </div>
+      <label className="mt-4 block">
+        <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
+          New manager · required
+        </span>
+        <Select value={to} onChange={(e) => setTo(e.target.value)} className="w-full">
+          <option value="">Nominate a replacement</option>
+          {candidates.map((c) => (
+            <option key={c.id}>{c.name}</option>
+          ))}
+        </Select>
+      </label>
+      <div className="mt-3 overflow-hidden rounded-[4px] border border-line">
+        {team.members.map((m, i) => (
+          <div key={m} className={cx("px-3.5 py-2 text-sm text-ink", i ? "border-t border-canvas" : "")}>
+            {m} <span className="text-muted">would report to {to || "…"}</span>
+          </div>
+        ))}
+      </div>
+    </Modal>
   );
 }
 
@@ -903,19 +1033,38 @@ function Onboarding() {
           {done} of {CHECKLIST.length} done
         </div>
         {CHECKLIST.map((c, i) => (
-          <div key={c.label} className={cx("flex items-center gap-2.5 px-5 py-2.5", i ? "border-t border-canvas" : "")}>
-            <span
-              className={cx(
-                "flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[4px] text-[11px] font-semibold text-ink",
-                c.done ? "bg-brand-lime" : "bg-divider",
-              )}
-            >
-              {c.done ? "✓" : ""}
-            </span>
-            <span className={cx("text-sm", c.done ? "text-muted line-through" : "text-ink")}>{c.label}</span>
-          </div>
+          <ChecklistRow key={c.label} label={c.label} done={c.done} first={i === 0} />
         ))}
       </Card>
+
+      <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
+        <CardHeader
+          title="Leaver checklist · Suresh Kumar"
+          hint="The mirror of the joiner list. A leaver who still owns work has not actually left the system."
+        />
+        <div className="border-b border-divider px-5 py-2.5 text-[13px] text-muted">
+          {LEAVER_CHECKLIST.filter((c) => c.done).length} of {LEAVER_CHECKLIST.length} done
+        </div>
+        {LEAVER_CHECKLIST.map((c, i) => (
+          <ChecklistRow key={c.label} label={c.label} done={c.done} first={i === 0} />
+        ))}
+      </Card>
+    </div>
+  );
+}
+
+function ChecklistRow({ label, done, first }: { label: string; done: boolean; first: boolean }) {
+  return (
+    <div className={cx("flex items-center gap-2.5 px-5 py-2.5", first ? "" : "border-t border-canvas")}>
+      <span
+        className={cx(
+          "flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[4px] text-[11px] font-semibold text-ink",
+          done ? "bg-brand-lime" : "bg-divider",
+        )}
+      >
+        {done ? "✓" : ""}
+      </span>
+      <span className={cx("text-sm", done ? "text-muted line-through" : "text-ink")}>{label}</span>
     </div>
   );
 }
