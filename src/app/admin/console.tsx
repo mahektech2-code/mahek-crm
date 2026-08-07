@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { AppSwitcher } from "@/components/shell/app-switcher";
+import type { AppDefinition } from "@/lib/apps";
 import { Badge, Button, Card, EmptyState, cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { ToastProvider } from "@/components/ui/toast";
@@ -50,18 +52,18 @@ const PLATFORM_NAV = [
 /** Apps → the last sub-tab is MahekOne's own configuration, rendered by the same renderer. */
 const PLATFORM_SETTINGS_TAB = 7;
 
-export function AdminConsole() {
+export function AdminConsole({ apps }: { apps: AppDefinition[] }) {
   return (
     <ToastProvider>
       <AdminStore>
-        <ConsoleShell />
+        <ConsoleShell apps={apps} />
         <AdminDrawer />
       </AdminStore>
     </ToastProvider>
   );
 }
 
-function ConsoleShell() {
+function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
   const { me, personas, setPersona, registry, notify, record } = useAdmin();
 
   const [section, setSection] = React.useState<string>("overview");
@@ -162,6 +164,9 @@ function ConsoleShell() {
   return (
     <div className="flex h-screen min-w-[1000px] flex-col overflow-hidden bg-canvas">
       <header className="relative z-20 flex h-14 flex-none items-center gap-4 border-b border-line bg-surface px-5">
+        {/* The same switcher every other app carries. Moving between apps is a
+            platform affordance, not something each app decides to offer. */}
+        {apps.length > 1 ? <AppSwitcher apps={apps} current="admin" /> : null}
         <Link href="/apps" className="text-[15px] font-semibold whitespace-nowrap text-ink no-underline hover:no-underline">
           MAHEK<span className="text-brand">ONE</span>
         </Link>

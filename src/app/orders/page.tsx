@@ -1,6 +1,3 @@
-import { redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
-import { listUserApps } from "@/lib/access";
 import { checkCapability } from "@/lib/access-control";
 import { pendingOrders } from "@/lib/services/order-approval-service";
 import { ApprovalScreen } from "./approval-screen";
@@ -8,13 +5,8 @@ import { ApprovalScreen } from "./approval-screen";
 export const metadata = { title: "Order approvals — MahekOne" };
 
 export default async function Page() {
-  const user = await requireUser();
-
-  // Checked here, not only on the launcher tile: a bookmarked /orders must not
-  // open for somebody who was never given the app.
-  const apps = await listUserApps(user.id);
-  if (!apps.includes("orders")) redirect("/apps");
-
+  // App access is gated by the layout. This decides only whether the buttons
+  // are live: seeing the queue and deciding on it are different things.
   const [{ allowed }, orders] = await Promise.all([
     checkCapability("order.approve"),
     pendingOrders(),
