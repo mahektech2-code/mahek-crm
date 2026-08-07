@@ -162,6 +162,20 @@ export const complaintCategoryEnum = pgEnum("complaint_category", [
 
 export const severityEnum = pgEnum("severity", ["low", "medium", "high"]);
 
+/**
+ * §6.2 — where a credit note request has got to. The CRM owns the REQUEST and
+ * nothing beyond it: approving, rejecting and issuing all happen in the
+ * external system, and this column only records what came back. Until there is
+ * an Accounts app to route to, everything sits at "requested".
+ */
+export const creditNoteStatusEnum = pgEnum("credit_note_status", [
+  "requested",
+  "under_review",
+  "approved",
+  "rejected",
+  "issued",
+]);
+
 export const messageStatusEnum = pgEnum("message_status", [
   "prepared",
   "copied",
@@ -865,6 +879,11 @@ export const complaints = pgTable(
     /** The bill the credit note relates to. Required when requestCn is true. */
     billId: text("bill_id").references(() => bills.id),
     goodsDescription: text("goods_description"),
+    /** Paise, and only ever set when requestCn is true. */
+    cnAmount: bigint("cn_amount", { mode: "number" }),
+    cnStatus: creditNoteStatusEnum("cn_status"),
+    /** The external system's CN number, once it has issued one. */
+    cnReference: text("cn_reference"),
     /** Whoever actually reported it — not always the customer's main number. */
     mobileNumber: text("mobile_number"),
 

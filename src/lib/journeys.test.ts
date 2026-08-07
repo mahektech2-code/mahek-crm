@@ -1649,6 +1649,112 @@ describe("Journey 9 - the Information tab", () => {
   });
 });
 
+/* --------------------------------------------- §6 complaints and credit notes */
+
+describe("Complaints raised on a call we made", () => {
+  test("outbound complaint fires exactly the side effects inbound does", async () => {
+    const outbound = await makeCustomer(priya.id);
+    const inbound = await makeCustomer(priya.id);
+
+    const args = (customerId: string) => ({
+      customerId,
+      outcome: "complaint" as const,
+      complaintCategory: "product_quality" as const,
+      complaintDescription: "Drum arrived dented and leaking.",
+      notes: "Sounded genuinely annoyed.",
+      idempotencyKey: randomUUID(),
+    });
+
+    const a = await saveInteraction({ ...args(outbound.id), interactionType: "outbound_call" });
+    const b = await saveInteraction({ ...args(inbound.id), interactionType: "inbound_call" });
+    assert.equal(a.ok, true, a.ok ? "" : a.error);
+    assert.equal(b.ok, true, b.ok ? "" : b.error);
+
+    assert.deepEqual(
+      a.ok && a.data.produced,
+      b.ok && b.data.produced,
+      "the same outcome must produce the same records whichever way the call went",
+    );
+
+    for (const c of [outbound, inbound]) {
+      const [row] = await db.select().from(customers).where(eq(customers.id, c.id));
+      assert.equal(row.lastContactDate, TODAY, "a complaint is contact");
+    }
+  });
+
+  test("a credit note amount without a Yes is refused", async () => {
+    const customer = await makeCustomer(priya.id);
+    const result = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "complaint",
+      complaintCategory: "billing_issue",
+      complaintDescription: "Charged for a drum that never arrived.",
+      complaintRequestCn: false,
+      complaintCnAmount: 4500,
+      idempotencyKey: randomUUID(),
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(
+      result.ok ? "" : result.error,
+      /credit note/i,
+      "a figure with no request behind it reads as an approved amount",
+    );
+  });
+
+  test("a credit note request cannot be raised without the bill behind it", async () => {
+    const customer = await makeCustomer(priya.id);
+    const result = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "complaint",
+      complaintCategory: "billing_issue",
+      complaintDescription: "Short supply against last week's bill.",
+      complaintRequestCn: true,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.ok ? "" : result.error, /bill/i);
+  });
+
+  test("a raised request shows up on the manager's pending list", async () => {
+    const customer = await makeCustomer(priya.id);
+    const [bill] = await db
+      .insert(bills)
+      .values({
+        id: id("bill"),
+        customerId: customer.id,
+        billNo: `CN-${randomUUID().slice(0, 5)}`,
+        billDate: TODAY,
+        amount: 500000,
+        paidAmount: 0,
+      })
+      .returning();
+
+    const saved = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "complaint",
+      complaintCategory: "shortage",
+      complaintDescription: "Two drums short on the last delivery.",
+      complaintRequestCn: true,
+      complaintBillId: bill.id,
+      complaintCnAmount: 4500,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
+
+    const { pendingCreditNotes } = await import("@/lib/queries");
+    const pending = await pendingCreditNotes();
+    const row = pending.find((p) => p.customerId === customer.id);
+
+    assert.ok(row, "a request with nowhere to go must still be visible");
+    assert.equal(row.amount, 450000, "rupees in, paise stored");
+    assert.equal(row.billNo, bill.billNo);
+  });
+});
+
 /* ------------------------------------------- §5 payment follow-up changes */
 
 describe("Retiring a follow-up response", () => {

@@ -94,6 +94,8 @@ export const saveInteractionSchema = z.object({
   complaintDescription: z.string().optional(),
   /** A credit note the customer asked for, and the bill it is against. */
   complaintRequestCn: z.boolean().default(false),
+  /** Whole rupees from the form; stored as paise. Only ever with a Yes. */
+  complaintCnAmount: z.coerce.number().int().positive().optional(),
   complaintBillId: z.string().optional(),
   complaintGoodsDescription: z.string().optional(),
 
@@ -215,6 +217,15 @@ export async function saveInteraction(
       return fieldError(
         "complaintBillId",
         "Pick the bill this credit note relates to.",
+      );
+    }
+    // §6.2 — an amount without a Yes is rejected. A figure sitting on a
+    // complaint nobody asked a credit note for reads as an approved amount to
+    // whoever opens it later.
+    if (input.complaintCnAmount && !input.complaintRequestCn) {
+      return fieldError(
+        "complaintCnAmount",
+        "There is a credit note amount but no credit note request. Choose Yes, or clear the amount.",
       );
     }
   }
@@ -477,6 +488,13 @@ export async function saveInteraction(
           goodsDescription: input.complaintRequestCn
             ? input.complaintGoodsDescription?.trim() || null
             : null,
+          cnAmount:
+            input.complaintRequestCn && input.complaintCnAmount
+              ? input.complaintCnAmount * 100
+              : null,
+          // Requested is where every request starts and, until something
+          // outside the CRM moves it, where it stays.
+          cnStatus: input.complaintRequestCn ? "requested" : null,
           createdById: ctx.user.id,
           updatedById: ctx.user.id,
         });

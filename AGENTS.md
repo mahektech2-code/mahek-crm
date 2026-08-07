@@ -257,6 +257,46 @@ interactions hold their identifiers in `quick_note_ids`, and those references
 must keep resolving to something a human can read. The save path deliberately
 does not check `active`, so an old reference is never rejected on read.
 
+**A file is validated on its bytes, never on its name.** `.jpg` is three
+characters anyone can type. `sniffContentType` reads the signature and that is
+what decides — an extension and the browser's declared MIME both come from the
+same untrusted place. Permitted types are configuration, so removing one takes
+effect immediately without touching code.
+
+**An attachment is created before its parent exists.** The upload starts when
+the file is chosen, not when the form saves, so a row begins life unparented
+and is bound when the parent is written. That is what makes orphans possible,
+which is why the nightly sweep is part of the subsystem rather than a tidy-up
+somebody remembers. A form abandoned mid-call keeps its files for the
+configured window first.
+
+**A save is never blocked by an attachment.** Attachments are optional
+everywhere. A failed upload leaves the complaint, call or follow-up intact and
+the message says how many files made it — never all-or-nothing, and never a
+lost call because a photograph did not upload.
+
+**Removing an attachment is a status, not a delete.** It detaches from the
+parent and moves to `removed`; the bytes go only when retention says so. A
+payment proof outlives whoever tidied it off a screen.
+
+**Attachments are read through `/api/attachments/[id]`, never a stored URL.**
+Access follows the parent record's scope, so anyone who can see the complaint
+can see its photographs and nobody else can. A file the caller may not see and
+a file that does not exist answer identically, or the endpoint becomes a way to
+enumerate customers.
+
+**A retired outcome is readable, never writable.** "Part payment promised" is
+gone from the follow-up form but stays in `PAY_OUTCOMES` marked `retired`, so
+attempts already recorded against it still resolve to a label. The screen reads
+`offeredPayOutcomes()`; the save schema simply does not accept it. Hiding it in
+the interface alone would leave it reachable.
+
+**A credit note amount without a request is refused.** A figure sitting on a
+complaint nobody asked a credit note for reads as an approved amount to whoever
+opens it next. Requests have nowhere to go yet — there is no Accounts app — so
+they surface on a manager's pending list rather than sitting invisible. That is
+interim, and a credit note has financial consequences.
+
 **A collections call is logged in one place, and it is one transaction.** The
 follow-up panel opens over the worklist and never navigates away — a
 telecaller working a list of twelve should not lose their place to look at a
