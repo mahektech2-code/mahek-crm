@@ -88,7 +88,6 @@ export const REGISTRY: RegistryEntry[] = [
  * ------------------------------------------------------------------------- */
 
 export type EntityKind =
-  | "products"
   | "templates"
   | "scripts"
   | "help"
@@ -512,14 +511,15 @@ export type EntityRow = {
   meta?: string;
 };
 
+/**
+ * Fixtures for the collections the console still edits in a drawer.
+ *
+ * Products are NOT here, and must not come back. The catalogue is two hundred
+ * real SKUs in the database, read and written by the Catalogue section — a
+ * handful of invented rows sitting beside it, with invented rates, is a screen
+ * that tells a manager something untrue about what the business sells.
+ */
 export const ENTITIES: Record<EntityKind, EntityRow[]> = {
-  products: [
-    { id: "p1", name: "Mahek Universal Thinner", pack: "5L", code: "MUT-03", rate: "1,240", active: true },
-    { id: "p2", name: "Nano Thinner", pack: "20L", code: "NAN-02", rate: "4,180", active: true },
-    { id: "p3", name: "Mahek NC Thinner", pack: "5L", code: "MNC-02", rate: "1,120", active: true },
-    { id: "p4", name: "PU Thinner M16 Tin Can", pack: "1L", code: "PUM-02", rate: "310", active: true },
-    { id: "p5", name: "Epoxy Thinner", pack: "20L", code: "EPX-03", rate: "4,650", active: false },
-  ],
   templates: [
     {
       id: "t1", name: "Payment reminder — stage 1", cat: "Payment reminder", stage: "1", uses: 42, active: true,
@@ -575,7 +575,6 @@ export const ENTITIES: Record<EntityKind, EntityRow[]> = {
 };
 
 export const ENTITY_META: Record<EntityKind, { noun: string; cta: string }> = {
-  products: { noun: "products", cta: "Add product" },
   templates: { noun: "templates", cta: "New template" },
   scripts: { noun: "scripts", cta: "New script" },
   help: { noun: "articles", cta: "New article" },

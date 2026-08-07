@@ -15,6 +15,11 @@ import {
   interactionProductLines,
   migrationExceptions,
   products,
+  productAliases,
+  productBrands,
+  productFormulations,
+  finishedGoods,
+  catalogueExceptions,
   quickNotes,
   eodReports,
   followUpAttempts,
@@ -38,6 +43,7 @@ import {
 import { hashPassword } from "../lib/password";
 import { initialsOf } from "../lib/format";
 import { SETTINGS } from "../lib/config/registry";
+import { eq } from "drizzle-orm";
 import { seedCatalogue } from "./seed-catalogue";
 
 /* ---------------------------------------------------------------------------
@@ -259,13 +265,6 @@ const LAST = [
   "Dhole",
 ];
 
-const PRODUCTS = [
-  "NC thinner 20L",
-  "MTO thinner 200L",
-  "Low-odour thinner 20L",
-  "PU thinner 20L",
-];
-
 const TEMPLATES = [
   {
     name: "Order confirmation",
@@ -409,7 +408,14 @@ async function main() {
     interactionProductLines,
     migrationExceptions,
     quickNotes,
+    // The catalogue, bottom up: SKUs refer to finished goods, which refer to
+    // brands, which refer to formulations.
+    catalogueExceptions,
+    productAliases,
     products,
+    finishedGoods,
+    productBrands,
+    productFormulations,
     payments,
     bills,
     monthlyTargets,
@@ -438,6 +444,20 @@ async function main() {
 
   console.log("Seeding products and quick notes…");
   const cat = await seedCatalogue();
+
+  // What an external order line names, read back OUT of the catalogue that was
+  // just imported. Hard-coding a few names here would be a second copy of the
+  // product master that drifts the moment the document is revised — and the
+  // product history matches external lines by NAME, so a name that has drifted
+  // makes a working join look broken.
+  const externalProductNames = (
+    await db
+      .select({ name: products.name })
+      .from(products)
+      .where(eq(products.active, true))
+      .orderBy(products.displayOrder)
+      .limit(40)
+  ).map((p) => p.name);
   console.log(
     `  ${cat.productsAdded} products · ${cat.quickNotesAdded} quick notes`,
   );
@@ -559,7 +579,7 @@ async function main() {
         status: "confirmed",
         lineItems: [
           {
-            product: pick(PRODUCTS),
+            product: pick(externalProductNames),
             quantity: between(2, 12),
             unitPrice: 0,
             amount: 0,

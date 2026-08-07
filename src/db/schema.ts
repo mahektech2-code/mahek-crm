@@ -12,7 +12,7 @@ import {
   pgEnum,
   primaryKey,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 
 /* ---------------------------------------------------------------------------
  * MahekOne — shared schema.
@@ -586,22 +586,223 @@ export const calls = pgTable(
 
 /* --------------------------------------------------------------- products */
 
+/* ---------------------------------------------------------------------------
+ * The catalogue is four levels, and only the bottom one can be ordered.
+ *
+ *   formulation → brand line → finished good → SKU
+ *
+ * A formulation is the actual liquid, and a customer never hears its name. A
+ * brand line is what they ask for — the same liquid sells as Nano, Astar Nano
+ * and M5x4 Thinner, which is exactly why search has to reach all three. A
+ * finished good is brand plus pack size, and is what most people mean by "a
+ * product". A SKU is a finished good in one packing configuration, and it is
+ * the ONLY level an order line may point at: "Nano Thinner - 5 Liter
+ * (6 Can/Box)" and "… (Loose)" are two SKUs of one finished good, and picking
+ * between them is the order, not a detail of it.
+ *
+ * The three upper levels are grouping. Deleting one would orphan the SKUs
+ * underneath, so they deactivate instead, the same way everything else here
+ * that history refers to does.
+ * ------------------------------------------------------------------------- */
+
+export const productFormulations = pgTable(
+  "product_formulations",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    /** Lowercased, punctuation stripped — the match key, unique. */
+    slug: text("slug").notNull(),
+    notes: text("notes"),
+    active: boolean("active").notNull().default(true),
+    displayOrder: integer("display_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("product_formulations_slug_key").on(t.slug)],
+);
+
+export const productBrands = pgTable(
+  "product_brands",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    formulationId: text("formulation_id")
+      .notNull()
+      .references(() => productFormulations.id),
+    active: boolean("active").notNull().default(true),
+    displayOrder: integer("display_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("product_brands_slug_key").on(t.slug),
+    index("product_brands_formulation_idx").on(t.formulationId),
+  ],
+);
+
+export const finishedGoods = pgTable(
+  "finished_goods",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    brandId: text("brand_id")
+      .notNull()
+      .references(() => productBrands.id),
+    formulationId: text("formulation_id")
+      .notNull()
+      .references(() => productFormulations.id),
+    /** Millilitres. 0.5 L and 0.8 L are both real sizes, so litres cannot be an integer. */
+    millilitres: integer("millilitres").notNull(),
+    active: boolean("active").notNull().default(true),
+    displayOrder: integer("display_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("finished_goods_slug_key").on(t.slug),
+    index("finished_goods_brand_idx").on(t.brandId),
+  ],
+);
+
+/** Per box where there is a box, per can where there is not. Never both. */
+export const weightBasisEnum = pgEnum("weight_basis", ["box", "can"]);
+
+/**
+ * Where a SKU stands. `ok` is orderable; the other two are not, and both say
+ * why on the screen rather than quietly vanishing.
+ *
+ *  - `needs_canonical_id` — more than one legacy Product ID carries this name,
+ *    and order lines reference the NAME. Somebody picks which ID is the real
+ *    one; the import will not, because getting it wrong silently rewrites
+ *    which product a year of orders was for.
+ *  - `held` — the legacy row has a packing configuration but no sellable name,
+ *    so there is nothing a telecaller could put on an order.
+ */
+export const skuStatusEnum = pgEnum("sku_status", ["ok", "needs_canonical_id", "held"]);
+
 export const products = pgTable(
   "products",
   {
     id: text("id").primaryKey(),
+    /**
+     * Normalised: spacing and casing fixed, "Can/box" standardised. Unique,
+     * and the join key to legacy orders and bills, which reference the
+     * description text rather than any ID.
+     */
     name: text("name").notNull(),
+    /** As the source spells it, for reconciling against records that kept the original string. */
+    rawName: text("raw_name"),
     /** Where it is separable from the name — "5L", "200L". */
     packSize: text("pack_size"),
     /** Join key to the external order system. */
     externalCode: text("external_code"),
+
+    /* ---- the levels above, null only on rows that predate the catalogue ---- */
+    finishedGoodId: text("finished_good_id").references(() => finishedGoods.id),
+    brandId: text("brand_id").references(() => productBrands.id),
+    formulationId: text("formulation_id").references(() => productFormulations.id),
+
+    /* ---- packing configuration ---- */
+    /** "6 Can/Box", "Loose", "Drum" — as printed on the name. */
+    packing: text("packing"),
+    /** Millilitres in one can. Quantity is entered in cans; litres are derived from this. */
+    millilitresPerCan: integer("millilitres_per_can"),
+    /** 1 for loose and for drums, which are one container rather than a box of them. */
+    cansPerBox: integer("cans_per_box").notNull().default(1),
+    /**
+     * The empty box or drum, in paise. This is a COST, not a price — a loose
+     * SKU has no box and so has none. Nothing may value an order with it.
+     */
+    packingCostPaise: integer("packing_cost_paise"),
+    /** Transport, not pricing. Read `weightBasis` before comparing two of these. */
+    weightGrams: integer("weight_grams"),
+    weightBasis: weightBasisEnum("weight_basis").notNull().default("box"),
+    /**
+     * Paise, and null until a price source is agreed. The catalogue document
+     * carries no price at all, and an order valued from a packing cost would
+     * be wrong in a way nobody would notice for a month.
+     */
+    sellingPricePaise: bigint("selling_price_paise", { mode: "number" }),
+
+    status: skuStatusEnum("status").notNull().default("ok"),
+    /**
+     * Legacy Product IDs carrying this name. More than one is what
+     * `needs_canonical_id` means; the chosen one lands in `externalCode`.
+     * Reference only — the primary key is ours.
+     */
+    externalIds: jsonb("external_ids").$type<number[]>(),
+
     /** Discontinued products stay for history but leave the entry list. */
     active: boolean("active").notNull().default(true),
     displayOrder: integer("display_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("products_active_idx").on(t.active, t.displayOrder)],
+  (t) => [
+    index("products_active_idx").on(t.active, t.displayOrder),
+    // Partial: unique across the catalogue, which is what the join key needs,
+    // without breaking rows that predate it and distinguish themselves by pack
+    // size rather than by name.
+    uniqueIndex("products_name_key")
+      .on(t.name)
+      .where(sql`finished_good_id is not null`),
+    index("products_finished_good_idx").on(t.finishedGoodId),
+    index("products_status_idx").on(t.status),
+  ],
+);
+
+/**
+ * A name that resolves to a SKU without being its name: the losing IDs of a
+ * duplicate, and whatever the legacy system spelled differently. Aliases are
+ * how an old order line still finds its product after a rename — they are read
+ * on the way in and never offered on an order form.
+ */
+export const productAliases = pgTable(
+  "product_aliases",
+  {
+    id: text("id").primaryKey(),
+    productId: text("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    /** The name or the legacy ID this alias answers to. */
+    name: text("name").notNull(),
+    externalId: integer("external_id"),
+    /** Why it exists — a duplicate ID that lost, or a spelling seen in the wild. */
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+  },
+  (t) => [
+    uniqueIndex("product_aliases_name_key").on(t.name),
+    index("product_aliases_product_idx").on(t.productId),
+  ],
+);
+
+/**
+ * A legacy row that could not become a SKU, kept where somebody will see it.
+ * Two kinds: packing configuration with no sellable name, and packaging
+ * material that is not a product at all. Dropping either on the floor at
+ * import time is how a catalogue quietly loses rows nobody can account for.
+ */
+export const catalogueExceptions = pgTable(
+  "catalogue_exceptions",
+  {
+    id: text("id").primaryKey(),
+    externalId: integer("external_id").notNull(),
+    /** What the source called it, where it called it anything. */
+    label: text("label"),
+    reason: text("reason").notNull(),
+    /** `held` — awaiting a name; `excluded` — deliberately not a product. */
+    kind: text("kind").notNull().default("held"),
+    /** Set when somebody names it and it becomes a SKU. */
+    resolvedProductId: text("resolved_product_id").references(() => products.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedById: text("resolved_by_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("catalogue_exceptions_external_key").on(t.externalId)],
 );
 
 /** One row per product with a non-zero quantity. Blanks are not stored. */
@@ -615,6 +816,12 @@ export const interactionProductLines = pgTable(
     productId: text("product_id")
       .notNull()
       .references(() => products.id),
+    /**
+     * CANS. The can is what a telecaller counts and what the customer says, so
+     * it is what gets stored; litres and boxes are derived from the SKU's own
+     * packing configuration in lib/catalogue.ts. Storing litres instead would
+     * make "six" unrecoverable the moment a pack size changed.
+     */
     quantity: integer("quantity").notNull(),
   },
   (t) => [index("interaction_lines_idx").on(t.interactionId)],
@@ -1395,6 +1602,11 @@ export type FollowUpAttempt = typeof followUpAttempts.$inferSelect;
 export type Reminder = typeof reminders.$inferSelect;
 export type Complaint = typeof complaints.$inferSelect;
 export type Product = typeof products.$inferSelect;
+export type ProductFormulation = typeof productFormulations.$inferSelect;
+export type ProductBrand = typeof productBrands.$inferSelect;
+export type FinishedGood = typeof finishedGoods.$inferSelect;
+export type ProductAlias = typeof productAliases.$inferSelect;
+export type CatalogueException = typeof catalogueExceptions.$inferSelect;
 export type InteractionProductLine = typeof interactionProductLines.$inferSelect;
 export type QuickNote = typeof quickNotes.$inferSelect;
 export type Interaction = typeof calls.$inferSelect;

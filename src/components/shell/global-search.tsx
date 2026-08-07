@@ -15,9 +15,11 @@ type Results = {
     customerId: string;
     customerName: string;
   }>;
+  /** The catalogue. Not scoped — one catalogue, the same for everybody. */
+  products: Array<{ id: string; name: string; subtitle: string }>;
 };
 
-const EMPTY: Results = { customers: [], bills: [] };
+const EMPTY: Results = { customers: [], bills: [], products: [] };
 
 export function GlobalSearch() {
   const router = useRouter();
@@ -80,7 +82,8 @@ export function GlobalSearch() {
   // Stale results from a previous query must never show under a short one.
   const shown = active ? results : EMPTY;
   const first = shown.customers[0];
-  const nothing = active && !shown.customers.length && !shown.bills.length;
+  const nothing =
+    active && !shown.customers.length && !shown.bills.length && !shown.products.length;
 
   function go(href: string) {
     setOpen(false);
@@ -106,7 +109,7 @@ export function GlobalSearch() {
         onKeyDown={(e) => {
           if (e.key === "Enter" && first) go(`${CRM_BASE}/customers/${first.id}`);
         }}
-        placeholder="Search customers, bills, phone numbers…   /"
+        placeholder="Search customers, bills, products, phone numbers…   /"
         aria-label="Search"
         className="h-8.5 w-full rounded-[4px] border border-line bg-canvas pr-3 pl-8 text-sm text-ink outline-none focus:border-brand focus:bg-surface"
       />
@@ -153,16 +156,44 @@ export function GlobalSearch() {
             </>
           ) : null}
 
+          {shown.products.length ? (
+            <>
+              <div className="mt-1.5 border-t border-divider px-3 py-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                Products
+              </div>
+              {/* Not clickable, on purpose. The question behind typing a
+                  product name here is "do we sell that, and in what pack" —
+                  and it is answered by the row itself. The place a product
+                  can be opened is the Admin Console, which most of the people
+                  searching cannot open. */}
+              {shown.products.map((p) => (
+                <span
+                  key={p.id}
+                  className="flex w-full items-center justify-between gap-3 px-3 py-[7px] text-left"
+                >
+                  <span className="min-w-0 truncate text-sm font-medium text-ink">{p.name}</span>
+                  <span className="flex-none text-[13px] whitespace-nowrap text-muted">
+                    {p.subtitle}
+                  </span>
+                </span>
+              ))}
+            </>
+          ) : null}
+
           {nothing ? (
             <div className="px-3 py-5 text-center text-sm text-muted">
-              Nothing matches that. Try a business name, a telephone number or a
-              bill number.
+              Nothing matches that. Try a business name, a telephone number, a
+              bill number, or a product.
             </div>
-          ) : (
+          ) : first ? (
+            // Only where Enter actually opens something. Enter opens the first
+            // CUSTOMER, so a search that matched only products or only bills
+            // must not be told to press it — a hint for a key that does
+            // nothing is worse than no hint.
             <div className="mt-1.5 border-t border-divider px-3 py-2 text-[13px] text-muted">
-              Press Enter to open the first result
+              Press Enter to open {first.name}
             </div>
-          )}
+          ) : null}
         </div>
       ) : null}
     </div>

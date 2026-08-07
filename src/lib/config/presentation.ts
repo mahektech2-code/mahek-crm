@@ -201,7 +201,9 @@ export const PRESENTATION: Record<string, Presentation> = {
   /* -------------------------------------------------------------- products */
   "products.frequentCount": { tab: "Products", group: "How the order form offers them", unit: "products" },
   "products.frequentRanking": { tab: "Products", group: "How the order form offers them", control: "choice" },
+  "products.starterListCount": { tab: "Products", group: "How the order form offers them", unit: "products" },
   "products.searchOnOrderForms": { tab: "Products", group: "How the order form offers them" },
+  "products.priceSource": { tab: "Products", group: "What a line is worth", control: "choice" },
 
   /* -------------------------------------------------------------- whatsapp */
   "whatsapp.mode": { tab: "WhatsApp", group: "Connection", control: "choice", adminOnly: true },
@@ -276,13 +278,19 @@ export type EntityCollection = {
    * nothing offers an editor that would not save.
    */
   editable: boolean;
+  /**
+   * Where this collection is actually managed, when that is a screen of its
+   * own rather than a drawer. A collection with somewhere to go says so and
+   * links there, instead of showing a create button that does nothing.
+   */
+  href?: string;
 };
 
 export const ENTITY_COLLECTIONS: EntityCollection[] = [
   {
-    key: "products", tab: "Products", group: "Catalogue", label: "Products", noun: "products", cta: "Add product",
-    built: true, editable: false,
-    help: "Name, pack, external code, rate and display order in the quantity list. The rate is load-bearing — without it, order value, target achievement and run rate all read zero.",
+    key: "products", tab: "Products", group: "Catalogue", label: "Products", noun: "SKUs", cta: "Open the catalogue",
+    built: true, editable: false, href: "/admin/catalogue",
+    help: "Four levels — formulation, brand line, finished good and SKU — and an order line attaches to a SKU only. Managed on its own screen, because a catalogue is rows a person edits one at a time rather than a change set. No selling price is stored yet, so nothing computes order value from it.",
   },
   {
     key: "notes", tab: "Interactions", group: "Quick notes", label: "Quick notes", noun: "notes", cta: "Add note",

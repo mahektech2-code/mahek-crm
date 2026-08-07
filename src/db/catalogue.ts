@@ -1,38 +1,16 @@
 /**
- * The product catalogue and the quick-note lists.
+ * The quick-note lists and the interaction vocabulary.
  *
- * Both are seeded into tables rather than read from here at runtime. Quick
- * notes especially: the lists below came to us labelled "examples", which
- * means they are a draft. A manager adds "Diwali stock booking" in October by
- * editing a row, not by waiting for a deploy — so this file is the shipped
- * starting point and the table is the source of truth.
+ * Seeded into tables rather than read from here at runtime. The lists below
+ * came to us labelled "examples", which means they are a draft. A manager adds
+ * "Diwali stock booking" in October by editing a row, not by waiting for a
+ * deploy — so this file is the shipped starting point and the table is the
+ * source of truth.
+ *
+ * The product catalogue used to live here too, as sixteen placeholder rows. It
+ * is now the real product master: generated into catalogue-seed.ts from the
+ * source document and written by lib/services/catalogue-import.ts.
  */
-
-export type SeedProduct = {
-  name: string;
-  packSize: string | null;
-  externalCode: string;
-};
-
-/** Named in the source document, plus the rest of Mahek's catalogue. */
-export const PRODUCTS: SeedProduct[] = [
-  { name: "Mahek Universal Thinner", packSize: "5L", externalCode: "MUT-5" },
-  { name: "Mahek Universal Thinner", packSize: "20L", externalCode: "MUT-20" },
-  { name: "Mahek Universal Thinner", packSize: "200L", externalCode: "MUT-200" },
-  { name: "NC Thinner", packSize: "5L", externalCode: "NC-5" },
-  { name: "NC Thinner", packSize: "20L", externalCode: "NC-20" },
-  { name: "NC Thinner", packSize: "200L", externalCode: "NC-200" },
-  { name: "MTO Thinner", packSize: "20L", externalCode: "MTO-20" },
-  { name: "MTO Thinner", packSize: "200L", externalCode: "MTO-200" },
-  { name: "PU Thinner", packSize: "5L", externalCode: "PU-5" },
-  { name: "PU Thinner", packSize: "20L", externalCode: "PU-20" },
-  { name: "Low-odour Thinner", packSize: "20L", externalCode: "LOT-20" },
-  { name: "Epoxy Thinner", packSize: "20L", externalCode: "EPX-20" },
-  { name: "Acetone", packSize: "20L", externalCode: "ACE-20" },
-  { name: "Toluene", packSize: "200L", externalCode: "TOL-200" },
-  { name: "Mineral Turpentine Oil", packSize: "200L", externalCode: "MTUR-200" },
-  { name: "White Petrol", packSize: "20L", externalCode: "WP-20" },
-];
 
 export type InteractionTypeKey = "outbound_call" | "inbound_call" | "order_received";
 

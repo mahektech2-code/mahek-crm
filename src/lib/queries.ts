@@ -492,7 +492,7 @@ export async function listHelpArticles() {
 
 export async function globalSearch(q: string) {
   const term = q.trim();
-  if (term.length < 2) return { customers: [], bills: [] };
+  if (term.length < 2) return { customers: [], bills: [], products: [] };
 
   const ctx = await resolveScope();
   const ids = scopedUserIds(ctx.scope);
@@ -540,7 +540,53 @@ export async function globalSearch(q: string) {
       .limit(5),
   ]);
 
-  return { customers: cust, bills: bill };
+  /**
+   * Products are searched too, and unlike customers and bills they are not
+   * scoped: the catalogue is the same catalogue for everybody, and a
+   * telecaller asking "do we sell M5x4 in 20 litre" is asking about the
+   * business, not about their own book.
+   *
+   * The same matching the order form uses — formulation, brand and alias as
+   * well as the name — so a product found here and a product found there are
+   * never two different answers to one question.
+   */
+  const product = await db.execute<{
+    id: string;
+    name: string;
+    formulation: string | null;
+    packing: string | null;
+  }>(sql`
+    select p.id, p.name, f.name as formulation, p.packing
+      from products p
+      left join product_formulations f on f.id = p.formulation_id
+      left join product_brands b on b.id = p.brand_id
+     where p.active = true
+       and (
+         p.name ilike ${like}
+         or coalesce(f.name, '') ilike ${like}
+         or coalesce(b.name, '') ilike ${like}
+         or exists (
+              select 1 from product_aliases a
+               where a.product_id = p.id and a.name ilike ${like}
+            )
+       )
+     order by
+       case when p.name ilike ${term + "%"} then 0
+            when p.name ilike ${like} then 1
+            else 2 end,
+       p.display_order, p.name
+     limit 5
+  `);
+
+  return {
+    customers: cust,
+    bills: bill,
+    products: product.map((p) => ({
+      id: p.id,
+      name: p.name,
+      subtitle: [p.formulation, p.packing].filter(Boolean).join(" · "),
+    })),
+  };
 }
 
 export { daysBetween, lte, orders, calls };

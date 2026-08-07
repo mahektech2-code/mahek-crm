@@ -78,6 +78,7 @@ export function QueueScreen({
   categories,
   quickNotes,
   singleSelectOutcomes,
+  searchEnabled,
   products,
   scripts,
 }: {
@@ -92,6 +93,8 @@ export function QueueScreen({
   categories: Array<{ value: string; label: string }>;
   quickNotes: QuickNoteOption[];
   singleSelectOutcomes: string[];
+  /** products.searchOnOrderForms — checked here as well as in the API. */
+  searchEnabled: boolean;
   products: ProductOption[];
   scripts: ScriptOption[];
   activity: {
@@ -492,6 +495,7 @@ export function QueueScreen({
         complaintCategories={categories}
         quickNotes={quickNotes}
         singleSelectOutcomes={singleSelectOutcomes}
+        searchEnabled={searchEnabled}
         products={products}
         scripts={scripts}
         hasNext={hasNext}

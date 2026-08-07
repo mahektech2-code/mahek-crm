@@ -613,6 +613,27 @@ export const SETTINGS = [
     options: ["orders", "recency"],
   },
   {
+    key: "products.starterListCount",
+    type: "integer",
+    category: "products",
+    label: "Products offered before anybody searches",
+    description:
+      "The best sellers the picker shows when the search box is empty and the customer has no history of their own. The catalogue runs to two hundred SKUs, which is a search box's job rather than a list's - this is the handful worth offering unprompted. Zero shows nothing until something is typed.",
+    default: 12,
+    min: 0,
+    max: 50,
+  },
+  {
+    key: "products.priceSource",
+    type: "text",
+    category: "products",
+    label: "Where a line's price comes from",
+    description:
+      "The product master arrived with no prices in it, so this is unanswered until somebody answers it. Until then an order is worth what the telecaller typed and nothing computes a value from the catalogue - a packing cost is the cost of an empty box, and valuing orders with it would put believable wrong numbers on every target screen. Not set: order value stays manual and the screens that would derive it say so.",
+    default: "unset",
+    options: ["unset", "manual", "product", "pricelist"],
+  },
+  {
     key: "products.searchOnOrderForms",
     type: "boolean",
     category: "products",
@@ -904,6 +925,15 @@ export function checkConsistency(config: Config): string[] {
     problems.push("At least one working day must be configured.");
   }
 
+  // A price list keyed on the customer's pricelist tag is the intended answer
+  // one day, but nothing stores one yet. Offering it and letting somebody pick
+  // it would produce orders valued from a table that does not exist.
+  if (config["products.priceSource"] === "pricelist") {
+    problems.push(
+      "Prices are set to come from a customer price list, but no price list exists yet - nothing is keyed on a pricelist tag. Until one is built, order value has to stay manual.",
+    );
+  }
+
   return problems;
 }
 
@@ -981,6 +1011,8 @@ export type Config = {
 
   "products.frequentCount": number;
   "products.frequentRanking": "orders" | "recency";
+  "products.starterListCount": number;
+  "products.priceSource": "unset" | "manual" | "product" | "pricelist";
   "products.searchOnOrderForms": boolean;
   "interactions.singleSelectOutcomes": string[];
 

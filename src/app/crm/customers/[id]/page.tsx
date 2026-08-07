@@ -12,7 +12,7 @@ import {
 } from "@/lib/queries";
 import { getFollowUpDetail } from "@/lib/services/payment-service";
 import { getConfig } from "@/lib/config/store";
-import { listActiveProducts } from "@/db/seed-catalogue";
+import { popularProducts } from "@/lib/services/product-service";
 import { quickNotes as quickNotesTable } from "@/db/schema";
 import { listTargets } from "@/lib/services/worklist-services";
 import { customerStatusLabel, daysBetween } from "@/lib/format";
@@ -76,7 +76,7 @@ export default async function CustomerRecordPage({
 
   const [quickNoteRows, productRows] = await Promise.all([
     db.select().from(quickNotesTable).where(eq(quickNotesTable.active, true)),
-    listActiveProducts(),
+    popularProducts(),
   ]);
 
   const target = targets.find((t) => t.customerId === id);
@@ -184,10 +184,14 @@ export default async function CustomerRecordPage({
         label: n.label,
       }))}
       singleSelectOutcomes={config["interactions.singleSelectOutcomes"]}
+      searchEnabled={config["products.searchOnOrderForms"]}
       products={productRows.map((p) => ({
-        id: p.id,
+        id: p.productId,
         name: p.name,
         packSize: p.packSize,
+        subtitle: p.subtitle,
+        millilitresPerCan: p.millilitresPerCan,
+        cansPerBox: p.cansPerBox,
       }))}
       timeline={timeline.map((t) => ({
         id: t.id,

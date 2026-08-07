@@ -12,7 +12,7 @@ import {
   Textarea,
   cx,
 } from "@/components/ui/primitives";
-import { useEscape } from "@/components/ui/overlays";
+import { ConfirmDialog, useEscape } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { saveInteractionAction } from "@/lib/actions/crm";
@@ -21,6 +21,8 @@ import {
   OUTCOME_LABEL as CATALOGUE_OUTCOME_LABEL,
 } from "@/db/catalogue";
 import { addDays, money, phoneDisplay, shortDate, today } from "@/lib/format";
+import { describeQuantity } from "@/lib/catalogue";
+import { addLabel, dropLabel } from "@/lib/notes";
 import { ACCEPTED_IMAGE_TYPES } from "@/lib/file-types";
 
 /**
@@ -107,6 +109,17 @@ export type ProductOption = {
   id: string;
   name: string;
   packSize: string | null;
+  /**
+   * The formulation. "Astar Nano Thinner - 20 Liter (Loose)" and "Nano Thinner
+   * - 20 Liter (Loose)" are two products whose names differ by one word, and
+   * mid-call the thing that tells them apart is what is underneath them.
+   */
+  subtitle?: string | null;
+  /** Set when the row matched on something not visible in its name. */
+  matchedOn?: string | null;
+  /** Packing, so a quantity in cans can be read back in litres and boxes. */
+  millilitresPerCan?: number | null;
+  cansPerBox?: number | null;
 };
 
 /** A call script from the help centre, matched to the chosen outcome. */
@@ -194,6 +207,9 @@ export type CustomerInfo = {
     name: string;
     packSize: string | null;
     displayName: string;
+    subtitle: string | null;
+    millilitresPerCan: number | null;
+    cansPerBox: number;
     lastPurchaseDate: string | null;
     totalOrderCount: number;
   }>;
@@ -249,6 +265,13 @@ type CallPanelProps = {
   scripts?: ScriptOption[];
   /** Products this customer has bought before — the "Usually buys" row. */
   frequentProductIds?: string[];
+  /**
+   * `products.searchOnOrderForms`. Off, the catalogue is not searchable and a
+   * telecaller picks from what they are offered — a deliberate constraint for
+   * a new team. The box is then hidden rather than shown and made useless,
+   * because a search box that finds nothing reads as a broken catalogue.
+   */
+  searchEnabled?: boolean;
   /** §3.2 — outcomes whose quick notes are one choice, from configuration. */
   singleSelectOutcomes?: string[];
   onClose: () => void;
@@ -300,6 +323,7 @@ function CallPanelForm({
   complaintCategories,
   scripts = [],
   frequentProductIds = [],
+  searchEnabled = true,
   singleSelectOutcomes = [],
   onClose,
   onSaved,
@@ -350,6 +374,9 @@ function CallPanelForm({
   // The design caps the visible list and offers the rest behind "show more" —
   // a full catalogue scrolling under the cursor mid-call is unusable.
   const [showAllProducts, setShowAllProducts] = React.useState(false);
+  const [showAllFrequent, setShowAllFrequent] = React.useState(false);
+  /** The line a typed zero is asking to remove, if any. */
+  const [removing, setRemoving] = React.useState<ProductOption | null>(null);
 
   // One key per opening, so a double-click logs one interaction, not two.
   const idempotencyKey = React.useRef(crypto.randomUUID());
@@ -382,7 +409,7 @@ function CallPanelForm({
   } | null>(null);
   React.useEffect(() => {
     const q = productQuery.trim();
-    if (!q || !target) return;
+    if (!q || !target || !searchEnabled) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       fetch(
@@ -394,10 +421,24 @@ function CallPanelForm({
           setRemote({
             q,
             items: (d.products ?? []).map(
-              (x: { productId: string; name: string; packSize: string | null }) => ({
+              (x: {
+                productId: string;
+                name: string;
+                packSize: string | null;
+                subtitle?: string | null;
+                matchedOn?: string | null;
+                millilitresPerCan?: number | null;
+                cansPerBox?: number | null;
+              }) => ({
                 id: x.productId,
                 name: x.name,
                 packSize: x.packSize,
+                subtitle: x.subtitle,
+                matchedOn: x.matchedOn,
+                // Carried through, or a searched-for product reads back as a
+                // bare can count while a frequent one reads back in litres.
+                millilitresPerCan: x.millilitresPerCan ?? null,
+                cansPerBox: x.cansPerBox ?? 1,
               }),
             ),
           }),
@@ -410,7 +451,7 @@ function CallPanelForm({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [productQuery, target]);
+  }, [productQuery, target, searchEnabled]);
 
   const isOrderReceived = type === "order_received";
   const chosen = isOrderReceived || Boolean(outcome);
@@ -466,21 +507,64 @@ function CallPanelForm({
         id: f.productId,
         name: f.name,
         packSize: f.packSize,
+        subtitle: f.subtitle,
+        millilitresPerCan: f.millilitresPerCan,
+        cansPerBox: f.cansPerBox,
       }))
     : products.filter((p) => frequentProductIds.includes(p.id));
   const productLabel = (p: ProductOption) =>
     p.packSize ? `${p.name} - ${p.packSize}` : p.name;
 
-  // A real catalogue is far too long to scroll mid-call, so the list is
-  // searchable by name, pack size or code.
+  /**
+   * Every product this panel has laid eyes on: the starter list, what this
+   * customer usually buys, and everything any search has returned.
+   *
+   * The catalogue is NOT held in the browser — it runs to two hundred SKUs and
+   * arrives a search at a time. But a product put on the order has to keep its
+   * name afterwards, even once the search that found it has been typed over,
+   * so anything seen is remembered for as long as the panel is open.
+   */
+  const known = React.useMemo(() => {
+    const map = new Map<string, ProductOption>();
+    for (const p of products) map.set(p.id, p);
+    // Read from `info` rather than from `frequent`, which is derived from it —
+    // one source per dependency, so the memo says what it actually depends on.
+    for (const f of info?.frequentProducts ?? []) {
+      map.set(f.productId, {
+        id: f.productId,
+        name: f.name,
+        packSize: f.packSize,
+        subtitle: f.subtitle,
+        millilitresPerCan: f.millilitresPerCan,
+        cansPerBox: f.cansPerBox,
+      });
+    }
+    for (const p of remote?.items ?? []) map.set(p.id, p);
+    return map;
+  }, [products, info, remote]);
+
+  // What the list shows. Nothing typed: the starter list, which is the book's
+  // best sellers. Typed: whatever the server found, because it matches the
+  // formulation and the brand and this browser cannot — the same liquid sells
+  // as Nano, Astar Nano and M5x4 Thinner.
   const matches = React.useMemo(() => {
-    const q = productQuery.trim().toLowerCase();
-    if (!q) return products;
-    if (remote && remote.q === productQuery.trim()) return remote.items;
-    return products.filter((p) =>
-      `${p.name} ${p.packSize ?? ""}`.toLowerCase().includes(q),
+    const typed = productQuery.trim();
+    if (!typed) return products;
+    if (remote && remote.q === typed) return remote.items;
+
+    // Until the server answers, filter what is already here — including the
+    // formulation, so a telecaller typing "M5x4" is not told there is no such
+    // thing by a list that simply has not looked yet.
+    const q = typed.toLowerCase();
+    return [...known.values()].filter((p) =>
+      `${p.name} ${p.packSize ?? ""} ${p.subtitle ?? ""}`.toLowerCase().includes(q),
     );
-  }, [products, productQuery, remote]);
+  }, [products, productQuery, remote, known]);
+
+  // A search that is still in flight, so an empty list can say "looking"
+  // rather than "there is no such product".
+  const searching =
+    searchEnabled && productQuery.trim() !== "" && remote?.q !== productQuery.trim();
 
   // Long lists are capped until asked for — the design shows a handful and
   // keeps the rest one click away.
@@ -491,17 +575,114 @@ function CallPanelForm({
       : matches.slice(0, PRODUCT_PREVIEW);
   const hasMoreProducts = visibleProducts.length < matches.length;
 
+  // The frequent cards are wide, so a customer with a long history would push
+  // the search box off the screen. Four is two rows at the usual width.
+  const FREQUENT_PREVIEW = 4;
+  const visibleFrequent = showAllFrequent ? frequent : frequent.slice(0, FREQUENT_PREVIEW);
+
+
   // What has actually been put on the order, read back so nothing is added by
-  // accident and left unnoticed.
-  const onThisOrder = products
-    .map((p) => ({ product: p, qty: Number(quantities[p.id]) }))
-    .filter((l) => Number.isFinite(l.qty) && l.qty > 0);
+  // accident and left unnoticed. Read from everything the panel has seen, not
+  // from the starter list — most orders are for something searched for.
+  /**
+   * On the order, which is NOT the same question as how many.
+   *
+   * A line is on the order because somebody put it there; its quantity is a
+   * separate fact that can be mid-edit, blank, or wrong. Conflating the two
+   * made a box holding "0" look like a chosen product, and made a line vanish
+   * out from under the cursor the moment its quantity was cleared to retype.
+   */
+  const onThisOrder = Object.entries(quantities)
+    .map(([id, raw]) => ({ product: known.get(id), qty: Number(raw), raw }))
+    .filter((l): l is { product: ProductOption; qty: number; raw: string } =>
+      Boolean(l.product),
+    );
+
+  /** Blank and zero are not quantities, so neither is a line that will save. */
+  const counts = (l: { qty: number; raw: string }) =>
+    l.raw.trim() !== "" && Number.isFinite(l.qty) && l.qty > 0;
+
+  /** The lines that will actually be saved. */
+  const countedLines = onThisOrder.filter(counts);
+
+  /** Put there, but with nothing said about how many — saving must not guess. */
+  const unquantified = onThisOrder.filter((l) => !counts(l));
+
+  /** Removes a line outright, as opposed to setting it to nothing. */
+  const removeLine = (id: string) =>
+    setQuantities((q) => {
+      const next = { ...q };
+      delete next[id];
+      return next;
+    });
+
+  /**
+   * Every quantity box goes through here, because zero is not a quantity — it
+   * is a removal typed as a number, and the two need telling apart.
+   *
+   * Zeroing a line that had a count is a deletion, so it asks. Zeroing one that
+   * never had a count is nobody's mistake — there is nothing to lose and a
+   * dialog about it would be noise, so it just comes off. Until the question is
+   * answered the box keeps its old number: a line must never sit at zero
+   * looking like an order for none of something.
+   */
+  function setQuantity(product: ProductOption, raw: string) {
+    const typed = raw.trim();
+    const n = Number(typed);
+    const isZero = typed !== "" && Number.isFinite(n) && n === 0;
+
+    if (isZero) {
+      if (Number(quantities[product.id]) > 0) {
+        setRemoving(product);
+        return;
+      }
+      removeLine(product.id);
+      return;
+    }
+    setQuantities((q) => ({ ...q, [product.id]: raw }));
+  }
+
+  /**
+   * What is on the order, in one line: how many products, how many cans, and
+   * how many litres that comes to. Litres are what the lorry and the customer
+   * both think in, and they are only derivable where every line knows its own
+   * pack size — so a mixed order that cannot be totalled says nothing rather
+   * than a number that is quietly short.
+   */
+  const orderSummary = ((): string => {
+    if (!countedLines.length) return "Nothing added yet";
+    const cans = countedLines.reduce((sum, l) => sum + l.qty, 0);
+    const parts = [
+      `${countedLines.length} ${countedLines.length === 1 ? "product" : "products"}`,
+      `${cans} ${cans === 1 ? "can" : "cans"}`,
+    ];
+    const measurable = countedLines.every((l) => l.product.millilitresPerCan != null);
+    if (measurable) {
+      const ml = countedLines.reduce(
+        (sum, l) => sum + l.qty * (l.product.millilitresPerCan ?? 0),
+        0,
+      );
+      const litres = ml / 1000;
+      parts.push(`${Number.isInteger(litres) ? litres : Number(litres.toFixed(2))} L`);
+    }
+    return parts.join(" · ");
+  })();
 
   function applyChip(n: QuickNoteOption) {
+    const alreadyPicked = picked.includes(n.id);
+
     if (singleSelect) {
       // §3.3 — one reason, not a pile of them. A second pick REPLACES the
       // first in the stored identifier and in the text, so the note cannot
       // end up reading "Stock sufficient Price issue" and meaning neither.
+      //
+      // Tapping the chosen one again clears it. A mis-tap has to be undoable
+      // without retyping the note, and no quick note at all is a valid save.
+      if (alreadyPicked) {
+        setPicked([]);
+        setNotes((t) => dropLabel(t, n.label));
+        return;
+      }
       const previous = chips.find((c) => picked.includes(c.id));
       setPicked([n.id]);
       setNotes((t) => {
@@ -519,14 +700,36 @@ function CallPanelForm({
       return;
     }
 
-    // Chips accumulate. Clicking three appends three, and the text stays
-    // editable afterwards — nothing is locked.
-    setPicked((p) => (p.includes(n.id) ? p : [...p, n.id]));
-    setNotes((t) => (t.trim() ? `${t.trim()} ${n.label}` : n.label));
+    // Chips accumulate, and each one toggles. Clicking a chosen chip takes it
+    // back off and removes the label it added — previously it silently
+    // appended the same words a second time, so a double tap left the note
+    // reading "Repeat order Repeat order".
+    if (alreadyPicked) {
+      setPicked((p) => p.filter((id) => id !== n.id));
+      setNotes((t) => dropLabel(t, n.label));
+      return;
+    }
+    setPicked((p) => [...p, n.id]);
+    setNotes((t) => addLabel(t, n.label));
   }
 
   async function save(advance: boolean) {
     if (!target) return;
+
+    // A line somebody put on the order and never counted is a question, not a
+    // blank. Dropping it silently is how an order goes out one product short
+    // and nobody finds out until the customer rings about it.
+    if (needsProducts && unquantified.length) {
+      setErrors((e) => ({
+        ...e,
+        productQuantities:
+          unquantified.length === 1
+            ? `How many cans of ${unquantified[0].product.name}? Give a quantity, or take it off the order.`
+            : `${unquantified.length} products have no quantity. Give each one a number, or take it off the order.`,
+      }));
+      return;
+    }
+
     setBusy(true);
     try {
       const productQuantities: Record<string, number> = {};
@@ -1502,113 +1705,252 @@ function CallPanelForm({
 
                       {needsProducts ? (
                         <div className="mb-3.5">
-                          <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                            Products and quantity
-                          </span>
+                          {/* The label row carries the running total, so what is
+                              on the order is legible without reading the list. */}
+                          <div className="mb-1.5 flex items-baseline justify-between gap-3">
+                            <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                              Products and quantity
+                            </span>
+                            <span
+                              className={cx(
+                                "text-[13px]",
+                                onThisOrder.length ? "font-medium text-ink" : "text-muted",
+                              )}
+                            >
+                              {orderSummary}
+                            </span>
+                          </div>
+
+                          {/* What they usually buy, as pickable cards with their
+                              own quantity box — the common order is taken here
+                              without touching the search at all. */}
                           {frequent.length ? (
-                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                              <span className="text-[13px] text-muted">
-                                Usually buys
-                              </span>
-                              {frequent.map((p) => (
+                            <div className="mb-2.5 rounded-[4px] border border-line p-3">
+                              <div className="mb-2.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                                Frequently purchased
+                              </div>
+                              <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-2.5">
+                                {visibleFrequent.map((p) => {
+                                  const raw = quantities[p.id];
+                                  // Chosen means a real quantity. A box holding
+                                  // "0" or left blank is not a product on the
+                                  // order, and must not look like one.
+                                  const chosen = Number(raw) > 0;
+                                  const touched = raw !== undefined;
+                                  return (
+                                    <div
+                                      key={p.id}
+                                      className={cx(
+                                        "rounded-[4px] border p-2.5",
+                                        chosen
+                                          ? "border-brand bg-brand-soft"
+                                          : "border-line bg-surface",
+                                      )}
+                                    >
+                                      <span className="flex items-start gap-1.5">
+                                        <span
+                                          className="block min-w-0 flex-1 truncate text-sm font-medium text-ink"
+                                          title={p.name}
+                                        >
+                                          {productLabel(p)}
+                                        </span>
+                                        {touched ? (
+                                          <button
+                                            onClick={() => removeLine(p.id)}
+                                            title={`Take ${p.name} off this order`}
+                                            aria-label={`Take ${p.name} off this order`}
+                                            className="flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded-[4px] border-none bg-transparent text-muted hover:bg-danger-soft hover:text-danger"
+                                          >
+                                            <Icon name="close" size={12} />
+                                          </button>
+                                        ) : null}
+                                      </span>
+                                      <span className="mt-2 flex items-center justify-between gap-2">
+                                        <span className="min-w-0 truncate text-xs text-muted">
+                                          {p.subtitle ?? ""}
+                                        </span>
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          inputMode="numeric"
+                                          value={raw ?? ""}
+                                          onChange={(e) => setQuantity(p, e.target.value)}
+                                          placeholder="Qty"
+                                          aria-label={`Cans of ${p.name}`}
+                                          className="h-8 w-[64px] flex-none rounded-[4px] border border-line bg-surface px-2 text-right text-sm"
+                                        />
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              {frequent.length > FREQUENT_PREVIEW ? (
                                 <button
-                                  key={p.id}
-                                  onClick={() =>
-                                    setQuantities((q) => ({
-                                      ...q,
-                                      [p.id]: q[p.id] || "1",
-                                    }))
-                                  }
-                                  className="cursor-pointer rounded-full border border-line bg-surface px-2.5 py-1 text-[13px] text-body hover:border-brand"
+                                  onClick={() => setShowAllFrequent((v) => !v)}
+                                  className="mt-2.5 cursor-pointer border-none bg-none p-0 text-[13px] font-medium text-brand"
                                 >
-                                  {productLabel(p)}
+                                  {showAllFrequent
+                                    ? "Show fewer"
+                                    : `Show all ${frequent.length}`}
                                 </button>
+                              ) : null}
+                            </div>
+                          ) : info ? (
+                            <div className="mb-2 text-[13px] text-muted">
+                              No previous orders for this customer.
+                            </div>
+                          ) : null}
+
+                          {searchEnabled ? (
+                            <div className="relative mb-2">
+                              <span className="pointer-events-none absolute top-[10px] left-2.5 text-muted">
+                                <Icon name="search" size={16} />
+                              </span>
+                              <input
+                                value={productQuery}
+                                onChange={(e) => setProductQuery(e.target.value)}
+                                placeholder="Search product to add…"
+                                aria-label="Search the catalogue"
+                                className="h-9 w-full rounded-[4px] border border-line bg-surface pr-8 pl-8 text-sm text-ink outline-none focus:border-brand"
+                              />
+                              {productQuery ? (
+                                <button
+                                  onClick={() => setProductQuery("")}
+                                  title="Clear the search"
+                                  className="absolute top-[7px] right-1.5 h-[22px] w-[22px] cursor-pointer border-none bg-transparent p-0 text-muted hover:text-body"
+                                >
+                                  ×
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : null}
+
+                          {/* Results are a list of things to ADD, not a list with
+                              quantity boxes: choosing the product and saying how
+                              much of it are two decisions, and merging them is
+                              how a stray keystroke becomes an order line. */}
+                          {productQuery.trim() ? (
+                            <div className="mb-2.5 overflow-hidden rounded-[4px] border border-line shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
+                              {visibleProducts.map((p) => {
+                                const added = quantities[p.id] !== undefined;
+                                return (
+                                  <button
+                                    key={p.id}
+                                    onClick={() =>
+                                      setQuantities((q) => ({ ...q, [p.id]: q[p.id] ?? "1" }))
+                                    }
+                                    disabled={added}
+                                    className={cx(
+                                      "flex w-full items-center gap-3 border-b border-divider px-2.5 py-2 text-left last:border-0",
+                                      added ? "bg-canvas" : "cursor-pointer bg-surface hover:bg-canvas",
+                                    )}
+                                  >
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-sm text-ink">
+                                        {productLabel(p)}
+                                      </span>
+                                      {p.subtitle || p.matchedOn ? (
+                                        <span className="block truncate text-[11px] text-muted">
+                                          {p.subtitle}
+                                          {p.subtitle && p.matchedOn ? " · " : ""}
+                                          {p.matchedOn ? `matched ${p.matchedOn}` : ""}
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                    <span
+                                      className={cx(
+                                        "flex-none rounded-[4px] border px-2 py-1 text-[13px] font-medium",
+                                        added
+                                          ? "border-transparent text-muted"
+                                          : "border-line text-brand",
+                                      )}
+                                    >
+                                      {added ? "Added" : "Add"}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                              {hasMoreProducts ? (
+                                <button
+                                  onClick={() => setShowAllProducts(true)}
+                                  className="w-full cursor-pointer border-t border-canvas bg-canvas px-2.5 py-2 text-left text-[13px] text-muted"
+                                >
+                                  Show all {matches.length} matches
+                                </button>
+                              ) : null}
+                              {matches.length === 0 ? (
+                                <div className="px-2.5 py-5 text-center text-sm text-muted">
+                                  {searching
+                                    ? "Looking…"
+                                    : "No product matches that. Try the formulation, like “M5x4” or “epoxy”, or the pack size."}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+
+                          {/* Everything on the order, editable in place. A line
+                              can be re-counted or taken off without hunting for
+                              it back in the search results. */}
+                          {onThisOrder.length ? (
+                            <div className="overflow-hidden rounded-[4px] border border-line">
+                              <div className="bg-canvas px-2.5 py-[7px] text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                                Added products
+                              </div>
+                              {onThisOrder.map((l) => (
+                                <div
+                                  key={l.product.id}
+                                  className="flex items-center gap-3 border-t border-divider bg-surface px-2.5 py-2"
+                                >
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block truncate text-sm font-medium text-ink">
+                                      {productLabel(l.product)}
+                                    </span>
+                                    {l.raw.trim() !== "" && l.qty > 0 ? (
+                                      <span className="block truncate text-[11px] text-muted">
+                                        {describeQuantity(l.qty, {
+                                          millilitresPerCan: l.product.millilitresPerCan ?? null,
+                                          cansPerBox: l.product.cansPerBox ?? 1,
+                                        })}
+                                      </span>
+                                    ) : (
+                                      <span className="block truncate text-[11px] text-warn-ink">
+                                        How many cans?
+                                      </span>
+                                    )}
+                                  </span>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    inputMode="numeric"
+                                    value={quantities[l.product.id] ?? ""}
+                                    onChange={(e) => setQuantity(l.product, e.target.value)}
+                                    placeholder="Qty"
+                                    aria-label={`Cans of ${l.product.name}`}
+                                    className="h-8 w-[70px] flex-none rounded-[4px] border border-line px-2 text-right text-sm"
+                                  />
+                                  <button
+                                    onClick={() => removeLine(l.product.id)}
+                                    title="Remove from this order"
+                                    aria-label={`Remove ${l.product.name} from this order`}
+                                    className="flex h-6 w-6 flex-none cursor-pointer items-center justify-center rounded-[4px] border-none bg-transparent text-muted hover:bg-danger-soft hover:text-danger"
+                                  >
+                                    <Icon name="close" size={14} />
+                                  </button>
+                                </div>
                               ))}
                             </div>
                           ) : null}
-                          <div className="relative mt-2">
-                            <Input
-                              value={productQuery}
-                              onChange={(e) => setProductQuery(e.target.value)}
-                              placeholder={`Search ${products.length} products by name or code`}
-                            />
-                            {productQuery ? (
-                              <button
-                                onClick={() => setProductQuery("")}
-                                title="Clear the search"
-                                className="absolute top-1/2 right-2 -translate-y-1/2 cursor-pointer text-[13px] text-muted hover:text-body"
-                              >
-                                Clear
-                              </button>
-                            ) : null}
-                          </div>
 
-                          {needsProducts && !onThisOrder.length ? (
+                          {needsProducts && !countedLines.length ? (
                             <div className="mt-2 rounded-[4px] border border-dashed border-warn-line bg-warn-soft px-3 py-5 text-center text-sm text-warn-ink">
                               At least one product is needed to log this as an
-                              order. Search above, or tap one this customer
-                              usually buys.
+                              order.{" "}
+                              {searchEnabled
+                                ? "Search above, or tap one this customer usually buys."
+                                : "Tap one this customer usually buys."}
                             </div>
                           ) : null}
 
-                          {onThisOrder.length ? (
-                            <div className="mt-2 rounded-[4px] border border-brand-softer bg-brand-soft px-3 py-2">
-                              <span className="text-[11px] font-medium tracking-[0.04em] text-[#5223E0] uppercase">
-                                On this order
-                              </span>
-                              <div className="mt-1 flex flex-col gap-0.5">
-                                {onThisOrder.map((l) => (
-                                  <span
-                                    key={l.product.id}
-                                    className="text-[13px] text-ink"
-                                  >
-                                    {productLabel(l.product)} × {l.qty}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-
-                          <div className="mt-2 max-h-56 overflow-y-auto rounded-[4px] border border-line">
-                            {matches.length === 0 ? (
-                              <p className="px-3 py-6 text-center text-[13px] text-muted">
-                                No product matches that. Try the family name,
-                                like &ldquo;epoxy&rdquo;, or the pack size.
-                              </p>
-                            ) : null}
-                            {visibleProducts.map((p) => (
-                              <div
-                                key={p.id}
-                                className="flex items-center gap-3 border-b border-divider px-3 py-2 last:border-0"
-                              >
-                                <span className="min-w-0 flex-1 truncate text-sm text-body">
-                                  {productLabel(p)}
-                                </span>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  inputMode="numeric"
-                                  value={quantities[p.id] ?? ""}
-                                  onChange={(e) =>
-                                    setQuantities((q) => ({
-                                      ...q,
-                                      [p.id]: e.target.value,
-                                    }))
-                                  }
-                                  placeholder="Qty"
-                                  className="h-8 w-[70px] rounded-[4px] border border-line px-2 text-right text-sm"
-                                />
-                              </div>
-                            ))}
-                          </div>
-                          {hasMoreProducts ? (
-                            <button
-                              onClick={() => setShowAllProducts(true)}
-                              className="mt-1.5 cursor-pointer text-[13px] text-brand"
-                            >
-                              Show all {matches.length} matches
-                            </button>
-                          ) : null}
                           {errors.productQuantities ? (
                             <p className="mt-1 text-[13px] text-danger">
                               {errors.productQuantities}
@@ -1623,20 +1965,33 @@ function CallPanelForm({
                             Quick notes
                           </span>
                           <div className="mt-1.5 flex flex-wrap gap-2">
-                            {chips.map((c) => (
-                              <button
-                                key={c.id}
-                                onClick={() => applyChip(c)}
-                                className={cx(
-                                  "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
-                                  picked.includes(c.id)
-                                    ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
-                                    : "border-line bg-surface text-body hover:border-brand",
-                                )}
-                              >
-                                {c.label}
-                              </button>
-                            ))}
+                            {chips.map((c) => {
+                              const on = picked.includes(c.id);
+                              return (
+                                <button
+                                  key={c.id}
+                                  onClick={() => applyChip(c)}
+                                  // A chip is a toggle, so it reports as one —
+                                  // and says what a second tap will do, because
+                                  // nothing about a filled pill tells you it
+                                  // can be taken back off.
+                                  aria-pressed={on}
+                                  title={
+                                    on
+                                      ? `Tap again to remove "${c.label}" from the note`
+                                      : undefined
+                                  }
+                                  className={cx(
+                                    "cursor-pointer rounded-full border px-2.5 py-1 text-[13px]",
+                                    on
+                                      ? "border-brand bg-brand-soft font-medium text-[#5223E0] hover:border-danger hover:text-danger"
+                                      : "border-line bg-surface text-body hover:border-brand",
+                                  )}
+                                >
+                                  {c.label}
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       ) : null}
@@ -1739,6 +2094,39 @@ function CallPanelForm({
           ) : null}
         </div>
       </div>
+
+      {/* A typed zero on a line that had a count. Keyed on the product so
+          reopening it for a different one starts fresh rather than showing the
+          last product's name for a frame. */}
+      <ConfirmDialog
+        key={removing?.id ?? "none"}
+        open={Boolean(removing)}
+        title="Take this off the order?"
+        destructive
+        confirmLabel="Take it off"
+        cancelLabel="Keep it"
+        body={
+          removing ? (
+            <>
+              <span className="block font-medium text-ink">{productLabel(removing)}</span>
+              <span className="mt-1 block">
+                It is down for{" "}
+                {describeQuantity(Number(quantities[removing.id]), {
+                  millilitresPerCan: removing.millilitresPerCan ?? null,
+                  cansPerBox: removing.cansPerBox ?? 1,
+                })}
+                . Zero is not a quantity, so this takes the line off the order
+                altogether. Nothing else about the call changes, and you can add
+                it back from the search.
+              </span>
+            </>
+          ) : null
+        }
+        onConfirm={() => {
+          if (removing) removeLine(removing.id);
+        }}
+        onClose={() => setRemoving(null)}
+      />
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { dayActivity, today } from "@/lib/queries";
 import { getConfig } from "@/lib/config/store";
-import { listActiveProducts } from "@/db/seed-catalogue";
+import { popularProducts } from "@/lib/services/product-service";
 import { db } from "@/db";
 import { helpArticles, quickNotes as quickNotesTable } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -23,11 +23,17 @@ export default async function QueuePage() {
     getConfig(),
   ]);
 
-  // The panel needs the whole catalogue up front: a telecaller mid-call should
-  // never wait on a round trip to pick a product or a quick note.
+  // Quick notes come up front — there are a few dozen and a telecaller
+  // mid-call should never wait on a round trip for a chip.
+  //
+  // Products do NOT. The catalogue runs to two hundred SKUs, so shipping it
+  // would be a payload on every page load and a list nobody can read. What
+  // comes up front is the handful worth offering unprompted; everything else
+  // is the search box, which reaches the formulation and the brand as well as
+  // the name.
   const [quickNoteRows, productRows, scriptRows] = await Promise.all([
     db.select().from(quickNotesTable).where(eq(quickNotesTable.active, true)),
-    listActiveProducts(),
+    popularProducts(),
     // Call scripts live in the help centre, so there is one place they are
     // written and the panel simply shows the relevant one.
     db.select().from(helpArticles).where(eq(helpArticles.type, "call_script")),
@@ -39,9 +45,12 @@ export default async function QueuePage() {
     label: n.label,
   }));
   const productOptions = productRows.map((p) => ({
-    id: p.id,
+    id: p.productId,
     name: p.name,
     packSize: p.packSize,
+    subtitle: p.subtitle,
+    millilitresPerCan: p.millilitresPerCan,
+    cansPerBox: p.cansPerBox,
   }));
 
   // Everything the call panel needs except the timeline, which it fetches when
@@ -105,6 +114,7 @@ export default async function QueuePage() {
       }))}
       quickNotes={quickNoteOptions}
       singleSelectOutcomes={config["interactions.singleSelectOutcomes"]}
+      searchEnabled={config["products.searchOnOrderForms"]}
       products={productOptions}
       scripts={scriptRows.map((a) => ({
         id: a.id,

@@ -76,6 +76,7 @@ export function RecordScreen({
   complaintCategories,
   quickNotes,
   singleSelectOutcomes,
+  searchEnabled,
   products,
 }: {
   customer: {
@@ -135,6 +136,8 @@ export function RecordScreen({
   complaintCategories: Array<{ value: string; label: string }>;
   quickNotes: QuickNoteOption[];
   singleSelectOutcomes: string[];
+  /** products.searchOnOrderForms — checked here as well as in the API. */
+  searchEnabled: boolean;
   products: ProductOption[];
 }) {
   const router = useRouter();
@@ -457,6 +460,7 @@ export function RecordScreen({
           complaintCategories={complaintCategories}
           quickNotes={quickNotes}
           singleSelectOutcomes={singleSelectOutcomes}
+          searchEnabled={searchEnabled}
           products={products}
           onClose={() => setCalling(false)}
         />

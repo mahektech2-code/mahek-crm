@@ -30,7 +30,7 @@ export type SchemaField = {
   key: string;
   label: string;
   /** Set on an entity collection: the plural noun, the CTA, and whether it exists. */
-  entity?: { noun: string; cta: string; built: boolean; editable: boolean };
+  entity?: { noun: string; cta: string; built: boolean; editable: boolean; href?: string };
   /** The console's control name. */
   control: Control;
   help: string;
@@ -106,7 +106,7 @@ export function crmSchema(): AppSchema {
       control: "entity",
       help: c.help,
       def: null,
-      entity: { noun: c.noun, cta: c.cta, built: c.built, editable: c.editable },
+      entity: { noun: c.noun, cta: c.cta, built: c.built, editable: c.editable, href: c.href },
     };
     if (!byTab.has(c.tab)) byTab.set(c.tab, new Map());
     const groups = byTab.get(c.tab)!;

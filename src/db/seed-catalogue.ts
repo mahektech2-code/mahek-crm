@@ -1,41 +1,30 @@
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { products, quickNotes } from "@/db/schema";
-import { PRODUCTS, QUICK_NOTES } from "@/db/catalogue";
+import { quickNotes } from "@/db/schema";
+import { QUICK_NOTES } from "@/db/catalogue";
+import { importCatalogue } from "@/lib/services/catalogue-import";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
 /**
  * Seeds the product catalogue and the quick-note lists.
  *
- * Idempotent by design, and deliberately non-destructive: products are matched
- * on their external code and quick notes on (type, outcome, label), so
- * re-running never duplicates and never resets a usage count or wipes a note a
- * manager added. Migrations and `db:seed` both call it.
+ * Idempotent by design, and deliberately non-destructive: the catalogue import
+ * matches on the canonical SKU name and quick notes on (type, outcome, label),
+ * so re-running never duplicates and never resets a usage count or wipes a
+ * note a manager added. Migrations and `db:seed` both call it.
+ *
+ * The products come from the real product master — four levels, 213 SKUs — via
+ * the same import the Admin Console runs, so a seeded database and a migrated
+ * one hold the same catalogue rather than two versions of it.
  */
 export async function seedCatalogue(): Promise<{
   productsAdded: number;
   quickNotesAdded: number;
 }> {
-  const existingProducts = new Set(
-    (await db.select({ code: products.externalCode }).from(products))
-      .map((r) => r.code)
-      .filter(Boolean) as string[],
-  );
-
-  let productsAdded = 0;
-  for (const [i, p] of PRODUCTS.entries()) {
-    if (existingProducts.has(p.externalCode)) continue;
-    await db.insert(products).values({
-      id: id("prd"),
-      name: p.name,
-      packSize: p.packSize,
-      externalCode: p.externalCode,
-      displayOrder: i,
-    });
-    productsAdded++;
-  }
+  const report = await importCatalogue();
+  const productsAdded = report.created;
 
   const existingNotes = new Set(
     (
@@ -81,12 +70,4 @@ export async function quickNotesFor(
           and ${outcome === null ? sql`${quickNotes.outcome} is null` : sql`${quickNotes.outcome} = ${outcome}`}`,
     )
     .orderBy(sql`${quickNotes.usageCount} desc, ${quickNotes.displayOrder} asc`);
-}
-
-export async function listActiveProducts() {
-  return db
-    .select()
-    .from(products)
-    .where(eq(products.active, true))
-    .orderBy(products.displayOrder, products.name);
 }

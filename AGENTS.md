@@ -31,6 +31,9 @@ npm run db:migrate   # apply migrations locally
 npm run db:seed      # wipe and reseed with demo data (also clears sessions)
 npm run db:studio    # Drizzle Studio
 npm run jobs -- nightly    # run a scheduled task by hand
+npm run catalogue:parse    # regenerate the product master from the document
+npm run catalogue:import -- --dry-run   # what the import would change
+npm run catalogue:import   # apply it — idempotent, re-runnable
 npm run check:links  # crawl the running app for broken links
 npx eslint src       # lint, including the React Compiler rules
 ```
@@ -111,6 +114,7 @@ src/
                            app chip, app placeholder, brand panel
     crm/call-panel.tsx     the call drawer, used by four screens
   db/                      schema, client, seed
+    catalogue-seed.ts      the product master, GENERATED from the document
   lib/
     apps.ts                the MahekOne app registry
     config/                registry.ts (every setting + validation) and
@@ -122,6 +126,7 @@ src/
     access-control.ts      scope resolution + capabilities (§8)
     recompute.ts           the rebuild path for every cached derived value
     business-date.ts       Asia/Kolkata, configurable day boundary
+    catalogue.ts           name normalisation + cans/litres/boxes — PURE
     password-reset.ts      reset tokens: minted, hashed, read back
     mailer.ts              the one place mail leaves MahekOne
     jobs.ts                scheduled work, idempotent and hand-triggerable
@@ -130,6 +135,10 @@ src/
     actions/               every write
     journeys.test.ts       the six §11 journeys, end to end
     format.ts merge.ts csv.ts scope.ts auth.ts
+  app/admin/               the console — platform sections, the CRM's schema,
+                           and the Catalogue section (catalogue-section.tsx)
+  scripts/parse-catalogue.mjs
+                           document → src/db/catalogue-seed.ts, by hand
 ```
 
 ## Rules that keep the data honest
@@ -255,8 +264,87 @@ does not carry cannot be put on an order.
 **Product search runs in Postgres, not in the browser.** Matching is trigram
 similarity as well as substring, because a name typed mid-call is a name typed
 badly: "thiner" has to find Thinner on the first attempt. The extension and its
-GIN indexes live in `drizzle/0008_products_and_no_order_reasons.sql`; Drizzle
-cannot express an operator-class index, so they are not in `schema.ts`.
+GIN indexes live in `drizzle/0008_products_and_no_order_reasons.sql` and
+`drizzle/0013_nostalgic_psynapse.sql`; Drizzle cannot express an operator-class
+index, so they are not in `schema.ts`.
+
+**The catalogue is four levels, and only the bottom one can be ordered.**
+Formulation → brand line → finished good → SKU. A formulation is the liquid and
+no customer hears its name; a brand line is what they ask for; a finished good
+is brand plus pack size; a SKU is a finished good in one packing configuration
+and is the ONLY level `interaction_product_lines` may point at. "Nano Thinner -
+5 Liter (6 Can/Box)" and "… (Loose)" are two SKUs of one finished good, and
+choosing between them IS the order. The three upper levels deactivate rather
+than delete, because deleting one orphans everything beneath it.
+
+**The catalogue is never shipped to the browser.** Two hundred SKUs is a
+search box's job, not a list's, so the order form is handed only what is worth
+offering unprompted — the customer's own frequent products and a short starter
+list of best sellers (`products.starterListCount`) — and everything else
+arrives a search at a time. The panel remembers every product it has seen, so a
+line put on an order keeps its name after the search that found it is typed
+over. Nothing is hardcoded anywhere: a product list in the CRM, the console or
+the seed is a query against `products`, never a literal.
+
+**Search reaches the formulation and the brand, not just the SKU name.** One
+liquid sells as Nano, Astar Nano and M5x4 Thinner, so a telecaller told "M5x4"
+must find the Nano SKUs or conclude we do not stock it. The formulation comes
+back as a subtitle, which is the only thing separating "Astar Nano Thinner - 20
+Liter (Loose)" from "Nano Thinner - 20 Liter (Loose)" on a list read mid-call.
+
+**An empty product list means three different things, and says which.** Still
+searching, nothing matched, and nothing offered yet are three different
+sentences — mid-call, a list that means "wait" and one that means "we do not
+sell that" must never look alike. Where `products.searchOnOrderForms` is off
+the box is hidden rather than shown and made useless, because a search that
+finds nothing reads as a broken catalogue rather than as a policy.
+
+**A SKU's name is the join key, so it is never edited.** Legacy orders and bills
+reference the description as TEXT, not by ID, so `products.name` is the
+normalised name and it is unique across the catalogue. A rename would silently
+detach every historical line carrying the old spelling — a name that has to
+change becomes a new SKU plus an alias. `product_aliases` is what makes an old
+spelling keep resolving; aliases are read on the way in and never offered on an
+order form. The raw name is kept beside the normalised one for reconciling
+against records that still hold the original string.
+
+**Quantity is cans, and it is shown as cans, litres and boxes.** Cans are what the telecaller counts and what the customer
+says, so cans are what is stored; litres and boxes are derived in
+`lib/catalogue.ts` from the SKU's own packing. Storing litres would make "six"
+unrecoverable the moment a pack size changed, and sizes here run 0.5 L to 210 L.
+`packing_cost_paise` is the empty box or drum and is a COST — never a price, and
+never a way to value an order. Weight is per BOX where there is a box and per
+CAN where there is not, so `weightBasis` decides the multiplier and no caller
+adds the two kinds together. A drum is not loose: it is a container that costs
+something, which is what keeps the two costs apart.
+
+**A name carried by two legacy Product IDs is held, never auto-picked.** The
+import refuses, because order lines reference the name and choosing wrong
+silently reassigns whatever history the losing ID carried. Those SKUs sit at
+`needs_canonical_id`, are not orderable, and wait for a person in Admin Console
+→ Catalogue → Duplicates. Choosing makes the losers aliases pointing at the
+same SKU. A legacy row with packing but no sellable name is held the same way,
+and packaging material is excluded outright — both stay listed rather than
+dropped on the floor, because a row nobody can account for later is worse than
+one that says why it is not a product.
+
+**The import is idempotent, and it never unmakes a decision.** It matches on
+the canonical name, reports created/updated/unchanged per field, and a dry run
+shows exactly what a real run would change while writing nothing. Two things it
+sets only on CREATE: `active`, because whether a SKU is offered is somebody's
+decision and a re-import must not put every retired product back; and the
+canonical ID, because a re-run must not reset a name somebody has already
+settled. Both have a test saying so. Regenerate the seed from a new revision of
+the document with `npm run catalogue:parse`, then `npm run catalogue:import`.
+
+**Order value is not computed from the catalogue until a price source is
+confirmed.** The product master carries no prices at all, so
+`products.priceSource` starts `unset` and `canValueOrders()` answers no. An
+order is worth what the telecaller typed, and the screens that would derive a
+value say so rather than showing a confident zero — reaching for the packing
+cost because it is the only number on the row would put believable wrong
+figures on every target screen. `pricelist` is refused by `checkConsistency`
+until a customer price list actually exists.
 
 **How many quick notes an outcome takes is configuration, not a column.**
 `interactions.singleSelectOutcomes` names the outcomes that take exactly one —
