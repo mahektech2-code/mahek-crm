@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "npm run db:deploy && next build",
+    "build": "npm run db:deploy && npm run catalogue:deploy && next build",
     "start": "next start",
     "lint": "eslint",
     "db:push": "drizzle-kit push",
@@ -14,6 +14,7 @@
     "demo:clear:url": "tsx --conditions=react-server scripts/clear-demo-data.ts",
     "jobs": "tsx --conditions=react-server --env-file=.env.local scripts/run-job.ts",
     "catalogue:import": "tsx --conditions=react-server --env-file=.env.local scripts/import-catalogue.ts",
+    "catalogue:deploy": "tsx --conditions=react-server scripts/import-catalogue.ts",
     "catalogue:parse": "node scripts/parse-catalogue.mjs",
     "db:setup": "node scripts/setup-db.mjs",
     "db:migrate": "drizzle-kit migrate",
