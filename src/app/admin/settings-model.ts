@@ -1,29 +1,30 @@
 /* ---------------------------------------------------------------------------
- * The value plumbing behind a rendered schema — pure, so the rules can be read
- * without a screen in front of you.
+ * The value plumbing behind a rendered schema.
  *
- * A field has a declared default, a saved value and, until Save is pressed, a
- * draft. Nothing is written until the whole section is saved, because half the
- * relationships below only hold across several fields at once.
+ * A field has a declared default, a saved value from the database, and — until
+ * Save — a draft. Nothing is written until the whole section is saved, because
+ * half the relationships only hold across several fields at once.
+ *
+ * The rules themselves are NOT reimplemented here. `checkConsistency` in the
+ * CRM's own registry is the one implementation, and the server runs the same
+ * function on the same values before it commits.
  * ------------------------------------------------------------------------- */
 
-import { T, type SchemaField, type SchemaTab } from "./data";
+import {
+  checkConsistency,
+  type Config,
+} from "@/lib/config/registry";
+import {
+  toStored,
+  type SchemaField,
+  type SchemaTab,
+} from "@/lib/config/schema-contract";
 
 export type Values = Record<string, unknown>;
 
-export function declaredDefault(f: SchemaField): unknown {
-  if (f.type === T.threshold && f.parts) {
-    return Object.fromEntries(f.parts.map((p) => [p.k, p.v]));
-  }
-  if (f.type === T.keyvalue && f.pairs) {
-    return Object.fromEntries(f.pairs.map((p) => [p.k, p.v]));
-  }
-  return f.def;
-}
-
 export function savedValue(values: Values, f: SchemaField): unknown {
   const v = values[f.key];
-  return v === undefined ? declaredDefault(f) : v;
+  return v === undefined ? f.def : v;
 }
 
 export function currentValue(values: Values, drafts: Values, f: SchemaField): unknown {
@@ -36,7 +37,7 @@ export function isDirty(values: Values, drafts: Values, f: SchemaField): boolean
 }
 
 export function isAtDefault(values: Values, drafts: Values, f: SchemaField): boolean {
-  return !isDirty(values, drafts, f) && same(savedValue(values, f), declaredDefault(f));
+  return !isDirty(values, drafts, f) && same(savedValue(values, f), f.def);
 }
 
 function same(a: unknown, b: unknown): boolean {
@@ -54,8 +55,21 @@ export function dirtyFields(tab: SchemaTab | null, values: Values, drafts: Value
 
 /** Rendered flat, the way an audit line reads it. */
 export function readable(v: unknown): string {
+  if (Array.isArray(v)) return v.join(", ");
   if (v && typeof v === "object") return Object.values(v as Record<string, unknown>).join(" / ");
   return String(v);
+}
+
+/** The change set, in the shape the write action accepts. */
+export function changeSet(
+  tab: SchemaTab | null,
+  values: Values,
+  drafts: Values,
+): Array<{ key: string; value: unknown }> {
+  return dirtyFields(tab, values, drafts).map((f) => ({
+    key: f.key,
+    value: toStored(drafts[f.key], f.control, f.def),
+  }));
 }
 
 /* ------------------------------------------------- cross-setting validation */
@@ -63,64 +77,38 @@ export function readable(v: unknown): string {
 export type CrossError = { key: string; text: string };
 
 /**
- * Relationships the schema declares, checked across the whole section. Two
- * statements of the same fact are not allowed to drift: aging buckets and stage
- * thresholds describe how overdue an account is, and the Sales Bill Report and
- * Payment Follow-up must not disagree about it.
+ * What this change set would break.
+ *
+ * A problem already present in the stored configuration is NOT counted: the
+ * database may be inconsistent today, and refusing to save would trap whoever
+ * is fixing one half of it. The server applies exactly this rule before it
+ * commits, so the screen and the write path cannot disagree.
  */
-export function crossCheck(tab: SchemaTab | null, values: Values, drafts: Values): CrossError[] {
-  const errs: CrossError[] = [];
+export function introducedProblems(
+  tab: SchemaTab | null,
+  values: Values,
+  drafts: Values,
+  stored: Config | null,
+): CrossError[] {
+  if (!stored) return [];
+  const dirty = dirtyFields(tab, values, drafts);
+  if (!dirty.length) return [];
+
+  const before = new Set(checkConsistency(stored));
+  const after = { ...stored } as Record<string, unknown>;
+  for (const f of dirty) {
+    after[f.key] = toStored(drafts[f.key], f.control, f.def);
+  }
+
   const fields = tabFields(tab);
-  const byKey = Object.fromEntries(fields.map((f) => [f.key, f]));
-  const cur = (k: string) => (byKey[k] ? currentValue(values, drafts, byKey[k]) : null);
-
-  for (const f of fields) {
-    if (f.type !== T.threshold || !f.ascending || !f.parts) continue;
-    const v = currentValue(values, drafts, f) as Record<string, string | number>;
-    const seq = f.parts.map((p) => parseFloat(String(v[p.k])));
-    for (let i = 1; i < seq.length; i++) {
-      if (!(seq[i] > seq[i - 1])) {
-        errs.push({
-          key: f.key,
-          text: `${f.label}: ${f.parts[i].l} (${seq[i]}) must be greater than ${f.parts[i - 1].l} (${seq[i - 1]}).`,
-        });
-        break;
-      }
-    }
-  }
-
-  if (byKey.stageThresholds && byKey.agingBuckets) {
-    const st = cur("stageThresholds") as Record<string, number>;
-    const ab = cur("agingBuckets") as Record<string, number>;
-    const stages = [st.s1, st.s2, st.s3].map(Number);
-    const buckets = [ab.b2, ab.b3, ab.b4].map(Number);
-    const aligned = stages.every((s) => buckets.includes(s));
-    if (!aligned) {
-      errs.push({
-        key: "agingBuckets",
-        text:
-          `Aging buckets (${[ab.b1, ab.b2, ab.b3, ab.b4].join(" / ")}) do not align with the stage thresholds ` +
-          `(${stages.join(" / ")}). The Sales Bill Report and Payment Follow-up would disagree about how overdue an account is.`,
-      });
-    }
-  }
-
-  if (byKey.shiftStart && byKey.shiftEnd) {
-    const a = cur("shiftStart") as string;
-    const b = cur("shiftEnd") as string;
-    if (a && b && a >= b) {
-      errs.push({ key: "shiftEnd", text: `Shift start (${a}) must be before shift end (${b}).` });
-    }
-    const boundary = cur("dayBoundary") as string;
-    if (boundary && a && b && boundary > a && boundary < b) {
-      errs.push({
-        key: "dayBoundary",
-        text: `Day boundary (${boundary}) falls inside the shift. It must sit outside ${a}–${b}, or a call logged mid-shift lands on the wrong day.`,
-      });
-    }
-  }
-
-  return errs;
+  return checkConsistency(after as Config)
+    .filter((text) => !before.has(text))
+    .map((text) => ({
+      // Attach the message to a field when it names one, so the row is flagged
+      // as well as the section.
+      key: fields.find((f) => text.toLowerCase().includes(f.label.toLowerCase()))?.key ?? "",
+      text,
+    }));
 }
 
 /* ----------------------------------------------------------- impact preview */
@@ -133,9 +121,11 @@ export type ImpactRow = {
 };
 
 /**
- * Settings the schema marks as worklist-affecting get a plain sentence about
- * what tomorrow looks like. A threshold changed without that sentence is a
- * telecaller finding forty extra customers in their list and nobody knowing why.
+ * What tomorrow looks like, for settings the app marks as worklist-affecting.
+ *
+ * These say what moves, not how many — the console cannot count customers, and
+ * a fabricated figure is worse than none. A real count belongs behind the
+ * app's own summary endpoint.
  */
 export function impactRows(tab: SchemaTab | null, values: Values, drafts: Values): ImpactRow[] {
   return dirtyFields(tab, values, drafts)
@@ -143,35 +133,24 @@ export function impactRows(tab: SchemaTab | null, values: Values, drafts: Values
     .map((f) => {
       const from = savedValue(values, f);
       const to = currentValue(values, drafts, f);
-      let effect = "";
-      let tone: ImpactRow["tone"] = "neutral";
+      const looser = Number(to) < Number(from);
 
-      if (f.impact === "queue" && f.key === "checkinInterval") {
-        const delta = Math.round((Number(from) - Number(to)) * 2.4);
-        effect =
-          delta > 0
-            ? `Roughly ${delta} more customers enter call queues tomorrow.`
-            : delta < 0
-              ? `Roughly ${Math.abs(delta)} fewer customers enter call queues tomorrow.`
-              : "No change to queue size.";
-        tone = delta > 0 ? "warn" : "ok";
-      } else if (f.impact === "inactive") {
-        const delta = Math.round((Number(from) - Number(to)) * 11);
-        effect =
-          delta > 0
-            ? `Roughly ${delta} more customers would newly flag as inactive.`
-            : delta < 0
-              ? `Roughly ${Math.abs(delta)} fewer customers would flag as inactive.`
-              : "No change to the inactive watch.";
-        tone = delta > 0 ? "warn" : "ok";
-      } else if (f.impact === "collections") {
-        effect = "Accounts move between stages, changing which prescribed action each one shows.";
-        tone = "warn";
-      } else if (f.key === "maxQueue") {
-        effect = "Caps each telecaller's daily list. Anything beyond the cap rolls to the next day.";
-        tone = "warn";
-      }
+      const effect =
+        f.impact === "queue"
+          ? looser
+            ? "More customers become due, so call queues grow tomorrow morning."
+            : "Fewer customers become due, so call queues shrink tomorrow morning."
+          : f.impact === "collections"
+            ? "Accounts move between stages, changing which prescribed action each one shows."
+            : looser
+              ? "More customers cross the inactivity line and appear on the watch."
+              : "Fewer customers cross the inactivity line.";
 
-      return { setting: f.label, change: `${readable(from)} → ${readable(to)}`, effect, tone };
+      return {
+        setting: f.label,
+        change: `${readable(from)} → ${readable(to)}`,
+        effect,
+        tone: looser ? "warn" : "ok",
+      };
     });
 }

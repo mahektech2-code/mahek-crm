@@ -57,7 +57,7 @@ export function OverviewSection({
   navigate,
 }: {
   tab: number;
-  navigate: (section: string, tab: number) => void;
+  navigate: (section: string, tab: string) => void;
 }) {
   if (tab === 0) return <AttentionTab navigate={navigate} />;
   if (tab === 1) return <Health />;
@@ -166,14 +166,14 @@ function Integrations() {
   );
 }
 
-function RecentActivity({ navigate }: { navigate: (section: string, tab: number) => void }) {
+function RecentActivity({ navigate }: { navigate: (section: string, tab: string) => void }) {
   const { audit } = useAdmin();
   return (
     <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
       <CardHeader
         title="Recent changes"
         action={
-          <Button size="sm" variant="ghost" onClick={() => navigate("audit", 0)}>
+          <Button size="sm" variant="ghost" onClick={() => navigate("audit", "search")}>
             Open the full audit log
           </Button>
         }

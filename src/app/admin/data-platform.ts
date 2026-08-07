@@ -6,7 +6,7 @@
  * and what an admin needs to see before touching a threshold.
  * ------------------------------------------------------------------------- */
 
-import { T, type SchemaTab } from "./data";
+import type { SchemaTab } from "@/lib/config/schema-contract";
 
 /* ------------------------------------------------------------------- usage */
 
@@ -179,6 +179,11 @@ export const SETTING_HISTORY: Record<string, Array<{ value: string; by: string; 
 /**
  * MahekOne's own configuration, declared in exactly the shape an app declares
  * its own. The renderer does not know the difference.
+ *
+ * Attachment settings used to sit here as well. They are real settings the CRM
+ * reads, so they live in the registry and render in the CRM's own section —
+ * two places declaring the same thing is the drift this console exists to
+ * prevent. Everything below is still platform demo data.
  */
 export const PLATFORM_SCHEMA: { tabs: SchemaTab[] } = {
   tabs: [
@@ -187,34 +192,16 @@ export const PLATFORM_SCHEMA: { tabs: SchemaTab[] } = {
       label: "Platform settings",
       groups: [
         {
-          label: "Attachments",
-          note: "A file is validated on its bytes, never on its name — permitted types are configuration, so removing one takes effect immediately.",
-          fields: [
-            {
-              key: "attTypes", label: "Permitted file types", type: T.multi,
-              options: ["JPG", "PNG", "PDF", "HEIC", "WEBP"], def: ["JPG", "PNG", "PDF"],
-              help: "Checked against the file signature, not the extension the browser declares.",
-            },
-            { key: "attMaxSize", label: "Maximum file size", type: T.int, unit: "MB", def: 5, min: 1, max: 50 },
-            {
-              key: "attOrphanWindow", label: "Orphan cleanup window", type: T.int, unit: "hours", def: 24, min: 1, max: 168,
-              help: "An upload starts before its parent record exists. A form abandoned mid-call keeps its files for this long first.",
-            },
-            { key: "attRetention", label: "Retention after removal", type: T.int, unit: "months", def: 24, min: 1, max: 120, help: "A payment proof outlives whoever tidied it off a screen." },
-          ],
-        },
-        {
           label: "Security",
-          note: "Nothing here blocks anybody automatically. A false positive locking out a telecaller mid-shift costs more than the risk.",
           fields: [
-            { key: "secSessionTimeout", label: "Session timeout", type: T.int, unit: "hours", def: 8, min: 1, max: 72 },
-            { key: "secRemember", label: "Remember-me duration", type: T.int, unit: "days", def: 30, min: 1, max: 365 },
-            { key: "secAttempts", label: "Failed attempts before lockout", type: T.int, unit: "attempts", def: 5, min: 3, max: 20 },
-            { key: "secLockout", label: "Lockout duration", type: T.int, unit: "minutes", def: 30, min: 1, max: 1440 },
-            { key: "secMinLength", label: "Password minimum length", type: T.int, unit: "characters", def: 10, min: 8, max: 64 },
-            { key: "secResetExpiry", label: "Reset link expiry", type: T.int, unit: "minutes", def: 30, min: 5, max: 1440, help: "Asking for a new link kills the old one, and using one deletes every session that account had." },
-            { key: "secForceChange", label: "Force a password change on first sign-in", type: T.bool, def: true },
-            { key: "secConcurrent", label: "Concurrent sessions per user", type: T.int, unit: "sessions", def: 3, min: 1, max: 10 },
+            { key: "secSessionTimeout", label: "Session timeout", control: "int", unit: "hours", def: 8, min: 1, max: 72, help: "How long a session survives without activity." },
+            { key: "secRemember", label: "Remember-me duration", control: "int", unit: "days", def: 30, min: 1, max: 365, help: "How long a remembered sign-in lasts." },
+            { key: "secAttempts", label: "Failed attempts before lockout", control: "int", unit: "attempts", def: 5, min: 3, max: 20, help: "Nothing is blocked automatically beyond this." },
+            { key: "secLockout", label: "Lockout duration", control: "int", unit: "minutes", def: 30, min: 1, max: 1440, help: "How long a locked account stays locked." },
+            { key: "secMinLength", label: "Password minimum length", control: "int", unit: "characters", def: 10, min: 8, max: 64, help: "Enforced when a password is set." },
+            { key: "secResetExpiry", label: "Reset link expiry", control: "int", unit: "minutes", def: 30, min: 5, max: 1440, help: "Asking for a new link kills the old one, and using it deletes every session that account had." },
+            { key: "secForceChange", label: "Force a password change on first sign-in", control: "bool", def: true, help: "An admin-created account starts with a link, never a password." },
+            { key: "secConcurrent", label: "Concurrent sessions per user", control: "int", unit: "sessions", def: 3, min: 1, max: 10, help: "Beyond this, the oldest session ends." },
           ],
         },
       ],

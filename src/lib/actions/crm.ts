@@ -26,7 +26,12 @@ import {
   assertCustomerInScope,
 } from "@/lib/access-control";
 import { SCOPE_COOKIE_NAME, DENSITY_COOKIE_NAME } from "@/lib/scope";
-import { getConfig, invalidateConfig, updateSetting } from "@/lib/config/store";
+import {
+  getConfig,
+  invalidateConfig,
+  updateSetting,
+  updateSettings,
+} from "@/lib/config/store";
 import { saveInteraction } from "@/lib/services/interaction-service";
 import {
   recordFollowUpAttempt,
@@ -1307,6 +1312,32 @@ export async function markNotificationRead(
 
 /* ------------------------------------------------------------ configuration */
 
+/**
+ * A whole section, saved as one change set. The Admin Console edits several
+ * related settings at once and reviews them together, so it commits them
+ * together — a half-applied set of escalation thresholds describes a policy
+ * nobody agreed to.
+ */
+export async function updateConfigSettings(
+  entries: Array<{ key: string; value: unknown }>,
+): Promise<Result<{ warnings: string[] }>> {
+  try {
+    const ctx = await requireCapability("config.write");
+    const r = await updateSettings(entries, ctx.user.id);
+    if (!r.ok) return err(r.error, "validation", r.fields);
+    refreshAll();
+    revalidatePath("/admin");
+    return ok(
+      { warnings: r.warnings },
+      entries.length === 1
+        ? "1 setting saved. It takes effect immediately."
+        : `${entries.length} settings saved. They take effect immediately.`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 export async function updateConfigSetting(
   key: string,
   value: unknown,
@@ -1317,7 +1348,7 @@ export async function updateConfigSetting(
     if (!r.ok)
       return err(r.error, "validation", [{ field: key, message: r.error }]);
     refreshAll();
-    revalidatePath("/crm/settings");
+    revalidatePath("/admin");
     return ok({ warnings: r.warnings }, "Setting saved");
   } catch (e) {
     return fromThrown(e);
@@ -1336,7 +1367,7 @@ export async function triggerJob(
     const { runJob } = await import("@/lib/jobs");
     const results = await runJob(job, ctx.user.id);
     refreshAll();
-    revalidatePath("/crm/settings");
+    revalidatePath("/admin");
     return ok(
       { ran: results.map((r) => `${r.job}: ${r.detail}`) },
       `${job} finished - ${results.reduce((a, r) => a + r.recordsAffected, 0)} records touched`,

@@ -3,15 +3,9 @@
 import * as React from "react";
 import { Badge, Button, Card, Textarea, cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
-import { type SchemaTab } from "./data";
+import type { SchemaTab } from "@/lib/config/schema-contract";
 import { SCHEDULED_CHANGES, SETTING_HISTORY } from "./data-platform";
-import {
-  declaredDefault,
-  readable,
-  savedValue,
-  tabFields,
-  type Values,
-} from "./settings-model";
+import { readable, savedValue, tabFields, type Values } from "./settings-model";
 import { useAdmin } from "./store";
 
 /* ---------------------------------------------------------------------------
@@ -34,7 +28,7 @@ export function SettingsToolbar({
   const [open, setOpen] = React.useState<null | "compare" | "transfer" | "scheduled">(null);
   const fields = tabFields(tab);
   const differing = fields.filter(
-    (f) => JSON.stringify(savedValue(values, f)) !== JSON.stringify(declaredDefault(f)),
+    (f) => JSON.stringify(savedValue(values, f)) !== JSON.stringify(f.def),
   );
 
   return (
@@ -85,8 +79,8 @@ function CompareModal({
   const rows = fields.map((f) => ({
     label: f.label,
     now: readable(savedValue(values, f)),
-    def: readable(declaredDefault(f)),
-    differs: JSON.stringify(savedValue(values, f)) !== JSON.stringify(declaredDefault(f)),
+    def: readable(f.def),
+    differs: JSON.stringify(savedValue(values, f)) !== JSON.stringify(f.def),
   }));
   const differing = rows.filter((r) => r.differs);
 
