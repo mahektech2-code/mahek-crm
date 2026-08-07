@@ -438,7 +438,11 @@ export function PaymentsScreen({
                   </div>
                   <div className="mt-1 text-[13px] text-muted">
                     {r.overdueBillCount} bill{r.overdueBillCount === 1 ? "" : "s"} overdue ·
-                    oldest by {ageLabel(r.daysOverdue)} · last contact{" "}
+                    {/* The value is the last PAYMENT follow-up, not the last
+                        time anybody spoke to them. Calling it "last contact"
+                        told a telecaller they had never spoken to a customer
+                        they rang on Tuesday. */}
+                    oldest by {ageLabel(r.daysOverdue)} · last chased{" "}
                     {r.lastFollowUpAt ? stamp(r.lastFollowUpAt) : "never"}
                     {r.promisedDate
                       ? ` · promised ${money(r.promisedAmount ?? 0)} by ${shortDate(r.promisedDate)}`

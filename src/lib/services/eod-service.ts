@@ -79,6 +79,13 @@ export async function eodMetricsFor(
       (select count(distinct c.customer_id) from calls c where c.user_id = ${userId}
         and c.source_module = 'call_queue'
         and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as queue_worked,
+      -- The telecaller's own work: an order is taken the moment the customer
+      -- says yes, whatever accounts decide about it afterwards. Cancelled is
+      -- excluded because that order was withdrawn, not merely unapproved.
+      (select count(*) from orders o where o.user_id = ${userId}
+        and o.ordered_at >= ${w.start}::timestamptz and o.ordered_at < ${w.end}::timestamptz
+        and o.status <> 'cancelled')::int as orders_captured,
+      -- The sale. Only approved orders, because only those are money.
       (select count(*) from orders o where o.user_id = ${userId}
         and o.ordered_at >= ${w.start}::timestamptz and o.ordered_at < ${w.end}::timestamptz
         and o.status in ('captured','confirmed','dispatched'))::int as orders_count,
@@ -108,7 +115,6 @@ export async function eodMetricsFor(
         and m.status in ('sent_manually','sent','delivered','read')
         and coalesce(m.confirmed_sent_at, m.sent_at) >= ${w.start}::timestamptz
         and coalesce(m.confirmed_sent_at, m.sent_at) <  ${w.end}::timestamptz)::int as whatsapp_sent,
-      (select count(*) from customers cu where cu.owner_id = ${userId} and cu.status <> 'deactivated')::int as queue_served,
       (select coalesce(sum(t.target_amount),0) from monthly_targets t
         join customers cu on cu.id = t.customer_id
         where cu.owner_id = ${userId} and t.year = ${year} and t.month = ${month}) as target_amount,
@@ -128,8 +134,8 @@ export async function eodMetricsFor(
     callsInbound: n("calls_inbound"),
     callsMissed: n("calls_missed"),
     ordersWithoutCall: n("orders_without_call"),
-    queueServed: n("queue_served"),
     queueWorked: n("queue_worked"),
+    ordersCaptured: n("orders_captured"),
     ordersCount: n("orders_count"),
     ordersValue: n("orders_value"),
     followUpsMade: n("follow_ups"),

@@ -21,9 +21,32 @@ export type EodInput = {
   callsInbound: number;
   callsMissed: number;
 
-  queueServed: number;
+  /**
+   * Customers called from the calling queue today.
+   *
+   * Deliberately NOT "x of y". The denominator — how many were on today's
+   * queue — can only be had by building the queue, which is what the Call Log
+   * does and shows. Computing a second, cheaper one here produced "3 of 8"
+   * against the Call Log's "3 of 4", and then "3 of 2". A number that cannot
+   * be derived the same way twice does not belong on two screens.
+   */
   queueWorked: number;
 
+  /**
+   * Two different questions about the same rows, and they have different
+   * answers — see lib/order-status.ts.
+   *
+   *   `ordersCaptured` — orders the telecaller logged today. Their work, true
+   *   the moment the customer said yes.
+   *
+   *   `ordersCount` — orders accounts have approved. The sale, and the only
+   *   one of the two that may carry a value.
+   *
+   * The report says both, because a day's work reported as nothing because
+   * accounts have not got to it yet is a telecaller's record of their own day
+   * being wrong.
+   */
+  ordersCaptured: number;
   ordersCount: number;
   ordersValue: number;
 
@@ -71,18 +94,43 @@ export function formatDate(date: BusinessDate): string {
   return `${d} ${MONTHS[Number(m) - 1]} ${y}`;
 }
 
+/**
+ * "3 · ₹1,20,000" where everything taken today has been approved, and
+ * "3 taken · 1 approved · ₹40,000" where it has not.
+ *
+ * The second form only appears when the two numbers actually differ, so a
+ * normal day reads as a single figure and the split shows up exactly when it
+ * means something — that some of today's work is still sitting with accounts.
+ */
+function describeOrders(input: EodInput): string {
+  const value = formatMoney(input.ordersValue);
+  if (input.ordersCaptured === input.ordersCount) {
+    return `${input.ordersCount} · ${value}`;
+  }
+  return `${input.ordersCaptured} taken · ${input.ordersCount} approved · ${value}`;
+}
+
+/** The same fact in the message's own punctuation, which is not the table's. */
+function describeOrdersForMessage(input: EodInput): string {
+  const value = formatMoney(input.ordersValue);
+  if (input.ordersCaptured === input.ordersCount) {
+    return `${input.ordersCount} (${value})`;
+  }
+  return `${input.ordersCaptured} taken · ${input.ordersCount} approved (${value})`;
+}
+
 export function aggregateEod(input: EodInput): EodReport {
   const percent = input.targetAmount
     ? Math.round((input.targetAchieved / input.targetAmount) * 100)
     : 0;
 
   const lines = [
-    { label: "Queue worked", value: `${input.queueWorked} of ${input.queueServed}` },
+    { label: "Customers called from the queue", value: String(input.queueWorked) },
     { label: "Calls attempted", value: String(input.callsAttempted) },
     { label: "Connected", value: String(input.callsConnected) },
     { label: "Inbound received", value: String(input.callsInbound) },
     { label: "Missed", value: String(input.callsMissed) },
-    { label: "Orders", value: `${input.ordersCount} · ${formatMoney(input.ordersValue)}` },
+    { label: "Orders", value: describeOrders(input) },
     { label: "Orders received without a call", value: String(input.ordersWithoutCall) },
     { label: "Payment follow-ups", value: String(input.followUpsMade) },
     { label: "Promises obtained", value: `${input.promisesCount} · ${formatMoney(input.promisesValue)}` },
@@ -105,7 +153,7 @@ export function aggregateEod(input: EodInput): EodReport {
     formatDate(input.date),
     "",
     `Calls: ${input.callsAttempted} attempted · ${input.callsConnected} connected · ${input.callsMissed} missed · ${input.callsInbound} inbound`,
-    `Orders: ${input.ordersCount} (${formatMoney(input.ordersValue)})`,
+    `Orders: ${describeOrdersForMessage(input)}`,
     ...(input.ordersWithoutCall
       ? [`Orders received without a call: ${input.ordersWithoutCall}`]
       : []),
@@ -169,8 +217,8 @@ export function aggregateTeamEod(
 ): TeamRollup {
   const zero = (): Omit<EodInput, "userName" | "date"> => ({
     callsAttempted: 0, callsConnected: 0, callsInbound: 0, callsMissed: 0, ordersWithoutCall: 0,
-    queueServed: 0, queueWorked: 0,
-    ordersCount: 0, ordersValue: 0,
+    queueWorked: 0,
+    ordersCaptured: 0, ordersCount: 0, ordersValue: 0,
     followUpsMade: 0, promisesCount: 0, promisesValue: 0, paymentsConfirmed: 0,
     remindersClosed: 0, remindersCreated: 0, remindersCarriedForward: 0,
     complaintsLogged: 0, whatsappSent: 0,

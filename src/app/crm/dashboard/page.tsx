@@ -202,18 +202,26 @@ export default async function DashboardPage() {
                 />
               }
             />
+            {/* "Orders taken" is the telecaller's own work, so it counts what
+                they took — not what accounts have got round to approving. The
+                value underneath is the approved figure, because only an
+                approved order is money. */}
             <StatCard
               href="/crm/history"
               label="Orders taken"
-              value={String(activity.ordersCount)}
-              foot={`${money(activity.ordersValue)} booked today`}
+              value={String(activity.ordersCaptured)}
+              foot={
+                activity.ordersCaptured > activity.ordersCount
+                  ? `${activity.ordersCaptured - activity.ordersCount} awaiting approval`
+                  : `${money(activity.ordersValue)} booked today`
+              }
               foot2={
-                activity.ordersCount
-                  ? `${money(Math.round(activity.ordersValue / activity.ordersCount))} average`
+                activity.ordersCaptured
+                  ? `${money(activity.ordersValue)} approved so far`
                   : "No orders yet today"
               }
               delta={
-                <Delta today={activity.ordersCount} yesterday={yesterday.ordersCount} />
+                <Delta today={activity.ordersCaptured} yesterday={yesterday.ordersCaptured} />
               }
             />
             <StatCard
@@ -458,7 +466,7 @@ function TeamView({
             <thead>
               <tr>
                 <Th>Telecaller</Th>
-                <Th align="right">Queue worked</Th>
+                <Th align="right">Queue calls</Th>
                 <Th align="right">Overdue reminders</Th>
                 <Th align="right">Connected</Th>
                 <Th align="right">Missed</Th>
@@ -473,7 +481,7 @@ function TeamView({
                 <Tr key={r.user.id} className="hover:bg-canvas">
                   <Td className="font-medium text-ink">{r.user.name}</Td>
                   <Td align="right">
-                    {r.activity.queueWorked}/{r.activity.queueServed}
+                    {r.activity.queueWorked}
                   </Td>
                   <Td
                     align="right"
@@ -485,7 +493,7 @@ function TeamView({
                   <Td align="right" className={r.activity.callsMissed > 5 ? "text-danger" : ""}>
                     {r.activity.callsMissed}
                   </Td>
-                  <Td align="right">{r.activity.ordersCount}</Td>
+                  <Td align="right">{r.activity.ordersCaptured}</Td>
                   <Td align="right" className="font-medium text-ink">
                     {moneyShort(r.activity.ordersValue)}
                   </Td>
@@ -503,7 +511,7 @@ function TeamView({
               <tr className="border-t border-line bg-canvas">
                 <Td className="font-semibold text-ink">Team average</Td>
                 <Td align="right" className="font-medium text-ink">
-                  {avg((r) => r.activity.queueWorked)}/{avg((r) => r.activity.queueServed)}
+                  {avg((r) => r.activity.queueWorked)}
                 </Td>
                 <Td align="right" className="font-medium text-ink">
                   {avg((r) => r.overdueReminders)}
@@ -515,7 +523,7 @@ function TeamView({
                   {avg((r) => r.activity.callsMissed)}
                 </Td>
                 <Td align="right" className="font-medium text-ink">
-                  {avg((r) => r.activity.ordersCount)}
+                  {avg((r) => r.activity.ordersCaptured)}
                 </Td>
                 <Td align="right" className="font-semibold text-ink">
                   {moneyShort(avg((r) => r.activity.ordersValue))}
