@@ -69,12 +69,17 @@ export const QUICK_NOTES: SeedQuickNote[] = [
   {
     interactionType: "outbound_call",
     outcome: "no_order",
+    // §3 — the six structured reasons. Single-select, so these are mutually
+    // exclusive answers to "why not", not notes that stack. The five they
+    // replaced are deactivated rather than deleted, in the same migration:
+    // historical interactions still point at them and must keep resolving.
     labels: [
-      "Comparing competitor rates",
-      "Stock available",
-      "Price high",
-      "Needs approval",
+      "Stock sufficient",
+      "Price issue",
       "Will order later",
+      "Not interested",
+      "Buying elsewhere",
+      "Business slow",
     ],
   },
   {

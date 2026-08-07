@@ -104,6 +104,7 @@ export default async function QueuePage() {
         label: c,
       }))}
       quickNotes={quickNoteOptions}
+      singleSelectOutcomes={config["interactions.singleSelectOutcomes"]}
       products={productOptions}
       scripts={scriptRows.map((a) => ({
         id: a.id,
