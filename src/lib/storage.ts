@@ -1,4 +1,4 @@
-import { put, del, head } from "@vercel/blob";
+import { put, del, get, head } from "@vercel/blob";
 
 /**
  * File storage. Vercel Blob, private — a payment proof or a damaged-goods
@@ -63,20 +63,24 @@ const blobStorage: FileStorage = {
     return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
   },
   async upload({ key, body, contentType }) {
-    const result = await put(key, Buffer.from(body), {
-      access: "public",
+    // Private, not public-with-an-unguessable-name. A payment proof must be
+    // unreadable without credentials even to somebody who has the URL — an
+    // unguessable public link is still a link that works once it leaks.
+    await put(key, Buffer.from(body), {
+      access: "private",
       contentType,
-      // The pathname must not be guessable: "public" here is Blob's only
-      // access mode for uploads, so unguessability plus an authenticated
-      // serving route is what keeps these private in practice.
-      addRandomSuffix: true,
+      addRandomSuffix: false,
     });
-    return { ref: result.url, sizeBytes: body.byteLength };
+    // The pathname is the reference. A private blob has no URL worth storing,
+    // and storing one would invite somebody to serve it directly.
+    return { ref: key, sizeBytes: body.byteLength };
   },
   async read(ref) {
-    const response = await fetch(ref);
-    if (!response.ok) throw new Error(`Attachment fetch failed: ${response.status}`);
-    return response.arrayBuffer();
+    const result = await get(ref, { access: "private" });
+    if (!result || result.statusCode !== 200) {
+      throw new Error("Attachment could not be read from storage.");
+    }
+    return new Response(result.stream).arrayBuffer();
   },
   async remove(ref) {
     await del(ref);
