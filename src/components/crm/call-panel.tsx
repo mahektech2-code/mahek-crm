@@ -579,7 +579,7 @@ function CallPanelForm({
             all present: an empty "Open complaint — None" column takes space to
             say nothing, and reads as a thing to check when it is not. Each
             figure appears only when it has something to report. */}
-        <div className="flex items-center gap-5 border-y border-divider bg-canvas px-6 py-2.5">
+        <div className="flex items-center gap-5 overflow-hidden border-y border-divider bg-canvas px-6 py-2.5">
           {/* A lead and a customer are different conversations, so the strip
               carries different facts. Outstanding and target gap on a record
               that has never ordered would both read zero, which looks like a
@@ -628,7 +628,7 @@ function CallPanelForm({
           {reminderText ? (
             <>
               <StatDivider />
-              <Stat label="Reminder" tone="warn">
+              <Stat label="Reminder" tone="warn" shrink>
                 {reminderText}
               </Stat>
             </>
@@ -641,7 +641,7 @@ function CallPanelForm({
               <button
                 onClick={() => setTab("information")}
                 title={target.openComplaint}
-                className="cursor-pointer border-none bg-transparent p-0 text-sm font-medium text-danger"
+                className="shrink-0 cursor-pointer border-none bg-transparent p-0 text-sm font-medium whitespace-nowrap text-danger"
               >
                 Open complaint
               </button>
@@ -1633,23 +1633,35 @@ function StatDivider() {
   return <span className="h-7 w-px flex-none bg-line" />;
 }
 
+/**
+ * A figure in the strip above the tabs.
+ *
+ * Truncation is opt-in, and only free text ever opts in. A shortened name is
+ * still a name, but "₹12,4…" is not a number — it could be twelve thousand or
+ * twelve lakh, and a telecaller about to ask for money cannot tell which. So
+ * the figures hold their full width and the long notes absorb the squeeze.
+ */
 function Stat({
   label,
   tone,
+  shrink = false,
   children,
 }: {
   label: string;
   tone?: "danger" | "warn";
+  /** Free text that may be shortened when the strip runs out of room. */
+  shrink?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <span className="block min-w-0">
-      <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+    <span className={cx("block", shrink ? "min-w-0 shrink" : "shrink-0")}>
+      <span className="block truncate text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
         {label}
       </span>
       <span
         className={cx(
-          "block truncate text-sm font-medium",
+          "block text-sm font-medium",
+          shrink ? "truncate" : "whitespace-nowrap",
           tone === "danger"
             ? "text-danger"
             : tone === "warn"
