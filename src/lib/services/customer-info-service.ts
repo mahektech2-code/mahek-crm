@@ -84,10 +84,6 @@ export type CustomerInformation = {
   monthly: MonthlyPerformance | null;
   outstanding: number;
   creditDays: number;
-  /** True when it fell back to the configured default. */
-  creditDaysIsDefault: boolean;
-  /** The terms offered when taking an order. Any other number may be typed. */
-  creditDayOptions: number[];
   recentCalls: RecentCall[];
   productHistory: ProductHistoryRow[];
   /** Which system produced the product history, so the screen can say so. */
@@ -281,9 +277,6 @@ export async function customerInformation(
     monthly: isLead ? null : monthly,
     outstanding: customer.outstanding,
     creditDays: customer.creditDays ?? config["customers.defaultCreditDays"],
-    creditDaysIsDefault: customer.creditDays === null,
-    /** The terms offered when taking an order. Any other number may be typed. */
-    creditDayOptions: config["bills.creditDayOptions"],
     recentCalls: recent.map((r) => ({
       id: r.id,
       at: r.at.toISOString(),
