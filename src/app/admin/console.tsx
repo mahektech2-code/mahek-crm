@@ -7,18 +7,18 @@ import type { AppDefinition } from "@/lib/apps";
 import { Badge, Button, Card, EmptyState, cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { ToastProvider } from "@/components/ui/toast";
-import {
-  INTEGRATIONS,
-  PLATFORM_SUBTITLES,
-  PLATFORM_TABS,
-  schemaFor,
-} from "./data";
+import type { Config } from "@/lib/config/registry";
+import { crmSchema, toStored } from "@/lib/config/schema-contract";
+import type { Collection } from "@/lib/config/entity-collections";
+import { updateConfigSettings } from "@/lib/actions/crm";
+import { INTEGRATIONS, PLATFORM_SUBTITLES, PLATFORM_TABS } from "./data";
 import { PLATFORM_SCHEMA } from "./data-platform";
 import { NotificationsSection } from "./platform-extra";
 import {
-  crossCheck,
+  changeSet,
   dirtyFields,
   impactRows,
+  introducedProblems,
   readable,
   savedValue,
   type Values,
@@ -52,42 +52,107 @@ const PLATFORM_NAV = [
 /** Apps → the last sub-tab is MahekOne's own configuration, rendered by the same renderer. */
 const PLATFORM_SETTINGS_TAB = 7;
 
-export function AdminConsole({ apps }: { apps: AppDefinition[] }) {
+export type CrmConfig = {
+  /** Stored values, in console shape, keyed by setting key. */
+  values: Values;
+  /** The raw stored config, for the consistency check the server also runs. */
+  config: Config;
+  /** Problems already present before anybody edits anything. */
+  warnings: string[];
+  /** Whether this person may write configuration at all. */
+  canWrite: boolean;
+  /** The rows behind each collection the CRM declares. */
+  collections: Record<string, Collection>;
+};
+
+export type Address = { section?: string; tab?: string };
+
+export function AdminConsole({
+  apps,
+  crm,
+  isPlatformAdmin,
+  initial,
+}: {
+  apps: AppDefinition[];
+  crm: CrmConfig;
+  isPlatformAdmin: boolean;
+  /** Where the URL says to open. */
+  initial: Address;
+}) {
   return (
     <ToastProvider>
       <AdminStore>
-        <ConsoleShell apps={apps} />
+        <ConsoleShell apps={apps} crm={crm} isPlatformAdmin={isPlatformAdmin} initial={initial} />
         <AdminDrawer />
       </AdminStore>
     </ToastProvider>
   );
 }
 
-function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
+/** Computed once from the CRM's own declaration — pure, so it runs here too. */
+const CRM_SCHEMA = crmSchema();
+
+/** Where a screen lives: /admin/people/security. */
+function addressOf(section: string, tab: string): string {
+  return tab ? `/admin/${section}/${tab}` : `/admin/${section}`;
+}
+
+/** Landing on a section means landing on its first tab. */
+function firstTab(section: string): string {
+  if (section === "crm") return CRM_SCHEMA.tabs[0]?.key ?? "";
+  return PLATFORM_TABS[section]?.[0]?.slug ?? "";
+}
+
+function ConsoleShell({
+  apps,
+  crm,
+  isPlatformAdmin,
+  initial,
+}: {
+  apps: AppDefinition[];
+  crm: CrmConfig;
+  isPlatformAdmin: boolean;
+  initial: Address;
+}) {
   const { me, personas, setPersona, registry, notify, record } = useAdmin();
 
-  const [section, setSection] = React.useState<string>("overview");
-  const [tab, setTab] = React.useState(0);
+  // A CRM manager has no platform sections at all, so they start in the CRM.
+  const [section, setSection] = React.useState<string>(initial.section ?? (isPlatformAdmin ? "overview" : "crm"));
+  const [tab, setTab] = React.useState<string>(initial.tab ?? "");
+
   const [detailId, setDetailId] = React.useState<string | null>(null);
 
   // Saved values and, until Save, per-field drafts. Nothing is written until the
   // whole section is saved — half the relationships only hold across fields.
-  const [values, setValues] = React.useState<Values>({});
+  const [values, setValues] = React.useState<Values>(crm.values);
+  const [saving, setSaving] = React.useState(false);
   const [drafts, setDrafts] = React.useState<Values>({});
   const [reviewOpen, setReviewOpen] = React.useState(false);
   // What the last applied change set replaced, so it can be put back. Reset to
   // default is a different question from reset to what it was before I broke it.
-  const [lastSet, setLastSet] = React.useState<null | { count: number; owner: string; before: Values }>(null);
+  const [lastSet, setLastSet] = React.useState<null | {
+    count: number;
+    owner: string;
+    /** Console shape, for the local state. */
+    before: Values;
+    /** Stored shape, for the write path. */
+    entries: Array<{ key: string; value: unknown }>;
+  }>(null);
   const [guard, setGuard] = React.useState<null | { count: number; go: () => void }>(null);
 
   const visibleApps = registry
     .filter((a) => me.apps.includes(a.id))
     .sort((a, b) => a.order - b.order);
   const appDef = registry.find((a) => a.id === section) ?? null;
-  const schema = appDef ? schemaFor(appDef.id) : null;
+  const schema = appDef?.id === "crm" ? CRM_SCHEMA : null;
   const platformTabs = PLATFORM_TABS[section];
-  const tabLabels = appDef ? (schema?.tabs.map((t) => t.label) ?? []) : (platformTabs ?? []);
-  const tabIndex = Math.min(tab, Math.max(0, tabLabels.length - 1));
+  const tabs: Array<{ slug: string; label: string }> = appDef
+    ? (schema?.tabs.map((t) => ({ slug: t.key, label: t.label })) ?? [])
+    : (platformTabs ?? []);
+  // An unknown slug lands on the first tab rather than a blank screen — a link
+  // to a tab that has since been removed should still open something.
+  const tabIndex = Math.max(0, tabs.findIndex((t) => t.slug === tab));
+  const tabSlug = tabs[tabIndex]?.slug ?? "";
 
   // A settings surface is either a live app's schema tab or, on Apps, the
   // platform's own schema. The renderer cannot tell the two apart.
@@ -100,24 +165,74 @@ function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
   const settingsOwner = appDef?.name ?? "Platform";
 
   const dirty = dirtyFields(tabDef, values, drafts);
-  const errors = tabDef ? crossCheck(tabDef, values, drafts) : [];
+  // The CRM section is checked against the real stored config with the CRM's
+  // own rules; the platform section has no such contract yet.
+  const errors = appDef?.id === "crm" ? introducedProblems(tabDef, values, drafts, crm.config) : [];
   const impact = impactRows(tabDef, values, drafts);
 
   // Leaving a section with unsaved work asks first — the drafts are discarded,
   // not quietly carried to the next screen where they would look saved.
-  function navigate(nextSection: string, nextTab: number) {
+  function navigate(nextSection: string, nextTab: string) {
     const go = () => {
       setSection(nextSection);
       setTab(nextTab);
       setDrafts({});
       setDetailId(null);
       setGuard(null);
+      // The URL is the address of what you are looking at, so a screen can be
+      // linked to, bookmarked, and reached again with the back button.
+      window.history.pushState(null, "", addressOf(nextSection, nextTab));
     };
     if (dirty.length) return setGuard({ count: dirty.length, go });
     go();
   }
 
-  function commit() {
+  // Opening /admin with no address resolves to a real screen, so the address
+  // bar matches what is on it and copying the URL actually works. Replace, not
+  // push — resolving a default is not a navigation somebody can go back from.
+  React.useEffect(() => {
+    if (!tabSlug) return;
+    const address = addressOf(section, tabSlug);
+    if (window.location.pathname === address) return;
+    window.history.replaceState(null, "", address);
+  }, [section, tabSlug]);
+
+  // Back and forward move between screens instead of leaving the console.
+  React.useEffect(() => {
+    const onPop = () => {
+      const [, , popSection, popTab] = window.location.pathname.split("/");
+      setSection(popSection || (isPlatformAdmin ? "overview" : "crm"));
+      setTab(popTab ?? "");
+      setDrafts({});
+      setDetailId(null);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [isPlatformAdmin]);
+
+  async function commit() {
+    const entries = changeSet(tabDef, values, drafts);
+
+    // Platform settings have no write path yet, so they stay where they are
+    // rather than pretending to save.
+    if (appDef?.id !== "crm") {
+      const next = { ...values };
+      for (const f of dirty) next[f.key] = drafts[f.key];
+      setValues(next);
+      setDrafts({});
+      setReviewOpen(false);
+      notify("Platform settings are not stored yet — this change is not saved.");
+      return;
+    }
+
+    setSaving(true);
+    const result = await updateConfigSettings(entries);
+    setSaving(false);
+    if (!result.ok) {
+      notify(result.error ?? "That did not save.");
+      return;
+    }
+
     const next = { ...values };
     for (const f of dirty) {
       next[f.key] = drafts[f.key];
@@ -127,15 +242,15 @@ function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
       count: dirty.length,
       owner: settingsOwner,
       before: Object.fromEntries(dirty.map((f) => [f.key, savedValue(values, f)])),
+      entries: dirty.map((f) => ({
+        key: f.key,
+        value: toStored(savedValue(values, f), f.control, f.def),
+      })),
     });
     setValues(next);
     setDrafts({});
     setReviewOpen(false);
-    notify(
-      dirty.length === 1
-        ? "1 setting saved. It takes effect immediately."
-        : `${dirty.length} settings saved. They take effect immediately.`,
-    );
+    notify(result.message ?? "Saved");
   }
 
   function save() {
@@ -147,8 +262,12 @@ function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
     commit();
   }
 
-  function rollback() {
+  async function rollback() {
     if (!lastSet) return;
+    if (appDef?.id === "crm") {
+      const result = await updateConfigSettings(lastSet.entries);
+      if (!result.ok) return notify(result.error ?? "That did not roll back.");
+    }
     setValues((v) => ({ ...v, ...lastSet.before }));
     record("config", lastSet.owner, "Change set rolled back", `${lastSet.count} settings`, "previous values");
     notify(
@@ -160,6 +279,7 @@ function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
   }
 
   const failing = INTEGRATIONS.filter((i) => i.state === "Failing").length;
+  const readOnly = appDef?.id === "crm" && !crm.canWrite;
 
   return (
     <div className="flex h-screen min-w-[1000px] flex-col overflow-hidden bg-canvas">
@@ -186,7 +306,7 @@ function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
               onClick={() => {
                 setPersona(p.key);
                 setSection(p.platform ? "overview" : "crm");
-                setTab(0);
+                setTab("");
                 setDrafts({});
                 setDetailId(null);
               }}
@@ -216,7 +336,7 @@ function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-60 flex-none flex-col border-r border-line bg-surface">
           <nav className="flex-1 overflow-y-auto p-2 pb-4">
-            {me.platform ? (
+            {isPlatformAdmin ? (
               <div>
                 <div className="px-3 pt-3 pb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
                   Platform
@@ -228,7 +348,7 @@ function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
                     active={section === n.key}
                     tone={n.key === "overview" && failing ? "danger" : "neutral"}
                     badge={n.key === "overview" && failing ? String(failing) : undefined}
-                    onClick={() => navigate(n.key, 0)}
+                    onClick={() => navigate(n.key, firstTab(n.key))}
                   />
                 ))}
               </div>
@@ -245,7 +365,7 @@ function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
                 tone={a.status === "Live" ? "success" : "neutral"}
                 badge={a.status === "Live" ? undefined : "Soon"}
                 title={a.status === "Live" ? undefined : a.status}
-                onClick={() => navigate(a.id, 0)}
+                onClick={() => navigate(a.id, firstTab(a.id))}
               />
             ))}
           </nav>
@@ -282,10 +402,10 @@ function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
                 </div>
 
                 <div className="mt-4 flex flex-wrap items-center border-b border-line">
-                  {tabLabels.map((label, i) => (
+                  {tabs.map((t, i) => (
                     <button
-                      key={label}
-                      onClick={() => navigate(section, i)}
+                      key={t.slug}
+                      onClick={() => navigate(section, t.slug)}
                       className={cx(
                         "-mb-px cursor-pointer border-b-2 px-1 py-2.5 text-sm whitespace-nowrap",
                         i === tabIndex
@@ -294,7 +414,7 @@ function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
                       )}
                       style={{ marginRight: 20 }}
                     >
-                      {label}
+                      {t.label}
                       {i === tabIndex && dirty.length ? (
                         <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-brand align-middle" />
                       ) : null}
@@ -306,6 +426,24 @@ function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
                   <SettingsToolbar tab={tabDef} owner={settingsOwner} values={values} />
                 ) : null}
 
+                {appDef?.id === "crm" && crm.warnings.length ? (
+                  <div className="mt-4 rounded-[4px] border border-warn-line border-l-[3px] border-l-warn bg-warn-soft px-4 py-3">
+                    <div className="text-sm font-medium text-warn-ink">
+                      The stored configuration is already inconsistent
+                    </div>
+                    <div className="mt-1.5 flex flex-col gap-1">
+                      {crm.warnings.map((w) => (
+                        <div key={w} className="text-sm leading-[21px] text-ink">
+                          {w}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2 text-[13px] text-muted">
+                      Saving is not blocked by this — you cannot fix one half of it otherwise.
+                    </div>
+                  </div>
+                ) : null}
+
                 <SectionBody
                   section={section}
                   tabIndex={tabIndex}
@@ -313,19 +451,23 @@ function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
                   onOpenUser={setDetailId}
                   settingsOpen={settingsOpen}
                   comingSoon={appDef && appDef.status !== "Live" ? appDef : null}
+                  noSchema={appDef && appDef.status === "Live" && !schema ? appDef.name : null}
                   tabDef={tabDef}
                   values={values}
                   drafts={drafts}
                   errors={errors}
                   onDraft={(key, value) => setDrafts((d) => ({ ...d, [key]: value }))}
-                  isPlatformAdmin={me.platform}
+                  isPlatformAdmin={isPlatformAdmin}
+                  collections={crm.collections}
                 />
 
                 {settingsOpen ? (
                   <div className="sticky bottom-0 mt-5 bg-canvas pt-4">
                     <Card className="flex items-center gap-3 px-5 py-3 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
                       <span className="text-sm text-body">
-                        {errors.length
+                        {readOnly
+                          ? "Read-only. Configuration is changed by a manager."
+                          : errors.length
                           ? `${errors.length} ${errors.length === 1 ? "relationship" : "relationships"} to fix before saving`
                           : dirty.length
                             ? `${dirty.length} unsaved ${dirty.length === 1 ? "change" : "changes"} in this section`
@@ -344,13 +486,15 @@ function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
                       ) : null}
                       <Button
                         variant="primary"
-                        disabled={!!errors.length || !dirty.length}
+                        disabled={readOnly || saving || !!errors.length || !dirty.length}
                         title={
-                          errors.length
-                            ? "Fix the relationships above first"
-                            : !dirty.length
-                              ? "Nothing to save"
-                              : undefined
+                          readOnly
+                            ? "You can see these settings but not change them"
+                            : errors.length
+                              ? "Fix the relationships above first"
+                              : !dirty.length
+                                ? "Nothing to save"
+                                : undefined
                         }
                         onClick={save}
                       >
@@ -376,7 +520,7 @@ function ConsoleShell({ apps }: { apps: AppDefinition[] }) {
               Keep editing
             </Button>
             <Button variant="primary" onClick={commit}>
-              Apply {dirty.length} change{dirty.length === 1 ? "" : "s"}
+              {saving ? "Saving…" : `Apply ${dirty.length} change${dirty.length === 1 ? "" : "s"}`}
             </Button>
           </>
         }
@@ -448,25 +592,30 @@ function SectionBody({
   onOpenUser,
   settingsOpen,
   comingSoon,
+  noSchema,
   tabDef,
   values,
   drafts,
   errors,
   onDraft,
   isPlatformAdmin,
+  collections,
 }: {
   section: string;
   tabIndex: number;
-  navigate: (section: string, tab: number) => void;
+  navigate: (section: string, tab: string) => void;
   onOpenUser: (id: string) => void;
   settingsOpen: boolean;
   comingSoon: { name: string; desc: string } | null;
+  /** The app's name when it is live but declares nothing to configure. */
+  noSchema: string | null;
   tabDef: React.ComponentProps<typeof SettingsSection>["tab"] | null;
   values: Values;
   drafts: Values;
   errors: React.ComponentProps<typeof SettingsSection>["errors"];
   onDraft: (key: string, value: unknown) => void;
   isPlatformAdmin: boolean;
+  collections: Record<string, Collection>;
 }) {
   if (comingSoon) {
     return (
@@ -475,8 +624,26 @@ function SectionBody({
           title={`${comingSoon.name} is registered but not built`}
           body={`${comingSoon.desc} Its settings appear here automatically once it publishes a configuration schema — this console needs no change.`}
           action={
-            <Button variant="secondary" onClick={() => navigate("apps", 0)}>
+            <Button variant="secondary" onClick={() => navigate("apps", "registry")}>
               Open its registry entry
+            </Button>
+          }
+        />
+      </Card>
+    );
+  }
+
+  // A live app that publishes no schema has no settings, which is different
+  // from not being built. Say which, rather than rendering nothing.
+  if (noSchema) {
+    return (
+      <Card className="mt-5">
+        <EmptyState
+          title={`${noSchema} publishes no configuration schema`}
+          body="The app is live, but it declares no settings — so there is nothing to configure here. Contract validation shows whether its schema endpoint is reachable."
+          action={
+            <Button variant="secondary" onClick={() => navigate("apps", "contracts")}>
+              Open contract validation
             </Button>
           }
         />
@@ -493,6 +660,7 @@ function SectionBody({
         errors={errors}
         onDraft={onDraft}
         isPlatformAdmin={isPlatformAdmin}
+        collections={collections}
       />
     );
   }

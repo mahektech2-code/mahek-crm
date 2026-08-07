@@ -9,12 +9,8 @@ import {
   Textarea,
   cx,
 } from "@/components/ui/primitives";
-import {
-  ENTITY_META,
-  T,
-  type SchemaField,
-  type SchemaTab,
-} from "./data";
+import type { Collection } from "@/lib/config/entity-collections";
+import type { SchemaField, SchemaTab } from "@/lib/config/schema-contract";
 import {
   currentValue,
   isAtDefault,
@@ -43,6 +39,7 @@ export function SettingsSection({
   errors,
   onDraft,
   isPlatformAdmin,
+  collections,
 }: {
   tab: SchemaTab;
   values: Values;
@@ -50,6 +47,7 @@ export function SettingsSection({
   errors: CrossError[];
   onDraft: (key: string, value: unknown) => void;
   isPlatformAdmin: boolean;
+  collections: Record<string, Collection>;
 }) {
   return (
     <div>
@@ -86,6 +84,7 @@ export function SettingsSection({
               error={errors.find((e) => e.key === field.key) ?? null}
               onDraft={onDraft}
               locked={!!field.adminOnly && !isPlatformAdmin}
+              collection={collections[field.key]}
             />
           ))}
         </Card>
@@ -102,6 +101,7 @@ function FieldRow({
   error,
   onDraft,
   locked,
+  collection,
 }: {
   field: SchemaField;
   first: boolean;
@@ -110,6 +110,7 @@ function FieldRow({
   error: CrossError | null;
   onDraft: (key: string, value: unknown) => void;
   locked: boolean;
+  collection?: Collection;
 }) {
   const value = currentValue(values, drafts, field);
   const dirty = isDirty(values, drafts, field);
@@ -145,27 +146,29 @@ function FieldRow({
         {field.help ? (
           <div className="mt-0.5 text-[13px] leading-[19px] text-muted">{field.help}</div>
         ) : null}
+        {field.control === "entity" ? null : (
         <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 text-[11px] text-muted">
           <span>
             {dirty
               ? `Unsaved — was ${readable(savedValue(values, field))}`
-              : values[field.key] !== undefined
-                ? "Changed on this screen, not yet reloaded"
-                : "Default · never changed"}
+              : atDefault
+                ? "Default · never changed"
+                : `Changed from the default of ${readable(field.def)}`}
           </span>
           <SettingHistory settingKey={field.key} label={field.label} />
         </div>
+        )}
       </div>
 
       <div className="min-w-0 flex-1">
-        <Control field={field} value={value} error={error} locked={locked} set={set} />
-        {error && field.type !== T.threshold ? (
+        <Control field={field} value={value} error={error} locked={locked} set={set} collection={collection} />
+        {error && field.control !== "threshold" ? (
           <div className="mt-1.5 text-[13px] text-danger">{error.text}</div>
         ) : null}
       </div>
 
       <div className="w-[120px] flex-none text-right">
-        {dirty ? (
+        {field.control === "entity" ? null : dirty ? (
           <Button size="sm" variant="ghost" onClick={() => onDraft(field.key, savedValue(values, field))}>
             Reset
           </Button>
@@ -185,16 +188,18 @@ function Control({
   error,
   locked,
   set,
+  collection,
 }: {
   field: SchemaField;
   value: unknown;
   error: CrossError | null;
   locked: boolean;
   set: (v: unknown) => void;
+  collection?: Collection;
 }) {
-  switch (field.type) {
-    case T.int:
-    case T.dec:
+  switch (field.control) {
+    case "int":
+    case "decimal":
       return (
         <span className="flex items-center gap-2">
           {/* The width lives on a wrapper: Input is w-full, and a competing
@@ -217,7 +222,7 @@ function Control({
         </span>
       );
 
-    case T.cur:
+    case "currency":
       return (
         <span className="flex h-8.5 w-40 items-center rounded-[4px] border border-line bg-surface px-2.5">
           <span className="mr-1 text-muted">₹</span>
@@ -230,10 +235,10 @@ function Control({
         </span>
       );
 
-    case T.bool:
+    case "bool":
       return <Toggle on={!!value} locked={locked} onToggle={() => set(!value)} />;
 
-    case T.text:
+    case "text":
       return (
         <Input
           value={String(value ?? "")}
@@ -244,7 +249,7 @@ function Control({
         />
       );
 
-    case T.long:
+    case "longtext":
       return (
         <Textarea
           value={String(value ?? "")}
@@ -254,12 +259,12 @@ function Control({
         />
       );
 
-    case T.rich:
+    case "richtext":
       return (
         <RichTextEditor value={String(value ?? "")} onChange={(next) => set(next)} />
       );
 
-    case T.choice:
+    case "choice":
       return (
         <span className="flex flex-wrap gap-2">
           {(field.options ?? []).map((opt) => (
@@ -270,7 +275,7 @@ function Control({
         </span>
       );
 
-    case T.multi: {
+    case "multi": {
       const arr = Array.isArray(value) ? (value as string[]) : [];
       return (
         <span className="flex flex-wrap gap-2">
@@ -287,7 +292,7 @@ function Control({
       );
     }
 
-    case T.time:
+    case "time":
       return (
         <input
           type="time"
@@ -301,7 +306,7 @@ function Control({
         />
       );
 
-    case T.dayset: {
+    case "dayset": {
       const arr = Array.isArray(value) ? (value as string[]) : [];
       return (
         <span className="flex gap-1.5">
@@ -318,7 +323,7 @@ function Control({
       );
     }
 
-    case T.threshold: {
+    case "threshold": {
       const v = (value ?? {}) as Record<string, string | number>;
       return (
         <span className="block">
@@ -345,11 +350,11 @@ function Control({
       );
     }
 
-    case T.keyvalue: {
+    case "keyvalue": {
       const v = (value ?? {}) as Record<string, string | number>;
       return (
         <span className="block overflow-hidden rounded-[4px] border border-line">
-          {(field.pairs ?? []).map((p, i) => (
+          {(field.parts ?? []).map((p, i) => (
             <span
               key={p.k}
               className={cx("flex items-center gap-3 px-2.5 py-1.5", i ? "border-t border-canvas" : "")}
@@ -370,11 +375,11 @@ function Control({
       );
     }
 
-    case T.ordered:
+    case "ordered":
       return <OrderedList value={(value as string[]) ?? []} locked={locked} set={set} />;
 
-    case T.entity:
-      return <EntityList field={field} />;
+    case "entity":
+      return <EntityList field={field} collection={collection} />;
 
     default:
       return null;
@@ -525,51 +530,86 @@ function IconButton({
   );
 }
 
-/** A collection the app owns. The console lists it and opens its editor. */
-function EntityList({ field }: { field: SchemaField }) {
-  const { entities, openDrawer } = useAdmin();
-  const kind = field.entity!;
-  const rows = entities[kind];
-  const meta = ENTITY_META[kind];
+/**
+ * A collection the app owns. The console lists it and opens its editor, and
+ * knows nothing about what the rows are.
+ */
+function EntityList({ field, collection }: { field: SchemaField; collection?: Collection }) {
+  const { openDrawer } = useAdmin();
+  const meta = field.entity;
+  if (!meta) return null;
+
+  if (!meta.built) {
+    return (
+      <span className="block rounded-[4px] border border-dashed border-line-strong bg-canvas px-3.5 py-3">
+        <span className="block text-sm font-medium text-ink">Declared, not yet stored</span>
+        <span className="mt-0.5 block text-[13px] leading-[19px] text-muted">
+          The CRM declares this collection but nothing stores it yet, so there is nothing to list. It appears here so
+          the gap is visible rather than silently missing.
+        </span>
+      </span>
+    );
+  }
+
+  const rows = collection?.rows ?? [];
+  const total = collection?.total ?? 0;
 
   return (
     <span className="block">
       <span className="mb-2 flex items-center justify-between gap-3">
         <span className="text-[13px] text-muted">
-          {rows.length} {meta.noun}
+          {total} {meta.noun}
+          {total > rows.length ? ` · showing ${rows.length}` : ""}
         </span>
-        <Button size="sm" variant="primary" onClick={() => openDrawer({ kind, id: null })}>
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={!meta.editable}
+          title={meta.editable ? undefined : "Authoring this collection is not wired into the console yet"}
+          onClick={() => openDrawer({ kind: field.key as never, id: null })}
+        >
           {meta.cta}
         </Button>
       </span>
       <span className="block overflow-hidden rounded-[4px] border border-line">
-        {rows.map((r, i) => (
-          <button
-            key={r.id}
-            type="button"
-            onClick={() => openDrawer({ kind, id: r.id })}
-            className={cx(
-              "flex w-full cursor-pointer items-center gap-3 bg-surface px-2.5 py-2 text-left hover:bg-canvas",
-              i ? "border-t border-canvas" : "",
-            )}
-          >
-            <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">{r.name}</span>
-            <span className="text-[13px] whitespace-nowrap text-muted">
-              {[r.pack, r.code, r.cat, r.situation, r.type, r.meta, r.rate ? `₹${r.rate}` : null]
-                .filter(Boolean)
-                .join(" · ")}
+        {rows.map((r, i) => {
+          const inner = (
+            <>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">{r.name}</span>
+              <span className="truncate text-[13px] whitespace-nowrap text-muted">{r.meta}</span>
+              <Badge tone={r.active ? "success" : "neutral"}>{r.active ? "Active" : "Archived"}</Badge>
+            </>
+          );
+          const shared = cx(
+            "flex w-full items-center gap-3 bg-surface px-2.5 py-2 text-left",
+            i ? "border-t border-canvas" : "",
+          );
+          // A row only opens where there is something to open it with.
+          return meta.editable ? (
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => openDrawer({ kind: field.key as never, id: r.id })}
+              className={cx(shared, "cursor-pointer hover:bg-canvas")}
+            >
+              {inner}
+            </button>
+          ) : (
+            <span key={r.id} className={shared}>
+              {inner}
             </span>
-            <Badge tone={r.active ? "success" : "neutral"}>{r.active ? "Active" : "Archived"}</Badge>
-          </button>
-        ))}
+          );
+        })}
         {rows.length === 0 ? (
-          <span className="block px-3 py-5 text-center text-sm text-muted">
-            {kind === "holidays"
-              ? "No holidays added. Working-day counts treat every non-working weekday as available."
-              : "Nothing here yet."}
-          </span>
+          <span className="block px-3 py-5 text-center text-sm text-muted">Nothing here yet.</span>
         ) : null}
       </span>
+      {meta.editable ? null : (
+        <span className="mt-2 block text-[13px] text-muted">
+          Read-only here. Authoring this collection is not wired into the console yet, so nothing offers an editor that
+          would not save.
+        </span>
+      )}
     </span>
   );
 }

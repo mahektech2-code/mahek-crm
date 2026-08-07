@@ -78,27 +78,15 @@ export const REGISTRY: RegistryEntry[] = [
   },
 ];
 
-/* ------------------------------------------------- the declared control set */
+/* ---------------------------------------------------------------------------
+ * The console holds NO copy of any app's settings.
+ *
+ * The CRM's schema is projected from `lib/config/registry.ts` by
+ * `lib/config/schema-contract.ts` — the same file the engines read — so a
+ * setting shown here is always one the CRM actually reads, and one added there
+ * appears here with no change to this console.
+ * ------------------------------------------------------------------------- */
 
-export const T = {
-  int: "int",
-  dec: "decimal",
-  cur: "currency",
-  bool: "bool",
-  text: "text",
-  long: "longtext",
-  rich: "richtext",
-  choice: "choice",
-  multi: "multi",
-  ordered: "ordered",
-  keyvalue: "keyvalue",
-  threshold: "threshold",
-  time: "time",
-  dayset: "dayset",
-  entity: "entity",
-} as const;
-
-export type ControlType = (typeof T)[keyof typeof T];
 export type EntityKind =
   | "products"
   | "templates"
@@ -108,680 +96,62 @@ export type EntityKind =
   | "rules"
   | "notes";
 
-export type SchemaField = {
-  key: string;
-  label: string;
-  type: ControlType;
-  help?: string;
-  unit?: string;
-  def?: unknown;
-  min?: number;
-  max?: number;
-  options?: string[];
-  parts?: Array<{ k: string; l: string; v: number }>;
-  pairs?: Array<{ k: string; l: string; v: number }>;
-  ascending?: boolean;
-  entity?: EntityKind;
-  /** Platform admin only — a CRM manager sees it but cannot change it. */
-  adminOnly?: boolean;
-  /** Marks a setting whose change alters tomorrow's worklists. */
-  impact?: "queue" | "collections" | "inactive";
-};
-
-export type SchemaGroup = { label: string; note?: string; fields: SchemaField[] };
-export type SchemaTab = { key: string; label: string; groups: SchemaGroup[] };
-export type AppSchema = { tabs: SchemaTab[] };
-
-/**
- * The CRM's published schema. The console has never heard of "escalation
- * stages" — it only knows the control types above.
- */
-export const CRM_SCHEMA: AppSchema = {
-  tabs: [
-    {
-      key: "queue",
-      label: "Call queue",
-      groups: [
-        {
-          label: "When a customer enters the queue",
-          fields: [
-            {
-              key: "checkinInterval",
-              label: "Routine check-in interval",
-              type: T.int,
-              unit: "days",
-              def: 14,
-              min: 1,
-              max: 120,
-              help: "How long after the last contact a customer is due a routine call.",
-              impact: "queue",
-            },
-            {
-              key: "checkinMultiplier",
-              label: "Check-in overdue multiplier",
-              type: T.dec,
-              def: 1.5,
-              min: 1,
-              max: 5,
-              help: "How far past the interval before a check-in counts as overdue.",
-            },
-            {
-              key: "waCooldown",
-              label: "WhatsApp cooldown window",
-              type: T.int,
-              unit: "days",
-              def: 3,
-              min: 0,
-              max: 30,
-              help: "Held back from the queue for this long after a confirmed WhatsApp send.",
-            },
-            {
-              key: "orderLead",
-              label: "Order due lead time",
-              type: T.int,
-              unit: "days",
-              def: 2,
-              min: 0,
-              max: 30,
-              help: "How early before the projected order date a customer surfaces.",
-            },
-          ],
-        },
-        {
-          label: "Suppression",
-          fields: [
-            {
-              key: "excludeErp",
-              label: "Exclude customers active in the external order system",
-              type: T.bool,
-              def: true,
-              help: "Anyone with a live order is held back so they are not chased mid-dispatch.",
-            },
-            {
-              key: "excludeCalledToday",
-              label: "Exclude customers already called today",
-              type: T.bool,
-              def: true,
-              help: "Prevents a second call the same day.",
-            },
-            {
-              key: "orderReceivedSuppresses",
-              label: "Order Received suppresses from today's queue",
-              type: T.bool,
-              def: true,
-              help: "An order logged without a call also counts as contact.",
-            },
-            {
-              key: "showSuppression",
-              label: "Show suppression strip to telecallers",
-              type: T.bool,
-              def: true,
-              help: "Suppression is a return value, not a filter — a telecaller must be able to find out why somebody is missing.",
-            },
-          ],
-        },
-        {
-          label: "Size and ordering",
-          fields: [
-            {
-              key: "maxQueue",
-              label: "Maximum queue size per telecaller",
-              type: T.int,
-              unit: "customers",
-              def: 60,
-              min: 0,
-              max: 300,
-              help: "0 means unlimited.",
-              impact: "queue",
-            },
-            {
-              key: "tierWeights",
-              label: "Priority tier weights",
-              type: T.threshold,
-              ascending: false,
-              parts: [
-                { k: "overdueRem", l: "Overdue reminder", v: 100 },
-                { k: "remToday", l: "Reminder due today", v: 90 },
-                { k: "orderOverCycle", l: "Order overdue by a cycle", v: 80 },
-                { k: "orderOverdue", l: "Order overdue", v: 70 },
-                { k: "orderSoon", l: "Order due soon", v: 60 },
-                { k: "checkinOver", l: "Check-in overdue", v: 50 },
-                { k: "checkinDue", l: "Check-in due", v: 40 },
-              ],
-              help: "Higher weight sorts higher in the Call Log.",
-            },
-            {
-              key: "tieBreak",
-              label: "Tie-breaker order",
-              type: T.ordered,
-              def: ["Outstanding", "Target gap", "Days since contact"],
-              help: "Applied when two customers share a tier weight.",
-            },
-          ],
-        },
-      ],
-    },
-    {
-      key: "collections",
-      label: "Collections",
-      groups: [
-        {
-          label: "Escalation stages",
-          note: "Thresholds must ascend, and the aging buckets below must align with them.",
-          fields: [
-            {
-              key: "stageThresholds",
-              label: "Stage thresholds",
-              type: T.threshold,
-              ascending: true,
-              unit: "days overdue",
-              parts: [
-                { k: "s1", l: "Stage 1", v: 7 },
-                { k: "s2", l: "Stage 2", v: 21 },
-                { k: "s3", l: "Stage 3", v: 45 },
-              ],
-              help: "Days overdue at which each stage begins.",
-              impact: "collections",
-            },
-            { key: "stage1Name", label: "Stage 1 name", type: T.text, def: "Gentle nudge", help: "Shown on the follow-up row and in the panel." },
-            { key: "stage2Name", label: "Stage 2 name", type: T.text, def: "Alternating" },
-            { key: "stage3Name", label: "Stage 3 name", type: T.text, def: "Urgent" },
-            {
-              key: "stage1Channels",
-              label: "Stage 1 permitted channels",
-              type: T.multi,
-              options: ["WhatsApp", "Call"],
-              def: ["WhatsApp"],
-              help: "A late bill is messaged before it is called — the prescribed action is drawn from these.",
-            },
-            { key: "stage2Channels", label: "Stage 2 permitted channels", type: T.multi, options: ["WhatsApp", "Call"], def: ["WhatsApp", "Call"] },
-            { key: "stage3Channels", label: "Stage 3 permitted channels", type: T.multi, options: ["WhatsApp", "Call"], def: ["Call"] },
-            {
-              key: "stageDriver",
-              label: "Stage driver",
-              type: T.choice,
-              options: ["Oldest overdue bill", "Largest overdue bill"],
-              def: "Oldest overdue bill",
-              help: "Which bill decides the stage when several are overdue.",
-            },
-          ],
-        },
-        {
-          label: "Behaviour",
-          fields: [
-            {
-              key: "partialResets",
-              label: "Partial payment resets the aging clock",
-              type: T.bool,
-              def: false,
-              adminOnly: true,
-              help: "Off means a part payment does not make the account look less overdue.",
-            },
-            { key: "disputeHolds", label: "Dispute holds escalation", type: T.bool, def: true, help: "A raised dispute stops the stage advancing." },
-            { key: "slowLookback", label: "Slow payer lookback", type: T.int, unit: "months", def: 6, min: 1, max: 36 },
-            {
-              key: "slowThreshold",
-              label: "Slow payer late-payment threshold",
-              type: T.int,
-              unit: "late payments",
-              def: 3,
-              min: 1,
-              max: 20,
-              help: "Late payments within the lookback before the flag appears.",
-            },
-            { key: "monthEnd", label: "Month-end mode starts", type: T.int, unit: "days before month end", def: 7, min: 0, max: 20 },
-          ],
-        },
-        {
-          label: "Aging and credit",
-          fields: [
-            {
-              key: "agingBuckets",
-              label: "Aging bucket boundaries",
-              type: T.threshold,
-              ascending: true,
-              unit: "days",
-              // Ships aligned with the stage thresholds above. These two are two
-              // statements of the same fact, and the section refuses to save
-              // while they disagree.
-              parts: [
-                { k: "b1", l: "Bucket 1 from", v: 0 },
-                { k: "b2", l: "Bucket 2 from", v: 7 },
-                { k: "b3", l: "Bucket 3 from", v: 21 },
-                { k: "b4", l: "Bucket 4 from", v: 45 },
-              ],
-              help: "Used by the Sales Bill Report. Must align with the stage thresholds above.",
-            },
-            { key: "creditPeriod", label: "Default credit period", type: T.int, unit: "days", def: 30, min: 0, max: 180 },
-            { key: "creditNew", label: "Default credit days for new customers", type: T.int, unit: "days", def: 30, min: 0, max: 180 },
-          ],
-        },
-        {
-          label: "The follow-up panel",
-          note: "The seven outcomes and what each requires are declared once. The form and the save path cannot disagree about which fields are mandatory.",
-          fields: [
-            {
-              key: "payOutcomes", label: "Follow-up response list", type: T.ordered,
-              def: ["Payment Promised", "Already Paid", "No Response", "Dispute", "Will check"],
-              help: "A retired outcome is readable, never writable — old attempts still resolve to a label.",
-            },
-            {
-              key: "payAttachments", label: "Attachment limit on payment follow-up", type: T.int, unit: "files", def: 3, min: 0, max: 10,
-              help: "A save is never blocked by an attachment. A failed upload leaves the follow-up intact.",
-            },
-          ],
-        },
-      ],
-    },
-    {
-      key: "targets",
-      label: "Targets & cycles",
-      groups: [
-        {
-          label: "Buying cycle",
-          note: "Minimum must be below the default, and the default below the maximum.",
-          fields: [
-            { key: "cycleMethod", label: "Buying cycle method", type: T.choice, options: ["Median", "Mean"], def: "Median", help: "How the interval between orders is averaged." },
-            { key: "cycleLookback", label: "Cycle lookback orders", type: T.int, unit: "orders", def: 6, min: 2, max: 24 },
-            { key: "cycleMinIntervals", label: "Minimum intervals required", type: T.int, unit: "intervals", def: 3, min: 1, max: 12, help: "Below this the default cycle is used instead." },
-            {
-              key: "cycleBounds",
-              label: "Cycle bounds",
-              type: T.threshold,
-              ascending: true,
-              unit: "days",
-              parts: [
-                { k: "min", l: "Minimum", v: 7 },
-                { k: "def", l: "Default", v: 30 },
-                { k: "max", l: "Maximum", v: 180 },
-              ],
-              help: "A computed cycle is clamped into this range.",
-            },
-          ],
-        },
-        {
-          label: "Inactivity",
-          fields: [
-            {
-              key: "inactiveMultiplier",
-              label: "Inactivity cycle multiplier",
-              type: T.dec,
-              def: 2.0,
-              min: 1,
-              max: 6,
-              help: "A customer flags once this many of their own cycles have passed.",
-              impact: "inactive",
-            },
-            { key: "decisionWarn", label: "Inactive decision age warning", type: T.int, unit: "days", def: 14, min: 1, max: 120 },
-            { key: "dismissSuppress", label: "Inactive dismissal suppression period", type: T.int, unit: "days", def: 90, min: 1, max: 365 },
-          ],
-        },
-        {
-          label: "Targets",
-          fields: [
-            { key: "targetMethod", label: "Default target method", type: T.choice, options: ["Trailing average", "Same month last year", "Fixed"], def: "Trailing average" },
-            { key: "trailingMonths", label: "Trailing months", type: T.int, unit: "months", def: 3, min: 1, max: 12 },
-            { key: "targetUplift", label: "Default target uplift", type: T.dec, unit: "%", def: 0, min: -50, max: 100 },
-            { key: "prorate", label: "Pro-rate targets for new customers", type: T.bool, def: true },
-            { key: "runRateBasis", label: "Run rate calculation basis", type: T.choice, options: ["Working days", "Calendar days"], def: "Working days" },
-            { key: "daysAgoBasis", label: "Days-ago display basis", type: T.choice, options: ["Calendar days", "Working days"], def: "Calendar days" },
-          ],
-        },
-      ],
-    },
-    {
-      key: "interactions",
-      label: "Interactions",
-      groups: [
-        {
-          label: "Interaction types",
-          note: "The first question the Call Log asks. Everything below depends on it.",
-          fields: [
-            {
-              key: "ixTypes",
-              label: "Interaction types",
-              type: T.ordered,
-              def: ["We Called Them", "They Called Us", "Order Received"],
-              help: "Label and order as shown to the telecaller.",
-            },
-          ],
-        },
-        {
-          label: "Outcomes",
-          fields: [
-            {
-              key: "outOutcomes",
-              label: "Outbound outcomes",
-              type: T.ordered,
-              def: ["Order Taken", "No Order", "No Answer", "Payment Promised", "Follow-up", "Not Interested"],
-              help: "Shown after choosing We Called Them.",
-            },
-            {
-              key: "inOutcomes",
-              label: "Inbound outcomes",
-              type: T.ordered,
-              def: ["Order Taken", "Payment Promised", "Follow-up", "Complaint", "Transport Follow-up", "Casual Talk"],
-              help: "Shown after choosing They Called Us.",
-            },
-          ],
-        },
-        {
-          label: "Field rules and side effects",
-          note: "Per outcome: which fields appear, and what saving creates.",
-          fields: [
-            {
-              key: "outcomeRules",
-              label: "Per-outcome rules",
-              type: T.entity,
-              entity: "rules",
-              help: "Resolves questions like whether outbound Payment Promised requires a date, without a code change.",
-            },
-          ],
-        },
-        {
-          label: "Quick notes",
-          fields: [
-            {
-              key: "quickNotes",
-              label: "Quick notes",
-              type: T.entity,
-              entity: "notes",
-              help: "Per outcome, tappable in the Call Log. Retired notes are deactivated, never deleted — old interactions must keep resolving.",
-            },
-            { key: "notesAppend", label: "Multiple quick notes append rather than replace", type: T.bool, def: true },
-            { key: "notesByUsage", label: "Order quick notes by usage", type: T.bool, def: false },
-            { key: "notesMax", label: "Notes maximum length", type: T.int, unit: "characters", def: 1000, min: 100, max: 5000 },
-          ],
-        },
-        {
-          label: "Customer records",
-          note: "What the CRM demands before a customer exists, and who is allowed to take one away.",
-          fields: [
-            { key: "custStatuses", label: "Customer status values", type: T.ordered, def: ["Active", "Inactive", "Deactivated"] },
-            {
-              key: "custMandatory", label: "Mandatory fields on customer creation", type: T.multi,
-              options: ["Business name", "Contact person", "Primary phone", "City", "GST number", "Payment term"],
-              def: ["Business name", "Contact person", "Primary phone", "City"],
-            },
-            {
-              key: "custDuplicate", label: "Duplicate detection basis", type: T.multi,
-              options: ["Phone match", "Name-plus-city match", "GST match"], def: ["Phone match", "Name-plus-city match"],
-            },
-            { key: "custDupOverride", label: "Allow duplicate override with a reason", type: T.bool, def: true },
-            { key: "custExportRoles", label: "Customer export permitted for", type: T.multi, options: ["Telecaller", "Manager"], def: ["Manager"], adminOnly: true, help: "Customer books are commercially sensitive, and every export is logged." },
-            { key: "custDeactivateRoles", label: "Customer deactivation permitted for", type: T.multi, options: ["Telecaller", "Manager"], def: ["Manager"] },
-          ],
-        },
-      ],
-    },
-    {
-      key: "products",
-      label: "Products",
-      groups: [
-        {
-          label: "Catalogue",
-          note: "The rate field is load-bearing — without it, order value, target achievement and run rate all read zero.",
-          fields: [
-            { key: "products", label: "Products", type: T.entity, entity: "products", help: "Name, pack, external code, rate and display order in the quantity list." },
-            {
-              key: "rateModel",
-              label: "Rate model",
-              type: T.choice,
-              options: ["Single rate per product", "Rate card per customer"],
-              def: "Single rate per product",
-              adminOnly: true,
-              help: "Flag this with the business — customer-specific rates need the rate-card model.",
-            },
-          ],
-        },
-        {
-          label: "How the order form offers them",
-          note: "The frequent container and the Information tab's product history are the same query. They were two once, and disagreed about the same customer.",
-          fields: [
-            { key: "frequentSize", label: "Frequent-products container size", type: T.int, unit: "products", def: 6, min: 0, max: 20 },
-            { key: "frequentBasis", label: "Frequent-products ranking basis", type: T.choice, options: ["Total orders", "Recency"], def: "Total orders" },
-            {
-              key: "productSearch", label: "Product search available on order forms", type: T.bool, def: true,
-              help: "Matching runs in Postgres on trigram similarity as well as substring — a name typed mid-call is a name typed badly.",
-            },
-          ],
-        },
-      ],
-    },
-    {
-      key: "whatsapp",
-      label: "WhatsApp",
-      groups: [
-        {
-          label: "Connection",
-          fields: [
-            {
-              key: "waMode",
-              label: "Mode",
-              type: T.choice,
-              options: ["Manual", "Automatic"],
-              def: "Manual",
-              adminOnly: true,
-              help: "Manual prepares a message to copy; Automatic sends from the business number. A message is only sent when a human confirms it.",
-            },
-            { key: "waNumber", label: "Business number", type: T.text, def: "", adminOnly: true, help: "Used only in Automatic mode." },
-          ],
-        },
-        {
-          label: "Limits",
-          fields: [
-            { key: "waFrequency", label: "Contact frequency limit", type: T.int, unit: "per week", def: 3, min: 1, max: 20 },
-            { key: "waExpiry", label: "Unconfirmed copy expiry", type: T.int, unit: "hours", def: 12, min: 1, max: 72, help: "How long a copied-but-unconfirmed message stays on the list." },
-            { key: "waAutoConfirm", label: "Auto-confirm after", type: T.int, unit: "hours", def: 0, min: 0, max: 72, help: "0 never auto-confirms." },
-            { key: "waFreeText", label: "Allow free-text messages", type: T.bool, def: false, help: "Off means only templates can be sent." },
-            { key: "waBulkRoles", label: "Bulk send permitted for", type: T.multi, options: ["Telecaller", "Manager"], def: ["Manager"] },
-          ],
-        },
-        {
-          label: "Templates",
-          fields: [{ key: "waTemplates", label: "Templates", type: T.entity, entity: "templates", help: "Merge placeholders are validated at authoring time, not at send time." }],
-        },
-      ],
-    },
-    {
-      key: "scripts",
-      label: "Scripts & help",
-      groups: [
-        {
-          label: "Call scripts",
-          fields: [
-            { key: "scripts", label: "Call scripts", type: T.entity, entity: "scripts", help: "Opening, purpose, repeatable objection blocks and closing." },
-            {
-              key: "scriptMatching",
-              label: "Contextual matching order",
-              type: T.ordered,
-              def: ["Open complaint", "Collections stage", "Order overdue", "Inactive", "Routine check-in"],
-              help: "The first match decides which script the CRM suggests.",
-            },
-          ],
-        },
-        {
-          label: "Help articles",
-          fields: [{ key: "helpArticles", label: "Help articles", type: T.entity, entity: "help", help: "Read in the CRM, authored here." }],
-        },
-      ],
-    },
-    {
-      key: "reminders",
-      label: "Reminders",
-      groups: [
-        {
-          label: "Types and behaviour",
-          fields: [
-            {
-              key: "reminderTypes",
-              label: "Reminder types",
-              type: T.ordered,
-              def: ["Call back", "Payment promise", "Order confirmation", "Send information", "Check stock", "Other"],
-            },
-            { key: "rollForward", label: "Roll forward when due on a non-working day", type: T.bool, def: true },
-            { key: "reschedWarn", label: "Reschedule count warning threshold", type: T.int, unit: "times", def: 3, min: 1, max: 20 },
-            { key: "dismissReason", label: "Dismissal requires a reason", type: T.bool, def: true },
-            {
-              key: "blockEod",
-              label: "Block end-of-day close on open reminders",
-              type: T.bool,
-              def: true,
-              help: "The EOD report cannot be submitted until today's reminders are closed or carried.",
-            },
-            { key: "notifyDue", label: "Notify on reminder due", type: T.bool, def: true },
-          ],
-        },
-      ],
-    },
-    {
-      key: "complaints",
-      label: "Complaints",
-      groups: [
-        {
-          label: "Classification",
-          fields: [
-            {
-              key: "cmpCategories",
-              label: "Categories",
-              type: T.ordered,
-              def: ["Product Quality", "Packaging Damage", "Dispatch Delay", "Billing Issue", "Delivery", "Pricing", "Service", "Shortage", "Other"],
-            },
-            { key: "cmpSeverities", label: "Severity levels", type: T.ordered, def: ["Low", "Medium", "High"] },
-            { key: "cmpDefaultSeverity", label: "Default severity", type: T.choice, options: ["Low", "Medium", "High"], def: "Medium" },
-          ],
-        },
-        {
-          label: "Resolution",
-          fields: [
-            {
-              key: "cmpSla",
-              label: "Resolution SLA per severity",
-              type: T.keyvalue,
-              unit: "hours",
-              pairs: [
-                { k: "low", l: "Low", v: 120 },
-                { k: "med", l: "Medium", v: 48 },
-                { k: "high", l: "High", v: 24 },
-              ],
-            },
-            { key: "cmpNotes", label: "Resolution notes mandatory on close", type: T.bool, def: true },
-            { key: "cmpInformed", label: "Record whether the customer was informed", type: T.bool, def: true },
-            { key: "cmpFollowUp", label: "Auto-create follow-up reminder on resolution", type: T.bool, def: false },
-            {
-              key: "cmpDuplicate",
-              label: "Duplicate handling",
-              type: T.choice,
-              options: ["Update existing in same category", "Always create new"],
-              def: "Update existing in same category",
-            },
-            { key: "cmpEscalate", label: "Escalate past SLA to manager", type: T.bool, def: true },
-            {
-              key: "cmpAttachments", label: "Attachment limit on complaints", type: T.int, unit: "files", def: 5, min: 0, max: 10,
-              help: "Removing one detaches it and marks it removed; the bytes go only when retention says so.",
-            },
-          ],
-        },
-        {
-          label: "Credit notes",
-          note: "A credit note has financial consequences, and there is no Accounts app yet — requests surface on a manager's pending list rather than sitting invisible.",
-          fields: [
-            {
-              key: "cnMandatory", label: "A credit note amount requires a request", type: T.bool, def: true, adminOnly: true,
-              help: "A figure on a complaint nobody asked a credit note for reads as an approved amount to whoever opens it next.",
-            },
-            {
-              key: "cnStatuses", label: "Credit note status vocabulary", type: T.ordered,
-              def: ["Requested", "Under review", "Approved", "Rejected", "Issued"],
-            },
-          ],
-        },
-      ],
-    },
-    {
-      key: "workday",
-      label: "Workday",
-      groups: [
-        {
-          label: "Hours",
-          note: "Shift start must precede shift end, and the day boundary must fall outside the shift.",
-          fields: [
-            { key: "shiftStart", label: "Shift start", type: T.time, def: "09:00" },
-            { key: "shiftEnd", label: "Shift end", type: T.time, def: "19:00" },
-            {
-              key: "dayBoundary",
-              label: "Day boundary hour",
-              type: T.time,
-              def: "05:00",
-              help: "When one working day becomes the next for reporting. A call logged at 2am belongs to the shift that started yesterday.",
-            },
-            { key: "workingDays", label: "Working days", type: T.dayset, def: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] },
-            { key: "timezone", label: "Timezone", type: T.choice, options: ["India Standard Time"], def: "India Standard Time", adminOnly: true },
-          ],
-        },
-        {
-          label: "End of day",
-          fields: [
-            { key: "eodAuto", label: "EOD auto-generate at day boundary", type: T.bool, def: true },
-            {
-              key: "eodLines",
-              label: "EOD report line items",
-              type: T.multi,
-              options: ["Calls attempted", "Connected", "Missed", "Inbound", "Orders", "Follow-ups", "Reminders closed", "Carried forward", "Complaints", "Target progress"],
-              def: ["Calls attempted", "Connected", "Missed", "Inbound", "Orders", "Follow-ups", "Reminders closed", "Carried forward", "Complaints", "Target progress"],
-            },
-            {
-              key: "eodTemplate",
-              label: "EOD WhatsApp format",
-              type: T.long,
-              def: "*MAHEK MARKETING — EOD REPORT*\n*{name}* | {date}\n\nCalls attempted: {attempted}\nConnected: {connected}\nMissed: {missed}\n\nOrders: {orders} ({orderValue})\nTarget: {achieved} / {target} ({pct})",
-            },
-            { key: "holidays", label: "Holiday calendar", type: T.entity, entity: "holidays", help: "Excluded from working-day counts." },
-          ],
-        },
-        {
-          label: "Platform contract",
-          note: "The launcher aggregates one number across every app. If apps count unlike things, the total is meaningless.",
-          fields: [
-            {
-              key: "attentionDef",
-              label: "Attention-count definition",
-              type: T.multi,
-              options: ["Overdue reminders", "Reminders due today", "Pending payment follow-ups", "Complaints past SLA", "Unworked queue items"],
-              def: ["Overdue reminders", "Reminders due today", "Pending payment follow-ups"],
-              adminOnly: true,
-              help: "Which item types feed the figure the launcher shows for this app.",
-            },
-            { key: "attentionFormat", label: "Attention status line format", type: T.text, def: "{count} reminders overdue across the team" },
-          ],
-        },
-      ],
-    },
-  ],
-};
-
-export function schemaFor(appId: string): AppSchema | null {
-  return appId === "crm" ? CRM_SCHEMA : null;
-}
-
 /* ------------------------------------------------------- platform sections */
 
-export const PLATFORM_TABS: Record<string, string[]> = {
-  overview: ["Attention", "Health", "Integrations", "Usage", "Configuration drift", "Job health", "Recent activity"],
-  people: ["Users", "App access", "Roles & teams", "Sessions & security", "Onboarding"],
-  apps: [
-    "Registry",
-    "Status",
-    "Access rules",
-    "Per-app dashboard",
-    "Schema inspector",
-    "Contract validation",
-    "Feature flags",
-    "Platform settings",
+export type PlatformTab = { slug: string; label: string };
+
+/**
+ * Every sub-tab, with the slug it answers to.
+ *
+ * These were positional once and everything addressed them by index —
+ * `navigate("apps", 5)` meant Contract validation only because it happened to
+ * be sixth. Inserting a tab moved every deep link below it without a single
+ * compile error. A slug cannot drift that way.
+ */
+export const PLATFORM_TABS: Record<string, PlatformTab[]> = {
+  overview: [
+    { slug: "attention", label: "Attention" },
+    { slug: "health", label: "Health" },
+    { slug: "integrations", label: "Integrations" },
+    { slug: "usage", label: "Usage" },
+    { slug: "drift", label: "Configuration drift" },
+    { slug: "jobs", label: "Job health" },
+    { slug: "activity", label: "Recent activity" },
   ],
-  data: ["Import history", "Export log", "Migration status", "Backup status"],
-  notifications: ["Catalogue", "Announcements", "Delivery log"],
-  audit: ["Unified search", "Configuration changes", "Access changes", "Admin actions"],
+  people: [
+    { slug: "users", label: "Users" },
+    { slug: "access", label: "App access" },
+    { slug: "roles", label: "Roles & teams" },
+    { slug: "security", label: "Sessions & security" },
+    { slug: "onboarding", label: "Onboarding" },
+  ],
+  apps: [
+    { slug: "registry", label: "Registry" },
+    { slug: "status", label: "Status" },
+    { slug: "rules", label: "Access rules" },
+    { slug: "dashboard", label: "Per-app dashboard" },
+    { slug: "schema", label: "Schema inspector" },
+    { slug: "contracts", label: "Contract validation" },
+    { slug: "flags", label: "Feature flags" },
+    { slug: "platform", label: "Platform settings" },
+  ],
+  data: [
+    { slug: "imports", label: "Import history" },
+    { slug: "exports", label: "Export log" },
+    { slug: "migration", label: "Migration status" },
+    { slug: "backup", label: "Backup status" },
+  ],
+  notifications: [
+    { slug: "catalogue", label: "Catalogue" },
+    { slug: "announcements", label: "Announcements" },
+    { slug: "delivery", label: "Delivery log" },
+  ],
+  audit: [
+    { slug: "search", label: "Unified search" },
+    { slug: "config", label: "Configuration changes" },
+    { slug: "access", label: "Access changes" },
+    { slug: "admin", label: "Admin actions" },
+  ],
 };
 
 export const PLATFORM_SUBTITLES: Record<string, string> = {
