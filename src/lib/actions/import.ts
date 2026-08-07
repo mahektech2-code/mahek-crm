@@ -167,7 +167,7 @@ export async function importBills(
       summary.skipped.push({
         row: i + 2,
         name: d.billNo,
-        problem: `no customer with telephone ${d.phone} — import customers first`,
+        problem: `no customer with telephone ${d.phone} - import customers first`,
       });
       continue;
     }

@@ -153,7 +153,7 @@ function ConfirmDialogBody({
 
   async function confirm() {
     if (needsReason && !reason.trim()) {
-      setError("A reason is required — it is recorded against the customer.");
+      setError("A reason is required - it is recorded against the customer.");
       return;
     }
     setBusy(true);

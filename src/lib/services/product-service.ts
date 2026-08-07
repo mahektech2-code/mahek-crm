@@ -173,7 +173,7 @@ export async function searchProducts(
 }
 
 function display(name: string, packSize: string | null): string {
-  return packSize ? `${name} — ${packSize}` : name;
+  return packSize ? `${name} - ${packSize}` : name;
 }
 
 function toProduct(r: Row): FrequentProduct {

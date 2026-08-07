@@ -18,6 +18,10 @@ import {
   users,
 } from "@/db/schema";
 import {
+  bindAttachments,
+  createAttachment,
+} from "@/lib/services/attachment-service";
+import {
   requireCapability,
   resolveScope,
   assertCustomerInScope,
@@ -25,7 +29,6 @@ import {
 import { SCOPE_COOKIE_NAME, DENSITY_COOKIE_NAME } from "@/lib/scope";
 import { getConfig, invalidateConfig, updateSetting } from "@/lib/config/store";
 import { saveInteraction } from "@/lib/services/interaction-service";
-import { fileStorage } from "@/lib/storage";
 import {
   recordFollowUpAttempt,
   recordPayment as recordPaymentService,
@@ -219,7 +222,7 @@ export async function rebuildQueue(): Promise<Result> {
 
 export async function restoreWorkedRows(): Promise<Result> {
   return err(
-    "Worked rows cannot be restored — the queue is derived from the calls you logged. Undo the call instead.",
+    "Worked rows cannot be restored - the queue is derived from the calls you logged. Undo the call instead.",
     "rule_violation",
   );
 }
@@ -396,7 +399,6 @@ export async function logPaymentFollowUpAction(input: {
   customerId: string;
   outcome:
     | "promised"
-    | "part"
     | "paid"
     | "callback"
     | "dispute"
@@ -406,6 +408,8 @@ export async function logPaymentFollowUpAction(input: {
   date?: string;
   notes?: string;
   chips?: string[];
+  /** §5.2 — payment proof already uploaded, bound when the attempt saves. */
+  attachmentIds?: string[];
   idempotencyKey: string;
 }): Promise<Result<{ produced: string[]; cleared: boolean }>> {
   try {
@@ -662,7 +666,7 @@ export async function requestDeactivation(
     }
 
     refreshAll();
-    return okVoid("Deactivation requested — a manager decides");
+    return okVoid("Deactivation requested - a manager decides");
   } catch (e) {
     return fromThrown(e);
   }
@@ -811,30 +815,37 @@ export async function logComplaint(input: {
       });
     });
 
-    // Storage has no backend yet (see lib/storage.ts), so attaching images is
-    // best-effort — the complaint itself must always save.
-    let imagesAttached = false;
-    if (input.images?.length && complaintId) {
-      const uploads = await Promise.allSettled(
-        input.images.map((file) => fileStorage.upload(file)),
+    // §4.2 — a failed upload never blocks the save. The complaint is already
+    // written; attaching is best-effort on top of it, and the message says
+    // exactly how many made it rather than implying all or nothing.
+    let attached = 0;
+    const wanted = input.images?.length ?? 0;
+    if (wanted && complaintId) {
+      const results = await Promise.allSettled(
+        input.images!.map(async (file) => {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          const created = await createAttachment({
+            filename: file.name,
+            bytes,
+            declaredType: file.type,
+          });
+          if (!created.ok) throw new Error(created.error);
+          return created.data.id;
+        }),
       );
-      const succeeded = uploads.flatMap((u) =>
-        u.status === "fulfilled" ? [u.value] : [],
+      const ids = results.flatMap((r) =>
+        r.status === "fulfilled" ? [r.value] : [],
       );
-      if (succeeded.length) {
-        await db
-          .insert(complaintImages)
-          .values(
-            succeeded.map((u) => ({ id: id("cim"), complaintId, url: u.url })),
-          );
-        imagesAttached = true;
+      if (ids.length) {
+        const bound = await bindAttachments(ids, "complaint", complaintId);
+        attached = bound.ok ? bound.data.bound : 0;
       }
     }
 
     refreshAll();
     return okVoid(
-      input.images?.length && !imagesAttached
-        ? "Complaint logged — image attachments aren't available until storage is configured"
+      wanted && attached < wanted
+        ? `Complaint logged — ${attached} of ${wanted} file${wanted === 1 ? "" : "s"} attached`
         : "Complaint logged",
     );
   } catch (e) {
@@ -993,7 +1004,7 @@ export async function setCustomerGroup(
     refreshAll();
     return okVoid(
       whatsappDest === "both"
-        ? "Saved — this customer now gets both"
+        ? "Saved - this customer now gets both"
         : "Group name saved",
     );
   } catch (e) {
@@ -1043,10 +1054,10 @@ export async function queueMessage(input: {
         })),
       },
       legs.length > 1
-        ? "Both messages are ready — work them one at a time"
+        ? "Both messages are ready - work them one at a time"
         : legs[0].mode === "automatic"
           ? "Ready to send"
-          : "Copied — confirm once you have sent it",
+          : "Copied - confirm once you have sent it",
     );
   } catch (e) {
     return fromThrown(e);
@@ -1294,7 +1305,7 @@ export async function triggerJob(
     revalidatePath("/crm/settings");
     return ok(
       { ran: results.map((r) => `${r.job}: ${r.detail}`) },
-      `${job} finished — ${results.reduce((a, r) => a + r.recordsAffected, 0)} records touched`,
+      `${job} finished - ${results.reduce((a, r) => a + r.recordsAffected, 0)} records touched`,
     );
   } catch (e) {
     return fromThrown(e);

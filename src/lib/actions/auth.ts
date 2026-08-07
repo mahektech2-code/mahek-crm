@@ -192,7 +192,7 @@ export async function requestPasswordReset(
         `Hello ${user.name.split(" ")[0]},`,
         "",
         "Somebody asked to reset the password on your MahekOne account.",
-        `Open this link to set a new one — it works once and expires in ${RESET_TTL_MINUTES} minutes:`,
+        `Open this link to set a new one - it works once and expires in ${RESET_TTL_MINUTES} minutes:`,
         "",
         link,
         "",

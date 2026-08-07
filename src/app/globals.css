@@ -2,7 +2,7 @@
 
 /* ---------------------------------------------------------------------------
    MahekOne design system tokens.
-   Shared by every app in the suite — CRM today, dispatch/inventory later.
+   Shared by every app in the suite - CRM today, dispatch/inventory later.
    Values come straight from the Mahek CRM design file.
 --------------------------------------------------------------------------- */
 @theme {
@@ -157,8 +157,8 @@
 }
 
 /* ---------------------------------------------------------------------------
-   The brand-panel motion set. Nothing here carries meaning — it is the ambient
-   life on the deep-purple panels of sign-in and the launcher — so every one of
+   The brand-panel motion set. Nothing here carries meaning - it is the ambient
+   life on the deep-purple panels of sign-in and the launcher - so every one of
    them is switched off wholesale by the reduced-motion rule at the bottom.
 --------------------------------------------------------------------------- */
 @keyframes rise {

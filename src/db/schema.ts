@@ -221,6 +221,33 @@ export const runStatusEnum = pgEnum("run_status", [
   "cancelled",
 ]);
 
+/* ---------------------------------------------------------------- §4 files */
+
+/**
+ * What an attachment hangs off. An attachment is created BEFORE its parent
+ * exists — the upload starts the moment a file is chosen, and the interaction
+ * or complaint it belongs to is only written when the form saves — so both
+ * parent columns are nullable and a row with neither is an orphan waiting to
+ * be bound or swept.
+ */
+export const attachmentParentEnum = pgEnum("attachment_parent", [
+  "interaction",
+  "complaint",
+  "follow_up_attempt",
+]);
+
+/**
+ * Removed is a state, not a deletion. Nothing representing a customer
+ * interaction is destroyed here (§3.1 rule 2), and a payment proof especially
+ * may be wanted by accounts long after somebody tidied it off a screen.
+ */
+export const attachmentStatusEnum = pgEnum("attachment_status", [
+  "uploading",
+  "available",
+  "failed",
+  "removed",
+]);
+
 export const appIdEnum = pgEnum("app_id", [
   "crm",
   "field",
@@ -864,6 +891,44 @@ export const complaintImages = pgTable("complaint_images", {
 });
 
 /**
+ * §4 — one attachment record for every file in MahekOne, whatever it hangs
+ * off. Complaint photos, payment proofs and anything a later app needs share
+ * this table rather than growing a column each: the rules about size, type,
+ * access and retention are the same wherever a file is attached, and three
+ * implementations would be three places for them to drift.
+ */
+export const attachments = pgTable(
+  "attachments",
+  {
+    id: text("id").primaryKey(),
+    /** Null until the form saves and binds it. */
+    parentType: attachmentParentEnum("parent_type"),
+    parentId: text("parent_id"),
+    /** As the customer's phone named it, for the person who reads it later. */
+    filename: text("filename").notNull(),
+    /** Where the bytes live. Never a public URL — see the serving route. */
+    storedRef: text("stored_ref").notNull(),
+    /** Sniffed from the bytes, never taken from the extension. */
+    contentType: text("content_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    thumbnailRef: text("thumbnail_ref"),
+    status: attachmentStatusEnum("status").notNull().default("uploading"),
+    uploadedById: text("uploaded_by_id")
+      .notNull()
+      .references(() => users.id),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    removedAt: timestamp("removed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("attachments_parent_idx").on(t.parentType, t.parentId),
+    // The orphan sweep reads exactly this: unbound rows older than the window.
+    index("attachments_orphan_idx").on(t.parentId, t.uploadedAt),
+  ],
+);
+
+/**
  * Full status-change history: from, to, who, when, note. This supersedes the
  * earlier free-text complaint_events log — every line here is attributable and
  * carries the transition, which a plain note could not.
@@ -1291,6 +1356,7 @@ export type ComplaintImage = typeof complaintImages.$inferSelect;
 export type ComplaintStatusHistory = typeof complaintStatusHistory.$inferSelect;
 export type MonthlyTarget = typeof monthlyTargets.$inferSelect;
 export type WaTemplate = typeof waTemplates.$inferSelect;
+export type Attachment = typeof attachments.$inferSelect;
 export type WaMessage = typeof waMessages.$inferSelect;
 export type WaRun = typeof waRuns.$inferSelect;
 export type WaReply = typeof waReplies.$inferSelect;

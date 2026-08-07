@@ -331,9 +331,9 @@ export function BillsScreen({
                     {money(r.balance)}
                   </Td>
                   <Td align="right" className={r.overdueDays > 60 ? "text-danger" : ""}>
-                    {r.overdueDays > 0 ? ageLabel(r.overdueDays) : "—"}
+                    {r.overdueDays > 0 ? ageLabel(r.overdueDays) : "-"}
                   </Td>
-                  <Td>{r.balance > 0 ? r.bucket : "—"}</Td>
+                  <Td>{r.balance > 0 ? r.bucket : "-"}</Td>
                   <Td>
                     <Badge
                       tone={

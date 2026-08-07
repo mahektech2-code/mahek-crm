@@ -80,9 +80,9 @@ export function rupeesFromPaise(paise: number): string {
 
 /** "2026-08-12" -> "12 Aug" */
 export function shortDate(iso: string | Date | null | undefined): string {
-  if (!iso) return "—";
+  if (!iso) return "-";
   const d = typeof iso === "string" ? parseISODate(iso) : iso;
-  if (!d) return "—";
+  if (!d) return "-";
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
 }
 
@@ -94,9 +94,9 @@ export function monthLabel(period: string): string {
 }
 
 export function longDate(iso: string | Date | null | undefined): string {
-  if (!iso) return "—";
+  if (!iso) return "-";
   const d = typeof iso === "string" ? parseISODate(iso) : iso;
-  if (!d) return "—";
+  if (!d) return "-";
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
 
@@ -108,7 +108,7 @@ export function periodLabel(period: string): string {
 
 /** Timestamp -> "12 Aug, 10:42 am" */
 export function stamp(at: Date | string | null | undefined): string {
-  if (!at) return "—";
+  if (!at) return "-";
   const d = typeof at === "string" ? new Date(at) : at;
   const day = `${d.getDate()} ${MONTHS[d.getMonth()]}`;
   return `${day}, ${clock(d)}`;

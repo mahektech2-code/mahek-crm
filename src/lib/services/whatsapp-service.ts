@@ -314,7 +314,7 @@ export async function markCopied(messageId: string): Promise<Result> {
     .set({ status: "copied", copiedAt: new Date(), updatedAt: new Date() })
     .where(eq(waMessages.id, messageId));
 
-  return okVoid("Copied — confirm once you have sent it");
+  return okVoid("Copied - confirm once you have sent it");
 }
 
 /**
@@ -596,7 +596,7 @@ export async function createRun(input: {
     .set({ totalCount: created, skippedCount: skipped.length })
     .where(eq(waRuns.id, runId));
 
-  return ok({ runId, total: created, skipped }, `Run ready — ${created} recipients`);
+  return ok({ runId, total: created, skipped }, `Run ready - ${created} recipients`);
 }
 
 export async function getRun(runId: string) {
@@ -668,7 +668,7 @@ export async function advanceRun(
       .where(eq(waRuns.id, runId));
   }
 
-  return okVoid(outcome === "sent" ? "Sent — next customer" : "Skipped");
+  return okVoid(outcome === "sent" ? "Sent - next customer" : "Skipped");
 }
 
 export async function setRunStatus(

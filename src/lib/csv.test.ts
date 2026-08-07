@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { toCsv } from "./csv";
 
 describe("CSV export", () => {
-  test("quotes every field — Indian business names contain commas", () => {
+  test("quotes every field - Indian business names contain commas", () => {
     const csv = toCsv(["Customer", "City"], [["Shah & Co, Traders", "Mumbai"]]);
     assert.equal(csv, '"Customer","City"\n"Shah & Co, Traders","Mumbai"');
   });

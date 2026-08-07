@@ -22,6 +22,7 @@
     "test:all": "npm run test && npm run test:integration"
   },
   "dependencies": {
+    "@vercel/blob": "^2.7.0",
     "drizzle-orm": "^0.45.2",
     "next": "16.2.12",
     "postgres": "^3.4.9",

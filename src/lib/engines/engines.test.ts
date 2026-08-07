@@ -444,7 +444,7 @@ describe("E2 queue builder", () => {
     assert.match(entries[0].reasons[0].label, /Weekly check-in/);
   });
 
-  test("that check-in is not an order chase — no order reason rides along", () => {
+  test("that check-in is not an order chase - no order reason rides along", () => {
     // Cycle 8, ordered 12 days ago: past their call day, but inside the quiet
     // window. The call is "is everything running fine", and the screen must
     // not tell the telecaller to ask for an order.
@@ -929,7 +929,7 @@ describe("E4 inactivity", () => {
     assert.equal(r.skippedReason, null);
   });
 
-  test("an order un-marks them — the same evaluation, a newer date", () => {
+  test("an order un-marks them - the same evaluation, a newer date", () => {
     const marked = {
       ...cust(30, addDays(TODAY, -90)),
       status: "inactive" as const,
@@ -1169,7 +1169,7 @@ describe("E6 EOD aggregator", () => {
     assert.equal(
       r.whatsappText,
       [
-        "*EOD — Priya Sharma*",
+        "*EOD - Priya Sharma*",
         "03 Aug 2026",
         "",
         "Calls: 42 attempted · 31 connected · 11 missed · 5 inbound",
@@ -1317,7 +1317,7 @@ describe("E7 payment follow-up cadence", () => {
     assert.equal(due.messages[0].daysSinceLast, 4);
   });
 
-  test("messages do not stop when calling begins — the two run alongside", () => {
+  test("messages do not stop when calling begins - the two run alongside", () => {
     const plan = planPaymentFollowUps(
       [
         subject({
@@ -1381,7 +1381,7 @@ describe("E7 payment follow-up cadence", () => {
     assert.equal(broken.calls.length, 1);
   });
 
-  test("a promise made for today is still live — chasing it is what breaks it", () => {
+  test("a promise made for today is still live - chasing it is what breaks it", () => {
     const plan = planPaymentFollowUps(
       [subject({ anchorDueDate: addDays(TODAY, -30), promisedDate: TODAY })],
       TODAY,

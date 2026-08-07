@@ -261,42 +261,42 @@ const TEMPLATES = [
     category: "order_confirmation" as const,
     stage: null,
     appliesTo: "personal" as const,
-    body: "Namaste {{contact}} ji,\n\nThank you for your order with Mahek Marketing.\n\nOrder value: {{last_order_value}}\nWe will confirm the dispatch date shortly.\n\n— {{owner}}, Mahek Marketing India",
+    body: "Namaste {{contact}} ji,\n\nThank you for your order with Mahek Marketing.\n\nOrder value: {{last_order_value}}\nWe will confirm the dispatch date shortly.\n\n- {{owner}}, Mahek Marketing India",
   },
   {
     name: "Payment reminder · stage 1",
     category: "payment_reminder" as const,
     stage: 1,
     appliesTo: "personal" as const,
-    body: "Namaste {{contact}} ji,\n\nA gentle reminder that {{outstanding}} is pending against {{customer}}.\n\nOldest bill {{bill_no}} was due on {{bill_due}}.\n\nKindly arrange the payment at your convenience.\n\n— {{owner}}, Mahek Marketing India",
+    body: "Namaste {{contact}} ji,\n\nA gentle reminder that {{outstanding}} is pending against {{customer}}.\n\nOldest bill {{bill_no}} was due on {{bill_due}}.\n\nKindly arrange the payment at your convenience.\n\n- {{owner}}, Mahek Marketing India",
   },
   {
     name: "Payment reminder · stage 2",
     category: "payment_reminder" as const,
     stage: 2,
     appliesTo: "personal" as const,
-    body: "Namaste {{contact}} ji,\n\n{{outstanding}} is now overdue against {{customer}}.\n\nBill {{bill_no}} was due on {{bill_due}}. Please confirm a date by which we can expect the payment.\n\n— {{owner}}, Mahek Marketing India",
+    body: "Namaste {{contact}} ji,\n\n{{outstanding}} is now overdue against {{customer}}.\n\nBill {{bill_no}} was due on {{bill_due}}. Please confirm a date by which we can expect the payment.\n\n- {{owner}}, Mahek Marketing India",
   },
   {
     name: "Payment reminder · stage 3",
     category: "payment_reminder" as const,
     stage: 3,
     appliesTo: "personal" as const,
-    body: "Namaste {{contact}} ji,\n\nDespite earlier reminders, {{outstanding}} remains unpaid against {{customer}}.\n\nWe would like to settle this before further supplies. Please call us today.\n\n— {{owner}}, Mahek Marketing India",
+    body: "Namaste {{contact}} ji,\n\nDespite earlier reminders, {{outstanding}} remains unpaid against {{customer}}.\n\nWe would like to settle this before further supplies. Please call us today.\n\n- {{owner}}, Mahek Marketing India",
   },
   {
     name: "Reorder nudge",
     category: "reactivation" as const,
     stage: null,
     appliesTo: "group" as const,
-    body: "Namaste {{contact}} ji,\n\nIt has been a while since your last order on {{last_order_date}}. Stock is ready and rates are unchanged this month.\n\nShall I book your usual quantity?\n\n— {{owner}}, Mahek Marketing India",
+    body: "Namaste {{contact}} ji,\n\nIt has been a while since your last order on {{last_order_date}}. Stock is ready and rates are unchanged this month.\n\nShall I book your usual quantity?\n\n- {{owner}}, Mahek Marketing India",
   },
   {
     name: "Routine check-in",
     category: "routine_check_in" as const,
     stage: null,
     appliesTo: "personal" as const,
-    body: "Namaste {{contact}} ji,\n\nChecking in from Mahek Marketing. Do you need any thinner stock this week?\n\n— {{owner}}",
+    body: "Namaste {{contact}} ji,\n\nChecking in from Mahek Marketing. Do you need any thinner stock this week?\n\n- {{owner}}",
   },
 ];
 
@@ -317,7 +317,7 @@ const HELP = [
     roles: ["telecaller", "manager"],
     scriptBody:
       "Namaste {contact name} ji. I am calling about bill {bill number} for {amount}, which was due on {due date}.\n\nCan you tell me a date by which we can expect the payment?",
-    body: "Never ask 'when can you pay'. Ask for a date, and repeat it back. A date is a promise you can record; 'soon' is not.\n\nAlways record the promise in the app before the call ends — it creates the chase reminder for the day after.",
+    body: "Never ask 'when can you pay'. Ask for a date, and repeat it back. A date is a promise you can record; 'soon' is not.\n\nAlways record the promise in the app before the call ends - it creates the chase reminder for the day after.",
   },
   {
     title: "Handling a short supply complaint",
@@ -325,15 +325,15 @@ const HELP = [
     type: "call_script" as const,
     roles: ["telecaller", "manager"],
     scriptBody:
-      "I am sorry that happened. Let me note exactly what was short — which product and how many drums?\n\nI am logging it now and our operations team will come back to you. You will hear from us either way.",
-    body: "Log the complaint while the customer is still on the line, in their words. Do not promise a resolution date you cannot control — promise a call back instead.",
+      "I am sorry that happened. Let me note exactly what was short - which product and how many drums?\n\nI am logging it now and our operations team will come back to you. You will hear from us either way.",
+    body: "Log the complaint while the customer is still on the line, in their words. Do not promise a resolution date you cannot control - promise a call back instead.",
   },
   {
     title: "Why a customer is held back from the queue",
     category: "SOPs",
     type: "sop" as const,
     roles: ["telecaller", "manager"],
-    body: "A customer is held back when:\n\n· a WhatsApp message was CONFIRMED sent inside the cooldown window\n· they were already called today, by anybody\n· they are active in the order system\n· they are marked do not contact\n\nA message you copied but never confirmed does NOT hold anyone back — the system cannot know it was sent. Held-back customers are always listed under the queue with the reason.",
+    body: "A customer is held back when:\n\n· a WhatsApp message was CONFIRMED sent inside the cooldown window\n· they were already called today, by anybody\n· they are active in the order system\n· they are marked do not contact\n\nA message you copied but never confirmed does NOT hold anyone back - the system cannot know it was sent. Held-back customers are always listed under the queue with the reason.",
   },
   {
     title: "Closing the day properly",
@@ -624,7 +624,7 @@ async function main() {
     "Cheque ready, asked us to collect on Friday.",
     "Comparing rates with another supplier, wants a call on Monday.",
     "Confirmed the usual quantity, dispatch this week.",
-    "Owner was travelling — spoke to the accountant instead.",
+    "Owner was travelling - spoke to the accountant instead.",
   ];
 
   const callRows: Array<typeof calls.$inferInsert> = [];

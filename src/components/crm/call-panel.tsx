@@ -218,7 +218,7 @@ const TYPES: Array<{
   {
     key: "order_received",
     label: "Order Received",
-    sub: "Arrived by WhatsApp or ERP — no call",
+    sub: "Arrived by WhatsApp or ERP - no call",
     icon: "doc",
   },
 ];
@@ -472,7 +472,7 @@ function CallPanelForm({
       }))
     : products.filter((p) => frequentProductIds.includes(p.id));
   const productLabel = (p: ProductOption) =>
-    p.packSize ? `${p.name} — ${p.packSize}` : p.name;
+    p.packSize ? `${p.name} - ${p.packSize}` : p.name;
 
   // A real catalogue is far too long to scroll mid-call, so the list is
   // searchable by name, pack size or code.
@@ -664,7 +664,7 @@ function CallPanelForm({
 
         {/* What a telecaller needs before they speak.
             A row with dividers rather than a grid, because the figures are not
-            all present: an empty "Open complaint — None" column takes space to
+            all present: an empty "Open complaint - None" column takes space to
             say nothing, and reads as a thing to check when it is not. Each
             figure appears only when it has something to report. */}
         <div className="flex items-center gap-5 overflow-hidden border-y border-divider bg-canvas px-6 py-2.5">
@@ -679,7 +679,7 @@ function CallPanelForm({
               </Stat>
               <StatDivider />
               <Stat label="Added">
-                {info?.lead ? shortDate(info.lead.addedDate) : "—"}
+                {info?.lead ? shortDate(info.lead.addedDate) : "-"}
               </Stat>
               <StatDivider />
               <Stat label="Source">{info?.lead?.source ?? "Not recorded"}</Stat>
@@ -831,7 +831,7 @@ function CallPanelForm({
                     {info.lead ? (
                       <div className="border-b border-divider px-6 py-4">
                         <p className="rounded-[4px] border border-brand-softer bg-brand-soft px-3.5 py-3 text-sm leading-[21px] text-ink">
-                          This is a lead — nobody here has ordered yet. There is
+                          This is a lead - nobody here has ordered yet. There is
                           no buying cycle, outstanding or monthly target to work
                           from, so the call is about finding out what they use
                           and what it would take to win the first order.
@@ -869,7 +869,7 @@ function CallPanelForm({
                               info.purchase.nextOrderDate
                                 ? `Next order: ${shortDate(info.purchase.nextOrderDate)}`
                                 : info.purchase.cycleIsDefault
-                                  ? "Default — too little history"
+                                  ? "Default - too little history"
                                   : "No order to count from"
                             }
                             subTone="brand"
@@ -1015,7 +1015,7 @@ function CallPanelForm({
                               <span className="flex-none text-[13px] text-muted">
                                 {p.lastPurchaseDate
                                   ? shortDate(p.lastPurchaseDate)
-                                  : "—"}
+                                  : "-"}
                               </span>
                               <span className="w-[78px] flex-none text-right text-[13px] font-medium text-ink">
                                 {p.totalOrderCount}
@@ -1071,7 +1071,7 @@ function CallPanelForm({
                     {scriptMissing ? (
                       <div className="mt-2.5 rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-2 text-[13px] text-warn-ink">
                         Nothing is written for{" "}
-                        {OUTCOME_LABEL[outcome!] ?? "this outcome"} yet — this
+                        {OUTCOME_LABEL[outcome!] ?? "this outcome"} yet - this
                         is the closest script we have.
                       </div>
                     ) : null}
@@ -1303,7 +1303,7 @@ function CallPanelForm({
                       {needsFollowUp ? (
                         <Field
                           label="Follow-up date"
-                          hint="Pick the follow-up date — it becomes a reminder you will see on the day."
+                          hint="Pick the follow-up date - it becomes a reminder you will see on the day."
                           error={errors.followUpDate ?? null}
                         >
                           {/* "Call me tomorrow" and "call me after three days" are what
@@ -1518,7 +1518,7 @@ function CallPanelForm({
 
                       <Field
                         label="Notes"
-                        hint="Quick notes add to this — you can still edit or type your own."
+                        hint="Quick notes add to this - you can still edit or type your own."
                         error={errors.notes ?? null}
                       >
                         <Textarea

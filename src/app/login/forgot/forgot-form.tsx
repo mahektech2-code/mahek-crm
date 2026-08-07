@@ -36,7 +36,7 @@ export function ForgotForm() {
         ) : null}
 
         <div className="mt-5 rounded-[6px] border border-line bg-surface p-4 text-sm leading-[21px] text-muted">
-          Nothing arrived? Check the spam folder, or send it again — the
+          Nothing arrived? Check the spam folder, or send it again - the
           previous link stops working the moment a new one is sent.
         </div>
 

@@ -11,7 +11,7 @@ import { Icon } from "@/components/shell/icons";
 import { longDate, today } from "@/lib/format";
 import { LoginForm } from "./login-form";
 
-export const metadata = { title: "Sign in — MahekOne" };
+export const metadata = { title: "Sign in - MahekOne" };
 
 /** Why the suite exists — written for the whole team, not one role. */
 const WHY = [

@@ -4,7 +4,7 @@ import { listCustomers, listTeam } from "@/lib/queries";
 import { customerStatusLabel } from "@/lib/format";
 import { CustomersScreen } from "./customers-screen";
 
-export const metadata = { title: "Customers — MahekOne CRM" };
+export const metadata = { title: "Customers - MahekOne CRM" };
 
 export default async function CustomersPage() {
   const user = await requireUser();

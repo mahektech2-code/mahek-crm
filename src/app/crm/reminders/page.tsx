@@ -4,7 +4,7 @@ import { listCustomers } from "@/lib/queries";
 import { listReminders } from "@/lib/services/worklist-services";
 import { RemindersScreen } from "./reminders-screen";
 
-export const metadata = { title: "Reminders — MahekOne CRM" };
+export const metadata = { title: "Reminders - MahekOne CRM" };
 
 export default async function RemindersPage() {
   const user = await requireUser();

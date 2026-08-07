@@ -137,7 +137,7 @@ export function escalationStage(
     anchorDueDate: anchor.due,
     nextChannel: prescribeChannel(stage, lastAttempt),
     held: holding,
-    heldReason: holding ? "An overdue bill is disputed — held at the current stage" : null,
+    heldReason: holding ? "An overdue bill is disputed - held at the current stage" : null,
     floored: stage > beforeFloor,
   };
 }
@@ -173,7 +173,7 @@ export function isAttemptAllowed(
     return {
       allowed: false,
       error:
-        "Stage 1 is a WhatsApp-only nudge — a call cannot be logged against it. Send the stage 1 message, or wait for the account to reach stage 2.",
+        "Stage 1 is a WhatsApp-only nudge - a call cannot be logged against it. Send the stage 1 message, or wait for the account to reach stage 2.",
     };
   }
   return { allowed: true };

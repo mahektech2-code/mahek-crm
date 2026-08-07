@@ -11,12 +11,12 @@ import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/queries";
 import { addDays, daysInMonth, isWorkingDay } from "@/lib/business-date";
 import {
-  PAY_OUTCOMES,
+  offeredPayOutcomes,
   stageOneBatch,
 } from "@/lib/services/payment-followup-service";
 import { PaymentsScreen } from "./payments-screen";
 
-export const metadata = { title: "Payment follow-up — MahekOne CRM" };
+export const metadata = { title: "Payment follow-up - MahekOne CRM" };
 
 export default async function PaymentsPage() {
   const user = await requireUser();
@@ -69,7 +69,7 @@ export default async function PaymentsPage() {
       aging={aging}
       workingDaysLeft={workingDaysLeft}
       plan={plan}
-      outcomes={PAY_OUTCOMES}
+      outcomes={offeredPayOutcomes()}
       metrics={metrics}
       batchCount={batch.templateId ? batch.customerIds.length : 0}
       rows={rows.map((r) => ({

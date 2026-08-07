@@ -10,7 +10,7 @@ import {
 import { daysBetween } from "@/lib/business-date";
 import { EodScreen } from "./eod-screen";
 
-export const metadata = { title: "EOD report — MahekOne CRM" };
+export const metadata = { title: "EOD report - MahekOne CRM" };
 
 export default async function EodPage() {
   const user = await requireUser();

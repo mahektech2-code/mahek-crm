@@ -169,7 +169,7 @@ export async function saveInteraction(
   // 2. Follow-up needs a date, and it cannot be in the past.
   if (input.outcome === "follow_up") {
     if (!input.followUpDate) {
-      return fieldError("followUpDate", "Pick the follow-up date — it becomes a reminder.");
+      return fieldError("followUpDate", "Pick the follow-up date - it becomes a reminder.");
     }
     if (input.followUpDate < day) {
       return fieldError("followUpDate", "The follow-up date cannot be in the past.");
@@ -330,7 +330,7 @@ export async function saveInteraction(
       });
       produced.push("order");
       warnings.push(
-        "Order value is zero — the system does not hold product rates yet, so quantities were saved without a value.",
+        "Order value is zero - the system does not hold product rates yet, so quantities were saved without a value.",
       );
     }
 
@@ -559,7 +559,7 @@ export async function saveInteraction(
 
     if (state && !verdict.allowed) {
       warnings.push(
-        `${customer.name} is at stage ${state.stage}, which is WhatsApp-only — the call was logged, but not counted as a collections attempt.`,
+        `${customer.name} is at stage ${state.stage}, which is WhatsApp-only - the call was logged, but not counted as a collections attempt.`,
       );
     } else if (state) {
       await db.insert(followUpAttempts).values({

@@ -80,7 +80,7 @@ export function HelpScreen({
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder={'Search scripts and SOPs — try "payment" or "short supply"'}
+          placeholder={'Search scripts and SOPs - try "payment" or "short supply"'}
           className="h-10 min-w-0 flex-1 text-[15px]"
         />
         <Select

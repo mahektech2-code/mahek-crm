@@ -25,6 +25,7 @@ export type SettingCategory =
   | "reminders"
   | "complaints"
   | "products"
+  | "attachments"
   | "interactions"
   | "whatsapp";
 
@@ -174,7 +175,7 @@ export const SETTINGS = [
     category: "queue",
     label: "Priority tier weights",
     description:
-      "Relative ranking of the reasons a customer can enter the queue. Highest weight wins. Inferred — confirm against the existing system during migration diffing.",
+      "Relative ranking of the reasons a customer can enter the queue. Highest weight wins. Inferred - confirm against the existing system during migration diffing.",
     default: {
       reminderOverdue: 100,
       reminderDueToday: 90,
@@ -256,7 +257,7 @@ export const SETTINGS = [
     category: "inactive-watch",
     label: "Cycle multiplier",
     description:
-      "Flag at this multiple of the customer's OWN buying cycle. The source document states 2.0 precisely — the one threshold that is not a guess.",
+      "Flag at this multiple of the customer's OWN buying cycle. The source document states 2.0 precisely - the one threshold that is not a guess.",
     default: 2.0,
     min: 1,
     max: 10,
@@ -410,7 +411,7 @@ export const SETTINGS = [
     category: "bills",
     label: "Payment terms offered",
     description:
-      "The terms a telecaller can pick from when taking an order, in days. Any other number can still be typed in — this list is the shortcut, not the limit.",
+      "The terms a telecaller can pick from when taking an order, in days. Any other number can still be typed in - this list is the shortcut, not the limit.",
     default: [15, 30, 45],
   },
 
@@ -585,7 +586,7 @@ export const SETTINGS = [
     category: "complaints",
     label: "Complaint categories",
     description:
-      "The list offered wherever a complaint is raised — the Complaints dialog, the customer record and the call panel all read this, so they cannot drift apart. Edit it here rather than in code.",
+      "The list offered wherever a complaint is raised - the Complaints dialog, the customer record and the call panel all read this, so they cannot drift apart. Edit it here rather than in code.",
     default: [...COMPLAINT_CATEGORIES],
   },
 
@@ -617,7 +618,7 @@ export const SETTINGS = [
     category: "products",
     label: "Product search on order forms",
     description:
-      "Off, a telecaller can only pick from the frequent list — which is a deliberate constraint for a new team, and a wall for an experienced one.",
+      "Off, a telecaller can only pick from the frequent list - which is a deliberate constraint for a new team, and a wall for an experienced one.",
     default: true,
   },
 
@@ -630,6 +631,71 @@ export const SETTINGS = [
     description:
       "Outcomes whose quick notes are one choice rather than several. A second pick replaces the first. Every outcome not listed here takes as many notes as apply.",
     default: ["no_order"],
+  },
+
+  /* ----------------------------------------------------------- attachments */
+  {
+    key: "attachments.maxSizeMb",
+    type: "integer",
+    category: "attachments",
+    label: "Maximum file size",
+    description:
+      "Megabytes per file. A photograph from a phone is usually under three; the ceiling is there to stop a video being attached by accident.",
+    default: 5,
+    min: 1,
+    max: 50,
+  },
+  {
+    key: "attachments.acceptedTypes",
+    type: "structured",
+    category: "attachments",
+    label: "Permitted file types",
+    description:
+      "Checked against the bytes of the file, never its extension — anything can be renamed .jpg. A type removed here stops being accepted immediately; files already stored keep working.",
+    default: ["image/jpeg", "image/png", "application/pdf"],
+  },
+  {
+    key: "attachments.maxPerComplaint",
+    type: "integer",
+    category: "attachments",
+    label: "Attachments per complaint",
+    description: "Photographs and documents supporting one complaint.",
+    default: 5,
+    min: 0,
+    max: 20,
+  },
+  {
+    key: "attachments.maxPerFollowUp",
+    type: "integer",
+    category: "attachments",
+    label: "Attachments per payment follow-up",
+    description:
+      "Proof of payment against one follow-up attempt. Three covers a slip, a screenshot and a bank reference.",
+    default: 3,
+    min: 0,
+    max: 20,
+  },
+  {
+    key: "attachments.orphanCleanupHours",
+    type: "integer",
+    category: "attachments",
+    label: "Orphan cleanup window",
+    description:
+      "An upload starts the moment a file is chosen, so a form abandoned before saving leaves a file belonging to nothing. Swept after this many hours. Long enough that a telecaller interrupted mid-call still finds their file.",
+    default: 24,
+    min: 1,
+    max: 720,
+  },
+  {
+    key: "attachments.retentionDays",
+    type: "integer",
+    category: "attachments",
+    label: "Retention after removal",
+    description:
+      "Days a removed attachment's bytes are kept before purging. 0 keeps them indefinitely. A payment proof may have accounting relevance long after somebody tidied it off a screen — confirm this with the business before lowering it.",
+    default: 0,
+    min: 0,
+    max: 3650,
   },
 
   /* -------------------------------------------------------------- whatsapp */
@@ -669,7 +735,7 @@ export const SETTINGS = [
     category: "whatsapp",
     label: "Auto-confirm after",
     description:
-      "0 means never auto-confirm. Defaulted off — auto-confirming asserts a message was sent when the system cannot know that.",
+      "0 means never auto-confirm. Defaulted off - auto-confirming asserts a message was sent when the system cannot know that.",
     default: 0,
     min: 0,
     max: 168,
@@ -805,7 +871,7 @@ export function checkConsistency(config: Config): string[] {
   const quiet = config["escalation.quietCallDays"];
   if (stage2Days !== quiet + 1) {
     problems.push(
-      `Calling opens on day ${stage2Days} (stage 2) but the quiet window runs to day ${quiet}. Stage 2 must be the day after the quiet window closes — set it to ${quiet + 1}, or shorten the window to ${stage2Days - 1}.`,
+      `Calling opens on day ${stage2Days} (stage 2) but the quiet window runs to day ${quiet}. Stage 2 must be the day after the quiet window closes - set it to ${quiet + 1}, or shorten the window to ${stage2Days - 1}.`,
     );
   }
 
@@ -905,6 +971,13 @@ export type Config = {
   "complaints.defaultSeverity": "low" | "medium" | "high";
   "interactions.maxNotesLength": number;
   "customers.defaultCreditDays": number;
+
+  "attachments.maxSizeMb": number;
+  "attachments.acceptedTypes": string[];
+  "attachments.maxPerComplaint": number;
+  "attachments.maxPerFollowUp": number;
+  "attachments.orphanCleanupHours": number;
+  "attachments.retentionDays": number;
 
   "products.frequentCount": number;
   "products.frequentRanking": "orders" | "recency";

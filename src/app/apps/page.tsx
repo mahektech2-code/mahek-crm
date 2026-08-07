@@ -13,7 +13,7 @@ import { cx } from "@/components/ui/primitives";
 import { clock, longDate, today } from "@/lib/format";
 import { AppShortcuts } from "./app-shortcuts";
 
-export const metadata = { title: "Your apps — MahekOne" };
+export const metadata = { title: "Your apps - MahekOne" };
 
 export default async function LauncherPage() {
   const user = await requireUser();
@@ -85,7 +85,7 @@ export default async function LauncherPage() {
                 ? "One app on your account."
                 : `You have access to ${apps.length} apps.`}
               {attendance
-                ? ` Signed in at ${clock(attendance.signedInAt)} — attendance recorded for today.`
+                ? ` Signed in at ${clock(attendance.signedInAt)} - attendance recorded for today.`
                 : ""}
             </p>
           </div>
@@ -220,7 +220,7 @@ export default async function LauncherPage() {
                 No apps on your account yet
               </div>
               <p className="mx-auto mt-1.5 max-w-[420px] text-[15px] text-muted">
-                Your sign-in works — a manager just has not given you an app to
+                Your sign-in works - a manager just has not given you an app to
                 open. Ask them to add you in the Admin Console.
               </p>
             </div>

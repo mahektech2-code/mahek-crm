@@ -113,7 +113,7 @@ export function InactiveScreen({
           { label: "Deactivation pending", value: String(pending) },
           {
             label: "Deepest lapse",
-            value: rows.length ? `${Math.max(...rows.map((r) => Number(r.cyclesElapsed)))}×` : "—",
+            value: rows.length ? `${Math.max(...rows.map((r) => Number(r.cyclesElapsed)))}×` : "-",
           },
         ]}
       />
@@ -176,7 +176,7 @@ export function InactiveScreen({
                   <Td align="right" className="font-medium text-ink">
                     {money(r.valueAtRisk)}
                   </Td>
-                  <Td>{r.lastContactDate ? shortDate(r.lastContactDate) : "—"}</Td>
+                  <Td>{r.lastContactDate ? shortDate(r.lastContactDate) : "-"}</Td>
                   <Td
                     align="right"
                     className={cx(
@@ -303,7 +303,7 @@ function BulkRemind({
   onSubmit: (dueDate: string, note: string) => Promise<void>;
 }) {
   const [dueDate, setDueDate] = React.useState(today());
-  const [note, setNote] = React.useState("Win-back call — they have gone past their cycle");
+  const [note, setNote] = React.useState("Win-back call - they have gone past their cycle");
   const [busy, setBusy] = React.useState(false);
 
   return (

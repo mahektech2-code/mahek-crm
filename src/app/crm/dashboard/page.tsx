@@ -24,7 +24,7 @@ import {
 import { Icon } from "@/components/shell/icons";
 import { DayStages } from "./day-stages";
 
-export const metadata = { title: "Dashboard — MahekOne CRM" };
+export const metadata = { title: "Dashboard - MahekOne CRM" };
 
 export default async function DashboardPage() {
   const user = await requireUser();
@@ -126,7 +126,7 @@ export default async function DashboardPage() {
         subtitle={`${scopeLabel(scope, user)} · ${
           teamView
             ? "Yesterday's comparison and today's red flags"
-            : "Everything below is live — the numbers open the records behind them"
+            : "Everything below is live - the numbers open the records behind them"
         }`}
         actions={
           <Link
@@ -220,7 +220,7 @@ export default async function DashboardPage() {
               label="Missed calls"
               value={String(activity.callsMissed)}
               tone="danger"
-              foot="Not reachable — retry after 4 pm"
+              foot="Not reachable - retry after 4 pm"
               foot2="fewer is better"
               delta={
                 <Delta
@@ -289,7 +289,7 @@ export default async function DashboardPage() {
 
             <div className="flex flex-col gap-4">
               <Card className="p-5">
-                <SectionLabel>Monthly target — {monthLabel(period)}</SectionLabel>
+                <SectionLabel>Monthly target - {monthLabel(period)}</SectionLabel>
                 <div className="mt-2 flex items-baseline gap-2">
                   <span className="text-[32px] leading-9 font-semibold text-ink">
                     {money(achieved)}
@@ -444,7 +444,7 @@ function TeamView({
 
       <Card className="overflow-hidden">
         <div className="border-b border-divider px-5 py-3.5 text-lg leading-6 font-semibold text-ink">
-          Telecaller comparison — yesterday
+          Telecaller comparison - yesterday
         </div>
         <div className="overflow-auto">
           <table>

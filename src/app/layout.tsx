@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "MahekOne — CRM",
+  title: "MahekOne - CRM",
   description:
     "Mahek Marketing India's connected workspace. CRM for the telecaller team.",
 };

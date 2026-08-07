@@ -258,15 +258,15 @@ export function ComponentsScreen() {
       {/* ------------------------------------------------------------ inputs */}
       <Group title="Inputs">
         <Card className="px-5 py-1">
-          <Spec label="Text — default">
+          <Spec label="Text - default">
             <Field label="Name" hint="Helper text sits below the field.">
               <Input placeholder="Om Sai Enterprises" />
             </Field>
           </Spec>
-          <Spec label="Text — focused">
+          <Spec label="Text - focused">
             <Input className="border-brand" defaultValue="Om Sai Enterprises" />
           </Spec>
-          <Spec label="Text — error">
+          <Spec label="Text - error">
             <Field label="Telephone" error="Enter a 10-digit mobile number.">
               <Input invalid defaultValue="9987" />
             </Field>
@@ -290,7 +290,7 @@ export function ComponentsScreen() {
           <Spec label="Disabled" note="Normal control.">
             <Input disabled placeholder="Pick a customer first" />
           </Spec>
-          <Spec label="Textarea" note="Long messages get skimmed — try to stay under 700.">
+          <Spec label="Textarea" note="Long messages get skimmed - try to stay under 700.">
             <Textarea
               className="h-20"
               defaultValue="Confirmed the usual quantity, dispatch this week."
@@ -298,7 +298,7 @@ export function ComponentsScreen() {
           </Spec>
           <Spec
             label="Reason · required"
-            note="A reason is required — it is kept on the customer record."
+            note="A reason is required - it is kept on the customer record."
           >
             <Textarea className="h-16" placeholder="Shop closed permanently" />
           </Spec>
@@ -476,7 +476,7 @@ export function ComponentsScreen() {
 
           <Card className="overflow-hidden">
             <div className="border-b border-divider px-4 py-2.5">
-              <SectionLabel>Empty — no data</SectionLabel>
+              <SectionLabel>Empty - no data</SectionLabel>
             </div>
             <EmptyState
               title="No customers yet"
@@ -486,7 +486,7 @@ export function ComponentsScreen() {
 
           <Card className="overflow-hidden">
             <div className="border-b border-divider px-4 py-2.5">
-              <SectionLabel>Empty — filters</SectionLabel>
+              <SectionLabel>Empty - filters</SectionLabel>
             </div>
             <EmptyState
               title="Nothing matches"
@@ -601,13 +601,13 @@ export function ComponentsScreen() {
           </Spec>
           <Spec label="Read-only">
             <div className="rounded-[4px] border border-line bg-canvas px-3 py-2 text-[13px] text-muted">
-              🔒 Read-only — managers write the wording so every telecaller sends the same
+              🔒 Read-only - managers write the wording so every telecaller sends the same
               thing.
             </div>
           </Spec>
           <Spec label="Stale data">
             <div className="rounded-[4px] border border-warn-line bg-warn-soft px-3 py-2 text-[13px] text-warn-ink">
-              Stale data — last synced 12 Aug, 07:30. Figures may be more than 4 hours old.
+              Stale data - last synced 12 Aug, 07:30. Figures may be more than 4 hours old.
             </div>
           </Spec>
         </Card>
@@ -654,7 +654,7 @@ export function ComponentsScreen() {
             <option>Order confirmation</option>
           </Select>
         </Field>
-        <Field label="Message" hint="Long messages get skimmed — try to stay under 700.">
+        <Field label="Message" hint="Long messages get skimmed - try to stay under 700.">
           <Textarea className="h-20" defaultValue="Namaste ji," />
         </Field>
       </Modal>
@@ -668,7 +668,7 @@ export function ComponentsScreen() {
           <div className="text-lg font-semibold text-ink">WhatsApp connection</div>
         </DrawerHeader>
         <div className="flex-1 overflow-y-auto p-5">
-          <Field label="Business number" hint="Saves on its own — fix a number without leaving the call">
+          <Field label="Business number" hint="Saves on its own - fix a number without leaving the call">
             <Input defaultValue="+91 98191 55207" />
           </Field>
         </div>

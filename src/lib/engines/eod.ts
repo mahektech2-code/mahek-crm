@@ -101,7 +101,7 @@ export function aggregateEod(input: EodInput): EodReport {
   // Short lines, a middot as the only separator, asterisks for the one bold
   // line. Nothing that WhatsApp renders badly, and no table characters.
   const whatsappText = [
-    `*EOD — ${input.userName}*`,
+    `*EOD - ${input.userName}*`,
     formatDate(input.date),
     "",
     `Calls: ${input.callsAttempted} attempted · ${input.callsConnected} connected · ${input.callsMissed} missed · ${input.callsInbound} inbound`,
@@ -192,7 +192,7 @@ export function aggregateTeamEod(
   }));
 
   const whatsappText = [
-    `*EOD — Team*`,
+    `*EOD - Team*`,
     formatDate(date),
     "",
     `Calls: ${totals.callsAttempted} attempted · ${totals.callsConnected} connected · ${totals.callsMissed} missed · ${totals.callsInbound} inbound`,

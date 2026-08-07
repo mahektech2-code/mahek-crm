@@ -153,12 +153,15 @@ function PanelBody({
 
   async function save(next: boolean) {
     if (!def || !panel) return;
+    // A retired outcome is readable but never writable, so it cannot be the
+    // thing being saved — the screen never offers one.
+    if (def.retired) return;
     setBusy(true);
     try {
       const result = await run(
         logPaymentFollowUpAction({
           customerId: panel.customerId,
-          outcome: def.key,
+          outcome: def.key as Exclude<typeof def.key, "part">,
           amount: amount.trim() ? Number(amount.replace(/[^0-9]/g, "")) : undefined,
           date: date || undefined,
           notes: notes.trim() || undefined,
@@ -304,7 +307,7 @@ function PanelBody({
                     : undefined
               }
             >
-              {panel ? (panel.oldestOverdueDays ? ageLabel(panel.oldestOverdueDays) : "Not due") : "—"}
+              {panel ? (panel.oldestOverdueDays ? ageLabel(panel.oldestOverdueDays) : "Not due") : "-"}
             </Stat>
             <Rule />
             <Stat label="Bills overdue">{panel?.overdueBillCount ?? 0}</Stat>
@@ -318,7 +321,7 @@ function PanelBody({
                 Prescribed now
               </div>
               <div className="text-sm font-semibold text-brand-hover">
-                {panel?.nextAction ?? "—"}
+                {panel?.nextAction ?? "-"}
               </div>
             </div>
           </div>
@@ -357,7 +360,7 @@ function PanelBody({
           <div className="flex-1 px-6 py-10 text-sm text-muted">Loading the account…</div>
         ) : !panel ? (
           <div className="flex-1 px-6 py-10 text-sm text-muted">
-            This customer is no longer on the follow-up list — their bills may have been
+            This customer is no longer on the follow-up list - their bills may have been
             paid, or they are outside your book.
           </div>
         ) : tab === "account" ? (
@@ -623,7 +626,7 @@ function RecordPaymentForm({
                 ))}
               </Select>
             </Field>
-            <Field label="Reference" hint="UTR, cheque number — optional">
+            <Field label="Reference" hint="UTR, cheque number - optional">
               <Input
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
@@ -730,7 +733,7 @@ function AccountTab({
           {panel.lastFollowUpAt ? stamp(panel.lastFollowUpAt) : "never"}.
         </div>
         <div className="mt-0.5 text-[13px] text-muted">
-          Stage {panel.stage} — {panel.stageName} · Credit terms {panel.creditDays} days ·{" "}
+          Stage {panel.stage} - {panel.stageName} · Credit terms {panel.creditDays} days ·{" "}
           {panel.slowPayer ? "flagged as a slow payer" : "no slow-payer flag"}
           {panel.floorReason ? ` · ${panel.floorReason}` : ""}
         </div>
@@ -803,7 +806,7 @@ function AccountTab({
         <div className="mt-2 text-[13px] text-muted">
           Record against a named bill here. For &ldquo;they paid ₹50,000&rdquo; with no
           bill named, log <span className="font-medium text-ink">Already paid</span> on the
-          next tab — that spreads it over the oldest bills first.
+          next tab - that spreads it over the oldest bills first.
         </div>
       </div>
 
@@ -842,7 +845,7 @@ function AccountTab({
                 <Badge tone={h.channel === "Collections" ? "warn" : "brand"}>
                   {h.outcome ?? h.channel}
                 </Badge>
-                <span className="mt-0.5 block text-[13px] text-muted">{h.note ?? "—"}</span>
+                <span className="mt-0.5 block text-[13px] text-muted">{h.note ?? "-"}</span>
               </span>
             </div>
           ))
@@ -889,7 +892,7 @@ function LogTab(props: {
           <div>
             <div className="mb-1 text-[15px] font-semibold text-ink">What did they say?</div>
             <div className="mb-3.5 text-[13px] text-muted">
-              Pick the outcome — it decides what gets created and whether the stage moves.
+              Pick the outcome - it decides what gets created and whether the stage moves.
             </div>
             {props.outcomes.map((o) => (
               <button
@@ -971,7 +974,7 @@ function LogTab(props: {
 
             <Field
               label="Notes"
-              hint="Quick notes add to this — you can still edit or type your own."
+              hint="Quick notes add to this - you can still edit or type your own."
             >
               <Textarea
                 rows={4}
@@ -1017,7 +1020,7 @@ function MessageTab({
     return (
       <div className="flex-1 px-6 py-10 text-sm text-muted">
         No active payment reminder template. A manager can write one on the WhatsApp
-        screen — until then, log a call instead.
+        screen - until then, log a call instead.
       </div>
     );
   }

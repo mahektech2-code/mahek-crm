@@ -160,7 +160,7 @@ export function PaymentsScreen({
     <div className="max-w-[1440px] px-6 pt-6 pb-10">
       <PageHeader
         title="Payment follow-up"
-        subtitle={`${scopeLabel} · One row per customer. The stage tells you what to do — do that, then log it.`}
+        subtitle={`${scopeLabel} · One row per customer. The stage tells you what to do - do that, then log it.`}
         actions={
           <>
           <Button
@@ -170,7 +170,7 @@ export function PaymentsScreen({
               !isManager
                 ? "Bulk sending is a manager action"
                 : batchCount === 0
-                  ? "Nobody at stage 1 is due a reminder today — the four-day interval runs from the last one actually sent"
+                  ? "Nobody at stage 1 is due a reminder today - the four-day interval runs from the last one actually sent"
                   : `Queue the stage 1 reminder for ${plural(batchCount, "customer")}`
             }
             onClick={async () => {
@@ -243,7 +243,7 @@ export function PaymentsScreen({
             label: "Promises kept",
             value:
               metrics.promisesKeptPercent === null
-                ? "—"
+                ? "-"
                 : `${metrics.promisesKeptPercent}%`,
             tone:
               metrics.promisesKeptPercent !== null && metrics.promisesKeptPercent < 60
@@ -310,7 +310,7 @@ export function PaymentsScreen({
             Month-end push · {workingDaysLeft} working days left
           </span>
           <span className="text-sm text-body">
-            Sorted by collectable value. Total collectable {money(total)} — chase the top
+            Sorted by collectable value. Total collectable {money(total)} - chase the top
             of this list first.
           </span>
         </Callout>
@@ -369,7 +369,7 @@ export function PaymentsScreen({
             </span>
             <span className="flex-1" />
             <span className="text-[13px] text-muted">
-              Nothing disappears silently — open this if somebody is missing
+              Nothing disappears silently - open this if somebody is missing
             </span>
           </button>
           {heldOpen ? (

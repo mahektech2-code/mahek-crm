@@ -154,7 +154,7 @@ export function ComplaintsScreen({
           { label: "Resolved", value: String(buckets.resolved.length), tone: "success" },
           {
             label: "Oldest open",
-            value: oldest ? ageLabel(oldest.ageDays) : "—",
+            value: oldest ? ageLabel(oldest.ageDays) : "-",
             tone: oldest && oldest.ageDays > 7 ? "danger" : "ink",
             sub: oldest?.customerName,
           },
@@ -335,7 +335,7 @@ export function ComplaintsScreen({
                 className="mt-5"
                 error={
                   notesError
-                    ? "Write what was done before closing — this is what the customer record will show."
+                    ? "Write what was done before closing - this is what the customer record will show."
                     : null
                 }
               >
@@ -741,7 +741,7 @@ function LogComplaintModalBody({
 
         <Field
           label="Upload picture"
-          hint="JPG, JPEG, PNG or WEBP — photos of the damaged or short goods, if any."
+          hint="JPG, JPEG, PNG or WEBP - photos of the damaged or short goods, if any."
           error={imageError}
         >
           <input
@@ -825,7 +825,7 @@ function LogComplaintModalBody({
 
             <Field
               label="Description of goods"
-              hint="Not on the bill record — filled in manually."
+              hint="Not on the bill record - filled in manually."
             >
               <Textarea
                 value={goodsDescription}

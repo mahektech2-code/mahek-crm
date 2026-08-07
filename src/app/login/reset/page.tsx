@@ -4,7 +4,7 @@ import { Icon } from "@/components/shell/icons";
 import { findLiveReset, RESET_TTL_MINUTES } from "@/lib/password-reset";
 import { ResetForm } from "./reset-form";
 
-export const metadata = { title: "Set a new password — MahekOne" };
+export const metadata = { title: "Set a new password - MahekOne" };
 
 export default async function ResetPasswordPage({
   searchParams,
@@ -31,7 +31,7 @@ export default async function ResetPasswordPage({
         </BrandPanelHeading>
         <p className="animate-rise mt-3.5 text-[15px] leading-6 text-balance text-white/70 [animation-delay:80ms]">
           The new password takes effect immediately and ends every session the
-          account already had — including on the phone you left signed in.
+          account already had - including on the phone you left signed in.
         </p>
       </BrandPanel>
 
