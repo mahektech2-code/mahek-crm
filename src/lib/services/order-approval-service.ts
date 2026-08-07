@@ -45,7 +45,12 @@ export type PendingOrder = {
 export type PendingOrderLine = {
   productName: string;
   packSize: string | null;
+  /** The formulation. Two SKU names here differ by one word; this is what separates them. */
+  subtitle: string | null;
+  /** Cans — always. Litres and boxes are derived from the packing below. */
   quantity: number;
+  millilitresPerCan: number | null;
+  cansPerBox: number;
 };
 
 /** The approval queue, oldest first — a customer waiting longest is worked first. */
@@ -114,19 +119,27 @@ export async function orderLines(orderId: string): Promise<PendingOrderLine[]> {
   const rows = await db.execute<{
     name: string;
     pack_size: string | null;
+    formulation: string | null;
     quantity: number;
+    millilitres_per_can: number | null;
+    cans_per_box: number;
   }>(sql`
-    select p.name, p.pack_size, l.quantity
+    select p.name, p.pack_size, f.name as formulation, l.quantity,
+           p.millilitres_per_can, p.cans_per_box
       from interaction_product_lines l
       join calls ca on ca.id = l.interaction_id
       join products p on p.id = l.product_id
+      left join product_formulations f on f.id = p.formulation_id
      where ca.order_id = ${orderId}
      order by p.display_order, p.name
   `);
   return rows.map((r) => ({
     productName: r.name,
     packSize: r.pack_size,
+    subtitle: r.formulation,
     quantity: Number(r.quantity),
+    millilitresPerCan: r.millilitres_per_can,
+    cansPerBox: Number(r.cans_per_box) || 1,
   }));
 }
 

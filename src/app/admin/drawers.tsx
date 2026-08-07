@@ -44,7 +44,7 @@ const SAMPLE: Record<string, string> = {
   bill: "MM-4418",
   days: "18",
   date: "14 Aug",
-  qty: "8 drums NC thinner",
+  qty: "8 drums",
   telecaller: "Priya Sharma",
   lastorder: "28 Jul",
   cycle: "21 days",
@@ -82,24 +82,7 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
   let preview: { name: string; body: string } | null = null;
   let blockers: Array<{ line: string; cta: string; run: () => void }> = [];
 
-  if (kind === "products") {
-    title = record0 ? "Edit product" : "Add product";
-    sub = "Shown in the quantity list when an order is captured.";
-    saveLabel = record0 ? "Save product" : "Add product";
-    fields = [
-      { key: "name", label: "Product name", value: v("name", record0?.name ?? ""), placeholder: "Mahek Universal Thinner" },
-      { key: "pack", label: "Pack size", value: v("pack", record0?.pack ?? ""), placeholder: "5L", half: true },
-      { key: "code", label: "External product code", value: v("code", record0?.code ?? ""), placeholder: "MUT-03", half: true },
-      {
-        key: "rate",
-        label: "Rate",
-        value: v("rate", record0?.rate ?? ""),
-        placeholder: "1,240",
-        help: "Without a rate, order value, target achievement and run rate all read zero.",
-      },
-      { key: "order", label: "Display order", value: v("order", record0 ? "1" : String(entities.products.length + 1)), half: true },
-    ];
-  } else if (kind === "templates") {
+  if (kind === "templates") {
     title = record0 ? "Edit template" : "New template";
     sub = "Merge placeholders are checked here, not at send time.";
     saveLabel = record0 ? "Save template" : "Create template";
@@ -531,5 +514,7 @@ function MessagePreview({ name, body }: { name: string; body: string }) {
 }
 
 function isEntityKind(kind: string): boolean {
-  return ["products", "templates", "scripts", "help", "holidays", "rules", "notes"].includes(kind);
+  // "products" is deliberately absent: the catalogue is edited on its own
+  // screen against the database, not in a drawer against a fixture.
+  return ["templates", "scripts", "help", "holidays", "rules", "notes"].includes(kind);
 }

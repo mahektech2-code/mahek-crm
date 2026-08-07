@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AppSwitcher } from "@/components/shell/app-switcher";
 import type { AppDefinition } from "@/lib/apps";
 import { Badge, Button, Card, EmptyState, cx } from "@/components/ui/primitives";
@@ -26,6 +27,8 @@ import {
 import { SettingsSection } from "./settings-section";
 import { SettingsToolbar } from "./settings-tools";
 import { AppsSection, AuditSection, DataSection, OverviewSection } from "./platform-sections";
+import { CATALOGUE_SUBTITLE, CATALOGUE_TABS, CatalogueSection } from "./catalogue-section";
+import type { CatalogueData } from "./catalogue-data";
 import { PeopleSection } from "./people-section";
 import { UserDetail } from "./user-detail";
 import { AdminDrawer } from "./drawers";
@@ -67,14 +70,23 @@ export type CrmConfig = {
 
 export type Address = { section?: string; tab?: string };
 
+/**
+ * The catalogue is the CRM's data rather than its configuration, so it gets its
+ * own section instead of a settings tab: a settings tab saves a change set, and
+ * this saves one row at a time against a table every order line points at.
+ */
+const CATALOGUE_SECTION = "catalogue";
+
 export function AdminConsole({
   apps,
   crm,
+  catalogue,
   isPlatformAdmin,
   initial,
 }: {
   apps: AppDefinition[];
   crm: CrmConfig;
+  catalogue: CatalogueData;
   isPlatformAdmin: boolean;
   /** Where the URL says to open. */
   initial: Address;
@@ -82,7 +94,13 @@ export function AdminConsole({
   return (
     <ToastProvider>
       <AdminStore>
-        <ConsoleShell apps={apps} crm={crm} isPlatformAdmin={isPlatformAdmin} initial={initial} />
+        <ConsoleShell
+          apps={apps}
+          crm={crm}
+          catalogue={catalogue}
+          isPlatformAdmin={isPlatformAdmin}
+          initial={initial}
+        />
         <AdminDrawer />
       </AdminStore>
     </ToastProvider>
@@ -100,17 +118,20 @@ function addressOf(section: string, tab: string): string {
 /** Landing on a section means landing on its first tab. */
 function firstTab(section: string): string {
   if (section === "crm") return CRM_SCHEMA.tabs[0]?.key ?? "";
+  if (section === CATALOGUE_SECTION) return CATALOGUE_TABS[0].slug;
   return PLATFORM_TABS[section]?.[0]?.slug ?? "";
 }
 
 function ConsoleShell({
   apps,
   crm,
+  catalogue,
   isPlatformAdmin,
   initial,
 }: {
   apps: AppDefinition[];
   crm: CrmConfig;
+  catalogue: CatalogueData;
   isPlatformAdmin: boolean;
   initial: Address;
 }) {
@@ -148,7 +169,9 @@ function ConsoleShell({
   const platformTabs = PLATFORM_TABS[section];
   const tabs: Array<{ slug: string; label: string }> = appDef
     ? (schema?.tabs.map((t) => ({ slug: t.key, label: t.label })) ?? [])
-    : (platformTabs ?? []);
+    : section === CATALOGUE_SECTION
+      ? CATALOGUE_TABS.map((t) => ({ slug: t.slug, label: t.label }))
+      : (platformTabs ?? []);
   // An unknown slug lands on the first tab rather than a blank screen — a link
   // to a tab that has since been removed should still open something.
   const tabIndex = Math.max(0, tabs.findIndex((t) => t.slug === tab));
@@ -368,6 +391,25 @@ function ConsoleShell({
                 onClick={() => navigate(a.id, firstTab(a.id))}
               />
             ))}
+
+            {/* Shared data rather than one app's settings: the catalogue is what
+                every order line points at, and dispatch and accounts will read
+                the same rows when they arrive. */}
+            <div className="px-3 pt-3.5 pb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+              Data
+            </div>
+            <NavButton
+              label="Catalogue"
+              active={section === CATALOGUE_SECTION}
+              tone={catalogue.summary.unresolved ? "danger" : "success"}
+              badge={catalogue.summary.unresolved ? String(catalogue.summary.unresolved) : undefined}
+              title={
+                catalogue.summary.unresolved
+                  ? `${catalogue.summary.unresolved} SKU names still need a canonical legacy ID`
+                  : undefined
+              }
+              onClick={() => navigate(CATALOGUE_SECTION, firstTab(CATALOGUE_SECTION))}
+            />
           </nav>
 
           <div className="flex-none border-t border-divider p-3">
@@ -395,7 +437,9 @@ function ConsoleShell({
                         ? appDef.status === "Live"
                           ? "Every setting below is declared by the app and rendered from its schema — the console holds no copy of it."
                           : "Registered in the app registry, not yet built."
-                        : PLATFORM_SUBTITLES[section]}
+                        : section === CATALOGUE_SECTION
+                          ? CATALOGUE_SUBTITLE
+                          : PLATFORM_SUBTITLES[section]}
                     </p>
                   </div>
                   <PrimaryAction section={section} />
@@ -459,6 +503,8 @@ function ConsoleShell({
                   onDraft={(key, value) => setDrafts((d) => ({ ...d, [key]: value }))}
                   isPlatformAdmin={isPlatformAdmin}
                   collections={crm.collections}
+                  catalogue={catalogue}
+                  canWriteCatalogue={crm.canWrite}
                 />
 
                 {settingsOpen ? (
@@ -600,6 +646,8 @@ function SectionBody({
   onDraft,
   isPlatformAdmin,
   collections,
+  catalogue,
+  canWriteCatalogue,
 }: {
   section: string;
   tabIndex: number;
@@ -616,7 +664,15 @@ function SectionBody({
   onDraft: (key: string, value: unknown) => void;
   isPlatformAdmin: boolean;
   collections: Record<string, Collection>;
+  catalogue: CatalogueData;
+  canWriteCatalogue: boolean;
 }) {
+  if (section === CATALOGUE_SECTION) {
+    return (
+      <CatalogueBody catalogue={catalogue} canWrite={canWriteCatalogue} tab={tabIndex} />
+    );
+  }
+
   if (comingSoon) {
     return (
       <Card className="mt-5">
@@ -672,6 +728,35 @@ function SectionBody({
   if (section === "notifications") return <NotificationsSection tab={tabIndex} />;
   if (section === "audit") return <AuditSection tab={tabIndex} />;
   return null;
+}
+
+/**
+ * The catalogue reads the database, so a write is followed by re-reading it
+ * rather than by patching a copy in memory — the console holds no copy, the
+ * same way it holds no copy of the configuration.
+ *
+ * A soft refresh, not a reload: `router.refresh()` re-runs the server
+ * component and leaves this screen's own state alone, so an import's report
+ * survives the numbers above it changing.
+ */
+function CatalogueBody({
+  catalogue,
+  canWrite,
+  tab,
+}: {
+  catalogue: CatalogueData;
+  canWrite: boolean;
+  tab: number;
+}) {
+  const router = useRouter();
+  return (
+    <CatalogueSection
+      tab={tab}
+      data={catalogue}
+      canWrite={canWrite}
+      refresh={() => router.refresh()}
+    />
+  );
 }
 
 function DetailPane({ id, onBack }: { id: string; onBack: () => void }) {

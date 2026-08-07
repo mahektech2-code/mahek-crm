@@ -561,15 +561,24 @@ function EntityList({ field, collection }: { field: SchemaField; collection?: Co
           {total} {meta.noun}
           {total > rows.length ? ` · showing ${rows.length}` : ""}
         </span>
-        <Button
-          size="sm"
-          variant="primary"
-          disabled={!meta.editable}
-          title={meta.editable ? undefined : "Authoring this collection is not wired into the console yet"}
-          onClick={() => openDrawer({ kind: field.key as never, id: null })}
-        >
-          {meta.cta}
-        </Button>
+        {/* A collection managed on its own screen links there. One that has
+            no write path at all says so on a disabled button, rather than
+            offering an editor that would not save. */}
+        {meta.href ? (
+          <Button size="sm" variant="secondary" onClick={() => (window.location.href = meta.href!)}>
+            {meta.cta}
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={!meta.editable}
+            title={meta.editable ? undefined : "Authoring this collection is not wired into the console yet"}
+            onClick={() => openDrawer({ kind: field.key as never, id: null })}
+          >
+            {meta.cta}
+          </Button>
+        )}
       </span>
       <span className="block overflow-hidden rounded-[4px] border border-line">
         {rows.map((r, i) => {
@@ -604,7 +613,7 @@ function EntityList({ field, collection }: { field: SchemaField; collection?: Co
           <span className="block px-3 py-5 text-center text-sm text-muted">Nothing here yet.</span>
         ) : null}
       </span>
-      {meta.editable ? null : (
+      {meta.editable || meta.href ? null : (
         <span className="mt-2 block text-[13px] text-muted">
           Read-only here. Authoring this collection is not wired into the console yet, so nothing offers an editor that
           would not save.

@@ -120,6 +120,12 @@ type ConfirmProps = {
   title: string;
   body: React.ReactNode;
   confirmLabel?: string;
+  /**
+   * The way out. "Cancel" is right for an action somebody started and can
+   * abandon; where the choice is between two outcomes — keep it or remove it —
+   * naming the other outcome is clearer than naming the escape.
+   */
+  cancelLabel?: string;
   destructive?: boolean;
   needsReason?: boolean;
   reasonLabel?: string;
@@ -141,6 +147,7 @@ function ConfirmDialogBody({
   title,
   body,
   confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
   destructive,
   needsReason,
   reasonLabel = "Reason",
@@ -173,7 +180,7 @@ function ConfirmDialogBody({
       footer={
         <>
           <Button onClick={onClose} variant="secondary">
-            Cancel
+            {cancelLabel}
           </Button>
           <Button
             onClick={confirm}

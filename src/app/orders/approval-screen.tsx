@@ -23,6 +23,7 @@ import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { approveOrderAction, declineOrderAction } from "@/lib/actions/orders";
 import { money, phoneDisplay, stamp } from "@/lib/format";
+import { describeQuantity } from "@/lib/catalogue";
 
 type PendingOrder = {
   orderId: string;
@@ -42,7 +43,15 @@ type PendingOrder = {
   waitingHours: number;
 };
 
-type Line = { productName: string; packSize: string | null; quantity: number };
+type Line = {
+  productName: string;
+  packSize: string | null;
+  subtitle: string | null;
+  /** Cans. Litres and boxes come from the packing, never from the figure itself. */
+  quantity: number;
+  millilitresPerCan: number | null;
+  cansPerBox: number;
+};
 
 /** Waiting a day is worth saying out loud; waiting an hour is not. */
 function waitingLabel(hours: number): { text: string; urgent: boolean } {
@@ -301,11 +310,21 @@ function ReviewDrawer({
                 key={`${l.productName}:${i}`}
                 className="flex items-center justify-between border-b border-divider px-3 py-2 last:border-0"
               >
-                <span className="min-w-0 flex-1 truncate text-sm text-body">
-                  {l.packSize ? `${l.productName} — ${l.packSize}` : l.productName}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-body">
+                    {l.packSize ? `${l.productName} — ${l.packSize}` : l.productName}
+                  </span>
+                  {/* Accounts approve orders for products whose names differ by
+                      one word. The formulation is what tells them apart. */}
+                  {l.subtitle ? (
+                    <span className="block truncate text-[11px] text-muted">{l.subtitle}</span>
+                  ) : null}
                 </span>
-                <span className="ml-3 text-sm font-medium text-ink">
-                  × {l.quantity}
+                <span className="ml-3 text-right text-sm font-medium whitespace-nowrap text-ink">
+                  {describeQuantity(l.quantity, {
+                    millilitresPerCan: l.millilitresPerCan,
+                    cansPerBox: l.cansPerBox,
+                  })}
                 </span>
               </div>
             ))

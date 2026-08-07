@@ -55,9 +55,25 @@ import { saveInteraction } from "@/lib/services/interaction-service";
 import { seedCatalogue } from "@/db/seed-catalogue";
 import {
   products as productsTable,
+  productAliases as productAliasesTable,
+  catalogueExceptions as catalogueExceptionsTable,
+  finishedGoods as finishedGoodsTable,
   quickNotes as quickNotesTable,
   interactionProductLines,
 } from "@/db/schema";
+import { importCatalogue } from "@/lib/services/catalogue-import";
+import {
+  searchProducts,
+  popularProducts,
+  customerProducts,
+} from "@/lib/services/product-service";
+import { globalSearch } from "@/lib/queries";
+import { describeQuantity } from "@/lib/catalogue";
+import {
+  chooseCanonicalId,
+  nameHeldRow,
+  setSkuActive,
+} from "@/lib/actions/catalogue";
 import {
   collectionsMetrics,
   getFollowUpWorklist,
@@ -160,7 +176,9 @@ beforeEach(async () => {
       audit_log, job_runs, bug_reports, help_articles, notifications,
       inactive_watch_items, monthly_targets, wa_runs, wa_replies, wa_messages,
       wa_templates, complaint_status_history, complaints, reminders,
-      interaction_product_lines, products, quick_notes, migration_exceptions,
+      interaction_product_lines, catalogue_exceptions, product_aliases, products,
+      finished_goods, product_brands, product_formulations,
+      quick_notes, migration_exceptions,
       follow_up_attempts, follow_up_states, payments, bills,
       orders, calls, eod_reports, attendance, app_access, sessions, password_resets,
       customers, users, app_settings
@@ -3219,5 +3237,298 @@ describe("Collections figures and the stage 1 batch", () => {
     const refused = await startStageOneBatch();
     assert.equal(refused.ok, false);
     assert.match(refused.error, /manager/i);
+  });
+});
+
+/* ------------------------------------------------------------- catalogue */
+
+describe("The product master — importing it, and what an import must not touch", () => {
+  test("the four levels land, and a second run changes nothing", async () => {
+    // beforeEach has already run one import via seedCatalogue.
+    const [levels] = await db.execute<{
+      formulations: number;
+      brands: number;
+      goods: number;
+      skus: number;
+    }>(sql`
+      select (select count(*)::int from product_formulations) as formulations,
+             (select count(*)::int from product_brands) as brands,
+             (select count(*)::int from finished_goods) as goods,
+             (select count(*)::int from products where finished_good_id is not null) as skus
+    `);
+    assert.equal(levels.formulations, 19);
+    assert.equal(levels.brands, 32);
+    assert.equal(levels.goods, 107);
+    assert.equal(levels.skus, 213);
+
+    const again = await importCatalogue();
+    assert.equal(again.created, 0, "a second run must create nothing");
+    assert.equal(again.updated, 0, "a second run must update nothing");
+    assert.ok(again.unchanged > 300);
+  });
+
+  test("a name carried by two legacy IDs is held, never auto-picked", async () => {
+    const held = await db
+      .select()
+      .from(productsTable)
+      .where(eq(productsTable.status, "needs_canonical_id"));
+
+    assert.equal(held.length, 15);
+    for (const row of held) {
+      assert.equal(row.active, false, `${row.name} must not be orderable while unidentified`);
+      assert.equal(row.externalCode, null, "the import must not choose an ID");
+      assert.ok((row.externalIds ?? []).length > 1, "a held row keeps every candidate");
+    }
+  });
+
+  test("choosing a canonical ID makes the losers aliases and the SKU orderable", async () => {
+    setTestUser(manager);
+    const [subject] = await db
+      .select()
+      .from(productsTable)
+      .where(eq(productsTable.status, "needs_canonical_id"))
+      .limit(1);
+    const [chosen, ...losers] = subject.externalIds ?? [];
+
+    const result = await chooseCanonicalId(subject.id, chosen);
+    assert.equal(result.ok, true, result.ok ? "" : result.error);
+
+    const [after] = await db
+      .select()
+      .from(productsTable)
+      .where(eq(productsTable.id, subject.id));
+    assert.equal(after.status, "ok");
+    assert.equal(after.active, true);
+    assert.equal(after.externalCode, String(chosen));
+
+    // The losing IDs must keep resolving: legacy rows carry them.
+    const aliases = await db
+      .select()
+      .from(productAliasesTable)
+      .where(eq(productAliasesTable.productId, subject.id));
+    assert.equal(aliases.length, losers.length);
+    for (const l of losers) {
+      assert.ok(aliases.some((a) => a.externalId === l), `#${l} lost its alias`);
+    }
+  });
+
+  test("a re-import never unmakes a canonical ID somebody chose", async () => {
+    setTestUser(manager);
+    const [subject] = await db
+      .select()
+      .from(productsTable)
+      .where(eq(productsTable.status, "needs_canonical_id"))
+      .limit(1);
+    const chosen = (subject.externalIds ?? [])[0];
+    await chooseCanonicalId(subject.id, chosen);
+
+    await importCatalogue();
+
+    const [after] = await db
+      .select()
+      .from(productsTable)
+      .where(eq(productsTable.id, subject.id));
+    assert.equal(after.status, "ok", "the import reset a decision a person made");
+    assert.equal(after.externalCode, String(chosen));
+    assert.equal(after.active, true, "the import took a resolved SKU off the order form");
+  });
+
+  test("a re-import never puts a retired SKU back on the order form", async () => {
+    setTestUser(manager);
+    const [live] = await db
+      .select()
+      .from(productsTable)
+      .where(and(eq(productsTable.status, "ok"), eq(productsTable.active, true)))
+      .limit(1);
+
+    const retired = await setSkuActive(live.id, false);
+    assert.equal(retired.ok, true, retired.ok ? "" : retired.error);
+
+    await importCatalogue();
+
+    const [after] = await db
+      .select()
+      .from(productsTable)
+      .where(eq(productsTable.id, live.id));
+    assert.equal(
+      after.active,
+      false,
+      "whether a SKU is offered is a decision, and the import must not overrule it",
+    );
+  });
+
+  test("search reaches the formulation, so M5x4 finds the Nano SKUs", async () => {
+    const results = await searchProducts("M5x4");
+    assert.ok(results.length > 0, "the formulation name found nothing");
+    assert.ok(
+      results.some((r) => r.name.includes("Nano")),
+      "a telecaller told 'M5x4' has to reach the Nano SKUs",
+    );
+    // The formulation is what separates two near-identical names on screen.
+    assert.ok(results.every((r) => r.subtitle));
+  });
+
+  test("a held legacy row cannot be ordered until somebody names it", async () => {
+    setTestUser(manager);
+    const exceptions = await db.select().from(catalogueExceptionsTable);
+    const held = exceptions.filter((e) => e.kind === "held");
+    const excluded = exceptions.filter((e) => e.kind === "excluded");
+
+    assert.equal(held.length, 2, "IDs 76 and 77 have packing but no sellable name");
+    assert.equal(excluded.length, 1, "the empty drum is packaging, not a product");
+    for (const e of held) assert.equal(e.resolvedAt, null);
+
+    // Naming one is what turns it into something a telecaller can pick.
+    const [good] = await db.select().from(finishedGoodsTable).limit(1);
+    const named = await nameHeldRow(held[0].id, {
+      name: "Epoxy Thinner (FD) - 1 Liter (16 Can/Box) [named]",
+      finishedGoodId: good.id,
+      packing: "16 Can/Box",
+      cansPerBox: 16,
+      millilitresPerCan: 1000,
+    });
+    assert.equal(named.ok, true, named.ok ? "" : named.error);
+
+    const [row] = await db
+      .select()
+      .from(catalogueExceptionsTable)
+      .where(eq(catalogueExceptionsTable.id, held[0].id));
+    assert.ok(row.resolvedAt, "the held row must record what it became");
+  });
+
+  test("excluded packaging cannot be named into a product", async () => {
+    setTestUser(manager);
+    const [drum] = await db
+      .select()
+      .from(catalogueExceptionsTable)
+      .where(eq(catalogueExceptionsTable.kind, "excluded"));
+    const [good] = await db.select().from(finishedGoodsTable).limit(1);
+
+    const refused = await nameHeldRow(drum.id, {
+      name: "Empty Drum 200 Liter",
+      finishedGoodId: good.id,
+      packing: "Drum",
+      cansPerBox: 1,
+      millilitresPerCan: 200000,
+    });
+    assert.equal(refused.ok, false);
+    assert.match(refused.error, /packaging/i);
+  });
+
+  test("a telecaller cannot change the catalogue, and the denial is recorded", async () => {
+    setTestUser(priya);
+    const [live] = await db.select().from(productsTable).limit(1);
+    const refused = await setSkuActive(live.id, false);
+    assert.equal(refused.ok, false);
+  });
+});
+
+describe("The catalogue as the telecaller meets it", () => {
+  test("the picker is offered a handful, not the catalogue", async () => {
+    setTestUser(manager);
+    await updateSetting("products.starterListCount", 8, manager.id);
+
+    const offered = await popularProducts();
+    assert.ok(offered.length <= 8, `offered ${offered.length}, which is a list to read mid-call`);
+    assert.ok(offered.length > 0, "a telecaller opening the panel must be offered something");
+    // Everything offered carries what tells two near-identical names apart.
+    for (const p of offered) assert.ok("subtitle" in p);
+  });
+
+  test("nothing held or retired is ever offered", async () => {
+    setTestUser(manager);
+    await updateSetting("products.starterListCount", 50, manager.id);
+
+    const held = await db
+      .select({ id: productsTable.id })
+      .from(productsTable)
+      .where(eq(productsTable.status, "needs_canonical_id"));
+    const offeredIds = new Set((await popularProducts()).map((p) => p.productId));
+    for (const h of held) {
+      assert.equal(offeredIds.has(h.id), false, "a SKU nobody can identify was offered on an order form");
+    }
+  });
+
+  test("a customer's history follows a name through an alias", async () => {
+    setTestUser(manager);
+    const customer = await makeCustomer(priya.id);
+
+    // A resolved duplicate leaves the losing spelling behind as an alias, and
+    // an external order carrying it has to keep counting.
+    const [sku] = await db
+      .select()
+      .from(productsTable)
+      .where(eq(productsTable.status, "needs_canonical_id"))
+      .limit(1);
+    await chooseCanonicalId(sku.id, (sku.externalIds ?? [])[0]);
+    const [alias] = await db
+      .select()
+      .from(productAliasesTable)
+      .where(eq(productAliasesTable.productId, sku.id));
+
+    await db.insert(orders).values({
+      id: `ord_${randomUUID().slice(0, 12)}`,
+      customerId: customer.id,
+      source: "external",
+      externalRef: `EXT-${randomUUID().slice(0, 6)}`,
+      orderedAt: new Date(),
+      totalAmount: 500000,
+      status: "confirmed",
+      // Spelled the losing way, and typed badly on top of it.
+      lineItems: [
+        { product: alias.name.toLowerCase().replace(/ /g, ""), quantity: 4, unitPrice: 0, amount: 0 },
+      ],
+    });
+
+    const history = await customerProducts(customer.id, { limit: 0 });
+    assert.ok(
+      history.some((h) => h.productId === sku.id),
+      "an order naming the alias contributed nothing to the history",
+    );
+  });
+
+  test("global search finds a SKU by the formulation nobody puts on a label", async () => {
+    setTestUser(priya);
+
+    // "135" appears in the formulation "Mylac - 135" and in no SKU name at
+    // all, so anything it returns was reached through the formulation rather
+    // than through the label — which is the whole point.
+    const results = await globalSearch("135");
+    assert.ok(results.products.length > 0, "the formulation found no products");
+    for (const p of results.products) {
+      assert.ok(
+        p.name.startsWith("Mylac"),
+        `${p.name} is not a Mylac SKU, so the formulation match reached too far`,
+      );
+      assert.match(p.subtitle, /Mylac - 135/);
+    }
+  });
+
+  test("searching a name ranks that name above the rest of its formulation", async () => {
+    setTestUser(priya);
+    // One liquid, three brand names. Typing one of them should not bury it
+    // under its own siblings — the list is five long and a telecaller reads
+    // the top of it.
+    const results = await globalSearch("M5x4");
+    assert.ok(results.products.length > 0);
+    assert.ok(
+      results.products[0].name.includes("M5x4"),
+      `typed "M5x4" and the first result was ${results.products[0].name}`,
+    );
+  });
+
+  test("a quantity is cans, and reads back as litres and boxes", async () => {
+    const [sku] = await db
+      .select()
+      .from(productsTable)
+      .where(eq(productsTable.name, "Nano Thinner - 5 Liter (6 Can/Box)"));
+    assert.ok(sku, "the seeded catalogue is missing a SKU the test names");
+    assert.equal(
+      describeQuantity(12, {
+        millilitresPerCan: sku.millilitresPerCan,
+        cansPerBox: sku.cansPerBox,
+      }),
+      "12 cans · 60 L · 2 boxes",
+    );
   });
 });

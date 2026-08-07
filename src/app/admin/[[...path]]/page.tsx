@@ -6,6 +6,15 @@ import { can } from "@/lib/access-control";
 import { getConfig, configWarnings } from "@/lib/config/store";
 import { listCollections } from "@/lib/config/entity-collections";
 import { crmSchema, schemaFields, toConsole } from "@/lib/config/schema-contract";
+import {
+  catalogueSummary,
+  listAliases,
+  listDuplicates,
+  listExceptions,
+  listHierarchy,
+  listSkus,
+} from "@/lib/services/catalogue-service";
+import { SOURCE_DISCREPANCIES } from "@/db/catalogue-seed";
 import type { Config } from "@/lib/config/registry";
 import { AdminConsole } from "../console";
 
@@ -26,8 +35,10 @@ export const metadata = { title: "Admin Console · MahekOne" };
  */
 export default async function Page({
   params,
+  searchParams,
 }: {
   params: Promise<{ path?: string[] }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { path } = await params;
   const [section, tab] = path ?? [];
@@ -44,6 +55,32 @@ export default async function Page({
     listCollections(),
   ]);
 
+  // The SKU list is filtered and paged by the address, so a filtered list is a
+  // screen somebody can send to somebody else.
+  const query = await searchParams;
+  const one = (k: string) => {
+    const v = query[k];
+    return Array.isArray(v) ? v[0] : v;
+  };
+  const page = Math.max(1, Number(one("page") ?? 1) || 1);
+  const PER_PAGE = 50;
+  const status = one("status") ?? "all";
+
+  const [summary, skuPage, hierarchy, duplicates, exceptions, aliases] = await Promise.all([
+    catalogueSummary(),
+    listSkus({
+      query: one("q"),
+      formulationId: one("formulation"),
+      status: status as "all" | "ok" | "needs_canonical_id" | "inactive",
+      limit: PER_PAGE,
+      offset: (page - 1) * PER_PAGE,
+    }),
+    listHierarchy(),
+    listDuplicates(),
+    listExceptions(),
+    listAliases(),
+  ]);
+
   // Stored values, projected into the shapes the console's controls edit.
   const values: Record<string, unknown> = {};
   for (const f of schemaFields(crmSchema())) {
@@ -55,6 +92,21 @@ export default async function Page({
       apps={APPS.filter((a) => apps.includes(a.id))}
       isPlatformAdmin={isPlatformAdmin}
       initial={{ section, tab }}
+      catalogue={{
+        summary,
+        skus: skuPage.rows,
+        total: skuPage.total,
+        page,
+        pages: Math.max(1, Math.ceil(skuPage.total / PER_PAGE)),
+        hierarchy,
+        duplicates,
+        exceptions,
+        aliases,
+        filters: { query: one("q"), formulationId: one("formulation"), status },
+        priceSource: config["products.priceSource"],
+        discrepancies: SOURCE_DISCREPANCIES,
+        lastReport: null,
+      }}
       crm={{
         values,
         config,
