@@ -192,13 +192,13 @@ function reasonsFor(
       const late = daysBetween(r.dueDate, today);
       reasons.push({
         kind: "reminderOverdue",
-        label: `Reminder ${late} day${late === 1 ? "" : "s"} overdue — ${r.note}`,
+        label: `Reminder ${late} day${late === 1 ? "" : "s"} overdue - ${r.note}`,
         weight: weights.reminderOverdue,
       });
     } else if (r.dueDate === today) {
       reasons.push({
         kind: "reminderDueToday",
-        label: `Reminder due today — ${r.note}`,
+        label: `Reminder due today - ${r.note}`,
         weight: weights.reminderDueToday,
       });
     }
@@ -226,27 +226,27 @@ function reasonsFor(
         if (cyclesMissed >= 1) {
           reasons.push({
             kind: "orderOverdueFullCycle",
-            label: `Order overdue by ${cyclesMissed} full cycle${cyclesMissed === 1 ? "" : "s"} — expected ${expected}`,
+            label: `Order overdue by ${cyclesMissed} full cycle${cyclesMissed === 1 ? "" : "s"} - expected ${expected}`,
             weight: weights.orderOverdueFullCycle,
           });
         } else {
           reasons.push({
             kind: "orderDue",
-            label: `Order overdue by ${overdueDays} day${overdueDays === 1 ? "" : "s"} — expected ${expected}`,
+            label: `Order overdue by ${overdueDays} day${overdueDays === 1 ? "" : "s"} - expected ${expected}`,
             weight: weights.orderDue,
           });
         }
       } else if (today === expected) {
         reasons.push({
           kind: "orderDue",
-          label: `Order due today — ${c.cycleDays}-day cycle`,
+          label: `Order due today - ${c.cycleDays}-day cycle`,
           weight: weights.orderDue,
         });
       } else {
         const inDays = daysBetween(today, expected);
         reasons.push({
           kind: "orderDueSoon",
-          label: `Orders every ${c.cycleDays} days — next one due in ${inDays} day${inDays === 1 ? "" : "s"}`,
+          label: `Orders every ${c.cycleDays} days - next one due in ${inDays} day${inDays === 1 ? "" : "s"}`,
           weight: weights.orderDueSoon,
         });
       }
@@ -263,8 +263,8 @@ function reasonsFor(
       reasons.push({
         kind: "prospect",
         label: c.lastContactDate
-          ? `Never ordered — ${daysSince} days since last contact`
-          : `Never ordered — on the book ${daysSince} days, never contacted`,
+          ? `Never ordered - ${daysSince} days since last contact`
+          : `Never ordered - on the book ${daysSince} days, never contacted`,
         weight: weights.prospect,
       });
     }
@@ -297,16 +297,16 @@ function reasonsFor(
       reasons.push({
         kind: "checkInOverdue",
         label: fastCycling
-          ? `Orders every ${c.cycleDays} days — no contact for ${daysSince} days`
-          : `No contact for ${daysSince} days — cycle not established yet`,
+          ? `Orders every ${c.cycleDays} days - no contact for ${daysSince} days`
+          : `No contact for ${daysSince} days - cycle not established yet`,
         weight: weights.checkInOverdue,
       });
     } else if (daysSince >= interval) {
       reasons.push({
         kind: "checkInDue",
         label: fastCycling
-          ? `Weekly check-in — orders every ${c.cycleDays} days, ${daysSince} days since last contact`
-          : `Check-in due — ${daysSince} days since last contact`,
+          ? `Weekly check-in - orders every ${c.cycleDays} days, ${daysSince} days since last contact`
+          : `Check-in due - ${daysSince} days since last contact`,
         weight: weights.checkInDue,
       });
     }
@@ -362,7 +362,7 @@ function quietWindow(
   const sinceOrder = daysBetween(c.lastOrderDate, today);
   if (sinceOrder >= quiet) return null;
   const left = quiet - sinceOrder;
-  return `Orders every ${c.cycleDays} days · ordered ${sinceOrder === 0 ? "today" : `${sinceOrder} day${sinceOrder === 1 ? "" : "s"} ago`} — no order chased for ${left} more day${left === 1 ? "" : "s"}`;
+  return `Orders every ${c.cycleDays} days · ordered ${sinceOrder === 0 ? "today" : `${sinceOrder} day${sinceOrder === 1 ? "" : "s"} ago`} - no order chased for ${left} more day${left === 1 ? "" : "s"}`;
 }
 
 function suppressionReason(
@@ -373,7 +373,7 @@ function suppressionReason(
 ): string | null {
   if (c.doNotContact) return "Marked do not contact";
 
-  if (c.skippedTodayReason) return `Skipped today — ${c.skippedTodayReason}`;
+  if (c.skippedTodayReason) return `Skipped today - ${c.skippedTodayReason}`;
 
   if (config["queue.excludeCalledToday"] && c.calledToday) {
     return "Already called today";
@@ -391,7 +391,7 @@ function suppressionReason(
     const elapsed = daysBetween(c.lastNoOrderDate, today);
     if (elapsed < cooldown) {
       const left = cooldown - elapsed;
-      return `No order ${elapsed === 0 ? "today" : `${elapsed} day${elapsed === 1 ? "" : "s"} ago`} — asking again in ${left} day${left === 1 ? "" : "s"}`;
+      return `No order ${elapsed === 0 ? "today" : `${elapsed} day${elapsed === 1 ? "" : "s"} ago`} - asking again in ${left} day${left === 1 ? "" : "s"}`;
     }
   }
 
@@ -404,7 +404,7 @@ function suppressionReason(
     const elapsed = daysBetween(c.lastConfirmedWhatsappDate, today);
     if (elapsed < cooldown) {
       const left = cooldown - elapsed;
-      return `WhatsApp sent ${elapsed === 0 ? "today" : `${elapsed} day${elapsed === 1 ? "" : "s"} ago`} — ${left} day${left === 1 ? "" : "s"} of cooldown left`;
+      return `WhatsApp sent ${elapsed === 0 ? "today" : `${elapsed} day${elapsed === 1 ? "" : "s"} ago`} - ${left} day${left === 1 ? "" : "s"} of cooldown left`;
     }
   }
 

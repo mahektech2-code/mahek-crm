@@ -10,7 +10,7 @@ import { getQueue } from "@/lib/services/queue-service";
 import { QueueScreen } from "./queue-screen";
 import type { CallTarget } from "@/components/crm/call-panel";
 
-export const metadata = { title: "Call Log — MahekOne CRM" };
+export const metadata = { title: "Call Log - MahekOne CRM" };
 
 export default async function QueuePage() {
   const user = await requireUser();

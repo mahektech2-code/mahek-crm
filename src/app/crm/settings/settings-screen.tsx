@@ -58,6 +58,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   reminders: "Reminders",
   complaints: "Complaints",
   products: "Products",
+  attachments: "Attachments",
   interactions: "Interactions",
   whatsapp: "WhatsApp",
 };
@@ -102,7 +103,7 @@ export function SettingsScreen({
     <div className="max-w-[1000px] px-6 pt-6 pb-10">
       <PageHeader
         title="Configuration"
-        subtitle="Every threshold the system runs on. Changes take effect on the next read — no restart, no redeploy — and each one is recorded against your name."
+        subtitle="Every threshold the system runs on. Changes take effect on the next read - no restart, no redeploy - and each one is recorded against your name."
       />
 
       {warnings.length ? (
@@ -132,7 +133,7 @@ export function SettingsScreen({
         </span>
         <span className="flex-1" />
         <span className="text-[13px] text-muted">
-          The defaults are placeholders — every one is expected to be tuned.
+          The defaults are placeholders - every one is expected to be tuned.
         </span>
       </Card>
 
@@ -248,7 +249,7 @@ function SettingRowBody({ setting: s }: { setting: Setting }) {
         ) : s.type === "structured" ? (
           <Field
             label="Value"
-            hint="JSON — the shape must match what the engine expects"
+            hint="JSON - the shape must match what the engine expects"
             className="mb-0"
           >
             <Textarea

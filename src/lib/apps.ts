@@ -84,7 +84,7 @@ export const APPS: AppDefinition[] = [
     description: "Accounts, roles and app access for the whole team.",
     href: "/admin",
     tone: "neutral",
-    built: false,
+    built: true,
   },
 ];
 

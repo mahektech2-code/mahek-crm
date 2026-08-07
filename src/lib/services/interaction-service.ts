@@ -86,6 +86,19 @@ export const saveInteractionSchema = z.object({
     ])
     .optional(),
 
+  /**
+   * The complaint as the customer put it. The call notes are about the call;
+   * this is the text the resolver reads, so it is captured separately rather
+   * than borrowed from them.
+   */
+  complaintDescription: z.string().optional(),
+  /** A credit note the customer asked for, and the bill it is against. */
+  complaintRequestCn: z.boolean().default(false),
+  /** Whole rupees from the form; stored as paise. Only ever with a Yes. */
+  complaintCnAmount: z.coerce.number().int().positive().optional(),
+  complaintBillId: z.string().optional(),
+  complaintGoodsDescription: z.string().optional(),
+
   /** Order-received only. User-entered, may be in the past, never the future. */
   orderDate: z.string().optional(),
 
@@ -169,7 +182,7 @@ export async function saveInteraction(
   // 2. Follow-up needs a date, and it cannot be in the past.
   if (input.outcome === "follow_up") {
     if (!input.followUpDate) {
-      return fieldError("followUpDate", "Pick the follow-up date — it becomes a reminder.");
+      return fieldError("followUpDate", "Pick the follow-up date - it becomes a reminder.");
     }
     if (input.followUpDate < day) {
       return fieldError("followUpDate", "The follow-up date cannot be in the past.");
@@ -183,9 +196,38 @@ export async function saveInteraction(
     }
   }
 
-  // 4. A complaint without a category cannot be routed.
-  if (input.outcome === "complaint" && !input.complaintCategory) {
-    return fieldError("complaintCategory", "Pick the complaint category.");
+  // 4. A complaint without a category cannot be routed, without a description
+  //    cannot be worked, and a credit note with no bill behind it is not
+  //    actionable by accounts. The same three rules as the complaints screen —
+  //    a complaint raised mid-call is not a lesser record.
+  if (input.outcome === "complaint") {
+    if (!input.complaintCategory) {
+      return fieldError("complaintCategory", "Pick the complaint category.");
+    }
+    // The description is its own field, but a complaint whose words were typed
+    // into the call note is still a described complaint — what must never
+    // happen is a resolver opening one that says nothing.
+    if (!input.complaintDescription?.trim() && !input.notes?.trim()) {
+      return fieldError(
+        "complaintDescription",
+        "Describe the complaint in the customer's words.",
+      );
+    }
+    if (input.complaintRequestCn && !input.complaintBillId) {
+      return fieldError(
+        "complaintBillId",
+        "Pick the bill this credit note relates to.",
+      );
+    }
+    // §6.2 — an amount without a Yes is rejected. A figure sitting on a
+    // complaint nobody asked a credit note for reads as an approved amount to
+    // whoever opens it later.
+    if (input.complaintCnAmount && !input.complaintRequestCn) {
+      return fieldError(
+        "complaintCnAmount",
+        "There is a credit note amount but no credit note request. Choose Yes, or clear the amount.",
+      );
+    }
   }
 
   // 5. Order received: the date is required and cannot be in the future.
@@ -330,7 +372,7 @@ export async function saveInteraction(
       });
       produced.push("order");
       warnings.push(
-        "Order value is zero — the system does not hold product rates yet, so quantities were saved without a value.",
+        "Order value is zero - the system does not hold product rates yet, so quantities were saved without a value.",
       );
     }
 
@@ -377,6 +419,11 @@ export async function saveInteraction(
 
     /* --------------------------------------------------------- complaint */
     if (input.outcome === "complaint") {
+      const complaintText =
+        input.complaintDescription?.trim() ||
+        input.notes?.trim() ||
+        "Reported on a call";
+
       // An existing open complaint in the same category is updated, not
       // duplicated — and the caller is told which happened.
       const [open] = await tx
@@ -401,8 +448,24 @@ export async function saveInteraction(
           fromStatus: open.status,
           toStatus: open.status,
           changedById: ctx.user.id,
-          note: `Raised again on a call: ${input.notes?.trim() || "no note"}`,
+          note: `Raised again on a call: ${complaintText}`,
         });
+        // Asking for a credit note is new information about a complaint we
+        // already knew about, so it lands on the existing row rather than
+        // being lost with the duplicate. An existing request is never
+        // withdrawn here — that is the resolver's decision, not this call's.
+        if (input.complaintRequestCn && !open.requestCn) {
+          await tx
+            .update(complaints)
+            .set({
+              requestCn: true,
+              billId: input.complaintBillId ?? null,
+              goodsDescription:
+                input.complaintGoodsDescription?.trim() || null,
+              updatedById: ctx.user.id,
+            })
+            .where(eq(complaints.id, complaintId));
+        }
         produced.push("complaint-updated");
       } else {
         complaintId = id("cmp");
@@ -414,9 +477,24 @@ export async function saveInteraction(
           loggedByUserId: ctx.user.id,
           callId: interactionId,
           category: input.complaintCategory!,
-          description: input.notes?.trim() || "Reported on a call",
+          description: complaintText,
           severity,
           slaDueAt: new Date(now.getTime() + slaHours * 3_600_000),
+          mobileNumber: customer.phone,
+          requestCn: input.complaintRequestCn,
+          billId: input.complaintRequestCn
+            ? (input.complaintBillId ?? null)
+            : null,
+          goodsDescription: input.complaintRequestCn
+            ? input.complaintGoodsDescription?.trim() || null
+            : null,
+          cnAmount:
+            input.complaintRequestCn && input.complaintCnAmount
+              ? input.complaintCnAmount * 100
+              : null,
+          // Requested is where every request starts and, until something
+          // outside the CRM moves it, where it stays.
+          cnStatus: input.complaintRequestCn ? "requested" : null,
           createdById: ctx.user.id,
           updatedById: ctx.user.id,
         });
@@ -559,7 +637,7 @@ export async function saveInteraction(
 
     if (state && !verdict.allowed) {
       warnings.push(
-        `${customer.name} is at stage ${state.stage}, which is WhatsApp-only — the call was logged, but not counted as a collections attempt.`,
+        `${customer.name} is at stage ${state.stage}, which is WhatsApp-only - the call was logged, but not counted as a collections attempt.`,
       );
     } else if (state) {
       await db.insert(followUpAttempts).values({

@@ -5,7 +5,7 @@ import { listReminders } from "@/lib/services/worklist-services";
 import { nowMs } from "@/lib/format";
 import { HistoryScreen } from "./history-screen";
 
-export const metadata = { title: "Call history — MahekOne CRM" };
+export const metadata = { title: "Call history - MahekOne CRM" };
 
 export default async function HistoryPage() {
   const user = await requireUser();

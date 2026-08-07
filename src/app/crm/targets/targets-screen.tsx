@@ -179,7 +179,7 @@ export function TargetsScreen({
           { label: "Behind", value: String(behind.length), tone: behind.length ? "danger" : "ink" },
           {
             label: "Biggest single gap",
-            value: behind.length ? moneyShort(Math.max(...behind.map((r) => r.gap))) : "—",
+            value: behind.length ? moneyShort(Math.max(...behind.map((r) => r.gap))) : "-",
           },
         ]}
       />
@@ -307,7 +307,7 @@ export function TargetsScreen({
                       </span>
                     </span>
                   </Td>
-                  <Td>{r.ownerName ?? "—"}</Td>
+                  <Td>{r.ownerName ?? "-"}</Td>
                   <Td align="right">
                     <span className="flex justify-end">
                       <RowMenu
@@ -510,7 +510,7 @@ function BulkTargetModal({
         {mode === "uplift" ? (
           <Field
             label="Uplift %"
-            hint="Applied to the customer's average order spread over a month — so a big account gets a big target."
+            hint="Applied to the customer's average order spread over a month - so a big account gets a big target."
           >
             <Input
               type="number"
@@ -538,7 +538,7 @@ function BulkTargetModal({
         <div className="rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-2 text-[13px] text-warn-ink">
           This overwrites existing targets for the customers it touches
           {onlyDefaults
-            ? " — with the box ticked, only the untouched defaults change."
+            ? " - with the box ticked, only the untouched defaults change."
             : `, all ${count} of them.`}
         </div>
       </div>

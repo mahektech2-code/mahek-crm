@@ -5,7 +5,7 @@ import { BrandPanel, BrandPanelHeading } from "@/components/shell/brand-panel";
 import { Icon } from "@/components/shell/icons";
 import { ForgotForm } from "./forgot-form";
 
-export const metadata = { title: "Forgot password — MahekOne" };
+export const metadata = { title: "Forgot password - MahekOne" };
 
 export default async function ForgotPasswordPage() {
   // Somebody already signed in does not need a reset link to change anything.
@@ -26,7 +26,7 @@ export default async function ForgotPasswordPage() {
         </BrandPanelHeading>
         <p className="animate-rise mt-3.5 text-[15px] leading-6 text-balance text-white/70 [animation-delay:80ms]">
           Enter the work email your account was created with and we send a link
-          to set a new password. Nobody — not even your manager — can see or
+          to set a new password. Nobody - not even your manager - can see or
           send you an existing one.
         </p>
       </BrandPanel>

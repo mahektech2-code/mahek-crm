@@ -4,7 +4,7 @@ import { recentJobRuns } from "@/lib/jobs";
 import { EmptyState, PageHeader } from "@/components/ui/primitives";
 import { SettingsScreen } from "./settings-screen";
 
-export const metadata = { title: "Configuration — MahekOne CRM" };
+export const metadata = { title: "Configuration - MahekOne CRM" };
 
 export default async function SettingsPage() {
   const user = await requireUser();
@@ -17,7 +17,7 @@ export default async function SettingsPage() {
         <PageHeader title="Configuration" />
         <EmptyState
           title="Managers only"
-          body="These are the thresholds the whole system runs on — buying cycles, escalation timing, targets. A manager can change them; ask if something looks wrong."
+          body="These are the thresholds the whole system runs on - buying cycles, escalation timing, targets. A manager can change them; ask if something looks wrong."
         />
       </div>
     );

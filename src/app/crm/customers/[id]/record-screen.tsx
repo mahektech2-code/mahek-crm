@@ -154,13 +154,13 @@ export function RecordScreen({
   const paysLate = customer.paysInDays > customer.creditTermDays;
 
   const alert = followUpStage?.held
-    ? `Held at stage ${followUpStage.stage} — ${followUpStage.heldReason ?? "a dispute is open"}.`
+    ? `Held at stage ${followUpStage.stage} - ${followUpStage.heldReason ?? "a dispute is open"}.`
     : openComplaint
-      ? `Open ${openComplaint.category.toLowerCase()} complaint — mention it before anything else.`
+      ? `Open ${openComplaint.category.toLowerCase()} complaint - mention it before anything else.`
       : openPromise && openPromise.promisedBy < today()
         ? `${money(openPromise.amount)} was promised for ${shortDate(openPromise.promisedBy)} and has not arrived.`
         : customer.deactivationRequested
-          ? `Deactivation requested — ${customer.deactivationReason ?? "no reason recorded"}. Waiting on a manager.`
+          ? `Deactivation requested - ${customer.deactivationReason ?? "no reason recorded"}. Waiting on a manager.`
           : overCycle
             ? `${daysSinceOrder} days since the last order, against a ${customer.cycleDays}-day buying cycle.`
             : null;
@@ -342,13 +342,13 @@ export function RecordScreen({
                 label="Days since order"
                 tone={overCycle ? "danger" : undefined}
               >
-                {daysSinceOrder === null ? "—" : ageLabel(daysSinceOrder)}
+                {daysSinceOrder === null ? "-" : ageLabel(daysSinceOrder)}
               </Figure>
               <Figure label="Buying cycle">
                 {customer.cycleDays} days
                 {customer.cycleIsDefault ? (
                   <span className="ml-1 text-[11px] font-normal text-muted">
-                    (default — not enough order history)
+                    (default - not enough order history)
                   </span>
                 ) : null}
               </Figure>
@@ -392,7 +392,7 @@ export function RecordScreen({
           <Card className="p-5">
             <div className="flex items-center justify-between">
               <SectionLabel>
-                Target vs achieved — {monthLabel(period)}
+                Target vs achieved - {monthLabel(period)}
               </SectionLabel>
               {target.isDefault ? <Badge tone="muted">Default</Badge> : null}
             </div>
@@ -585,7 +585,7 @@ export function QuickReminder({
         </Field>
         <Field
           label="What was promised · required"
-          hint="This note is what you will see in the reminders list — write it for your future self."
+          hint="This note is what you will see in the reminders list - write it for your future self."
         >
           <Textarea
             value={note}
@@ -659,7 +659,7 @@ export function QuickComplaint({
         </Field>
         <Field
           label="Description · required"
-          hint="Write it in the customer's words — this is what the resolver reads."
+          hint="Write it in the customer's words - this is what the resolver reads."
         >
           <Textarea
             value={description}

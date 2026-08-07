@@ -189,6 +189,66 @@ export async function customerTimeline(
   }));
 }
 
+/* ------------------------------------------------------- credit note asks */
+
+export type PendingCreditNote = {
+  complaintId: string;
+  customerId: string;
+  customerName: string;
+  category: string;
+  amount: number | null;
+  billNo: string | null;
+  raisedAt: Date;
+  raisedByName: string | null;
+  ageDays: number;
+};
+
+/**
+ * §6.2 — credit notes asked for and not yet answered.
+ *
+ * There is no Accounts app and no defined recipient, so a request has nowhere
+ * to go. Rather than let it sit invisible on a complaint, it is surfaced as a
+ * list a manager can work. This is deliberately interim: a credit note has
+ * financial consequences and cannot stay unrouted indefinitely.
+ */
+export async function pendingCreditNotes(): Promise<PendingCreditNote[]> {
+  const rows = await db.execute<{
+    complaint_id: string;
+    customer_id: string;
+    customer_name: string;
+    category: string;
+    amount: number | null;
+    bill_no: string | null;
+    raised_at: Date;
+    raised_by: string | null;
+    age_days: number;
+  }>(sql`
+    select cm.id as complaint_id, cm.customer_id, c.name as customer_name,
+           cm.category::text as category, cm.cn_amount as amount,
+           b.bill_no, cm.created_at as raised_at, u.name as raised_by,
+           extract(day from now() - cm.created_at)::int as age_days
+      from complaints cm
+      join customers c on c.id = cm.customer_id
+      left join bills b on b.id = cm.bill_id
+      left join users u on u.id = cm.logged_by_user_id
+     where cm.request_cn = true
+       and coalesce(cm.cn_status, 'requested') in ('requested', 'under_review')
+     order by cm.created_at asc
+  `);
+
+  return rows.map((r) => ({
+    complaintId: r.complaint_id,
+    customerId: r.customer_id,
+    customerName: r.customer_name,
+    category: r.category,
+    amount: r.amount === null ? null : Number(r.amount),
+    billNo: r.bill_no,
+    raisedAt: new Date(r.raised_at),
+    raisedByName: r.raised_by,
+    ageDays: Number(r.age_days),
+  }));
+}
+
 /* -------------------------------------------------------- message history */
 
 export type CustomerMessage = {

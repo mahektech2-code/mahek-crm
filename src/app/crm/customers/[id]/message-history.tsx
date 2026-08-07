@@ -96,7 +96,7 @@ export function MessageHistory({ messages }: { messages: MessageEntry[] }) {
                 </div>
               ) : (
                 <div className="mt-2 text-[13px] text-muted italic">
-                  {m.templateName ?? "Message"} — body not recorded
+                  {m.templateName ?? "Message"} - body not recorded
                 </div>
               )}
 

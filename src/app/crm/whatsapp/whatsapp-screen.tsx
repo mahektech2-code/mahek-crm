@@ -91,7 +91,7 @@ type Message = {
 /** The message lifecycle, in the words a telecaller would use. */
 const STATUS_LABEL: Record<string, string> = {
   prepared: "ready",
-  copied: "copied — not confirmed",
+  copied: "copied - not confirmed",
   sent_manually: "sent",
   sending: "sending",
   sent: "sent",
@@ -216,12 +216,12 @@ export function WhatsappScreen(props: {
       />
 
       {/* Automatic sending is on but not working. Said plainly, and paired
-          with the reassurance that the manual flow below still works — the
+          with the reassurance that the manual flow below still works - the
           screen is not blocked, only one route through it is. */}
       {sendingFailing ? (
         <Callout tone="danger">
           <span className="text-sm text-ink">
-            Automatic sending is unavailable — the API is configured but not
+            Automatic sending is unavailable - the API is configured but not
             responding. The manual flow below is ready to use, so nothing is
             blocked.
           </span>
@@ -580,7 +580,7 @@ function SendComposer({
             <Select value={customerId} onChange={(e) => onPickCustomer(e.target.value)}>
               {customers.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.name} — {c.city}
+                  {c.name} - {c.city}
                   {c.outstanding > 0 ? ` · ${money(c.outstanding)} due` : ""}
                 </option>
               ))}
@@ -694,7 +694,7 @@ function SendComposer({
           {missing.length ? (
             <div className="bg-warn-soft px-4 py-2.5 text-[13px] text-warn-ink">
               {missing.length} field{missing.length === 1 ? "" : "s"} could not be filled
-              for this customer — the placeholder stays visible so you can fix it before
+              for this customer - the placeholder stays visible so you can fix it before
               sending.
             </div>
           ) : null}
@@ -725,7 +725,7 @@ function SendComposer({
           />
           {edited ? (
             <div className="mt-1.5 text-[13px] text-muted">
-              Edited — the log will record this as edited from the template.
+              Edited - the log will record this as edited from the template.
             </div>
           ) : null}
         </Card>
@@ -1139,7 +1139,7 @@ function RunTab({
 
         <Card>
           <div className="border-b border-divider px-4 py-3 text-xs font-medium tracking-[0.04em] text-muted uppercase">
-            Check the merge — three samples
+            Check the merge - three samples
           </div>
           {samples.map((s) => (
             <div key={s.customer.id} className="border-b border-canvas px-4 py-3.5 last:border-0">
@@ -1511,7 +1511,7 @@ function LogTab({
                   <Td className="font-medium text-ink">{m.customerName}</Td>
                   <Td>{m.destination}</Td>
                   <Td>
-                    {m.templateName ?? "—"}
+                    {m.templateName ?? "-"}
                     {m.edited ? (
                       <span className="ml-1.5 text-[11px] text-muted">edited</span>
                     ) : null}
@@ -1603,7 +1603,7 @@ function ConnectionModalBody({ open, mode, isManager, onClose, onSave }: Connect
       }
     >
       <p className="mb-3 text-sm text-body">
-        Manual sending always works — a telecaller copies the message and pastes it into
+        Manual sending always works - a telecaller copies the message and pastes it into
         WhatsApp, then confirms. Connected sending needs the Business API and sends
         straight from the app.
       </p>
@@ -1716,7 +1716,7 @@ function GroupModalBody({ open, customers, initialId, onClose, onSave }: GroupMo
           >
             <option value="group">Their WhatsApp group</option>
             <option value="personal">Their own number</option>
-            <option value="both">Both — the same message to each</option>
+            <option value="both">Both - the same message to each</option>
           </Select>
         </Field>
       </div>
@@ -1780,7 +1780,7 @@ function TemplateDrawerBody({
           <div className="flex-1 overflow-y-auto p-5">
             {!isManager ? (
               <div className="mb-4 rounded-[4px] border border-warn-line bg-warn-soft px-3 py-2 text-[13px] text-warn-ink">
-                Read only — editing templates is a manager action.
+                Read only - editing templates is a manager action.
               </div>
             ) : null}
 
@@ -1819,7 +1819,7 @@ function TemplateDrawerBody({
               <Field
                 label="Message body"
                 hint="Merge fields: {{customer}} {{contact}} {{city}} {{outstanding}} {{bill_no}} {{bill_due}} {{last_order_date}} {{last_order_value}} {{owner}}"
-                error={tooLong ? "Long messages get skimmed — try to stay under 700 characters." : null}
+                error={tooLong ? "Long messages get skimmed - try to stay under 700 characters." : null}
               >
                 <Textarea
                   value={body}

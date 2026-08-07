@@ -31,6 +31,7 @@ import {
   users,
   waMessages,
   waTemplates,
+  attachments as attachmentsTable,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import {
@@ -178,7 +179,7 @@ after(async () => {
 
 /* ------------------------------------------------- journey 1: buying cycle */
 
-describe("Journey 1 — a new customer earns their own buying cycle", () => {
+describe("Journey 1 - a new customer earns their own buying cycle", () => {
   test("orders replace the default cycle, and the customer reaches the queue when due", async () => {
     const customer = await makeCustomer(priya.id);
 
@@ -233,7 +234,7 @@ describe("Journey 1 — a new customer earns their own buying cycle", () => {
 
 /* ------------------------------------------ journey 2: payment escalation */
 
-describe("Journey 2 — an overdue bill escalates, is chased, and is paid", () => {
+describe("Journey 2 - an overdue bill escalates, is chased, and is paid", () => {
   async function overdueCustomer(daysOverdue: number) {
     const customer = await makeCustomer(priya.id);
     await db.insert(bills).values({
@@ -251,7 +252,7 @@ describe("Journey 2 — an overdue bill escalates, is chased, and is paid", () =
     return customer;
   }
 
-  test("stage 1 is WhatsApp-only — a call attempt is refused, and says why", async () => {
+  test("stage 1 is WhatsApp-only - a call attempt is refused, and says why", async () => {
     const customer = await overdueCustomer(10);
 
     const [state] = await db
@@ -350,7 +351,7 @@ describe("Journey 2 — an overdue bill escalates, is chased, and is paid", () =
 
 /* --------------------------------------------- journey 3: WhatsApp and the queue */
 
-describe("Journey 3 — copying is not sending", () => {
+describe("Journey 3 - copying is not sending", () => {
   async function prepared() {
     const customer = await makeCustomer(priya.id, {
       lastContactDate: addDays(TODAY, -60),
@@ -455,7 +456,7 @@ describe("Journey 3 — copying is not sending", () => {
       cycleDays: 20,
       cycleIsDefault: false,
       whatsappDest: "both",
-      whatsappGroupName: "Balaji Traders — orders",
+      whatsappGroupName: "Balaji Traders - orders",
       ...over,
     });
 
@@ -486,9 +487,9 @@ describe("Journey 3 — copying is not sending", () => {
     assert.deepEqual(
       legs.map((l) => l.destKind),
       ["personal", "group"],
-      "the personal leg comes first — it is the one that can finish without a human",
+      "the personal leg comes first - it is the one that can finish without a human",
     );
-    assert.equal(legs[1].resolvedDestination, "Balaji Traders — orders");
+    assert.equal(legs[1].resolvedDestination, "Balaji Traders - orders");
     assert.notEqual(
       legs[0].messageId,
       legs[1].messageId,
@@ -544,7 +545,7 @@ describe("Journey 3 — copying is not sending", () => {
 
 /* ------------------------------------------------- journey 4: the EOD gate */
 
-describe("Journey 4 — the EOD gate", () => {
+describe("Journey 4 - the EOD gate", () => {
   test("a reminder due today blocks the report until it is closed", async () => {
     const customer = await makeCustomer(priya.id);
 
@@ -606,7 +607,7 @@ describe("Journey 4 — the EOD gate", () => {
 
 /* ------------------------------------------- journey 5: the inactive watch */
 
-describe("Journey 5 — a customer goes quiet and gets a decision", () => {
+describe("Journey 5 - a customer goes quiet and gets a decision", () => {
   test("they are flagged with a value at risk, then leave once decided", async () => {
     const customer = await makeCustomer(priya.id, {
       cycleDays: 20,
@@ -631,7 +632,7 @@ describe("Journey 5 — a customer goes quiet and gets a decision", () => {
     const decided = await recordWatchOutcome(
       customer.id,
       "contacted",
-      "Spoke to them — they buy again next month",
+      "Spoke to them - they buy again next month",
     );
     assert.equal(decided.ok, true, decided.ok ? "" : decided.error);
 
@@ -713,7 +714,7 @@ describe("Journey 5 — a customer goes quiet and gets a decision", () => {
 
 /* -------------------------------------------------- journey 6: who sees what */
 
-describe("Journey 6 — a telecaller sees their own book and nothing else", () => {
+describe("Journey 6 - a telecaller sees their own book and nothing else", () => {
   test("another telecaller's customers are invisible in every list", async () => {
     const mine = await makeCustomer(priya.id, { name: "Priya's customer" });
     const theirs = await makeCustomer(rakesh.id, { name: "Rakesh's customer" });
@@ -790,7 +791,7 @@ describe("Journey 6 — a telecaller sees their own book and nothing else", () =
 
 /* ------------------------- journey 7: complaints, merged from both branches */
 
-describe("Journey 7 — a complaint carries its SLA and its credit-note request", () => {
+describe("Journey 7 - a complaint carries its SLA and its credit-note request", () => {
   test("logging one sets severity, an SLA deadline and an opening history line", async () => {
     const customer = await makeCustomer(priya.id);
     const { logComplaint } = await import("@/lib/actions/crm");
@@ -908,7 +909,7 @@ describe("Journey 7 — a complaint carries its SLA and its credit-note request"
 
 /* ------------------- journey 8: interactions, and the three hazards */
 
-describe("Journey 8 — the interaction log", () => {
+describe("Journey 8 - the interaction log", () => {
   async function firstProduct() {
     const [p] = await db.select().from(productsTable).limit(1);
     return p;
@@ -936,7 +937,7 @@ describe("Journey 8 — the interaction log", () => {
     assert.equal(
       row.lastContactDate,
       addDays(TODAY, -40),
-      "a ringing phone is not contact — the check-in timer must not reset",
+      "a ringing phone is not contact - the check-in timer must not reset",
     );
   });
 
@@ -1027,11 +1028,87 @@ describe("Journey 8 — the interaction log", () => {
     const wrong = await saveInteraction({
       customerId: customer.id,
       interactionType: "inbound_call",
-      outcome: "not_interested",
+      outcome: "no_answer",
       idempotencyKey: randomUUID(),
     });
-    assert.equal(wrong.ok, false, "not_interested is outbound-only");
+    assert.equal(wrong.ok, false, "nobody rings us and then does not answer");
     assert.match(wrong.error, /outcome/i);
+  });
+
+  test("a complaint raised on a call we made is raised the same way", async () => {
+    const customer = await makeCustomer(priya.id);
+
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "complaint",
+      complaintCategory: "packaging_damage",
+      notes: "Two drums arrived dented",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.ok(r.data.complaintId, "the complaint exists, not just the note");
+
+    const [{ n }] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from complaints where customer_id = ${customer.id}
+    `);
+    assert.equal(Number(n), 1);
+  });
+
+  test("a complaint raised on a call carries its credit-note request", async () => {
+    const customer = await makeCustomer(priya.id);
+    const billId = id("bil");
+    await db.insert(bills).values({
+      id: billId,
+      customerId: customer.id,
+      billNo: `MMI/${randomUUID().slice(0, 6)}`,
+      billDate: addDays(TODAY, -10),
+      dueDate: addDays(TODAY, 20),
+      amount: 40_000_00,
+      paidAmount: 0,
+    });
+
+    const askedForNoBill = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "complaint",
+      complaintCategory: "shortage",
+      complaintDescription: "Two drums short against the last consignment",
+      complaintRequestCn: true,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(
+      askedForNoBill.ok,
+      false,
+      "accounts cannot act on a credit note with no bill behind it",
+    );
+
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "complaint",
+      complaintCategory: "shortage",
+      complaintDescription: "Two drums short against the last consignment",
+      complaintRequestCn: true,
+      complaintBillId: billId,
+      complaintGoodsDescription: "20L NC Thinner × 10",
+      notes: "Rang about the next order, this came up",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    const [row] = await db
+      .select()
+      .from(complaints)
+      .where(eq(complaints.id, r.data.complaintId!));
+    assert.equal(row.requestCn, true);
+    assert.equal(row.billId, billId);
+    assert.equal(row.goodsDescription, "20L NC Thinner × 10");
+    assert.equal(
+      row.description,
+      "Two drums short against the last consignment",
+      "the resolver reads the complaint, not the call note",
+    );
   });
 
   test("follow-up needs a date; inbound payment promise needs one; outbound does not", async () => {
@@ -1102,7 +1179,7 @@ describe("Journey 8 — the interaction log", () => {
     assert.deepEqual(
       row.quickNoteIds.sort(),
       [chips[0].id, chips[1].id].sort(),
-      "the identifiers are what makes them analysable — free text cannot be",
+      "the identifiers are what makes them analysable - free text cannot be",
     );
 
     const [used] = await db
@@ -1238,7 +1315,7 @@ describe("Journey 8 — the interaction log", () => {
 
 /* ------------------------- journey 9: the information tab (§7) */
 
-describe("Journey 9 — the Information tab", () => {
+describe("Journey 9 - the Information tab", () => {
   test("last call ignores Order Received, because that was not a call", async () => {
     const customer = await makeCustomer(priya.id);
     const [product] = await db.select().from(productsTable).limit(1);
@@ -1449,7 +1526,7 @@ describe("Journey 9 — the Information tab", () => {
         (r) => r.productId === product.id,
       ),
       false,
-      "nor findable by search — other products may still match the words",
+      "nor findable by search - other products may still match the words",
     );
   });
 
@@ -1468,7 +1545,7 @@ describe("Journey 9 — the Information tab", () => {
     const fuzzy = await searchProducts(typo);
     assert.ok(
       fuzzy.some((r) => r.productId === product.id),
-      `a misspelling must still find it — searched "${typo}"`,
+      `a misspelling must still find it - searched "${typo}"`,
     );
   });
 
@@ -1572,6 +1649,364 @@ describe("Journey 9 — the Information tab", () => {
   });
 });
 
+/* --------------------------------------------- §6 complaints and credit notes */
+
+describe("Complaints raised on a call we made", () => {
+  test("outbound complaint fires exactly the side effects inbound does", async () => {
+    const outbound = await makeCustomer(priya.id);
+    const inbound = await makeCustomer(priya.id);
+
+    const args = (customerId: string) => ({
+      customerId,
+      outcome: "complaint" as const,
+      complaintCategory: "product_quality" as const,
+      complaintDescription: "Drum arrived dented and leaking.",
+      notes: "Sounded genuinely annoyed.",
+      idempotencyKey: randomUUID(),
+    });
+
+    const a = await saveInteraction({ ...args(outbound.id), interactionType: "outbound_call" });
+    const b = await saveInteraction({ ...args(inbound.id), interactionType: "inbound_call" });
+    assert.equal(a.ok, true, a.ok ? "" : a.error);
+    assert.equal(b.ok, true, b.ok ? "" : b.error);
+
+    assert.deepEqual(
+      a.ok && a.data.produced,
+      b.ok && b.data.produced,
+      "the same outcome must produce the same records whichever way the call went",
+    );
+
+    for (const c of [outbound, inbound]) {
+      const [row] = await db.select().from(customers).where(eq(customers.id, c.id));
+      assert.equal(row.lastContactDate, TODAY, "a complaint is contact");
+    }
+  });
+
+  test("a credit note amount without a Yes is refused", async () => {
+    const customer = await makeCustomer(priya.id);
+    const result = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "complaint",
+      complaintCategory: "billing_issue",
+      complaintDescription: "Charged for a drum that never arrived.",
+      complaintRequestCn: false,
+      complaintCnAmount: 4500,
+      idempotencyKey: randomUUID(),
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(
+      result.ok ? "" : result.error,
+      /credit note/i,
+      "a figure with no request behind it reads as an approved amount",
+    );
+  });
+
+  test("a credit note request cannot be raised without the bill behind it", async () => {
+    const customer = await makeCustomer(priya.id);
+    const result = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "complaint",
+      complaintCategory: "billing_issue",
+      complaintDescription: "Short supply against last week's bill.",
+      complaintRequestCn: true,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.ok ? "" : result.error, /bill/i);
+  });
+
+  test("a raised request shows up on the manager's pending list", async () => {
+    const customer = await makeCustomer(priya.id);
+    const [bill] = await db
+      .insert(bills)
+      .values({
+        id: id("bill"),
+        customerId: customer.id,
+        billNo: `CN-${randomUUID().slice(0, 5)}`,
+        billDate: TODAY,
+        amount: 500000,
+        paidAmount: 0,
+      })
+      .returning();
+
+    const saved = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "complaint",
+      complaintCategory: "shortage",
+      complaintDescription: "Two drums short on the last delivery.",
+      complaintRequestCn: true,
+      complaintBillId: bill.id,
+      complaintCnAmount: 4500,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
+
+    const { pendingCreditNotes } = await import("@/lib/queries");
+    const pending = await pendingCreditNotes();
+    const row = pending.find((p) => p.customerId === customer.id);
+
+    assert.ok(row, "a request with nowhere to go must still be visible");
+    assert.equal(row.amount, 450000, "rupees in, paise stored");
+    assert.equal(row.billNo, bill.billNo);
+  });
+});
+
+/* ------------------------------------------- §5 payment follow-up changes */
+
+describe("Retiring a follow-up response", () => {
+  test("Part payment promised is no longer offered", async () => {
+    const { offeredPayOutcomes } = await import(
+      "@/lib/services/payment-followup-service"
+    );
+    assert.equal(
+      offeredPayOutcomes().some((o) => o.key === "part"),
+      false,
+    );
+    assert.equal(
+      offeredPayOutcomes().length,
+      6,
+      "seven responses become six",
+    );
+  });
+
+  test("but an attempt already recorded against it still reads correctly", async () => {
+    const { payOutcome } = await import(
+      "@/lib/services/payment-followup-service"
+    );
+    const def = payOutcome("part");
+    assert.ok(def, "history must still resolve the key it was written with");
+    assert.equal(def.label, "Part payment promised");
+    assert.equal(def.retired, true);
+  });
+
+  test("and saving one is refused, not merely hidden", async () => {
+    const customer = await makeCustomer(priya.id);
+    const result = await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "part" as never,
+      amount: 5000,
+      date: addDays(TODAY, 2),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(
+      result.ok,
+      false,
+      "a form still offering it must be rejected server-side",
+    );
+  });
+});
+
+/* --------------------------------------------- §4 the attachment subsystem */
+
+describe("Attachments — what may be attached, and what removal means", () => {
+  const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const PDF = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
+  const ZIP = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00]);
+
+  test("a file renamed .jpg is refused on its bytes, not its name", async () => {
+    const { createAttachment } = await import("@/lib/services/attachment-service");
+
+    // The extension says JPG and so does the browser. Neither is evidence.
+    const result = await createAttachment({
+      filename: "payment-proof.jpg",
+      bytes: ZIP,
+      declaredType: "image/jpeg",
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(
+      result.ok ? "" : result.error,
+      /not a JPG, PNG or PDF/i,
+      "the refusal must say what is actually wrong",
+    );
+  });
+
+  test("each permitted type is recognised from its signature", async () => {
+    const { sniffContentType } = await import("@/lib/storage");
+    assert.equal(sniffContentType(JPEG), "image/jpeg");
+    assert.equal(sniffContentType(PNG), "image/png");
+    assert.equal(sniffContentType(PDF), "application/pdf");
+    assert.equal(sniffContentType(ZIP), null);
+  });
+
+  test("bytes survive a round trip through Postgres storage", async () => {
+    const { fileStorage } = await import("@/lib/storage");
+    assert.equal(
+      fileStorage.kind,
+      "postgres",
+      "no Blob token in the test environment, so Postgres is the backend",
+    );
+
+    // A real JPEG header plus a body, so this is not just a length check.
+    const original = new Uint8Array(4096);
+    original.set(JPEG, 0);
+    for (let i = JPEG.length; i < original.length; i++) original[i] = i % 251;
+
+    const key = `attachments/roundtrip_${randomUUID().slice(0, 8)}`;
+    const stored = await fileStorage.upload({
+      key,
+      body: original,
+      contentType: "image/jpeg",
+    });
+    assert.equal(stored.sizeBytes, original.byteLength);
+    assert.equal(stored.ref, key, "the reference is opaque, never a URL");
+
+    const readBack = new Uint8Array(await fileStorage.read(stored.ref));
+    assert.equal(readBack.byteLength, original.byteLength);
+    assert.deepEqual(
+      Array.from(readBack.slice(0, 16)),
+      Array.from(original.slice(0, 16)),
+      "byte for byte, not merely the same length",
+    );
+    assert.deepEqual(
+      Array.from(readBack.slice(-16)),
+      Array.from(original.slice(-16)),
+      "including the tail, where a truncation would hide",
+    );
+
+    await fileStorage.remove(stored.ref);
+    await assert.rejects(
+      () => fileStorage.read(stored.ref),
+      /missing from storage/i,
+      "removing the bytes leaves nothing readable behind",
+    );
+  });
+
+  test("a file over the limit is refused, and the message says by how much", async () => {
+    const { createAttachment } = await import("@/lib/services/attachment-service");
+    const config = await getConfig();
+    const tooBig = new Uint8Array(config["attachments.maxSizeMb"] * 1024 * 1024 + 1024);
+    tooBig.set(JPEG, 0);
+
+    const result = await createAttachment({ filename: "big.jpg", bytes: tooBig });
+    assert.equal(result.ok, false);
+    assert.match(result.ok ? "" : result.error, /MB/);
+  });
+
+  test("removal detaches and marks removed, and never destroys the row", async () => {
+    const { removeAttachment } = await import("@/lib/services/attachment-service");
+    const [row] = await db
+      .insert(attachmentsTable)
+      .values({
+        id: id("att"),
+        parentType: "complaint",
+        parentId: "cmp_whatever",
+        filename: "slip.jpg",
+        storedRef: "memory://slip",
+        contentType: "image/jpeg",
+        sizeBytes: 1024,
+        status: "available",
+        uploadedById: priya.id,
+      })
+      .returning();
+
+    const result = await removeAttachment(row.id);
+    assert.equal(result.ok, true);
+
+    const [after] = await db
+      .select()
+      .from(attachmentsTable)
+      .where(eq(attachmentsTable.id, row.id));
+    assert.ok(after, "nothing representing a customer interaction is destroyed");
+    assert.equal(after.status, "removed");
+    assert.equal(after.parentId, null, "and it is detached from the complaint");
+    assert.ok(after.removedAt);
+  });
+
+  test("binding stops at the configured limit rather than failing the save", async () => {
+    const { bindAttachments } = await import("@/lib/services/attachment-service");
+    const config = await getConfig();
+    const limit = config["attachments.maxPerFollowUp"];
+
+    const ids: string[] = [];
+    for (let n = 0; n < limit + 2; n++) {
+      const [row] = await db
+        .insert(attachmentsTable)
+        .values({
+          id: id("att"),
+          filename: `proof-${n}.jpg`,
+          storedRef: `memory://proof-${n}`,
+          contentType: "image/jpeg",
+          sizeBytes: 512,
+          status: "available",
+          uploadedById: priya.id,
+        })
+        .returning();
+      ids.push(row.id);
+    }
+
+    const result = await bindAttachments(ids, "follow_up_attempt", "fua_whatever");
+    assert.equal(result.ok, true);
+    assert.equal(result.ok && result.data.bound, limit);
+    assert.equal(
+      result.ok && result.data.skipped,
+      2,
+      "the extras are left for the sweep — the parent is already saved, so this is not an error",
+    );
+  });
+
+  test("an abandoned form's files are swept; a bound one's are not", async () => {
+    const { sweepOrphans } = await import("@/lib/services/attachment-service");
+    const config = await getConfig();
+    const old = new Date(
+      Date.now() - (config["attachments.orphanCleanupHours"] + 1) * 60 * 60 * 1000,
+    );
+
+    const [orphan] = await db
+      .insert(attachmentsTable)
+      .values({
+        id: id("att"),
+        filename: "abandoned.jpg",
+        storedRef: "memory://abandoned",
+        contentType: "image/jpeg",
+        sizeBytes: 256,
+        status: "available",
+        uploadedById: priya.id,
+        uploadedAt: old,
+      })
+      .returning();
+
+    const [bound] = await db
+      .insert(attachmentsTable)
+      .values({
+        id: id("att"),
+        parentType: "complaint",
+        parentId: "cmp_kept",
+        filename: "kept.jpg",
+        storedRef: "memory://kept",
+        contentType: "image/jpeg",
+        sizeBytes: 256,
+        status: "available",
+        uploadedById: priya.id,
+        uploadedAt: old,
+      })
+      .returning();
+
+    await sweepOrphans();
+
+    const [afterOrphan] = await db
+      .select()
+      .from(attachmentsTable)
+      .where(eq(attachmentsTable.id, orphan.id));
+    const [afterBound] = await db
+      .select()
+      .from(attachmentsTable)
+      .where(eq(attachmentsTable.id, bound.id));
+
+    assert.equal(afterOrphan.status, "removed", "nothing ever pointed at it");
+    assert.equal(
+      afterBound.status,
+      "available",
+      "a file on a real complaint is not an orphan, however old",
+    );
+  });
+});
+
 /* ------------------------------------------------ the calling rules, end to end */
 
 describe("Who the Call Log puts in front of a telecaller", () => {
@@ -1586,7 +2021,7 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     assert.equal(
       q.entries.some((e) => e.customerId === customer.id),
       false,
-      "they order every 8 days on their own — asking for an order adds nothing",
+      "they order every 8 days on their own - asking for an order adds nothing",
     );
   });
 
@@ -1978,7 +2413,7 @@ describe("Cross-cutting rules", () => {
 
 /* ------------------------------------- journey: the payment follow-up cycle */
 
-describe("The payment follow-up cycle — term, quiet window, messages, calls", () => {
+describe("The payment follow-up cycle - term, quiet window, messages, calls", () => {
   /**
    * A bill with no due date of its own, so what governs it is the term agreed
    * when the order was taken.
@@ -2048,7 +2483,7 @@ describe("The payment follow-up cycle — term, quiet window, messages, calls", 
     assert.equal(
       order.creditDays,
       15,
-      "the term is no longer agreed call by call — it comes from the customer",
+      "the term is no longer agreed call by call - it comes from the customer",
     );
     assert.equal(order.paymentDueDate, addDays(TODAY, 15));
   });
@@ -2197,7 +2632,7 @@ describe("The payment follow-up cycle — term, quiet window, messages, calls", 
 
 /* ----------------------------------- journey: logging a collections call */
 
-describe("Logging a collections call — one outcome, one transaction", () => {
+describe("Logging a collections call - one outcome, one transaction", () => {
   async function onTheWorklist(daysOverdue: number) {
     const customer = await makeCustomer(priya.id);
     await db.insert(bills).values({

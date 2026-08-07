@@ -64,7 +64,7 @@ export type WorklistRow = {
 const NEXT_ACTION: Record<number, Record<"whatsapp" | "call", string>> = {
   1: { whatsapp: "Send the stage 1 nudge", call: "Send the stage 1 nudge" },
   2: { whatsapp: "Send the stage 2 message", call: "Call and get a dated promise" },
-  3: { whatsapp: "Call — urgent", call: "Call — urgent" },
+  3: { whatsapp: "Call - urgent", call: "Call - urgent" },
 };
 
 export async function getFollowUpWorklist(filters?: {
@@ -124,9 +124,9 @@ export async function getFollowUpWorklist(filters?: {
     // Promised, the date has passed, and the money is still outstanding.
     promiseBroken: Boolean(promise.promisedDate && promise.promisedDate < day),
     nextAction: state.held
-      ? "Held — dispute open"
+      ? "Held - dispute open"
       : promise.promisedDate && promise.promisedDate < day
-        ? "Promise broken — call today"
+        ? "Promise broken - call today"
         : (NEXT_ACTION[state.stage]?.[state.nextChannel] ?? "Follow up"),
   }));
 
@@ -312,7 +312,7 @@ export async function recordFollowUpAttempt(
     .where(eq(followUpStates.customerId, input.customerId));
   if (!state) {
     return err(
-      "That customer has nothing overdue — they are not on the collections worklist.",
+      "That customer has nothing overdue - they are not on the collections worklist.",
       "rule_violation",
     );
   }

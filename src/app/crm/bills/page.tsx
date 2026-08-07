@@ -4,7 +4,7 @@ import { getCustomer } from "@/lib/queries";
 import { agingSummary, listBills } from "@/lib/services/payment-service";
 import { BillsScreen } from "./bills-screen";
 
-export const metadata = { title: "Sales bills — MahekOne CRM" };
+export const metadata = { title: "Sales bills - MahekOne CRM" };
 
 export default async function BillsPage({
   searchParams,

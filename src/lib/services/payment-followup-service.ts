@@ -18,6 +18,7 @@ import {
 } from "@/db/schema";
 import { resolveScope, assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
+import { bindAttachments } from "./attachment-service";
 import { isAttemptAllowed } from "../engines/escalation";
 import { addDays, onOrAfterWorkingDay } from "../business-date";
 import {
@@ -66,6 +67,14 @@ export type PayOutcomeDefinition = {
   chips: string[];
   /** What saving it will do, said before they press save. */
   consequence: string | null;
+  /**
+   * §5.1 — withdrawn from the form but kept here so historical attempts still
+   * resolve to a label. A retired outcome is never offered and never accepted;
+   * it is only ever read back.
+   */
+  retired?: boolean;
+  /** How many files this outcome may carry. Absent means none. */
+  attachments?: { label: string; limitKey: "attachments.maxPerFollowUp" };
 };
 
 export const PAY_OUTCOMES: PayOutcomeDefinition[] = [
@@ -87,6 +96,10 @@ export const PAY_OUTCOMES: PayOutcomeDefinition[] = [
   {
     key: "part",
     label: "Part payment promised",
+    // §5.1 — Payment Promised alone is sufficient; a part payment does not
+    // warrant its own response. Retired rather than deleted: attempts already
+    // recorded against it must still read correctly.
+    retired: true,
     amount: "Amount promised",
     date: "Promised by",
     escalates: false,
@@ -101,6 +114,10 @@ export const PAY_OUTCOMES: PayOutcomeDefinition[] = [
   {
     key: "paid",
     label: "Already paid",
+    // §5.2 — proof of payment. Recorded and surfaced to whoever reconciles;
+    // it deliberately does NOT change bill status, because the CRM does not
+    // own that — the external order system does.
+    attachments: { label: "Payment proof", limitKey: "attachments.maxPerFollowUp" },
     amount: "Amount already paid",
     date: false,
     escalates: false,
@@ -171,11 +188,17 @@ export function payOutcome(key: string): PayOutcomeDefinition | undefined {
   return PAY_OUTCOMES.find((o) => o.key === key);
 }
 
+/** What the form offers today. History reads through `payOutcome` instead. */
+export function offeredPayOutcomes(): PayOutcomeDefinition[] {
+  return PAY_OUTCOMES.filter((o) => !o.retired);
+}
+
 export const logFollowUpSchema = z.object({
   customerId: z.string().min(1),
+  // "part" is absent on purpose: retired outcomes are readable, never
+  // writable. A form still offering it is rejected here, not just hidden.
   outcome: z.enum([
     "promised",
-    "part",
     "paid",
     "callback",
     "dispute",
@@ -187,6 +210,12 @@ export const logFollowUpSchema = z.object({
   date: z.string().optional(),
   notes: z.string().max(4000).optional(),
   chips: z.array(z.string()).default([]),
+  /**
+   * §5.2 — proof already uploaded and waiting to be bound. Never required:
+   * attachments are optional everywhere, and a failed upload must not stop a
+   * telecaller recording what the customer told them.
+   */
+  attachmentIds: z.array(z.string()).default([]),
   idempotencyKey: z.string().min(8),
 });
 
@@ -232,7 +261,7 @@ export async function logPaymentFollowUp(
   }
   if (def.date && !input.date) {
     return err(`Pick the ${def.date.toLowerCase()} date.`, "validation", [
-      { field: "date", message: "Pick the date — it becomes the reminder that chases this." },
+      { field: "date", message: "Pick the date - it becomes the reminder that chases this." },
     ]);
   }
   if (def.date && input.date && input.date < day) {
@@ -247,7 +276,7 @@ export async function logPaymentFollowUp(
     .where(eq(followUpStates.customerId, input.customerId));
   if (!state) {
     return err(
-      "That customer has nothing overdue — they are not on the collections worklist.",
+      "That customer has nothing overdue - they are not on the collections worklist.",
       "rule_violation",
     );
   }
@@ -316,12 +345,11 @@ export async function logPaymentFollowUp(
       attemptedAt: now,
       userId: ctx.user.id,
       outcome: def.label,
-      promisedAmount:
-        input.outcome === "promised" || input.outcome === "part" ? amountPaise : null,
-      promisedDate:
-        input.outcome === "promised" || input.outcome === "part"
-          ? (input.date ?? null)
-          : null,
+      // "part" used to reach here too. Retiring it made these branches
+      // unreachable, and the compiler said so — historical rows keep the
+      // values they were written with.
+      promisedAmount: input.outcome === "promised" ? amountPaise : null,
+      promisedDate: input.outcome === "promised" ? (input.date ?? null) : null,
       idempotencyKey: input.idempotencyKey,
       createdById: ctx.user.id,
     });
@@ -342,7 +370,7 @@ export async function logPaymentFollowUp(
     });
 
     /* ---- a promise, and the reminder that chases it ---- */
-    if ((input.outcome === "promised" || input.outcome === "part") && input.date) {
+    if (input.outcome === "promised" && input.date) {
       const due = onOrAfterWorkingDay(addDays(input.date, 1), {
         timezone: config["workingDay.timezone"],
         dayBoundaryHour: config["workingDay.dayBoundaryHour"],
@@ -487,6 +515,17 @@ export async function logPaymentFollowUp(
     });
   });
 
+  /* ----------------------------------------------------------- attachments */
+
+  // §5.2 — outside the transaction on purpose. The attempt is the record that
+  // must not be half-saved; binding a file that failed to upload is not worth
+  // rolling back a collections call the telecaller has already made.
+  if (input.attachmentIds.length) {
+    await bindAttachments(input.attachmentIds, "follow_up_attempt", attemptId).catch(
+      () => {},
+    );
+  }
+
   /* ------------------------------------------------------------- recompute */
 
   if (input.outcome === "paid") {
@@ -593,13 +632,13 @@ export type FollowUpPanelData = {
 const STAGE_NAME: Record<number, string> = {
   1: "WhatsApp nudge",
   2: "WhatsApp and calls",
-  3: "Urgent — call, firm",
+  3: "Urgent - call, firm",
 };
 
 const NEXT_ACTION: Record<number, string> = {
   1: "Send the stage 1 nudge",
   2: "Call and get a dated promise",
-  3: "Call — urgent",
+  3: "Call - urgent",
 };
 
 /**
@@ -673,7 +712,7 @@ export async function getFollowUpPanel(
     lastFollowUpAt: state.lastFollowUpAt?.toISOString() ?? null,
     nextChannel: state.nextChannel,
     nextAction: state.held
-      ? "Held — dispute open"
+      ? "Held - dispute open"
       : (NEXT_ACTION[state.stage] ?? "Follow up"),
     creditDays: customer.creditDays ?? config["customers.defaultCreditDays"],
     bills: openBills.map((b) => ({

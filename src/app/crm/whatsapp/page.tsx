@@ -13,7 +13,7 @@ import {
 import { clock, nowMs } from "@/lib/format";
 import { WhatsappScreen } from "./whatsapp-screen";
 
-export const metadata = { title: "WhatsApp — MahekOne CRM" };
+export const metadata = { title: "WhatsApp - MahekOne CRM" };
 
 /** Whole minutes a run took, floored at one so "0 min" never shows. */
 function runMinutes(from: Date, to: Date | null): number {
@@ -119,7 +119,7 @@ export default async function WhatsappPage({
         destKind: m.destKind,
         mode: m.mode,
         status: m.status,
-        sentByName: m.userName ?? "—",
+        sentByName: m.userName ?? "-",
         edited: m.edited,
         createdAt: m.preparedAt.toISOString(),
         copiedAt: m.copiedAt?.toISOString() ?? null,

@@ -116,7 +116,7 @@ export async function handoverSummary(customerId: string): Promise<Handover | nu
     .limit(1);
 
   const text = [
-    `*Handover — ${customer.name}*`,
+    `*Handover - ${customer.name}*`,
     `${customer.contactPerson} · ${customer.phone}`,
     "",
     "Last three interactions:",

@@ -9,7 +9,6 @@ import { isManager } from "../auth";
 import { db } from "@/db";
 import {
   auditLog,
-  complaintImages,
   complaints,
   complaintStatusHistory,
   customers,
@@ -18,6 +17,10 @@ import {
   users,
 } from "@/db/schema";
 import {
+  bindAttachments,
+  createAttachment,
+} from "@/lib/services/attachment-service";
+import {
   requireCapability,
   resolveScope,
   assertCustomerInScope,
@@ -25,7 +28,6 @@ import {
 import { SCOPE_COOKIE_NAME, DENSITY_COOKIE_NAME } from "@/lib/scope";
 import { getConfig, invalidateConfig, updateSetting } from "@/lib/config/store";
 import { saveInteraction } from "@/lib/services/interaction-service";
-import { fileStorage } from "@/lib/storage";
 import {
   recordFollowUpAttempt,
   recordPayment as recordPaymentService,
@@ -160,6 +162,12 @@ export type SaveInteractionActionInput = {
   followUpDate?: string;
   paymentPromiseDate?: string;
   complaintCategory?: string;
+  complaintDescription?: string;
+  complaintRequestCn?: boolean;
+  complaintBillId?: string;
+  complaintGoodsDescription?: string;
+  /** Photos of the damaged or short goods. Best-effort, like the dialog's. */
+  complaintImages?: File[];
   orderDate?: string;
   sourceModule?:
     | "call_queue"
@@ -189,19 +197,33 @@ export async function saveInteractionAction(
       followUpDate: raw.followUpDate,
       paymentPromiseDate: raw.paymentPromiseDate,
       complaintCategory: raw.complaintCategory as never,
+      complaintDescription: raw.complaintDescription,
+      complaintRequestCn: raw.complaintRequestCn ?? false,
+      complaintBillId: raw.complaintBillId,
+      complaintGoodsDescription: raw.complaintGoodsDescription,
       orderDate: raw.orderDate,
       sourceModule: raw.sourceModule ?? "ad_hoc",
       queuePosition: raw.queuePosition,
       idempotencyKey: raw.idempotencyKey ?? randomUUID(),
     });
     if (!result.ok) return result;
+
+    // Best-effort: the call is already saved and must not be undone by a
+    // failed upload.
+    const attached = await attachComplaintImages(
+      result.data.complaintId,
+      raw.complaintImages,
+    );
+
     refreshAll();
     return ok(
       {
         produced: result.data.produced,
         complaintUpdated: result.data.complaintUpdated,
       },
-      result.message ?? "Interaction saved",
+      attachmentNote(attached)
+        ? `Call saved — ${attachmentNote(attached)}`
+        : (result.message ?? "Interaction saved"),
       result.warnings,
     );
   } catch (e) {
@@ -219,7 +241,7 @@ export async function rebuildQueue(): Promise<Result> {
 
 export async function restoreWorkedRows(): Promise<Result> {
   return err(
-    "Worked rows cannot be restored — the queue is derived from the calls you logged. Undo the call instead.",
+    "Worked rows cannot be restored - the queue is derived from the calls you logged. Undo the call instead.",
     "rule_violation",
   );
 }
@@ -396,7 +418,6 @@ export async function logPaymentFollowUpAction(input: {
   customerId: string;
   outcome:
     | "promised"
-    | "part"
     | "paid"
     | "callback"
     | "dispute"
@@ -406,6 +427,8 @@ export async function logPaymentFollowUpAction(input: {
   date?: string;
   notes?: string;
   chips?: string[];
+  /** §5.2 — payment proof already uploaded, bound when the attempt saves. */
+  attachmentIds?: string[];
   idempotencyKey: string;
 }): Promise<Result<{ produced: string[]; cleared: boolean }>> {
   try {
@@ -662,7 +685,7 @@ export async function requestDeactivation(
     }
 
     refreshAll();
-    return okVoid("Deactivation requested — a manager decides");
+    return okVoid("Deactivation requested - a manager decides");
   } catch (e) {
     return fromThrown(e);
   }
@@ -734,6 +757,49 @@ export async function decideDeactivation(
 }
 
 /* ------------------------------------------------------------- complaints */
+
+/**
+ * Photos of the damaged or short goods, attached to a complaint however it was
+ * raised — the dialog and a call both come through here.
+ *
+ * Storage has no backend yet (see lib/storage.ts), so this is deliberately
+ * best-effort: the complaint is already written and a dead uploader must not
+ * take it down with it. The caller says so on screen rather than pretending
+ * the pictures arrived.
+ */
+async function attachComplaintImages(
+  complaintId: string | null,
+  images?: File[],
+): Promise<{ wanted: number; attached: number }> {
+  const wanted = images?.length ?? 0;
+  if (!complaintId || !wanted) return { wanted: 0, attached: 0 };
+
+  // §4.2 — never blocks the save. The complaint is already written; each file
+  // is validated on its bytes and the ones that make it are bound. What did
+  // not make it is reported by count, so nobody assumes all or nothing.
+  const results = await Promise.allSettled(
+    images!.map(async (file) => {
+      const created = await createAttachment({
+        filename: file.name,
+        bytes: new Uint8Array(await file.arrayBuffer()),
+        declaredType: file.type,
+      });
+      if (!created.ok) throw new Error(created.error);
+      return created.data.id;
+    }),
+  );
+  const ids = results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+  if (!ids.length) return { wanted, attached: 0 };
+
+  const bound = await bindAttachments(ids, "complaint", complaintId);
+  return { wanted, attached: bound.ok ? bound.data.bound : 0 };
+}
+
+/** The sentence to show when some files did not make it. */
+function attachmentNote({ wanted, attached }: { wanted: number; attached: number }) {
+  if (!wanted || attached === wanted) return null;
+  return `${attached} of ${wanted} file${wanted === 1 ? "" : "s"} attached`;
+}
 
 /**
  * Raising a complaint outside a call. It still goes through the call service,
@@ -811,32 +877,11 @@ export async function logComplaint(input: {
       });
     });
 
-    // Storage has no backend yet (see lib/storage.ts), so attaching images is
-    // best-effort — the complaint itself must always save.
-    let imagesAttached = false;
-    if (input.images?.length && complaintId) {
-      const uploads = await Promise.allSettled(
-        input.images.map((file) => fileStorage.upload(file)),
-      );
-      const succeeded = uploads.flatMap((u) =>
-        u.status === "fulfilled" ? [u.value] : [],
-      );
-      if (succeeded.length) {
-        await db
-          .insert(complaintImages)
-          .values(
-            succeeded.map((u) => ({ id: id("cim"), complaintId, url: u.url })),
-          );
-        imagesAttached = true;
-      }
-    }
+    const attached = await attachComplaintImages(complaintId, input.images);
 
     refreshAll();
-    return okVoid(
-      input.images?.length && !imagesAttached
-        ? "Complaint logged — image attachments aren't available until storage is configured"
-        : "Complaint logged",
-    );
+    const note = attachmentNote(attached);
+    return okVoid(note ? `Complaint logged — ${note}` : "Complaint logged");
   } catch (e) {
     return fromThrown(e);
   }
@@ -993,7 +1038,7 @@ export async function setCustomerGroup(
     refreshAll();
     return okVoid(
       whatsappDest === "both"
-        ? "Saved — this customer now gets both"
+        ? "Saved - this customer now gets both"
         : "Group name saved",
     );
   } catch (e) {
@@ -1043,10 +1088,10 @@ export async function queueMessage(input: {
         })),
       },
       legs.length > 1
-        ? "Both messages are ready — work them one at a time"
+        ? "Both messages are ready - work them one at a time"
         : legs[0].mode === "automatic"
           ? "Ready to send"
-          : "Copied — confirm once you have sent it",
+          : "Copied - confirm once you have sent it",
     );
   } catch (e) {
     return fromThrown(e);
@@ -1294,7 +1339,7 @@ export async function triggerJob(
     revalidatePath("/crm/settings");
     return ok(
       { ran: results.map((r) => `${r.job}: ${r.detail}`) },
-      `${job} finished — ${results.reduce((a, r) => a + r.recordsAffected, 0)} records touched`,
+      `${job} finished - ${results.reduce((a, r) => a + r.recordsAffected, 0)} records touched`,
     );
   } catch (e) {
     return fromThrown(e);

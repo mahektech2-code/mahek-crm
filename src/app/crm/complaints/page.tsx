@@ -5,7 +5,7 @@ import { listBills } from "@/lib/services/payment-service";
 import { getConfig } from "@/lib/config/store";
 import { ComplaintsScreen } from "./complaints-screen";
 
-export const metadata = { title: "Complaints — MahekOne CRM" };
+export const metadata = { title: "Complaints - MahekOne CRM" };
 
 export default async function ComplaintsPage() {
   const user = await requireUser();

@@ -185,7 +185,7 @@ export function planPaymentFollowUps(
         daysSinceLast: since,
         reason: s.lastCallOn
           ? `Last called ${since} ${since === 1 ? "day" : "days"} ago, still unpaid`
-          : `${daysOverdue} days overdue — the quiet window has closed`,
+          : `${daysOverdue} days overdue - the quiet window has closed`,
       });
     } else {
       // Not a problem, but the reason somebody expected on the calling list is
@@ -196,8 +196,8 @@ export function planPaymentFollowUps(
         channel: "call",
         reason:
           phase === "quiet"
-            ? `Only ${daysOverdue} ${daysOverdue === 1 ? "day" : "days"} overdue — messages only until ${callingOpensOn(s.anchorDueDate, config)}`
-            : `Called ${daysBetween(s.lastCallOn!, today)} ${daysBetween(s.lastCallOn!, today) === 1 ? "day" : "days"} ago — due again on ${nextCallOn(s, config)}`,
+            ? `Only ${daysOverdue} ${daysOverdue === 1 ? "day" : "days"} overdue - messages only until ${callingOpensOn(s.anchorDueDate, config)}`
+            : `Called ${daysBetween(s.lastCallOn!, today)} ${daysBetween(s.lastCallOn!, today) === 1 ? "day" : "days"} ago - due again on ${nextCallOn(s, config)}`,
       });
     }
   }
@@ -219,9 +219,9 @@ export function planPaymentFollowUps(
  */
 function blockingReason(s: FollowUpSubject, today: BusinessDate): string | null {
   if (s.doNotContact) return "Marked do not contact";
-  if (s.held) return s.heldReason ?? "Held — a bill is disputed";
+  if (s.held) return s.heldReason ?? "Held - a bill is disputed";
   if (s.promisedDate && s.promisedDate >= today) {
-    return `Payment promised by ${s.promisedDate} — not chased until it passes`;
+    return `Payment promised by ${s.promisedDate} - not chased until it passes`;
   }
   if (s.contactedToday) return "Already contacted today";
   return null;

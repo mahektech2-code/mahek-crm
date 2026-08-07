@@ -107,12 +107,12 @@ export function HistoryScreen({
   const lastPromise = handoverRows.find((r) => r.note)?.note ?? "Nothing recorded yet.";
 
   const handoverText = [
-    `*Handover — ${handoverName}*`,
+    `*Handover - ${handoverName}*`,
     "",
     "Last three interactions:",
     ...handoverRows
       .slice(0, 3)
-      .map((r) => `· ${stamp(r.occurredAt)} — ${r.channel}, ${r.outcome ?? "no outcome"}: ${r.note ?? "no note"}`),
+      .map((r) => `· ${stamp(r.occurredAt)} - ${r.channel}, ${r.outcome ?? "no outcome"}: ${r.note ?? "no note"}`),
     "",
     `Last thing promised: ${lastPromise}`,
     "",
@@ -175,7 +175,7 @@ export function HistoryScreen({
         <div className="flex items-center justify-between gap-3 border-b border-divider px-5 py-3.5">
           <div>
             <div className="text-lg font-semibold text-ink">
-              Handover summary — {handoverName}
+              Handover summary - {handoverName}
             </div>
             <div className="mt-0.5 text-[13px] text-muted">
               Everything someone else needs to pick up this customer
@@ -216,7 +216,7 @@ export function HistoryScreen({
             <div className="mt-1.5">
               {handoverRows.slice(0, 3).map((r) => (
                 <div key={r.id} className="py-0.5 text-sm text-body">
-                  {stamp(r.occurredAt)} — {r.channel}, {r.outcome ?? "no outcome"}:{" "}
+                  {stamp(r.occurredAt)} - {r.channel}, {r.outcome ?? "no outcome"}:{" "}
                   {r.note ?? "no note"}
                 </div>
               ))}
@@ -324,15 +324,15 @@ export function HistoryScreen({
                         {r.connection}
                       </Badge>
                     ) : (
-                      <span className="text-muted">—</span>
+                      <span className="text-muted">-</span>
                     )}
                   </Td>
-                  <Td>{r.outcome ?? "—"}</Td>
+                  <Td>{r.outcome ?? "-"}</Td>
                   <Td className="max-w-[320px] truncate text-muted" title={r.note ?? ""}>
-                    {r.note ?? "—"}
+                    {r.note ?? "-"}
                   </Td>
                   <Td className={r.produced ? "font-medium text-success" : "text-muted"}>
-                    {r.produced ?? "—"}
+                    {r.produced ?? "-"}
                   </Td>
                 </Tr>
               ))}

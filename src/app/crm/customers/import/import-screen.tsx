@@ -29,7 +29,7 @@ import { parseCsv } from "@/lib/csv";
 const CUSTOMER_COLUMNS = [
   ["name", "Business name, as it appears on the bill", "required"],
   ["contactPerson", "Person you actually speak to", "required"],
-  ["phone", "10-digit mobile — also the key for re-imports", "required"],
+  ["phone", "10-digit mobile - also the key for re-imports", "required"],
   ["city", "City", "required"],
   ["ownerName", "Telecaller who owns the account", "optional"],
   ["gstin", "GSTIN", "optional"],
@@ -39,7 +39,7 @@ const CUSTOMER_COLUMNS = [
 ];
 
 const BILL_COLUMNS = [
-  ["billNo", "Bill number — the key for re-imports", "required"],
+  ["billNo", "Bill number - the key for re-imports", "required"],
   ["phone", "Customer's telephone, to match the account", "required"],
   ["billDate", "YYYY-MM-DD", "required"],
   ["dueDate", "YYYY-MM-DD", "required"],
@@ -132,7 +132,7 @@ export function ImportScreen({
           </tbody>
         </table>
         <p className="mt-3 text-[13px] text-muted">
-          Column order does not matter — the header row is what is read. Extra
+          Column order does not matter - the header row is what is read. Extra
           columns are ignored.
         </p>
       </Card>
@@ -166,7 +166,7 @@ export function ImportScreen({
         {rows ? (
           <div className="mt-4 flex items-center gap-3">
             <span className="text-sm text-body">
-              <strong className="font-medium text-ink">{fileName}</strong> —{" "}
+              <strong className="font-medium text-ink">{fileName}</strong> -{" "}
               {rows.length} row{rows.length === 1 ? "" : "s"} ready
             </span>
             <span className="flex-1" />
@@ -260,7 +260,7 @@ export function ImportScreen({
           {summary.skipped.length ? (
             <>
               <div className="bg-warn-soft px-5 py-2.5 text-[13px] text-warn-ink">
-                These rows were left out. Fix them in the sheet and import again —
+                These rows were left out. Fix them in the sheet and import again -
                 the rows that already went in will update, not duplicate.
               </div>
               <table>

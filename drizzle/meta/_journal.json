@@ -64,6 +64,27 @@
       "when": 1785997228038,
       "tag": "0008_products_and_no_order_reasons",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786083128324,
+      "tag": "0009_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786083654176,
+      "tag": "0010_credit_note_request",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786083654177,
+      "tag": "0011_attachment_bytes",
+      "breakpoints": true
     }
   ]
 }

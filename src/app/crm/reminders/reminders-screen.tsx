@@ -99,7 +99,7 @@ export function RemindersScreen({
         title="Reminders"
         subtitle={`${scopeLabel} · ${
           buckets.overdue.length
-            ? `${buckets.overdue.length} overdue — the oldest by ${ageLabel(oldest)}.`
+            ? `${buckets.overdue.length} overdue - the oldest by ${ageLabel(oldest)}.`
             : "Nothing overdue. Every promise is being kept on time."
         }`}
         actions={
@@ -371,7 +371,7 @@ function DismissModal({
       <div className="mb-3 text-sm text-muted">{reminder?.note}</div>
       <Field
         label="Why is this no longer needed?"
-        error={error ? "Give a reason — this stays on the customer record." : null}
+        error={error ? "Give a reason - this stays on the customer record." : null}
       >
         <Textarea
           value={reason}
@@ -450,7 +450,7 @@ function NewReminderModal({
         </Field>
         <Field
           label="What was promised · required"
-          hint="This note is what you will see in the reminders list — write it for your future self."
+          hint="This note is what you will see in the reminders list - write it for your future self."
         >
           <Textarea
             value={note}

@@ -1,0 +1,471 @@
+"use client";
+
+import * as React from "react";
+import { Button, Input, Select, Textarea, cx } from "@/components/ui/primitives";
+import { Drawer, DrawerHeader } from "@/components/ui/overlays";
+import { ownedFor, ROLE_TEMPLATES, TEAMS, type EntityKind, type EntityRow } from "./data";
+import { useAdmin, type Drawer as DrawerState } from "./store";
+
+/* ---------------------------------------------------------------------------
+ * Every editor in the console is the same drawer: a list of declared fields, an
+ * optional live preview, and an optional set of blockers that must be cleared
+ * before Save does anything.
+ *
+ * Mounting it with a key means a drawer opened for one record never shows what
+ * somebody typed about a different one.
+ * ------------------------------------------------------------------------- */
+
+type FieldSpec = {
+  key: string;
+  label: string;
+  value: string;
+  placeholder?: string;
+  help?: string;
+  error?: string;
+  area?: boolean;
+  select?: string[];
+  half?: boolean;
+};
+
+const PLACEHOLDERS = ["customer", "contact", "amount", "bill", "days", "date", "qty", "telecaller"];
+
+const SAMPLE: Record<string, string> = {
+  customer: "Shree Paints & Hardware",
+  contact: "Mahesh Shah",
+  amount: "₹1,84,500",
+  bill: "MM-4418",
+  days: "18",
+  date: "14 Aug",
+  qty: "8 drums NC thinner",
+  telecaller: "Priya Sharma",
+  lastorder: "28 Jul",
+  cycle: "21 days",
+};
+
+export function AdminDrawer() {
+  const { drawer, closeDrawer } = useAdmin();
+  if (!drawer) return null;
+  // Remount per record rather than resetting state in an effect.
+  return <DrawerBody key={drawerKey(drawer)} drawer={drawer} onClose={closeDrawer} />;
+}
+
+function drawerKey(d: DrawerState): string {
+  return `${d.kind}:${"id" in d ? (d.id ?? "new") : "new"}`;
+}
+
+function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => void }) {
+  const { entities, users, registry, notify, record, archiveEntity } = useAdmin();
+  const [draft, setDraft] = React.useState<Record<string, string>>({});
+
+  const kind = drawer.kind;
+  const id = "id" in drawer ? drawer.id : null;
+  const entityKind = isEntityKind(kind) ? (kind as EntityKind) : null;
+  const record0: EntityRow | null = entityKind && id ? entities[entityKind].find((r) => r.id === id) ?? null : null;
+  const user = "id" in drawer && drawer.id ? users.find((u) => u.id === drawer.id) ?? null : null;
+
+  const v = (key: string, fallback = "") => draft[key] ?? fallback;
+  const set = (key: string) => (e: { target: { value: string } }) =>
+    setDraft((d) => ({ ...d, [key]: e.target.value }));
+
+  let title = "";
+  let sub = "";
+  let saveLabel = "Save";
+  let fields: FieldSpec[] = [];
+  let preview: { name: string; body: string } | null = null;
+  let blockers: Array<{ line: string; cta: string; run: () => void }> = [];
+
+  if (kind === "products") {
+    title = record0 ? "Edit product" : "Add product";
+    sub = "Shown in the quantity list when an order is captured.";
+    saveLabel = record0 ? "Save product" : "Add product";
+    fields = [
+      { key: "name", label: "Product name", value: v("name", record0?.name ?? ""), placeholder: "Mahek Universal Thinner" },
+      { key: "pack", label: "Pack size", value: v("pack", record0?.pack ?? ""), placeholder: "5L", half: true },
+      { key: "code", label: "External product code", value: v("code", record0?.code ?? ""), placeholder: "MUT-03", half: true },
+      {
+        key: "rate",
+        label: "Rate",
+        value: v("rate", record0?.rate ?? ""),
+        placeholder: "1,240",
+        help: "Without a rate, order value, target achievement and run rate all read zero.",
+      },
+      { key: "order", label: "Display order", value: v("order", record0 ? "1" : String(entities.products.length + 1)), half: true },
+    ];
+  } else if (kind === "templates") {
+    title = record0 ? "Edit template" : "New template";
+    sub = "Merge placeholders are checked here, not at send time.";
+    saveLabel = record0 ? "Save template" : "Create template";
+    const body = v("body", record0?.body ?? "");
+    const used = (body.match(/\{[a-z]+\}/g) ?? []).map((x) => x.replace(/[{}]/g, ""));
+    const unknown = [...new Set(used.filter((x) => !PLACEHOLDERS.includes(x)))];
+    fields = [
+      { key: "name", label: "Template name", value: v("name", record0?.name ?? "") },
+      {
+        key: "cat", label: "Category", value: v("cat", record0?.cat ?? "Payment reminder"), half: true,
+        select: ["Order confirmation", "Payment reminder", "Routine check-in", "Reactivation", "Other"],
+      },
+      { key: "stage", label: "Escalation stage", value: v("stage", record0?.stage ?? "—"), half: true, select: ["—", "1", "2", "3"] },
+      {
+        key: "body", label: "Message body", value: body, area: true,
+        help: `Available: ${PLACEHOLDERS.map((p) => `{${p}}`).join(" ")}`,
+        error: unknown.length
+          ? `Unknown placeholder: ${unknown.map((x) => `{${x}}`).join(", ")}. The system cannot resolve it, so it would send literally.`
+          : undefined,
+      },
+    ];
+    preview = { name: SAMPLE.customer, body };
+  } else if (kind === "scripts") {
+    title = record0 ? "Edit call script" : "New call script";
+    sub = "Read aloud, so it is set larger in the CRM than the rest of the interface.";
+    saveLabel = record0 ? "Save script" : "Create script";
+    const body = v("body", record0?.body ?? "OPENING\n\n\nPURPOSE\n\n\nCLOSING\n");
+    fields = [
+      { key: "name", label: "Script name", value: v("name", record0?.name ?? "") },
+      {
+        key: "situation", label: "Situation it matches", value: v("situation", record0?.situation ?? "Routine check-in"), half: true,
+        select: ["Routine check-in", "Order due", "Collections stage 1", "Collections stage 2", "Collections stage 3", "Complaint handling", "Inactive"],
+      },
+      { key: "lang", label: "Language", value: v("lang", record0?.lang ?? "Hindi"), half: true, select: ["Hindi", "English", "Marathi"] },
+      {
+        key: "body", label: "Body — named blocks", value: body, area: true,
+        help: "Use block headings in caps: OPENING · PURPOSE · IF … (repeatable) · CLOSING.",
+      },
+    ];
+    preview = { name: SAMPLE.customer, body };
+  } else if (kind === "help") {
+    title = record0 ? "Edit article" : "New article";
+    sub = "Read in the CRM Help Center, authored here.";
+    saveLabel = record0 ? "Save article" : "Create article";
+    fields = [
+      { key: "name", label: "Title", value: v("name", record0?.name ?? "") },
+      {
+        key: "cat", label: "Category", value: v("cat", record0?.cat ?? "Collections SOP"), half: true,
+        select: ["Call scripts", "Collections SOP", "Order capture", "Complaints", "System basics"],
+      },
+      { key: "type", label: "Type", value: v("type", record0?.type ?? "SOP"), half: true, select: ["SOP", "Call script", "System guide", "Policy"] },
+      {
+        key: "roles", label: "Visible to", value: v("roles", record0?.roles ?? "Telecaller, Manager"),
+        select: ["Telecaller", "Manager", "Telecaller, Manager"],
+      },
+      { key: "body", label: "Body", value: v("body", record0?.body ?? ""), area: true },
+    ];
+  } else if (kind === "holidays") {
+    title = "Add holiday";
+    sub = "Excluded from working-day counts and run-rate maths.";
+    saveLabel = "Add holiday";
+    fields = [
+      { key: "date", label: "Date", value: v("date"), placeholder: "02 Oct 2026" },
+      { key: "name", label: "Name", value: v("name"), placeholder: "Gandhi Jayanti" },
+      { key: "applies", label: "Applies to", value: v("applies", "Whole company"), select: ["Whole company", "Telecalling only", "Field sales only"] },
+    ];
+  } else if (kind === "rules") {
+    title = record0 ? `Field rules · ${record0.name}` : "Per-outcome rules";
+    sub = "Which fields appear, and what saving this outcome creates.";
+    saveLabel = "Save rules";
+    const three = ["Hidden", "Optional", "Required"];
+    fields = [
+      { key: "products", label: "Product list", value: v("products", "Required"), select: ["Hidden", "Shown", "Required"], half: true },
+      { key: "followDate", label: "Follow-up date", value: v("followDate", "Hidden"), select: three, half: true },
+      { key: "payDate", label: "Payment promise date", value: v("payDate", "Optional"), select: three, half: true },
+      { key: "payAmt", label: "Payment promise amount", value: v("payAmt", "Required"), select: three, half: true },
+      { key: "cmpCat", label: "Complaint category", value: v("cmpCat", "Hidden"), select: three, half: true },
+      { key: "orderDate", label: "Order date", value: v("orderDate", "Hidden"), select: three, half: true },
+      { key: "notes", label: "Notes", value: v("notes", "Optional"), select: ["Optional", "Required"], half: true },
+      {
+        key: "effects", label: "Side effects", area: true,
+        value: v("effects", "Creates an order · updates last order date · counts as connected"),
+        help: "Creates an order · creates a reminder · creates or updates a complaint · updates last order, call or contact date · counts as attempted, connected or missed.",
+      },
+    ];
+  } else if (kind === "notes") {
+    title = record0 ? `Quick notes · ${record0.name}` : "Quick notes";
+    sub = "Tappable in the Call Log for this outcome.";
+    saveLabel = "Save notes";
+    fields = [
+      {
+        key: "items", label: "Notes for this outcome", area: true,
+        value: v("items", "Customer confirmed order\nRepeat order\nUrgent delivery\nRate accepted\nPayment on delivery"),
+        help: "One per line, in display order. A manager can add a seasonal note here without a code change.",
+      },
+      { key: "max", label: "Maximum length", value: v("max", "1000"), half: true },
+    ];
+  } else if (kind === "createUser" || kind === "editUser") {
+    const editing = kind === "editUser";
+    title = editing ? "Edit user" : "Create user";
+    sub = editing
+      ? (user?.name ?? "")
+      : "The account is created and a set-password link is sent. No password is ever set here.";
+    saveLabel = editing ? "Save user" : "Create user and send link";
+    fields = [
+      { key: "name", label: "Full name", value: v("name", user?.name ?? ""), placeholder: "Priya Sharma" },
+      {
+        key: "contact", label: "Work email or number", value: v("contact", user?.contact ?? ""), placeholder: "priya@mahek.in",
+        help: editing ? undefined : "The set-password link goes here. It expires in 30 minutes.",
+      },
+    ];
+    if (!editing) {
+      fields.push(
+        {
+          key: "apps", label: "Initial app access", value: v("apps", "Telecaller CRM"),
+          select: ["Telecaller CRM", "Telecaller CRM, Order Management", "None yet"],
+          help: "One app means MahekOne takes them straight in and hides the app switcher.",
+        },
+        { key: "role", label: "Role in the CRM", value: v("role", "Telecaller"), select: ["Telecaller", "Manager"], half: true },
+        {
+          key: "reportsTo", label: "Reports to", value: v("reportsTo", "Vikram Shah"), half: true,
+          select: [...users.filter((u) => Object.values(u.roles).includes("Manager")).map((u) => u.name), "—"],
+        },
+      );
+    }
+  } else if (kind === "deactivate" && user) {
+    title = `Deactivate ${user.name}`;
+    sub = "Their sessions end and MahekOne stops opening for them.";
+    saveLabel = "Deactivate user";
+    fields = [{ key: "reason", label: "Reason", value: v("reason"), area: true, placeholder: "Left the company on 31 Aug" }];
+    const book = ownedFor(user.id).find((r) => r.key === "customers");
+    if (book) {
+      blockers = [
+        {
+          line: `${user.name} still owns ${book.count} Telecaller CRM customers. Their book must be reassigned before the account can be deactivated.`,
+          cta: "Reassign their book",
+          run: () => notify("Opening the offboarding flow on their record"),
+        },
+      ];
+    }
+  } else if (kind === "delegate" && user) {
+    title = `Delegate access · ${user.name}`;
+    sub = "A dated grant so nothing quietly becomes permanent.";
+    saveLabel = "Delegate";
+    fields = [
+      {
+        key: "app", label: "App", value: v("app", registry[0].name),
+        select: registry.map((a) => a.name),
+      },
+      { key: "from", label: "Starts", value: v("from", "2026-08-07"), half: true },
+      { key: "until", label: "Ends", value: v("until", "2026-08-31"), half: true, help: "Required — this is what keeps it temporary." },
+      { key: "why", label: "Why", value: v("why"), area: true, placeholder: "Covering Priya while she is on leave" },
+    ];
+  } else if (kind === "leave" && user) {
+    title = `Mark ${user.name} on leave`;
+    sub = "Their queue is covered rather than left to pile up.";
+    saveLabel = "Mark on leave";
+    fields = [
+      { key: "from", label: "From", value: v("from", "2026-08-07"), half: true },
+      { key: "until", label: "Until", value: v("until", "2026-08-20"), half: true },
+      {
+        key: "cover", label: "Covered by", value: v("cover", ""),
+        select: ["—", ...users.filter((u) => u.status === "Active" && u.id !== user.id).map((u) => u.name)],
+        help: "Leaving this empty means their reminders and follow-ups simply age.",
+      },
+    ];
+  } else if (kind === "decline") {
+    title = "Decline the request";
+    sub = "The reason is shown to whoever asked, so they do not simply ask again.";
+    saveLabel = "Decline request";
+    fields = [{ key: "why", label: "Reason", value: v("why"), area: true, placeholder: "Dispatch data is not needed to work a collections list." }];
+  } else if (kind === "registerApp") {
+    const app = id ? registry.find((a) => a.id === id) : null;
+    title = app ? "Edit registry entry" : "Register an app";
+    sub = "The console reads its settings from the schema endpoint. No console change is needed.";
+    saveLabel = app ? "Save entry" : "Register app";
+    fields = [
+      { key: "name", label: "App name", value: v("name", app?.name ?? ""), placeholder: "Dispatch" },
+      { key: "short", label: "Short name", value: v("short", app?.short ?? ""), placeholder: "Dispatch", half: true },
+      {
+        key: "status", label: "Status", value: v("status", app?.status ?? "Coming soon"), half: true,
+        select: ["Live", "Coming soon", "Maintenance", "Retired"],
+      },
+      { key: "route", label: "Route or entry URL", value: v("route", app?.route ?? ""), placeholder: "/orders" },
+      {
+        key: "schema", label: "Configuration schema endpoint", value: v("schema", app?.schemaEndpoint ?? ""),
+        placeholder: "/api/orders/config/schema", help: "Where the console fetches this app's settings definition.",
+      },
+      { key: "write", label: "Configuration write endpoint", value: v("write", app?.writeEndpoint ?? ""), placeholder: "/api/orders/config" },
+      {
+        key: "summary", label: "Summary endpoint", value: v("summary", app?.summaryEndpoint ?? ""),
+        placeholder: "/api/orders/summary", help: "Where the launcher fetches the attention count and status line.",
+      },
+      {
+        key: "roles", label: "Role vocabulary", value: v("roles", app?.roles.join(", ") ?? ""), placeholder: "Dispatcher, Manager",
+        help: "The roles this app understands. The console renders these options in People → Roles.",
+      },
+      {
+        key: "desc", label: "Description", value: v("desc", app?.desc ?? ""), area: true,
+        help: "Shown on the launcher's locked chip so people know what the app is.",
+      },
+    ];
+  } else if (kind === "template") {
+    const t = id ? ROLE_TEMPLATES.find((x) => x.id === id) : null;
+    title = t ? "Edit role template" : "New role template";
+    sub = "Creating a user becomes choosing one of these and typing a name.";
+    saveLabel = t ? "Save template" : "Create template";
+    fields = [
+      { key: "name", label: "Template name", value: v("name", t?.name ?? ""), placeholder: "Telecaller" },
+      { key: "dept", label: "Department", value: v("dept", t?.dept ?? ""), placeholder: "Telecalling", half: true },
+      { key: "apps", label: "Apps granted", value: v("apps", t?.apps ?? ""), select: registry.map((a) => a.name) },
+      { key: "roles", label: "Roles", value: v("roles", t?.roles ?? ""), placeholder: "CRM: Telecaller" },
+    ];
+  } else if (kind === "bulkInvite") {
+    title = "Bulk invite";
+    sub = "One person per line. Each gets their own set-password link.";
+    saveLabel = "Send invitations";
+    fields = [
+      {
+        key: "people", label: "Name and work email or number", area: true,
+        value: v("people", ""),
+        placeholder: "Mahesh Parab, mahesh@mahek.in\nSunita Rane, 9820011010",
+        help: "Existing accounts are skipped rather than duplicated.",
+      },
+      { key: "template", label: "Role template", value: v("template", ROLE_TEMPLATES[0].name), select: ROLE_TEMPLATES.map((t) => t.name) },
+    ];
+  } else if (kind === "team") {
+    const team = TEAMS.find((t) => t.id === id);
+    title = team?.name ?? "Team";
+    sub = "One manager each. Removing a manager requires nominating a replacement.";
+    saveLabel = "Save team";
+    fields = [
+      { key: "name", label: "Team name", value: v("name", team?.name ?? "") },
+      {
+        key: "manager", label: "Manager", value: v("manager", team?.manager ?? ""),
+        select: users.filter((u) => Object.values(u.roles).includes("Manager")).map((u) => u.name),
+        help: "Every member's work rolls up to this person.",
+      },
+      { key: "members", label: "Members", value: v("members", (team?.members ?? []).join(", ")), area: true },
+    ];
+  }
+
+  const fieldError = fields.find((f) => f.error);
+  const blocked = blockers.length > 0 || !!fieldError;
+
+  return (
+    <Drawer open onClose={onClose} label={title}>
+      <DrawerHeader onClose={onClose}>
+        <div className="text-lg font-semibold text-ink">{title}</div>
+        {sub ? <div className="mt-0.5 text-[13px] text-muted">{sub}</div> : null}
+      </DrawerHeader>
+
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        <div className="flex flex-wrap gap-x-[4%] gap-y-3.5">
+          {fields.map((f) => (
+            <label key={f.key} className={cx("block", f.half ? "w-[48%]" : "w-full")}>
+              <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
+                {f.label}
+              </span>
+              {f.area ? (
+                <Textarea
+                  value={f.value}
+                  onChange={set(f.key)}
+                  placeholder={f.placeholder}
+                  invalid={!!f.error}
+                  className="h-[180px] font-mono text-[13px]"
+                />
+              ) : f.select ? (
+                <Select value={f.value} onChange={set(f.key)} className="w-full">
+                  {f.select.map((o) => (
+                    <option key={o}>{o}</option>
+                  ))}
+                </Select>
+              ) : (
+                <Input value={f.value} onChange={set(f.key)} placeholder={f.placeholder} invalid={!!f.error} />
+              )}
+              {f.error ? (
+                <span className="mt-1 block text-[13px] text-danger">{f.error}</span>
+              ) : f.help ? (
+                <span className="mt-1 block text-[13px] text-muted">{f.help}</span>
+              ) : null}
+            </label>
+          ))}
+        </div>
+
+        {preview ? <MessagePreview name={preview.name} body={preview.body} /> : null}
+
+        {blockers.length ? (
+          <div className="mt-4 rounded-[4px] border border-danger-soft border-l-[3px] border-l-danger bg-danger-soft px-3.5 py-3">
+            <div className="text-sm font-medium text-danger">This must be done first</div>
+            <div className="mt-2 flex flex-col gap-2">
+              {blockers.map((b) => (
+                <div key={b.line} className="rounded-[4px] border border-danger-soft bg-surface px-3 py-2.5">
+                  <div className="text-sm text-ink">{b.line}</div>
+                  <Button size="sm" variant="ghost" className="mt-2" onClick={b.run}>
+                    {b.cta}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="flex flex-none items-center gap-2.5 border-t border-line px-5 py-3">
+        {record0 ? (
+          <Button
+            variant="ghost"
+            className="border-none text-danger"
+            onClick={() => {
+              archiveEntity(entityKind!, record0.id);
+              onClose();
+            }}
+          >
+            {record0.active ? "Archive" : "Restore"}
+          </Button>
+        ) : null}
+        <span className="flex-1" />
+        <Button variant="secondary" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          variant="primary"
+          disabled={blocked}
+          title={
+            blockers.length
+              ? "Reassign their book first"
+              : fieldError
+                ? "Fix the flagged field first"
+                : undefined
+          }
+          onClick={() => {
+            record(
+              kind === "createUser" || kind === "editUser" || kind === "deactivate" ? "access" : "admin",
+              kind === "registerApp" ? "Platform" : "Telecaller CRM",
+              title,
+              "—",
+              "—",
+            );
+            notify(`${title} — saved`);
+            onClose();
+          }}
+        >
+          {saveLabel}
+        </Button>
+      </div>
+    </Drawer>
+  );
+}
+
+/**
+ * What the customer will actually read. Placeholders are resolved against one
+ * real-looking account, because a template that reads well as `{customer}` can
+ * still read badly as a name.
+ */
+function MessagePreview({ name, body }: { name: string; body: string }) {
+  const resolved = body.replace(/\{([a-z]+)\}/g, (m, k: string) => SAMPLE[k] ?? m);
+  return (
+    <div className="mt-4">
+      <div className="mb-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
+        Preview against {name}
+      </div>
+      <div className="flex justify-end rounded-[6px] border border-line bg-canvas p-4">
+        <div className="max-w-[320px] rounded-[6px_6px_2px_6px] border border-brand-softer bg-brand-soft px-3 py-2.5 text-[15px] leading-[22px] whitespace-pre-wrap text-ink">
+          {resolved || " "}
+        </div>
+      </div>
+      <div className={cx("mt-2 text-[13px]", body.length > 700 ? "text-warn-ink" : "text-muted")}>
+        {body.length} characters{body.length > 700 ? " — long messages get skimmed" : ""}
+      </div>
+    </div>
+  );
+}
+
+function isEntityKind(kind: string): boolean {
+  return ["products", "templates", "scripts", "help", "holidays", "rules", "notes"].includes(kind);
+}

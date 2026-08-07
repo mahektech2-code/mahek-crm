@@ -138,7 +138,7 @@ export function EodScreen({
                   {d.overdueDays > 0 ? `${ageLabel(d.overdueDays)} late` : "Due today"}
                 </Badge>
                 <span className="flex-1 text-sm text-ink">
-                  {d.note} <span className="text-muted">— {d.customerName}</span>
+                  {d.note} <span className="text-muted">- {d.customerName}</span>
                 </span>
                 <Button
                   size="sm"
@@ -172,7 +172,7 @@ export function EodScreen({
             title={view === "mine" ? "Today's numbers" : "Team roll-up"}
             hint={
               view === "mine"
-                ? "Derived from what you logged — a thin report means thin logging, not a thin day"
+                ? "Derived from what you logged - a thin report means thin logging, not a thin day"
                 : undefined
             }
           />

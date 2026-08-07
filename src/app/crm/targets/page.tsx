@@ -4,7 +4,7 @@ import { currentPeriod } from "@/lib/queries";
 import { listTargets, shortfallAnalysis } from "@/lib/services/worklist-services";
 import { TargetsScreen } from "./targets-screen";
 
-export const metadata = { title: "Monthly targets — MahekOne CRM" };
+export const metadata = { title: "Monthly targets - MahekOne CRM" };
 
 export default async function TargetsPage({
   searchParams,

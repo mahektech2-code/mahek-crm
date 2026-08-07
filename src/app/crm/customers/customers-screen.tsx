@@ -418,8 +418,8 @@ export function CustomersScreen({
                       {r.status}
                     </Badge>
                   </Td>
-                  <Td>{r.lastOrderDate ? shortDate(r.lastOrderDate) : "—"}</Td>
-                  <Td>{r.lastContactAt ? stamp(r.lastContactAt) : "—"}</Td>
+                  <Td>{r.lastOrderDate ? shortDate(r.lastOrderDate) : "-"}</Td>
+                  <Td>{r.lastContactAt ? stamp(r.lastContactAt) : "-"}</Td>
                   <Td
                     align="right"
                     className={
@@ -831,7 +831,7 @@ function BulkReminderModal({
         </Field>
         <Field
           label="What is the reminder for · required"
-          hint="Every selected customer gets this same note — write it so it still makes sense in a week."
+          hint="Every selected customer gets this same note - write it so it still makes sense in a week."
         >
           <Textarea
             value={note}

@@ -44,7 +44,7 @@ export async function AppPlaceholder({ app: appId }: { app: AppId }) {
             {app.name}
           </div>
           <p className="mt-2 text-[15px] leading-[22px] text-muted">
-            Not built yet — this is where {app.name} will open. The sign-in,
+            Not built yet - this is where {app.name} will open. The sign-in,
             app access, attendance and the switcher already work, and it shares
             the same database as the CRM.
           </p>

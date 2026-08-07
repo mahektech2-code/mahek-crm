@@ -25,7 +25,7 @@ export async function generateMetadata({
 }) {
   const { id } = await params;
   const customer = await getCustomer(id);
-  return { title: `${customer?.name ?? "Customer"} — MahekOne CRM` };
+  return { title: `${customer?.name ?? "Customer"} - MahekOne CRM` };
 }
 
 export default async function CustomerRecordPage({

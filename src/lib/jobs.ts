@@ -22,6 +22,7 @@ import {
   today,
 } from "./recompute";
 import { sweepUnconfirmed } from "./services/whatsapp-service";
+import { sweepOrphans } from "./services/attachment-service";
 import { autoGenerateEodReports } from "./services/eod-service";
 import { isWorkingDay, nextWorkingDay, type BusinessDate } from "./business-date";
 import { buildQueue } from "./engines/queue";
@@ -50,7 +51,8 @@ export type JobName =
   | "sweep-unconfirmed"
   | "escalate-complaint-sla"
   | "auto-eod"
-  | "roll-reminders";
+  | "roll-reminders"
+  | "sweep-orphan-attachments";
 
 export type JobResult = { job: JobName; recordsAffected: number; detail: string };
 
@@ -110,6 +112,16 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
       await recomputeAllOutstanding();
       const n = await recomputeAllFollowUpStates();
       return { recordsAffected: n, detail: `${n} customers evaluated` };
+    }, triggeredById),
+  );
+
+  // §4.2 — an abandoned form leaves files belonging to nothing. Nothing else
+  // will ever reclaim them, so the sweep is part of the subsystem rather than
+  // a tidy-up somebody remembers to run.
+  results.push(
+    await run("sweep-orphan-attachments", async () => {
+      const { swept } = await sweepOrphans();
+      return { recordsAffected: swept, detail: `${swept} unbound files removed` };
     }, triggeredById),
   );
 

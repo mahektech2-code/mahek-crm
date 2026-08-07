@@ -192,13 +192,13 @@ export function QueueScreen({
     <div className="max-w-[1440px] px-6 pt-6 pb-10">
       <PageHeader
         title="Call Log"
-        subtitle={`${scopeLabel} · Worked top to bottom. The first row is your next call — log an inbound call or an order that arrived without one from any row.`}
+        subtitle={`${scopeLabel} · Worked top to bottom. The first row is your next call - log an inbound call or an order that arrived without one from any row.`}
         actions={
           <>
             <Button
               variant="secondary"
               disabled={busy}
-              title="The queue is recomputed on every load — this just re-reads it"
+              title="The queue is recomputed on every load - this just re-reads it"
               onClick={async () => {
                 setBusy(true);
                 await run(rebuildQueue());
@@ -321,7 +321,7 @@ export function QueueScreen({
             </span>
             <span className="flex-1" />
             <span className="text-[13px] text-muted">
-              Nothing disappears silently — open this if somebody is missing
+              Nothing disappears silently - open this if somebody is missing
             </span>
           </button>
           {heldOpen ? (
@@ -350,8 +350,13 @@ export function QueueScreen({
           visible.map((r, i) => (
             <div
               key={r.customerId}
-              onClick={() => setSelected(i)}
-              onDoubleClick={() => setOpenId(r.customerId)}
+              onClick={() => {
+                // One click opens the call, the way the payment worklist does.
+                // The row still becomes the selection, so j/k carries on from
+                // wherever the mouse left off.
+                setSelected(i);
+                setOpenId(r.customerId);
+              }}
               className={cx(
                 "flex cursor-pointer items-center gap-4 border-b border-divider px-5 py-3 last:border-0",
                 i === selected ? "bg-brand-soft/50" : "hover:bg-canvas",
