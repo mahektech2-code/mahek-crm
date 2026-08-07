@@ -16,7 +16,8 @@ import {
   cx,
 } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
-import { CRM_SCHEMA, JOBS, type AuditKind, type AuditRow } from "./data";
+import { crmSchema, schemaFields } from "@/lib/config/schema-contract";
+import { JOBS, type AuditKind, type AuditRow } from "./data";
 import {
   ANNOUNCEMENTS,
   APP_USAGE,
@@ -41,46 +42,46 @@ import { useAdmin } from "./store";
 
 /* --------------------------------------------------------------- attention */
 
-export function AttentionTab({ navigate }: { navigate: (s: string, t: number) => void }) {
+export function AttentionTab({ navigate }: { navigate: (s: string, t: string) => void }) {
   const { users, requests, expiring, registry, unused, notify } = useAdmin();
 
   const rows = [
     {
       n: 1, one: "integration failing", many: "integrations failing", detail: "External order system — authentication rejected on the last three attempts.",
-      tone: "danger" as const, cta: "Open integrations", go: () => navigate("overview", 2),
+      tone: "danger" as const, cta: "Open integrations", go: () => navigate("overview", "integrations"),
     },
     {
       n: JOBS.filter((j) => !j.ok).length, one: "scheduled job failed", many: "scheduled jobs failed",
       detail: "Recompute buying cycles timed out. The queue is ordering on yesterday's projections.",
-      tone: "danger" as const, cta: "Open job health", go: () => navigate("overview", 5),
+      tone: "danger" as const, cta: "Open job health", go: () => navigate("overview", "jobs"),
     },
     {
       n: CONTRACT_CHECKS.filter((c) => !c.ok && c.app === "Telecaller CRM").length, one: "app contract failing", many: "app contracts failing",
       detail: "The CRM's per-user summary does not answer, so owned records and offboarding impact read empty.",
-      tone: "danger" as const, cta: "Open contract validation", go: () => navigate("apps", 5),
+      tone: "danger" as const, cta: "Open contract validation", go: () => navigate("apps", "contracts"),
     },
     {
       n: requests.length, one: "access request", many: "access requests", detail: "Raised from the launcher's locked chips.",
-      tone: "warn" as const, cta: "Open requests", go: () => navigate("people", 1),
+      tone: "warn" as const, cta: "Open requests", go: () => navigate("people", "access"),
     },
     {
       n: users.filter((u) => u.status === "Locked").length, one: "account locked out", many: "accounts locked out",
       detail: "Locked after failed sign-in attempts. Unlocking changes no password.",
-      tone: "warn" as const, cta: "Open lockouts", go: () => navigate("people", 3),
+      tone: "warn" as const, cta: "Open lockouts", go: () => navigate("people", "security"),
     },
     {
       n: users.filter((u) => u.status === "Invited").length, one: "invited over seven days ago, never signed in", many: "invited over seven days ago, never signed in",
       detail: "An invitation nobody opened means somebody is not working yet and has not said so.",
-      tone: "warn" as const, cta: "Open onboarding", go: () => navigate("people", 4),
+      tone: "warn" as const, cta: "Open onboarding", go: () => navigate("people", "onboarding"),
     },
     {
       n: expiring.filter((e) => e.left <= 30).length, one: "access grant expiring", many: "access grants expiring",
       detail: "Temporary grants that end within the month.",
-      tone: "neutral" as const, cta: "Open app access", go: () => navigate("people", 1),
+      tone: "neutral" as const, cta: "Open app access", go: () => navigate("people", "access"),
     },
     {
       n: unused.length, one: "granted app never opened", many: "granted apps never opened", detail: "Access sprawl, cleaned up from the unused-access report.",
-      tone: "neutral" as const, cta: "Open app access", go: () => navigate("people", 1),
+      tone: "neutral" as const, cta: "Open app access", go: () => navigate("people", "access"),
     },
     {
       n: 14, one: "CRM customer unassigned", many: "CRM customers unassigned", detail: "Nobody's book. They will not appear in any queue.",
@@ -89,7 +90,7 @@ export function AttentionTab({ navigate }: { navigate: (s: string, t: number) =>
     {
       n: registry.filter((a) => a.status === "Maintenance").length, one: "app in maintenance", many: "apps in maintenance",
       detail: "A banner is showing inside the app and on its launcher card.",
-      tone: "neutral" as const, cta: "Open app status", go: () => navigate("apps", 1),
+      tone: "neutral" as const, cta: "Open app status", go: () => navigate("apps", "status"),
     },
   ].filter((r) => r.n > 0);
 
@@ -216,7 +217,7 @@ export function UsageTab() {
 
 /* ------------------------------------------------------ configuration drift */
 
-export function DriftTab({ navigate }: { navigate: (s: string, t: number) => void }) {
+export function DriftTab({ navigate }: { navigate: (s: string, t: string) => void }) {
   return (
     <div>
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
@@ -254,7 +255,7 @@ export function DriftTab({ navigate }: { navigate: (s: string, t: number) => voi
           title="Still on a default the business has not confirmed"
           hint="Untouched is not the same as agreed. During rollout this is the list to work down."
           action={
-            <Button size="sm" variant="ghost" onClick={() => navigate("crm", 0)}>
+            <Button size="sm" variant="ghost" onClick={() => navigate("crm", "call-queue")}>
               Open CRM configuration
             </Button>
           }
@@ -293,7 +294,7 @@ export function PerAppDashboard() {
   const flags = FEATURE_FLAGS.filter((f) => f.app === app.name);
   const checks = CONTRACT_CHECKS.filter((c) => c.app === app.name);
   const jobs = JOBS.filter((j) => j.app === app.name);
-  const settingCount = app.id === "crm" ? CRM_SCHEMA.tabs.flatMap((t) => t.groups.flatMap((g) => g.fields)).length : 0;
+  const settingCount = app.id === "crm" ? schemaFields(crmSchema()).length : 0;
 
   return (
     <div>
@@ -359,7 +360,10 @@ export function SchemaInspector() {
   const [appId, setAppId] = React.useState("crm");
   const app = registry.find((a) => a.id === appId)!;
   const live = app.status === "Live";
-  const fields = live ? CRM_SCHEMA.tabs.flatMap((t) => t.groups.flatMap((g) => g.fields.map((f) => ({ tab: t.label, ...f })))) : [];
+  const schema = crmSchema();
+  const fields = live
+    ? schema.tabs.flatMap((t) => t.groups.flatMap((g) => g.fields.map((f) => ({ tab: t.label, ...f }))))
+    : [];
 
   return (
     <div>
@@ -404,14 +408,12 @@ export function SchemaInspector() {
                     </Td>
                     <Td>{f.tab}</Td>
                     <Td>
-                      <Badge tone="neutral">{f.type}</Badge>
+                      <Badge tone="neutral">{f.control}</Badge>
                     </Td>
                     <Td className="max-w-[280px] truncate">
-                      {f.type === "entity"
-                        ? `entity · ${f.entity}`
-                        : f.def === undefined
-                          ? (f.parts ?? f.pairs ?? []).map((p) => p.v).join(" / ")
-                          : String(Array.isArray(f.def) ? f.def.join(", ") : f.def)}
+                      {typeof f.def === "object" && f.def !== null
+                        ? Object.values(f.def as Record<string, unknown>).join(" / ")
+                        : String(f.def)}
                     </Td>
                     <Td>{f.min !== undefined ? `${f.min}–${f.max}` : "—"}</Td>
                     <Td>{f.adminOnly ? <Badge tone="warn">Platform admin</Badge> : "—"}</Td>

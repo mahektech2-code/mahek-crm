@@ -142,6 +142,100 @@ export async function updateSetting(
   return { ok: true, warnings };
 }
 
+/**
+ * A whole section saved as one change set.
+ *
+ * The console edits several related settings at once — three escalation
+ * thresholds, a set of aging buckets — and half-applying those leaves the
+ * system briefly describing something nobody agreed to. So every value is
+ * validated before any is written, the writes share one transaction, and the
+ * resulting configuration is checked for consistency before the transaction
+ * commits.
+ *
+ * A problem that was ALREADY present is not a reason to refuse: the stored
+ * configuration may be inconsistent today, and refusing to save would trap
+ * whoever is trying to fix one half of it.
+ */
+export async function updateSettings(
+  entries: ReadonlyArray<{ key: string; value: unknown }>,
+  actorId: string,
+): Promise<
+  | { ok: true; warnings: string[] }
+  | { ok: false; error: string; fields: Array<{ field: string; message: string }> }
+> {
+  if (!entries.length) return { ok: true, warnings: [] };
+
+  const fields: Array<{ field: string; message: string }> = [];
+  const validated: Array<{ def: SettingDefinition; value: unknown }> = [];
+
+  for (const entry of entries) {
+    const def = definition(entry.key);
+    if (!def) {
+      fields.push({ field: entry.key, message: `Unknown setting "${entry.key}".` });
+      continue;
+    }
+    const result = validateSetting(entry.key, entry.value);
+    if (!result.ok) fields.push({ field: entry.key, message: result.error });
+    else validated.push({ def, value: result.value });
+  }
+
+  if (fields.length) {
+    return { ok: false, error: "Some values cannot be saved.", fields };
+  }
+
+  const before = await getConfig();
+  const problemsBefore = new Set(checkConsistency(before));
+
+  const after = { ...before } as Config;
+  for (const v of validated) {
+    (after as Record<string, unknown>)[v.def.key] = v.value;
+  }
+  const introduced = checkConsistency(after).filter((p) => !problemsBefore.has(p));
+  if (introduced.length) {
+    return {
+      ok: false,
+      error: introduced[0],
+      fields: introduced.map((message) => ({ field: "", message })),
+    };
+  }
+
+  await db.transaction(async (tx) => {
+    for (const { def, value } of validated) {
+      await tx
+        .insert(appSettings)
+        .values({
+          key: def.key,
+          value: value as never,
+          valueType: def.type,
+          category: def.category,
+          label: def.label,
+          description: def.description,
+          updatedAt: new Date(),
+          updatedById: actorId,
+        })
+        .onConflictDoUpdate({
+          target: appSettings.key,
+          set: { value: value as never, updatedAt: new Date(), updatedById: actorId },
+        });
+
+      // One entry per setting, not one per change set — the audit answers
+      // "what happened to this threshold", which a bundled row cannot.
+      await tx.insert(auditLog).values({
+        id: `aud_${randomUUID().slice(0, 12)}`,
+        actorId,
+        action: "config.update",
+        entityType: "app_setting",
+        entityId: def.key,
+        beforeState: { value: before[def.key as keyof Config] } as never,
+        afterState: { value } as never,
+      });
+    }
+  });
+
+  invalidateConfig();
+  return { ok: true, warnings: checkConsistency(await getConfig()) };
+}
+
 /** For the manager configuration screen: definitions plus current values. */
 export type SettingRow = SettingDefinition & {
   value: unknown;

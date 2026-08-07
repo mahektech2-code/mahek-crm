@@ -40,7 +40,7 @@ export default async function ComplaintsPage() {
       billsByCustomer={Object.fromEntries(billsByCustomer)}
       loggedInUserName={user.name}
       // Categories are configuration, not a constant — a manager edits the
-      // list at /crm/settings without a deploy.
+      // list in the Admin Console without a deploy.
       categories={config["complaints.categories"]}
     />
   );

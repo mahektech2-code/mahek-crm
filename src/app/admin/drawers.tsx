@@ -3,9 +3,12 @@
 import * as React from "react";
 import { Button, Input, Select, Textarea, cx } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
-import { ownedFor, ROLE_TEMPLATES, TEAMS, type EntityKind, type EntityRow } from "./data";
+import { ownedFor, TEAMS, type EntityKind, type EntityRow } from "./data";
 import { ANNOUNCEMENTS } from "./data-platform";
 import { RichTextEditor } from "./rich-text";
+import { saveTemplate } from "@/lib/actions/crm";
+import { validateAppEndpoint, validateAppRoute, validateAppSlug } from "@/lib/apps";
+import { slugify } from "@/lib/slug";
 import { useAdmin, type Drawer as DrawerState } from "./store";
 
 /* ---------------------------------------------------------------------------
@@ -19,6 +22,8 @@ import { useAdmin, type Drawer as DrawerState } from "./store";
 
 type FieldSpec = {
   rich?: boolean;
+  /** Shown but not editable, with `help` saying why. */
+  readOnly?: boolean;
   key: string;
   label: string;
   value: string;
@@ -274,22 +279,51 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
     title = app ? "Edit registry entry" : "Register an app";
     sub = "The console reads its settings from the schema endpoint. No console change is needed.";
     saveLabel = app ? "Save entry" : "Register app";
+
+    const name = v("name", app?.name ?? "");
+    const status = v("status", app?.status ?? "Coming soon");
+    const live = status === "Live";
+    // Suggest a slug from the name, but only once there is a name to derive one
+    // from — and never overwrite what somebody typed themselves.
+    const slug = app ? app.id : (draft.slug ?? (name.trim() ? slugify(name) : ""));
+    const route = v("route", app?.route ?? "");
+
     fields = [
-      { key: "name", label: "App name", value: v("name", app?.name ?? ""), placeholder: "Dispatch" },
+      { key: "name", label: "App name", value: name, placeholder: "Dispatch" },
       { key: "short", label: "Short name", value: v("short", app?.short ?? ""), placeholder: "Dispatch", half: true },
       {
-        key: "status", label: "Status", value: v("status", app?.status ?? "Coming soon"), half: true,
+        key: "status", label: "Status", value: status, half: true,
         select: ["Live", "Coming soon", "Maintenance", "Retired"],
       },
-      { key: "route", label: "Route or entry URL", value: v("route", app?.route ?? ""), placeholder: "/orders" },
+      {
+        key: "slug", label: "Slug", value: slug, placeholder: "dispatch", half: true,
+        readOnly: !!app,
+        help: app
+          ? "Fixed once registered. Every access grant is a row against this slug, so changing it would orphan them all."
+          : "Lowercase, hyphenated. It becomes the URL and the key every access grant is written against.",
+        error: app ? undefined : (validateAppSlug(slug, registry.map((a) => a.id)) ?? undefined),
+      },
+      {
+        key: "route", label: "Route or entry URL", value: route, placeholder: `/${slug || "dispatch"}`,
+        help: "Where the launcher sends people. It must sit under the app's own slug.",
+        error: validateAppRoute(route, slug, live) ?? undefined,
+      },
       {
         key: "schema", label: "Configuration schema endpoint", value: v("schema", app?.schemaEndpoint ?? ""),
-        placeholder: "/api/orders/config/schema", help: "Where the console fetches this app's settings definition.",
+        placeholder: `/api/${slug || "dispatch"}/config/schema`,
+        help: "Where the console fetches this app's settings definition.",
+        error: validateAppEndpoint(v("schema", app?.schemaEndpoint ?? "")) ?? undefined,
       },
-      { key: "write", label: "Configuration write endpoint", value: v("write", app?.writeEndpoint ?? ""), placeholder: "/api/orders/config" },
+      {
+        key: "write", label: "Configuration write endpoint", value: v("write", app?.writeEndpoint ?? ""),
+        placeholder: `/api/${slug || "dispatch"}/config`,
+        error: validateAppEndpoint(v("write", app?.writeEndpoint ?? "")) ?? undefined,
+      },
       {
         key: "summary", label: "Summary endpoint", value: v("summary", app?.summaryEndpoint ?? ""),
-        placeholder: "/api/orders/summary", help: "Where the launcher fetches the attention count and status line.",
+        placeholder: `/api/${slug || "dispatch"}/summary`,
+        help: "Where the launcher fetches the attention count and status line.",
+        error: validateAppEndpoint(v("summary", app?.summaryEndpoint ?? "")) ?? undefined,
       },
       {
         key: "roles", label: "Role vocabulary", value: v("roles", app?.roles.join(", ") ?? ""), placeholder: "Dispatcher, Manager",
@@ -299,30 +333,6 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
         key: "desc", label: "Description", value: v("desc", app?.desc ?? ""), area: true,
         help: "Shown on the launcher's locked chip so people know what the app is.",
       },
-    ];
-  } else if (kind === "template") {
-    const t = id ? ROLE_TEMPLATES.find((x) => x.id === id) : null;
-    title = t ? "Edit role template" : "New role template";
-    sub = "Creating a user becomes choosing one of these and typing a name.";
-    saveLabel = t ? "Save template" : "Create template";
-    fields = [
-      { key: "name", label: "Template name", value: v("name", t?.name ?? ""), placeholder: "Telecaller" },
-      { key: "dept", label: "Department", value: v("dept", t?.dept ?? ""), placeholder: "Telecalling", half: true },
-      { key: "apps", label: "Apps granted", value: v("apps", t?.apps ?? ""), select: registry.map((a) => a.name) },
-      { key: "roles", label: "Roles", value: v("roles", t?.roles ?? ""), placeholder: "CRM: Telecaller" },
-    ];
-  } else if (kind === "bulkInvite") {
-    title = "Bulk invite";
-    sub = "One person per line. Each gets their own set-password link.";
-    saveLabel = "Send invitations";
-    fields = [
-      {
-        key: "people", label: "Name and work email or number", area: true,
-        value: v("people", ""),
-        placeholder: "Mahesh Parab, mahesh@mahek.in\nSunita Rane, 9820011010",
-        help: "Existing accounts are skipped rather than duplicated.",
-      },
-      { key: "template", label: "Role template", value: v("template", ROLE_TEMPLATES[0].name), select: ROLE_TEMPLATES.map((t) => t.name) },
     ];
   } else if (kind === "announcement") {
     const a = id ? ANNOUNCEMENTS.find((x) => x.id === id) : null;
@@ -397,7 +407,14 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
                   ))}
                 </Select>
               ) : (
-                <Input value={f.value} onChange={set(f.key)} placeholder={f.placeholder} invalid={!!f.error} />
+                <Input
+                  value={f.value}
+                  onChange={set(f.key)}
+                  placeholder={f.placeholder}
+                  invalid={!!f.error}
+                  disabled={f.readOnly}
+                  className={f.readOnly ? "bg-canvas text-muted" : undefined}
+                />
               )}
               {f.error ? (
                 <span className="mt-1 block text-[13px] text-danger">{f.error}</span>
@@ -454,7 +471,22 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
                 ? "Fix the flagged field first"
                 : undefined
           }
-          onClick={() => {
+          onClick={async () => {
+            // Templates are the one collection with a write path today, so this
+            // is a real save. Everything else records the intent locally and
+            // says nothing that is not true.
+            if (kind === "templates") {
+              const result = await saveTemplate({
+                id: id ?? undefined,
+                name: v("name", record0?.name ?? ""),
+                category: v("cat", record0?.cat ?? "payment_reminder"),
+                body: v("body", record0?.body ?? ""),
+                appliesTo: "personal",
+              });
+              notify(result.ok ? (result.message ?? "Template saved") : (result.error ?? "That did not save."));
+              if (result.ok) onClose();
+              return;
+            }
             record(
               kind === "createUser" || kind === "editUser" || kind === "deactivate" ? "access" : "admin",
               kind === "registerApp" ? "Platform" : "Telecaller CRM",

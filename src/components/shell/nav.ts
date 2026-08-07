@@ -68,8 +68,9 @@ export const NAV: NavGroup[] = [
     label: "Support",
     items: [
       { href: at("/help"), label: "Help Center", icon: "book" },
-      // Managers only, but the page explains itself rather than 403-ing.
-      { href: at("/settings"), label: "Configuration", icon: "settings" },
+      // Configuration is not here. Every setting in MahekOne is changed in the
+      // Admin Console, so an app that also offered them would be a second place
+      // for the same fact to live.
     ],
   },
 ];
