@@ -57,6 +57,8 @@ const CATEGORY_LABEL: Record<string, string> = {
   "working-day": "Working day",
   reminders: "Reminders",
   complaints: "Complaints",
+  products: "Products",
+  interactions: "Interactions",
   whatsapp: "WhatsApp",
 };
 

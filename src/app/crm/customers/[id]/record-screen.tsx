@@ -75,6 +75,7 @@ export function RecordScreen({
   period,
   complaintCategories,
   quickNotes,
+  singleSelectOutcomes,
   products,
 }: {
   customer: {
@@ -133,6 +134,7 @@ export function RecordScreen({
   period: string;
   complaintCategories: Array<{ value: string; label: string }>;
   quickNotes: QuickNoteOption[];
+  singleSelectOutcomes: string[];
   products: ProductOption[];
 }) {
   const router = useRouter();
@@ -454,6 +456,7 @@ export function RecordScreen({
           target={callTarget}
           complaintCategories={complaintCategories}
           quickNotes={quickNotes}
+          singleSelectOutcomes={singleSelectOutcomes}
           products={products}
           onClose={() => setCalling(false)}
         />

@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { calls, customers, orders } from "@/db/schema";
 import { assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
+import { customerProducts, type FrequentProduct } from "./product-service";
 import { today } from "../recompute";
 import {
   addDays,
@@ -86,6 +87,8 @@ export type CustomerInformation = {
   creditDays: number;
   recentCalls: RecentCall[];
   productHistory: ProductHistoryRow[];
+  /** §2.1 — the order form's quick-pick container, same aggregation. */
+  frequentProducts: FrequentProduct[];
   /** Which system produced the product history, so the screen can say so. */
   productHistorySource: "external" | "crm";
   productHistorySyncedAt: string | null;
@@ -241,23 +244,12 @@ export async function customerInformation(
 
   /* ------------------------------------------------------- product history */
 
-  // The external order system is not connected, so this is derived from what
-  // the CRM captured — and it says so rather than pretending to be the ERP.
-  const productRows = await db.execute<{
-    product_name: string;
-    last_purchase: string | null;
-    order_count: number;
-  }>(sql`
-    select p.name || coalesce(' — ' || p.pack_size, '') as product_name,
-           max(c.started_at)::date::text as last_purchase,
-           count(distinct c.order_id)::int as order_count
-      from interaction_product_lines l
-      join products p on p.id = l.product_id
-      join calls c on c.id = l.interaction_id
-     where c.customer_id = ${customerId} and c.order_id is not null
-     group by 1
-     order by order_count desc, last_purchase desc nulls last
-  `);
+  // §2.1 — one aggregation serves the Information tab and the order form's
+  // quick-pick container, so the two cannot describe the same customer
+  // differently. Limit 0 means the whole history; the form asks for fewer.
+  const config2 = await getConfig();
+  const allProducts = await customerProducts(customerId, { limit: 0 });
+  const frequent = allProducts.slice(0, config2["products.frequentCount"]);
 
   return {
     kind: customer.kind,
@@ -284,11 +276,12 @@ export async function customerInformation(
       outcome: r.outcome,
       notes: r.notes,
     })),
-    productHistory: productRows.map((r) => ({
-      productName: r.product_name,
-      lastPurchaseDate: r.last_purchase,
-      totalOrderCount: Number(r.order_count),
+    productHistory: allProducts.map((r) => ({
+      productName: r.displayName,
+      lastPurchaseDate: r.lastPurchaseDate,
+      totalOrderCount: r.totalOrderCount,
     })),
+    frequentProducts: frequent,
     productHistorySource: "crm",
     productHistorySyncedAt: null,
   };

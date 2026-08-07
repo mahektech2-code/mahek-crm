@@ -24,6 +24,8 @@ export type SettingCategory =
   | "working-day"
   | "reminders"
   | "complaints"
+  | "products"
+  | "interactions"
   | "whatsapp";
 
 export type SettingDefinition = {
@@ -587,6 +589,49 @@ export const SETTINGS = [
     default: [...COMPLAINT_CATEGORIES],
   },
 
+  /* -------------------------------------------------------------- products */
+  {
+    key: "products.frequentCount",
+    type: "integer",
+    category: "products",
+    label: "Frequent products shown",
+    description:
+      "How many of a customer's regular products the order form offers before anybody searches. Enough to cover the usual order without becoming a list to read.",
+    default: 6,
+    min: 1,
+    max: 24,
+  },
+  {
+    key: "products.frequentRanking",
+    type: "text",
+    category: "products",
+    label: "Frequent products ranked by",
+    description:
+      "Total orders puts their staples first and is stable week to week. Recency surfaces what they have moved onto, and reorders more often.",
+    default: "orders",
+    options: ["orders", "recency"],
+  },
+  {
+    key: "products.searchOnOrderForms",
+    type: "boolean",
+    category: "products",
+    label: "Product search on order forms",
+    description:
+      "Off, a telecaller can only pick from the frequent list — which is a deliberate constraint for a new team, and a wall for an experienced one.",
+    default: true,
+  },
+
+  /* ---------------------------------------------------------- interactions */
+  {
+    key: "interactions.singleSelectOutcomes",
+    type: "structured",
+    category: "interactions",
+    label: "Single-select outcomes",
+    description:
+      "Outcomes whose quick notes are one choice rather than several. A second pick replaces the first. Every outcome not listed here takes as many notes as apply.",
+    default: ["no_order"],
+  },
+
   /* -------------------------------------------------------------- whatsapp */
   {
     key: "whatsapp.mode",
@@ -860,6 +905,11 @@ export type Config = {
   "complaints.defaultSeverity": "low" | "medium" | "high";
   "interactions.maxNotesLength": number;
   "customers.defaultCreditDays": number;
+
+  "products.frequentCount": number;
+  "products.frequentRanking": "orders" | "recency";
+  "products.searchOnOrderForms": boolean;
+  "interactions.singleSelectOutcomes": string[];
 
   "whatsapp.mode": "manual" | "automatic";
   "whatsapp.contactsPerWeekLimit": number;
