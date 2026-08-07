@@ -16,6 +16,7 @@ import {
   Tr,
   cx,
 } from "@/components/ui/primitives";
+import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { describeQuantity } from "@/lib/catalogue";
 import {
@@ -203,6 +204,7 @@ function SkuTab({
 
   const open = data.skus.find((s) => s.id === openId) ?? null;
 
+
   return (
     <>
       <div className="mb-3 flex flex-wrap items-end gap-3">
@@ -350,35 +352,47 @@ function SkuTab({
         </div>
       ) : null}
 
-      {open ? (
-        <SkuDetail
-          key={open.id}
-          sku={open}
-          goods={data.hierarchy.goods}
-          canWrite={canWrite}
-          refresh={refresh}
-          onClose={() => setOpenId(null)}
-        />
-      ) : null}
+      {/* A modal, not a panel under the table: on a fifty-row page an inline
+          detail opens a screen and a half below the button that opened it,
+          which reads as the button doing nothing. */}
+      <SkuDetail
+        key={open?.id ?? "none"}
+        sku={open}
+        goods={data.hierarchy.goods}
+        canWrite={canWrite}
+        refresh={refresh}
+        onClose={() => setOpenId(null)}
+      />
     </>
   );
 }
 
 /* --------------------------------------------------------- the SKU detail */
 
-function SkuDetail({
+type SkuDetailProps = {
+  sku: CatalogueData["skus"][number] | null;
+  goods: CatalogueData["hierarchy"]["goods"];
+  canWrite: boolean;
+  refresh: () => void;
+  onClose: () => void;
+};
+
+/**
+ * Mounts fresh each time it opens, so the boxes never carry the last SKU's
+ * numbers for a frame — the same reason ConfirmDialog is split this way.
+ */
+function SkuDetail(props: SkuDetailProps) {
+  if (!props.sku) return null;
+  return <SkuDetailBody {...props} sku={props.sku} />;
+}
+
+function SkuDetailBody({
   sku,
   goods,
   canWrite,
   refresh,
   onClose,
-}: {
-  sku: CatalogueData["skus"][number];
-  goods: CatalogueData["hierarchy"]["goods"];
-  canWrite: boolean;
-  refresh: () => void;
-  onClose: () => void;
-}) {
+}: SkuDetailProps & { sku: NonNullable<SkuDetailProps["sku"]> }) {
   // Keyed by the caller, so opening a different SKU remounts with its own
   // initial state rather than resetting this one in an effect.
   const [price, setPrice] = React.useState(
@@ -399,17 +413,46 @@ function SkuDetail({
   const sample = { millilitresPerCan: sku.millilitresPerCan, cansPerBox: perBox };
 
   return (
-    <Card className="mt-4">
-      <CardHeader
-        title={sku.name}
-        hint={[sku.formulation, sku.brand, sku.finishedGood].filter(Boolean).join(" › ")}
-        action={
-          <Button variant="ghost" onClick={onClose}>
+    <Modal
+      open
+      onClose={onClose}
+      width={860}
+      title={
+        <span className="block">
+          <span className="block truncate">{sku.name}</span>
+          <span className="mt-0.5 block text-[13px] font-normal text-muted">
+            {[sku.formulation, sku.brand, sku.finishedGood].filter(Boolean).join(" › ")}
+          </span>
+        </span>
+      }
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
             Close
           </Button>
-        }
-      />
-      <div className="px-5 py-4">
+          <Button
+            variant="primary"
+            disabled={!canWrite || busy}
+            title={canWrite ? undefined : "Configuration is changed by a manager."}
+            onClick={() =>
+              run(() =>
+                updateSku(sku.id, {
+                  sellingPricePaise: price === "" ? null : Math.round(Number(price) * 100),
+                  packingCostPaise: packingCost === "" ? null : Math.round(Number(packingCost) * 100),
+                  weightGrams: weight === "" ? null : Math.round(Number(weight) * 1000),
+                  cansPerBox: Number(cansPerBox) || 1,
+                  weightBasis: (Number(cansPerBox) || 1) > 1 ? "box" : "can",
+                  ...(goodId ? { finishedGoodId: goodId } : {}),
+                }),
+              )
+            }
+          >
+            Save
+          </Button>
+        </>
+      }
+    >
+      <div>
         <div className="grid grid-cols-3 gap-x-6 gap-y-3">
           <Fact label="Raw name in the source" value={sku.rawName ?? "—"} />
           <Fact
@@ -492,26 +535,10 @@ function SkuDetail({
           </span>
         </div>
 
-        <div className="mt-4 flex items-center gap-2 border-t border-divider pt-3">
-          <Button
-            variant="primary"
-            disabled={!canWrite || busy}
-            title={canWrite ? undefined : "Configuration is changed by a manager."}
-            onClick={() =>
-              run(() =>
-                updateSku(sku.id, {
-                  sellingPricePaise: price === "" ? null : Math.round(Number(price) * 100),
-                  packingCostPaise: packingCost === "" ? null : Math.round(Number(packingCost) * 100),
-                  weightGrams: weight === "" ? null : Math.round(Number(weight) * 1000),
-                  cansPerBox: Number(cansPerBox) || 1,
-                  weightBasis: (Number(cansPerBox) || 1) > 1 ? "box" : "can",
-                  ...(goodId ? { finishedGoodId: goodId } : {}),
-                }),
-              )
-            }
-          >
-            Save
-          </Button>
+        {/* Save lives in the modal footer, where a form's commit belongs.
+            Retiring does not: it is a different decision from editing the
+            row, and putting the two side by side invites the wrong one. */}
+        <div className="mt-4 flex items-center gap-3 border-t border-divider pt-3">
           <Button
             variant="secondary"
             disabled={!canWrite || busy}
@@ -525,7 +552,7 @@ function SkuDetail({
             {sku.active ? "Retire from the order form" : "Put back on the order form"}
           </Button>
           <span className="flex-1" />
-          <span className="text-[13px] text-muted">
+          <span className="text-right text-[13px] text-muted">
             {sku.timesOrdered
               ? `${sku.timesOrdered} order ${sku.timesOrdered === 1 ? "line" : "lines"} name it`
               : "Never ordered"}
@@ -579,7 +606,7 @@ function SkuDetail({
           </div>
         </div>
       </div>
-    </Card>
+    </Modal>
   );
 }
 
