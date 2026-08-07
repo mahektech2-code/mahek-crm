@@ -1,5 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
+import { orderCountsSql } from "./order-status";
 import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -55,10 +56,29 @@ export async function recomputeBuyingCycle(customerId: string): Promise<void> {
   const rows = await db
     .select({ orderedAt: orders.orderedAt, totalAmount: orders.totalAmount })
     .from(orders)
-    .where(and(eq(orders.customerId, customerId), sql`${orders.status} <> 'cancelled'`))
+    .where(and(eq(orders.customerId, customerId), orderCountsSql("orders")))
     .orderBy(asc(orders.orderedAt));
 
-  await writeCycle(customerId, rows, config);
+  await writeCycle(customerId, rows, config, await lastPlaced(customerId));
+}
+
+/**
+ * When they last PLACED an order, approved or not.
+ *
+ * Separate from the cycle on purpose. The cycle is a fact about purchases and
+ * must ignore anything accounts have not accepted; this is the signal that
+ * stops the calling queue chasing somebody who ordered this morning, and it
+ * would be wrong to make a telecaller ring them because approval is slow.
+ * A declined order drops out of both.
+ */
+async function lastPlaced(customerId: string): Promise<string | null> {
+  const rows = await db.execute<{ d: string | null }>(sql`
+    select max((o.ordered_at at time zone 'Asia/Kolkata'))::date::text as d
+      from orders o
+     where o.customer_id = ${customerId}
+       and o.status in ('captured', 'pending_approval', 'confirmed', 'dispatched')
+  `);
+  return rows[0]?.d ?? null;
 }
 
 /** Shared by the single-customer and whole-book paths so they cannot drift. */
@@ -66,6 +86,7 @@ async function writeCycle(
   customerId: string,
   rows: Array<{ orderedAt: Date; totalAmount: number }>,
   config: Config,
+  placedOn: string | null,
 ): Promise<void> {
   const dates = rows.map((r) => r.orderedAt.toISOString().slice(0, 10));
   const cycle = buyingCycle(dates, config);
@@ -78,7 +99,8 @@ async function writeCycle(
     .set({
       cycleDays: cycle.days,
       cycleIsDefault: cycle.isDefault,
-      lastOrderDate: dates.at(-1) ?? null,
+      // The latest order PLACED, which may be newer than the latest approved.
+      lastOrderDate: placedOn ?? dates.at(-1) ?? null,
       avgOrderValue: avg,
       updatedAt: new Date(),
     })
@@ -99,7 +121,7 @@ export async function recomputeAllBuyingCycles(): Promise<number> {
       totalAmount: orders.totalAmount,
     })
     .from(orders)
-    .where(sql`${orders.status} <> 'cancelled'`)
+    .where(orderCountsSql("orders"))
     .orderBy(asc(orders.orderedAt));
 
   const byCustomer = new Map<string, Array<{ orderedAt: Date; totalAmount: number }>>();
@@ -111,8 +133,19 @@ export async function recomputeAllBuyingCycles(): Promise<number> {
 
   // Customers with no orders still need their cycle written — that is how a
   // brand-new customer gets the configured default.
+  // One pass for the placed dates too, rather than a query per customer.
+  const placed = await db.execute<{ customer_id: string; d: string | null }>(sql`
+    select o.customer_id, max((o.ordered_at at time zone 'Asia/Kolkata'))::date::text as d
+      from orders o
+     where o.status in ('captured', 'pending_approval', 'confirmed', 'dispatched')
+     group by o.customer_id
+  `);
+  const placedBy = new Map(placed.map((r) => [r.customer_id, r.d]));
+
   const ids = await db.select({ id: customers.id }).from(customers);
-  for (const { id } of ids) await writeCycle(id, byCustomer.get(id) ?? [], config);
+  for (const { id } of ids) {
+    await writeCycle(id, byCustomer.get(id) ?? [], config, placedBy.get(id) ?? null);
+  }
   return ids.length;
 }
 
@@ -385,12 +418,12 @@ export async function recomputeInactivity(): Promise<number> {
  */
 export async function recomputeLastContact(customerId: string): Promise<void> {
   const [lastCall] = await db
-    .select({ at: sql<string | null>`max(${calls.startedAt})::date` })
+    .select({ at: sql<string | null>`max(${calls.startedAt} at time zone 'Asia/Kolkata')::date` })
     .from(calls)
     .where(eq(calls.customerId, customerId));
 
   const [lastWa] = await db
-    .select({ at: sql<string | null>`max(${waMessages.confirmedSentAt})::date` })
+    .select({ at: sql<string | null>`max(${waMessages.confirmedSentAt} at time zone 'Asia/Kolkata')::date` })
     .from(waMessages)
     .where(
       and(
@@ -444,7 +477,7 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
             eq(orders.customerId, c.id),
             sql`extract(year from ${orders.orderedAt}) = ${y}`,
             sql`extract(month from ${orders.orderedAt}) = ${m}`,
-            sql`${orders.status} <> 'cancelled'`,
+            orderCountsSql("orders"),
           ),
         );
       trailing.push(Number(row?.total ?? 0));

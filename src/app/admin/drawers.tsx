@@ -4,6 +4,8 @@ import * as React from "react";
 import { Button, Input, Select, Textarea, cx } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
 import { ownedFor, ROLE_TEMPLATES, TEAMS, type EntityKind, type EntityRow } from "./data";
+import { ANNOUNCEMENTS } from "./data-platform";
+import { RichTextEditor } from "./rich-text";
 import { useAdmin, type Drawer as DrawerState } from "./store";
 
 /* ---------------------------------------------------------------------------
@@ -16,6 +18,7 @@ import { useAdmin, type Drawer as DrawerState } from "./store";
  * ------------------------------------------------------------------------- */
 
 type FieldSpec = {
+  rich?: boolean;
   key: string;
   label: string;
   value: string;
@@ -147,7 +150,10 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
         key: "roles", label: "Visible to", value: v("roles", record0?.roles ?? "Telecaller, Manager"),
         select: ["Telecaller", "Manager", "Telecaller, Manager"],
       },
-      { key: "body", label: "Body", value: v("body", record0?.body ?? ""), area: true },
+      {
+        key: "body", label: "Body", value: v("body", record0?.body ?? ""), rich: true,
+        help: "Read in the CRM Help Center. Written as Markdown so the stored article stays legible in an audit diff.",
+      },
     ];
   } else if (kind === "holidays") {
     title = "Add holiday";
@@ -318,6 +324,25 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
       },
       { key: "template", label: "Role template", value: v("template", ROLE_TEMPLATES[0].name), select: ROLE_TEMPLATES.map((t) => t.name) },
     ];
+  } else if (kind === "announcement") {
+    const a = id ? ANNOUNCEMENTS.find((x) => x.id === id) : null;
+    title = a ? "Edit announcement" : "New announcement";
+    sub = "Shown on the launcher, which everybody passes through each morning.";
+    saveLabel = a ? "Save announcement" : "Publish announcement";
+    fields = [
+      { key: "title", label: "Title", value: v("title", a?.title ?? ""), placeholder: "Diwali dispatch cut-off is 18 October" },
+      { key: "severity", label: "Severity", value: v("severity", a?.severity ?? "Info"), select: ["Info", "Warning"], half: true },
+      {
+        key: "audience", label: "Who sees it", value: v("audience", a?.audience ?? "Telecaller CRM · everyone"), half: true,
+        select: ["Everyone on the platform", "Telecaller CRM · everyone", "Telecaller CRM · Telecaller", "Telecaller CRM · Manager"],
+      },
+      { key: "from", label: "Shows from", value: v("from", a?.from ?? "2026-08-07"), half: true },
+      { key: "to", label: "Stops showing", value: v("to", a?.to ?? ""), half: true, help: "Leave empty for “until resolved”." },
+      {
+        key: "body", label: "Body", value: v("body", a?.body ?? ""), area: true,
+        help: "Say what somebody should do differently today. An announcement nobody acts on trains people to skip the next one.",
+      },
+    ];
   } else if (kind === "team") {
     const team = TEAMS.find((t) => t.id === id);
     title = team?.name ?? "Team";
@@ -351,7 +376,13 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
               <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
                 {f.label}
               </span>
-              {f.area ? (
+              {f.rich ? (
+                <RichTextEditor
+                  value={f.value}
+                  placeholder={f.placeholder}
+                  onChange={(next) => setDraft((d) => ({ ...d, [f.key]: next }))}
+                />
+              ) : f.area ? (
                 <Textarea
                   value={f.value}
                   onChange={set(f.key)}
@@ -430,6 +461,7 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
               title,
               "—",
               "—",
+              user?.id ?? null,
             );
             notify(`${title} — saved`);
             onClose();

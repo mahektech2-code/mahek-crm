@@ -14,7 +14,8 @@ import {
   cx,
   type Tone,
 } from "@/components/ui/primitives";
-import { FilterPills, RowMenu, SelectionBar } from "@/components/ui/overlays";
+import { FilterPills, Modal, RowMenu, SelectionBar } from "@/components/ui/overlays";
+import { LEAVER_CHECKLIST } from "./data-platform";
 import {
   CHECKLIST,
   RESETS,
@@ -27,6 +28,7 @@ import {
   type AdminUser,
   type UserStatus,
 } from "./data";
+import { pinnedCell, pinnedHead } from "./pinned";
 import { useAdmin } from "./store";
 
 export function statusTone(status: UserStatus): Tone {
@@ -66,7 +68,7 @@ export function PeopleSection({
 /* ------------------------------------------------------------------ roster */
 
 function Roster({ onOpenUser }: { onOpenUser: (id: string) => void }) {
-  const { users, registry, notify, openDrawer } = useAdmin();
+  const { users, registry, notify, record, openDrawer } = useAdmin();
   const [view, setView] = React.useState<View>("All active");
   const [selected, setSelected] = React.useState<string[]>([]);
 
@@ -120,11 +122,11 @@ function Roster({ onOpenUser }: { onOpenUser: (id: string) => void }) {
 
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
-                <Th />
-                <Th>Name</Th>
+                <Th className={cx(pinnedHead("left"), "w-11 border-r-0")} />
+                <Th className={cx(pinnedHead("left"), "left-11")}>Name</Th>
                 <Th>Code</Th>
                 <Th>Team</Th>
                 <Th>Reports to</Th>
@@ -134,7 +136,9 @@ function Roster({ onOpenUser }: { onOpenUser: (id: string) => void }) {
                 <Th align="right">Owns</Th>
                 <Th>Last active</Th>
                 <Th>Created</Th>
-                <Th />
+                {/* The roster is wider than the screen, so the actions stay
+                    pinned rather than living past the right edge. */}
+                <Th className={pinnedHead("right")} />
               </tr>
             </thead>
             <tbody>
@@ -147,7 +151,7 @@ function Roster({ onOpenUser }: { onOpenUser: (id: string) => void }) {
                     onClick={() => onOpenUser(u.id)}
                     className={cx("cursor-pointer", on ? "bg-brand-soft" : i % 2 ? "bg-canvas" : "")}
                   >
-                    <Td>
+                    <Td className={cx(pinnedCell("left", i, on), "w-11 border-r-0")}>
                       <span onClick={(e) => e.stopPropagation()}>
                         <Checkbox
                           label=""
@@ -159,7 +163,9 @@ function Roster({ onOpenUser }: { onOpenUser: (id: string) => void }) {
                         />
                       </span>
                     </Td>
-                    <Td className="font-medium text-ink">{u.name}</Td>
+                    {/* Scrolled right to reach the actions, you must still be
+                        able to see whose row this is. */}
+                    <Td className={cx(pinnedCell("left", i, on), "left-11 font-medium text-ink")}>{u.name}</Td>
                     <Td>{u.code}</Td>
                     <Td>{u.dept}</Td>
                     <Td>{u.reportsTo ?? "—"}</Td>
@@ -184,17 +190,27 @@ function Roster({ onOpenUser }: { onOpenUser: (id: string) => void }) {
                     <Td align="right">{owns ? owns : "—"}</Td>
                     <Td>{u.lastActive}</Td>
                     <Td>{u.created}</Td>
-                    <Td>
+                    <Td className={pinnedCell("right", i, on)}>
                       <span className="flex justify-end" onClick={(e) => e.stopPropagation()}>
                         <RowMenu
                           items={[
                             { label: "Edit user", onSelect: () => openDrawer({ kind: "editUser", id: u.id }) },
                             {
+                              // Both of these change what somebody can do, so
+                              // both land on that account's audit tab.
                               label: "Trigger password reset",
-                              onSelect: () =>
-                                notify(`Reset link sent to ${u.contact} — it expires in 30 minutes and kills any earlier one`),
+                              onSelect: () => {
+                                record("access", "Platform", "Password reset triggered", "—", "Link sent, expires in 30 minutes", u.id);
+                                notify(`Reset link sent to ${u.contact} — it expires in 30 minutes and kills any earlier one`);
+                              },
                             },
-                            { label: "Force sign-out", onSelect: () => notify(`All sessions ended for ${u.name}`) },
+                            {
+                              label: "Force sign-out",
+                              onSelect: () => {
+                                record("access", "Platform", "All sessions ended", "—", "—", u.id);
+                                notify(`All sessions ended for ${u.name}`);
+                              },
+                            },
                             {
                               label: u.status === "Active" ? "Deactivate user" : "Already deactivated",
                               destructive: u.status === "Active",
@@ -232,6 +248,9 @@ function AppAccess() {
     revokeUnused,
     notify,
   } = useAdmin();
+  const [pending, setPending] = React.useState<null | {
+    userId: string; userName: string; appId: string; appName: string; grows: boolean; other: string;
+  }>(null);
 
   return (
     <div>
@@ -246,7 +265,7 @@ function AppAccess() {
           }
         />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>User</Th>
@@ -277,7 +296,18 @@ function AppAccess() {
                           label=""
                           aria-label={`${a.name} access for ${u.name}`}
                           checked={u.apps.includes(a.id)}
-                          onChange={() => toggleAppAccess(u.id, a.id)}
+                          onChange={() => {
+                            const had = u.apps.includes(a.id);
+                            const after = had ? u.apps.length - 1 : u.apps.length + 1;
+                            // Crossing one app either way changes where this
+                            // person lands at sign-in, which is a bigger change
+                            // than the checkbox looks.
+                            if ((u.apps.length === 1 && after === 2) || (u.apps.length === 2 && after === 1)) {
+                              setPending({ userId: u.id, userName: u.name, appId: a.id, appName: a.name, grows: !had, other: registry.find((x) => x.id === (had ? u.apps.find((z) => z !== a.id) : u.apps[0]))?.name ?? "" });
+                              return;
+                            }
+                            toggleAppAccess(u.id, a.id);
+                          }}
                         />
                       </Td>
                     ))}
@@ -326,7 +356,7 @@ function AppAccess() {
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <CardHeader title="Expiring access" hint="So nothing quietly becomes permanent." />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>Who</Th>
@@ -334,7 +364,7 @@ function AppAccess() {
                 <Th>Why</Th>
                 <Th>Ends</Th>
                 <Th>Remaining</Th>
-                <Th />
+                <Th className={pinnedHead("right")} />
               </tr>
             </thead>
             <tbody>
@@ -347,7 +377,7 @@ function AppAccess() {
                   <Td className={cx("font-medium", r.left < 20 ? "text-warn-ink" : "text-body")}>
                     {r.left} {r.left === 1 ? "day" : "days"} left
                   </Td>
-                  <Td>
+                  <Td className={pinnedCell("right", i)}>
                     <span className="flex gap-1.5">
                       <Button size="sm" variant="ghost" onClick={() => notify("Extended by 30 days")}>
                         Extend
@@ -373,14 +403,14 @@ function AppAccess() {
           <div className="px-5 py-5 text-sm text-muted">Every granted app has been opened.</div>
         ) : (
           <div className="overflow-auto">
-            <table>
+            <table className="[&_td]:whitespace-nowrap">
               <thead>
                 <tr>
                   <Th>Who</Th>
                   <Th>App</Th>
                   <Th>Granted</Th>
                   <Th>Last opened</Th>
-                  <Th />
+                  <Th className={pinnedHead("right")} />
                 </tr>
               </thead>
               <tbody>
@@ -390,7 +420,7 @@ function AppAccess() {
                     <Td>{r.app}</Td>
                     <Td>{r.granted}</Td>
                     <Td>{r.opened}</Td>
-                    <Td>
+                    <Td className={pinnedCell("right", i)}>
                       <Button size="sm" variant="ghost" className="text-danger" onClick={() => revokeUnused(i)}>
                         Revoke
                       </Button>
@@ -402,6 +432,45 @@ function AppAccess() {
           </div>
         )}
       </Card>
+
+      <Modal
+        open={!!pending}
+        onClose={() => setPending(null)}
+        title="This changes how they sign in"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setPending(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                if (pending) toggleAppAccess(pending.userId, pending.appId);
+                setPending(null);
+              }}
+            >
+              {pending?.grows ? "Grant it anyway" : "Revoke it"}
+            </Button>
+          </>
+        }
+      >
+        {pending ? (
+          <div className="text-sm leading-[21px] text-body">
+            {pending.grows ? (
+              <>
+                {pending.userName} opens only {pending.other} today, so MahekOne takes them straight into it and hides
+                the app switcher. Granting {pending.appName} means they land on the launcher every morning instead, and
+                have to choose.
+              </>
+            ) : (
+              <>
+                {pending.userName} would be left with one app. MahekOne will stop showing them the launcher and take
+                them straight into it — a single option is not a choice.
+              </>
+            )}
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }
@@ -412,6 +481,7 @@ function RolesAndTeams() {
   const { users, registry, setRole, openDrawer } = useAdmin();
   const active = users.filter((u) => u.status !== "Deactivated");
   const [effUser, setEffUser] = React.useState(active[0]?.name ?? "");
+  const [handover, setHandover] = React.useState<string | null>(null);
   const eu = users.find((u) => u.name === effUser) ?? active[0];
 
   const roleRows = active.flatMap((u) =>
@@ -426,7 +496,7 @@ function RolesAndTeams() {
           hint="MahekOne decides which apps you open; the app's role decides what you can do inside it. Each app declares its own role vocabulary."
         />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>User</Th>
@@ -523,16 +593,17 @@ function RolesAndTeams() {
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <CardHeader
           title="Teams"
-          hint="One manager each. Removing a manager requires nominating a replacement."
+          hint="One manager each. Removing a manager requires nominating a replacement — a team without one has nobody its figures roll up to."
         />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>Team</Th>
                 <Th>App</Th>
                 <Th>Manager</Th>
                 <Th align="right">Members</Th>
+                <Th />
               </tr>
             </thead>
             <tbody>
@@ -546,12 +617,21 @@ function RolesAndTeams() {
                   <Td>{t.app}</Td>
                   <Td>{t.manager}</Td>
                   <Td align="right">{t.members.length}</Td>
+                  <Td>
+                    <span className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+                      <Button size="sm" variant="ghost" onClick={() => setHandover(t.id)}>
+                        Change manager
+                      </Button>
+                    </span>
+                  </Td>
                 </Tr>
               ))}
             </tbody>
           </table>
         </div>
       </Card>
+
+      <ManagerHandover teamId={handover} onClose={() => setHandover(null)} />
 
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <CardHeader
@@ -589,6 +669,71 @@ function RolesAndTeams() {
   );
 }
 
+/**
+ * A manager cannot simply be removed. Their reports have to land on somebody,
+ * and the replacement is nominated before anything changes.
+ */
+function ManagerHandover({ teamId, onClose }: { teamId: string | null; onClose: () => void }) {
+  const { users, notify, record } = useAdmin();
+  const team = TEAMS.find((t) => t.id === teamId);
+  const candidates = users.filter(
+    (u) => u.status === "Active" && Object.values(u.roles).includes("Manager") && u.name !== team?.manager,
+  );
+  const [to, setTo] = React.useState("");
+
+  if (!team) return null;
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Change the manager of ${team.name}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!to}
+            title={to ? undefined : "Nominate a replacement first"}
+            onClick={() => {
+              record("access", "Platform", `Team manager — ${team.name}`, team.manager, to);
+              notify(`${team.name} now reports to ${to}. ${team.members.length} people moved with it.`);
+              onClose();
+            }}
+          >
+            Hand the team over
+          </Button>
+        </>
+      }
+    >
+      <div className="text-sm leading-[21px] text-body">
+        {team.manager} manages {team.members.length} {team.members.length === 1 ? "person" : "people"} on {team.app}.
+        They cannot simply be removed — their reports have to roll up to somebody.
+      </div>
+      <label className="mt-4 block">
+        <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
+          New manager · required
+        </span>
+        <Select value={to} onChange={(e) => setTo(e.target.value)} className="w-full">
+          <option value="">Nominate a replacement</option>
+          {candidates.map((c) => (
+            <option key={c.id}>{c.name}</option>
+          ))}
+        </Select>
+      </label>
+      <div className="mt-3 overflow-hidden rounded-[4px] border border-line">
+        {team.members.map((m, i) => (
+          <div key={m} className={cx("px-3.5 py-2 text-sm text-ink", i ? "border-t border-canvas" : "")}>
+            {m} <span className="text-muted">would report to {to || "…"}</span>
+          </div>
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
 export function capabilities(role: string): string {
   return role === "Manager"
     ? "Team figures · edit targets · close complaints · export · deactivate customers"
@@ -617,7 +762,7 @@ function SessionsAndSecurity() {
           <div className="px-5 py-5 text-sm text-muted">No active sessions.</div>
         ) : (
           <div className="overflow-auto">
-            <table>
+            <table className="[&_td]:whitespace-nowrap">
               <thead>
                 <tr>
                   <Th>User</Th>
@@ -627,7 +772,7 @@ function SessionsAndSecurity() {
                   <Th>Started</Th>
                   <Th>Last seen</Th>
                   <Th>State</Th>
-                  <Th />
+                  <Th className={pinnedHead("right")} />
                 </tr>
               </thead>
               <tbody>
@@ -642,7 +787,7 @@ function SessionsAndSecurity() {
                     <Td>
                       <Badge tone={s.stale ? "neutral" : "success"}>{s.stale ? "Idle" : "Active"}</Badge>
                     </Td>
-                    <Td>
+                    <Td className={pinnedCell("right", i)}>
                       <Button size="sm" variant="ghost" className="text-danger" onClick={() => endSession(s.id)}>
                         End
                       </Button>
@@ -691,7 +836,7 @@ function SessionsAndSecurity() {
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <CardHeader title="Sign-in history" />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>User</Th>
@@ -726,7 +871,7 @@ function SessionsAndSecurity() {
           hint="A reset sent but never used means someone is still locked out and has not said so."
         />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>User</Th>
@@ -819,7 +964,7 @@ function Onboarding() {
           }
         />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>Template</Th>
@@ -856,14 +1001,14 @@ function Onboarding() {
           <div className="px-5 py-5 text-sm text-muted">No invitations outstanding.</div>
         ) : (
           <div className="overflow-auto">
-            <table>
+            <table className="[&_td]:whitespace-nowrap">
               <thead>
                 <tr>
                   <Th>Name</Th>
                   <Th>Sent to</Th>
                   <Th>Sent</Th>
                   <Th>State</Th>
-                  <Th />
+                  <Th className={pinnedHead("right")} />
                 </tr>
               </thead>
               <tbody>
@@ -875,7 +1020,7 @@ function Onboarding() {
                     <Td>
                       <Badge tone="warn">Sent, not opened</Badge>
                     </Td>
-                    <Td>
+                    <Td className={pinnedCell("right", i)}>
                       <span className="flex gap-1.5">
                         <Button
                           size="sm"
@@ -903,19 +1048,38 @@ function Onboarding() {
           {done} of {CHECKLIST.length} done
         </div>
         {CHECKLIST.map((c, i) => (
-          <div key={c.label} className={cx("flex items-center gap-2.5 px-5 py-2.5", i ? "border-t border-canvas" : "")}>
-            <span
-              className={cx(
-                "flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[4px] text-[11px] font-semibold text-ink",
-                c.done ? "bg-brand-lime" : "bg-divider",
-              )}
-            >
-              {c.done ? "✓" : ""}
-            </span>
-            <span className={cx("text-sm", c.done ? "text-muted line-through" : "text-ink")}>{c.label}</span>
-          </div>
+          <ChecklistRow key={c.label} label={c.label} done={c.done} first={i === 0} />
         ))}
       </Card>
+
+      <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
+        <CardHeader
+          title="Leaver checklist · Suresh Kumar"
+          hint="The mirror of the joiner list. A leaver who still owns work has not actually left the system."
+        />
+        <div className="border-b border-divider px-5 py-2.5 text-[13px] text-muted">
+          {LEAVER_CHECKLIST.filter((c) => c.done).length} of {LEAVER_CHECKLIST.length} done
+        </div>
+        {LEAVER_CHECKLIST.map((c, i) => (
+          <ChecklistRow key={c.label} label={c.label} done={c.done} first={i === 0} />
+        ))}
+      </Card>
+    </div>
+  );
+}
+
+function ChecklistRow({ label, done, first }: { label: string; done: boolean; first: boolean }) {
+  return (
+    <div className={cx("flex items-center gap-2.5 px-5 py-2.5", first ? "" : "border-t border-canvas")}>
+      <span
+        className={cx(
+          "flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[4px] text-[11px] font-semibold text-ink",
+          done ? "bg-brand-lime" : "bg-divider",
+        )}
+      >
+        {done ? "✓" : ""}
+      </span>
+      <span className={cx("text-sm", done ? "text-muted line-through" : "text-ink")}>{label}</span>
     </div>
   );
 }

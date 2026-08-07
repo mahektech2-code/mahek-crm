@@ -22,7 +22,7 @@ export type DataScope =
 
 export type RequestScope = {
   user: User;
-  role: "telecaller" | "manager" | "admin";
+  role: "telecaller" | "manager" | "accounts" | "admin";
   scope: DataScope;
 };
 
@@ -45,6 +45,14 @@ export const resolveScope = cache(
 
     if (user.role === "admin") {
       return { user, role: "admin", scope: { kind: "all", userIds: null } };
+    }
+
+    // Accounts work the approval queue, which is every telecaller's orders
+    // and nobody's book. Without this branch they fell through to the manager
+    // path and were labelled managers — which then denied them the one
+    // capability that is theirs.
+    if (user.role === "accounts") {
+      return { user, role: "accounts", scope: { kind: "all", userIds: null } };
     }
 
     // A manager may deliberately narrow to their own book.
@@ -119,6 +127,7 @@ export const CAPABILITIES = [
   "whatsapp.template.write",
   "team.report",
   "config.write",
+  "order.approve",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -136,23 +145,38 @@ const MANAGER_ONLY: ReadonlySet<Capability> = new Set<Capability>([
   "config.write",
 ]);
 
+/**
+ * Accepting an order is accounts' job and nobody else's. A manager is not
+ * given it by seniority: the person chasing the target must not also be the
+ * one signing off the orders that hit it.
+ */
+const ACCOUNTS_ONLY: ReadonlySet<Capability> = new Set<Capability>([
+  "order.approve",
+]);
+
 export function can(role: string, capability: Capability): boolean {
+  if (ACCOUNTS_ONLY.has(capability)) {
+    return role === "accounts" || role === "admin";
+  }
   if (role === "admin" || role === "manager") return true;
+  // Accounts do not work the calling book, so they get none of the rest.
+  if (role === "accounts") return false;
   return !MANAGER_ONLY.has(capability);
 }
 
 export class NotPermittedError extends Error {
   readonly capability: Capability;
-  readonly requiredRole = "manager";
+  readonly requiredRole: "manager" | "accounts";
   constructor(capability: Capability) {
+    const role = ACCOUNTS_ONLY.has(capability) ? "accounts" : "manager";
     // Names the required role rather than pretending the resource is absent —
     // the interface shows locked-but-visible controls, and the backend should
-    // tell the same story.
-    super(
-      `That is a manager action. "${capability}" requires the manager role.`,
-    );
+    // tell the same story. It has to name the RIGHT role: telling a manager
+    // they need the manager role is a dead end.
+    super(`That is ${role === "accounts" ? "an accounts" : "a manager"} action. "${capability}" requires the ${role} role.`);
     this.name = "NotPermittedError";
     this.capability = capability;
+    this.requiredRole = role;
   }
 }
 

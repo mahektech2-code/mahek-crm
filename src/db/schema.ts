@@ -34,7 +34,17 @@ import { relations } from "drizzle-orm";
 
 /* ------------------------------------------------------------------- enums */
 
-export const roleEnum = pgEnum("role", ["telecaller", "manager", "admin"]);
+/**
+ * Accounts approve orders and nothing else about them is special. Kept a role
+ * rather than a capability on the Orders app, so that being able to OPEN the
+ * app and being able to ACCEPT an order stay separable.
+ */
+export const roleEnum = pgEnum("role", [
+  "telecaller",
+  "manager",
+  "accounts",
+  "admin",
+]);
 
 export const customerStatusEnum = pgEnum("customer_status", [
   "active",
@@ -105,8 +115,20 @@ export const sourceModuleEnum = pgEnum("source_module", [
 ]);
 
 export const orderSourceEnum = pgEnum("order_source", ["crm", "external"]);
+/**
+ * An order taken on a call is not yet an order the business has agreed to:
+ * accounts check the customer first. New CRM orders start at
+ * `pending_approval` and become `confirmed` when approved, or `declined`.
+ *
+ * `captured` remains for the orders written before approval existed — they
+ * were accepted at the time, and moving them into "pending" would rewrite
+ * history that already settled. See lib/order-status.ts for which of these
+ * count as a sale.
+ */
 export const orderStatusEnum = pgEnum("order_status", [
   "captured",
+  "pending_approval",
+  "declined",
   "confirmed",
   "dispatched",
   "cancelled",
@@ -643,6 +665,11 @@ export const orders = pgTable(
     /** Kept from day one: Inactive Watch produces false positives without it. */
     source: orderSourceEnum("source").notNull().default("crm"),
     externalRef: text("external_ref"),
+    /* ---- approval, §order-approval ---- */
+    approvedById: text("approved_by_id"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    /** Required when declining — a refusal the telecaller cannot read is a row nobody can act on. */
+    declineReason: text("decline_reason"),
     orderedAt: timestamp("ordered_at", { withTimezone: true }).notNull(),
     totalAmount: bigint("total_amount", { mode: "number" }).notNull(),
     status: orderStatusEnum("status").notNull().default("captured"),

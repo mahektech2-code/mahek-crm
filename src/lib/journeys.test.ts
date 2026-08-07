@@ -79,12 +79,17 @@ import {
   setTarget,
 } from "@/lib/services/worklist-services";
 import {
+  approveOrder,
+  declineOrder,
+} from "@/lib/services/order-approval-service";
+import { customerTimeline } from "@/lib/queries";
+import {
   confirmSent,
   markCopied,
   prepareLegs,
   prepareMessage,
 } from "@/lib/services/whatsapp-service";
-import { eodPreflightFor } from "@/lib/services/eod-service";
+import { eodMetricsFor, eodPreflightFor } from "@/lib/services/eod-service";
 
 /* ------------------------------------------------------------------ harness */
 
@@ -94,10 +99,11 @@ let TODAY: string;
 let manager: typeof users.$inferSelect;
 let priya: typeof users.$inferSelect;
 let rakesh: typeof users.$inferSelect;
+let deepa: typeof users.$inferSelect;
 
 async function makeUser(
   name: string,
-  role: "telecaller" | "manager",
+  role: "telecaller" | "manager" | "accounts",
   reportsToId?: string,
 ) {
   const [row] = await db
@@ -167,6 +173,7 @@ beforeEach(async () => {
   manager = await makeUser("Vikram", "manager");
   priya = await makeUser("Priya", "telecaller", manager.id);
   rakesh = await makeUser("Rakesh", "telecaller", manager.id);
+  deepa = await makeUser("Deepa", "accounts");
 
   setTestUser(priya);
   TODAY = await today();
@@ -1645,6 +1652,210 @@ describe("Journey 9 - the Information tab", () => {
         "Stock sufficient",
         "Will order later",
       ],
+    );
+  });
+});
+
+/* --------------------------------------------------------------- timezone */
+
+describe("The business day is Asia/Kolkata, whatever the database thinks", () => {
+  test("a call at 1am IST belongs to that day, on a GMT database", async () => {
+    // The client's Neon runs in GMT. Postgres casts a timestamptz to a date in
+    // the SESSION zone, so a bare `started_at::date` puts a 1am IST call on the
+    // previous day — and local Postgres runs in Asia/Kolkata, which hides it
+    // perfectly. This test forces the session to GMT so it cannot hide.
+    await db.execute(sql`set time zone 'GMT'`);
+    try {
+      const [row] = await db.execute<{ bare: string; zoned: string }>(sql`
+        select (timestamptz '2026-08-07 20:00:00+00')::date::text as bare,
+               ((timestamptz '2026-08-07 20:00:00+00')
+                 at time zone 'Asia/Kolkata')::date::text as zoned
+      `);
+
+      // 20:00 UTC on the 7th is 01:30 IST on the 8th.
+      assert.equal(row.bare, "2026-08-07", "this is the trap, stated plainly");
+      assert.equal(
+        row.zoned,
+        "2026-08-08",
+        "every timestamp-to-date cast in the app must look like this one",
+      );
+    } finally {
+      await db.execute(sql`set time zone 'Asia/Kolkata'`);
+    }
+  });
+
+  test("no query turns a stored timestamp into a date without saying which zone", async () => {
+    // A grep, deliberately. The rule is invisible at runtime on a database
+    // that happens to run in IST, so it is enforced on the source instead.
+    const { readFileSync, readdirSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (full.endsWith(".ts") && !full.includes(".test.")) files.push(full);
+      }
+    };
+    walk("src/lib");
+
+    const TIMESTAMP_COLUMNS =
+      /(started_at|ordered_at|confirmed_sent_at|attempted_at|created_at|updated_at|paid_at|copied_at)\s*\)?::date/;
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      for (const [i, line] of readFileSync(file, "utf8").split("\n").entries()) {
+        const code = line.trim();
+        // Prose describing the rule is not a breach of it.
+        if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*")) continue;
+        if (line.includes("time zone")) continue;
+        if (TIMESTAMP_COLUMNS.test(line)) offenders.push(`${file}:${i + 1}`);
+      }
+    }
+
+    assert.deepEqual(
+      offenders,
+      [],
+      "cast these through `at time zone 'Asia/Kolkata'` — see APP_TIMEZONE",
+    );
+  });
+});
+
+/* ------------------------------------------------------- order approval */
+
+describe("An order is a customer saying yes, not the business saying yes", () => {
+  async function takeOrder(customerId: string) {
+    const [product] = await db.select().from(productsTable).limit(1);
+    const saved = await saveInteraction({
+      customerId,
+      interactionType: "outbound_call",
+      outcome: "order_taken",
+      productQuantities: { [product.id]: 6 },
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(eq(orders.customerId, customerId));
+    return order;
+  }
+
+  test("a captured order waits for approval", async () => {
+    const customer = await makeCustomer(priya.id);
+    const order = await takeOrder(customer.id);
+    assert.equal(order.status, "pending_approval");
+    assert.equal(order.approvedAt, null);
+  });
+
+  test("the customer is not chased for an order approval has not reached yet", async () => {
+    // Due to reorder, so without the capture signal they would be called.
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -40),
+      lastContactDate: addDays(TODAY, -40),
+      cycleDays: 20,
+      cycleIsDefault: false,
+    });
+    await takeOrder(customer.id);
+
+    const [row] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(
+      row.lastOrderDate,
+      TODAY,
+      "they ordered today — nobody should ring tomorrow asking again",
+    );
+  });
+
+  test("but nothing about money moves until it is approved", async () => {
+    const customer = await makeCustomer(priya.id);
+    await takeOrder(customer.id);
+
+    const eod = await eodMetricsFor(priya.id, TODAY);
+    assert.equal(
+      eod.ordersCount,
+      0,
+      "a pending order is not a sale, so it is not on the day's count",
+    );
+    assert.equal(eod.ordersValue, 0);
+  });
+
+  test("approving makes it count, and only accounts may do it", async () => {
+    const customer = await makeCustomer(priya.id);
+    const order = await takeOrder(customer.id);
+
+    // A telecaller cannot, and a manager cannot either — the person chasing
+    // the target must not sign off the orders that hit it.
+    setTestUser(priya);
+    await assert.rejects(() => approveOrder(order.id), /not permitted|manager|accounts/i);
+    setTestUser(manager);
+    await assert.rejects(() => approveOrder(order.id), /not permitted|manager|accounts/i);
+
+    setTestUser(deepa);
+    const approved = await approveOrder(order.id);
+    assert.equal(approved.ok, true, approved.ok ? "" : approved.error);
+
+    const [after] = await db.select().from(orders).where(eq(orders.id, order.id));
+    assert.equal(after.status, "confirmed");
+    assert.equal(after.approvedById, deepa.id);
+
+    setTestUser(priya);
+    const eod = await eodMetricsFor(priya.id, TODAY);
+    assert.equal(eod.ordersCount, 1, "approved, so now it is a sale");
+  });
+
+  test("declining requires a reason, and the reason reaches the telecaller", async () => {
+    const customer = await makeCustomer(priya.id);
+    const order = await takeOrder(customer.id);
+
+    setTestUser(deepa);
+    const blank = await declineOrder(order.id, "   ");
+    assert.equal(blank.ok, false, "a refusal nobody can read is not a refusal");
+
+    const declined = await declineOrder(
+      order.id,
+      "Outstanding is over their limit — clear the June bills first.",
+    );
+    assert.equal(declined.ok, true, declined.ok ? "" : declined.error);
+
+    setTestUser(priya);
+    const timeline = await customerTimeline(customer.id);
+    const entry = timeline.find((t) => t.kind === "Order");
+    assert.ok(entry);
+    assert.match(entry.content, /declined/i);
+    assert.match(
+      entry.meta ?? "",
+      /clear the June bills/i,
+      "the telecaller has to ring back with it, so it is on the timeline",
+    );
+  });
+
+  test("a declined order never counted, and the customer returns to the list", async () => {
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 20,
+      cycleIsDefault: false,
+    });
+    const order = await takeOrder(customer.id);
+
+    setTestUser(deepa);
+    await declineOrder(order.id, "Customer disputed the last two bills.");
+
+    setTestUser(priya);
+    const eod = await eodMetricsFor(priya.id, TODAY);
+    assert.equal(eod.ordersCount, 0, "it must never have counted");
+
+    const [row] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.notEqual(
+      row.lastOrderDate,
+      TODAY,
+      "the order was refused, so it no longer holds them out of the calling list",
     );
   });
 });

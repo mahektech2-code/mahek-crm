@@ -366,7 +366,10 @@ export async function saveInteraction(
         source: "crm",
         orderedAt: new Date(`${orderedOn}T09:00:00+05:30`),
         totalAmount: orderValue,
-        status: "captured",
+        // Not a sale until accounts say so. The customer HAS ordered, which
+        // is what stops the queue chasing them, but nothing about money moves
+        // until this is approved.
+        status: "pending_approval",
         creditDays,
         paymentDueDate: addDays(orderedOn, creditDays),
       });
@@ -552,6 +555,12 @@ export async function saveInteraction(
     if (orderId) {
       // The user-entered order date is the order date. And a backdated order
       // must never drag the last-order date backwards.
+      //
+      // Set on CAPTURE, not on approval: this is the signal that stops the
+      // calling queue chasing them, and nobody should ring a customer
+      // tomorrow asking for an order they placed today, whatever accounts
+      // decide afterwards. If the order is declined, `recomputeLastOrder`
+      // pulls it back to the last one that actually counted.
       const orderedOn = isOrderReceived ? input.orderDate! : day;
       if (!customer.lastOrderDate || orderedOn > customer.lastOrderDate) {
         set.lastOrderDate = orderedOn;

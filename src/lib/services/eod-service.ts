@@ -81,10 +81,10 @@ export async function eodMetricsFor(
         and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as queue_worked,
       (select count(*) from orders o where o.user_id = ${userId}
         and o.ordered_at >= ${w.start}::timestamptz and o.ordered_at < ${w.end}::timestamptz
-        and o.status <> 'cancelled')::int as orders_count,
+        and o.status in ('captured','confirmed','dispatched'))::int as orders_count,
       (select coalesce(sum(o.total_amount),0) from orders o where o.user_id = ${userId}
         and o.ordered_at >= ${w.start}::timestamptz and o.ordered_at < ${w.end}::timestamptz
-        and o.status <> 'cancelled') as orders_value,
+        and o.status in ('captured','confirmed','dispatched')) as orders_value,
       (select count(*) from follow_up_attempts a where a.user_id = ${userId}
         and a.attempted_at >= ${w.start}::timestamptz and a.attempted_at < ${w.end}::timestamptz)::int as follow_ups,
       (select count(*) from follow_up_attempts a where a.user_id = ${userId}
@@ -114,7 +114,8 @@ export async function eodMetricsFor(
         where cu.owner_id = ${userId} and t.year = ${year} and t.month = ${month}) as target_amount,
       (select coalesce(sum(o.total_amount),0) from orders o
         join customers cu on cu.id = o.customer_id
-        where cu.owner_id = ${userId} and o.status <> 'cancelled'
+        where cu.owner_id = ${userId}
+          and o.status in ('captured','confirmed','dispatched')
           and extract(year from o.ordered_at) = ${year}
           and extract(month from o.ordered_at) = ${month}) as target_achieved
   `);

@@ -62,14 +62,14 @@ export async function customerProducts(
     with lines as (
       -- CRM-captured: a product id per line, joined to the interaction that
       -- produced the order.
-      select l.product_id, c.started_at::date as purchased_on, c.order_id as order_key
+      select l.product_id, (c.started_at at time zone 'Asia/Kolkata')::date as purchased_on, c.order_id as order_key
         from interaction_product_lines l
         join calls c on c.id = l.interaction_id
        where c.customer_id = ${customerId} and c.order_id is not null
       union all
       -- External: line items are JSON carrying a product name, so the match
       -- back to the catalogue is by name.
-      select p.id, o.ordered_at::date, o.id
+      select p.id, (o.ordered_at at time zone 'Asia/Kolkata')::date, o.id
         from orders o
         cross join lateral jsonb_array_elements(o.line_items) as li
         join products p
@@ -77,7 +77,7 @@ export async function customerProducts(
           or lower(p.name || coalesce(' ' || p.pack_size, '')) = lower(li->>'product')
        where o.customer_id = ${customerId}
          and o.source = 'external'
-         and o.status <> 'cancelled'
+         and o.status in ('captured','confirmed','dispatched')
          and o.line_items is not null
     )
     select p.id as product_id, p.name, p.pack_size,

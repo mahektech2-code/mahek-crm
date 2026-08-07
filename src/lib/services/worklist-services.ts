@@ -556,7 +556,8 @@ export async function listTargets(period?: string) {
       isDefault: monthlyTargets.isDefault,
       achieved: sql<number>`coalesce((
         select sum(o.total_amount) from ${orders} o
-         where o.customer_id = customers.id and o.status <> 'cancelled'
+         where o.customer_id = customers.id
+           and o.status in ('captured','confirmed','dispatched')
            and extract(year from o.ordered_at) = ${year}
            and extract(month from o.ordered_at) = ${month}
       ), 0)`,

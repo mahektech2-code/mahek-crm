@@ -52,12 +52,12 @@ export const REGISTRY: RegistryEntry[] = [
     id: "orders",
     name: "Order Management",
     short: "Orders",
-    status: "Coming soon",
-    route: "—",
+    status: "Live",
+    route: "/orders",
     schemaEndpoint: "—",
     writeEndpoint: "—",
     summaryEndpoint: "—",
-    roles: ["Dispatcher", "Manager"],
+    roles: ["Accounts", "Manager"],
     managerRole: "Manager",
     order: 2,
     desc: "Loading sheets, vehicle assignment and delivery confirmation.",
@@ -87,6 +87,7 @@ export const T = {
   bool: "bool",
   text: "text",
   long: "longtext",
+  rich: "richtext",
   choice: "choice",
   multi: "multi",
   ordered: "ordered",
@@ -355,6 +356,21 @@ export const CRM_SCHEMA: AppSchema = {
             { key: "creditNew", label: "Default credit days for new customers", type: T.int, unit: "days", def: 30, min: 0, max: 180 },
           ],
         },
+        {
+          label: "The follow-up panel",
+          note: "The seven outcomes and what each requires are declared once. The form and the save path cannot disagree about which fields are mandatory.",
+          fields: [
+            {
+              key: "payOutcomes", label: "Follow-up response list", type: T.ordered,
+              def: ["Payment Promised", "Already Paid", "No Response", "Dispute", "Will check"],
+              help: "A retired outcome is readable, never writable — old attempts still resolve to a label.",
+            },
+            {
+              key: "payAttachments", label: "Attachment limit on payment follow-up", type: T.int, unit: "files", def: 3, min: 0, max: 10,
+              help: "A save is never blocked by an attachment. A failed upload leaves the follow-up intact.",
+            },
+          ],
+        },
       ],
     },
     {
@@ -477,6 +493,25 @@ export const CRM_SCHEMA: AppSchema = {
             { key: "notesMax", label: "Notes maximum length", type: T.int, unit: "characters", def: 1000, min: 100, max: 5000 },
           ],
         },
+        {
+          label: "Customer records",
+          note: "What the CRM demands before a customer exists, and who is allowed to take one away.",
+          fields: [
+            { key: "custStatuses", label: "Customer status values", type: T.ordered, def: ["Active", "Inactive", "Deactivated"] },
+            {
+              key: "custMandatory", label: "Mandatory fields on customer creation", type: T.multi,
+              options: ["Business name", "Contact person", "Primary phone", "City", "GST number", "Payment term"],
+              def: ["Business name", "Contact person", "Primary phone", "City"],
+            },
+            {
+              key: "custDuplicate", label: "Duplicate detection basis", type: T.multi,
+              options: ["Phone match", "Name-plus-city match", "GST match"], def: ["Phone match", "Name-plus-city match"],
+            },
+            { key: "custDupOverride", label: "Allow duplicate override with a reason", type: T.bool, def: true },
+            { key: "custExportRoles", label: "Customer export permitted for", type: T.multi, options: ["Telecaller", "Manager"], def: ["Manager"], adminOnly: true, help: "Customer books are commercially sensitive, and every export is logged." },
+            { key: "custDeactivateRoles", label: "Customer deactivation permitted for", type: T.multi, options: ["Telecaller", "Manager"], def: ["Manager"] },
+          ],
+        },
       ],
     },
     {
@@ -496,6 +531,18 @@ export const CRM_SCHEMA: AppSchema = {
               def: "Single rate per product",
               adminOnly: true,
               help: "Flag this with the business — customer-specific rates need the rate-card model.",
+            },
+          ],
+        },
+        {
+          label: "How the order form offers them",
+          note: "The frequent container and the Information tab's product history are the same query. They were two once, and disagreed about the same customer.",
+          fields: [
+            { key: "frequentSize", label: "Frequent-products container size", type: T.int, unit: "products", def: 6, min: 0, max: 20 },
+            { key: "frequentBasis", label: "Frequent-products ranking basis", type: T.choice, options: ["Total orders", "Recency"], def: "Total orders" },
+            {
+              key: "productSearch", label: "Product search available on order forms", type: T.bool, def: true,
+              help: "Matching runs in Postgres on trigram similarity as well as substring — a name typed mid-call is a name typed badly.",
             },
           ],
         },
@@ -629,6 +676,24 @@ export const CRM_SCHEMA: AppSchema = {
               def: "Update existing in same category",
             },
             { key: "cmpEscalate", label: "Escalate past SLA to manager", type: T.bool, def: true },
+            {
+              key: "cmpAttachments", label: "Attachment limit on complaints", type: T.int, unit: "files", def: 5, min: 0, max: 10,
+              help: "Removing one detaches it and marks it removed; the bytes go only when retention says so.",
+            },
+          ],
+        },
+        {
+          label: "Credit notes",
+          note: "A credit note has financial consequences, and there is no Accounts app yet — requests surface on a manager's pending list rather than sitting invisible.",
+          fields: [
+            {
+              key: "cnMandatory", label: "A credit note amount requires a request", type: T.bool, def: true, adminOnly: true,
+              help: "A figure on a complaint nobody asked a credit note for reads as an approved amount to whoever opens it next.",
+            },
+            {
+              key: "cnStatuses", label: "Credit note status vocabulary", type: T.ordered,
+              def: ["Requested", "Under review", "Approved", "Rejected", "Issued"],
+            },
           ],
         },
       ],
@@ -702,11 +767,21 @@ export function schemaFor(appId: string): AppSchema | null {
 /* ------------------------------------------------------- platform sections */
 
 export const PLATFORM_TABS: Record<string, string[]> = {
-  overview: ["Health", "Integrations", "Recent activity", "Scheduled jobs"],
+  overview: ["Attention", "Health", "Integrations", "Usage", "Configuration drift", "Job health", "Recent activity"],
   people: ["Users", "App access", "Roles & teams", "Sessions & security", "Onboarding"],
-  apps: ["Registry", "Status", "Access rules"],
-  data: ["Import history", "Export log", "Backup"],
-  audit: ["Configuration changes", "Access changes", "Admin actions"],
+  apps: [
+    "Registry",
+    "Status",
+    "Access rules",
+    "Per-app dashboard",
+    "Schema inspector",
+    "Contract validation",
+    "Feature flags",
+    "Platform settings",
+  ],
+  data: ["Import history", "Export log", "Migration status", "Backup status"],
+  notifications: ["Catalogue", "Announcements", "Delivery log"],
+  audit: ["Unified search", "Configuration changes", "Access changes", "Admin actions"],
 };
 
 export const PLATFORM_SUBTITLES: Record<string, string> = {
@@ -715,6 +790,7 @@ export const PLATFORM_SUBTITLES: Record<string, string> = {
   apps: "The registry that drives the launcher and this console.",
   audit: "Every configuration and access change. Read-only, and never editable.",
   data: "What has been imported and exported, and whether the backup ran.",
+  notifications: "What the platform sends, who receives it, and whether it arrived.",
 };
 
 /* --------------------------------------------------------------- the people */
@@ -1028,6 +1104,12 @@ export type AuditRow = {
   to: string;
   actor: string;
   t: string;
+  /**
+   * The account this record is *about*, as opposed to the actor who caused it.
+   * Without it, a user's own audit tab can only show what they did, never what
+   * was done to them.
+   */
+  subject?: string | null;
 };
 
 export const AUDIT: AuditRow[] = [

@@ -152,8 +152,17 @@ export async function customerTimeline(
      where m.customer_id = ${customerId}
     union all
     select o.id, 'Order', o.ordered_at, coalesce(u.name, 'Order system'),
-           concat('Order ', o.status),
-           concat('₹', to_char(round(o.total_amount / 100.0), 'FM9G99G99G999'))
+           case o.status
+             when 'pending_approval' then 'Order waiting for approval'
+             when 'declined' then 'Order declined'
+             else concat('Order ', o.status)
+           end,
+           -- A declined order says why on the timeline. The telecaller has to
+           -- ring the customer back, and hunting for the reason is how that
+           -- call gets made badly or not at all.
+           concat_ws(' · ',
+             concat('₹', to_char(round(o.total_amount / 100.0), 'FM9G99G99G999')),
+             o.decline_reason)
       from orders o left join users u on u.id = o.user_id
      where o.customer_id = ${customerId}
     union all

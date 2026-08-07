@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { isManager, requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { currentPeriod, dayActivity, teamDay, today } from "@/lib/queries";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { getQueue } from "@/lib/services/queue-service";
 import { getFollowUpWorklist } from "@/lib/services/payment-service";
 import { listInactiveWatch, listTargets } from "@/lib/services/worklist-services";
@@ -71,7 +72,7 @@ export default async function DashboardPage() {
 
   const hour = Number(
     new Intl.DateTimeFormat("en-GB", {
-      timeZone: "Asia/Kolkata",
+      timeZone: APP_TIMEZONE,
       hour: "numeric",
       hour12: false,
     }).format(new Date()),
@@ -306,7 +307,13 @@ export default async function DashboardPage() {
                 </div>
                 <div className="mt-3 flex justify-between text-[13px] text-muted">
                   <span>Gap {money(Math.max(0, targetTotal - achieved))}</span>
-                  <span>{workingDaysLeft(day, config["workingDay.workingDays"])} working days left</span>
+                  <span>{workingDaysLeft(
+                    day,
+                    config["workingDay.workingDays"],
+                    config["workingDay.timezone"],
+                    config["workingDay.dayBoundaryHour"],
+                  )}{" "}
+                  working days left</span>
                 </div>
                 <Link
                   href="/crm/targets"
@@ -714,13 +721,18 @@ async function overSixtyDays(): Promise<number> {
  * Working days left this month, against the configured working week rather
  * than a hardcoded one — which is the whole point of having it in settings.
  */
-function workingDaysLeft(day: string, workingDays: number[]): number {
+function workingDaysLeft(
+  day: string,
+  workingDays: number[],
+  timezone: string,
+  dayBoundaryHour: number,
+): number {
   const [year, month] = day.split("-").map(Number);
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   let count = 0;
   for (let d = Number(day.slice(8)); d <= lastDay; d++) {
     const date = `${day.slice(0, 8)}${String(d).padStart(2, "0")}`;
-    if (isWorkingDay(date, { timezone: "Asia/Kolkata", dayBoundaryHour: 5, workingDays })) {
+    if (isWorkingDay(date, { timezone, dayBoundaryHour, workingDays })) {
       count++;
     }
   }

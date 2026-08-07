@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { db, sql as client } from "./index";
 import {
   appAccess,
@@ -49,7 +50,7 @@ const now = new Date();
 const DAY = 86_400_000;
 
 const IST = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "Asia/Kolkata",
+  timeZone: APP_TIMEZONE,
   year: "numeric",
   month: "2-digit",
   day: "2-digit",
@@ -126,6 +127,16 @@ const TEAM = [
     phone: "9820011007",
     role: "telecaller" as const,
     apps: ["field"],
+  },
+  {
+    // Accounts accept orders and do nothing else. Deliberately without the
+    // CRM: the person deciding whether a customer may take more credit is not
+    // the person chasing them for the next order.
+    name: "Deepa Nair",
+    email: "deepa@mahek.in",
+    phone: "9820011008",
+    role: "accounts" as const,
+    apps: ["orders"],
   },
 ];
 

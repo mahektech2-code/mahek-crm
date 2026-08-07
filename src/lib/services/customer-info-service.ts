@@ -1,6 +1,7 @@
 import "server-only";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { orderCountsSql } from "../order-status";
 import { bills, calls, customers, orders } from "@/db/schema";
 import { assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
@@ -176,7 +177,7 @@ export async function customerInformation(
     .where(
       and(
         eq(orders.customerId, customerId),
-        sql`${orders.status} <> 'cancelled'`,
+        orderCountsSql("orders"),
         sql`extract(year from ${orders.orderedAt}) = ${year}`,
         sql`extract(month from ${orders.orderedAt}) = ${month}`,
       ),
