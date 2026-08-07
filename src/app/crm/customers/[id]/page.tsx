@@ -183,6 +183,7 @@ export default async function CustomerRecordPage({
         outcome: n.outcome,
         label: n.label,
       }))}
+      singleSelectOutcomes={config["interactions.singleSelectOutcomes"]}
       products={productRows.map((p) => ({
         id: p.id,
         name: p.name,

@@ -77,6 +77,7 @@ export function QueueScreen({
   activity,
   categories,
   quickNotes,
+  singleSelectOutcomes,
   products,
   scripts,
 }: {
@@ -90,6 +91,7 @@ export function QueueScreen({
   /** Complaint categories, from configuration rather than a constant. */
   categories: Array<{ value: string; label: string }>;
   quickNotes: QuickNoteOption[];
+  singleSelectOutcomes: string[];
   products: ProductOption[];
   scripts: ScriptOption[];
   activity: {
@@ -484,6 +486,7 @@ export function QueueScreen({
         target={openTarget}
         complaintCategories={categories}
         quickNotes={quickNotes}
+        singleSelectOutcomes={singleSelectOutcomes}
         products={products}
         scripts={scripts}
         hasNext={hasNext}

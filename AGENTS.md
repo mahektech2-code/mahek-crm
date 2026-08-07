@@ -230,6 +230,33 @@ becomes 30 because nobody typed a date onto the bill.
 Orders taken before this change carry the term the telecaller agreed at the
 time, and those values stand — the capture was removed, never the history.
 
+**One aggregation answers "what do they buy".** The order form's frequent
+container and the Information tab's product history are the same query in
+`lib/services/product-service.ts`, ranked and trimmed by configuration. They
+were two queries once and disagreed about the same customer, which a telecaller
+notices and then stops trusting the screen. External order lines carry a
+product NAME rather than an id, so they are matched back to the catalogue by
+name — an unmatched name contributes nothing, because a product the catalogue
+does not carry cannot be put on an order.
+
+**Product search runs in Postgres, not in the browser.** Matching is trigram
+similarity as well as substring, because a name typed mid-call is a name typed
+badly: "thiner" has to find Thinner on the first attempt. The extension and its
+GIN indexes live in `drizzle/0008_products_and_no_order_reasons.sql`; Drizzle
+cannot express an operator-class index, so they are not in `schema.ts`.
+
+**How many quick notes an outcome takes is configuration, not a column.**
+`interactions.singleSelectOutcomes` names the outcomes that take exactly one —
+No Order today. Putting it on each `quick_notes` row would let two rows for the
+same outcome disagree. A second pick replaces the first in the stored
+identifier AND in the note text, so the note can never read "Stock sufficient
+Price issue" and mean neither.
+
+**Retired quick notes are deactivated, never deleted.** Historical
+interactions hold their identifiers in `quick_note_ids`, and those references
+must keep resolving to something a human can read. The save path deliberately
+does not check `active`, so an old reference is never rejected on read.
+
 **A collections call is logged in one place, and it is one transaction.** The
 follow-up panel opens over the worklist and never navigates away — a
 telecaller working a list of twelve should not lose their place to look at a

@@ -180,6 +180,15 @@ export type CustomerInfo = {
     outcome: string | null;
     notes: string | null;
   }>;
+  /** §2.1 — ranked and trimmed on the server, per configuration. */
+  frequentProducts: Array<{
+    productId: string;
+    name: string;
+    packSize: string | null;
+    displayName: string;
+    lastPurchaseDate: string | null;
+    totalOrderCount: number;
+  }>;
   productHistory: Array<{
     productName: string;
     lastPurchaseDate: string | null;
@@ -254,6 +263,8 @@ type CallPanelProps = {
   scripts?: ScriptOption[];
   /** Products this customer has bought before — the "Usually buys" row. */
   frequentProductIds?: string[];
+  /** §3.2 — outcomes whose quick notes are one choice, from configuration. */
+  singleSelectOutcomes?: string[];
   onClose: () => void;
   onSaved?: (advance: boolean) => void;
   hasNext?: boolean;
@@ -303,6 +314,7 @@ function CallPanelForm({
   complaintCategories,
   scripts = [],
   frequentProductIds = [],
+  singleSelectOutcomes = [],
   onClose,
   onSaved,
   hasNext,
@@ -365,6 +377,47 @@ function CallPanelForm({
     return () => controller.abort();
   }, [target]);
 
+  // §2.2 — search runs on the server so a misspelling still finds the
+  // product. Debounced, because this fires on every keystroke mid-call.
+  // The result is tagged with the query that produced it, so a stale response
+  // is ignored on read rather than cleared by a second render pass — the
+  // React Compiler rules exist to stop exactly that kind of effect.
+  const [remote, setRemote] = React.useState<{
+    q: string;
+    items: ProductOption[];
+  } | null>(null);
+  React.useEffect(() => {
+    const q = productQuery.trim();
+    if (!q || !target) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      fetch(
+        `/api/product-search?q=${encodeURIComponent(q)}&customerId=${target.customerId}`,
+        { signal: controller.signal },
+      )
+        .then((r) => (r.ok ? r.json() : { products: [] }))
+        .then((d) =>
+          setRemote({
+            q,
+            items: (d.products ?? []).map(
+              (x: { productId: string; name: string; packSize: string | null }) => ({
+                id: x.productId,
+                name: x.name,
+                packSize: x.packSize,
+              }),
+            ),
+          }),
+        )
+        // A dead search falls back to filtering what is already loaded rather
+        // than leaving the telecaller with an empty list.
+        .catch(() => {});
+    }, 150);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [productQuery, target]);
+
   const isOrderReceived = type === "order_received";
   const chosen = isOrderReceived || Boolean(outcome);
 
@@ -385,6 +438,11 @@ function CallPanelForm({
     [quickNotes, type, outcome],
   );
 
+  // §3.2 — which outcomes take one reason rather than several is configuration,
+  // not a property of each note: two rows for the same outcome could otherwise
+  // disagree about it.
+  const singleSelect = Boolean(outcome && singleSelectOutcomes.includes(outcome));
+
   // The script follows the outcome once one is chosen; before that, whatever
   // general guidance exists.
   const [scriptId, setScriptId] = React.useState<string | null>(null);
@@ -404,7 +462,15 @@ function CallPanelForm({
     outcome && !scripts.some((x) => x.outcome === outcome),
   );
 
-  const frequent = products.filter((p) => frequentProductIds.includes(p.id));
+  // §2.1 — the server ranks and trims this per configuration. The prop is the
+  // fallback for the moment before the information strip lands.
+  const frequent: ProductOption[] = info?.frequentProducts?.length
+    ? info.frequentProducts.map((f) => ({
+        id: f.productId,
+        name: f.name,
+        packSize: f.packSize,
+      }))
+    : products.filter((p) => frequentProductIds.includes(p.id));
   const productLabel = (p: ProductOption) =>
     p.packSize ? `${p.name} — ${p.packSize}` : p.name;
 
@@ -413,10 +479,11 @@ function CallPanelForm({
   const matches = React.useMemo(() => {
     const q = productQuery.trim().toLowerCase();
     if (!q) return products;
+    if (remote && remote.q === productQuery.trim()) return remote.items;
     return products.filter((p) =>
       `${p.name} ${p.packSize ?? ""}`.toLowerCase().includes(q),
     );
-  }, [products, productQuery]);
+  }, [products, productQuery, remote]);
 
   // Long lists are capped until asked for — the design shows a handful and
   // keeps the rest one click away.
@@ -434,6 +501,27 @@ function CallPanelForm({
     .filter((l) => Number.isFinite(l.qty) && l.qty > 0);
 
   function applyChip(n: QuickNoteOption) {
+    if (singleSelect) {
+      // §3.3 — one reason, not a pile of them. A second pick REPLACES the
+      // first in the stored identifier and in the text, so the note cannot
+      // end up reading "Stock sufficient Price issue" and meaning neither.
+      const previous = chips.find((c) => picked.includes(c.id));
+      setPicked([n.id]);
+      setNotes((t) => {
+        const text = t.trim();
+        if (!previous) return text ? `${text} ${n.label}` : n.label;
+        // Swap the old label out wherever the telecaller left it. Anything
+        // they typed themselves is theirs and survives untouched.
+        const swapped = text.replace(previous.label, n.label);
+        return swapped === text && !text.includes(n.label)
+          ? text
+            ? `${text} ${n.label}`
+            : n.label
+          : swapped;
+      });
+      return;
+    }
+
     // Chips accumulate. Clicking three appends three, and the text stays
     // editable afterwards — nothing is locked.
     setPicked((p) => (p.includes(n.id) ? p : [...p, n.id]));
