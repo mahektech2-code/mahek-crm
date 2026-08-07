@@ -1027,11 +1027,87 @@ describe("Journey 8 — the interaction log", () => {
     const wrong = await saveInteraction({
       customerId: customer.id,
       interactionType: "inbound_call",
-      outcome: "not_interested",
+      outcome: "no_answer",
       idempotencyKey: randomUUID(),
     });
-    assert.equal(wrong.ok, false, "not_interested is outbound-only");
+    assert.equal(wrong.ok, false, "nobody rings us and then does not answer");
     assert.match(wrong.error, /outcome/i);
+  });
+
+  test("a complaint raised on a call we made is raised the same way", async () => {
+    const customer = await makeCustomer(priya.id);
+
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "complaint",
+      complaintCategory: "packaging_damage",
+      notes: "Two drums arrived dented",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.ok(r.data.complaintId, "the complaint exists, not just the note");
+
+    const [{ n }] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from complaints where customer_id = ${customer.id}
+    `);
+    assert.equal(Number(n), 1);
+  });
+
+  test("a complaint raised on a call carries its credit-note request", async () => {
+    const customer = await makeCustomer(priya.id);
+    const billId = id("bil");
+    await db.insert(bills).values({
+      id: billId,
+      customerId: customer.id,
+      billNo: `MMI/${randomUUID().slice(0, 6)}`,
+      billDate: addDays(TODAY, -10),
+      dueDate: addDays(TODAY, 20),
+      amount: 40_000_00,
+      paidAmount: 0,
+    });
+
+    const askedForNoBill = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "complaint",
+      complaintCategory: "shortage",
+      complaintDescription: "Two drums short against the last consignment",
+      complaintRequestCn: true,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(
+      askedForNoBill.ok,
+      false,
+      "accounts cannot act on a credit note with no bill behind it",
+    );
+
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "complaint",
+      complaintCategory: "shortage",
+      complaintDescription: "Two drums short against the last consignment",
+      complaintRequestCn: true,
+      complaintBillId: billId,
+      complaintGoodsDescription: "20L NC Thinner × 10",
+      notes: "Rang about the next order, this came up",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    const [row] = await db
+      .select()
+      .from(complaints)
+      .where(eq(complaints.id, r.data.complaintId!));
+    assert.equal(row.requestCn, true);
+    assert.equal(row.billId, billId);
+    assert.equal(row.goodsDescription, "20L NC Thinner × 10");
+    assert.equal(
+      row.description,
+      "Two drums short against the last consignment",
+      "the resolver reads the complaint, not the call note",
+    );
   });
 
   test("follow-up needs a date; inbound payment promise needs one; outbound does not", async () => {

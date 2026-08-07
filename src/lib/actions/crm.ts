@@ -160,6 +160,12 @@ export type SaveInteractionActionInput = {
   followUpDate?: string;
   paymentPromiseDate?: string;
   complaintCategory?: string;
+  complaintDescription?: string;
+  complaintRequestCn?: boolean;
+  complaintBillId?: string;
+  complaintGoodsDescription?: string;
+  /** Photos of the damaged or short goods. Best-effort, like the dialog's. */
+  complaintImages?: File[];
   orderDate?: string;
   sourceModule?:
     | "call_queue"
@@ -189,19 +195,34 @@ export async function saveInteractionAction(
       followUpDate: raw.followUpDate,
       paymentPromiseDate: raw.paymentPromiseDate,
       complaintCategory: raw.complaintCategory as never,
+      complaintDescription: raw.complaintDescription,
+      complaintRequestCn: raw.complaintRequestCn ?? false,
+      complaintBillId: raw.complaintBillId,
+      complaintGoodsDescription: raw.complaintGoodsDescription,
       orderDate: raw.orderDate,
       sourceModule: raw.sourceModule ?? "ad_hoc",
       queuePosition: raw.queuePosition,
       idempotencyKey: raw.idempotencyKey ?? randomUUID(),
     });
     if (!result.ok) return result;
+
+    // Storage has no backend yet (see lib/storage.ts), so attaching images is
+    // best-effort — the call itself is already saved and must not be undone
+    // by a failed upload.
+    const attached = await attachComplaintImages(
+      result.data.complaintId,
+      raw.complaintImages,
+    );
+
     refreshAll();
     return ok(
       {
         produced: result.data.produced,
         complaintUpdated: result.data.complaintUpdated,
       },
-      result.message ?? "Interaction saved",
+      attached === "failed"
+        ? "Call saved — image attachments aren't available until storage is configured"
+        : (result.message ?? "Interaction saved"),
       result.warnings,
     );
   } catch (e) {
@@ -736,6 +757,35 @@ export async function decideDeactivation(
 /* ------------------------------------------------------------- complaints */
 
 /**
+ * Photos of the damaged or short goods, attached to a complaint however it was
+ * raised — the dialog and a call both come through here.
+ *
+ * Storage has no backend yet (see lib/storage.ts), so this is deliberately
+ * best-effort: the complaint is already written and a dead uploader must not
+ * take it down with it. The caller says so on screen rather than pretending
+ * the pictures arrived.
+ */
+async function attachComplaintImages(
+  complaintId: string | null,
+  images?: File[],
+): Promise<"none" | "attached" | "failed"> {
+  if (!complaintId || !images?.length) return "none";
+
+  const uploads = await Promise.allSettled(
+    images.map((file) => fileStorage.upload(file)),
+  );
+  const succeeded = uploads.flatMap((u) =>
+    u.status === "fulfilled" ? [u.value] : [],
+  );
+  if (!succeeded.length) return "failed";
+
+  await db
+    .insert(complaintImages)
+    .values(succeeded.map((u) => ({ id: id("cim"), complaintId, url: u.url })));
+  return "attached";
+}
+
+/**
  * Raising a complaint outside a call. It still goes through the call service,
  * so the complaint gets its severity, SLA deadline and opening status-history
  * line exactly as one raised mid-call would — there is one path, not two.
@@ -811,29 +861,11 @@ export async function logComplaint(input: {
       });
     });
 
-    // Storage has no backend yet (see lib/storage.ts), so attaching images is
-    // best-effort — the complaint itself must always save.
-    let imagesAttached = false;
-    if (input.images?.length && complaintId) {
-      const uploads = await Promise.allSettled(
-        input.images.map((file) => fileStorage.upload(file)),
-      );
-      const succeeded = uploads.flatMap((u) =>
-        u.status === "fulfilled" ? [u.value] : [],
-      );
-      if (succeeded.length) {
-        await db
-          .insert(complaintImages)
-          .values(
-            succeeded.map((u) => ({ id: id("cim"), complaintId, url: u.url })),
-          );
-        imagesAttached = true;
-      }
-    }
+    const attached = await attachComplaintImages(complaintId, input.images);
 
     refreshAll();
     return okVoid(
-      input.images?.length && !imagesAttached
+      attached === "failed"
         ? "Complaint logged — image attachments aren't available until storage is configured"
         : "Complaint logged",
     );

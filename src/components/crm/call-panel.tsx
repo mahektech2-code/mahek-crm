@@ -7,6 +7,7 @@ import {
   Button,
   Field,
   Input,
+  Radio,
   Select,
   Textarea,
   cx,
@@ -15,7 +16,12 @@ import { useEscape } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { saveInteractionAction } from "@/lib/actions/crm";
+import {
+  OUTCOMES_BY_TYPE,
+  OUTCOME_LABEL as CATALOGUE_OUTCOME_LABEL,
+} from "@/db/catalogue";
 import { addDays, money, phoneDisplay, shortDate, today } from "@/lib/format";
+import { ACCEPTED_IMAGE_TYPES } from "@/lib/storage";
 
 /**
  * The dates customers actually ask for, as one tap each. Anything else still
@@ -180,6 +186,8 @@ export type CustomerInfo = {
     outcome: string | null;
     notes: string | null;
   }>;
+  /** Newest first — what a Request CN on a complaint picks its bill from. */
+  bills: Array<{ id: string; billNo: string; billDate: string }>;
   /** §2.1 — ranked and trimmed on the server, per configuration. */
   frequentProducts: Array<{
     productId: string;
@@ -223,37 +231,15 @@ const TYPES: Array<{
   },
 ];
 
-/** Exactly the sets from the brief. Nothing added. */
-const OUTCOMES: Record<Exclude<InteractionType, "order_received">, string[]> = {
-  outbound_call: [
-    "order_taken",
-    "no_order",
-    "no_answer",
-    "payment_promised",
-    "follow_up",
-    "not_interested",
-  ],
-  inbound_call: [
-    "order_taken",
-    "payment_promised",
-    "follow_up",
-    "complaint",
-    "transport_follow_up",
-    "casual_talk",
-  ],
-};
+/**
+ * Which outcomes a call may end in, and what they are called. Both come from
+ * the catalogue, which is also what `saveInteraction` validates against — a
+ * second copy here is a form that offers an outcome the server refuses.
+ */
+const OUTCOMES = OUTCOMES_BY_TYPE;
 
-const OUTCOME_LABEL: Record<string, string> = {
-  order_taken: "Order Taken",
-  no_order: "No Order",
-  no_answer: "No Answer",
-  payment_promised: "Payment Promised",
-  follow_up: "Follow-up",
-  not_interested: "Not Interested",
-  complaint: "Complaint",
-  transport_follow_up: "Transport Follow-up",
-  casual_talk: "Casual Talk",
-};
+/** Widened, because past interactions arrive from the database as strings. */
+const OUTCOME_LABEL: Record<string, string> = CATALOGUE_OUTCOME_LABEL;
 
 type CallPanelProps = {
   target: CallTarget | null;
@@ -343,6 +329,14 @@ function CallPanelForm({
   const [category, setCategory] = React.useState(
     complaintCategories[0]?.value ?? "other",
   );
+  // The complaint, captured mid-call exactly as the complaints screen captures
+  // one raised any other way — same description, same photos, same CN request.
+  const [complaintDescription, setComplaintDescription] = React.useState("");
+  const [complaintImages, setComplaintImages] = React.useState<File[]>([]);
+  const [imageError, setImageError] = React.useState<string | null>(null);
+  const [requestCn, setRequestCn] = React.useState(false);
+  const [cnBillId, setCnBillId] = React.useState("");
+  const [goodsDescription, setGoodsDescription] = React.useState("");
   const [orderDate, setOrderDate] = React.useState(today());
   const [busy, setBusy] = React.useState(false);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
@@ -427,6 +421,9 @@ function CallPanelForm({
     type === "inbound_call" && outcome === "payment_promised";
   const showPayDate = outcome === "payment_promised";
   const needsCategory = outcome === "complaint";
+
+  /** The bill a requested credit note is against, for the read-only date. */
+  const cnBill = (info?.bills ?? []).find((b) => b.id === cnBillId) ?? null;
 
   const chips = React.useMemo(
     () =>
@@ -549,6 +546,14 @@ function CallPanelForm({
           followUpDate: needsFollowUp ? followUpDate : undefined,
           paymentPromiseDate: showPayDate ? payDate || undefined : undefined,
           complaintCategory: needsCategory ? category : undefined,
+          complaintDescription: needsCategory
+            ? complaintDescription
+            : undefined,
+          complaintRequestCn: needsCategory ? requestCn : false,
+          complaintBillId: needsCategory && requestCn ? cnBillId : undefined,
+          complaintGoodsDescription:
+            needsCategory && requestCn ? goodsDescription : undefined,
+          complaintImages: needsCategory ? complaintImages : undefined,
           orderDate: isOrderReceived ? orderDate : undefined,
           sourceModule: target.sourceModule ?? "ad_hoc",
           queuePosition: target.queuePosition,
@@ -586,6 +591,13 @@ function CallPanelForm({
     setQuantities({});
     setFollowUpDate("");
     setPayDate("");
+    // One customer's complaint must never be attached to the next one.
+    setComplaintDescription("");
+    setComplaintImages([]);
+    setImageError(null);
+    setRequestCn(false);
+    setCnBillId("");
+    setGoodsDescription("");
     setOrderDate(today());
     setErrors({});
     setSaved(null);
@@ -1373,6 +1385,119 @@ function CallPanelForm({
                             ))}
                           </Select>
                         </Field>
+                      ) : null}
+
+                      {needsCategory ? (
+                        <>
+                          <Field
+                            label="Complaint description"
+                            error={errors.complaintDescription ?? null}
+                          >
+                            <Textarea
+                              value={complaintDescription}
+                              onChange={(e) => {
+                                setComplaintDescription(e.target.value);
+                              }}
+                              className="h-20"
+                              placeholder="Describe the complaint in detail."
+                            />
+                          </Field>
+
+                          <Field
+                            label="Upload picture"
+                            hint="JPG, JPEG, PNG or WEBP — photos of the damaged or short goods, if any."
+                            error={imageError}
+                          >
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp"
+                              multiple
+                              onChange={(e) => {
+                                const picked = Array.from(e.target.files ?? []);
+                                const accepted = picked.filter((f) =>
+                                  ACCEPTED_IMAGE_TYPES.includes(f.type),
+                                );
+                                setComplaintImages(accepted);
+                                setImageError(
+                                  accepted.length < picked.length
+                                    ? "Only JPG, JPEG, PNG or WEBP images are allowed."
+                                    : null,
+                                );
+                              }}
+                              className="block w-full text-sm text-body file:mr-3 file:cursor-pointer file:rounded-[4px] file:border file:border-line file:bg-surface file:px-2.5 file:py-1.5 file:text-sm file:text-ink"
+                            />
+                            {complaintImages.length ? (
+                              <p className="mt-1 text-[13px] text-muted">
+                                {complaintImages.length} picture
+                                {complaintImages.length === 1 ? "" : "s"} will be
+                                attached
+                              </p>
+                            ) : null}
+                          </Field>
+
+                          <Field label="Request CN">
+                            <div className="flex items-center gap-4">
+                              <Radio
+                                name="callRequestCn"
+                                label="No"
+                                checked={!requestCn}
+                                onChange={() => setRequestCn(false)}
+                              />
+                              <Radio
+                                name="callRequestCn"
+                                label="Yes"
+                                checked={requestCn}
+                                onChange={() => setRequestCn(true)}
+                              />
+                            </div>
+                          </Field>
+
+                          {requestCn ? (
+                            <div className="mb-3.5 grid gap-3 rounded-[4px] border border-line bg-canvas p-3">
+                              <Field
+                                label="Bill number"
+                                error={errors.complaintBillId ?? null}
+                              >
+                                <Select
+                                  value={cnBillId}
+                                  onChange={(e) => setCnBillId(e.target.value)}
+                                >
+                                  <option value="">Select a bill</option>
+                                  {(info?.bills ?? []).map((b) => (
+                                    <option key={b.id} value={b.id}>
+                                      {b.billNo} · {shortDate(b.billDate)}
+                                    </option>
+                                  ))}
+                                </Select>
+                              </Field>
+
+                              <Field label="Bill date">
+                                <Input
+                                  value={
+                                    cnBill ? shortDate(cnBill.billDate) : ""
+                                  }
+                                  readOnly
+                                  disabled
+                                  placeholder="Pick a bill number first"
+                                />
+                              </Field>
+
+                              <Field
+                                label="Description of goods"
+                                hint="Not on the bill record — filled in manually."
+                              >
+                                <Textarea
+                                  value={goodsDescription}
+                                  onChange={(e) =>
+                                    setGoodsDescription(e.target.value)
+                                  }
+                                  className="h-16"
+                                  placeholder="What was billed"
+                                />
+                              </Field>
+                            </div>
+                          ) : null}
+                        </>
                       ) : null}
 
                       {needsProducts ? (

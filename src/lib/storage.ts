@@ -20,3 +20,10 @@ export const notConfiguredStorage: FileStorage = {
 };
 
 export const fileStorage: FileStorage = notConfiguredStorage;
+
+/**
+ * What a complaint photo may be. Declared once, because the complaints dialog
+ * and the call panel both filter on it and a picture one screen accepts must
+ * not be one the other rejects.
+ */
+export const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];

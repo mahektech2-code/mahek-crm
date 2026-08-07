@@ -26,6 +26,7 @@ import { Drawer, DrawerHeader, Modal, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { logComplaint, reassignComplaint, resolveComplaint } from "@/lib/actions/crm";
 import { ageLabel, shortDate, stamp } from "@/lib/format";
+import { ACCEPTED_IMAGE_TYPES } from "@/lib/storage";
 
 type Status =
   | "open"
@@ -503,7 +504,6 @@ type LogComplaintInput = {
 };
 
 type CustomerHit = { id: string; name: string; city: string; phone: string };
-const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
 function LogComplaintModal({
   open,

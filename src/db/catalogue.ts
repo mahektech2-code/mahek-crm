@@ -171,15 +171,26 @@ export const OUTCOMES_BY_TYPE: Record<InteractionTypeKey, OutcomeKey[]> = {
     "no_answer",
     "payment_promised",
     "follow_up",
+    // A complaint is not something the customer has to ring in to make. Half
+    // of them come out when we call to ask for the next order, and a
+    // telecaller with nowhere to put it either loses it or files it as a note.
+    "complaint",
+    "transport_follow_up",
+    "casual_talk",
     "not_interested",
   ],
   inbound_call: [
     "order_taken",
+    // An enquiry that ended in nothing, and a customer who rang to say they
+    // are done buying, both happen on calls we did not make. Only "no answer"
+    // stays outbound-only: they are on the line.
+    "no_order",
     "payment_promised",
     "follow_up",
     "complaint",
     "transport_follow_up",
     "casual_talk",
+    "not_interested",
   ],
   order_received: [],
 };
