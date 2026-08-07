@@ -32,6 +32,7 @@ import {
   UnifiedAudit,
   UsageTab,
 } from "./platform-extra";
+import { pinnedHead } from "./pinned";
 import { useAdmin } from "./store";
 
 /* ---------------------------------------------------------------------------
@@ -85,7 +86,7 @@ function Health() {
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <CardHeader title="Registered apps" />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>App</Th>
@@ -178,7 +179,7 @@ function RecentActivity({ navigate }: { navigate: (section: string, tab: number)
         }
       />
       <div className="overflow-auto">
-        <table>
+        <table className="[&_td]:whitespace-nowrap">
           <thead>
             <tr>
               <Th>Kind</Th>
@@ -263,7 +264,7 @@ export function AppsSection({ tab }: { tab: number }) {
           hint="Adding an entry gives the console a working settings section with no code change — it reads the schema endpoint."
         />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>App</Th>
@@ -388,7 +389,7 @@ export function DataSection({ tab }: { tab: number }) {
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <CardHeader title="Import history" hint="A partial import is worth more than a failed one, so the rows that did not land are downloadable." />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>What</Th>
@@ -397,7 +398,7 @@ export function DataSection({ tab }: { tab: number }) {
                 <Th align="right">Rows</Th>
                 <Th align="right">Failed</Th>
                 <Th>State</Th>
-                <Th />
+                <Th className={pinnedHead("right")} />
               </tr>
             </thead>
             <tbody>
@@ -411,7 +412,12 @@ export function DataSection({ tab }: { tab: number }) {
                   <Td>
                     <Badge tone={r.ok ? "success" : "danger"}>{r.ok ? "Complete" : "Partial"}</Badge>
                   </Td>
-                  <Td>
+                  <Td
+                    className={cx(
+                      "sticky right-0 z-10 border-l border-line",
+                      r.ok ? (i % 2 ? "bg-canvas" : "bg-surface") : "bg-danger-soft",
+                    )}
+                  >
                     <Button size="sm" variant="ghost" disabled={!r.failed} onClick={() => notify("Error file downloaded")}>
                       Error file
                     </Button>
@@ -433,7 +439,7 @@ export function DataSection({ tab }: { tab: number }) {
           hint="Customer books are commercially sensitive, so who exported one is recorded."
         />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>What</Th>
@@ -482,7 +488,7 @@ export function AuditSection({ tab }: { tab: number }) {
   return (
     <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
       <div className="overflow-auto">
-        <table>
+        <table className="[&_td]:whitespace-nowrap">
           <thead>
             <tr>
               <Th>What changed</Th>

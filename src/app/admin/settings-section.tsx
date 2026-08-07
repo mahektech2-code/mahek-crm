@@ -25,6 +25,7 @@ import {
   type Values,
 } from "./settings-model";
 import { SettingHistory } from "./settings-tools";
+import { RichTextEditor } from "./rich-text";
 import { useAdmin } from "./store";
 
 /* ---------------------------------------------------------------------------
@@ -251,6 +252,11 @@ function Control({
           onChange={(e) => set(e.target.value)}
           className="h-[120px] font-mono text-[13px]"
         />
+      );
+
+    case T.rich:
+      return (
+        <RichTextEditor value={String(value ?? "")} onChange={(next) => set(next)} />
       );
 
     case T.choice:

@@ -73,7 +73,7 @@ export async function recomputeBuyingCycle(customerId: string): Promise<void> {
  */
 async function lastPlaced(customerId: string): Promise<string | null> {
   const rows = await db.execute<{ d: string | null }>(sql`
-    select max(o.ordered_at)::date::text as d
+    select max((o.ordered_at at time zone 'Asia/Kolkata'))::date::text as d
       from orders o
      where o.customer_id = ${customerId}
        and o.status in ('captured', 'pending_approval', 'confirmed', 'dispatched')
@@ -135,7 +135,7 @@ export async function recomputeAllBuyingCycles(): Promise<number> {
   // brand-new customer gets the configured default.
   // One pass for the placed dates too, rather than a query per customer.
   const placed = await db.execute<{ customer_id: string; d: string | null }>(sql`
-    select o.customer_id, max(o.ordered_at)::date::text as d
+    select o.customer_id, max((o.ordered_at at time zone 'Asia/Kolkata'))::date::text as d
       from orders o
      where o.status in ('captured', 'pending_approval', 'confirmed', 'dispatched')
      group by o.customer_id
@@ -418,12 +418,12 @@ export async function recomputeInactivity(): Promise<number> {
  */
 export async function recomputeLastContact(customerId: string): Promise<void> {
   const [lastCall] = await db
-    .select({ at: sql<string | null>`max(${calls.startedAt})::date` })
+    .select({ at: sql<string | null>`max(${calls.startedAt} at time zone 'Asia/Kolkata')::date` })
     .from(calls)
     .where(eq(calls.customerId, customerId));
 
   const [lastWa] = await db
-    .select({ at: sql<string | null>`max(${waMessages.confirmedSentAt})::date` })
+    .select({ at: sql<string | null>`max(${waMessages.confirmedSentAt} at time zone 'Asia/Kolkata')::date` })
     .from(waMessages)
     .where(
       and(

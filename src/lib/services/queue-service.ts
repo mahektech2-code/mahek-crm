@@ -108,7 +108,7 @@ async function queueInputs(ids: string[] | null, day: string) {
       // "id", which inside this correlated subquery would bind to the INNER
       // table and quietly match every row.
       lastNoOrder: sql<string | null>`(
-        select c.started_at::date::text from ${calls} c
+        select (c.started_at at time zone 'Asia/Kolkata')::date::text from ${calls} c
          where c.customer_id = customers.id and c.outcome = 'no_order'
          order by c.started_at desc limit 1
       )`,

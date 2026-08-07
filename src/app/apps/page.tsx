@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { requireUser } from "@/lib/auth";
 import {
   launcherApps,
@@ -30,7 +31,7 @@ export default async function LauncherPage() {
 
   const hour = Number(
     new Intl.DateTimeFormat("en-GB", {
-      timeZone: "Asia/Kolkata",
+      timeZone: APP_TIMEZONE,
       hour: "numeric",
       hour12: false,
     }).format(new Date()),

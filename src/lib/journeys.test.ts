@@ -1656,6 +1656,72 @@ describe("Journey 9 - the Information tab", () => {
   });
 });
 
+/* --------------------------------------------------------------- timezone */
+
+describe("The business day is Asia/Kolkata, whatever the database thinks", () => {
+  test("a call at 1am IST belongs to that day, on a GMT database", async () => {
+    // The client's Neon runs in GMT. Postgres casts a timestamptz to a date in
+    // the SESSION zone, so a bare `started_at::date` puts a 1am IST call on the
+    // previous day — and local Postgres runs in Asia/Kolkata, which hides it
+    // perfectly. This test forces the session to GMT so it cannot hide.
+    await db.execute(sql`set time zone 'GMT'`);
+    try {
+      const [row] = await db.execute<{ bare: string; zoned: string }>(sql`
+        select (timestamptz '2026-08-07 20:00:00+00')::date::text as bare,
+               ((timestamptz '2026-08-07 20:00:00+00')
+                 at time zone 'Asia/Kolkata')::date::text as zoned
+      `);
+
+      // 20:00 UTC on the 7th is 01:30 IST on the 8th.
+      assert.equal(row.bare, "2026-08-07", "this is the trap, stated plainly");
+      assert.equal(
+        row.zoned,
+        "2026-08-08",
+        "every timestamp-to-date cast in the app must look like this one",
+      );
+    } finally {
+      await db.execute(sql`set time zone 'Asia/Kolkata'`);
+    }
+  });
+
+  test("no query turns a stored timestamp into a date without saying which zone", async () => {
+    // A grep, deliberately. The rule is invisible at runtime on a database
+    // that happens to run in IST, so it is enforced on the source instead.
+    const { readFileSync, readdirSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (full.endsWith(".ts") && !full.includes(".test.")) files.push(full);
+      }
+    };
+    walk("src/lib");
+
+    const TIMESTAMP_COLUMNS =
+      /(started_at|ordered_at|confirmed_sent_at|attempted_at|created_at|updated_at|paid_at|copied_at)\s*\)?::date/;
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      for (const [i, line] of readFileSync(file, "utf8").split("\n").entries()) {
+        const code = line.trim();
+        // Prose describing the rule is not a breach of it.
+        if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*")) continue;
+        if (line.includes("time zone")) continue;
+        if (TIMESTAMP_COLUMNS.test(line)) offenders.push(`${file}:${i + 1}`);
+      }
+    }
+
+    assert.deepEqual(
+      offenders,
+      [],
+      "cast these through `at time zone 'Asia/Kolkata'` — see APP_TIMEZONE",
+    );
+  });
+});
+
 /* ------------------------------------------------------- order approval */
 
 describe("An order is a customer saying yes, not the business saying yes", () => {

@@ -28,6 +28,7 @@ import {
   type AdminUser,
   type UserStatus,
 } from "./data";
+import { pinnedCell, pinnedHead } from "./pinned";
 import { useAdmin } from "./store";
 
 export function statusTone(status: UserStatus): Tone {
@@ -67,7 +68,7 @@ export function PeopleSection({
 /* ------------------------------------------------------------------ roster */
 
 function Roster({ onOpenUser }: { onOpenUser: (id: string) => void }) {
-  const { users, registry, notify, openDrawer } = useAdmin();
+  const { users, registry, notify, record, openDrawer } = useAdmin();
   const [view, setView] = React.useState<View>("All active");
   const [selected, setSelected] = React.useState<string[]>([]);
 
@@ -121,11 +122,11 @@ function Roster({ onOpenUser }: { onOpenUser: (id: string) => void }) {
 
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
-                <Th />
-                <Th>Name</Th>
+                <Th className={cx(pinnedHead("left"), "w-11 border-r-0")} />
+                <Th className={cx(pinnedHead("left"), "left-11")}>Name</Th>
                 <Th>Code</Th>
                 <Th>Team</Th>
                 <Th>Reports to</Th>
@@ -135,7 +136,9 @@ function Roster({ onOpenUser }: { onOpenUser: (id: string) => void }) {
                 <Th align="right">Owns</Th>
                 <Th>Last active</Th>
                 <Th>Created</Th>
-                <Th />
+                {/* The roster is wider than the screen, so the actions stay
+                    pinned rather than living past the right edge. */}
+                <Th className={pinnedHead("right")} />
               </tr>
             </thead>
             <tbody>
@@ -148,7 +151,7 @@ function Roster({ onOpenUser }: { onOpenUser: (id: string) => void }) {
                     onClick={() => onOpenUser(u.id)}
                     className={cx("cursor-pointer", on ? "bg-brand-soft" : i % 2 ? "bg-canvas" : "")}
                   >
-                    <Td>
+                    <Td className={cx(pinnedCell("left", i, on), "w-11 border-r-0")}>
                       <span onClick={(e) => e.stopPropagation()}>
                         <Checkbox
                           label=""
@@ -160,7 +163,9 @@ function Roster({ onOpenUser }: { onOpenUser: (id: string) => void }) {
                         />
                       </span>
                     </Td>
-                    <Td className="font-medium text-ink">{u.name}</Td>
+                    {/* Scrolled right to reach the actions, you must still be
+                        able to see whose row this is. */}
+                    <Td className={cx(pinnedCell("left", i, on), "left-11 font-medium text-ink")}>{u.name}</Td>
                     <Td>{u.code}</Td>
                     <Td>{u.dept}</Td>
                     <Td>{u.reportsTo ?? "—"}</Td>
@@ -185,17 +190,27 @@ function Roster({ onOpenUser }: { onOpenUser: (id: string) => void }) {
                     <Td align="right">{owns ? owns : "—"}</Td>
                     <Td>{u.lastActive}</Td>
                     <Td>{u.created}</Td>
-                    <Td>
+                    <Td className={pinnedCell("right", i, on)}>
                       <span className="flex justify-end" onClick={(e) => e.stopPropagation()}>
                         <RowMenu
                           items={[
                             { label: "Edit user", onSelect: () => openDrawer({ kind: "editUser", id: u.id }) },
                             {
+                              // Both of these change what somebody can do, so
+                              // both land on that account's audit tab.
                               label: "Trigger password reset",
-                              onSelect: () =>
-                                notify(`Reset link sent to ${u.contact} — it expires in 30 minutes and kills any earlier one`),
+                              onSelect: () => {
+                                record("access", "Platform", "Password reset triggered", "—", "Link sent, expires in 30 minutes", u.id);
+                                notify(`Reset link sent to ${u.contact} — it expires in 30 minutes and kills any earlier one`);
+                              },
                             },
-                            { label: "Force sign-out", onSelect: () => notify(`All sessions ended for ${u.name}`) },
+                            {
+                              label: "Force sign-out",
+                              onSelect: () => {
+                                record("access", "Platform", "All sessions ended", "—", "—", u.id);
+                                notify(`All sessions ended for ${u.name}`);
+                              },
+                            },
                             {
                               label: u.status === "Active" ? "Deactivate user" : "Already deactivated",
                               destructive: u.status === "Active",
@@ -250,7 +265,7 @@ function AppAccess() {
           }
         />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>User</Th>
@@ -341,7 +356,7 @@ function AppAccess() {
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <CardHeader title="Expiring access" hint="So nothing quietly becomes permanent." />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>Who</Th>
@@ -349,7 +364,7 @@ function AppAccess() {
                 <Th>Why</Th>
                 <Th>Ends</Th>
                 <Th>Remaining</Th>
-                <Th />
+                <Th className={pinnedHead("right")} />
               </tr>
             </thead>
             <tbody>
@@ -362,7 +377,7 @@ function AppAccess() {
                   <Td className={cx("font-medium", r.left < 20 ? "text-warn-ink" : "text-body")}>
                     {r.left} {r.left === 1 ? "day" : "days"} left
                   </Td>
-                  <Td>
+                  <Td className={pinnedCell("right", i)}>
                     <span className="flex gap-1.5">
                       <Button size="sm" variant="ghost" onClick={() => notify("Extended by 30 days")}>
                         Extend
@@ -388,14 +403,14 @@ function AppAccess() {
           <div className="px-5 py-5 text-sm text-muted">Every granted app has been opened.</div>
         ) : (
           <div className="overflow-auto">
-            <table>
+            <table className="[&_td]:whitespace-nowrap">
               <thead>
                 <tr>
                   <Th>Who</Th>
                   <Th>App</Th>
                   <Th>Granted</Th>
                   <Th>Last opened</Th>
-                  <Th />
+                  <Th className={pinnedHead("right")} />
                 </tr>
               </thead>
               <tbody>
@@ -405,7 +420,7 @@ function AppAccess() {
                     <Td>{r.app}</Td>
                     <Td>{r.granted}</Td>
                     <Td>{r.opened}</Td>
-                    <Td>
+                    <Td className={pinnedCell("right", i)}>
                       <Button size="sm" variant="ghost" className="text-danger" onClick={() => revokeUnused(i)}>
                         Revoke
                       </Button>
@@ -481,7 +496,7 @@ function RolesAndTeams() {
           hint="MahekOne decides which apps you open; the app's role decides what you can do inside it. Each app declares its own role vocabulary."
         />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>User</Th>
@@ -581,7 +596,7 @@ function RolesAndTeams() {
           hint="One manager each. Removing a manager requires nominating a replacement — a team without one has nobody its figures roll up to."
         />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>Team</Th>
@@ -747,7 +762,7 @@ function SessionsAndSecurity() {
           <div className="px-5 py-5 text-sm text-muted">No active sessions.</div>
         ) : (
           <div className="overflow-auto">
-            <table>
+            <table className="[&_td]:whitespace-nowrap">
               <thead>
                 <tr>
                   <Th>User</Th>
@@ -757,7 +772,7 @@ function SessionsAndSecurity() {
                   <Th>Started</Th>
                   <Th>Last seen</Th>
                   <Th>State</Th>
-                  <Th />
+                  <Th className={pinnedHead("right")} />
                 </tr>
               </thead>
               <tbody>
@@ -772,7 +787,7 @@ function SessionsAndSecurity() {
                     <Td>
                       <Badge tone={s.stale ? "neutral" : "success"}>{s.stale ? "Idle" : "Active"}</Badge>
                     </Td>
-                    <Td>
+                    <Td className={pinnedCell("right", i)}>
                       <Button size="sm" variant="ghost" className="text-danger" onClick={() => endSession(s.id)}>
                         End
                       </Button>
@@ -821,7 +836,7 @@ function SessionsAndSecurity() {
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <CardHeader title="Sign-in history" />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>User</Th>
@@ -856,7 +871,7 @@ function SessionsAndSecurity() {
           hint="A reset sent but never used means someone is still locked out and has not said so."
         />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>User</Th>
@@ -949,7 +964,7 @@ function Onboarding() {
           }
         />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>Template</Th>
@@ -986,14 +1001,14 @@ function Onboarding() {
           <div className="px-5 py-5 text-sm text-muted">No invitations outstanding.</div>
         ) : (
           <div className="overflow-auto">
-            <table>
+            <table className="[&_td]:whitespace-nowrap">
               <thead>
                 <tr>
                   <Th>Name</Th>
                   <Th>Sent to</Th>
                   <Th>Sent</Th>
                   <Th>State</Th>
-                  <Th />
+                  <Th className={pinnedHead("right")} />
                 </tr>
               </thead>
               <tbody>
@@ -1005,7 +1020,7 @@ function Onboarding() {
                     <Td>
                       <Badge tone="warn">Sent, not opened</Badge>
                     </Td>
-                    <Td>
+                    <Td className={pinnedCell("right", i)}>
                       <span className="flex gap-1.5">
                         <Button
                           size="sm"

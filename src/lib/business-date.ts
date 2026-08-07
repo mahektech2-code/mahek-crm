@@ -206,6 +206,30 @@ function zonedParts(now: Date, timezone: string) {
   };
 }
 
+/**
+ * The zone the business runs in, in one place.
+ *
+ * `workingDay.timezone` is the configurable setting and remains the authority
+ * for anything that reads configuration. This constant is for the two places
+ * that CANNOT: client components, which have no async config, and SQL, which
+ * needs the zone as a literal. Its default and this value are the same string
+ * by construction, so they cannot drift.
+ *
+ * It matters more than it looks. Postgres casts a timestamptz to a date in the
+ * SESSION timezone, and the client's database runs in GMT — so a bare
+ * `ordered_at::date` puts a 1am IST call on the previous day. Local Postgres
+ * runs in Asia/Kolkata, which hides it perfectly.
+ */
+export const APP_TIMEZONE = "Asia/Kolkata";
+
+/**
+ * A timestamptz rendered as a business date. Every place that turns a stored
+ * timestamp into a day must use this rather than a bare `::date`.
+ */
+export function businessDateSql(expr: string): string {
+  return `((${expr}) at time zone '${APP_TIMEZONE}')::date`;
+}
+
 /** Fixed offsets for the zones this product runs in. */
 const ZONE_OFFSETS: Record<string, string> = {
   "Asia/Kolkata": "+05:30",

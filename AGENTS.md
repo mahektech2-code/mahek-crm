@@ -159,6 +159,18 @@ function, so they cannot drift apart.
 **Outstanding is derived, never typed.** `recomputeOutstanding()` rebuilds it
 from bills after anything that touches a bill or a payment.
 
+**The zone is named once, in `APP_TIMEZONE`.** `workingDay.timezone` stays the
+configurable authority for anything that reads configuration; the constant
+exists for the two places that cannot — client components, which have no async
+config, and SQL, which needs a literal. Nothing else spells the zone out.
+
+**Never cast a stored timestamp to a date without naming the zone.** Postgres
+casts a timestamptz in the SESSION zone, and Neon runs in GMT, so a bare
+`ordered_at::date` puts a 1am IST call on the previous day. Local Postgres runs
+in Asia/Kolkata and hides it completely. Two tests guard it: one forces the
+session to GMT and asserts the difference, and one greps `lib/` for bare casts,
+because the rule is invisible at runtime on a database that happens to agree.
+
 **The working day is Asia/Kolkata, and it does not start at midnight.**
 `today()` in `lib/recompute.ts` applies the configured day boundary (5am by
 default), so a call logged at 2am belongs to the shift that started yesterday.

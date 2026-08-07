@@ -69,7 +69,7 @@ type Store = {
   notes: Record<string, AdminNote[]>;
 
   notify: (message: string) => void;
-  record: (kind: AuditKind, app: string, setting: string, from: string, to: string) => void;
+  record: (kind: AuditKind, app: string, setting: string, from: string, to: string, subject?: string | null) => void;
 
   patchUser: (id: string, patch: Partial<AdminUser>) => void;
   toggleAppAccess: (id: string, appId: string) => void;
@@ -119,8 +119,9 @@ export function AdminStore({ children }: { children: React.ReactNode }) {
   const value = React.useMemo<Store>(() => {
     const notify = (message: string) => toast.push(message);
 
-    const record = (kind: AuditKind, app: string, setting: string, from: string, to: string) =>
-      setAudit((rows) => [{ kind, app, setting, from, to, actor: me.name, t: "Just now" }, ...rows]);
+    const record = (
+      kind: AuditKind, app: string, setting: string, from: string, to: string, subject?: string | null,
+    ) => setAudit((rows) => [{ kind, app, setting, from, to, actor: me.name, subject: subject ?? null, t: "Just now" }, ...rows]);
 
     const patchUser = (id: string, patch: Partial<AdminUser>) =>
       setUsers((all) => all.map((u) => (u.id === id ? { ...u, ...patch } : u)));

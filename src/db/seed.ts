@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { db, sql as client } from "./index";
 import {
   appAccess,
@@ -49,7 +50,7 @@ const now = new Date();
 const DAY = 86_400_000;
 
 const IST = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "Asia/Kolkata",
+  timeZone: APP_TIMEZONE,
   year: "numeric",
   month: "2-digit",
   day: "2-digit",

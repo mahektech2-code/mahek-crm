@@ -87,6 +87,7 @@ export const T = {
   bool: "bool",
   text: "text",
   long: "longtext",
+  rich: "richtext",
   choice: "choice",
   multi: "multi",
   ordered: "ordered",
@@ -1103,6 +1104,12 @@ export type AuditRow = {
   to: string;
   actor: string;
   t: string;
+  /**
+   * The account this record is *about*, as opposed to the actor who caused it.
+   * Without it, a user's own audit tab can only show what they did, never what
+   * was done to them.
+   */
+  subject?: string | null;
 };
 
 export const AUDIT: AuditRow[] = [

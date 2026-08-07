@@ -3,6 +3,8 @@
  * becomes a string here, on the way to the screen.
  * ------------------------------------------------------------------------- */
 
+import { APP_TIMEZONE } from "./business-date";
+
 const MONTHS = [
   "Jan",
   "Feb",
@@ -167,7 +169,7 @@ export function nowMs(): number {
  */
 export function today(): string {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
+    timeZone: APP_TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

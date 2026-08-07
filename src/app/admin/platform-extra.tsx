@@ -23,12 +23,14 @@ import {
   CONTRACT_CHECKS,
   DELIVERY_LOG,
   DRIFT_RECENT,
+  AUDIT_POLICY,
   DRIFT_UNCONFIRMED,
   FEATURE_FLAGS,
   MIGRATION,
   NOTIFICATION_CATALOGUE,
   SIGNINS_PER_DAY,
 } from "./data-platform";
+import { pinnedCell, pinnedHead } from "./pinned";
 import { useAdmin } from "./store";
 
 /* ---------------------------------------------------------------------------
@@ -167,7 +169,7 @@ export function UsageTab() {
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <CardHeader title="Active users per app" hint="Granted against actually opening it." />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>App</Th>
@@ -220,7 +222,7 @@ export function DriftTab({ navigate }: { navigate: (s: string, t: number) => voi
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <CardHeader title="Changed in the last seven days" hint="Across every app." />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>Setting</Th>
@@ -383,7 +385,7 @@ export function SchemaInspector() {
           </div>
         ) : (
           <div className="overflow-auto">
-            <table>
+            <table className="[&_td]:whitespace-nowrap">
               <thead>
                 <tr>
                   <Th>Key</Th>
@@ -453,7 +455,7 @@ export function ContractValidation() {
           }
         />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>App</Th>
@@ -476,7 +478,7 @@ export function ContractValidation() {
                     <Badge tone={c.ok ? "success" : "danger"}>{c.ok ? "Pass" : "Fail"}</Badge>
                   </Td>
                   <Td align="right">{c.ms === null ? "—" : `${c.ms} ms`}</Td>
-                  <Td className="max-w-[420px] whitespace-normal">{c.note}</Td>
+                  <Td className="max-w-[420px] !whitespace-normal">{c.note}</Td>
                 </Tr>
               ))}
             </tbody>
@@ -602,7 +604,7 @@ export function NotificationsSection({ tab }: { tab: number }) {
           hint="Every notification any app can send, and who receives it. One place to answer “why did four people get emailed about that?”"
         />
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>Event</Th>
@@ -617,7 +619,7 @@ export function NotificationsSection({ tab }: { tab: number }) {
                 <Tr key={`${n.app}-${n.event}`} className={i % 2 ? "bg-canvas" : ""}>
                   <Td className="font-medium text-ink">{n.event}</Td>
                   <Td>{n.app}</Td>
-                  <Td className="max-w-[360px] whitespace-normal">{n.desc}</Td>
+                  <Td className="max-w-[360px] !whitespace-normal">{n.desc}</Td>
                   {(["Telecaller", "Manager"] as const).map((role) => (
                     <Td key={role}>
                       <Checkbox
@@ -693,7 +695,7 @@ export function NotificationsSection({ tab }: { tab: number }) {
     <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
       <CardHeader title="Delivery log" hint="What was sent, to whom, and whether anybody looked at it." />
       <div className="overflow-auto">
-        <table>
+        <table className="[&_td]:whitespace-nowrap">
           <thead>
             <tr>
               <Th>What</Th>
@@ -778,7 +780,7 @@ export function UnifiedAudit() {
 
       <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
         <div className="overflow-auto">
-          <table>
+          <table className="[&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>Kind</Th>
@@ -787,7 +789,7 @@ export function UnifiedAudit() {
                 <Th>Change</Th>
                 <Th>Who</Th>
                 <Th>When</Th>
-                <Th />
+                <Th className={pinnedHead("right")} />
               </tr>
             </thead>
             <tbody>
@@ -803,7 +805,7 @@ export function UnifiedAudit() {
                   <Td>{r.from === "—" ? r.to : `${r.from} → ${r.to}`}</Td>
                   <Td>{r.actor}</Td>
                   <Td>{r.t}</Td>
-                  <Td>
+                  <Td className={pinnedCell("right", i)}>
                     {r.kind === "config" ? (
                       <Button size="sm" variant="ghost" onClick={() => setDiff(r)}>
                         Diff
@@ -822,6 +824,8 @@ export function UnifiedAudit() {
           Read-only. Audit records cannot be edited or deleted by anyone, including a platform admin.
         </div>
       </Card>
+
+      <AuditPolicy />
 
       <Modal
         open={!!diff}
@@ -857,5 +861,113 @@ export function UnifiedAudit() {
         ) : null}
       </Modal>
     </div>
+  );
+}
+
+/**
+ * Retention is the only setting on this screen, and it is the one place where
+ * an audit record can legitimately disappear. It ages out on a schedule, and
+ * only after it has been exported — never by anybody's hand.
+ */
+function AuditPolicy() {
+  const { notify, record } = useAdmin();
+  const [months, setMonths] = React.useState(String(AUDIT_POLICY.retentionMonths));
+  const [exportFirst, setExportFirst] = React.useState(AUDIT_POLICY.exportBeforeAgeOut);
+  const [scheduled, setScheduled] = React.useState(AUDIT_POLICY.scheduledExport);
+  const [day, setDay] = React.useState(AUDIT_POLICY.scheduleDay);
+  const [to, setTo] = React.useState(AUDIT_POLICY.destination);
+
+  const dirty =
+    months !== String(AUDIT_POLICY.retentionMonths) ||
+    exportFirst !== AUDIT_POLICY.exportBeforeAgeOut ||
+    scheduled !== AUDIT_POLICY.scheduledExport ||
+    day !== AUDIT_POLICY.scheduleDay ||
+    to !== AUDIT_POLICY.destination;
+
+  return (
+    <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
+      <CardHeader
+        title="Retention and export"
+        hint="The oldest record here is from 02 Jan 2026. Nothing ages out until it has been written to a file somewhere else."
+      />
+
+      <div className="flex items-center gap-4 px-5 py-3.5">
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium text-ink">Keep audit records for</span>
+          <span className="block text-[13px] text-muted">
+            Oldest record on the platform: {AUDIT_POLICY.oldestRecord}
+          </span>
+        </span>
+        <span className="flex items-center gap-2">
+          <span className="block w-[110px]">
+            <Input value={months} onChange={(e) => setMonths(e.target.value.replace(/[^0-9]/g, ""))} className="text-right" />
+          </span>
+          <span className="text-sm text-muted">months</span>
+        </span>
+      </div>
+
+      <div className="flex items-center gap-4 border-t border-canvas px-5 py-3.5">
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium text-ink">Export before anything ages out</span>
+          <span className="block text-[13px] text-muted">
+            Off means records are simply dropped, and the history is gone for good.
+          </span>
+        </span>
+        <PolicyToggle on={exportFirst} onToggle={() => setExportFirst((v) => !v)} />
+      </div>
+
+      <div className="flex items-center gap-4 border-t border-canvas px-5 py-3.5">
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium text-ink">Weekly export</span>
+          <span className="block text-[13px] text-muted">Last export: {AUDIT_POLICY.lastExport}</span>
+        </span>
+        <Select value={day} onChange={(e) => setDay(e.target.value)} disabled={!scheduled}>
+          {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((d) => (
+            <option key={d}>{d}</option>
+          ))}
+        </Select>
+        <span className="block w-[220px]">
+          <Input value={to} disabled={!scheduled} onChange={(e) => setTo(e.target.value)} />
+        </span>
+        <PolicyToggle on={scheduled} onToggle={() => setScheduled((v) => !v)} />
+      </div>
+
+      <div className="flex items-center gap-3 border-t border-divider bg-canvas px-5 py-3">
+        <span className="text-[13px] text-muted">
+          {dirty ? "Unsaved changes to the retention policy." : "The policy change is itself audited."}
+        </span>
+        <span className="flex-1" />
+        <Button size="sm" variant="ghost" onClick={() => notify("Audit log exported")}>
+          Export now
+        </Button>
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={!dirty}
+          title={dirty ? undefined : "Nothing to save"}
+          onClick={() => {
+            record("admin", "Platform", "Audit retention policy", `${AUDIT_POLICY.retentionMonths} months`, `${months} months`);
+            notify("Retention policy saved");
+          }}
+        >
+          Save policy
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function PolicyToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      aria-pressed={on}
+      onClick={onToggle}
+      className={cx(
+        "relative h-[22px] w-[38px] flex-none cursor-pointer rounded-full border-none p-0",
+        on ? "bg-brand" : "bg-line",
+      )}
+    >
+      <span className={cx("absolute top-[3px] block h-4 w-4 rounded-full bg-white", on ? "left-[19px]" : "left-[3px]")} />
+    </button>
   );
 }

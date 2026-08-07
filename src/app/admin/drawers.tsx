@@ -5,6 +5,7 @@ import { Button, Input, Select, Textarea, cx } from "@/components/ui/primitives"
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
 import { ownedFor, ROLE_TEMPLATES, TEAMS, type EntityKind, type EntityRow } from "./data";
 import { ANNOUNCEMENTS } from "./data-platform";
+import { RichTextEditor } from "./rich-text";
 import { useAdmin, type Drawer as DrawerState } from "./store";
 
 /* ---------------------------------------------------------------------------
@@ -17,6 +18,7 @@ import { useAdmin, type Drawer as DrawerState } from "./store";
  * ------------------------------------------------------------------------- */
 
 type FieldSpec = {
+  rich?: boolean;
   key: string;
   label: string;
   value: string;
@@ -148,7 +150,10 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
         key: "roles", label: "Visible to", value: v("roles", record0?.roles ?? "Telecaller, Manager"),
         select: ["Telecaller", "Manager", "Telecaller, Manager"],
       },
-      { key: "body", label: "Body", value: v("body", record0?.body ?? ""), area: true },
+      {
+        key: "body", label: "Body", value: v("body", record0?.body ?? ""), rich: true,
+        help: "Read in the CRM Help Center. Written as Markdown so the stored article stays legible in an audit diff.",
+      },
     ];
   } else if (kind === "holidays") {
     title = "Add holiday";
@@ -371,7 +376,13 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
               <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
                 {f.label}
               </span>
-              {f.area ? (
+              {f.rich ? (
+                <RichTextEditor
+                  value={f.value}
+                  placeholder={f.placeholder}
+                  onChange={(next) => setDraft((d) => ({ ...d, [f.key]: next }))}
+                />
+              ) : f.area ? (
                 <Textarea
                   value={f.value}
                   onChange={set(f.key)}
@@ -450,6 +461,7 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
               title,
               "—",
               "—",
+              user?.id ?? null,
             );
             notify(`${title} — saved`);
             onClose();

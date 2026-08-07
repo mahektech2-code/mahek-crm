@@ -221,3 +221,55 @@ export const PLATFORM_SCHEMA: { tabs: SchemaTab[] } = {
     },
   ],
 };
+
+/* ------------------------------------------------------------ user activity */
+
+export type ActivityKind = "Sign-in" | "App" | "Account" | "Session";
+
+export type ActivityRow = {
+  t: string;
+  kind: ActivityKind;
+  what: string;
+  meta: string;
+};
+
+/**
+ * A person's use of the system, not their work. An admin reading this is
+ * answering "did anyone actually open Dispatch last month?" or "when did they
+ * last really work, rather than merely authenticate?"
+ */
+export function activityFor(userId: string, joined: string, createdBy: string): ActivityRow[] {
+  const base: ActivityRow[] = [
+    { t: "Today, 11:20", kind: "App", what: "Telecaller CRM · Call Log", meta: "42 minutes on screen" },
+    { t: "Today, 10:04", kind: "App", what: "Telecaller CRM · Payment Follow-up", meta: "12 minutes on screen" },
+    { t: "Today, 09:04", kind: "Sign-in", what: "Signed in", meta: "Windows 11 · Chrome 128 · 103.21.58.14" },
+    { t: "Yesterday, 18:02", kind: "Session", what: "Signed out", meta: "Session ended normally" },
+    { t: "Yesterday, 17:40", kind: "App", what: "Telecaller CRM · EOD Report", meta: "Submitted" },
+    { t: "Yesterday, 09:11", kind: "Sign-in", what: "Signed in", meta: "Windows 11 · Chrome 128 · 103.21.58.14" },
+    { t: "05 Aug, 16:22", kind: "Account", what: "Password reset link used", meta: "Every earlier session was ended" },
+    { t: "05 Aug, 16:10", kind: "Account", what: "Password reset requested", meta: "By Vikram Shah" },
+    { t: "05 Aug, 09:02", kind: "Sign-in", what: "Signed in", meta: "Windows 11 · Chrome 128 · 103.21.58.14" },
+    { t: "04 Aug, 19:14", kind: "Session", what: "Session expired", meta: "Idle past the 8-hour timeout" },
+    { t: "04 Aug, 09:06", kind: "Sign-in", what: "Signed in", meta: "Android · Chrome 128 · 182.70.44.9" },
+    { t: "03 Aug, 14:30", kind: "Account", what: "Role changed", meta: "CRM · Telecaller, by Vikram Shah" },
+    { t: "02 Aug, 09:00", kind: "Sign-in", what: "Signed in", meta: "Windows 11 · Chrome 128 · 103.21.58.14" },
+    { t: "01 Aug, 08:58", kind: "Sign-in", what: "Failed sign-in", meta: "Wrong password · attempt 1" },
+  ];
+  // Everybody's record ends where their account began.
+  return [
+    ...(userId === "u5" ? [] : base),
+    { t: joined, kind: "Account", what: "Account created", meta: `By ${createdBy}` },
+  ];
+}
+
+/* ------------------------------------------------------------ audit policy */
+
+export const AUDIT_POLICY = {
+  retentionMonths: 36,
+  exportBeforeAgeOut: true,
+  scheduledExport: true,
+  scheduleDay: "Monday",
+  destination: "sandeep@mahek.in",
+  lastExport: "03 Aug 2026 · 1,204 records",
+  oldestRecord: "02 Jan 2026",
+};
