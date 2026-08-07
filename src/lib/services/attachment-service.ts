@@ -5,7 +5,8 @@ import { db } from "@/db";
 import { attachments, complaints, calls, followUpAttempts } from "@/db/schema";
 import { resolveScope, assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
-import { fileStorage, sniffContentType } from "../storage";
+import { fileStorage } from "../storage";
+import { sniffContentType } from "../file-types";
 import { err, ok, okVoid, type Result } from "../result";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;

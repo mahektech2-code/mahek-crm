@@ -1,18 +1,29 @@
-import { put, del, get, head } from "@vercel/blob";
+import "server-only";
+import { put, del, get } from "@vercel/blob";
+import { sql } from "drizzle-orm";
+import { db } from "@/db";
 
 /**
- * File storage. Vercel Blob, private — a payment proof or a damaged-goods
- * photograph is commercially sensitive, so nothing is ever written with public
- * access and no URL is guessable. Bytes are read back through
- * `/api/attachments/[id]`, which checks the caller can see the parent record
- * before it hands anything over.
+ * Where attachment bytes live.
  *
- * The seam stays because the rest of the app should not know which backend it
- * is. Swapping S3 in later means replacing `blobStorage` and nothing else.
+ * Two backends, and the app never knows which. Postgres is the default: no
+ * second service, no token, no separate lifecycle, and the bytes sit in the
+ * same backup and the same point-in-time restore as the record that refers to
+ * them. For a few complaint photographs a week that is simpler in every way
+ * that matters.
+ *
+ * Blob takes over the moment BLOB_READ_WRITE_TOKEN exists, because Postgres
+ * stops being the right answer at volume: bytes in the database are bytes in
+ * every backup, every restore and every replica, and they are billed as
+ * database storage rather than as file storage. The switch is the constant at
+ * the bottom of this file and nothing else.
+ *
+ * Neither backend is ever read directly by a browser. Bytes come back through
+ * /api/attachments/[id], which checks the caller can see the parent record.
  */
 
 export type StoredFile = {
-  /** Opaque reference, not a URL the browser can follow. */
+  /** Opaque reference. Never a URL, so nothing can be served directly. */
   ref: string;
   sizeBytes: number;
 };
@@ -25,54 +36,53 @@ export interface FileStorage {
   }): Promise<StoredFile>;
   read(ref: string): Promise<ArrayBuffer>;
   remove(ref: string): Promise<void>;
-  readonly configured: boolean;
+  readonly kind: "postgres" | "blob";
 }
 
 /**
- * What a complaint photo may be. Declared once, because the complaints dialog
- * and the call panel both filter on it and a picture one screen accepts must
- * not be one the other rejects. This is the browser-side accept hint only —
- * the server decides for real, from the bytes.
+ * Bytes in their own table, never a column on `attachments`. A listing reads
+ * filenames and sizes constantly; with the bytes alongside them, every such
+ * read would drag megabytes through the connection pool to display a name.
  */
-export const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png"];
-
-/**
- * Magic numbers, because an extension is trivially renamed and the MIME type
- * the browser reports comes from the same untrusted place. §4.2 requires the
- * check be against actual content.
- */
-const SIGNATURES: Array<{ type: string; bytes: number[] }> = [
-  { type: "image/jpeg", bytes: [0xff, 0xd8, 0xff] },
-  { type: "image/png", bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
-  { type: "application/pdf", bytes: [0x25, 0x50, 0x44, 0x46] },
-];
-
-/**
- * The real type of these bytes, or null if it is none we accept. Never trust
- * the caller's claim — a .jpg carrying a zip is the case this exists for.
- */
-export function sniffContentType(bytes: Uint8Array): string | null {
-  for (const sig of SIGNATURES) {
-    if (sig.bytes.every((b, i) => bytes[i] === b)) return sig.type;
-  }
-  return null;
-}
+const postgresStorage: FileStorage = {
+  kind: "postgres",
+  async upload({ key, body }) {
+    const buffer = Buffer.from(body);
+    await db.execute(sql`
+      insert into attachment_bytes (ref, bytes)
+      values (${key}, ${buffer})
+      on conflict (ref) do update set bytes = excluded.bytes
+    `);
+    return { ref: key, sizeBytes: buffer.byteLength };
+  },
+  async read(ref) {
+    const rows = await db.execute<{ bytes: Buffer }>(
+      sql`select bytes from attachment_bytes where ref = ${ref}`,
+    );
+    const row = rows[0];
+    if (!row) throw new Error("Attachment bytes are missing from storage.");
+    const buffer = Buffer.from(row.bytes);
+    return buffer.buffer.slice(
+      buffer.byteOffset,
+      buffer.byteOffset + buffer.byteLength,
+    ) as ArrayBuffer;
+  },
+  async remove(ref) {
+    await db.execute(sql`delete from attachment_bytes where ref = ${ref}`);
+  },
+};
 
 const blobStorage: FileStorage = {
-  get configured() {
-    return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
-  },
+  kind: "blob",
   async upload({ key, body, contentType }) {
-    // Private, not public-with-an-unguessable-name. A payment proof must be
-    // unreadable without credentials even to somebody who has the URL — an
-    // unguessable public link is still a link that works once it leaks.
+    // Private, not public-with-an-unguessable-name. An unguessable public URL
+    // is still a URL that works for anyone who ends up with it — forwarded,
+    // logged by a proxy, pasted into a chat.
     await put(key, Buffer.from(body), {
       access: "private",
       contentType,
       addRandomSuffix: false,
     });
-    // The pathname is the reference. A private blob has no URL worth storing,
-    // and storing one would invite somebody to serve it directly.
     return { ref: key, sizeBytes: body.byteLength };
   },
   async read(ref) {
@@ -87,29 +97,12 @@ const blobStorage: FileStorage = {
   },
 };
 
-/**
- * Without a token there is nowhere to put bytes. It fails loudly on upload
- * rather than silently accepting and losing the file — but §4.2 is explicit
- * that a failed upload must never block the save, so callers catch this and
- * carry on.
- */
-export const notConfiguredStorage: FileStorage = {
-  configured: false,
-  async upload() {
-    throw new Error(
-      "File storage is not configured. Set BLOB_READ_WRITE_TOKEN, or connect a Blob store to the project.",
-    );
-  },
-  async read() {
-    throw new Error("File storage is not configured.");
-  },
-  async remove() {
-    /* nothing was ever stored */
-  },
-};
-
 export const fileStorage: FileStorage = process.env.BLOB_READ_WRITE_TOKEN
   ? blobStorage
-  : notConfiguredStorage;
+  : postgresStorage;
 
-export { head as blobHead };
+export {
+  sniffContentType,
+  ACCEPTED_IMAGE_TYPES,
+  ACCEPTED_UPLOAD_TYPES,
+} from "./file-types";

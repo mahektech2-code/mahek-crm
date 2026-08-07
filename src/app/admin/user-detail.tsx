@@ -598,7 +598,9 @@ function OffboardWizard({
                 <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
                   Effective date
                 </span>
-                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-[200px]" />
+                <span className="block w-[200px]">
+                  <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                </span>
               </label>
             </div>
           ) : null}

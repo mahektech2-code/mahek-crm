@@ -78,6 +78,13 @@
       "when": 1786083654176,
       "tag": "0010_credit_note_request",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786083654177,
+      "tag": "0011_attachment_bytes",
+      "breakpoints": true
     }
   ]
 }

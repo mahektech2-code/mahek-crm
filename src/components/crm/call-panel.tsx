@@ -21,7 +21,7 @@ import {
   OUTCOME_LABEL as CATALOGUE_OUTCOME_LABEL,
 } from "@/db/catalogue";
 import { addDays, money, phoneDisplay, shortDate, today } from "@/lib/format";
-import { ACCEPTED_IMAGE_TYPES } from "@/lib/storage";
+import { ACCEPTED_IMAGE_TYPES } from "@/lib/file-types";
 
 /**
  * The dates customers actually ask for, as one tap each. Anything else still

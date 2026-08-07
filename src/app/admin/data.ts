@@ -340,11 +340,14 @@ export const CRM_SCHEMA: AppSchema = {
               type: T.threshold,
               ascending: true,
               unit: "days",
+              // Ships aligned with the stage thresholds above. These two are two
+              // statements of the same fact, and the section refuses to save
+              // while they disagree.
               parts: [
                 { k: "b1", l: "Bucket 1 from", v: 0 },
-                { k: "b2", l: "Bucket 2 from", v: 30 },
-                { k: "b3", l: "Bucket 3 from", v: 60 },
-                { k: "b4", l: "Bucket 4 from", v: 90 },
+                { k: "b2", l: "Bucket 2 from", v: 7 },
+                { k: "b3", l: "Bucket 3 from", v: 21 },
+                { k: "b4", l: "Bucket 4 from", v: 45 },
               ],
               help: "Used by the Sales Bill Report. Must align with the stage thresholds above.",
             },
@@ -1034,7 +1037,7 @@ export const AUDIT: AuditRow[] = [
   { kind: "access", app: "Platform", setting: "User deactivated", from: "Active", to: "Deactivated", actor: "Vikram Shah", t: "28 Jul, 16:40" },
   { kind: "admin", app: "Platform", setting: "App registered — Order Management", from: "—", to: "Coming soon", actor: "Sandeep Rao", t: "26 Jul, 10:15" },
   { kind: "admin", app: "Telecaller CRM", setting: "Template edited — Payment reminder stage 2", from: "—", to: "—", actor: "Anjali Kulkarni", t: "25 Jul, 15:30" },
-  { kind: "config", app: "Telecaller CRM", setting: "Aging bucket boundaries", from: "0/30/60/90", to: "0/30/60/90", actor: "Vikram Shah", t: "24 Jul, 09:20" },
+  { kind: "config", app: "Telecaller CRM", setting: "Aging bucket boundaries", from: "0 / 30 / 60 / 90", to: "0 / 7 / 21 / 45", actor: "Vikram Shah", t: "24 Jul, 09:20" },
 ];
 
 /* ------------------------------------------------------- entity collections */

@@ -1834,6 +1834,49 @@ describe("Attachments — what may be attached, and what removal means", () => {
     assert.equal(sniffContentType(ZIP), null);
   });
 
+  test("bytes survive a round trip through Postgres storage", async () => {
+    const { fileStorage } = await import("@/lib/storage");
+    assert.equal(
+      fileStorage.kind,
+      "postgres",
+      "no Blob token in the test environment, so Postgres is the backend",
+    );
+
+    // A real JPEG header plus a body, so this is not just a length check.
+    const original = new Uint8Array(4096);
+    original.set(JPEG, 0);
+    for (let i = JPEG.length; i < original.length; i++) original[i] = i % 251;
+
+    const key = `attachments/roundtrip_${randomUUID().slice(0, 8)}`;
+    const stored = await fileStorage.upload({
+      key,
+      body: original,
+      contentType: "image/jpeg",
+    });
+    assert.equal(stored.sizeBytes, original.byteLength);
+    assert.equal(stored.ref, key, "the reference is opaque, never a URL");
+
+    const readBack = new Uint8Array(await fileStorage.read(stored.ref));
+    assert.equal(readBack.byteLength, original.byteLength);
+    assert.deepEqual(
+      Array.from(readBack.slice(0, 16)),
+      Array.from(original.slice(0, 16)),
+      "byte for byte, not merely the same length",
+    );
+    assert.deepEqual(
+      Array.from(readBack.slice(-16)),
+      Array.from(original.slice(-16)),
+      "including the tail, where a truncation would hide",
+    );
+
+    await fileStorage.remove(stored.ref);
+    await assert.rejects(
+      () => fileStorage.read(stored.ref),
+      /missing from storage/i,
+      "removing the bytes leaves nothing readable behind",
+    );
+  });
+
   test("a file over the limit is refused, and the message says by how much", async () => {
     const { createAttachment } = await import("@/lib/services/attachment-service");
     const config = await getConfig();

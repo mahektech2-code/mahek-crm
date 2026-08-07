@@ -43,18 +43,18 @@ const PLATFORM_NAV = [
   { key: "data", label: "Data" },
 ] as const;
 
-export function AdminConsole({ signedInAs }: { signedInAs: string }) {
+export function AdminConsole() {
   return (
     <ToastProvider>
       <AdminStore>
-        <ConsoleShell signedInAs={signedInAs} />
+        <ConsoleShell />
         <AdminDrawer />
       </AdminStore>
     </ToastProvider>
   );
 }
 
-function ConsoleShell({ signedInAs }: { signedInAs: string }) {
+function ConsoleShell() {
   const { me, personas, setPersona, registry, notify, record } = useAdmin();
 
   const [section, setSection] = React.useState<string>("overview");

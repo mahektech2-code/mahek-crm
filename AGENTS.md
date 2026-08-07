@@ -257,6 +257,16 @@ interactions hold their identifiers in `quick_note_ids`, and those references
 must keep resolving to something a human can read. The save path deliberately
 does not check `active`, so an old reference is never rejected on read.
 
+**Attachment bytes live in Postgres by default, and in Blob only if a token
+says so.** No second service, no token, and the bytes sit in the same backup
+and the same point-in-time restore as the row that refers to them — which for a
+few complaint photographs a week is simpler in every way that matters. Setting
+`BLOB_READ_WRITE_TOKEN` switches the backend and nothing else changes, because
+Postgres stops being right at volume: bytes in the database are bytes in every
+backup, every restore and every replica, billed as database storage. They live
+in `attachment_bytes`, never as a column on `attachments`, or every listing
+would drag megabytes through the pool to display a filename.
+
 **A file is validated on its bytes, never on its name.** `.jpg` is three
 characters anyone can type. `sniffContentType` reads the signature and that is
 what decides — an extension and the browser's declared MIME both come from the

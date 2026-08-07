@@ -192,13 +192,17 @@ function Control({
     case T.dec:
       return (
         <span className="flex items-center gap-2">
-          <Input
-            value={String(value ?? "")}
-            invalid={!!error}
-            disabled={locked}
-            onChange={(e) => set(e.target.value.replace(/[^0-9.\-]/g, ""))}
-            className="w-[110px] flex-none text-right"
-          />
+          {/* The width lives on a wrapper: Input is w-full, and a competing
+              width utility on the control itself does not reliably win. */}
+          <span className="block w-[110px] flex-none">
+            <Input
+              value={String(value ?? "")}
+              invalid={!!error}
+              disabled={locked}
+              onChange={(e) => set(e.target.value.replace(/[^0-9.\-]/g, ""))}
+              className="text-right"
+            />
+          </span>
           {field.unit ? <span className="text-sm whitespace-nowrap text-muted">{field.unit}</span> : null}
           {field.min !== undefined ? (
             <span className="text-[13px] whitespace-nowrap text-muted">
@@ -314,13 +318,15 @@ function Control({
                 <span className="block text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
                   {p.l}
                 </span>
-                <Input
-                  value={String(v[p.k] ?? "")}
-                  invalid={!!error}
-                  disabled={locked}
-                  onChange={(e) => set({ ...v, [p.k]: e.target.value.replace(/[^0-9.]/g, "") })}
-                  className="w-[110px] text-right"
-                />
+                <span className="block w-[110px]">
+                  <Input
+                    value={String(v[p.k] ?? "")}
+                    invalid={!!error}
+                    disabled={locked}
+                    onChange={(e) => set({ ...v, [p.k]: e.target.value.replace(/[^0-9.]/g, "") })}
+                    className="text-right"
+                  />
+                </span>
               </span>
             ))}
           </span>
@@ -339,12 +345,14 @@ function Control({
               className={cx("flex items-center gap-3 px-2.5 py-1.5", i ? "border-t border-canvas" : "")}
             >
               <span className="min-w-0 flex-1 text-sm text-ink">{p.l}</span>
-              <Input
-                value={String(v[p.k] ?? "")}
-                disabled={locked}
-                onChange={(e) => set({ ...v, [p.k]: e.target.value.replace(/[^0-9]/g, "") })}
-                className="w-[110px] text-right"
-              />
+              <span className="block w-[110px] flex-none">
+                <Input
+                  value={String(v[p.k] ?? "")}
+                  disabled={locked}
+                  onChange={(e) => set({ ...v, [p.k]: e.target.value.replace(/[^0-9]/g, "") })}
+                  className="text-right"
+                />
+              </span>
               <span className="w-11 text-[13px] whitespace-nowrap text-muted">{field.unit}</span>
             </span>
           ))}
@@ -467,7 +475,7 @@ function OrderedList({
           placeholder="Add an item"
           disabled={locked}
           onChange={(e) => setDraft(e.target.value)}
-          className="h-[30px] flex-1"
+          className="flex-1"
         />
         <Button
           size="sm"

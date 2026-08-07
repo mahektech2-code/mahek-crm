@@ -1,7 +1,18 @@
-import { AppPlaceholder } from "@/components/shell/app-placeholder";
+import { redirect } from "next/navigation";
+import { requireUser } from "@/lib/auth";
+import { listUserApps } from "@/lib/access";
+import { AdminConsole } from "./console";
 
-export const metadata = { title: "Admin Console - MahekOne" };
+export const metadata = { title: "Admin Console · MahekOne" };
 
-export default function Page() {
-  return <AppPlaceholder app="admin" />;
+/**
+ * Access is checked here, not just hidden on the launcher — a bookmarked
+ * /admin must not open for somebody who was never given the app.
+ */
+export default async function Page() {
+  const user = await requireUser();
+  const apps = await listUserApps(user.id);
+  if (!apps.includes("admin")) redirect("/apps");
+
+  return <AdminConsole />;
 }
