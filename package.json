@@ -10,6 +10,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx --conditions=react-server --env-file=.env.local src/db/seed.ts",
+    "demo:clear": "tsx --conditions=react-server --env-file=.env.local scripts/clear-demo-data.ts",
     "jobs": "tsx --conditions=react-server --env-file=.env.local scripts/run-job.ts",
     "catalogue:import": "tsx --conditions=react-server --env-file=.env.local scripts/import-catalogue.ts",
     "catalogue:parse": "node scripts/parse-catalogue.mjs",
