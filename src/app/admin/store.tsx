@@ -2,6 +2,30 @@
 
 import * as React from "react";
 import { useToast } from "@/components/ui/toast";
+import { APPS } from "@/lib/apps";
+import { setUserApps } from "@/lib/actions/people";
+import type { Person } from "@/lib/services/admin-people-service";
+
+/**
+ * The console's registry, derived from the one registry that decides what
+ * MahekOne actually has. It used to be a separate hand-written list of three,
+ * so People could not grant the other four apps and the launcher and the
+ * console disagreed about what existed.
+ */
+const FULL_REGISTRY: RegistryEntry[] = APPS.map((a, i) => {
+  const sample = REGISTRY.find((r) => r.id === a.id);
+  return {
+    ...(sample ?? {}),
+    id: a.id,
+    name: a.name,
+    short: sample?.short ?? a.initials,
+    status: a.built ? "Live" : "Coming soon",
+    route: a.href,
+    roles: sample?.roles ?? [],
+    order: sample?.order ?? 100 + i,
+    desc: a.description,
+  } as RegistryEntry;
+});
 import {
   AUDIT,
   DEFAULT_ACCESS_RULES,
@@ -12,7 +36,6 @@ import {
   REQUESTS,
   SESSIONS,
   UNUSED_ACCESS,
-  USERS,
   type AdminUser,
   type AccessRequest,
   type AuditKind,
@@ -98,14 +121,58 @@ export function useAdmin(): Store {
   return ctx;
 }
 
-export function AdminStore({ children }: { children: React.ReactNode }) {
+/**
+ * Real accounts, mapped into the shape this console was written around.
+ *
+ * Fields the database has no answer for are left empty rather than filled with
+ * something plausible — that habit is what made the whole section a mockup.
+ */
+function toAdminUser(p: Person): AdminUser {
+  const roleLabel = p.role.charAt(0).toUpperCase() + p.role.slice(1);
+  const stamp = (iso: string | null) =>
+    iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+  return {
+    id: p.id,
+    name: p.name,
+    code: p.phone ?? "",
+    dept: roleLabel,
+    contact: p.email,
+    mobile: p.phone ?? "",
+    status: p.active ? "Active" : "Deactivated",
+    apps: p.apps,
+    roles: {},
+    reportsTo: p.reportsToName ?? undefined,
+    designation: roleLabel,
+    lastSeen: stamp(p.lastLoginAt) || "Never",
+    lastActive: stamp(p.lastLoginAt) || "Never",
+    created: stamp(p.createdAt),
+    createdBy: "",
+    joined: stamp(p.createdAt),
+    grants: [],
+    roleLog: [],
+  };
+}
+
+export function AdminStore({
+  children,
+  people,
+}: {
+  children: React.ReactNode;
+  people: Person[];
+}) {
   const toast = useToast();
 
   const [personaKey, setPersonaKey] = React.useState(PERSONAS[0].key);
-  const [users, setUsers] = React.useState<AdminUser[]>(USERS);
+  // Seeded once from the database. Every write here updates this list and is
+  // rolled back if the server refuses, and each action revalidates, so a
+  // navigation brings the authoritative version. Deliberately no effect
+  // syncing state to props: this codebase remounts rather than re-syncing.
+  const [users, setUsers] = React.useState<AdminUser[]>(() => people.map(toAdminUser));
   const [sessions, setSessions] = React.useState<Session[]>(SESSIONS);
   const [requests, setRequests] = React.useState<AccessRequest[]>(REQUESTS);
-  const [registry, setRegistry] = React.useState<RegistryEntry[]>(REGISTRY);
+  // The real app list, not the console's three-entry sample. An access matrix
+  // that cannot show four of the seven apps cannot grant them either.
+  const [registry, setRegistry] = React.useState<RegistryEntry[]>(FULL_REGISTRY);
   const [audit, setAudit] = React.useState<AuditRow[]>(AUDIT);
   const [entities, setEntities] = React.useState(ENTITIES);
   const [accessRules, setAccessRules] = React.useState(DEFAULT_ACCESS_RULES);
@@ -155,19 +222,35 @@ export function AdminStore({ children }: { children: React.ReactNode }) {
         const had = user.apps.includes(appId);
         const apps = had ? user.apps.filter((a) => a !== appId) : [...user.apps, appId];
         const app = registry.find((a) => a.id === appId);
-        const grants = had
-          ? user.grants.filter((g) => g.app !== appId)
-          : [...user.grants, { app: appId, by: me.name, on: "Today", reason: "Granted from the access matrix" }];
-        patchUser(id, { apps, grants });
-        record("access", "Platform", had ? `App access revoked — ${app?.name}` : `App access granted — ${app?.name}`, had ? user.name : "—", had ? "—" : user.name);
 
-        if (user.apps.length === 1 && apps.length === 2) {
-          notify(`${user.name} now lands on the launcher instead of going straight into one app`);
-        } else if (user.apps.length === 2 && apps.length === 1) {
-          notify(`${user.name} will now be taken straight into ${registry.find((a) => a.id === apps[0])?.name}`);
-        } else {
-          notify(had ? `Access revoked · ${app?.short}` : `Access granted · ${app?.short}`);
-        }
+        // Shown immediately, then confirmed by the server. If the write is
+        // refused the row goes back to what it was — the old version only ever
+        // did the first half, which is why the console could claim to grant an
+        // app it had not granted.
+        const before = user.apps;
+        patchUser(id, { apps });
+
+        void setUserApps(id, apps).then((result) => {
+          if (!result.ok) {
+            patchUser(id, { apps: before });
+            notify(result.error);
+            return;
+          }
+          record(
+            "access",
+            "Platform",
+            had ? `App access revoked — ${app?.name}` : `App access granted — ${app?.name}`,
+            had ? user.name : "—",
+            had ? "—" : user.name,
+          );
+          if (before.length === 1 && apps.length === 2) {
+            notify(`${user.name} now lands on the launcher instead of going straight into one app`);
+          } else if (before.length === 2 && apps.length === 1) {
+            notify(`${user.name} will now be taken straight into ${registry.find((a) => a.id === apps[0])?.name}`);
+          } else {
+            notify(had ? `Access revoked · ${app?.short}` : `Access granted · ${app?.short}`);
+          }
+        });
       },
 
       setRole: (id, appId, role) => {

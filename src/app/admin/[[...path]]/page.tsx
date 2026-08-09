@@ -22,6 +22,7 @@ import {
   sheetSummary,
 } from "@/lib/services/sheet-order-service";
 import { sheetsConfigured } from "@/lib/sheets";
+import { listPeople } from "@/lib/services/admin-people-service";
 import {
   orderSheetId,
   orderTabTitle,
@@ -106,6 +107,9 @@ export default async function Page({
     listSheetIssues(),
   ]);
 
+  // Real accounts. The People section used to render a hardcoded array.
+  const people = await listPeople();
+
   // Stored values, projected into the shapes the console's controls edit.
   const values: Record<string, unknown> = {};
   for (const f of schemaFields(crmSchema())) {
@@ -117,6 +121,7 @@ export default async function Page({
       apps={APPS.filter((a) => apps.includes(a.id))}
       isPlatformAdmin={isPlatformAdmin}
       initial={{ section, tab }}
+      people={people}
       sheet={{
         summary: sheetStats,
         rows: sheetPage.rows,
