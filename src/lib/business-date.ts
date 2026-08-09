@@ -223,8 +223,20 @@ function zonedParts(now: Date, timezone: string) {
 export const APP_TIMEZONE = "Asia/Kolkata";
 
 /**
- * A timestamptz rendered as a business date. Every place that turns a stored
- * timestamp into a day must use this rather than a bare `::date`.
+ * The calendar day a stored instant fell on, in the business's own zone.
+ *
+ * The day BOUNDARY is deliberately not applied: an order placed at 2am was
+ * placed on that date, whatever shift the telecaller was working. Reach for
+ * `businessDate()` when the question is which shift something belongs to.
+ */
+export function calendarDate(at: Date, timezone: string = APP_TIMEZONE): BusinessDate {
+  const { year, month, day } = zonedParts(at, timezone);
+  return iso(year, month, day);
+}
+
+/**
+ * A timestamptz rendered as a business date, in SQL. Every place that turns a
+ * stored timestamp into a day must use this rather than a bare `::date`.
  */
 export function businessDateSql(expr: string): string {
   return `((${expr}) at time zone '${APP_TIMEZONE}')::date`;
