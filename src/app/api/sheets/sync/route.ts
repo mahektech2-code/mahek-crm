@@ -17,6 +17,9 @@ import { runJob, type JobName } from "@/lib/jobs";
  *   ?mode=payments    the Payment Status tab, always a full compare — a payment
  *                     row's whole purpose is to change in place long after it
  *                     was written, which an append run would never see.
+ *   ?mode=parties     the customer master. Where the phone numbers come from.
+ *   ?mode=project     turn what has landed into customers, orders and — only
+ *                     when asked — bills. Takes &owner=, &leads=1, &bills=1.
  *
  * `reparse` is deliberately NOT reachable here. It re-reads stored rows after
  * somebody corrects a parsing rule, which is a decision a person makes with a
@@ -44,6 +47,8 @@ const JOBS: Record<string, JobName> = {
   append: "sheet-append",
   reconcile: "sheet-reconcile",
   payments: "sheet-payments",
+  parties: "party-sync",
+  project: "project-sheet",
 };
 
 export async function GET(request: Request) {
@@ -67,8 +72,19 @@ export async function GET(request: Request) {
     );
   }
 
+  // Only the projection reads these, and only because both are decisions
+  // somebody has to make rather than defaults worth inheriting: who the
+  // imported customers answer to, and whether parties that have never ordered
+  // become somebody's calling list.
+  const params = new URL(request.url).searchParams;
+  const options = {
+    owner: params.get("owner") ?? undefined,
+    leads: params.get("leads") === "1",
+    bills: params.get("bills") === "1",
+  };
+
   try {
-    const [result] = await runJob(job);
+    const [result] = await runJob(job, undefined, options);
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     // The job row already carries the failure; this is what the cron log sees.
