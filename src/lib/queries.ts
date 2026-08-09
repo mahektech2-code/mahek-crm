@@ -668,7 +668,7 @@ export async function globalSearch(q: string) {
               ? sql`${customers.phone} like ${"%" + digits + "%"}`
               : undefined,
           ),
-          ids ? inArray(customers.ownerId, ids) : undefined,
+          ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined,
         ),
       )
       .limit(8),
@@ -685,7 +685,7 @@ export async function globalSearch(q: string) {
       .where(
         and(
           sql`${bills.billNo} ilike ${like}`,
-          ids ? inArray(customers.ownerId, ids) : undefined,
+          ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined,
         ),
       )
       .limit(5),

@@ -12,7 +12,12 @@ import {
   payments,
   reminders,
 } from "@/db/schema";
-import { resolveScope, scopedUserIds, assertCustomerInScope } from "../access-control";
+import {
+  ASSIGNED_TO_SQL,
+  resolveScope,
+  scopedUserIds,
+  assertCustomerInScope,
+} from "../access-control";
 import { getConfig } from "../config/store";
 import { isAttemptAllowed, agingBucket, effectiveDueDate } from "../engines/escalation";
 import { billCreditDaysSql } from "../bill-terms";
@@ -99,7 +104,11 @@ export async function getFollowUpWorklist(filters?: {
     .innerJoin(customers, eq(customers.id, followUpStates.customerId))
     .where(
       and(
-        ids ? inArray(customers.ownerId, ids) : undefined,
+        // Whose book, by the single definition in access-control. Reading
+        // owner_id alone dropped every customer whose sales account manager
+        // had been set — off the collections list while still owing money,
+        // which is the one list nobody may quietly fall off.
+        ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined,
         filters?.stage ? eq(followUpStates.stage, filters.stage) : undefined,
         filters?.slowPayersOnly ? eq(customers.slowPayer, true) : undefined,
       ),
@@ -182,7 +191,7 @@ export async function getPaymentFollowUpPlan(): Promise<PaymentFollowUpPlan> {
     })
     .from(followUpStates)
     .innerJoin(customers, eq(customers.id, followUpStates.customerId))
-    .where(ids ? inArray(customers.ownerId, ids) : undefined);
+    .where(ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined);
 
   const plan = planPaymentFollowUps(
     rows.map(({ state, customer, ...last }) => ({
@@ -493,7 +502,7 @@ export async function listBills(filters?: { customerId?: string; status?: string
     .innerJoin(customers, eq(customers.id, bills.customerId))
     .where(
       and(
-        ids ? inArray(customers.ownerId, ids) : undefined,
+        ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined,
         filters?.customerId ? eq(bills.customerId, filters.customerId) : undefined,
       ),
     )

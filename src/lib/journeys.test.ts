@@ -32,6 +32,8 @@ import {
   waMessages,
   waTemplates,
   attachments as attachmentsTable,
+  sheetOrderRows,
+  sheetSyncRuns,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { customerStatusLabel } from "@/lib/format";
@@ -109,6 +111,7 @@ import {
   prepareMessage,
 } from "@/lib/services/whatsapp-service";
 import { eodMetricsFor, eodPreflightFor } from "@/lib/services/eod-service";
+import { projectSheet } from "@/lib/services/sheet-projection-service";
 
 /* ------------------------------------------------------------------ harness */
 
@@ -3618,6 +3621,132 @@ describe("The catalogue as the telecaller meets it", () => {
         cansPerBox: sku.cansPerBox,
       }),
       "12 cans · 60 L · 2 boxes",
+    );
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * The imported sheet reaching a telecaller.
+ *
+ * The projection has a job behind it and its own report. What these pin is the
+ * step after: whether anything it wrote is allowed to appear on a screen. Both
+ * of the failures below were total and silent — a full database and an empty
+ * Call Log, with the reason living in a flag and a fallback that nothing on the
+ * screen could show.
+ * ------------------------------------------------------------------------- */
+
+describe("An imported customer reaches the calling queue", () => {
+  /** One order, two lines, for one billing party. */
+  async function stageSheetRows(party: string, orderNumber: string, orderDate: string) {
+    const [run] = await db
+      .insert(sheetSyncRuns)
+      .values({
+        id: id("syn"),
+        source: "order_details",
+        spreadsheetId: "test-sheet",
+        tabTitle: "Order Details",
+        mode: "reconcile",
+        status: "ok",
+      })
+      .returning();
+
+    for (const [i, description] of ["Nano Thinner", "Mylac Primer"].entries()) {
+      await db.insert(sheetOrderRows).values({
+        id: id("shr"),
+        syncId: run.id,
+        rowNumber: 2 + i,
+        lineKey: `ODID-${orderNumber}-${i}`,
+        orderNumber,
+        raw: {},
+        rowHash: randomUUID(),
+        orderDate,
+        billingPartyName: party,
+        area: "Bhiwandi",
+        creditDays: 45,
+        description,
+        cans: 10,
+        ratePaise: 100_00,
+        amountPaise: 1000_00,
+        finalAmountPaise: 1180_00,
+      });
+    }
+    return run;
+  }
+
+  test("the import does not flag them active in the order system", async () => {
+    // That flag means live activity somewhere else, and the queue holds such a
+    // customer back. Setting it across an import of order HISTORY muted the
+    // whole book at once — every customer imported, every customer suppressed.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await projectSheet({ assignToUserId: priya.id });
+
+    const [imported] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.name, "Shree Paints"));
+    assert.ok(imported, "the projection created no customer");
+    assert.equal(imported.activeInOrderSystem, false);
+  });
+
+  test("and the telecaller can actually see them the same day", async () => {
+    // The whole point. A record written this afternoon carrying a 40-day-old
+    // order was dated from its own creation, so it sat off the list for a
+    // week — a full database and an empty screen.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await projectSheet({ assignToUserId: priya.id });
+
+    const [imported] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.name, "Shree Paints"));
+
+    setTestUser(priya);
+    const queue = await getQueue();
+    const seen = [...queue.entries, ...queue.suppressed].some(
+      (r) => r.customerId === imported.id,
+    );
+    assert.ok(seen, "the imported customer reached neither the queue nor the held-back list");
+  });
+
+  test("the order lands, and the cycle is rebuilt from it", async () => {
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    const report = await projectSheet({ assignToUserId: priya.id });
+
+    assert.equal(report.customers.created, 1);
+    assert.equal(report.orders.created, 1);
+    // Two lines, one order — the value is the SUM, never one line's figure.
+    assert.equal(report.orders.lines, 2);
+
+    const [imported] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.name, "Shree Paints"));
+    assert.equal(imported.lastOrderDate, addDays(TODAY, -40));
+    assert.equal(imported.avgOrderValue, 2360_00);
+  });
+
+  test("a customer whose sales AM is set stays on the collections list", async () => {
+    // Scope has one definition and it reads the sales account manager before
+    // the owner. Eight lists read owner_id alone, so a converted customer
+    // dropped off every one of them while still owing money.
+    const customer = await makeCustomer(priya.id, { ownerId: null, salesAmId: priya.id });
+    await db.insert(bills).values({
+      id: id("bil"),
+      customerId: customer.id,
+      billNo: `INV-${randomUUID().slice(0, 6)}`,
+      billDate: addDays(TODAY, -90),
+      dueDate: addDays(TODAY, -60),
+      amount: 50_000_00,
+      paidAmount: 0,
+    });
+    await recomputeOutstanding(customer.id);
+    await recomputeFollowUpState(customer.id);
+
+    setTestUser(priya);
+    const worklist = await getFollowUpWorklist();
+    assert.ok(
+      worklist.some((r) => r.customerId === customer.id),
+      "an overdue customer with a sales AM was missing from the collections worklist",
     );
   });
 });

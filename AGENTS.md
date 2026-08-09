@@ -471,6 +471,27 @@ day `isAttemptAllowed` still called stage 1, saving it would be rejected.
 back customers alongside the queue, and the screen shows them. A telecaller
 must always be able to find out why somebody they expected is missing.
 
+**An import of order history never sets `activeInOrderSystem`.** That flag
+means live activity in the external order system, and the queue holds such a
+customer back — `queue.excludeActiveInOrderSystem` is on by default. The
+projection set it on every row it touched, which muted the whole book the first
+time production filled itself: a full database and an empty Call Log, with the
+cause living in a column no screen shows. `0021` clears what it wrote.
+
+**An order is contact.** Where nothing has been logged against a customer, the
+weekly check-in dates them from their last ORDER before their record's creation
+date — somebody spoke to them to take it. Reading the creation date first dates
+a customer of four years from the afternoon their row was written, so an
+imported book sits off the queue for a week. Prospects still fall back to the
+creation date: they have no order to be dated from.
+
+**Whose book is one definition, and it is `ASSIGNED_TO_SQL`.** A lead answers
+to its owner; a customer answers to its sales account manager, falling back to
+the owner. Every scoped list reads it — the queue, collections, bills,
+complaints, targets, the inactive watch, WhatsApp replies and global search.
+Reading `owner_id` alone silently drops every customer whose sales AM has been
+set, including off the collections list while they still owe money.
+
 **In raw SQL, qualify every column of the outer table.** Drizzle renders
 `${customers.id}` as a bare `"id"`. Inside a correlated subquery that binds to
 the *inner* table and the condition silently becomes false — types and unit

@@ -264,7 +264,6 @@ export async function projectCustomers(
           city: party.area ?? "",
           creditTermDays: party.creditDays ?? 30,
           creditDays: party.creditDays,
-          activeInOrderSystem: true,
           ...(options.reassign && options.assignToUserId
             ? { ownerId: options.assignToUserId, salesAmId: options.assignToUserId }
             : {}),
@@ -287,7 +286,12 @@ export async function projectCustomers(
         creditTermDays: party.creditDays ?? 30,
         creditDays: party.creditDays,
         customerSince: party.firstOrder,
-        activeInOrderSystem: true,
+        // NOT activeInOrderSystem. That flag means there is live activity in
+        // the external order system, and the calling queue holds such a
+        // customer back — `queue.excludeActiveInOrderSystem` is on by default.
+        // Setting it from an import of order HISTORY mutes the entire book at
+        // once: every customer imported, every customer suppressed, and a Call
+        // Log that is empty for a reason nothing on the screen can show.
         // Both, deliberately: ownerId records who found the account and
         // salesAmId is what scope actually reads for a customer.
         ownerId: options.assignToUserId ?? null,

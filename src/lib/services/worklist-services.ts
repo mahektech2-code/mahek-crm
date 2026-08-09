@@ -15,6 +15,7 @@ import {
   users,
 } from "@/db/schema";
 import {
+  ASSIGNED_TO_SQL,
   assertCustomerInScope,
   requireCapability,
   resolveScope,
@@ -281,7 +282,7 @@ export async function listComplaints(status?: string) {
     .innerJoin(users, eq(users.id, complaints.loggedByUserId))
     .where(
       and(
-        ids ? inArray(customers.ownerId, ids) : undefined,
+        ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined,
         status ? eq(complaints.status, status as never) : undefined,
       ),
     )
@@ -463,7 +464,7 @@ export async function listInactiveWatch(): Promise<WatchRow[]> {
     })
     .from(inactiveWatchItems)
     .innerJoin(customers, eq(customers.id, inactiveWatchItems.customerId))
-    .where(ids ? inArray(customers.ownerId, ids) : undefined);
+    .where(ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined);
 
   return rows
     .map(({ item, customer, ownerName }) => {
@@ -582,7 +583,7 @@ export async function listTargets(period?: string) {
         // A customer who has gone quiet still carries a target — that is the
         // gap the month has to explain. Only deactivation removes them.
         ne(customers.status, "deactivated"),
-        ids ? inArray(customers.ownerId, ids) : undefined,
+        ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined,
       ),
     )
     .orderBy(asc(customers.name));

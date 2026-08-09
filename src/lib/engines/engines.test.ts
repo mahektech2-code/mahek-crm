@@ -562,6 +562,34 @@ describe("E2 queue builder", () => {
     assert.ok(entries[0].reasons[0].kind.startsWith("checkIn"));
   });
 
+  test("a customer imported with order history is dated from the order, not the row", () => {
+    // The record was written today and the last order is 40 days old. Dating
+    // the check-in from the row's creation holds a whole imported book off the
+    // queue for a week — every screen empty, and nothing on any of them able
+    // to say why.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleIsDefault: true,
+      lastContactDate: null,
+      createdDate: TODAY,
+    });
+    const { entries } = buildQueue([c], TODAY, C);
+    assert.equal(entries.length, 1);
+    assert.match(entries[0].reasons[0].label, /40 days/);
+  });
+
+  test("a real last-contact date still wins over the order date", () => {
+    // Spoken to two days ago, ordered forty days ago: they have been
+    // contacted, and the order is only a fallback for when nothing says so.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleIsDefault: true,
+      lastContactDate: addDays(TODAY, -2),
+      createdDate: TODAY,
+    });
+    assert.equal(buildQueue([c], TODAY, C).entries.length, 0);
+  });
+
   /* -------------------------------------------------- no-order cooldown */
 
   test("a customer told us no is not asked again the next day", () => {
