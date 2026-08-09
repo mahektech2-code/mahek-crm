@@ -211,6 +211,13 @@
       "when": 1786305583850,
       "tag": "0030_back_office_name",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1786305583851,
+      "tag": "0031_customer_reactivation",
+      "breakpoints": true
     }
   ]
 }

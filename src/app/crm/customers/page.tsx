@@ -84,6 +84,8 @@ export default async function CustomersPage({
         cycleDays: c.cycleDays,
         route: c.route,
         deactivationRequested: c.deactivationRequested,
+        reactivationRequested: c.reactivationRequested,
+        reactivationReason: c.reactivationReason,
       }))}
     />
   );

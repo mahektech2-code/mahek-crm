@@ -18,6 +18,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
+  auditLog,
   bills,
   calls,
   complaints,
@@ -97,7 +98,13 @@ import {
   logPaymentFollowUp,
   stageOneBatch,
 } from "@/lib/services/payment-followup-service";
-import { startStageOneBatch } from "@/lib/actions/crm";
+import {
+  decideDeactivation,
+  decideReactivation,
+  requestDeactivation,
+  requestReactivation,
+  startStageOneBatch,
+} from "@/lib/actions/crm";
 import {
   createReminder,
   completeReminder,
@@ -877,6 +884,127 @@ describe("Journey 5 - a customer goes quiet and gets a decision", () => {
       .from(customers)
       .where(eq(customers.id, customer.id));
     assert.equal(row.status, "deactivated", "an order does not undo a decision");
+  });
+
+  test("the way back: requested by a telecaller, decided by a manager", async () => {
+    const customer = await makeCustomer(priya.id, { lastOrderDate: TODAY });
+
+    // Out of the book first, the ordinary way.
+    setTestUser(priya);
+    assert.equal(
+      (await requestDeactivation([customer.id], "Shut the shop.")).ok,
+      true,
+    );
+    setTestUser(manager);
+    assert.equal((await decideDeactivation(customer.id, true)).ok, true);
+
+    let [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(row.status, "deactivated");
+
+    // A telecaller hears they are opening again. They may ask; they may not decide.
+    setTestUser(priya);
+    const blank = await requestReactivation([customer.id], "   ");
+    assert.equal(blank.ok, false, "a reason is required in both directions");
+
+    const asked = await requestReactivation(
+      [customer.id],
+      "Reopened under the son. Wants to order next week.",
+    );
+    assert.equal(asked.ok, true, asked.ok ? "" : asked.error);
+
+    [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(row.reactivationRequested, true);
+    assert.match(row.reactivationReason ?? "", /Reopened under the son/);
+    assert.equal(row.status, "deactivated", "asking is not deciding");
+
+    // The action catches and returns rather than throwing, the way every
+    // action here does — so the denial arrives as a Result a form can show.
+    const denied = await decideReactivation(customer.id, true);
+    assert.equal(denied.ok, false, "a telecaller cannot bring a customer back");
+    assert.equal(denied.ok === false && denied.code, "not_permitted");
+
+    // The manager decides.
+    setTestUser(manager);
+    const done = await decideReactivation(customer.id, true);
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
+
+    [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(row.status, "active", "they are back in the book");
+    assert.equal(row.reactivationRequested, false);
+    assert.equal(row.reactivationReason, null);
+    // The deactivation that was reversed does not stay on the row explaining a
+    // state the customer is no longer in.
+    assert.equal(row.deactivatedAt, null);
+    assert.equal(row.deactivationReason, null);
+
+    // Both decisions are in the log, which is where the history lives.
+    const log = await db
+      .select({ action: auditLog.action })
+      .from(auditLog)
+      .where(eq(auditLog.entityId, customer.id));
+    const actions = log.map((l) => l.action);
+    assert.ok(actions.includes("customer.deactivate"));
+    assert.ok(actions.includes("customer.reactivate"));
+  });
+
+  test("a rejected request leaves the customer where they were", async () => {
+    const customer = await makeCustomer(priya.id);
+    await db
+      .update(customers)
+      .set({ status: "deactivated", deactivationReason: "Stopped paying." })
+      .where(eq(customers.id, customer.id));
+
+    setTestUser(priya);
+    await requestReactivation([customer.id], "They say they will pay.");
+    setTestUser(manager);
+    assert.equal((await decideReactivation(customer.id, false)).ok, true);
+
+    const [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(row.status, "deactivated", "a refusal changes nothing but the ask");
+    assert.equal(row.reactivationRequested, false);
+    assert.equal(row.reactivationReason, null);
+    assert.equal(
+      row.deactivationReason,
+      "Stopped paying.",
+      "and the reason they went out is untouched",
+    );
+  });
+
+  test("a customer who is not deactivated cannot be asked back", async () => {
+    const customer = await makeCustomer(priya.id);
+    setTestUser(priya);
+    const refused = await requestReactivation([customer.id], "no reason to");
+    assert.equal(refused.ok, false);
+    assert.equal(refused.ok === false && refused.code, "conflict");
+  });
+
+  test("coming back does not fake activity - a quiet customer is still quiet", async () => {
+    const customer = await makeCustomer(priya.id, {
+      cycleDays: 20,
+      cycleIsDefault: false,
+      // Long gone: well past any inactivity threshold.
+      lastOrderDate: addDays(TODAY, -400),
+      lastContactDate: addDays(TODAY, -400),
+    });
+    await db
+      .update(customers)
+      .set({ status: "deactivated" })
+      .where(eq(customers.id, customer.id));
+
+    setTestUser(priya);
+    await requestReactivation([customer.id], "Asked to be put back on.");
+    setTestUser(manager);
+    await decideReactivation(customer.id, true);
+
+    const [row] = await db
+      .select({ status: customers.status })
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    // `active` is what the action sets; `recomputeInactivity` runs straight
+    // after and is what decides whether that is still true. A customer who has
+    // bought nothing for a year comes back onto the watch, not onto the
+    // dashboard as a healthy account.
+    assert.equal(row.status, "inactive");
   });
 });
 

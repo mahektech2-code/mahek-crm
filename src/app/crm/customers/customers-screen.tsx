@@ -30,7 +30,9 @@ import { Icon } from "@/components/shell/icons";
 import {
   createCustomer,
   createRemindersBulk,
+  decideReactivation,
   requestDeactivation,
+  requestReactivation,
   updateCustomer,
 } from "@/lib/actions/crm";
 import { money, phoneDisplay, shortDate, stamp, today } from "@/lib/format";
@@ -60,6 +62,8 @@ type Row = {
   cycleDays: number;
   route: string | null;
   deactivationRequested: boolean;
+  reactivationRequested: boolean;
+  reactivationReason: string | null;
 };
 
 /**
@@ -135,9 +139,21 @@ export function CustomersScreen({
   const [editing, setEditing] = React.useState<Row | null>(null);
   const [bulkRemind, setBulkRemind] = React.useState(false);
   const [deactivating, setDeactivating] = React.useState(false);
+  const [reactivating, setReactivating] = React.useState(false);
 
   // Already filtered, counted and sliced by Postgres. `rows` is this page.
   const visible = rows;
+  /*
+   * Which way the bulk button points. Every selected row has to be
+   * deactivated for it to offer the way back — a mixed selection means the
+   * person has not decided what they are doing, and quietly acting on the
+   * subset that happens to match is how a bulk action surprises somebody.
+   */
+  const selectedAllDeactivated =
+    selected.size > 0 &&
+    visible
+      .filter((r) => selected.has(r.id))
+      .every((r) => r.status === "Deactivated");
   const from = (page - 1) * perPage;
 
   const chips = [
@@ -420,6 +436,14 @@ export function CustomersScreen({
                         <Badge tone="warn">Deactivation asked</Badge>
                       </span>
                     ) : null}
+                    {/* A customer waiting to come back is worth flagging on
+                        the row: they are off every list until somebody says
+                        yes, so nothing else would surface them. */}
+                    {r.reactivationRequested ? (
+                      <span className="ml-2">
+                        <Badge tone="brand">Reactivation asked</Badge>
+                      </span>
+                    ) : null}
                   </Td>
                   <Td>{r.contactPerson}</Td>
                   <Td>{phoneDisplay(r.phone)}</Td>
@@ -492,14 +516,55 @@ export function CustomersScreen({
                             onSelect: () =>
                               router.push(`/crm/bills?customer=${r.id}`),
                           },
-                          {
-                            label: "Request deactivation",
-                            destructive: true,
-                            onSelect: () => {
-                              setSelected(new Set([r.id]));
-                              setDeactivating(true);
-                            },
-                          },
+                          /*
+                           * A deactivated customer is offered the way back
+                           * rather than the way out. The manager who can
+                           * decide gets the decision here, where the customer
+                           * actually is — there is no separate queue for it,
+                           * and inventing one would hide two-a-month behind a
+                           * screen nobody opens.
+                           */
+                          ...(r.status === "Deactivated"
+                            ? isManager && r.reactivationRequested
+                              ? [
+                                  {
+                                    label: "Approve reactivation",
+                                    onSelect: async () => {
+                                      await run(decideReactivation(r.id, true));
+                                      router.refresh();
+                                    },
+                                  },
+                                  {
+                                    label: "Reject the request",
+                                    destructive: true,
+                                    onSelect: async () => {
+                                      await run(decideReactivation(r.id, false));
+                                      router.refresh();
+                                    },
+                                  },
+                                ]
+                              : [
+                                  {
+                                    label: r.reactivationRequested
+                                      ? "Reactivation already asked for"
+                                      : "Request reactivation",
+                                    disabled: r.reactivationRequested,
+                                    onSelect: () => {
+                                      setSelected(new Set([r.id]));
+                                      setReactivating(true);
+                                    },
+                                  },
+                                ]
+                            : [
+                                {
+                                  label: "Request deactivation",
+                                  destructive: true,
+                                  onSelect: () => {
+                                    setSelected(new Set([r.id]));
+                                    setDeactivating(true);
+                                  },
+                                },
+                              ]),
                         ]}
                       />
                     </span>
@@ -606,9 +671,17 @@ export function CustomersScreen({
         >
           Export
         </Button>
-        <Button variant="dark" size="sm" onClick={() => setDeactivating(true)}>
-          Request deactivation
-        </Button>
+        {/* Which way round depends on what is selected. Offering both at once
+            would put "deactivate" next to "bring back" over one tick list. */}
+        {selectedAllDeactivated ? (
+          <Button variant="dark" size="sm" onClick={() => setReactivating(true)}>
+            Request reactivation
+          </Button>
+        ) : (
+          <Button variant="dark" size="sm" onClick={() => setDeactivating(true)}>
+            Request deactivation
+          </Button>
+        )}
       </SelectionBar>
 
       <CustomerForm
@@ -673,6 +746,22 @@ export function CustomersScreen({
         onClose={() => setDeactivating(false)}
         onConfirm={async (reason) => {
           const result = await run(requestDeactivation([...selected], reason));
+          if (result.ok) {
+            setSelected(new Set());
+            router.refresh();
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={reactivating}
+        title={`Ask to bring back ${selected.size} customer${selected.size === 1 ? "" : "s"}?`}
+        body="They stay off every list until a manager approves it. The reason is what the manager decides on, so say what has changed."
+        confirmLabel="Request reactivation"
+        needsReason
+        onClose={() => setReactivating(false)}
+        onConfirm={async (reason) => {
+          const result = await run(requestReactivation([...selected], reason));
           if (result.ok) {
             setSelected(new Set());
             router.refresh();

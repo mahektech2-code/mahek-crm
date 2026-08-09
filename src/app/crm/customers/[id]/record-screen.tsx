@@ -110,6 +110,8 @@ export function RecordScreen({
     customerSince: string | null;
     deactivationRequested: boolean;
     deactivationReason: string | null;
+    reactivationRequested: boolean;
+    reactivationReason: string | null;
   };
   daysSinceOrder: number | null;
   followUpStage: {
@@ -169,6 +171,10 @@ export function RecordScreen({
         ? `${money(openPromise.amount)} was promised for ${shortDate(openPromise.promisedBy)} and has not arrived.`
         : customer.deactivationRequested
           ? `Deactivation requested - ${customer.deactivationReason ?? "no reason recorded"}. Waiting on a manager.`
+          // Above the buying cycle, because a customer nobody has decided on
+          // yet is not one whose cycle means anything.
+          : customer.reactivationRequested
+            ? `Reactivation requested - ${customer.reactivationReason ?? "no reason recorded"}. Waiting on a manager.`
           : overCycle
             ? `${daysSinceOrder} days since the last order, against a ${customer.cycleDays}-day buying cycle.`
             : null;
