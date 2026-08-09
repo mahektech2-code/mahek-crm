@@ -21,6 +21,9 @@ import { runJob, type JobName } from "@/lib/jobs";
  *   ?mode=project     turn what has landed into customers, orders and — only
  *                     when asked — bills. Takes &owner=, &leads=1, &bills=1,
  *                     and &reassign=1 to move customers that already exist.
+ *   ?mode=team        gives the back office team logins and hands each of them
+ *                     the accounts the master says they work. Takes &password=
+ *                     for the accounts it creates — never for existing ones.
  *
  * `reparse` is deliberately NOT reachable here. It re-reads stored rows after
  * somebody corrects a parsing rule, which is a decision a person makes with a
@@ -50,6 +53,7 @@ const JOBS: Record<string, JobName> = {
   payments: "sheet-payments",
   parties: "party-sync",
   project: "project-sheet",
+  team: "provision-team",
 };
 
 export async function GET(request: Request) {
@@ -83,6 +87,7 @@ export async function GET(request: Request) {
     leads: params.get("leads") === "1",
     bills: params.get("bills") === "1",
     reassign: params.get("reassign") === "1",
+    password: params.get("password") ?? undefined,
   };
 
   try {
