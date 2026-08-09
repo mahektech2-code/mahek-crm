@@ -120,6 +120,7 @@ export default async function QueuePage() {
       }))}
       quickNotes={quickNoteOptions}
       singleSelectOutcomes={config["interactions.singleSelectOutcomes"]}
+      maxComplaintImages={config["attachments.maxPerComplaint"]}
       searchEnabled={config["products.searchOnOrderForms"]}
       userName={user.name}
       products={productOptions}

@@ -953,22 +953,37 @@ describe("Journey 7 - a complaint carries its SLA and its credit-note request", 
     assert.equal(history[0].toStatus, "open");
   });
 
-  test("a credit-note request without a bill is refused", async () => {
+  test("a credit-note request is a yes, and needs no bill behind it", async () => {
+    // The telecaller answers whether the customer asked for one. Which bill
+    // and how much are accounts' work — they hold the ledger, and a bill
+    // picked mid-call was as likely to be the wrong one as the right one.
     const customer = await makeCustomer(priya.id);
     const { logComplaint } = await import("@/lib/actions/crm");
 
-    const refused = await logComplaint({
+    const result = await logComplaint({
       customerId: customer.id,
       category: "Packaging",
       description: "Short supply, wants a credit note",
       requestCn: true,
-      billId: null,
     });
-    assert.equal(refused.ok, false, "accounts cannot action a CN with no bill");
-    assert.match(refused.error, /bill/i);
+    assert.equal(result.ok, true, result.ok ? "" : result.error);
+
+    const [row] = await db
+      .select()
+      .from(complaints)
+      .where(eq(complaints.customerId, customer.id));
+    assert.equal(row.requestCn, true);
+    assert.equal(row.billId, null);
+    // It has somewhere to go: the pending list is what accounts read.
+    const { pendingCreditNotes } = await import("@/lib/queries");
+    const pending = await pendingCreditNotes();
+    assert.ok(
+      pending.some((c) => c.complaintId === row.id),
+      "a request with no bill fell off the pending list",
+    );
   });
 
-  test("a credit-note request with a bill stores the link", async () => {
+  test("a bill named on a request is still stored, for whoever fills it in", async () => {
     const customer = await makeCustomer(priya.id);
     const [bill] = await db
       .insert(bills)
@@ -1184,21 +1199,6 @@ describe("Journey 8 - the interaction log", () => {
       amount: 40_000_00,
       paidAmount: 0,
     });
-
-    const askedForNoBill = await saveInteraction({
-      customerId: customer.id,
-      interactionType: "outbound_call",
-      outcome: "complaint",
-      complaintCategory: "shortage",
-      complaintDescription: "Two drums short against the last consignment",
-      complaintRequestCn: true,
-      idempotencyKey: randomUUID(),
-    });
-    assert.equal(
-      askedForNoBill.ok,
-      false,
-      "accounts cannot act on a credit note with no bill behind it",
-    );
 
     const r = await saveInteraction({
       customerId: customer.id,
@@ -2024,7 +2024,9 @@ describe("Complaints raised on a call we made", () => {
     );
   });
 
-  test("a credit note request cannot be raised without the bill behind it", async () => {
+  test("a credit note request needs no bill behind it, and still reaches accounts", async () => {
+    // Mid-call, the question is whether the customer asked for a credit note.
+    // Which bill and how much belong to whoever holds the ledger.
     const customer = await makeCustomer(priya.id);
     const result = await saveInteraction({
       customerId: customer.id,
@@ -2035,8 +2037,13 @@ describe("Complaints raised on a call we made", () => {
       complaintRequestCn: true,
       idempotencyKey: randomUUID(),
     });
-    assert.equal(result.ok, false);
-    assert.match(result.ok ? "" : result.error, /bill/i);
+    assert.equal(result.ok, true, result.ok ? "" : result.error);
+
+    const { pendingCreditNotes } = await import("@/lib/queries");
+    const pending = await pendingCreditNotes();
+    const raised = pending.find((c) => c.complaintId === result.data.complaintId);
+    assert.ok(raised, "a request with no bill never reached the pending list");
+    assert.equal(raised.billNo, null, "no bill was named, so none is claimed");
   });
 
   test("a raised request shows up on the manager's pending list", async () => {
@@ -2269,6 +2276,37 @@ describe("Attachments — what may be attached, and what removal means", () => {
       2,
       "the extras are left for the sweep — the parent is already saved, so this is not an error",
     );
+  });
+
+  test("a complaint carries six photographs", async () => {
+    // A short delivery gets photographed from every side, and five was one
+    // short of a pallet. The limit is configuration; what this pins is that
+    // the number the screens offer is the number that binds.
+    const { bindAttachments } = await import("@/lib/services/attachment-service");
+    const config = await getConfig();
+    const limit = config["attachments.maxPerComplaint"];
+    assert.equal(limit, 6);
+
+    const ids: string[] = [];
+    for (let n = 0; n < limit; n++) {
+      const [row] = await db
+        .insert(attachmentsTable)
+        .values({
+          id: id("att"),
+          filename: `damage-${n}.jpg`,
+          storedRef: `memory://damage-${n}`,
+          contentType: "image/jpeg",
+          sizeBytes: 512,
+          status: "available",
+          uploadedById: priya.id,
+        })
+        .returning();
+      ids.push(row.id);
+    }
+
+    const result = await bindAttachments(ids, "complaint", "cmp_whatever");
+    assert.equal(result.ok && result.data.bound, limit);
+    assert.equal(result.ok && result.data.skipped, 0);
   });
 
   test("an abandoned form's files are swept; a bound one's are not", async () => {

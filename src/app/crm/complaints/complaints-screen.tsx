@@ -26,7 +26,7 @@ import { Drawer, DrawerHeader, Modal, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { logComplaint, reassignComplaint, resolveComplaint } from "@/lib/actions/crm";
 import { ageLabel, shortDate, stamp } from "@/lib/format";
-import { ACCEPTED_IMAGE_TYPES } from "@/lib/file-types";
+import { ImagePicker } from "@/components/crm/image-picker";
 
 type Status =
   | "open"
@@ -72,7 +72,6 @@ function statusTone(s: Status) {
 
 type Event = { at: string; note: string };
 type Tab = "open" | "progress" | "resolved" | "all";
-type BillOption = { id: string; billNo: string; billDate: string };
 
 const RESOLVERS = ["Operations", "Accounts", "Dispatch", "Quality", "Management"];
 
@@ -82,19 +81,18 @@ export function ComplaintsScreen({
   isTeamView,
   rows,
   events,
-  billsByCustomer,
-  loggedInUserName,
   categories,
+  maxImages,
 }: {
   scopeLabel: string;
   isManager: boolean;
   isTeamView: boolean;
   rows: Row[];
   events: Record<string, Event[]>;
-  billsByCustomer: Record<string, BillOption[]>;
-  loggedInUserName: string;
   /** From configuration, so a manager can change the list without a deploy. */
   categories: string[];
+  /** `attachments.maxPerComplaint`, so the screen and the server agree. */
+  maxImages: number;
 }) {
   const router = useRouter();
   const { run } = useToast();
@@ -419,9 +417,8 @@ export function ComplaintsScreen({
       <LogComplaintModal
         open={logging}
         onClose={() => setLogging(false)}
-        billsByCustomer={billsByCustomer}
-        employeeName={loggedInUserName}
         categories={categories}
+        maxImages={maxImages}
         onSubmit={async (input) => {
           const result = await run(logComplaint(input));
           if (result.ok) {
@@ -498,8 +495,6 @@ type LogComplaintInput = {
   description: string;
   mobileNumber: string;
   requestCn: boolean;
-  billId: string | null;
-  goodsDescription: string;
   images: File[];
 };
 
@@ -508,24 +503,21 @@ type CustomerHit = { id: string; name: string; city: string; phone: string };
 function LogComplaintModal({
   open,
   onClose,
-  billsByCustomer,
-  employeeName,
   categories,
+  maxImages,
   onSubmit,
 }: {
   open: boolean;
   onClose: () => void;
-  billsByCustomer: Record<string, BillOption[]>;
-  employeeName: string;
   categories: string[];
+  maxImages: number;
   onSubmit: (input: LogComplaintInput) => Promise<void>;
 }) {
   if (!open) return null;
   return (
     <LogComplaintModalBody
-      billsByCustomer={billsByCustomer}
-      employeeName={employeeName}
       categories={categories}
+      maxImages={maxImages}
       onClose={onClose}
       onSubmit={onSubmit}
     />
@@ -533,15 +525,13 @@ function LogComplaintModal({
 }
 
 function LogComplaintModalBody({
-  billsByCustomer,
-  employeeName,
   categories,
+  maxImages,
   onClose,
   onSubmit,
 }: {
-  billsByCustomer: Record<string, BillOption[]>;
-  employeeName: string;
   categories: string[];
+  maxImages: number;
   onClose: () => void;
   onSubmit: (input: LogComplaintInput) => Promise<void>;
 }) {
@@ -553,15 +543,11 @@ function LogComplaintModalBody({
   const [category, setCategory] = React.useState<string>(categories[0] ?? "Other");
   const [description, setDescription] = React.useState("");
   const [images, setImages] = React.useState<File[]>([]);
-  const [imageError, setImageError] = React.useState<string | null>(null);
   const [requestCn, setRequestCn] = React.useState(false);
-  const [billId, setBillId] = React.useState("");
-  const [goodsDescription, setGoodsDescription] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [errors, setErrors] = React.useState<{
     customer?: string;
     description?: string;
-    bill?: string;
   }>({});
 
   const searchActive = !customer && customerQuery.trim().length >= 2;
@@ -592,17 +578,6 @@ function LogComplaintModalBody({
     };
   }, [customerQuery, searchActive]);
 
-  const previews = React.useMemo(
-    () => images.map((f) => URL.createObjectURL(f)),
-    [images],
-  );
-  React.useEffect(() => {
-    return () => previews.forEach((u) => URL.revokeObjectURL(u));
-  }, [previews]);
-
-  const bills = customer ? (billsByCustomer[customer.id] ?? []) : [];
-  const selectedBill = bills.find((b) => b.id === billId) ?? null;
-
   return (
     <Modal
       open
@@ -628,10 +603,6 @@ function LogComplaintModalBody({
                 });
                 return;
               }
-              if (requestCn && !billId) {
-                setErrors({ bill: "Pick the bill this credit note relates to." });
-                return;
-              }
               setErrors({});
               setBusy(true);
               try {
@@ -641,8 +612,6 @@ function LogComplaintModalBody({
                   description,
                   mobileNumber: customer.phone,
                   requestCn,
-                  billId: requestCn ? billId : null,
-                  goodsDescription,
                   images,
                 });
               } finally {
@@ -656,10 +625,6 @@ function LogComplaintModalBody({
       }
     >
       <div className="grid gap-3">
-        <Field label="Employee name">
-          <Input value={employeeName} readOnly disabled />
-        </Field>
-
         <Field label="Company / Customer Name" error={errors.customer ?? null}>
           {customer ? (
             <div className="flex h-8.5 items-center justify-between rounded-[4px] border border-line bg-canvas px-2.5 text-sm text-ink">
@@ -670,7 +635,6 @@ function LogComplaintModalBody({
                 onClick={() => {
                   setCustomer(null);
                   setCustomerQuery("");
-                  setBillId("");
                 }}
               >
                 Change
@@ -694,7 +658,6 @@ function LogComplaintModalBody({
                         setCustomer({ id: c.id, name: c.name, phone: c.phone });
                         setCustomerHits([]);
                         setCustomerQuery("");
-                        setBillId("");
                       }}
                     >
                       <span className="text-sm font-medium text-ink">{c.name}</span>
@@ -739,43 +702,16 @@ function LogComplaintModalBody({
           />
         </Field>
 
-        <Field
-          label="Upload picture"
-          hint="JPG, JPEG, PNG or WEBP - photos of the damaged or short goods, if any."
-          error={imageError}
-        >
-          <input
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            multiple
-            onChange={(e) => {
-              const picked = Array.from(e.target.files ?? []);
-              const accepted = picked.filter((f) => ACCEPTED_IMAGE_TYPES.includes(f.type));
-              setImages(accepted);
-              setImageError(
-                accepted.length < picked.length
-                  ? "Only JPG, JPEG, PNG or WEBP images are allowed."
-                  : null,
-              );
-            }}
-            className="block w-full text-sm text-body file:mr-3 file:cursor-pointer file:rounded-[4px] file:border file:border-line file:bg-surface file:px-2.5 file:py-1.5 file:text-sm file:text-ink"
-          />
-          {previews.length ? (
-            <div className="mt-2 flex flex-wrap gap-2">
-              {previews.map((src, i) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  key={i}
-                  src={src}
-                  alt=""
-                  className="h-14 w-14 rounded-[4px] border border-line object-cover"
-                />
-              ))}
-            </div>
-          ) : null}
-        </Field>
+        <ImagePicker files={images} onChange={setImages} max={maxImages} />
 
-        <Field label="Request CN">
+        <Field
+          label="Request CN"
+          hint={
+            requestCn
+              ? "Accounts take it from here - they pick up the bill and the amount."
+              : undefined
+          }
+        >
           <div className="flex items-center gap-4">
             <Radio
               name="requestCn"
@@ -791,51 +727,6 @@ function LogComplaintModalBody({
             />
           </div>
         </Field>
-
-        {requestCn ? (
-          <div className="grid gap-3 rounded-[4px] border border-line bg-canvas p-3">
-            <Field label="Bill number" error={errors.bill ?? null}>
-              <Select
-                value={billId}
-                onChange={(e) => {
-                  setBillId(e.target.value);
-                  setErrors({});
-                }}
-                disabled={!customer}
-              >
-                <option value="">
-                  {customer ? "Select a bill" : "Pick a customer first"}
-                </option>
-                {bills.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.billNo} · {shortDate(b.billDate)}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-
-            <Field label="Bill date">
-              <Input
-                value={selectedBill ? shortDate(selectedBill.billDate) : ""}
-                readOnly
-                disabled
-                placeholder="Pick a bill number first"
-              />
-            </Field>
-
-            <Field
-              label="Description of goods"
-              hint="Not on the bill record - filled in manually."
-            >
-              <Textarea
-                value={goodsDescription}
-                onChange={(e) => setGoodsDescription(e.target.value)}
-                className="h-16"
-                placeholder="What was billed"
-              />
-            </Field>
-          </div>
-        ) : null}
       </div>
     </Modal>
   );

@@ -213,12 +213,11 @@ export async function saveInteraction(
         "Describe the complaint in the customer's words.",
       );
     }
-    if (input.complaintRequestCn && !input.complaintBillId) {
-      return fieldError(
-        "complaintBillId",
-        "Pick the bill this credit note relates to.",
-      );
-    }
+    // A credit-note request is a yes, and nothing more. Naming the bill and
+    // the amount is accounts' work — they hold the ledger, and asking a
+    // telecaller mid-call to pick the right bill produced either a wrong one
+    // or a request nobody made. `bill_id` stays on the row for whoever fills
+    // it in later, and for the requests taken while the form asked.
     // §6.2 — an amount without a Yes is rejected. A figure sitting on a
     // complaint nobody asked a credit note for reads as an approved amount to
     // whoever opens it later.

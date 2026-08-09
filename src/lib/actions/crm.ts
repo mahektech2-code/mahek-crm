@@ -834,16 +834,6 @@ export async function logComplaint(input: {
         ],
       );
     }
-    // A credit note with no bill behind it is not actionable by accounts.
-    if (input.requestCn && !input.billId) {
-      return err("Pick the bill this credit note relates to.", "validation", [
-        {
-          field: "billId",
-          message: "Pick the bill this credit note relates to.",
-        },
-      ]);
-    }
-
     // Her dialog does not ask how the complaint reached us, so it must not
     // invent an inbound call — that would inflate the call counts. A complaint
     // raised ON a call comes through saveInteraction instead, and gets its

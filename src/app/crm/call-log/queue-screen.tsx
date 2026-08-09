@@ -78,6 +78,7 @@ export function QueueScreen({
   categories,
   quickNotes,
   singleSelectOutcomes,
+  maxComplaintImages,
   searchEnabled,
   userName,
   products,
@@ -94,6 +95,7 @@ export function QueueScreen({
   categories: Array<{ value: string; label: string }>;
   quickNotes: QuickNoteOption[];
   singleSelectOutcomes: string[];
+  maxComplaintImages: number;
   /** products.searchOnOrderForms — checked here as well as in the API. */
   searchEnabled: boolean;
   /** The signed-in telecaller, for script placeholders. */
@@ -498,6 +500,7 @@ export function QueueScreen({
         complaintCategories={categories}
         quickNotes={quickNotes}
         singleSelectOutcomes={singleSelectOutcomes}
+        maxComplaintImages={maxComplaintImages}
         searchEnabled={searchEnabled}
         userName={userName}
         products={products}
