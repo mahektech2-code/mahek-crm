@@ -1,0 +1,21 @@
+-- The back office keeps its NAME, the way the sales person already does.
+--
+-- The party master names two people against a customer: `Sales Person` and
+-- `Tag Sales Person`, the second being the back office — dispatch, billing and
+-- paperwork. Both were read, and only one survived the projection.
+--
+-- The sales side stores the name as text whether or not it matches a MahekOne
+-- login, because most of those people have no account and the name is what the
+-- screens say. The back office side stored only `back_office_am_id`, so a name
+-- that matched no login went nowhere: all four back office people in the sheet
+-- are without logins, which left `back_office_am_id` null on every customer and
+-- every screen reading "Unassigned" against 919 rows that name somebody.
+--
+-- That was not merely blank. The call panel tints an unassigned back office as
+-- a WARNING — dispatch and billing questions on this call have nobody to go to
+-- — so the flag was firing on the whole book and was wrong every time, which is
+-- how a team learns to ignore a warning.
+--
+-- `back_office_am_id` keeps its job: it is a real assignment to a real account.
+-- This column is the mirror of the sheet beside it.
+ALTER TABLE "customers" ADD COLUMN "back_office_name" text;

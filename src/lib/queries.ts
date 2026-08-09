@@ -167,8 +167,15 @@ export async function listCustomersPage(
         customers.sales_person_name,
         (select name from users u where u.id = customers.sales_am_id)
       )`,
-      backOfficeAmName: sql<string | null>`(
-        select name from users u where u.id = customers.back_office_am_id
+      // The ACCOUNT first here, and the sheet's name second — the opposite of
+      // the sales side above, deliberately. `sales_am_id` is bulk-assigned by
+      // the import, so reading it first names the telecaller who owns the book
+      // on every customer; `back_office_am_id` is only ever set by a real link
+      // or a manager choosing somebody, so it is the better answer where it
+      // exists, and the sheet's name is what stands in when it does not.
+      backOfficeAmName: sql<string | null>`coalesce(
+        (select name from users u where u.id = customers.back_office_am_id),
+        customers.back_office_name
       )`,
       openComplaints: sql<number>`(
         select count(*)::int from ${complaints}
@@ -220,8 +227,15 @@ export async function listCustomers(): Promise<CustomerRow[]> {
         customers.sales_person_name,
         (select name from users u where u.id = customers.sales_am_id)
       )`,
-      backOfficeAmName: sql<string | null>`(
-        select name from users u where u.id = customers.back_office_am_id
+      // The ACCOUNT first here, and the sheet's name second — the opposite of
+      // the sales side above, deliberately. `sales_am_id` is bulk-assigned by
+      // the import, so reading it first names the telecaller who owns the book
+      // on every customer; `back_office_am_id` is only ever set by a real link
+      // or a manager choosing somebody, so it is the better answer where it
+      // exists, and the sheet's name is what stands in when it does not.
+      backOfficeAmName: sql<string | null>`coalesce(
+        (select name from users u where u.id = customers.back_office_am_id),
+        customers.back_office_name
       )`,
       openComplaints: sql<number>`(
         select count(*)::int from ${complaints}
@@ -255,8 +269,15 @@ export async function getCustomer(customerId: string) {
         customers.sales_person_name,
         (select name from users u where u.id = customers.sales_am_id)
       )`,
-      backOfficeAmName: sql<string | null>`(
-        select name from users u where u.id = customers.back_office_am_id
+      // The ACCOUNT first here, and the sheet's name second — the opposite of
+      // the sales side above, deliberately. `sales_am_id` is bulk-assigned by
+      // the import, so reading it first names the telecaller who owns the book
+      // on every customer; `back_office_am_id` is only ever set by a real link
+      // or a manager choosing somebody, so it is the better answer where it
+      // exists, and the sheet's name is what stands in when it does not.
+      backOfficeAmName: sql<string | null>`coalesce(
+        (select name from users u where u.id = customers.back_office_am_id),
+        customers.back_office_name
       )`,
     })
     .from(customers)

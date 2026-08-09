@@ -204,6 +204,13 @@
       "when": 1786305583849,
       "tag": "0029_accounts_app_slug",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1786305583850,
+      "tag": "0030_back_office_name",
+      "breakpoints": true
     }
   ]
 }

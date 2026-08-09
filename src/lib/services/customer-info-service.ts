@@ -129,7 +129,12 @@ export async function customerInformation(
              ${customer.salesPersonName},
              (select name from users where id = ${customer.salesAmId})
            ) as sales,
-           (select name from users where id = ${customer.backOfficeAmId}) as back_office
+           -- The account first, the sheet's name second. See queries.ts: the
+           -- two sides coalesce in opposite orders on purpose.
+           coalesce(
+             (select name from users where id = ${customer.backOfficeAmId}),
+             ${customer.backOfficeName}
+           ) as back_office
   `);
 
   const config = await getConfig();
