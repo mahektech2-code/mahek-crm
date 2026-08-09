@@ -62,6 +62,14 @@ type Row = {
   deactivationRequested: boolean;
 };
 
+/**
+ * How many rows at a time. Twenty-five by default because the book is now over
+ * a thousand and a telecaller opening this screen wants the first screenful,
+ * not all of it — the whole list still arrives, so search and the totals keep
+ * covering everybody rather than only the page in front of you.
+ */
+const PER_PAGE = [25, 50, 100] as const;
+
 const STATUSES = [
   "All statuses",
   "Active",
@@ -89,6 +97,8 @@ export function CustomersScreen({
   const [status, setStatus] = React.useState(STATUSES[0]);
   const [owner, setOwner] = React.useState("All owners");
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [perPage, setPerPage] = React.useState<number>(PER_PAGE[0]);
+  const [page, setPage] = React.useState(1);
 
   const [addOpen, setAddOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Row | null>(null);
@@ -110,20 +120,35 @@ export function CustomersScreen({
     });
   }, [rows, query, status, owner]);
 
+  // Clamped during render rather than corrected in an effect: a filter that
+  // shortens the list must not leave somebody looking at page nine of three
+  // and concluding their customers have gone.
+  const pageCount = Math.max(1, Math.ceil(filtered.length / perPage));
+  const current = Math.min(page, pageCount);
+  const from = (current - 1) * perPage;
+  const visible = filtered.slice(from, from + perPage);
+
   const chips = [
     status !== STATUSES[0]
-      ? { label: `Status: ${status}`, clear: () => setStatus(STATUSES[0]) }
+      ? { label: `Status: ${status}`, clear: () => refine(() => setStatus(STATUSES[0])) }
       : null,
     owner !== "All owners"
-      ? { label: `Owner: ${owner}`, clear: () => setOwner("All owners") }
+      ? { label: `Owner: ${owner}`, clear: () => refine(() => setOwner("All owners")) }
       : null,
-    query ? { label: `Search: ${query}`, clear: () => setQuery("") } : null,
+    query ? { label: `Search: ${query}`, clear: () => refine(() => setQuery("")) } : null,
   ].filter(Boolean) as Array<{ label: string; clear: () => void }>;
 
   function clearAll() {
     setQuery("");
     setStatus(STATUSES[0]);
     setOwner("All owners");
+    setPage(1);
+  }
+
+  /** Any change to what is being looked at starts at the beginning of it. */
+  function refine(apply: () => void) {
+    apply();
+    setPage(1);
   }
 
   function toggle(id: string) {
@@ -255,13 +280,13 @@ export function CustomersScreen({
           />
           <input
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => refine(() => setQuery(e.target.value))}
             placeholder="Search name, contact, phone, city"
             className="h-8 w-full rounded-[4px] border border-line pr-7 pl-7.5 text-sm outline-none focus:border-brand"
           />
           {query ? (
             <button
-              onClick={() => setQuery("")}
+              onClick={() => refine(() => setQuery(""))}
               aria-label="Clear search"
               className="absolute top-1.5 right-1.5 h-4.5 w-4.5 cursor-pointer text-muted"
             >
@@ -271,7 +296,7 @@ export function CustomersScreen({
         </div>
         <Select
           value={status}
-          onChange={(e) => setStatus(e.target.value)}
+          onChange={(e) => refine(() => setStatus(e.target.value))}
           className="h-8"
         >
           {STATUSES.map((s) => (
@@ -280,7 +305,7 @@ export function CustomersScreen({
         </Select>
         <Select
           value={owner}
-          onChange={(e) => setOwner(e.target.value)}
+          onChange={(e) => refine(() => setOwner(e.target.value))}
           className="h-8"
         >
           <option>All owners</option>
@@ -324,17 +349,23 @@ export function CustomersScreen({
                 <Th className="w-9">
                   <input
                     type="checkbox"
-                    aria-label="Select all"
+                    aria-label="Select the customers on this page"
                     className="accent-[#6835FB]"
                     checked={
-                      filtered.length > 0 && selected.size === filtered.length
+                      visible.length > 0 && visible.every((r) => selected.has(r.id))
                     }
                     onChange={(e) =>
-                      setSelected(
-                        e.target.checked
-                          ? new Set(filtered.map((r) => r.id))
-                          : new Set(),
-                      )
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        // The box sits above this page, so it selects this
+                        // page. Selecting eleven hundred rows because somebody
+                        // ticked a header is not what the tick meant.
+                        for (const r of visible) {
+                          if (e.target.checked) next.add(r.id);
+                          else next.delete(r.id);
+                        }
+                        return next;
+                      })
                     }
                   />
                 </Th>
@@ -352,7 +383,7 @@ export function CustomersScreen({
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => (
+              {visible.map((r) => (
                 <Tr key={r.id} className="hover:bg-canvas">
                   <Td>
                     <input
@@ -480,6 +511,67 @@ export function CustomersScreen({
           />
         )}
       </Card>
+
+      {filtered.length ? (
+        <div className="flex flex-wrap items-center gap-3 border-r border-b border-l border-line bg-surface px-4 py-3">
+          <span className="text-[13px] text-muted">
+            {/* The range, not just the page number: "26–50 of 1,075" answers
+                where you are, which "page 2" only does if you already know how
+                big a page is. */}
+            {from + 1}&ndash;{Math.min(from + perPage, filtered.length)} of{" "}
+            {filtered.length.toLocaleString("en-IN")}
+          </span>
+
+          <span className="flex items-center gap-2 text-[13px] text-muted">
+            <label htmlFor="per-page">Show</label>
+            <select
+              id="per-page"
+              value={perPage}
+              onChange={(e) => {
+                // Keep the first row of the current page in view rather than
+                // jumping to the top: changing the page size is a change of
+                // zoom, not of place.
+                const next = Number(e.target.value);
+                setPage(Math.floor(from / next) + 1);
+                setPerPage(next);
+              }}
+              className="h-8 cursor-pointer rounded-[4px] border border-line bg-canvas px-2 text-[13px] text-body"
+            >
+              {PER_PAGE.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </span>
+
+          <span className="flex-1" />
+
+          <span className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={current <= 1}
+              title={current <= 1 ? "This is the first page" : undefined}
+              onClick={() => setPage(current - 1)}
+            >
+              Previous
+            </Button>
+            <span className="text-[13px] text-body tabular-nums">
+              {current} / {pageCount}
+            </span>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={current >= pageCount}
+              title={current >= pageCount ? "This is the last page" : undefined}
+              onClick={() => setPage(current + 1)}
+            >
+              Next
+            </Button>
+          </span>
+        </div>
+      ) : null}
 
       <SelectionBar
         count={selected.size}
