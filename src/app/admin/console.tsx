@@ -31,6 +31,7 @@ import { CATALOGUE_SUBTITLE, CATALOGUE_TABS, CatalogueSection } from "./catalogu
 import type { CatalogueData } from "./catalogue-data";
 import { SHEET_SUBTITLE, SHEET_TABS, type SheetData } from "./sheet-data";
 import { SheetSection } from "./sheet-section";
+import type { Person } from "@/lib/services/admin-people-service";
 import { PeopleSection } from "./people-section";
 import { UserDetail } from "./user-detail";
 import { AdminDrawer } from "./drawers";
@@ -91,6 +92,7 @@ export function AdminConsole({
   crm,
   catalogue,
   sheet,
+  people,
   isPlatformAdmin,
   initial,
 }: {
@@ -98,13 +100,14 @@ export function AdminConsole({
   crm: CrmConfig;
   catalogue: CatalogueData;
   sheet: SheetData;
+  people: Person[];
   isPlatformAdmin: boolean;
   /** Where the URL says to open. */
   initial: Address;
 }) {
   return (
     <ToastProvider>
-      <AdminStore>
+      <AdminStore people={people}>
         <ConsoleShell
           apps={apps}
           crm={crm}

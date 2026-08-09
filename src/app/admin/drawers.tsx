@@ -7,6 +7,12 @@ import { ownedFor, TEAMS, type EntityKind, type EntityRow } from "./data";
 import { ANNOUNCEMENTS } from "./data-platform";
 import { RichTextEditor } from "./rich-text";
 import { saveTemplate } from "@/lib/actions/crm";
+import { useRouter } from "next/navigation";
+import {
+  setUserActive,
+  setUserRole,
+  updateUserIdentity,
+} from "@/lib/actions/people";
 import { validateAppEndpoint, validateAppRoute, validateAppSlug } from "@/lib/apps";
 import { slugify } from "@/lib/slug";
 import { useAdmin, type Drawer as DrawerState } from "./store";
@@ -62,6 +68,7 @@ function drawerKey(d: DrawerState): string {
 }
 
 function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => void }) {
+  const router = useRouter();
   const { entities, users, registry, notify, record, archiveEntity } = useAdmin();
   const [draft, setDraft] = React.useState<Record<string, string>>({});
 
@@ -193,10 +200,24 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
     fields = [
       { key: "name", label: "Full name", value: v("name", user?.name ?? ""), placeholder: "Priya Sharma" },
       {
-        key: "contact", label: "Work email or number", value: v("contact", user?.contact ?? ""), placeholder: "priya@mahek.in",
-        help: editing ? undefined : "The set-password link goes here. It expires in 30 minutes.",
+        key: "contact", label: "Work email", value: v("contact", user?.contact ?? ""), placeholder: "priya@mahek.in",
+        help: editing
+          ? "This is their sign-in. Changing it changes how they log in."
+          : "The set-password link goes here. It expires in 30 minutes.",
       },
     ];
+    if (editing) {
+      fields.push(
+        {
+          key: "mobile", label: "Work number", value: v("mobile", user?.mobile ?? ""), half: true,
+          help: "Also a sign-in — telecallers know their number, not their email.",
+        },
+        {
+          key: "userRole", label: "Role", value: v("userRole", user?.designation ?? "Telecaller"), half: true,
+          select: ["Telecaller", "Manager", "Accounts", "Admin"],
+        },
+      );
+    }
     if (!editing) {
       fields.push(
         {
@@ -470,6 +491,43 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
               if (result.ok) onClose();
               return;
             }
+            if (kind === "editUser" && user) {
+              const identity = await updateUserIdentity(user.id, {
+                name: v("name", user.name),
+                email: v("contact", user.contact),
+                phone: v("mobile", user.mobile) || null,
+              });
+              if (!identity.ok) {
+                notify(identity.error ?? "That did not save.");
+                return;
+              }
+              const wanted = v("userRole", user.designation).toLowerCase();
+              if (wanted !== user.designation.toLowerCase()) {
+                const r = await setUserRole(
+                  user.id,
+                  wanted as "telecaller" | "manager" | "accounts" | "admin",
+                );
+                if (!r.ok) {
+                  notify(r.error ?? "The role did not change.");
+                  return;
+                }
+              }
+              notify(identity.message ?? "Saved");
+              onClose();
+              router.refresh();
+              return;
+            }
+
+            if (kind === "deactivate" && user) {
+              const result = await setUserActive(user.id, false);
+              notify(result.ok ? (result.message ?? "Deactivated") : (result.error ?? "That did not save."));
+              if (result.ok) {
+                onClose();
+                router.refresh();
+              }
+              return;
+            }
+
             record(
               kind === "createUser" || kind === "editUser" || kind === "deactivate" ? "access" : "admin",
               kind === "registerApp" ? "Platform" : "Telecaller CRM",
