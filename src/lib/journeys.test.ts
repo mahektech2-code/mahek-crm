@@ -337,9 +337,13 @@ describe("Journey 2 - an overdue bill escalates, is chased, and is paid", () => 
   });
 
   test("the whole chase: stage 1 → stage 2 → promise → payment → off the list", async () => {
-    const customer = await overdueCustomer(30);
+    const customer = await overdueCustomer(20);
 
-    // Thirty days overdue is past the second threshold, so a call is allowed.
+    // The ladder is 0–15, 16–29, 30+. Twenty days is inside the second band,
+    // and past the fifteen-day quiet window, so this is a customer who may be
+    // called. It used to be thirty, which stage 3 now claims — the number moved
+    // when the bands did, and what this journey is about is the chase, not the
+    // day it starts on.
     const worklist = await getFollowUpWorklist();
     const row = worklist.find((r) => r.customerId === customer.id);
     assert.ok(row);

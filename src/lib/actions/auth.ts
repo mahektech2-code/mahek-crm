@@ -106,6 +106,13 @@ export async function signIn(
 
   await createSession(user.id, parsed.data.remember);
   await recordSignIn(user.id, newId("att"));
+  // Nothing wrote this column, so every screen that asked when somebody last
+  // signed in answered "never" — including the console's list of accounts
+  // nobody has ever used, which therefore accused the whole company.
+  await db
+    .update(users)
+    .set({ lastLoginAt: new Date() })
+    .where(eq(users.id, user.id));
   await audit(user, "sign-in", "user", user.id);
 
   const apps = await listUserApps(user.id);

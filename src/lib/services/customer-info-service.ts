@@ -123,7 +123,12 @@ export async function customerInformation(
     back_office: string | null;
   }>(sql`
     select (select name from users where id = ${customer.ownerId}) as owner,
-           (select name from users where id = ${customer.salesAmId}) as sales,
+           -- The Sales Person the customer master names, falling back to a
+           -- linked account. Most of those names have no account at all.
+           coalesce(
+             ${customer.salesPersonName},
+             (select name from users where id = ${customer.salesAmId})
+           ) as sales,
            (select name from users where id = ${customer.backOfficeAmId}) as back_office
   `);
 

@@ -3,12 +3,12 @@
 import * as React from "react";
 import { Button, Input, Select, Textarea, cx } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
-import { ownedFor, TEAMS, type EntityKind, type EntityRow } from "./data";
-import { ANNOUNCEMENTS } from "./data-platform";
+import type { EntityKind, EntityRow } from "./data";
 import { RichTextEditor } from "./rich-text";
 import { saveTemplate } from "@/lib/actions/crm";
 import { useRouter } from "next/navigation";
 import {
+  createUser,
   setUserActive,
   setUserRole,
   updateUserIdentity,
@@ -69,7 +69,7 @@ function drawerKey(d: DrawerState): string {
 
 function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => void }) {
   const router = useRouter();
-  const { entities, users, registry, notify, record, archiveEntity } = useAdmin();
+  const { entities, users, registry, notify, archiveEntity } = useAdmin();
   const [draft, setDraft] = React.useState<Record<string, string>>({});
 
   const kind = drawer.kind;
@@ -87,7 +87,10 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
   let saveLabel = "Save";
   let fields: FieldSpec[] = [];
   let preview: { name: string; body: string } | null = null;
-  let blockers: Array<{ line: string; cta: string; run: () => void }> = [];
+  // A warning that does not block. Where something genuinely cannot proceed
+  // the save button is what says so, not a card with a button that opens a
+  // flow nobody built.
+  let blockers: Array<{ line: string; cta?: string; run?: () => void }> = [];
 
   if (kind === "templates") {
     title = record0 ? "Edit template" : "New template";
@@ -195,8 +198,8 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
     title = editing ? "Edit user" : "Create user";
     sub = editing
       ? (user?.name ?? "")
-      : "The account is created and a set-password link is sent. No password is ever set here.";
-    saveLabel = editing ? "Save user" : "Create user and send link";
+      : "Accounts are created here — there is no sign-up. Set a password now and tell them to change it, or send a reset link from the row menu afterwards.";
+    saveLabel = editing ? "Save user" : "Create the account";
     fields = [
       { key: "name", label: "Full name", value: v("name", user?.name ?? ""), placeholder: "Priya Sharma" },
       {
@@ -221,14 +224,21 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
     if (!editing) {
       fields.push(
         {
-          key: "apps", label: "Initial app access", value: v("apps", "Telecaller CRM"),
-          select: ["Telecaller CRM", "Telecaller CRM, Accounts", "None yet"],
-          help: "One app means MahekOne takes them straight in and hides the app switcher.",
+          key: "mobile", label: "Work number", value: v("mobile", ""), half: true,
+          help: "Also a sign-in — telecallers know their number, not their email.",
         },
-        { key: "role", label: "Role in the CRM", value: v("role", "Telecaller"), select: ["Telecaller", "Manager"], half: true },
         {
-          key: "reportsTo", label: "Reports to", value: v("reportsTo", "Vikram Shah"), half: true,
-          select: [...users.filter((u) => Object.values(u.roles).includes("Manager")).map((u) => u.name), "—"],
+          key: "userRole", label: "Role", value: v("userRole", "Telecaller"), half: true,
+          select: ["Telecaller", "Manager", "Accounts", "Admin"],
+        },
+        {
+          key: "password", label: "First password", value: v("password", ""),
+          help: "Eight characters at least. They can change it from the sign-in screen, and a reset link is one click away in the row menu.",
+        },
+        {
+          key: "apps", label: "Apps", value: v("apps", "crm"),
+          select: registry.map((a) => a.id),
+          help: "One app means MahekOne takes them straight in and hides the switcher. Two or more means they land on the launcher.",
         },
       );
     }
@@ -237,13 +247,13 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
     sub = "Their sessions end and MahekOne stops opening for them.";
     saveLabel = "Deactivate user";
     fields = [{ key: "reason", label: "Reason", value: v("reason"), area: true, placeholder: "Left the company on 31 Aug" }];
-    const book = ownedFor(user.id).find((r) => r.key === "customers");
-    if (book) {
+    // Said, not enforced: deactivating is reversible and a book with no owner
+    // is visible on the console's own attention list, so blocking the action
+    // behind a reassignment flow that does not exist would strand the leaver.
+    if (user.customers) {
       blockers = [
         {
-          line: `${user.name} still owns ${book.count} Telecaller CRM customers. Their book must be reassigned before the account can be deactivated.`,
-          cta: "Reassign their book",
-          run: () => notify("Opening the offboarding flow on their record"),
+          line: `${user.name} holds ${user.customers} customers. Deactivating does not reassign them — they will sit in nobody's book until somebody is given them, and the Overview says so.`,
         },
       ];
     }
@@ -338,43 +348,10 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
         help: "Shown on the launcher's locked chip so people know what the app is.",
       },
     ];
-  } else if (kind === "announcement") {
-    const a = id ? ANNOUNCEMENTS.find((x) => x.id === id) : null;
-    title = a ? "Edit announcement" : "New announcement";
-    sub = "Shown on the launcher, which everybody passes through each morning.";
-    saveLabel = a ? "Save announcement" : "Publish announcement";
-    fields = [
-      { key: "title", label: "Title", value: v("title", a?.title ?? ""), placeholder: "Diwali dispatch cut-off is 18 October" },
-      { key: "severity", label: "Severity", value: v("severity", a?.severity ?? "Info"), select: ["Info", "Warning"], half: true },
-      {
-        key: "audience", label: "Who sees it", value: v("audience", a?.audience ?? "Telecaller CRM · everyone"), half: true,
-        select: ["Everyone on the platform", "Telecaller CRM · everyone", "Telecaller CRM · Telecaller", "Telecaller CRM · Manager"],
-      },
-      { key: "from", label: "Shows from", value: v("from", a?.from ?? "2026-08-07"), half: true },
-      { key: "to", label: "Stops showing", value: v("to", a?.to ?? ""), half: true, help: "Leave empty for “until resolved”." },
-      {
-        key: "body", label: "Body", value: v("body", a?.body ?? ""), area: true,
-        help: "Say what somebody should do differently today. An announcement nobody acts on trains people to skip the next one.",
-      },
-    ];
-  } else if (kind === "team") {
-    const team = TEAMS.find((t) => t.id === id);
-    title = team?.name ?? "Team";
-    sub = "One manager each. Removing a manager requires nominating a replacement.";
-    saveLabel = "Save team";
-    fields = [
-      { key: "name", label: "Team name", value: v("name", team?.name ?? "") },
-      {
-        key: "manager", label: "Manager", value: v("manager", team?.manager ?? ""),
-        select: users.filter((u) => Object.values(u.roles).includes("Manager")).map((u) => u.name),
-        help: "Every member's work rolls up to this person.",
-      },
-      { key: "members", label: "Members", value: v("members", (team?.members ?? []).join(", ")), area: true },
-    ];
   }
 
   const fieldError = fields.find((f) => f.error);
-  const blocked = blockers.length > 0 || !!fieldError;
+  const blocked = !!fieldError;
 
   return (
     <Drawer open onClose={onClose} label={title}>
@@ -433,14 +410,16 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
 
         {blockers.length ? (
           <div className="mt-4 rounded-[4px] border border-danger-soft border-l-[3px] border-l-danger bg-danger-soft px-3.5 py-3">
-            <div className="text-sm font-medium text-danger">This must be done first</div>
+            <div className="text-sm font-medium text-danger">Worth knowing first</div>
             <div className="mt-2 flex flex-col gap-2">
               {blockers.map((b) => (
                 <div key={b.line} className="rounded-[4px] border border-danger-soft bg-surface px-3 py-2.5">
                   <div className="text-sm text-ink">{b.line}</div>
-                  <Button size="sm" variant="ghost" className="mt-2" onClick={b.run}>
-                    {b.cta}
-                  </Button>
+                  {b.cta && b.run ? (
+                    <Button size="sm" variant="ghost" className="mt-2" onClick={b.run}>
+                      {b.cta}
+                    </Button>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -491,6 +470,27 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
               if (result.ok) onClose();
               return;
             }
+            if (kind === "createUser") {
+              const result = await createUser({
+                name: v("name", ""),
+                email: v("contact", ""),
+                phone: v("mobile", "") || null,
+                role: v("userRole", "Telecaller").toLowerCase() as
+                  | "telecaller"
+                  | "manager"
+                  | "accounts"
+                  | "admin",
+                password: v("password", ""),
+                apps: [v("apps", "crm")],
+              });
+              notify(result.ok ? (result.message ?? "Created") : result.error);
+              if (result.ok) {
+                onClose();
+                router.refresh();
+              }
+              return;
+            }
+
             if (kind === "editUser" && user) {
               const identity = await updateUserIdentity(user.id, {
                 name: v("name", user.name),
@@ -528,15 +528,10 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
               return;
             }
 
-            record(
-              kind === "createUser" || kind === "editUser" || kind === "deactivate" ? "access" : "admin",
-              kind === "registerApp" ? "Platform" : "Telecaller CRM",
-              title,
-              "—",
-              "—",
-              user?.id ?? null,
-            );
-            notify(`${title} — saved`);
+            // Everything with a write path returned above. What is left is a
+            // collection the CRM does not expose a save for yet, and saying
+            // "saved" would be the one thing this console must never do.
+            notify(`${title} cannot be saved yet — nothing was changed.`);
             onClose();
           }}
         >

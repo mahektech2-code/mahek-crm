@@ -20,7 +20,6 @@ import {
   type CrossError,
   type Values,
 } from "./settings-model";
-import { SettingHistory } from "./settings-tools";
 import { RichTextEditor } from "./rich-text";
 import { useAdmin } from "./store";
 
@@ -155,7 +154,6 @@ function FieldRow({
                 ? "Default · never changed"
                 : `Changed from the default of ${readable(field.def)}`}
           </span>
-          <SettingHistory settingKey={field.key} label={field.label} />
         </div>
         )}
       </div>

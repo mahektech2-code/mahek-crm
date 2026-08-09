@@ -174,7 +174,12 @@ export async function approveOrder(orderId: string): Promise<Result> {
       action: "order.approve",
       entityType: "order",
       entityId: orderId,
-      afterState: { customerId: order.customerId } as never,
+      // The value is recorded on the row so the audit log can say what was
+      // approved without joining back to an order that may since have moved.
+      afterState: {
+        customerId: order.customerId,
+        amount: Number(order.totalAmount),
+      } as never,
     });
   });
 
@@ -224,7 +229,11 @@ export async function declineOrder(
       action: "order.decline",
       entityType: "order",
       entityId: orderId,
-      afterState: { customerId: order.customerId, reason: reason.trim() } as never,
+      afterState: {
+        customerId: order.customerId,
+        reason: reason.trim(),
+        amount: Number(order.totalAmount),
+      } as never,
     });
   });
 

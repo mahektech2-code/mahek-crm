@@ -80,7 +80,7 @@ Where you land depends on what you can open:
 - **none** → `/apps`, which says so plainly instead of showing a blank screen
 
 `app_access` is a row per user per app. It is checked in each app's layout, not
-just used to hide launcher tiles — a bookmarked `/orders` must not open for
+just used to hide launcher tiles — a bookmarked `/accounts` must not open for
 somebody who was never given it.
 
 **Signing in opens an attendance record for the day; signing out closes it.** A
@@ -105,8 +105,10 @@ src/
       forgot/  reset/      ask for a reset link, and spend it
     apps/                  the launcher, 1–9 opens an app
     field/                 placeholder shell for an app not built yet
-    orders/                the Accounts app — order approvals, payments to
-                           confirm, record a payment, customer account
+    accounts/              the Accounts app — today, order approvals, payments
+                           to confirm, credit notes, record a payment, bills,
+                           customer account, on account, sheet import, audit
+                           (was `orders/`; /orders still redirects here)
     people/ reports/ admin/
     crm/                   the CRM — header, sidebar, toasts
       dashboard/           telecaller day + manager team overview
@@ -162,8 +164,9 @@ src/
     actions/               every write
     journeys.test.ts       the six §11 journeys, end to end
     format.ts merge.ts csv.ts scope.ts auth.ts
-  app/admin/               the console — platform sections, the CRM's schema,
-                           and the Catalogue section (catalogue-section.tsx)
+  app/admin/               the console — platform sections (platform-real.tsx,
+                           from admin-platform-service), the CRM's schema, and
+                           the Catalogue section (catalogue-section.tsx)
   scripts/parse-catalogue.mjs
                            document → src/db/catalogue-seed.ts, by hand
   scripts/grant-app.ts     give somebody an app, by hand
@@ -645,6 +648,22 @@ a customer of four years from the afternoon their row was written, so an
 imported book sits off the queue for a week. Prospects still fall back to the
 creation date: they have no order to be dated from.
 
+**A salesperson is a name, not an account.** The Sales Party tab's `Sales
+Person` is who sells to a customer, and most of those people have never signed
+in — several are not people at all ("Western Line Sale", "Company Own",
+"JAIPUR"). `salesAmId` can only hold a `users` row, so the projection linked
+the handful that matched and dropped the rest, and every screen fell through
+to the owner: all 557 customers showed a telecaller as their salesperson.
+`customers.salesPersonName` holds the name itself, the screens read it first
+and the linked account only where the sheet is silent, and
+`recomputeSalesPeople()` rebuilds it from what is already stored — the command
+to run when the reading changed rather than the row.
+
+**What it does NOT do is decide whose book a customer is in.** That stays
+`salesAmId`, because scope has to resolve to somebody who can sign in and see
+the work. The two answer different questions and a name with no account cannot
+be given a queue.
+
 **Whose book is one definition, and it is `ASSIGNED_TO_SQL`.** A lead answers
 to its owner; a customer answers to its sales account manager, falling back to
 the owner. Every scoped list reads it — the queue, collections, bills,
@@ -713,6 +732,41 @@ changed the totals under it would show a different figure on every click.
 the *inner* table and the condition silently becomes false — types and unit
 tests both pass. Write `customers.id` in the string instead. This one shipped
 once; the integration tests exist partly to catch it.
+
+**The Admin Console answers from the database, or it does not answer.**
+Every platform screen — Overview, Apps, Data, Notifications, Audit — used to
+render fixtures: a failing integration that did not exist, a nightly backup
+nobody runs, "14 customers unassigned" that was a literal `14`, and a header
+naming two invented people, Sandeep Rao and Vikram Shah, instead of whoever
+was signed in. A console is where somebody goes to find out whether the
+platform is all right, so one that answers from a file is worse than one that
+does not answer: it is believed. `lib/services/admin-platform-service.ts` is
+the one place those questions are asked.
+
+**Where nothing can answer, the screen is GONE rather than filled in.** Access
+requests, lockout counters, failed-attempt logs, grant expiry, unused-access
+reports, feature flags, contract validation, export logs, backup status,
+scheduled configuration changes and per-app roles were all deleted, because
+MahekOne records none of them. Anything kept says plainly what it cannot show
+— a session row has no device or IP because neither is stored.
+
+**A screen that offers an action must do it.** "Trigger password reset" wrote
+a line to an in-memory list and toasted as though mail had gone; "Create user"
+created nobody. Those are real actions now (`sendPasswordResetFor`,
+`endSessionsFor`, `createUser`), and the one save path with nowhere to write
+says so instead of claiming success.
+
+**An app id may not collide with a platform section key.** `people` and `apps`
+are both, and a bare section address let the app win — `/admin/people` opened
+"Attendance & People, registered but not built" instead of the roster. App
+sections are addressed `app-<id>`; a bare id still resolves for anything that
+is not a platform key, so `/admin/crm` keeps working.
+
+**`users.lastLoginAt` is written on sign-in.** Nothing wrote it, so every
+screen asking when somebody last signed in answered "never" — which made the
+console's list of never-used accounts accuse the entire company. Attendance is
+the fallback for accounts that signed in before the column was filled: a day
+recorded is a sign-in, whatever the column says.
 
 **Feedback is a row, not a message.** The Tell us button sits in the header
 of every app, and what it writes lands in `feedback` — kind, heading, detail,
@@ -791,6 +845,17 @@ drizzle-kit applies every pending migration in ONE transaction — so a grant in
 the next migration file fails on any database that has not already been
 through the first. `npm run app:grant` is the way in, which suits HRMS anyway:
 salaries and home addresses are granted deliberately.
+
+**Renaming an app's slug is a RENAME, never an add-and-migrate.** `orders`
+became `accounts` when the app outgrew the name it was given for its first
+screen. Adding the new enum value, updating `app_access` and dropping the old
+one cannot be done at all — a value added to an enum may not be USED in the
+transaction that adds it, and drizzle-kit runs every pending migration in one
+— and doing it across two deploys revokes the app from everybody who has it in
+between. `ALTER TYPE app_id RENAME VALUE` changes it in place: every existing
+grant keeps pointing at the same app without being touched. The old URLs are
+kept alive by a permanent redirect in `next.config.ts`, because a slug lives in
+bookmarks, in emails and in screenshots long after it has changed in the code.
 
 ## Testing
 

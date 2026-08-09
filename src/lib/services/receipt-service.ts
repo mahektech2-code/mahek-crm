@@ -560,7 +560,14 @@ export async function rejectReceipt(
       entityType: "payment_receipt",
       entityId: receiptId,
       beforeState: { status: receipt.status } as never,
-      afterState: { status: "rejected", reason: reason.trim() } as never,
+      // The amount is recorded here, not left to be joined back later: the log
+      // has to say what was rejected, and a receipt somebody later re-records
+      // under a new id would leave this row describing nothing.
+      afterState: {
+        status: "rejected",
+        reason: reason.trim(),
+        amount: Number(receipt.amount),
+      } as never,
     });
   });
 
@@ -788,7 +795,10 @@ export async function customerLedger(
 
   for (const { receipt: r, allocated } of receiptRows) {
     const onAccount = Number(r.amount) - Number(allocated);
-    const parts = [r.mode];
+    // The projection writes "Not stated" as a mode, meaning the sheet never
+    // said how the money arrived. Printed raw it reads as a fault rather than
+    // as a fact about the record, so it is turned into a sentence here.
+    const parts = [r.mode === "Not stated" ? "Payment · method not recorded" : r.mode];
     if (r.reference) parts.push(r.reference);
     if (onAccount > 0) parts.push(`${rupees(onAccount)} on account`);
     if (r.status === "reported") parts.push("waiting for accounts");
@@ -797,7 +807,10 @@ export async function customerLedger(
       at: r.receivedAt,
       sort: `${r.receivedAt}-1-${r.id}`,
       kind: "receipt",
-      ref: r.reference ?? r.mode,
+      // The reference column is for a reference. Where there is none, say so
+      // rather than repeating the mode into it — "Not stated · Not stated"
+      // across two columns looks like a broken row.
+      ref: r.reference ?? (r.mode === "Not stated" ? "—" : r.mode),
       detail: parts.join(" · "),
       debit: 0,
       // Only confirmed money comes off the balance. A reported receipt shows on

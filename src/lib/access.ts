@@ -16,6 +16,8 @@ import { isManager } from "./auth";
 // that started yesterday, and the boundary is configurable.
 import { today } from "./recompute";
 import { pendingOrderCount } from "./services/order-approval-service";
+import { pendingReceiptCount } from "./services/receipt-service";
+import { pendingCreditNoteCount } from "./services/credit-note-service";
 import { activeEmployeeCount } from "./services/employee-service";
 
 /* ---------------------------------------------------------------------------
@@ -63,16 +65,37 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
   const out: LauncherApp[] = [];
 
   for (const app of APPS.filter((a) => ids.includes(a.id))) {
-    // Orders waiting on accounts are the only thing that app holds today, and
-    // an order nobody has looked at is a customer nobody has confirmed to.
-    if (app.id === "orders") {
-      const waiting = await pendingOrderCount();
+    /*
+     * Accounts hold three queues, not one. The tile counted orders alone,
+     * which was honest about its own sentence and silently wrong about the
+     * app: money nobody has confirmed and credit notes nobody has decided
+     * both leave somebody waiting, and neither reached the launcher.
+     *
+     * The badge is the total, and the sentence names what that total is made
+     * of — so the number and the words still describe the same thing, which is
+     * the rule the single-queue version was keeping.
+     */
+    if (app.id === "accounts") {
+      const [orders, payments, credits] = await Promise.all([
+        pendingOrderCount(),
+        pendingReceiptCount(),
+        pendingCreditNoteCount(),
+      ]);
+      const waiting = orders + payments + credits;
+
+      const parts: string[] = [];
+      if (orders) parts.push(`${orders} order${orders === 1 ? "" : "s"} to approve`);
+      if (payments) {
+        parts.push(`${payments} payment${payments === 1 ? "" : "s"} to confirm`);
+      }
+      if (credits) {
+        parts.push(`${credits} credit note${credits === 1 ? "" : "s"}`);
+      }
+
       out.push({
         ...app,
         count: waiting,
-        status: waiting
-          ? `${waiting} order${waiting === 1 ? "" : "s"} waiting for approval`
-          : "Nothing waiting",
+        status: parts.length ? parts.join(" · ") : "Nothing waiting",
       });
       continue;
     }

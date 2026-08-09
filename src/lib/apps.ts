@@ -9,7 +9,7 @@
 export const APP_IDS = [
   "crm",
   "field",
-  "orders",
+  "accounts",
   "people",
   "reports",
   "hrms",
@@ -52,16 +52,20 @@ export const APPS: AppDefinition[] = [
     built: false,
   },
   {
-    id: "orders",
-    // The app grew past its name: orders wait here to be accepted, and so does
-    // money. The id and the route stay `orders` — they are what `app_access`
-    // rows and every bookmark already say, and renaming those would revoke the
-    // app from everybody who has it.
+    id: "accounts",
+    // It was `orders`, named for what it first held. It now holds approvals,
+    // receipts, the bill ledger, credit notes, on-account balances, the sheet
+    // import and the audit log, and "orders" described one screen of seven.
+    //
+    // The slug moved with the name. `app_access` rows came with it — the
+    // migration RENAMEs the enum value in place rather than adding a second
+    // one, so nobody lost the app for an instant — and the old /orders URLs
+    // redirect, so every bookmark still opens it.
     name: "Accounts",
     initials: "AC",
     description:
-      "Orders taken on a call, and payments reported against them, wait here to be accepted.",
-    href: "/orders",
+      "Order approvals, money coming in, the bill ledger and the credit notes behind it.",
+    href: "/accounts",
     tone: "neutral",
     built: true,
   },

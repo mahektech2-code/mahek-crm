@@ -14,7 +14,7 @@ import { fromThrown, type Result } from "@/lib/result";
  */
 function refresh() {
   try {
-    revalidatePath("/orders");
+    revalidatePath("/accounts");
     revalidatePath("/apps");
     revalidatePath("/crm/dashboard");
     revalidatePath("/crm/eod");

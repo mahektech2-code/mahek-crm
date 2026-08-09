@@ -240,25 +240,9 @@ export function ageLabel(days: number): string {
   return `${days} days`;
 }
 
-/** Aging bucket used across bills, payments and the aging bar. */
-export function agingBucket(overdueDays: number): string {
-  if (overdueDays <= 0) return "Not due";
-  if (overdueDays <= 30) return "0–30 days";
-  if (overdueDays <= 60) return "31–60 days";
-  if (overdueDays <= 90) return "61–90 days";
-  return "90+ days";
-}
-
-export const AGING_BUCKETS = [
-  "0–30 days",
-  "31–60 days",
-  "61–90 days",
-  "90+ days",
-] as const;
-
-export const BUCKET_COLOURS: Record<string, string> = {
-  "0–30 days": "#6835FB",
-  "31–60 days": "#B77B08",
-  "61–90 days": "#D97706",
-  "90+ days": "#B3261E",
-};
+/* An `agingBucket` lived here too, with bands of its own — 0–30/31–60/61–90 —
+ * hardcoded where the real one reads `bills.agingBuckets` from configuration.
+ * Nothing imported it, which is the only reason no screen ever disagreed with
+ * the ledger. Deleted rather than corrected: a second set of bands is a second
+ * thing to change, and the one that matters is
+ * `lib/engines/escalation.ts#agingBucket`. */

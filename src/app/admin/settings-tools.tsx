@@ -4,7 +4,6 @@ import * as React from "react";
 import { Badge, Button, Card, Textarea, cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import type { SchemaTab } from "@/lib/config/schema-contract";
-import { SCHEDULED_CHANGES, SETTING_HISTORY } from "./data-platform";
 import { readable, savedValue, tabFields, type Values } from "./settings-model";
 import { useAdmin } from "./store";
 
@@ -25,7 +24,7 @@ export function SettingsToolbar({
   owner: string;
   values: Values;
 }) {
-  const [open, setOpen] = React.useState<null | "compare" | "transfer" | "scheduled">(null);
+  const [open, setOpen] = React.useState<null | "compare" | "transfer">(null);
   const fields = tabFields(tab);
   const differing = fields.filter(
     (f) => JSON.stringify(savedValue(values, f)) !== JSON.stringify(f.def),
@@ -41,10 +40,6 @@ export function SettingsToolbar({
         <Button size="sm" variant="ghost" onClick={() => setOpen("transfer")}>
           Export or import configuration
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => setOpen("scheduled")}>
-          Scheduled changes
-          {SCHEDULED_CHANGES.length ? <Badge tone="warn">{SCHEDULED_CHANGES.length}</Badge> : null}
-        </Button>
       </div>
 
       <CompareModal
@@ -55,7 +50,6 @@ export function SettingsToolbar({
         owner={owner}
       />
       <TransferModal open={open === "transfer"} onClose={() => setOpen(null)} tab={tab} values={values} owner={owner} />
-      <ScheduledModal open={open === "scheduled"} onClose={() => setOpen(null)} owner={owner} />
     </>
   );
 }
@@ -269,99 +263,12 @@ function fileName(owner: string, tabKey: string): string {
 
 /* ------------------------------------------------------- scheduled changes */
 
-function ScheduledModal({ open, onClose, owner }: { open: boolean; onClose: () => void; owner: string }) {
-  const { notify } = useAdmin();
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      width={620}
-      title="Scheduled changes"
-      footer={
-        <Button variant="secondary" onClick={onClose}>
-          Close
-        </Button>
-      }
-    >
-      <div className="text-sm leading-[21px] text-body">
-        Changes agreed now and applied later — a festival uplift, a year-end tightening. They are listed here so nobody
-        is surprised by a threshold that moved on its own.
-      </div>
-      <div className="mt-3.5 overflow-hidden rounded-[4px] border border-line">
-        {SCHEDULED_CHANGES.filter((s) => s.app === owner || owner === "Platform").length === 0 ? (
-          <div className="px-3.5 py-3 text-sm text-muted">Nothing is scheduled for {owner}.</div>
-        ) : null}
-        {SCHEDULED_CHANGES.filter((s) => s.app === owner || owner === "Platform").map((s, i) => (
-          <div key={s.id} className={cx("px-3.5 py-3", i ? "border-t border-canvas" : "")}>
-            <div className="flex items-baseline gap-2.5">
-              <span className="min-w-0 flex-1 text-sm font-medium text-ink">{s.setting}</span>
-              <Badge tone="warn">{s.when}</Badge>
-            </div>
-            <div className="mt-0.5 font-mono text-[13px] text-muted">
-              {s.from} → <span className="text-ink">{s.to}</span>
-            </div>
-            <div className="mt-1 text-[13px] text-muted">
-              {s.why} · set by {s.by}
-            </div>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="mt-2 text-danger"
-              onClick={() => notify(`Scheduled change cancelled — ${s.setting} stays as it is`)}
-            >
-              Cancel this change
-            </Button>
-          </div>
-        ))}
-      </div>
-    </Modal>
-  );
-}
-
-/* ------------------------------------------------- inline setting history */
-
-export function SettingHistory({ settingKey, label }: { settingKey: string; label: string }) {
-  const [open, setOpen] = React.useState(false);
-  const rows = SETTING_HISTORY[settingKey];
-  if (!rows) return null;
-
-  return (
-    <>
-      <button
-        onClick={() => setOpen(true)}
-        className="cursor-pointer border-none bg-transparent p-0 text-[11px] text-brand hover:underline"
-      >
-        {rows.length} earlier value{rows.length === 1 ? "" : "s"}
-      </button>
-      <Modal
-        open={open}
-        onClose={() => setOpen(false)}
-        width={480}
-        title={label}
-        footer={
-          <Button variant="secondary" onClick={() => setOpen(false)}>
-            Close
-          </Button>
-        }
-      >
-        <div className="text-sm text-body">
-          Every value this setting has held. Shown here rather than in Audit, because this is where the question gets
-          asked.
-        </div>
-        <div className="mt-3.5 border-l-2 border-brand-softer pl-3.5">
-          {rows.map((r, i) => (
-            <div key={`${r.value}-${r.t}`} className="py-2">
-              <div className="flex items-baseline gap-2.5">
-                <span className="font-mono text-sm text-ink">{r.value}</span>
-                {i === 0 ? <Badge tone="success">Current</Badge> : null}
-              </div>
-              <div className="text-[13px] text-muted">
-                {r.by} · {r.t}
-              </div>
-            </div>
-          ))}
-        </div>
-      </Modal>
-    </>
-  );
-}
+/* ---------------------------------------------------------------------------
+ * What used to live below here: a "Scheduled changes" button badged with two
+ * changes that did not exist, and a per-setting history read from a fixture.
+ *
+ * Scheduling is not a feature — there is no table and nothing applies one — so
+ * the button is gone rather than reworded. History IS recorded: `updateSettings`
+ * writes one audit row per setting, and Overview → Configuration shows what has
+ * drifted from the code's default, with who moved it and when.
+ * ------------------------------------------------------------------------- */

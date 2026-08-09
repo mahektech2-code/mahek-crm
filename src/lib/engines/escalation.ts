@@ -234,8 +234,12 @@ export function agingBucket(
   for (let i = bounds.length - 1; i >= 0; i--) {
     if (daysOverdue > bounds[i]) {
       const next = bounds[i + 1];
+      // Boundaries are exclusive, so a band opens the day AFTER its boundary.
+      // The open-ended one said `${bound}+`, which named a day the band below
+      // it already owned: with a boundary of 29, day 29 sits in 16–29 and the
+      // top band begins on 30.
       return next === undefined
-        ? `${bounds[i]}+ days`
+        ? `${bounds[i] + 1}+ days`
         : `${bounds[i] + 1}–${next} days`;
     }
   }

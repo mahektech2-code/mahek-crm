@@ -1,0 +1,22 @@
+-- The Orders app becomes the Accounts app, slug and all.
+--
+-- It was named for what it first held. It now holds order approvals, money
+-- coming in, the bill ledger, credit notes, on-account balances, the sheet
+-- import and the audit log — and "orders" describes one of seven screens.
+--
+-- The id is load-bearing in three places at once: the row in `app_access` that
+-- grants somebody the app, the URL segment they land on, and the key every
+-- console screen joins against. Renaming it the obvious way — add `accounts`,
+-- migrate the rows, drop `orders` — would revoke the app from everybody who
+-- has it for as long as the two values disagreed, and Postgres will not let a
+-- value added to an enum be USED in the transaction that adds it, so there is
+-- no way to do the add and the update together.
+--
+-- RENAME VALUE avoids all of it. The value changes in place, so every existing
+-- `app_access` row keeps pointing at the same app without being touched, and
+-- there is no window in which anybody loses access. It is transactional, which
+-- matters because drizzle-kit applies every pending migration in one.
+--
+-- The old /orders URLs keep working: `next.config.ts` redirects them, so a
+-- bookmark or a link in somebody's email still opens the app.
+ALTER TYPE "public"."app_id" RENAME VALUE 'orders' TO 'accounts';

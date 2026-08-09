@@ -26,6 +26,20 @@ import { sheetsConfigured } from "@/lib/sheets";
 import { listPeople } from "@/lib/services/admin-people-service";
 import { feedbackCounts, listFeedback } from "@/lib/services/feedback-service";
 import {
+  attentionItems,
+  auditRows,
+  configDrift,
+  importHistory,
+  integrationStatus,
+  jobHealth,
+  liveSessions,
+  migrationStatus,
+  notificationLog,
+  onboardingRows,
+  platformHealth,
+  usageStats,
+} from "@/lib/services/admin-platform-service";
+import {
   orderSheetId,
   orderTabTitle,
 } from "@/lib/services/sheet-sync-service";
@@ -117,6 +131,36 @@ export default async function Page({
   // other section's data, so the console arrives rendered.
   const [feedbackRows, counts] = await Promise.all([listFeedback(), feedbackCounts()]);
 
+  // The platform sections. Every one of these was a fixture until now, so they
+  // are read here with everything else rather than fetched by a client.
+  const [
+    attention,
+    health,
+    integrations,
+    usage,
+    drift,
+    jobs,
+    audit,
+    imports,
+    migrations,
+    notificationRows,
+    sessionRows,
+    onboarding,
+  ] = await Promise.all([
+    attentionItems(),
+    platformHealth(),
+    integrationStatus(),
+    usageStats(),
+    configDrift(),
+    jobHealth(),
+    auditRows(),
+    importHistory(),
+    migrationStatus(),
+    notificationLog(),
+    liveSessions(),
+    onboardingRows(),
+  ]);
+
   // Stored values, projected into the shapes the console's controls edit.
   const values: Record<string, unknown> = {};
   for (const f of schemaFields(crmSchema())) {
@@ -129,6 +173,21 @@ export default async function Page({
       isPlatformAdmin={isPlatformAdmin}
       initial={{ section, tab }}
       people={people}
+      me={{ name: user.name, initials: user.initials, role: user.role }}
+      platform={{
+        attention,
+        health,
+        integrations,
+        usage,
+        drift,
+        jobs,
+        audit,
+        imports,
+        migrations,
+        notifications: notificationRows,
+        sessions: sessionRows,
+        onboarding,
+      }}
       feedback={{
         rows: feedbackRows,
         counts,

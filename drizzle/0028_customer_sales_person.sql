@@ -1,0 +1,1 @@
+ALTER TABLE "customers" ADD COLUMN "sales_person_name" text;

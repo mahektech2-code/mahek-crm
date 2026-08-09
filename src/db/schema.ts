@@ -304,7 +304,7 @@ export const attachmentStatusEnum = pgEnum("attachment_status", [
 export const appIdEnum = pgEnum("app_id", [
   "crm",
   "field",
-  "orders",
+  "accounts",
   "people",
   "reports",
   "hrms",
@@ -470,6 +470,22 @@ export const customers = pgTable(
     ownerId: text("owner_id").references(() => users.id),
     /** Who the CUSTOMER answers to. Null on leads. Drives scope. */
     salesAmId: text("sales_am_id").references(() => users.id),
+    /**
+     * The salesperson the customer master names, as text.
+     *
+     * Who actually sells to this account is a fact the Sales Party tab holds,
+     * and most of those people have no MahekOne login — several are not people
+     * at all ("Western Line Sale", "Company Own", "JAIPUR"). `salesAmId` can
+     * only hold somebody with a `users` row, so the projection linked the few
+     * that matched and dropped the rest on the floor; every screen then fell
+     * back to the owner and showed a telecaller's name as the salesperson.
+     *
+     * This is a mirror of the sheet and a derived cache: it is never typed on
+     * a screen, and `recomputeSalesPeople()` rebuilds it. `salesAmId` keeps
+     * its job — it is what decides whose book a customer is in, and a name
+     * with no account cannot be given a book.
+     */
+    salesPersonName: text("sales_person_name"),
     /** Dispatch, billing and paperwork. Null on leads, and may be unassigned. */
     backOfficeAmId: text("back_office_am_id").references(() => users.id),
     deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
