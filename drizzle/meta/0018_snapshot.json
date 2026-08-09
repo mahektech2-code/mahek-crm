@@ -1,6 +1,6 @@
 {
-  "id": "7e756f93-9f43-4b37-a155-e80357222053",
-  "prevId": "cb4554c7-5b47-4291-9369-c528ee9e16e3",
+  "id": "27e894e9-27e9-403a-8d8e-73ed24cf3469",
+  "prevId": "d8cf737a-a272-4ab3-a473-eec23b30558e",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4775,6 +4775,824 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.sheet_order_rows": {
+      "name": "sheet_order_rows",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sync_id": {
+          "name": "sync_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "row_number": {
+          "name": "row_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "line_key": {
+          "name": "line_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "order_number": {
+          "name": "order_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "raw": {
+          "name": "raw",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "row_hash": {
+          "name": "row_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "sheet_row_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'present'"
+        },
+        "last_seen_sync_id": {
+          "name": "last_seen_sync_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "order_date": {
+          "name": "order_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dispatch_date": {
+          "name": "dispatch_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "billing_party_name": {
+          "name": "billing_party_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "area": {
+          "name": "area",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "transport_name": {
+          "name": "transport_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payment_type": {
+          "name": "payment_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payment_status": {
+          "name": "payment_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payment_received_date": {
+          "name": "payment_received_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "segment_counter_type": {
+          "name": "segment_counter_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sales_man": {
+          "name": "sales_man",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "credit_days": {
+          "name": "credit_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "order_fulfill_days": {
+          "name": "order_fulfill_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "gst_bp": {
+          "name": "gst_bp",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pack_type": {
+          "name": "pack_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cans": {
+          "name": "cans",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "volume_ml": {
+          "name": "volume_ml",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "rate_paise": {
+          "name": "rate_paise",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "amount_paise": {
+          "name": "amount_paise",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "final_amount_paise": {
+          "name": "final_amount_paise",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "discount_bp": {
+          "name": "discount_bp",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tally_bill_no": {
+          "name": "tally_bill_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "matched_customer_id": {
+          "name": "matched_customer_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "customer_match_status": {
+          "name": "customer_match_status",
+          "type": "sheet_match_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "matched_product_id": {
+          "name": "matched_product_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "product_match_status": {
+          "name": "product_match_status",
+          "type": "sheet_match_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "match_note": {
+          "name": "match_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "issues": {
+          "name": "issues",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "sheet_order_rows_line_key": {
+          "name": "sheet_order_rows_line_key",
+          "columns": [
+            {
+              "expression": "line_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sheet_order_rows_sync_idx": {
+          "name": "sheet_order_rows_sync_idx",
+          "columns": [
+            {
+              "expression": "sync_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sheet_order_rows_order_idx": {
+          "name": "sheet_order_rows_order_idx",
+          "columns": [
+            {
+              "expression": "order_number",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sheet_order_rows_party_idx": {
+          "name": "sheet_order_rows_party_idx",
+          "columns": [
+            {
+              "expression": "billing_party_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sheet_order_rows_customer_idx": {
+          "name": "sheet_order_rows_customer_idx",
+          "columns": [
+            {
+              "expression": "matched_customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sheet_order_rows_date_idx": {
+          "name": "sheet_order_rows_date_idx",
+          "columns": [
+            {
+              "expression": "order_date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sheet_order_rows_row_number_idx": {
+          "name": "sheet_order_rows_row_number_idx",
+          "columns": [
+            {
+              "expression": "row_number",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sheet_order_rows_product_match_idx": {
+          "name": "sheet_order_rows_product_match_idx",
+          "columns": [
+            {
+              "expression": "product_match_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "sheet_order_rows_sync_id_sheet_sync_runs_id_fk": {
+          "name": "sheet_order_rows_sync_id_sheet_sync_runs_id_fk",
+          "tableFrom": "sheet_order_rows",
+          "tableTo": "sheet_sync_runs",
+          "columnsFrom": [
+            "sync_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "sheet_order_rows_matched_customer_id_customers_id_fk": {
+          "name": "sheet_order_rows_matched_customer_id_customers_id_fk",
+          "tableFrom": "sheet_order_rows",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "matched_customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "sheet_order_rows_matched_product_id_products_id_fk": {
+          "name": "sheet_order_rows_matched_product_id_products_id_fk",
+          "tableFrom": "sheet_order_rows",
+          "tableTo": "products",
+          "columnsFrom": [
+            "matched_product_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.sheet_payment_rows": {
+      "name": "sheet_payment_rows",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sync_id": {
+          "name": "sync_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "row_number": {
+          "name": "row_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "order_number": {
+          "name": "order_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "raw": {
+          "name": "raw",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "row_hash": {
+          "name": "row_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "sheet_row_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'present'"
+        },
+        "last_seen_sync_id": {
+          "name": "last_seen_sync_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "billing_party_name": {
+          "name": "billing_party_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tally_bill_no": {
+          "name": "tally_bill_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dispatch_date": {
+          "name": "dispatch_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "bill_amount_paise": {
+          "name": "bill_amount_paise",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "due_date": {
+          "name": "due_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payment_status": {
+          "name": "payment_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payment_received_date": {
+          "name": "payment_received_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "message_date": {
+          "name": "message_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "next_message_date": {
+          "name": "next_message_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "back_office": {
+          "name": "back_office",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "issues": {
+          "name": "issues",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "sheet_payment_rows_order_key": {
+          "name": "sheet_payment_rows_order_key",
+          "columns": [
+            {
+              "expression": "order_number",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sheet_payment_rows_sync_idx": {
+          "name": "sheet_payment_rows_sync_idx",
+          "columns": [
+            {
+              "expression": "sync_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sheet_payment_rows_party_idx": {
+          "name": "sheet_payment_rows_party_idx",
+          "columns": [
+            {
+              "expression": "billing_party_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sheet_payment_rows_status_idx": {
+          "name": "sheet_payment_rows_status_idx",
+          "columns": [
+            {
+              "expression": "payment_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "sheet_payment_rows_sync_id_sheet_sync_runs_id_fk": {
+          "name": "sheet_payment_rows_sync_id_sheet_sync_runs_id_fk",
+          "tableFrom": "sheet_payment_rows",
+          "tableTo": "sheet_sync_runs",
+          "columnsFrom": [
+            "sync_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.sheet_sync_runs": {
+      "name": "sheet_sync_runs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "spreadsheet_id": {
+          "name": "spreadsheet_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tab_title": {
+          "name": "tab_title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mode": {
+          "name": "mode",
+          "type": "sheet_sync_mode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'reconcile'"
+        },
+        "status": {
+          "name": "status",
+          "type": "sheet_sync_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'running'"
+        },
+        "rows_read": {
+          "name": "rows_read",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "rows_created": {
+          "name": "rows_created",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "rows_updated": {
+          "name": "rows_updated",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "rows_unchanged": {
+          "name": "rows_unchanged",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "rows_withdrawn": {
+          "name": "rows_withdrawn",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "rows_with_issues": {
+          "name": "rows_with_issues",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "highest_row": {
+          "name": "highest_row",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "cursor_row": {
+          "name": "cursor_row",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "feeds_crm": {
+          "name": "feeds_crm",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "triggered_by_id": {
+          "name": "triggered_by_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "sheet_sync_runs_source_idx": {
+          "name": "sheet_sync_runs_source_idx",
+          "columns": [
+            {
+              "expression": "source",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "started_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "sheet_sync_runs_triggered_by_id_users_id_fk": {
+          "name": "sheet_sync_runs_triggered_by_id_users_id_fk",
+          "tableFrom": "sheet_sync_runs",
+          "tableTo": "users",
+          "columnsFrom": [
+            "triggered_by_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.users": {
       "name": "users",
       "schema": "",
@@ -5744,6 +6562,42 @@
         "low",
         "medium",
         "high"
+      ]
+    },
+    "public.sheet_match_status": {
+      "name": "sheet_match_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "matched",
+        "ambiguous",
+        "unmatched"
+      ]
+    },
+    "public.sheet_row_status": {
+      "name": "sheet_row_status",
+      "schema": "public",
+      "values": [
+        "present",
+        "withdrawn"
+      ]
+    },
+    "public.sheet_sync_mode": {
+      "name": "sheet_sync_mode",
+      "schema": "public",
+      "values": [
+        "append",
+        "reconcile",
+        "reparse"
+      ]
+    },
+    "public.sheet_sync_status": {
+      "name": "sheet_sync_status",
+      "schema": "public",
+      "values": [
+        "running",
+        "ok",
+        "failed"
       ]
     },
     "public.sku_status": {

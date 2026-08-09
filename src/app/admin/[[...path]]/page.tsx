@@ -15,6 +15,13 @@ import {
   listSkus,
 } from "@/lib/services/catalogue-service";
 import { SOURCE_DISCREPANCIES } from "@/db/catalogue-seed";
+import {
+  listSheetIssues,
+  listSheetOrders,
+  listSheetRows,
+  sheetSummary,
+} from "@/lib/services/sheet-order-service";
+import { sheetsConfigured } from "@/lib/sheets";
 import type { Config } from "@/lib/config/registry";
 import { AdminConsole } from "../console";
 
@@ -81,6 +88,20 @@ export default async function Page({
     listAliases(),
   ]);
 
+  // The imported order sheet. Read here rather than in the client component so
+  // the section arrives rendered, like every other section in this console.
+  const [sheetStats, sheetPage, sheetOrders, sheetIssues] = await Promise.all([
+    sheetSummary(),
+    listSheetRows({
+      query: one("sq"),
+      issuesOnly: one("sissues") === "1",
+      page: Math.max(1, Number(one("spage") ?? 1) || 1),
+      perPage: 100,
+    }),
+    listSheetOrders(200),
+    listSheetIssues(),
+  ]);
+
   // Stored values, projected into the shapes the console's controls edit.
   const values: Record<string, unknown> = {};
   for (const f of schemaFields(crmSchema())) {
@@ -92,6 +113,21 @@ export default async function Page({
       apps={APPS.filter((a) => apps.includes(a.id))}
       isPlatformAdmin={isPlatformAdmin}
       initial={{ section, tab }}
+      sheet={{
+        summary: sheetStats,
+        rows: sheetPage.rows,
+        total: sheetPage.total,
+        page: sheetPage.page,
+        pages: sheetPage.pages,
+        orders: sheetOrders,
+        issues: sheetIssues,
+        filters: { query: one("sq"), issuesOnly: one("sissues") === "1" },
+        source: {
+          spreadsheetId: process.env.ORDERS_SHEET_ID ?? null,
+          tabTitle: process.env.ORDERS_SHEET_TAB ?? "Order Details",
+          configured: sheetsConfigured(),
+        },
+      }}
       catalogue={{
         summary,
         skus: skuPage.rows,

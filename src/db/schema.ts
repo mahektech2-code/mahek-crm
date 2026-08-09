@@ -1464,6 +1464,340 @@ export const queueSnapshots = pgTable(
   ],
 );
 
+/* ------------------------------------------------- imported sheet: orders
+ *
+ * The order history lives in a Google Sheet that somebody else maintains, and
+ * it arrives with the defects any long-lived spreadsheet has: product names
+ * that are brand families rather than SKUs, a salesman column carrying people
+ * and sales channels and one city, columns that are entirely empty, and the
+ * occasional row whose Final Amount does not follow from its own Amount.
+ *
+ * So the landing is deliberately dumb. Every column arrives as the sheet gave
+ * it and NOTHING is rejected: a row that cannot be understood is still a row
+ * we hold, and the reason it could not be understood is recorded beside it.
+ * Interpretation is a separate, re-runnable pass over rows already stored,
+ * which is what makes fixing the sheet tomorrow a re-parse rather than a
+ * re-fetch — and what stops a bad row from costing us the other 19,999.
+ * ------------------------------------------------------------------------- */
+
+export const sheetSyncStatusEnum = pgEnum("sheet_sync_status", [
+  "running",
+  "ok",
+  "failed",
+]);
+
+/**
+ * How much of the sheet a sync looked at.
+ *
+ * Google offers no "changed since" for a spreadsheet, so there is no such
+ * thing as a cheap correct read — only a cheap read and a correct one, and the
+ * schedule runs both:
+ *
+ *  - `append` reads only past the highest row seen before. At 30,000 rows of
+ *    order history that is a few hundred cells instead of two million, so it
+ *    can run every few minutes. It cannot see an edit to an existing row.
+ *  - `reconcile` reads the whole tab and compares hashes. It catches edits,
+ *    corrections and deletions, and runs nightly.
+ *  - `reparse` touches Google not at all: it re-reads the stored `raw` and
+ *    parses it again. That is the one to run after fixing a parsing rule, and
+ *    it is why the raw column exists.
+ */
+export const sheetSyncModeEnum = pgEnum("sheet_sync_mode", [
+  "append",
+  "reconcile",
+  "reparse",
+]);
+
+/**
+ * Whether the row is still in the sheet.
+ *
+ * A row that disappears is marked, never deleted. Somebody sorting a
+ * spreadsheet badly, or a filter left on during an export, should not silently
+ * erase order history we have already shown people.
+ */
+export const sheetRowStatusEnum = pgEnum("sheet_row_status", [
+  "present",
+  "withdrawn",
+]);
+
+/**
+ * One row per sync. Kept as history rather than overwritten: when a figure on
+ * a screen looks wrong, the first question is which pull it came from.
+ */
+export const sheetSyncRuns = pgTable(
+  "sheet_sync_runs",
+  {
+    id: text("id").primaryKey(),
+    /** Which sheet+tab. One row per source, so a second import gets its own. */
+    source: text("source").notNull(),
+    spreadsheetId: text("spreadsheet_id").notNull(),
+    tabTitle: text("tab_title").notNull(),
+    mode: sheetSyncModeEnum("mode").notNull().default("reconcile"),
+    status: sheetSyncStatusEnum("status").notNull().default("running"),
+    rowsRead: integer("rows_read").notNull().default(0),
+    rowsCreated: integer("rows_created").notNull().default(0),
+    rowsUpdated: integer("rows_updated").notNull().default(0),
+    /**
+     * Rows whose hash was unchanged, so nothing was written for them. At 30k
+     * rows this is nearly all of them, and it is the number that shows the
+     * sync is doing work proportional to what changed rather than to size.
+     */
+    rowsUnchanged: integer("rows_unchanged").notNull().default(0),
+    rowsWithdrawn: integer("rows_withdrawn").notNull().default(0),
+    rowsWithIssues: integer("rows_with_issues").notNull().default(0),
+    /**
+     * The highest sheet row this source has ever seen, carried forward so the
+     * next `append` run knows where to start reading.
+     */
+    highestRow: integer("highest_row").notNull().default(1),
+    /**
+     * Where a chunked run got to. A sync that dies at row 24,000 of 30,000
+     * resumes from here instead of starting the whole read again.
+     */
+    cursorRow: integer("cursor_row"),
+    /** Populated on failure. A sync that died halfway says so on the screen. */
+    error: text("error"),
+    /**
+     * Whether this batch is allowed to feed the CRM's derived state — buying
+     * cycles, outstanding, lastOrderDate, targets.
+     *
+     * It starts FALSE and that is the point. Those values are caches the whole
+     * application trusts, and data imported from a sheet nobody has corrected
+     * yet must be visible without being believed. Turning it on is a decision
+     * somebody makes about a specific batch, after looking at the exceptions.
+     */
+    feedsCrm: boolean("feeds_crm").notNull().default(false),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    triggeredById: text("triggered_by_id").references(() => users.id),
+  },
+  (t) => [index("sheet_sync_runs_source_idx").on(t.source, t.startedAt)],
+);
+
+export const sheetMatchStatusEnum = pgEnum("sheet_match_status", [
+  /** Not looked at yet. */
+  "pending",
+  /** Exactly one candidate. */
+  "matched",
+  /** More than one candidate — held for a person, never auto-picked. */
+  "ambiguous",
+  /** No candidate at all. */
+  "unmatched",
+]);
+
+/**
+ * The raw landing table for the Order Details tab. One row per SHEET row,
+ * which is one order LINE — the sheet repeats the order-level columns across
+ * every line of an order, so 99 rows are 47 orders.
+ *
+ * `raw` holds all 55 columns whatever they are called; the typed columns below
+ * are a best-effort reading of them and every one is nullable. A null here
+ * means "could not be read", never "zero" — and `issues` says why.
+ */
+export const sheetOrderRows = pgTable(
+  "sheet_order_rows",
+  {
+    id: text("id").primaryKey(),
+    syncId: text("sync_id")
+      .notNull()
+      .references(() => sheetSyncRuns.id, { onDelete: "cascade" }),
+    /** 1-based row in the sheet, header included — what you scroll to. */
+    rowNumber: integer("row_number").notNull(),
+
+    /**
+     * The sheet's own per-line identifier (its "Order ID", e.g. ODID-89BBFA6B).
+     * Unique, and the key the import is idempotent on: re-running after the
+     * sheet is corrected updates the row in place instead of duplicating it.
+     */
+    lineKey: text("line_key").notNull(),
+    /** The sheet's "Order Number" — shared by every line of one order. */
+    orderNumber: text("order_number"),
+
+    /**
+     * Every column, exactly as the sheet gave it, keyed by header text.
+     *
+     * Never selected by a list query. It is the biggest thing on the row and a
+     * table of 30,000 of them would drag hundreds of megabytes through the
+     * pool to render a screen — the same reason attachment bytes live in their
+     * own table rather than as a column on `attachments`.
+     */
+    raw: jsonb("raw").$type<Record<string, string>>().notNull(),
+
+    /**
+     * SHA-256 of the raw row. The whole of incremental sync rests on this: a
+     * reconcile read hashes each row and writes only the ones that differ, so
+     * a nightly pass over 30,000 unchanged rows performs 30,000 comparisons
+     * and zero writes.
+     */
+    rowHash: text("row_hash").notNull(),
+
+    /** Whether the row is still in the sheet. Disappearance is a status. */
+    status: sheetRowStatusEnum("status").notNull().default("present"),
+    /** Which sync last saw this row present — what marks the rest withdrawn. */
+    lastSeenSyncId: text("last_seen_sync_id"),
+
+    /* ---- order-level, best effort. Consistent across an order's lines. ---- */
+    orderDate: date("order_date"),
+    dispatchDate: date("dispatch_date"),
+    billingPartyName: text("billing_party_name"),
+    area: text("area"),
+    transportName: text("transport_name"),
+    paymentType: text("payment_type"),
+    paymentStatus: text("payment_status"),
+    paymentReceivedDate: date("payment_received_date"),
+    segmentCounterType: text("segment_counter_type"),
+    /** Free text. Holds people, sales channels and at least one city. */
+    salesMan: text("sales_man"),
+    creditDays: integer("credit_days"),
+    orderFulfillDays: integer("order_fulfill_days"),
+    /** Basis points: 18% is 1800. Percentages are never floats here. */
+    gstBp: integer("gst_bp"),
+
+    /* ---------------------------- line-level ---------------------------- */
+    description: text("description"),
+    /** The sheet's "Type" — Can or Drums. */
+    packType: text("pack_type"),
+    cans: integer("cans"),
+    /** Millilitres, so litres survive as integers: 12.50 L is 12500. */
+    volumeMl: bigint("volume_ml", { mode: "number" }),
+    /** Paise, and per CAN — the sheet's Rate is not per litre. */
+    ratePaise: bigint("rate_paise", { mode: "number" }),
+    amountPaise: bigint("amount_paise", { mode: "number" }),
+    finalAmountPaise: bigint("final_amount_paise", { mode: "number" }),
+    /** Basis points. The sheet's Discount is a PERCENTAGE, not an amount. */
+    discountBp: integer("discount_bp"),
+    /** Line-level: one order's lines can carry different bill numbers. */
+    tallyBillNo: text("tally_bill_no"),
+
+    /* ------------------------------ matching ------------------------------
+     * Resolved ids stay null until something resolves unambiguously. Nothing
+     * here guesses: "MELODY" names five brand lines in the catalogue and
+     * picking one would silently attribute an order to the wrong product.
+     */
+    matchedCustomerId: text("matched_customer_id").references(() => customers.id, {
+      onDelete: "set null",
+    }),
+    customerMatchStatus: sheetMatchStatusEnum("customer_match_status")
+      .notNull()
+      .default("pending"),
+    matchedProductId: text("matched_product_id").references(() => products.id, {
+      onDelete: "set null",
+    }),
+    productMatchStatus: sheetMatchStatusEnum("product_match_status")
+      .notNull()
+      .default("pending"),
+    /** Why a match was refused: the candidates it could not choose between. */
+    matchNote: text("match_note"),
+
+    /**
+     * Everything that could not be read, one entry per column. A row with
+     * issues still imports — this is a note for whoever fixes the sheet, not
+     * a rejection.
+     */
+    issues: jsonb("issues").$type<SheetRowIssue[]>().notNull().default([]),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sheet_order_rows_line_key").on(t.lineKey),
+    index("sheet_order_rows_sync_idx").on(t.syncId),
+    index("sheet_order_rows_order_idx").on(t.orderNumber),
+    index("sheet_order_rows_party_idx").on(t.billingPartyName),
+    index("sheet_order_rows_customer_idx").on(t.matchedCustomerId),
+    /**
+     * The admin table's default order, and its keyset pagination key. Date
+     * alone is not unique — three hundred orders share one day — so the id
+     * rides along to make the cursor stable.
+     */
+    index("sheet_order_rows_date_idx").on(t.orderDate, t.id),
+    index("sheet_order_rows_row_number_idx").on(t.rowNumber),
+    /** Drives the exceptions screen without scanning the whole table. */
+    index("sheet_order_rows_product_match_idx").on(t.productMatchStatus),
+  ],
+);
+
+export type SheetRowIssue = {
+  /** The sheet column header the problem is in. */
+  column: string;
+  /** What the cell actually held, so the screen can show it without a re-read. */
+  value: string;
+  problem: string;
+  /**
+   * How much of somebody's attention this deserves. Optional, because the
+   * order sheet's issues predate it and are all `unreadable` in effect.
+   *
+   * The distinction earns its place on the employee sheet, where two thirds of
+   * the rows carry a date that could be read two ways. A note saying "we took
+   * 5/1/2021 as the 5th of January" is worth surfacing, and it is not the same
+   * kind of thing as a leaving date before a joining date. Counting them
+   * together would put 66 of 71 people under "needs attention", which is the
+   * same as putting nobody there.
+   */
+  kind?: "unreadable" | "ambiguous" | "contradiction";
+};
+
+/**
+ * The Payment Status tab: one row per ORDER, not per line and not per bill.
+ *
+ * It is a separate table rather than columns on `sheet_order_rows` because the
+ * grain differs — 23,619 order lines against 10,510 payment rows — and because
+ * the two tabs are maintained by different people and arrive at different
+ * times. Folding them together would make a payment update rewrite order rows
+ * that did not change.
+ *
+ * The key is Order Number. The Tally bill number cannot be one: 113 of them
+ * repeat across 539 rows, some hold placeholders like "1" against a zero
+ * amount, and `bills.bill_no` is unique.
+ */
+export const sheetPaymentRows = pgTable(
+  "sheet_payment_rows",
+  {
+    id: text("id").primaryKey(),
+    syncId: text("sync_id")
+      .notNull()
+      .references(() => sheetSyncRuns.id, { onDelete: "cascade" }),
+    rowNumber: integer("row_number").notNull(),
+    /** The idempotency key. Unique across the tab, and 1:1 with an order. */
+    orderNumber: text("order_number").notNull(),
+
+    raw: jsonb("raw").$type<Record<string, string>>().notNull(),
+    rowHash: text("row_hash").notNull(),
+    status: sheetRowStatusEnum("status").notNull().default("present"),
+    lastSeenSyncId: text("last_seen_sync_id"),
+
+    billingPartyName: text("billing_party_name"),
+    tallyBillNo: text("tally_bill_no"),
+    dispatchDate: date("dispatch_date"),
+    /** Paise. The sheet writes whole rupees here. */
+    billAmountPaise: bigint("bill_amount_paise", { mode: "number" }),
+    /**
+     * Filled on 13% of rows. Null is not a gap to fill in: a bill with no due
+     * date of its own resolves one from the order's term, then the customer's,
+     * then the configured default — which is the existing rule, and better
+     * than inventing a date here.
+     */
+    dueDate: date("due_date"),
+    /** "Received", "Pending", or absent — and absent is its own answer. */
+    paymentStatus: text("payment_status"),
+    paymentReceivedDate: date("payment_received_date"),
+    messageDate: date("message_date"),
+    nextMessageDate: date("next_message_date"),
+    backOffice: text("back_office"),
+
+    issues: jsonb("issues").$type<SheetRowIssue[]>().notNull().default([]),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sheet_payment_rows_order_key").on(t.orderNumber),
+    index("sheet_payment_rows_sync_idx").on(t.syncId),
+    index("sheet_payment_rows_party_idx").on(t.billingPartyName),
+    index("sheet_payment_rows_status_idx").on(t.paymentStatus),
+  ],
+);
+
 /* --------------------------------------------------------------- relations */
 
 export const usersRelations = relations(users, ({ many, one }) => ({
@@ -1625,3 +1959,6 @@ export type EodReport = typeof eodReports.$inferSelect;
 export type AppSetting = typeof appSettings.$inferSelect;
 export type JobRun = typeof jobRuns.$inferSelect;
 export type AuditEntry = typeof auditLog.$inferSelect;
+export type SheetSyncRun = typeof sheetSyncRuns.$inferSelect;
+export type SheetOrderRow = typeof sheetOrderRows.$inferSelect;
+export type SheetPaymentRow = typeof sheetPaymentRows.$inferSelect;
