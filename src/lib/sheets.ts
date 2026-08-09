@@ -95,10 +95,24 @@ async function api<T>(path: string): Promise<T> {
       res.status === 403
         ? ` Share the sheet with ${process.env.GOOGLE_SA_EMAIL} as Viewer.`
         : "";
-    throw new Error(`Google Sheets ${res.status}: ${body.error?.message ?? ""}.${hint}`);
+    const message = body.error?.message ?? "";
+    if (res.status === 400 && /exceeds grid limits/i.test(message)) {
+      throw new RangeBeyondSheetError(message);
+    }
+    throw new Error(`Google Sheets ${res.status}: ${message}.${hint}`);
   }
   return body;
 }
+
+/**
+ * Asked for rows that are not in the grid.
+ *
+ * Google answers a range starting past the last row with a 400 rather than an
+ * empty result, so this is not an error in any useful sense — it is the end of
+ * the sheet, arriving as an exception. An append run reaches it the moment it
+ * has caught up, which is most of the time, so it must not read as a failure.
+ */
+export class RangeBeyondSheetError extends Error {}
 
 export type SheetTab = { title: string; gid: number; rows: number; columns: number };
 
@@ -175,10 +189,21 @@ export async function readTab(
       ? `!${range.firstRow}:${range.lastRow ?? ""}`
       : "";
 
-  const data = await api<{ values?: string[][] }>(
-    `${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(tab + rows)}` +
-      `?majorDimension=ROWS&valueRenderOption=FORMATTED_VALUE`,
-  );
+  let data: { values?: string[][] };
+  try {
+    data = await api<{ values?: string[][] }>(
+      `${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(tab + rows)}` +
+        `?majorDimension=ROWS&valueRenderOption=FORMATTED_VALUE`,
+    );
+  } catch (error) {
+    // A window that starts past the last row holds no rows. Saying so is the
+    // honest answer, and it is what ends a windowed read rather than failing
+    // one. Only this one error is absorbed; everything else still throws.
+    if (error instanceof RangeBeyondSheetError) {
+      return { headers: range.headers ?? [], rows: [], rowsInWindow: 0 };
+    }
+    throw error;
+  }
 
   const values = data.values ?? [];
   const firstRow = range.firstRow ?? 1;

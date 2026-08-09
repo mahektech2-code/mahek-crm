@@ -1,0 +1,74 @@
+import { NextResponse } from "next/server";
+import { runJob, type JobName } from "@/lib/jobs";
+
+/* ---------------------------------------------------------------------------
+ * The order sheet's only trigger on a deployed machine.
+ *
+ * The three sync jobs were CLI-only, which is fine on a laptop and useless on
+ * Vercel — there is no shell there, so nothing has ever imported an order into
+ * production. This is what makes the schedule reachable.
+ *
+ * Which job runs is a query parameter rather than three routes, because they
+ * are one job with three appetites and the cron entries read better naming the
+ * mode than the path:
+ *
+ *   ?mode=append      only past the highest row seen. Cheap, every few minutes.
+ *   ?mode=reconcile   the whole tab, hash-compared. Catches edits and deletions.
+ *   ?mode=payments    the Payment Status tab, always a full compare — a payment
+ *                     row's whole purpose is to change in place long after it
+ *                     was written, which an append run would never see.
+ *
+ * `reparse` is deliberately NOT reachable here. It re-reads stored rows after
+ * somebody corrects a parsing rule, which is a decision a person makes with a
+ * deploy, not something a schedule should do on its own.
+ *
+ * It is not open. Vercel Cron sends `Authorization: Bearer $CRON_SECRET`, and
+ * without a secret configured the route refuses rather than running — an
+ * endpoint that pulls a company's order book into the database on request is
+ * not a default anybody should get by forgetting a variable.
+ * ------------------------------------------------------------------------- */
+
+// A sheet read and a batch of writes: never cached, never prerendered.
+export const dynamic = "force-dynamic";
+
+/** A long reconcile is minutes of work, not the default ten seconds. */
+export const maxDuration = 300;
+
+const JOBS: Record<string, JobName> = {
+  append: "sheet-append",
+  reconcile: "sheet-reconcile",
+  payments: "sheet-payments",
+};
+
+export async function GET(request: Request) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) {
+    return NextResponse.json(
+      { ok: false, error: "CRON_SECRET is not set, so this endpoint is closed." },
+      { status: 503 },
+    );
+  }
+  if (request.headers.get("authorization") !== `Bearer ${secret}`) {
+    return NextResponse.json({ ok: false, error: "Not authorised." }, { status: 401 });
+  }
+
+  const mode = new URL(request.url).searchParams.get("mode") ?? "append";
+  const job = JOBS[mode];
+  if (!job) {
+    return NextResponse.json(
+      { ok: false, error: `Unknown mode "${mode}". Use append, reconcile or payments.` },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const [result] = await runJob(job);
+    return NextResponse.json({ ok: true, ...result });
+  } catch (e) {
+    // The job row already carries the failure; this is what the cron log sees.
+    return NextResponse.json(
+      { ok: false, error: e instanceof Error ? e.message : String(e) },
+      { status: 500 },
+    );
+  }
+}
