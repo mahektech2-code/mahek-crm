@@ -18,9 +18,9 @@ function refresh() {
   try {
     // Money moving touches the accounts queue, the collections screens and
     // every place outstanding is shown.
-    revalidatePath("/orders/payments");
-    revalidatePath("/orders/record");
-    revalidatePath("/orders/ledger");
+    revalidatePath("/accounts/payments");
+    revalidatePath("/accounts/record");
+    revalidatePath("/accounts/ledger");
     revalidatePath("/apps");
     revalidatePath("/crm/payments");
     revalidatePath("/crm/bills");

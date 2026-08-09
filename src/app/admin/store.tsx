@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useToast } from "@/components/ui/toast";
 import { APPS } from "@/lib/apps";
-import { setUserApps } from "@/lib/actions/people";
+import { setUserApps, setUserRole } from "@/lib/actions/people";
 import type { Person } from "@/lib/services/admin-people-service";
 
 /**
@@ -27,24 +27,12 @@ const FULL_REGISTRY: RegistryEntry[] = APPS.map((a, i) => {
   } as RegistryEntry;
 });
 import {
-  AUDIT,
-  DEFAULT_ACCESS_RULES,
   ENTITIES,
-  EXPIRING,
-  PERSONAS,
   REGISTRY,
-  REQUESTS,
-  SESSIONS,
-  UNUSED_ACCESS,
   type AdminUser,
-  type AccessRequest,
-  type AuditKind,
-  type AuditRow,
   type EntityKind,
   type EntityRow,
-  type Persona,
   type RegistryEntry,
-  type Session,
 } from "./data";
 
 /* ---------------------------------------------------------------------------
@@ -76,37 +64,26 @@ export type Drawer =
 export type AdminNote = { text: string; by: string; t: string };
 
 type Store = {
-  me: Persona;
-  personas: Persona[];
-  setPersona: (key: string) => void;
+  /** The signed-in account, as the actor on anything written from here. */
+  me: { name: string };
 
   users: AdminUser[];
-  sessions: Session[];
-  requests: AccessRequest[];
   registry: RegistryEntry[];
-  audit: AuditRow[];
   entities: Record<EntityKind, EntityRow[]>;
-  accessRules: Array<{ line: string; on: boolean }>;
-  expiring: typeof EXPIRING;
-  unused: typeof UNUSED_ACCESS;
   notes: Record<string, AdminNote[]>;
 
   notify: (message: string) => void;
-  record: (kind: AuditKind, app: string, setting: string, from: string, to: string, subject?: string | null) => void;
 
   patchUser: (id: string, patch: Partial<AdminUser>) => void;
   toggleAppAccess: (id: string, appId: string) => void;
-  setRole: (id: string, appId: string, role: string) => void;
-  revokeGrant: (id: string, appId: string) => void;
-  endSession: (sessionId: string) => void;
-  endAllSessions: () => void;
-  resolveRequest: (id: string, approved: boolean) => void;
-  setAppStatus: (appId: string, status: RegistryEntry["status"]) => void;
-  toggleAccessRule: (index: number) => void;
+  /**
+   * The account's ONE role. There is no role per app: `users.role` is what
+   * every capability check reads, and the per-app matrix this replaced wrote
+   * to nothing at all.
+   */
+  setPlatformRole: (id: string, role: AdminUser["platformRole"]) => void;
   archiveEntity: (kind: EntityKind, id: string) => void;
   addNote: (userId: string, text: string) => void;
-  endExpiring: (index: number) => void;
-  revokeUnused: (index: number) => void;
 
   drawer: Drawer | null;
   openDrawer: (d: Drawer) => void;
@@ -140,7 +117,8 @@ function toAdminUser(p: Person): AdminUser {
     mobile: p.phone ?? "",
     status: p.active ? "Active" : "Deactivated",
     apps: p.apps,
-    roles: {},
+    platformRole: p.role,
+    customers: p.customerCount,
     reportsTo: p.reportsToName ?? undefined,
     designation: roleLabel,
     lastSeen: stamp(p.lastLoginAt) || "Never",
@@ -148,67 +126,47 @@ function toAdminUser(p: Person): AdminUser {
     created: stamp(p.createdAt),
     createdBy: "",
     joined: stamp(p.createdAt),
-    grants: [],
-    roleLog: [],
   };
 }
 
 export function AdminStore({
   children,
   people,
+  me,
 }: {
   children: React.ReactNode;
   people: Person[];
+  /** The signed-in account. What the audit trail records as the actor. */
+  me: { name: string };
 }) {
   const toast = useToast();
-
-  const [personaKey, setPersonaKey] = React.useState(PERSONAS[0].key);
   // Seeded once from the database. Every write here updates this list and is
   // rolled back if the server refuses, and each action revalidates, so a
   // navigation brings the authoritative version. Deliberately no effect
   // syncing state to props: this codebase remounts rather than re-syncing.
   const [users, setUsers] = React.useState<AdminUser[]>(() => people.map(toAdminUser));
-  const [sessions, setSessions] = React.useState<Session[]>(SESSIONS);
-  const [requests, setRequests] = React.useState<AccessRequest[]>(REQUESTS);
   // The real app list, not the console's three-entry sample. An access matrix
   // that cannot show four of the seven apps cannot grant them either.
-  const [registry, setRegistry] = React.useState<RegistryEntry[]>(FULL_REGISTRY);
-  const [audit, setAudit] = React.useState<AuditRow[]>(AUDIT);
+  // The app list is code, not state: nothing in this console can add an app,
+  // because adding one means writing it.
+  const registry = FULL_REGISTRY;
   const [entities, setEntities] = React.useState(ENTITIES);
-  const [accessRules, setAccessRules] = React.useState(DEFAULT_ACCESS_RULES);
-  const [expiring, setExpiring] = React.useState(EXPIRING);
-  const [unused, setUnused] = React.useState(UNUSED_ACCESS);
   const [notes, setNotes] = React.useState<Record<string, AdminNote[]>>({});
   const [drawer, setDrawer] = React.useState<Drawer | null>(null);
 
-  const me = PERSONAS.find((p) => p.key === personaKey) ?? PERSONAS[0];
-
   const value = React.useMemo<Store>(() => {
     const notify = (message: string) => toast.push(message);
-
-    const record = (
-      kind: AuditKind, app: string, setting: string, from: string, to: string, subject?: string | null,
-    ) => setAudit((rows) => [{ kind, app, setting, from, to, actor: me.name, subject: subject ?? null, t: "Just now" }, ...rows]);
 
     const patchUser = (id: string, patch: Partial<AdminUser>) =>
       setUsers((all) => all.map((u) => (u.id === id ? { ...u, ...patch } : u)));
 
     return {
       me,
-      personas: PERSONAS,
-      setPersona: setPersonaKey,
       users,
-      sessions,
-      requests,
       registry,
-      audit,
       entities,
-      accessRules,
-      expiring,
-      unused,
       notes,
       notify,
-      record,
       patchUser,
 
       /**
@@ -236,13 +194,6 @@ export function AdminStore({
             notify(result.error);
             return;
           }
-          record(
-            "access",
-            "Platform",
-            had ? `App access revoked — ${app?.name}` : `App access granted — ${app?.name}`,
-            had ? user.name : "—",
-            had ? "—" : user.name,
-          );
           if (before.length === 1 && apps.length === 2) {
             notify(`${user.name} now lands on the launcher instead of going straight into one app`);
           } else if (before.length === 2 && apps.length === 1) {
@@ -253,62 +204,23 @@ export function AdminStore({
         });
       },
 
-      setRole: (id, appId, role) => {
+      setPlatformRole: (id, role) => {
         const user = users.find((u) => u.id === id);
         if (!user) return;
-        const app = registry.find((a) => a.id === appId);
-        patchUser(id, { roles: { ...user.roles, [appId]: role } });
-        record("access", "Platform", `Role changed — ${app?.short}`, user.roles[appId] ?? "—", role);
-        notify(`${user.name} is now ${role} in ${app?.short}`);
-      },
+        const before = user.platformRole;
+        if (before === role) return;
 
-      revokeGrant: (id, appId) => {
-        const user = users.find((u) => u.id === id);
-        if (!user) return;
-        const app = registry.find((a) => a.id === appId);
-        patchUser(id, {
-          apps: user.apps.filter((a) => a !== appId),
-          grants: user.grants.filter((g) => g.app !== appId),
+        // Shown at once, then confirmed. A refused write puts the row back —
+        // the console must never claim a change the server declined.
+        patchUser(id, { platformRole: role });
+        void setUserRole(id, role).then((result) => {
+          if (!result.ok) {
+            patchUser(id, { platformRole: before });
+            notify(result.error);
+            return;
+          }
+          notify(result.message ?? `${user.name} is now ${role}`);
         });
-        record("access", "Platform", `App access revoked — ${app?.name}`, user.name, "—");
-        notify(`${app?.name} access revoked from ${user.name}`);
-      },
-
-      endSession: (sessionId) => {
-        const s = sessions.find((x) => x.id === sessionId);
-        setSessions((all) => all.filter((x) => x.id !== sessionId));
-        const who = users.find((u) => u.id === s?.user);
-        notify(who ? `Session ended for ${who.name}` : "Session ended");
-      },
-
-      endAllSessions: () => {
-        setSessions([]);
-        notify("Every session on the platform has been ended");
-      },
-
-      resolveRequest: (id, approved) => {
-        const r = requests.find((x) => x.id === id);
-        if (!r) return;
-        setRequests((all) => all.filter((x) => x.id !== id));
-        record("access", "Platform", `Access request ${approved ? "approved" : "declined"} — ${r.app}`, "Pending", approved ? "Granted" : "Declined");
-        notify(approved ? `${r.app} access granted to ${r.user}` : `Request declined — ${r.user} is told why`);
-      },
-
-      /**
-       * Maintenance mode shows a banner inside the app and marks its launcher
-       * card, so nobody opens it and wonders why the figures look wrong.
-       */
-      setAppStatus: (appId, status) => {
-        const app = registry.find((a) => a.id === appId);
-        if (!app) return;
-        setRegistry((all) => all.map((a) => (a.id === appId ? { ...a, status } : a)));
-        record("admin", "Platform", `App status — ${app.name}`, app.status, status);
-        notify(`${app.name} set to ${status} — a banner shows inside the app and on its launcher card`);
-      },
-
-      toggleAccessRule: (index) => {
-        setAccessRules((all) => all.map((r, i) => (i === index ? { ...r, on: !r.on } : r)));
-        notify("Default access rule updated");
       },
 
       /** Retired records are deactivated, never deleted — old references must keep resolving. */
@@ -327,23 +239,11 @@ export function AdminStore({
         notify("Note added");
       },
 
-      endExpiring: (index) => {
-        const row = expiring[index];
-        setExpiring((all) => all.filter((_, i) => i !== index));
-        notify(`Access ended for ${row.who}`);
-      },
-
-      revokeUnused: (index) => {
-        const row = unused[index];
-        setUnused((all) => all.filter((_, i) => i !== index));
-        notify(`${row.app} access revoked from ${row.who}`);
-      },
-
       drawer,
       openDrawer: setDrawer,
       closeDrawer: () => setDrawer(null),
     };
-  }, [me, users, sessions, requests, registry, audit, entities, accessRules, expiring, unused, notes, drawer, toast]);
+  }, [me, users, registry, entities, notes, drawer, toast]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

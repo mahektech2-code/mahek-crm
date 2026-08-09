@@ -12,9 +12,7 @@ import type { Config } from "@/lib/config/registry";
 import { crmSchema, toStored } from "@/lib/config/schema-contract";
 import type { Collection } from "@/lib/config/entity-collections";
 import { updateConfigSettings } from "@/lib/actions/crm";
-import { INTEGRATIONS, PLATFORM_SUBTITLES, PLATFORM_TABS } from "./data";
-import { PLATFORM_SCHEMA } from "./data-platform";
-import { NotificationsSection } from "./platform-extra";
+import { PLATFORM_SUBTITLES, PLATFORM_TABS } from "./data";
 import {
   changeSet,
   dirtyFields,
@@ -26,7 +24,23 @@ import {
 } from "./settings-model";
 import { SettingsSection } from "./settings-section";
 import { SettingsToolbar } from "./settings-tools";
-import { AppsSection, AuditSection, DataSection, OverviewSection } from "./platform-sections";
+import { SchemaInspector } from "./platform-extra";
+import {
+  AttentionTab,
+  AuditTab,
+  DriftTab,
+  HealthTab,
+  ImportsTab,
+  IntegrationsTab,
+  JobsTab,
+  MigrationsTab,
+  NotificationsTab,
+  OnboardingTab,
+  RegistryTab,
+  SessionsTab,
+  UsageTab,
+  type PlatformData,
+} from "./platform-real";
 import { CATALOGUE_SUBTITLE, CATALOGUE_TABS, CatalogueSection } from "./catalogue-section";
 import type { CatalogueData } from "./catalogue-data";
 import { SHEET_SUBTITLE, SHEET_TABS, type SheetData } from "./sheet-data";
@@ -57,9 +71,6 @@ const PLATFORM_NAV = [
   { key: "audit", label: "Audit" },
 ] as const;
 
-/** Apps → the last sub-tab is MahekOne's own configuration, rendered by the same renderer. */
-const PLATFORM_SETTINGS_TAB = 7;
-
 export type CrmConfig = {
   /** Stored values, in console shape, keyed by setting key. */
   values: Values;
@@ -89,6 +100,14 @@ const CATALOGUE_SECTION = "catalogue";
  */
 const SHEET_SECTION = "order-sheet";
 
+/** Section keys the platform owns. An app may not take one of these. */
+const PLATFORM_KEYS: ReadonlySet<string> = new Set([
+  ...PLATFORM_NAV.map((n) => n.key),
+  CATALOGUE_SECTION,
+  SHEET_SECTION,
+]);
+
+
 export function AdminConsole({
   apps,
   crm,
@@ -96,6 +115,8 @@ export function AdminConsole({
   sheet,
   people,
   feedback,
+  platform,
+  me,
   isPlatformAdmin,
   initial,
 }: {
@@ -105,19 +126,24 @@ export function AdminConsole({
   sheet: SheetData;
   people: Person[];
   feedback: FeedbackData;
+  platform: PlatformData;
+  /** The account actually signed in. The console shows who you ARE. */
+  me: { name: string; initials: string; role: string };
   isPlatformAdmin: boolean;
   /** Where the URL says to open. */
   initial: Address;
 }) {
   return (
     <ToastProvider>
-      <AdminStore people={people}>
+      <AdminStore people={people} me={me}>
         <ConsoleShell
           apps={apps}
           crm={crm}
           catalogue={catalogue}
           sheet={sheet}
           feedback={feedback}
+          platform={platform}
+          me={me}
           isPlatformAdmin={isPlatformAdmin}
           initial={initial}
         />
@@ -125,6 +151,21 @@ export function AdminConsole({
       </AdminStore>
     </ToastProvider>
   );
+}
+
+/**
+ * An app's section is addressed `app-<id>`.
+ *
+ * Two of the app ids — `people` and `apps` — are also platform section keys,
+ * and a bare id let the app win: /admin/people opened "Attendance & People,
+ * registered but not built" instead of the roster. A bare id is still accepted
+ * for anything that is not a platform key, so /admin/crm keeps working.
+ */
+const APP_PREFIX = "app-";
+
+function appIdOf(section: string, platformKeys: ReadonlySet<string>): string | null {
+  if (section.startsWith(APP_PREFIX)) return section.slice(APP_PREFIX.length);
+  return platformKeys.has(section) ? null : section;
 }
 
 /** Computed once from the CRM's own declaration — pure, so it runs here too. */
@@ -137,7 +178,7 @@ function addressOf(section: string, tab: string): string {
 
 /** Landing on a section means landing on its first tab. */
 function firstTab(section: string): string {
-  if (section === "crm") return CRM_SCHEMA.tabs[0]?.key ?? "";
+  if (section === "crm" || section === `${APP_PREFIX}crm`) return CRM_SCHEMA.tabs[0]?.key ?? "";
   if (section === CATALOGUE_SECTION) return CATALOGUE_TABS[0].slug;
   if (section === SHEET_SECTION) return SHEET_TABS[0].slug;
   return PLATFORM_TABS[section]?.[0]?.slug ?? "";
@@ -149,6 +190,8 @@ function ConsoleShell({
   catalogue,
   sheet,
   feedback,
+  platform,
+  me,
   isPlatformAdmin,
   initial,
 }: {
@@ -157,10 +200,13 @@ function ConsoleShell({
   catalogue: CatalogueData;
   sheet: SheetData;
   feedback: FeedbackData;
+  platform: PlatformData;
+  me: { name: string; initials: string; role: string };
   isPlatformAdmin: boolean;
   initial: Address;
 }) {
-  const { me, personas, setPersona, registry, notify, record } = useAdmin();
+  // Config writes audit themselves server-side, one row per setting.
+  const { registry, notify } = useAdmin();
 
   // A CRM manager has no platform sections at all, so they start in the CRM.
   const [section, setSection] = React.useState<string>(initial.section ?? (isPlatformAdmin ? "overview" : "crm"));
@@ -187,9 +233,10 @@ function ConsoleShell({
   const [guard, setGuard] = React.useState<null | { count: number; go: () => void }>(null);
 
   const visibleApps = registry
-    .filter((a) => me.apps.includes(a.id))
+    .filter((a) => apps.some((mine) => mine.id === a.id))
     .sort((a, b) => a.order - b.order);
-  const appDef = registry.find((a) => a.id === section) ?? null;
+  const appId = appIdOf(section, PLATFORM_KEYS);
+  const appDef = appId ? (registry.find((a) => a.id === appId) ?? null) : null;
   const schema = appDef?.id === "crm" ? CRM_SCHEMA : null;
   const platformTabs = PLATFORM_TABS[section];
   const tabs: Array<{ slug: string; label: string }> = appDef
@@ -204,13 +251,9 @@ function ConsoleShell({
   const tabIndex = Math.max(0, tabs.findIndex((t) => t.slug === tab));
   const tabSlug = tabs[tabIndex]?.slug ?? "";
 
-  // A settings surface is either a live app's schema tab or, on Apps, the
-  // platform's own schema. The renderer cannot tell the two apart.
-  const tabDef = schema
-    ? schema.tabs[Math.min(tabIndex, schema.tabs.length - 1)]
-    : section === "apps" && tabIndex === PLATFORM_SETTINGS_TAB
-      ? PLATFORM_SCHEMA.tabs[0]
-      : null;
+  // A settings surface is a live app's schema tab. The platform itself
+  // declares no settings — the tab that pretended it did rendered a fixture.
+  const tabDef = schema ? schema.tabs[Math.min(tabIndex, schema.tabs.length - 1)] : null;
   const settingsOpen = !!tabDef && (appDef ? appDef.status === "Live" : true);
   const settingsOwner = appDef?.name ?? "Platform";
 
@@ -286,7 +329,6 @@ function ConsoleShell({
     const next = { ...values };
     for (const f of dirty) {
       next[f.key] = drafts[f.key];
-      record("config", settingsOwner, f.label, readable(savedValue(values, f)), readable(drafts[f.key]));
     }
     setLastSet({
       count: dirty.length,
@@ -319,7 +361,6 @@ function ConsoleShell({
       if (!result.ok) return notify(result.error ?? "That did not roll back.");
     }
     setValues((v) => ({ ...v, ...lastSet.before }));
-    record("config", lastSet.owner, "Change set rolled back", `${lastSet.count} settings`, "previous values");
     notify(
       lastSet.count === 1
         ? "Change set rolled back. The setting is back to what it was."
@@ -328,7 +369,9 @@ function ConsoleShell({
     setLastSet(null);
   }
 
-  const failing = INTEGRATIONS.filter((i) => i.state === "Failing").length;
+  // What the Attention tab would show. A badge that counts a fixture is how a
+  // console gets a red dot nobody can ever clear.
+  const failing = platform.attention.filter((a) => a.tone === "danger").length;
   const readOnly = appDef?.id === "crm" && !crm.canWrite;
 
   return (
@@ -344,32 +387,9 @@ function ConsoleShell({
         <span className="text-[15px] font-semibold whitespace-nowrap text-ink">Admin Console</span>
         <span className="min-w-2 flex-1" />
 
-        {/* Two personas, because "what a CRM manager sees here" is the whole
-            point of the platform/app split and cannot be checked otherwise. */}
-        <div className="flex h-[30px] flex-none items-center gap-1.5 rounded-[4px] border border-dashed border-line-strong px-1">
-          <span className="pl-1.5 text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
-            Viewing as
-          </span>
-          {personas.map((p) => (
-            <button
-              key={p.key}
-              onClick={() => {
-                setPersona(p.key);
-                setSection(p.platform ? "overview" : "crm");
-                setTab("");
-                setDrafts({});
-                setDetailId(null);
-              }}
-              className={cx(
-                "h-[22px] cursor-pointer rounded-[3px] border-none px-2 text-xs whitespace-nowrap",
-                me.key === p.key ? "bg-brand-soft font-medium text-[#5223E0]" : "bg-transparent text-muted hover:text-body",
-              )}
-            >
-              {p.role}
-            </button>
-          ))}
-        </div>
-
+        {/* Who is signed in. There were two fictional personas here — a
+            platform admin and a CRM manager nobody could log in as — which
+            meant the console named somebody other than the person reading it. */}
         <span className="flex flex-none items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]">
             {me.initials}
@@ -377,7 +397,7 @@ function ConsoleShell({
           <span className="leading-[14px]">
             <span className="block text-[13px] font-medium whitespace-nowrap text-ink">{me.name}</span>
             <span className="block text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
-              {me.role}
+              {isPlatformAdmin ? "Platform admin" : me.role}
             </span>
           </span>
         </span>
@@ -428,11 +448,11 @@ function ConsoleShell({
               <NavButton
                 key={a.id}
                 label={a.name}
-                active={section === a.id}
+                active={appId === a.id}
                 tone={a.status === "Live" ? "success" : "neutral"}
                 badge={a.status === "Live" ? undefined : "Soon"}
                 title={a.status === "Live" ? undefined : a.status}
-                onClick={() => navigate(a.id, firstTab(a.id))}
+                onClick={() => navigate(`${APP_PREFIX}${a.id}`, firstTab(a.id))}
               />
             ))}
 
@@ -484,7 +504,7 @@ function ConsoleShell({
         <main className="relative min-w-0 flex-1 overflow-y-auto">
           <div className="px-6 pt-6 pb-12">
             {detailId ? (
-              <DetailPane id={detailId} onBack={() => setDetailId(null)} />
+              <DetailPane id={detailId} platform={platform} onBack={() => setDetailId(null)} />
             ) : (
               <>
                 <div className="flex items-start justify-between gap-4">
@@ -568,6 +588,7 @@ function ConsoleShell({
                   catalogue={catalogue}
                   sheet={sheet}
                   feedback={feedback}
+                  platform={platform}
                   canWriteCatalogue={crm.canWrite}
                 />
 
@@ -713,6 +734,7 @@ function SectionBody({
   catalogue,
   sheet,
   feedback,
+  platform,
   canWriteCatalogue,
 }: {
   section: string;
@@ -733,6 +755,7 @@ function SectionBody({
   catalogue: CatalogueData;
   sheet: SheetData;
   feedback: FeedbackData;
+  platform: PlatformData;
   canWriteCatalogue: boolean;
 }) {
   if (section === CATALOGUE_SECTION) {
@@ -797,13 +820,32 @@ function SectionBody({
     );
   }
 
-  if (section === "overview") return <OverviewSection tab={tabIndex} navigate={navigate} />;
-  if (section === "people") return <PeopleSection tab={tabIndex} onOpenUser={onOpenUser} />;
-  if (section === "apps") return <AppsSection tab={tabIndex} />;
-  if (section === "data") return <DataSection tab={tabIndex} />;
-  if (section === "notifications") return <NotificationsSection tab={tabIndex} />;
+  if (section === "overview") {
+    if (tabIndex === 0) return <AttentionTab data={platform} navigate={navigate} />;
+    if (tabIndex === 1) return <HealthTab data={platform} />;
+    if (tabIndex === 2) return <IntegrationsTab data={platform} />;
+    if (tabIndex === 3) return <UsageTab data={platform} />;
+    if (tabIndex === 4) return <DriftTab data={platform} navigate={navigate} />;
+    return <JobsTab data={platform} />;
+  }
+  if (section === "people") {
+    // Sessions and never-signed-in are platform questions with real answers;
+    // the rest of People is its own screen and already reads the database.
+    if (tabIndex === 3) return <SessionsTab data={platform} />;
+    if (tabIndex === 4) return <OnboardingTab data={platform} />;
+    return <PeopleSection tab={tabIndex} onOpenUser={onOpenUser} />;
+  }
+  if (section === "apps") {
+    if (tabIndex === 0) return <RegistryTab data={platform} />;
+    return <SchemaInspector />;
+  }
+  if (section === "data") {
+    if (tabIndex === 0) return <ImportsTab data={platform} />;
+    return <MigrationsTab data={platform} />;
+  }
+  if (section === "notifications") return <NotificationsTab data={platform} />;
   if (section === "feedback") return <FeedbackSection data={feedback} tab={tabIndex} />;
-  if (section === "audit") return <AuditSection tab={tabIndex} />;
+  if (section === "audit") return <AuditTab data={platform} tab={tabIndex} />;
   return null;
 }
 
@@ -836,15 +878,23 @@ function CatalogueBody({
   );
 }
 
-function DetailPane({ id, onBack }: { id: string; onBack: () => void }) {
+function DetailPane({
+  id,
+  platform,
+  onBack,
+}: {
+  id: string;
+  platform: PlatformData;
+  onBack: () => void;
+}) {
   const { users } = useAdmin();
   const user = users.find((u) => u.id === id);
   if (!user) return null;
-  return <UserDetail key={user.id} user={user} onBack={onBack} />;
+  return <UserDetail key={user.id} user={user} platform={platform} onBack={onBack} />;
 }
 
 function PrimaryAction({ section }: { section: string }) {
-  const { openDrawer, notify } = useAdmin();
+  const { openDrawer } = useAdmin();
   if (section === "people") {
     return (
       <Button variant="primary" onClick={() => openDrawer({ kind: "createUser" })}>
@@ -852,20 +902,8 @@ function PrimaryAction({ section }: { section: string }) {
       </Button>
     );
   }
-  if (section === "apps") {
-    return (
-      <Button variant="primary" onClick={() => openDrawer({ kind: "registerApp" })}>
-        Register app
-      </Button>
-    );
-  }
-  if (section === "audit") {
-    return (
-      <Button variant="primary" onClick={() => notify("Audit log exported")}>
-        Export log
-      </Button>
-    );
-  }
+  // Apps are code, not rows: there is nothing to register from a screen. The
+  // audit log had an Export button that exported nothing.
   return null;
 }
 

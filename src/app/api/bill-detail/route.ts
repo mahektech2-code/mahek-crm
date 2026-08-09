@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   // The ledger this opens from lives in the CRM. A bookmarked endpoint must be
   // gated the same way its screen is, not just hidden from the menu.
   const apps = await listUserApps(user.id);
-  if (!apps.includes("crm") && !apps.includes("orders")) {
+  if (!apps.includes("crm") && !apps.includes("accounts")) {
     return NextResponse.json({ detail: null }, { status: 403 });
   }
 

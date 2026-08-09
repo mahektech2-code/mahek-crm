@@ -12,7 +12,7 @@ export async function GET(request: Request) {
   if (!user) return NextResponse.json({ lines: [] }, { status: 401 });
 
   const apps = await listUserApps(user.id);
-  if (!apps.includes("orders")) {
+  if (!apps.includes("accounts")) {
     return NextResponse.json({ lines: [] }, { status: 403 });
   }
 

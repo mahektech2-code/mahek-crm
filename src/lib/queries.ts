@@ -160,8 +160,12 @@ export async function listCustomersPage(
     .select({
       customer: customers,
       ownerName: users.name,
-      salesAmName: sql<string | null>`(
-        select name from users u where u.id = customers.sales_am_id
+      // The customer master's Sales Person first, and the linked account only
+      // where the sheet is silent. Reading the account first showed the
+      // telecaller who owns the book as the salesperson on every customer.
+      salesAmName: sql<string | null>`coalesce(
+        customers.sales_person_name,
+        (select name from users u where u.id = customers.sales_am_id)
       )`,
       backOfficeAmName: sql<string | null>`(
         select name from users u where u.id = customers.back_office_am_id
@@ -209,8 +213,12 @@ export async function listCustomers(): Promise<CustomerRow[]> {
       ownerName: users.name,
       // Subqueries rather than two more joins: three left joins to the same
       // table on one row is where column aliasing starts going wrong quietly.
-      salesAmName: sql<string | null>`(
-        select name from users u where u.id = customers.sales_am_id
+      // The customer master's Sales Person first, and the linked account only
+      // where the sheet is silent. Reading the account first showed the
+      // telecaller who owns the book as the salesperson on every customer.
+      salesAmName: sql<string | null>`coalesce(
+        customers.sales_person_name,
+        (select name from users u where u.id = customers.sales_am_id)
       )`,
       backOfficeAmName: sql<string | null>`(
         select name from users u where u.id = customers.back_office_am_id
@@ -240,8 +248,12 @@ export async function getCustomer(customerId: string) {
     .select({
       customer: customers,
       ownerName: users.name,
-      salesAmName: sql<string | null>`(
-        select name from users u where u.id = customers.sales_am_id
+      // The customer master's Sales Person first, and the linked account only
+      // where the sheet is silent. Reading the account first showed the
+      // telecaller who owns the book as the salesperson on every customer.
+      salesAmName: sql<string | null>`coalesce(
+        customers.sales_person_name,
+        (select name from users u where u.id = customers.sales_am_id)
       )`,
       backOfficeAmName: sql<string | null>`(
         select name from users u where u.id = customers.back_office_am_id

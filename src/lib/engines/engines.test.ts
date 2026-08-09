@@ -16,6 +16,7 @@ import {
 import { buyingCycle } from "./buying-cycle";
 import { buildQueue, type QueueCandidate } from "./queue";
 import {
+  agingBucket,
   escalationStage,
   isAttemptAllowed,
   isSlowPayer,
@@ -94,12 +95,27 @@ describe("configuration", () => {
   });
 
   test("aligned boundaries produce no problems at all", () => {
-    const aligned = { ...C, "bills.agingBuckets": [0, 7, 21, 45] };
+    // Boundaries are exclusive, so these open bands on days 1, 16, 30 and 60 —
+    // and 16 and 30 are where stages 2 and 3 begin. A fourth band beyond the
+    // ladder is fine; it is the shared boundary that matters.
+    const aligned = { ...C, "bills.agingBuckets": [0, 15, 29, 59] };
     assert.deepEqual(checkConsistency(aligned), []);
   });
 
+  test("the shipped bands are 0–15, 16–29 and 30+", () => {
+    const label = (days: number) => agingBucket(days, C);
+    assert.equal(label(0), "Not due");
+    assert.equal(label(15), "1–15 days");
+    assert.equal(label(16), "16–29 days");
+    assert.equal(label(29), "16–29 days");
+    // The open-ended band used to be named after the boundary below it — "29+"
+    // — which claimed a day the band beneath it already owned.
+    assert.equal(label(30), "30+ days");
+    assert.equal(label(400), "30+ days");
+  });
+
   test("catches escalation thresholds that do not increase", () => {
-    const bad = { ...C, "escalation.stage2Days": 5 };
+    const bad = { ...C, "escalation.stage3Days": 10 };
     assert.ok(
       checkConsistency(bad).some((p) => p.includes("stage 1 < stage 2")),
     );
@@ -108,7 +124,7 @@ describe("configuration", () => {
   test("catches aging buckets that disagree with escalation thresholds", () => {
     const bad = { ...C, "bills.agingBuckets": [0, 17, 34, 51] };
     assert.ok(
-      checkConsistency(bad).some((p) => p.includes("share no boundary")),
+      checkConsistency(bad).some((p) => p.includes("escalation stage begins")),
     );
   });
 });
@@ -872,8 +888,8 @@ describe("E3 escalation", () => {
     // logged against them.
     assert.equal(at(15), 1);
     assert.equal(at(16), 2, "stage 2 begins exactly at its threshold");
-    assert.equal(at(44), 2);
-    assert.equal(at(45), 3, "stage 3 begins exactly at its threshold");
+    assert.equal(at(29), 2);
+    assert.equal(at(30), 3, "stage 3 begins exactly at its threshold");
   });
 
   test("a customer with five overdue bills produces ONE entry", () => {

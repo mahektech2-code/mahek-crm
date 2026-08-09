@@ -17,7 +17,17 @@ const testUrl = dev.replace(/\/[^/?]+(\?|$)/, "/mahekone_test$1");
 try {
   execFileSync(
     "npx",
-    ["tsx", "--conditions=react-server", "--test", "src/lib/journeys.test.ts"],
+    [
+      "tsx",
+      "--conditions=react-server",
+      "--test",
+      // One database, so one file at a time. The runner parallelises files by
+      // default, and two suites truncating the same tables is not a test
+      // failure anybody can read.
+      "--test-concurrency=1",
+      "src/lib/journeys.test.ts",
+      "src/lib/accounts.test.ts",
+    ],
     { stdio: "inherit", env: { ...process.env, NODE_ENV: "test", DATABASE_URL: testUrl } },
   );
 } catch {

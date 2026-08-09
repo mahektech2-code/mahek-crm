@@ -13,6 +13,7 @@ import {
   orders,
   paymentReceipts,
   payments,
+  sheetPartyRows,
   sheetTakenOrderRows,
   waMessages,
 } from "@/db/schema";
@@ -26,6 +27,7 @@ import {
   type EscalationBill,
 } from "./engines/escalation";
 import { billCreditDaysSql } from "./bill-terms";
+import { partyNameKey } from "./sheet-parse";
 import { evaluateInactivity } from "./engines/inactivity";
 import { resolveTarget } from "./engines/targets";
 import { businessDate, monthKey, addMonths, type BusinessDate } from "./business-date";
@@ -742,6 +744,62 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
   return created;
 }
 
+/* ------------------------------------------------------------ salespeople */
+
+/**
+ * Who sells to each customer, mirrored from the customer master.
+ *
+ * The Sales Party tab's `Sales Person` is the answer to "who is the account
+ * manager for sales", and it is a NAME rather than an account: Heena Pritesh
+ * Doshi, Rahul, and entries that are not people at all — "Western Line Sale",
+ * "Company Own", "JAIPUR". `salesAmId` can only hold a `users` row, so every
+ * screen fell through to the owner and showed a telecaller as the salesperson
+ * for all 557 customers.
+ *
+ * This reads what is already stored rather than the sheet, so it is the
+ * command to run when the READING changed and not the row — the same reason
+ * `taken-order-reparse` exists. It rewrites every customer on every pass,
+ * including back to null: a salesperson removed from the master must not go
+ * on being displayed by a cache nobody clears.
+ */
+export async function recomputeSalesPeople(): Promise<number> {
+  const parties = await db
+    .select({
+      partyName: sheetPartyRows.partyName,
+      salesPersonName: sheetPartyRows.salesPersonName,
+    })
+    .from(sheetPartyRows)
+    .where(eq(sheetPartyRows.status, "present"));
+
+  // Nothing synced yet is not the same as nobody having a salesperson. A pass
+  // over an empty tab would blank the column for the whole book.
+  if (!parties.length) return 0;
+
+  const byKey = new Map(
+    parties.map((p) => [partyNameKey(p.partyName), p.salesPersonName]),
+  );
+
+  const rows = await db
+    .select({
+      id: customers.id,
+      name: customers.name,
+      salesPersonName: customers.salesPersonName,
+    })
+    .from(customers);
+
+  let changed = 0;
+  for (const c of rows) {
+    const next = byKey.get(partyNameKey(c.name)) ?? null;
+    if (next === c.salesPersonName) continue;
+    await db
+      .update(customers)
+      .set({ salesPersonName: next })
+      .where(eq(customers.id, c.id));
+    changed++;
+  }
+  return changed;
+}
+
 /* ----------------------------------------------------------- full rebuild */
 
 /** Everything, in dependency order. Used after a migration or a config change. */
@@ -759,11 +817,22 @@ export async function recomputeEverything(): Promise<Record<string, number>> {
   // From what the Taken Order tab last said. A no-op until that tab has been
   // synced at least once — see the guard at the top of it.
   const { held } = await recomputeOrderSystemHolds();
+  // From what the Sales Party tab last said, for the same reason.
+  const salesPeople = await recomputeSalesPeople();
 
   const all = await db.select({ id: customers.id }).from(customers);
   for (const c of all) await recomputeLastContact(c.id);
 
-  return { cycles, outstanding, slowPayers, followUps, inactive, targets, held };
+  return {
+    cycles,
+    outstanding,
+    slowPayers,
+    followUps,
+    inactive,
+    targets,
+    held,
+    salesPeople,
+  };
 }
 
 export { isNotNull };

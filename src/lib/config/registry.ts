@@ -289,8 +289,9 @@ export const SETTINGS = [
     type: "integer",
     category: "escalation",
     label: "Stage 1 threshold",
-    description: "Days overdue at which the gentle WhatsApp nudge begins.",
-    default: 7,
+    description:
+      "Days overdue at which the gentle WhatsApp nudge begins. Zero, because it begins the day the bill falls due: the reminder interval decides when the first message actually goes, and `stageFor` puts everything below stage 2 in stage 1 regardless. A seven here described a band the engine never had.",
+    default: 0,
     min: 0,
     max: 365,
   },
@@ -311,7 +312,7 @@ export const SETTINGS = [
     category: "escalation",
     label: "Stage 3 threshold",
     description: "Days overdue at which the urgent call stage begins.",
-    default: 45,
+    default: 30,
     min: 0,
     max: 730,
   },
@@ -412,8 +413,8 @@ export const SETTINGS = [
     category: "bills",
     label: "Aging bucket boundaries",
     description:
-      "Lower bounds in days overdue. MUST align with the escalation thresholds, or the bills screen and the follow-up screen will disagree about how overdue an account is. The defaults trace the follow-up policy: the quiet window, then calling, then urgent.",
-    default: [0, 15, 45, 90],
+      "Lower bounds in days overdue, EXCLUSIVE: a boundary of 15 opens a band on day 16. MUST align with the escalation thresholds, or the bills screen and the follow-up screen will disagree about how overdue an account is. The defaults trace the follow-up policy: the quiet window, then calling, then urgent.",
+    default: [0, 15, 29],
   },
   {
     key: "bills.defaultCreditDays",
@@ -985,9 +986,15 @@ export function checkConsistency(config: Config): string[] {
   } else {
     const sorted = [...buckets].every((v, i, a) => i === 0 || a[i - 1] < v);
     if (!sorted) problems.push("Aging bucket boundaries must increase.");
-    if (!buckets.includes(stage2Days) && !buckets.includes(stage3Days)) {
+    // A bucket boundary is EXCLUSIVE — a boundary of 15 opens a band on day 16
+    // — so a band starts at boundary + 1, and that is what has to line up with
+    // the day a stage begins. Comparing the boundary itself was off by one: it
+    // let 45 pass as "aligned" with a stage 3 that opens on day 45, which put
+    // the first urgent day inside the 16–45 bucket on the bills screen.
+    const bandStarts = buckets.map((b) => b + 1);
+    if (!bandStarts.includes(stage2Days) && !bandStarts.includes(stage3Days)) {
       problems.push(
-        `Aging buckets (${buckets.join(", ")}) share no boundary with the escalation thresholds (${stage2Days}, ${stage3Days}). The bills screen and the follow-up screen will disagree about how overdue an account is.`,
+        `Aging buckets (${buckets.join(", ")}) open bands on days ${bandStarts.join(", ")}, none of which is where an escalation stage begins (${stage2Days}, ${stage3Days}). The bills screen and the follow-up screen will disagree about how overdue an account is.`,
       );
     }
   }
