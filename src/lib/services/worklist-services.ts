@@ -4,6 +4,7 @@ import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
+  attachments,
   auditLog,
   complaints,
   complaintStatusHistory,
@@ -318,13 +319,60 @@ export async function complaintHistories(
   for (const { history: h, byName } of rows) {
     (out[h.complaintId] ??= []).push({
       at: h.at.toISOString(),
+      // The name is appended, unless the note already ends in it. Opening a
+      // complaint writes "Logged by Priya" and this used to add "Priya" after
+      // it, so every first line read "Logged by Priya · Priya".
       note: [
         `${h.fromStatus ? `${STATUS_LABEL[h.fromStatus]} → ` : ""}${STATUS_LABEL[h.toStatus]}`,
         h.note,
-        byName,
+        byName && h.note?.trim().endsWith(byName) ? null : byName,
       ]
         .filter(Boolean)
         .join(" · "),
+    });
+  }
+  return out;
+}
+
+/**
+ * The photographs on a set of complaints, keyed by complaint.
+ *
+ * Batched exactly like `complaintHistories`, because the list screen opens a
+ * drawer over rows it has already read and must not go back to the database
+ * per complaint to do it.
+ *
+ * The bytes are NOT here. Only what is needed to render a thumbnail and its
+ * link — `/api/attachments/[id]` serves the file itself, and it is the only
+ * thing that does, because that is where the parent's scope is checked.
+ */
+export async function complaintAttachments(
+  complaintIds: string[],
+): Promise<Record<string, Array<{ id: string; filename: string; isImage: boolean }>>> {
+  if (!complaintIds.length) return {};
+
+  const rows = await db
+    .select({
+      id: attachments.id,
+      parentId: attachments.parentId,
+      filename: attachments.filename,
+      contentType: attachments.contentType,
+    })
+    .from(attachments)
+    .where(
+      and(
+        eq(attachments.parentType, "complaint"),
+        inArray(attachments.parentId, complaintIds),
+        eq(attachments.status, "available"),
+      ),
+    )
+    .orderBy(asc(attachments.uploadedAt));
+
+  const out: Record<string, Array<{ id: string; filename: string; isImage: boolean }>> = {};
+  for (const r of rows) {
+    (out[r.parentId!] ??= []).push({
+      id: r.id,
+      filename: r.filename,
+      isImage: r.contentType.startsWith("image/"),
     });
   }
   return out;
