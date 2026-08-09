@@ -1348,14 +1348,27 @@ export async function updateConfigSetting(
 /**
  * §7 requires every scheduled task to be triggerable by hand — a missed
  * nightly run must be fixable from the screen, not only from a terminal.
+ *
+ * The sheet jobs are here for a sharper reason: on a deploy nobody has shell
+ * access to, a terminal is not a fallback, it is the only door and it is
+ * locked. The import ran on somebody's laptop against the production database
+ * or it did not run at all, and Sales Bills stayed empty through three
+ * releases that each claimed to fix it. A merge has to be enough.
  */
 export async function triggerJob(
-  job: "nightly" | "hourly" | "day-boundary",
+  job:
+    | "nightly"
+    | "hourly"
+    | "day-boundary"
+    | "sheet-reconcile"
+    | "sheet-payments"
+    | "project-sheet",
+  options: { owner?: string; bills?: boolean } = {},
 ): Promise<Result<{ ran: string[] }>> {
   try {
     const ctx = await requireCapability("config.write");
     const { runJob } = await import("@/lib/jobs");
-    const results = await runJob(job, ctx.user.id);
+    const results = await runJob(job, ctx.user.id, options);
     refreshAll();
     revalidatePath("/admin");
     return ok(

@@ -27,6 +27,9 @@ export type SheetData = {
   filters: { query?: string; issuesOnly?: boolean; withdrawn?: boolean };
   /** Which sheet and tab this came from, so the screen can name its source. */
   source: { spreadsheetId: string; tabTitle: string; configured: boolean };
+  /** Who imported customers can be assigned to, and whether this person may run it. */
+  owners: Array<{ id: string; name: string; email: string; role: string }>;
+  canImport: boolean;
 };
 
 export const SHEET_TABS = [
