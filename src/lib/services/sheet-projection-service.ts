@@ -9,6 +9,7 @@ import {
   payments,
   sheetOrderRows,
   sheetPaymentRows,
+  sheetSyncRuns,
   type OrderLine,
 } from "@/db/schema";
 import { isReceived } from "@/lib/sheet-parse";
@@ -47,6 +48,25 @@ import {
  * ------------------------------------------------------------------------- */
 
 const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
+
+/**
+ * Rows per statement.
+ *
+ * The projection used to write a row at a time, which is invisible on a local
+ * Postgres and ruinous on a hosted one: eleven thousand round trips took a
+ * minute and a half against Neon, a third of the route's ceiling, and would
+ * have started timing out mid-write as the sheet grew. Writing in chunks turns
+ * the network cost from per-row into per-chunk.
+ *
+ * 500 leaves room under Postgres's 65,535 bind parameters for rows this wide.
+ */
+const WRITE_CHUNK = 500;
+
+function chunked<T>(rows: T[], size = WRITE_CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
+  return out;
+}
 
 /** An order date, placed inside its own business day in IST.
  *
@@ -115,6 +135,18 @@ export type ProjectionOptions = {
    * re-import must not undo it.
    */
   assignToUserId?: string | null;
+  /**
+   * Also move customers that already exist to `assignToUserId`.
+   *
+   * Ownership is written on create, so an import that guessed wrong once used
+   * to be uncorrectable without hand-written SQL — and a customer in nobody's
+   * book appears on no list for anybody, which is exactly the mistake somebody
+   * makes on a first run. This is the way back.
+   *
+   * Off by default: a routine re-sync must not quietly rearrange who works
+   * which accounts.
+   */
+  reassign?: boolean;
 };
 
 /* ------------------------------------------------------------- customers */
@@ -203,6 +235,9 @@ export async function projectCustomers(
   let withoutPhone = 0;
   let unassigned = 0;
 
+  const toInsert: (typeof customers.$inferInsert)[] = [];
+  const toUpdate: { id: string; values: Partial<typeof customers.$inferInsert> }[] = [];
+
   for (const party of parties) {
     const known = byCode.get(partyKey(party.name));
 
@@ -214,30 +249,31 @@ export async function projectCustomers(
 
     if (!known && !options.assignToUserId) unassigned++;
 
-    if (options.dryRun) {
-      if (known) updated++;
-      else created++;
-      continue;
-    }
-
     if (known) {
       // Only the fields the sheet actually owns. Anything a person has since
       // typed into the CRM — a phone number, a contact name — is theirs, and a
       // re-run must not wipe it back to the blank the sheet has.
-      await db
-        .update(customers)
-        .set({
+      //
+      // Ownership is the exception, and only when it is asked for: reassigning
+      // a book is an operator's decision that the first import should not be
+      // able to lock in forever.
+      toUpdate.push({
+        id: known.id,
+        values: {
           name: party.name,
           city: party.area ?? "",
           creditTermDays: party.creditDays ?? 30,
           creditDays: party.creditDays,
           activeInOrderSystem: true,
+          ...(options.reassign && options.assignToUserId
+            ? { ownerId: options.assignToUserId, salesAmId: options.assignToUserId }
+            : {}),
           updatedAt: new Date(),
-        })
-        .where(eq(customers.id, known.id));
+        },
+      });
       updated++;
     } else {
-      await db.insert(customers).values({
+      toInsert.push({
         id: newId("cus"),
         externalCode: partyKey(party.name),
         name: party.name,
@@ -258,6 +294,19 @@ export async function projectCustomers(
         salesAmId: options.assignToUserId ?? null,
       });
       created++;
+    }
+  }
+
+  if (!options.dryRun) {
+    for (const batch of chunked(toInsert)) {
+      await db.insert(customers).values(batch);
+    }
+    for (const batch of chunked(toUpdate, 100)) {
+      await Promise.all(
+        batch.map((u) =>
+          db.update(customers).set(u.values).where(eq(customers.id, u.id)),
+        ),
+      );
     }
   }
 
@@ -316,6 +365,7 @@ export async function projectOrders(
   let created = 0;
   let updated = 0;
   let lineCount = 0;
+  const pending: (typeof orders.$inferInsert)[] = [];
   const skipReasons = new Map<string, number>();
   const skip = (reason: string) =>
     skipReasons.set(reason, (skipReasons.get(reason) ?? 0) + 1);
@@ -367,19 +417,32 @@ export async function projectOrders(
       updatedAt: new Date(),
     };
 
-    if (options.dryRun) {
-      if (orderByRef.has(externalRef)) updated++;
-      else created++;
-      continue;
-    }
+    if (orderByRef.has(externalRef)) updated++;
+    else created++;
+    pending.push({ id: orderByRef.get(externalRef) ?? newId("ord"), ...values });
+  }
 
-    const id = orderByRef.get(externalRef);
-    if (id) {
-      await db.update(orders).set(values).where(eq(orders.id, id));
-      updated++;
-    } else {
-      await db.insert(orders).values({ id: newId("ord"), ...values });
-      created++;
+  // One statement per five hundred orders rather than one per order. The
+  // external reference is unique, so an order already here is updated in place
+  // and the pass stays re-runnable.
+  if (!options.dryRun) {
+    for (const batch of chunked(pending)) {
+      await db
+        .insert(orders)
+        .values(batch)
+        .onConflictDoUpdate({
+          target: orders.externalRef,
+          set: {
+            customerId: sql`excluded.customer_id`,
+            status: sql`excluded.status`,
+            orderedAt: sql`excluded.ordered_at`,
+            totalAmount: sql`excluded.total_amount`,
+            lineItems: sql`excluded.line_items`,
+            creditDays: sql`excluded.credit_days`,
+            expectedDispatch: sql`excluded.expected_dispatch`,
+            updatedAt: sql`excluded.updated_at`,
+          },
+        });
     }
   }
 
@@ -601,6 +664,16 @@ export async function projectSheet(
       await recomputeAllFollowUpStates();
       await recomputeSlowPayers();
     }
+
+    // The flag finally means something. It was written on every sync and read
+    // only to warn that nothing was derived from these rows — which stopped
+    // being true the moment a projection existed, leaving the console
+    // contradicting the screens next to it. Marking the batches that have been
+    // projected is the fact worth showing.
+    await db
+      .update(sheetSyncRuns)
+      .set({ feedsCrm: true })
+      .where(eq(sheetSyncRuns.status, "ok"));
   }
 
   return {

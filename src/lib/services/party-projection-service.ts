@@ -102,6 +102,7 @@ export async function projectParties(
     leadsCreated: 0,
   };
 
+  const updates: { id: string; values: Partial<typeof customers.$inferInsert> }[] = [];
   const unlinked = new Set<string>();
   const seen = new Set<string>();
 
@@ -140,9 +141,7 @@ export async function projectParties(
 
     if (options.dryRun) continue;
 
-    await db
-      .update(customers)
-      .set({
+    updates.push({ id: customer.id, values: {
         ...(fillPhone ? { phone: party.mobileNo! } : {}),
         ...(fillWhatsapp ? { whatsappPhone: party.whatsappNo! } : {}),
         ...(salesId ? { salesAmId: salesId } : {}),
@@ -156,8 +155,17 @@ export async function projectParties(
         ...(party.counterType ? { leadSource: party.counterType } : {}),
         ...(deactive ? { status: "inactive" as const } : {}),
         updatedAt: new Date(),
-      })
-      .where(eq(customers.id, customer.id));
+      } });
+  }
+
+  // Written in flights rather than one at a time: 555 sequential round trips
+  // to a hosted database is most of a minute for work that takes seconds.
+  for (let i = 0; i < updates.length; i += 100) {
+    await Promise.all(
+      updates.slice(i, i + 100).map((u) =>
+        db.update(customers).set(u.values).where(eq(customers.id, u.id)),
+      ),
+    );
   }
 
   // Customers the master does not mention. Reported rather than touched: a

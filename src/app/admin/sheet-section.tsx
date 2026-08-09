@@ -431,22 +431,41 @@ function SyncPanel({ data }: { data: SheetData }) {
       <Card>
         <CardHeader
           title="Running a sync"
-          hint="Three modes, because a spreadsheet has no way to say what changed."
+          hint="Nothing is scheduled. The sheets are read when something asks."
         />
         <div className="space-y-3 px-5 pb-5 text-[13px] text-body">
           <p>
-            <code>npm run jobs -- sheet-append</code> — reads only past the
-            highest row seen before. Cheap enough to run every few minutes, and
-            blind to edits of existing rows.
+            One endpoint, authorised with <code>CRON_SECRET</code>. There is no
+            cron behind it — Vercel Cron is a paid feature — so a person or an
+            external scheduler has to call it.
           </p>
-          <p>
-            <code>npm run jobs -- sheet-reconcile</code> — reads the whole tab
-            and compares hashes. Catches edits and rows that have gone. Nightly.
-          </p>
-          <p>
-            <code>npm run jobs -- sheet-reparse</code> — touches Google not at
-            all; re-reads the stored rows. This is the one to run after a
-            parsing rule is corrected.
+          <pre className="overflow-x-auto rounded bg-canvas p-3 text-[12px] leading-relaxed">
+{`curl -H "Authorization: Bearer $CRON_SECRET" \\
+  "https://<host>/api/sheets/sync?mode=reconcile"`}
+          </pre>
+          <table className="w-full text-[13px]">
+            <tbody>
+              {[
+                ["append", "only past the highest row seen. Cheap; blind to edits of existing rows."],
+                ["reconcile", "the whole order tab, hash-compared. Catches edits and rows that have gone."],
+                ["payments", "the Payment Status tab. Always a full compare — a payment row changes in place."],
+                ["parties", "the customer master. Where every phone number comes from."],
+                ["project", "turns what has landed into customers and orders. Takes &owner=, &leads=1, &bills=1."],
+              ].map(([mode, what]) => (
+                <tr key={mode} className="border-t border-divider">
+                  <td className="w-28 py-1.5 align-top">
+                    <code>?mode={mode}</code>
+                  </td>
+                  <td className="py-1.5 text-muted">{what}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-muted">
+            On a developer machine the same work is <code>npm run jobs -- sheet-reconcile</code>,
+            and <code>sheet-reparse</code> re-reads stored rows without touching
+            Google — the one to run after a parsing rule is corrected. Neither is
+            available on a deployment, which has no shell.
           </p>
         </div>
       </Card>
