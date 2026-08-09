@@ -22,6 +22,10 @@ import {
   sheetSummary,
 } from "@/lib/services/sheet-order-service";
 import { sheetsConfigured } from "@/lib/sheets";
+import {
+  orderSheetId,
+  orderTabTitle,
+} from "@/lib/services/sheet-sync-service";
 import type { Config } from "@/lib/config/registry";
 import { AdminConsole } from "../console";
 
@@ -123,8 +127,8 @@ export default async function Page({
         issues: sheetIssues,
         filters: { query: one("sq"), issuesOnly: one("sissues") === "1" },
         source: {
-          spreadsheetId: process.env.ORDERS_SHEET_ID ?? null,
-          tabTitle: process.env.ORDERS_SHEET_TAB ?? "Order Details",
+          spreadsheetId: orderSheetId(),
+          tabTitle: orderTabTitle(),
           configured: sheetsConfigured(),
         },
       }}
