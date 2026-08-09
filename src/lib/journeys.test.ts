@@ -574,6 +574,13 @@ describe("Journey 4 - the EOD gate", () => {
   test("a reminder due today blocks the report until it is closed", async () => {
     const customer = await makeCustomer(priya.id);
 
+    // The gate is about a reminder due TODAY, so today has to be a day the
+    // reminder can fall on. Reminders roll off non-working days by default,
+    // and when this suite runs on a Sunday that rule quietly moves the due
+    // date to Monday — leaving nothing due today and the gate correctly open,
+    // which reads as this rule being broken rather than the other one working.
+    await updateSetting("reminders.rollForwardOnNonWorkingDays", false, manager.id);
+
     const created = await createReminder({
       customerId: customer.id,
       dueDate: TODAY,
