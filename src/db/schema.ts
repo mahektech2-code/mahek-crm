@@ -488,6 +488,14 @@ export const customers = pgTable(
     salesPersonName: text("sales_person_name"),
     /** Dispatch, billing and paperwork. Null on leads, and may be unassigned. */
     backOfficeAmId: text("back_office_am_id").references(() => users.id),
+    /**
+     * The back office person the party master names, whether or not they hold
+     * a MahekOne login — the mirror of `salesPersonName` beside it, and for
+     * the same reason. None of the four in the sheet have an account, so
+     * storing only the id left every screen saying "Unassigned" against a
+     * customer the sheet names somebody for.
+     */
+    backOfficeName: text("back_office_name"),
     deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
     deactivatedById: text("deactivated_by_id").references(() => users.id),
     deactivationReason: text("deactivation_reason"),

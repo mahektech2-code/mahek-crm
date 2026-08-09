@@ -168,6 +168,11 @@ export async function projectParties(
         // fails for most of these rows by design — see the header.
         ...(party.salesPersonName ? { salesPersonName: party.salesPersonName } : {}),
         ...(backId ? { backOfficeAmId: backId } : {}),
+        // And the same for the back office, for the same reason. This line was
+        // missing, so a back office name that matched no account was read,
+        // counted as unlinked, and then thrown away — leaving every screen
+        // saying "Unassigned" against a customer the sheet names somebody for.
+        ...(party.backOfficeName ? { backOfficeName: party.backOfficeName } : {}),
         ...(party.gstNumber && !customer.gstin ? { gstin: party.gstNumber } : {}),
         ...(party.creditDays !== null
           ? { creditTermDays: party.creditDays, creditDays: party.creditDays }
