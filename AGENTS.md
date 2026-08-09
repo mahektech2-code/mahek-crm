@@ -111,7 +111,8 @@ src/
       components/          the live design system
     hrms/employees/        HRMS — the employee master, one module
     api/search/            global search endpoint
-    api/hrms/sync/         the cron endpoint the employee sync runs on
+    api/sheets/sync/       order + payment sync, on demand, ?mode=
+    api/hrms/sync/         employee sync, on demand — no schedule, see below
   components/
     ui/                    primitives + overlays + toasts
     shell/                 header, sidebar, icons, search, wordmark,
@@ -486,12 +487,14 @@ mode, `reconcile`, not the order sheet's three: seventy rows is a single API
 call, and only a full compare notices a salary corrected, a leaver marked
 Inactive, or a row deleted.
 
-**Two things keep it current, and they cover different failures.** The open
-screen asks every minute, so somebody who adds a row and switches tabs sees
-it; and a Vercel Cron hits `/api/hrms/sync` every five minutes, so a sheet
-edited on Friday afternoon is already right on Monday morning. Both land in
-the same action, which refuses to run twice inside twenty seconds — ten open
-tabs must not be ten reads of one sheet a minute.
+**What keeps it current is the open screen, and only that.** It asks every
+minute, so somebody who adds a row and switches tabs sees it. There is no
+schedule behind it: Vercel Cron is a paid feature and this account is on the
+free plan, so a sheet edited on Friday afternoon stays unread until somebody
+opens HRMS on Monday. `/api/hrms/sync` still exists for an external scheduler
+or a person to call, guarded by `CRON_SECRET`. Both paths land in the same
+action, which refuses to run twice inside twenty seconds — ten open tabs must
+not be ten reads of one sheet a minute.
 
 **The employee sheet's password column never reaches the database.** It holds
 plaintext credentials to a different system, MahekOne has no use for it, and

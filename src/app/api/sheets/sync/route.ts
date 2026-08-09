@@ -9,8 +9,8 @@ import { runJob, type JobName } from "@/lib/jobs";
  * production. This is what makes the schedule reachable.
  *
  * Which job runs is a query parameter rather than three routes, because they
- * are one job with three appetites and the cron entries read better naming the
- * mode than the path:
+ * are one job with three appetites and a caller reads better naming the mode
+ * than the path:
  *
  *   ?mode=append      only past the highest row seen. Cheap, every few minutes.
  *   ?mode=reconcile   the whole tab, hash-compared. Catches edits and deletions.
@@ -22,7 +22,13 @@ import { runJob, type JobName } from "@/lib/jobs";
  * somebody corrects a parsing rule, which is a decision a person makes with a
  * deploy, not something a schedule should do on its own.
  *
- * It is not open. Vercel Cron sends `Authorization: Bearer $CRON_SECRET`, and
+ * NOTHING SCHEDULES THIS. Vercel Cron is a paid feature and this account is on
+ * the free plan, so there are no cron entries — the route exists and has to be
+ * called: by hand, by a GitHub Action, or by any external scheduler holding the
+ * secret. Left uncalled the sheet is read only when somebody asks, which is a
+ * choice worth knowing about rather than a gap to discover from stale figures.
+ *
+ * It is not open. A caller sends `Authorization: Bearer $CRON_SECRET`, and
  * without a secret configured the route refuses rather than running — an
  * endpoint that pulls a company's order book into the database on request is
  * not a default anybody should get by forgetting a variable.

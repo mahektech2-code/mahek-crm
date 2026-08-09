@@ -9,7 +9,12 @@ import { runJob } from "@/lib/jobs";
  * sheet changes at four in the afternoon and nobody opens HRMS until Monday,
  * and Monday's screen should already be right rather than right after a wait.
  *
- * It is not open. Vercel Cron sends `Authorization: Bearer $CRON_SECRET`, and
+ * Nothing schedules this any more — Vercel Cron is a paid feature and this
+ * account is on the free plan. The screen still syncs while somebody is
+ * looking at it, which covers the common case; this route stays for an
+ * external scheduler, or a person, to call.
+ *
+ * It is not open. A caller sends `Authorization: Bearer $CRON_SECRET`, and
  * without a secret configured the route refuses rather than running — an
  * unauthenticated endpoint that reads somebody's payroll into the database on
  * request is not a default anybody should get by forgetting a variable.
