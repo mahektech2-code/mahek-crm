@@ -33,6 +33,7 @@ import { evaluateInactivity, watchAge } from "./inactivity";
 import { resolveTarget, classifyShortfall } from "./targets";
 import { aggregateEod, eodPreflight, formatMoney } from "./eod";
 import { parseJobArgs } from "../job-args";
+import { parseReceivables, parseTallyDate, parseAmountPaise } from "../receivables-parse";
 import {
   financialYearOf,
   financialYearRange,
@@ -956,6 +957,45 @@ describe("E3 escalation", () => {
       false,
     );
   });
+
+  test("a few days past the due date is not late — the grace period covers it", () => {
+    const grace = C["escalation.slowPayerGraceDays"];
+    // The last forgiven day, however many times it happens.
+    const justInside = {
+      dueDate: "2026-07-01",
+      paidOn: addDays("2026-07-01", grace),
+    };
+    assert.equal(isSlowPayer([justInside], TODAY, C).latePayments, 0);
+    assert.equal(
+      isSlowPayer([justInside, justInside, justInside, justInside], TODAY, C)
+        .slowPayer,
+      false,
+      "a customer who is always a few days late is not a slow payer",
+    );
+
+    // The first day that counts.
+    const justOutside = {
+      dueDate: "2026-07-01",
+      paidOn: addDays("2026-07-01", grace + 1),
+    };
+    assert.equal(isSlowPayer([justOutside], TODAY, C).latePayments, 1);
+  });
+
+  test("grace forgives the due date, never the count", () => {
+    // A fortnight late, three times over, is still a slow payer.
+    const properlyLate = { dueDate: "2026-07-01", paidOn: "2026-07-15" };
+    assert.equal(
+      isSlowPayer([properlyLate, properlyLate, properlyLate], TODAY, C).slowPayer,
+      true,
+    );
+  });
+
+  test("with no grace configured, a single day late counts again", () => {
+    const none = { ...C, "escalation.slowPayerGraceDays": 0 };
+    const oneDay = { dueDate: "2026-07-01", paidOn: "2026-07-02" };
+    assert.equal(isSlowPayer([oneDay], TODAY, none).latePayments, 1);
+    assert.equal(isSlowPayer([oneDay], TODAY, C).latePayments, 0);
+  });
 });
 
 /* ========================================================== E4 inactivity */
@@ -1751,5 +1791,71 @@ describe("financial years", () => {
   test("with no records at all, this year is still offered", () => {
     // 1 April, nothing billed yet, and the filter must not be empty.
     assert.deepEqual(financialYearsBetween(null, "2026-04-01"), ["26-27"]);
+  });
+});
+
+/* ====================================================== Tally receivables */
+
+const RECEIVABLES = [
+  '" "," ","A TO Z ENTERPRISES"," "," "',
+  '"Date","Ref. No.","Pending Amount","Due on","OverDue by days"',
+  '"22 Jan 26","MMI/25-26/3209","5210","23 Jan 26","198"',
+  '" "," Total","5210"," "," "',
+  '" "," "," "," "," "',
+  '" "," ","AADINATH PAINTS"," "," "',
+  '"Date","Ref. No.","Pending Amount","Due on","OverDue by days"',
+  '" ","On Account","-1222"," "," "',
+  '"30 Jul 26","MMI/26-27/1047","19051","29 Aug 26"," "',
+  '" "," Total","17829"," "," "',
+].join("\n");
+
+describe("Tally's receivables report", () => {
+  test("a customer heading names the rows beneath it", () => {
+    const { rows } = parseReceivables(RECEIVABLES);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].customer, "A TO Z ENTERPRISES");
+    assert.equal(rows[1].customer, "AADINATH PAINTS");
+  });
+
+  test("the reference is the bill number, and money is paise", () => {
+    const { rows } = parseReceivables(RECEIVABLES);
+    assert.equal(rows[0].reference, "MMI/25-26/3209");
+    assert.equal(rows[0].pendingPaise, 5210_00);
+    assert.equal(rows[0].dueDate, "2026-01-23");
+    assert.equal(rows[0].billDate, "2026-01-22");
+  });
+
+  test("money against no bill is a credit, never an amount owed", () => {
+    // "On Account" is money in hand that names no bill. Applying it would
+    // mark a real debt settled on a guess.
+    const { rows, credits } = parseReceivables(RECEIVABLES);
+    assert.ok(!rows.some((r) => r.reference === "On Account"));
+    assert.equal(credits.length, 1);
+    assert.equal(credits[0].pendingPaise, -1222_00);
+  });
+
+  test("a negative against a reference is a credit too", () => {
+    const { rows, credits } = parseReceivables(
+      '" "," ","X"," "," "\n"04 Nov 25","009480441","-150"," "," "',
+    );
+    assert.equal(rows.length, 0);
+    assert.equal(credits.length, 1);
+  });
+
+  test("two-digit years, and a total that is not a bill", () => {
+    assert.equal(parseTallyDate("22 Jan 26"), "2026-01-22");
+    assert.equal(parseTallyDate("5 Apr 2025"), "2025-04-05");
+    assert.equal(parseTallyDate(""), null);
+    assert.equal(parseAmountPaise("5,210.50"), 521050);
+    assert.equal(parseAmountPaise("nonsense"), null);
+  });
+
+  test("an unreadable amount is reported, not treated as zero", () => {
+    // Zero would read as "settled", which is the opposite of unknown.
+    const { rows, problems } = parseReceivables(
+      '" "," ","X"," "," "\n"22 Jan 26","MMI/25-26/1","abc","23 Jan 26"," "',
+    );
+    assert.equal(rows.length, 0);
+    assert.equal(problems.length, 1);
   });
 });

@@ -384,6 +384,17 @@ export const SETTINGS = [
     max: 60,
   },
   {
+    key: "escalation.slowPayerGraceDays",
+    type: "integer",
+    category: "escalation",
+    label: "Slow payer grace period",
+    description:
+      "Days past the due date a payment may arrive without counting as late. A bill settled a day or two after its term is ordinary business - a cheque in the post, a bank holiday, an accounts department that runs on Fridays - and counting it marks customers who pay reliably. The flag is meant to name the ones who genuinely do not.",
+    default: 7,
+    min: 0,
+    max: 90,
+  },
+  {
     key: "escalation.slowPayerLateCount",
     type: "integer",
     category: "escalation",
@@ -1062,6 +1073,7 @@ export type Config = {
   "escalation.messageIntervalDays": number;
   "escalation.callIntervalDays": number;
   "escalation.slowPayerLookbackMonths": number;
+  "escalation.slowPayerGraceDays": number;
   "escalation.slowPayerLateCount": number;
 
   "bills.agingBuckets": number[];

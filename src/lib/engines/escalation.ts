@@ -184,17 +184,33 @@ export function isAttemptAllowed(
 export type PaidBill = { dueDate: BusinessDate; paidOn: BusinessDate };
 
 /**
- * Counts bills paid after their due date within the lookback. Evaluated
+ * Counts bills paid well after their due date within the lookback. Evaluated
  * nightly; the flag then appears beside the customer name everywhere.
+ *
+ * "Well after" is the grace period, and it is the difference between a useful
+ * flag and a meaningless one. A payment landing a day or two past its term is
+ * ordinary business — a cheque in the post, a bank holiday, an accounts
+ * department that pays on Fridays — and counting those marked customers who
+ * pay perfectly reliably, just not to the calendar. The flag is read as "be
+ * careful with this one", so it has to mean it.
+ *
+ * Grace applies to the DUE DATE, not to the count: three payments a fortnight
+ * late is still a slow payer, however forgiving the first week is.
  */
 export function isSlowPayer(
   paidBills: PaidBill[],
   today: BusinessDate,
-  config: Pick<Config, "escalation.slowPayerLookbackMonths" | "escalation.slowPayerLateCount">,
+  config: Pick<
+    Config,
+    | "escalation.slowPayerLookbackMonths"
+    | "escalation.slowPayerLateCount"
+    | "escalation.slowPayerGraceDays"
+  >,
 ): { slowPayer: boolean; latePayments: number } {
   const cutoff = addDays(today, -30 * config["escalation.slowPayerLookbackMonths"]);
+  const grace = config["escalation.slowPayerGraceDays"];
   const late = paidBills.filter(
-    (b) => b.paidOn >= cutoff && b.paidOn > b.dueDate,
+    (b) => b.paidOn >= cutoff && b.paidOn > addDays(b.dueDate, grace),
   ).length;
   return {
     slowPayer: late >= config["escalation.slowPayerLateCount"],
