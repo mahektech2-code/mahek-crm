@@ -246,6 +246,7 @@ function candidate(over: Partial<QueueCandidate> = {}): QueueCandidate {
     doNotContact: false,
     skippedTodayReason: null,
     lastNoOrderDate: null,
+    onInactiveWatch: false,
     outstanding: 0,
     targetGap: 0,
     ...over,
@@ -601,6 +602,41 @@ describe("E2 queue builder", () => {
     const r = buildQueue([c], TODAY, C);
     assert.equal(r.entries.length, 0);
     assert.match(r.suppressed[0].reason, /asking again in 6 days/);
+  });
+
+  test("a customer on the inactive watch is worked from that list, not the queue", () => {
+    const c = candidate({
+      // Well past twice their cycle, so the queue would otherwise rank them
+      // among the most overdue customers on it — every day.
+      lastOrderDate: addDays(TODAY, -200),
+      cycleDays: 22,
+      onInactiveWatch: true,
+    });
+    const r = buildQueue([c], TODAY, C);
+    assert.equal(r.entries.length, 0);
+    assert.match(r.suppressed[0].reason, /inactive watch/i);
+  });
+
+  test("a reminder outranks the inactive watch", () => {
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -200),
+      cycleDays: 22,
+      onInactiveWatch: true,
+      reminders: [{ id: "r1", dueDate: TODAY, note: "Ring back today" }],
+    });
+    // A callback the customer asked for is not chasing, and not making it is
+    // worse than any wasted call.
+    assert.equal(buildQueue([c], TODAY, C).entries.length, 1);
+  });
+
+  test("turning the setting off puts them back in the queue", () => {
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -200),
+      cycleDays: 22,
+      onInactiveWatch: true,
+    });
+    const off = { ...C, "queue.excludeInactiveWatch": false };
+    assert.equal(buildQueue([c], TODAY, off).entries.length, 1);
   });
 
   test("the no-order cooldown expires", () => {

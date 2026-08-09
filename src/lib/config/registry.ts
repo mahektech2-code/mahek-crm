@@ -141,6 +141,15 @@ export const SETTINGS = [
     default: true,
   },
   {
+    key: "queue.excludeInactiveWatch",
+    type: "boolean",
+    category: "queue",
+    label: "Hold back customers on the inactive watch",
+    description:
+      "A customer past twice their own cycle is worked from the Inactive Watch, where the conversation is why they stopped rather than whether they will reorder. Leaving them in the queue puts every one of them at the top of it, every day, above the customers who are merely due. A reminder still outranks this.",
+    default: true,
+  },
+  {
     key: "queue.excludeCalledToday",
     type: "boolean",
     category: "queue",
@@ -952,6 +961,7 @@ export type Config = {
   "queue.prospectIntervalDays": number;
   "queue.excludeActiveInOrderSystem": boolean;
   "queue.excludeCalledToday": boolean;
+  "queue.excludeInactiveWatch": boolean;
   "queue.maxSizePerUser": number;
   "queue.tierWeights": Record<QueueReasonKind, number>;
 
