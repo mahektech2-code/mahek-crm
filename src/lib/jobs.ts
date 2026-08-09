@@ -27,6 +27,11 @@ import { autoGenerateEodReports } from "./services/eod-service";
 import { isWorkingDay, nextWorkingDay, type BusinessDate } from "./business-date";
 import { buildQueue } from "./engines/queue";
 import { queueCandidatesFor } from "./services/queue-service";
+import {
+  syncOrderSheet,
+  syncPaymentSheet,
+  type SyncMode,
+} from "./services/sheet-sync-service";
 
 /* ---------------------------------------------------------------------------
  * §7 Scheduled work.
@@ -52,7 +57,11 @@ export type JobName =
   | "escalate-complaint-sla"
   | "auto-eod"
   | "roll-reminders"
-  | "sweep-orphan-attachments";
+  | "sweep-orphan-attachments"
+  | "sheet-append"
+  | "sheet-reconcile"
+  | "sheet-reparse"
+  | "sheet-payments";
 
 export type JobResult = { job: JobName; recordsAffected: number; detail: string };
 
@@ -308,6 +317,12 @@ export async function runJob(job: JobName, triggeredById?: string): Promise<JobR
       return runHourly(triggeredById);
     case "day-boundary":
       return runDayBoundary(triggeredById);
+    case "sheet-append":
+    case "sheet-reconcile":
+    case "sheet-reparse":
+      return [await runSheetSync(job, triggeredById)];
+    case "sheet-payments":
+      return [await runPaymentSync(triggeredById)];
     default:
       throw new Error(`Unknown job "${job}".`);
   }
@@ -319,4 +334,82 @@ export async function recentJobRuns(limit = 30) {
     .from(jobRuns)
     .orderBy(sql`${jobRuns.startedAt} desc`)
     .limit(limit);
+}
+
+/* ------------------------------------------------------- the order sheet */
+
+/**
+ * Three schedules over one sheet, because a spreadsheet offers no way to ask
+ * what changed:
+ *
+ *   sheet-append     every few minutes — reads only past the highest row seen
+ *   sheet-reconcile  nightly — the whole tab, hash-compared, catches edits
+ *                    and rows that have gone
+ *   sheet-reparse    by hand — re-reads nothing, re-parses what is stored
+ *
+ * Append cannot see an edit to an existing row and reconcile can, which is why
+ * both exist rather than one compromise between them. Running append alone
+ * would mean a corrected figure never arrives; running reconcile at append's
+ * frequency would read two million cells every few minutes to find nothing.
+ */
+async function runSheetSync(
+  job: "sheet-append" | "sheet-reconcile" | "sheet-reparse",
+  triggeredById?: string,
+): Promise<JobResult> {
+  const mode = job.replace("sheet-", "") as SyncMode;
+  return run(
+    job,
+    async () => {
+      const spreadsheetId = process.env.ORDERS_SHEET_ID;
+      if (!spreadsheetId) {
+        // Not an error and not a silent success: nothing is configured, and
+        // the job log should say exactly that rather than "0 rows".
+        return { recordsAffected: 0, detail: "ORDERS_SHEET_ID is not set — nothing to sync." };
+      }
+
+      const outcome = await syncOrderSheet({
+        source: "order_details",
+        spreadsheetId,
+        tabTitle: process.env.ORDERS_SHEET_TAB ?? "Order Details",
+        mode,
+        triggeredById,
+      });
+
+      return {
+        recordsAffected: outcome.rowsCreated + outcome.rowsUpdated,
+        detail: outcome.detail,
+      };
+    },
+    triggeredById,
+  );
+}
+
+/**
+ * The Payment Status tab. Always a full reconcile: unlike orders, a payment
+ * row's whole purpose is to CHANGE after it is written — Pending becomes
+ * Received weeks later, in place, on a row that was created long ago. An
+ * append run reads only new rows and would never see it.
+ */
+async function runPaymentSync(triggeredById?: string): Promise<JobResult> {
+  return run(
+    "sheet-payments",
+    async () => {
+      const spreadsheetId = process.env.ORDERS_SHEET_ID;
+      if (!spreadsheetId) {
+        return { recordsAffected: 0, detail: "ORDERS_SHEET_ID is not set — nothing to sync." };
+      }
+      const outcome = await syncPaymentSheet({
+        source: "payment_status",
+        spreadsheetId,
+        tabTitle: process.env.PAYMENTS_SHEET_TAB ?? "Payment Status",
+        mode: "reconcile",
+        triggeredById,
+      });
+      return {
+        recordsAffected: outcome.rowsCreated + outcome.rowsUpdated,
+        detail: outcome.detail,
+      };
+    },
+    triggeredById,
+  );
 }

@@ -29,6 +29,8 @@ import { SettingsToolbar } from "./settings-tools";
 import { AppsSection, AuditSection, DataSection, OverviewSection } from "./platform-sections";
 import { CATALOGUE_SUBTITLE, CATALOGUE_TABS, CatalogueSection } from "./catalogue-section";
 import type { CatalogueData } from "./catalogue-data";
+import { SHEET_SUBTITLE, SHEET_TABS, type SheetData } from "./sheet-data";
+import { SheetSection } from "./sheet-section";
 import { PeopleSection } from "./people-section";
 import { UserDetail } from "./user-detail";
 import { AdminDrawer } from "./drawers";
@@ -77,16 +79,25 @@ export type Address = { section?: string; tab?: string };
  */
 const CATALOGUE_SECTION = "catalogue";
 
+/**
+ * The imported order sheet. Data rather than configuration, like the
+ * catalogue — and read-only, because the spreadsheet is the source and a
+ * second place to edit a figure is a second answer to the same question.
+ */
+const SHEET_SECTION = "order-sheet";
+
 export function AdminConsole({
   apps,
   crm,
   catalogue,
+  sheet,
   isPlatformAdmin,
   initial,
 }: {
   apps: AppDefinition[];
   crm: CrmConfig;
   catalogue: CatalogueData;
+  sheet: SheetData;
   isPlatformAdmin: boolean;
   /** Where the URL says to open. */
   initial: Address;
@@ -98,6 +109,7 @@ export function AdminConsole({
           apps={apps}
           crm={crm}
           catalogue={catalogue}
+          sheet={sheet}
           isPlatformAdmin={isPlatformAdmin}
           initial={initial}
         />
@@ -119,6 +131,7 @@ function addressOf(section: string, tab: string): string {
 function firstTab(section: string): string {
   if (section === "crm") return CRM_SCHEMA.tabs[0]?.key ?? "";
   if (section === CATALOGUE_SECTION) return CATALOGUE_TABS[0].slug;
+  if (section === SHEET_SECTION) return SHEET_TABS[0].slug;
   return PLATFORM_TABS[section]?.[0]?.slug ?? "";
 }
 
@@ -126,12 +139,14 @@ function ConsoleShell({
   apps,
   crm,
   catalogue,
+  sheet,
   isPlatformAdmin,
   initial,
 }: {
   apps: AppDefinition[];
   crm: CrmConfig;
   catalogue: CatalogueData;
+  sheet: SheetData;
   isPlatformAdmin: boolean;
   initial: Address;
 }) {
@@ -171,7 +186,9 @@ function ConsoleShell({
     ? (schema?.tabs.map((t) => ({ slug: t.key, label: t.label })) ?? [])
     : section === CATALOGUE_SECTION
       ? CATALOGUE_TABS.map((t) => ({ slug: t.slug, label: t.label }))
-      : (platformTabs ?? []);
+      : section === SHEET_SECTION
+        ? SHEET_TABS.map((t) => ({ slug: t.slug, label: t.label }))
+        : (platformTabs ?? []);
   // An unknown slug lands on the first tab rather than a blank screen — a link
   // to a tab that has since been removed should still open something.
   const tabIndex = Math.max(0, tabs.findIndex((t) => t.slug === tab));
@@ -410,6 +427,22 @@ function ConsoleShell({
               }
               onClick={() => navigate(CATALOGUE_SECTION, firstTab(CATALOGUE_SECTION))}
             />
+            <NavButton
+              label="Order sheet"
+              active={section === SHEET_SECTION}
+              tone={sheet.summary.rowsWithIssues ? "danger" : "success"}
+              badge={
+                sheet.summary.rowsWithIssues
+                  ? String(sheet.summary.rowsWithIssues)
+                  : undefined
+              }
+              title={
+                sheet.summary.rowsWithIssues
+                  ? `${sheet.summary.rowsWithIssues} imported rows need attention`
+                  : undefined
+              }
+              onClick={() => navigate(SHEET_SECTION, firstTab(SHEET_SECTION))}
+            />
           </nav>
 
           <div className="flex-none border-t border-divider p-3">
@@ -439,7 +472,9 @@ function ConsoleShell({
                           : "Registered in the app registry, not yet built."
                         : section === CATALOGUE_SECTION
                           ? CATALOGUE_SUBTITLE
-                          : PLATFORM_SUBTITLES[section]}
+                          : section === SHEET_SECTION
+                            ? SHEET_SUBTITLE
+                            : PLATFORM_SUBTITLES[section]}
                     </p>
                   </div>
                   <PrimaryAction section={section} />
@@ -504,6 +539,7 @@ function ConsoleShell({
                   isPlatformAdmin={isPlatformAdmin}
                   collections={crm.collections}
                   catalogue={catalogue}
+                  sheet={sheet}
                   canWriteCatalogue={crm.canWrite}
                 />
 
@@ -647,6 +683,7 @@ function SectionBody({
   isPlatformAdmin,
   collections,
   catalogue,
+  sheet,
   canWriteCatalogue,
 }: {
   section: string;
@@ -665,11 +702,20 @@ function SectionBody({
   isPlatformAdmin: boolean;
   collections: Record<string, Collection>;
   catalogue: CatalogueData;
+  sheet: SheetData;
   canWriteCatalogue: boolean;
 }) {
   if (section === CATALOGUE_SECTION) {
     return (
       <CatalogueBody catalogue={catalogue} canWrite={canWriteCatalogue} tab={tabIndex} />
+    );
+  }
+
+  if (section === SHEET_SECTION) {
+    return (
+      <div className="mt-5">
+        <SheetSection data={sheet} tab={tabIndex} />
+      </div>
     );
   }
 
