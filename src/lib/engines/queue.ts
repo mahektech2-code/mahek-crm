@@ -120,12 +120,10 @@ export function buildQueue(
       (r) => r.kind === "reminderOverdue" || r.kind === "reminderDueToday",
     );
 
-    // The quiet window silences ORDER CHASING, not the customer. A fast-cycling
-    // customer still gets their weekly check-in inside it — that call is "is
-    // everything running fine", not "please place an order", and the two must
-    // not be confused. So the order reasons are stripped rather than the whole
-    // customer suppressed, and what the telecaller sees is the call they are
-    // actually making.
+    // The quiet window silences ORDER CHASING, not the customer. Order reasons
+    // are stripped rather than the whole customer suppressed, so a telecaller
+    // with a reminder or a check-in against them still sees the call they are
+    // actually making rather than one about an order.
     const quiet = quietWindow(c, today, config, hasReminderReason);
     const reasons = quiet ? all.filter((r) => !isOrderChasing(r.kind)) : all;
 
@@ -279,23 +277,24 @@ function reasonsFor(
 
   /* ---- check-in due ---- */
   //
-  // Two kinds of customer, one cadence.
+  // One group only: customers whose cycle could not be measured yet. There is
+  // no cycle to time a call from, so a steady cadence is the only thing left.
   //
-  // Customers who reorder faster than the quiet window are never chased for an
-  // order — they are the good ones and they order on their own. But going
-  // silent on your best customers for weeks is how you lose them, so they get
-  // a weekly call that asks whether everything is running fine and whether
-  // they need anything, not whether they will place an order.
+  // Customers who reorder FASTER than the quiet window used to get this too,
+  // on the reasoning that going silent on your best customers loses them. They
+  // no longer do. A customer buying every seven days is in contact constantly
+  // through the orders themselves, and a weekly call on top is noise on both
+  // sides of the phone — they are the one group who genuinely do order on
+  // their own.
   //
-  // Customers whose cycle could not be measured yet get the same cadence for a
-  // different reason: there is no cycle to time a call from.
+  // They are not lost by it. The moment they stop ordering they leave the
+  // quiet window, their order reasons apply, and they come back on the list
+  // for the reason that actually matters.
   //
-  // Customers with a measured cycle of 15 days or more get neither — their
-  // cycle already says when to call, and adding a weekly check-in on top would
-  // mean ringing a 60-day buyer eight times before their order is due.
-  const fastCycling =
-    !c.cycleIsDefault && c.cycleDays < config["queue.quietDaysAfterOrder"];
-  if (c.lastOrderDate && (c.cycleIsDefault || fastCycling)) {
+  // Customers with a measured cycle of 15 days or more never had this: their
+  // cycle already says when to call, and a weekly check-in on top would ring a
+  // 60-day buyer eight times before their order was due.
+  if (c.lastOrderDate && c.cycleIsDefault) {
     // When contact was last made, as well as it can be known. An ORDER is
     // contact — somebody spoke to them to take it — and for a book imported
     // from elsewhere it is the only evidence there is. Falling straight to the
@@ -309,17 +308,13 @@ function reasonsFor(
     if (daysSince > interval * 1.5) {
       reasons.push({
         kind: "checkInOverdue",
-        label: fastCycling
-          ? `Orders every ${c.cycleDays} days - no contact for ${daysSince} days`
-          : `No contact for ${daysSince} days - cycle not established yet`,
+        label: `No contact for ${daysSince} days - cycle not established yet`,
         weight: weights.checkInOverdue,
       });
     } else if (daysSince >= interval) {
       reasons.push({
         kind: "checkInDue",
-        label: fastCycling
-          ? `Weekly check-in - orders every ${c.cycleDays} days, ${daysSince} days since last contact`
-          : `Check-in due - ${daysSince} days since last contact`,
+        label: `Check-in due - ${daysSince} days since last contact`,
         weight: weights.checkInDue,
       });
     }
