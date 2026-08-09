@@ -32,6 +32,10 @@ import {
   syncPaymentSheet,
   type SyncMode,
 } from "./services/sheet-sync-service";
+import {
+  employeeSheetId,
+  syncEmployeeSheet,
+} from "./services/employee-sync-service";
 
 /* ---------------------------------------------------------------------------
  * §7 Scheduled work.
@@ -61,6 +65,8 @@ export type JobName =
   | "sheet-append"
   | "sheet-reconcile"
   | "sheet-reparse"
+  | "hrms-sync"
+  | "hrms-reparse"
   | "sheet-payments";
 
 export type JobResult = { job: JobName; recordsAffected: number; detail: string };
@@ -323,6 +329,9 @@ export async function runJob(job: JobName, triggeredById?: string): Promise<JobR
       return [await runSheetSync(job, triggeredById)];
     case "sheet-payments":
       return [await runPaymentSync(triggeredById)];
+    case "hrms-sync":
+    case "hrms-reparse":
+      return [await runEmployeeSync(job, triggeredById)];
     default:
       throw new Error(`Unknown job "${job}".`);
   }
@@ -405,6 +414,44 @@ async function runPaymentSync(triggeredById?: string): Promise<JobResult> {
         mode: "reconcile",
         triggeredById,
       });
+      return {
+        recordsAffected: outcome.rowsCreated + outcome.rowsUpdated,
+        detail: outcome.detail,
+      };
+    },
+    triggeredById,
+  );
+}
+
+/* -------------------------------------------------- the employee sheet */
+
+/**
+ * The employee master, kept level with the Employee Details tab.
+ *
+ * One job and not three. The order sheet needs a cheap append and an expensive
+ * reconcile because it is heading for thirty thousand rows; this tab is a
+ * company's payroll, so a full compare is a single API call and the hashes
+ * make an unchanged sheet cost no writes at all. That makes reconcile
+ * affordable at the frequency append would have run at — and it is the only
+ * mode that sees a salary corrected, a leaver marked Inactive, or a row
+ * deleted. Watching for new rows alone would miss all three.
+ *
+ * `hrms-reparse` touches Google not at all and re-reads what is stored. It is
+ * the one to run after a date-reading rule is corrected.
+ */
+async function runEmployeeSync(
+  job: "hrms-sync" | "hrms-reparse",
+  triggeredById?: string,
+): Promise<JobResult> {
+  return run(
+    job,
+    async () => {
+      const outcome = await syncEmployeeSheet({
+        spreadsheetId: employeeSheetId(),
+        mode: job === "hrms-reparse" ? "reparse" : "reconcile",
+        triggeredById,
+      });
+
       return {
         recordsAffected: outcome.rowsCreated + outcome.rowsUpdated,
         detail: outcome.detail,

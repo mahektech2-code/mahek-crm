@@ -31,6 +31,8 @@ npm run db:migrate   # apply migrations locally
 npm run db:seed      # wipe and reseed with demo data (also clears sessions)
 npm run db:studio    # Drizzle Studio
 npm run jobs -- nightly    # run a scheduled task by hand
+npm run hrms:sync    # pull the employee sheet now
+npm run app:grant -- hrms vikram@mahek.in   # give somebody an app
 npm run catalogue:parse    # regenerate the product master from the document
 npm run catalogue:import -- --dry-run   # what the import would change
 npm run catalogue:import   # apply it — idempotent, re-runnable
@@ -54,7 +56,7 @@ Sign in with the email **or** the work number.
 | `anjali@mahek.in` | 9820011003 | telecaller | CRM | straight into the CRM |
 | `suresh@mahek.in` | 9820011004 | telecaller | CRM | straight into the CRM |
 | `neha@mahek.in` | 9820011005 | telecaller | CRM, Reports | the launcher |
-| `vikram@mahek.in` | 9820011006 | manager | CRM, Orders, Reports, People, Admin | the launcher |
+| `vikram@mahek.in` | 9820011006 | manager | CRM, Orders, Reports, People, HRMS, Admin | the launcher |
 | `mahesh@mahek.in` | 9820011007 | field salesman | Salesman App | straight into that app |
 | `deepa@mahek.in` | 9820011008 | accounts | Orders | straight into order approvals |
 
@@ -107,7 +109,9 @@ src/
       complaints/  targets/  eod/  whatsapp/
       help/  settings/     SOPs and the manager configuration screen
       components/          the live design system
+    hrms/employees/        HRMS — the employee master, one module
     api/search/            global search endpoint
+    api/hrms/sync/         the cron endpoint the employee sync runs on
   components/
     ui/                    primitives + overlays + toasts
     shell/                 header, sidebar, icons, search, wordmark,
@@ -127,6 +131,9 @@ src/
     recompute.ts           the rebuild path for every cached derived value
     business-date.ts       Asia/Kolkata, configurable day boundary
     catalogue.ts           name normalisation + cans/litres/boxes — PURE
+    sheets.ts              the one place a Google Sheet is read — read-only
+    sheet-parse.ts         the order tab's cells → typed values — PURE
+    hr-parse.ts            the employee tab's cells → typed values — PURE
     password-reset.ts      reset tokens: minted, hashed, read back
     mailer.ts              the one place mail leaves MahekOne
     jobs.ts                scheduled work, idempotent and hand-triggerable
@@ -139,6 +146,7 @@ src/
                            and the Catalogue section (catalogue-section.tsx)
   scripts/parse-catalogue.mjs
                            document → src/db/catalogue-seed.ts, by hand
+  scripts/grant-app.ts     give somebody an app, by hand
 ```
 
 ## Rules that keep the data honest
@@ -467,6 +475,61 @@ must always be able to find out why somebody they expected is missing.
 the *inner* table and the condition silently becomes false — types and unit
 tests both pass. Write `customers.id` in the string instead. This one shipped
 once; the integration tests exist partly to catch it.
+
+**The employee master is a mirror, and mirrors do not get edited.** HRMS reads
+the workbook's `Employee Details` tab and nothing on its screens can be
+changed, because HR maintains that sheet and a field edited here would be
+overwritten by the next sync without telling anybody. The sync is
+hash-driven, so a tab that has not changed costs a read and zero writes —
+which is what makes it affordable every minute rather than every night. One
+mode, `reconcile`, not the order sheet's three: seventy rows is a single API
+call, and only a full compare notices a salary corrected, a leaver marked
+Inactive, or a row deleted.
+
+**Two things keep it current, and they cover different failures.** The open
+screen asks every minute, so somebody who adds a row and switches tabs sees
+it; and a Vercel Cron hits `/api/hrms/sync` every five minutes, so a sheet
+edited on Friday afternoon is already right on Monday morning. Both land in
+the same action, which refuses to run twice inside twenty seconds — ten open
+tabs must not be ten reads of one sheet a minute.
+
+**The employee sheet's password column never reaches the database.** It holds
+plaintext credentials to a different system, MahekOne has no use for it, and
+the raw snapshot is stored with it redacted. The hash is still taken over the
+sheet's own cells, so a changed password still reads as a changed row.
+
+**A bank account and an Aadhaar number are stored as four digits.** Enough to
+recognise the account against a passbook, useless to whoever photographs the
+screen. The full values stay in the row's `raw` snapshot, which no list query
+and no screen selects — a leak of this kind is never a breach, it is an
+ordinary query that selected everything.
+
+**A date that can be read two ways says so rather than being guessed at.**
+The tab mixes `1-Nov-2024`, Google's month-first rendering of real dates, and
+day-first text somebody typed, so `hr-parse.ts` resolves what it can from the
+value itself and falls back on a convention only when it must — and records a
+note when it does. Those notes are kept apart from real problems: two thirds
+of the rows carry one, and counting them as faults would put everybody under
+"needs attention", which is the same as putting nobody there.
+
+**The employee workbook's id is hardcoded, and the credential is not.** A
+spreadsheet id names a document; it does not open one — the service account
+does, and that stays in the environment. Keeping the id in
+`employee-sync-service.ts` means one less variable to set correctly on every
+deploy, and no HRMS reporting "not configured" because one was missed.
+`HR_SHEET_ID` still overrides it, which is how a staging deploy points at a
+copy.
+
+**An employee who leaves the sheet is marked, never deleted.** Payroll history
+outlives a spreadsheet edit, and somebody tidying a leaver off a tab is not
+asking for their record to be erased.
+
+**A new app id cannot be granted in the migration that adds it.** Postgres
+refuses to USE a value added to an enum until that transaction commits, and
+drizzle-kit applies every pending migration in ONE transaction — so a grant in
+the next migration file fails on any database that has not already been
+through the first. `npm run app:grant` is the way in, which suits HRMS anyway:
+salaries and home addresses are granted deliberately.
 
 ## Testing
 
