@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Badge,
   Button,
@@ -62,6 +62,13 @@ type Row = {
   deactivationRequested: boolean;
 };
 
+/**
+ * How many rows at a time. Twenty-five by default: the book is over a thousand
+ * now, and a telecaller opening this screen wants the first screenful. The
+ * count, the totals and the filters all still describe the whole book.
+ */
+const PER_PAGE = [25, 50, 100] as const;
+
 const STATUSES = [
   "All statuses",
   "Active",
@@ -76,54 +83,76 @@ export function CustomersScreen({
   isManager,
   team,
   rows,
+  filters,
+  pageInfo,
+  totals,
 }: {
   scopeLabel: string;
   isManager: boolean;
   team: Array<{ id: string; name: string }>;
   rows: Row[];
+  filters: { query: string; status: string; owner: string; perPage: number };
+  pageInfo: { page: number; pageCount: number; total: number; bookTotal: number };
+  totals: { outstanding: number; slowPayers: number; withComplaints: number };
 }) {
   const router = useRouter();
   const { run, push } = useToast();
 
-  const [query, setQuery] = React.useState("");
-  const [status, setStatus] = React.useState(STATUSES[0]);
-  const [owner, setOwner] = React.useState("All owners");
+  const search = useSearchParams();
+
+  // What is on screen is what the address says. These used to be component
+  // state, which was fine while the browser held the whole book; the server
+  // does the filtering now, so it has to be told — and a filtered list gains a
+  // shareable link and a working back button for free.
+  const status = filters.status || STATUSES[0];
+  const owner = filters.owner || "All owners";
+  const perPage = filters.perPage;
+  const { page, pageCount, total, bookTotal } = pageInfo;
+  const query = filters.query;
+
+  // The search box is the one control that cannot afford a round trip per
+  // keystroke, so it holds its own text and navigates when typing settles.
+  const [draft, setDraft] = React.useState(filters.query);
+  const searchTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
+
+  const navigate = React.useCallback(
+    (patch: Record<string, string | number | undefined>) => {
+      const next = new URLSearchParams(search.toString());
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === undefined || v === "" || v === null) next.delete(k);
+        else next.set(k, String(v));
+      }
+      // Any change to what is being looked at starts at the beginning of it —
+      // unless the change IS the page.
+      if (!("page" in patch)) next.delete("page");
+      router.push(`?${next.toString()}`, { scroll: false });
+    },
+    [router, search],
+  );
 
   const [addOpen, setAddOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Row | null>(null);
   const [bulkRemind, setBulkRemind] = React.useState(false);
   const [deactivating, setDeactivating] = React.useState(false);
 
-  const filtered = React.useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (status !== STATUSES[0] && r.status !== status) return false;
-      if (owner !== "All owners" && r.ownerName !== owner) return false;
-      if (!q) return true;
-      return (
-        r.name.toLowerCase().includes(q) ||
-        r.contactPerson.toLowerCase().includes(q) ||
-        r.phone.includes(q) ||
-        r.city.toLowerCase().includes(q)
-      );
-    });
-  }, [rows, query, status, owner]);
+  // Already filtered, counted and sliced by Postgres. `rows` is this page.
+  const visible = rows;
+  const from = (page - 1) * perPage;
 
   const chips = [
     status !== STATUSES[0]
-      ? { label: `Status: ${status}`, clear: () => setStatus(STATUSES[0]) }
+      ? { label: `Status: ${status}`, clear: () => navigate({ status: undefined }) }
       : null,
     owner !== "All owners"
-      ? { label: `Owner: ${owner}`, clear: () => setOwner("All owners") }
+      ? { label: `Owner: ${owner}`, clear: () => navigate({ owner: undefined }) }
       : null,
-    query ? { label: `Search: ${query}`, clear: () => setQuery("") } : null,
+    query ? { label: `Search: ${query}`, clear: () => { setDraft(""); navigate({ q: undefined }); } } : null,
   ].filter(Boolean) as Array<{ label: string; clear: () => void }>;
 
   function clearAll() {
-    setQuery("");
-    setStatus(STATUSES[0]);
-    setOwner("All owners");
+    setDraft("");
+    navigate({ q: undefined, status: undefined, owner: undefined });
   }
 
   function toggle(id: string) {
@@ -181,9 +210,11 @@ export function CustomersScreen({
     push(`Exported ${subset.length} rows`);
   }
 
-  const totalOutstanding = filtered.reduce((a, r) => a + r.outstanding, 0);
-  const slow = filtered.filter((r) => r.slowPayer).length;
-  const withComplaints = filtered.filter((r) => r.openComplaints > 0).length;
+  // Summed by Postgres over everything the filters match, not by the browser
+  // over the page it happens to be holding.
+  const totalOutstanding = totals.outstanding;
+  const slow = totals.slowPayers;
+  const withComplaints = totals.withComplaints;
 
   return (
     <div className="px-6 pt-6 pb-10">
@@ -198,7 +229,7 @@ export function CustomersScreen({
               title={
                 isManager ? "Download as CSV" : "Export is a manager action"
               }
-              onClick={() => exportCsv(filtered)}
+              onClick={() => exportCsv(visible)}
             >
               Export
             </Button>
@@ -221,8 +252,8 @@ export function CustomersScreen({
         metrics={[
           {
             label: "Customers",
-            value: String(filtered.length),
-            sub: `of ${rows.length} in the book`,
+            value: String(total),
+            sub: `of ${bookTotal.toLocaleString("en-IN")} in the book`,
           },
           {
             label: "Outstanding",
@@ -238,8 +269,8 @@ export function CustomersScreen({
           {
             label: "Average outstanding",
             value: money(
-              filtered.length
-                ? Math.round(totalOutstanding / filtered.length)
+              total
+                ? Math.round(totalOutstanding / total)
                 : 0,
             ),
           },
@@ -254,14 +285,23 @@ export function CustomersScreen({
             className="pointer-events-none absolute top-2 left-2.5 text-muted"
           />
           <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              // Typing settles before the server is asked. A round trip per
+              // keystroke would make the box feel broken on a 4G handset.
+              clearTimeout(searchTimer.current);
+              searchTimer.current = setTimeout(
+                () => navigate({ q: e.target.value }),
+                300,
+              );
+            }}
             placeholder="Search name, contact, phone, city"
             className="h-8 w-full rounded-[4px] border border-line pr-7 pl-7.5 text-sm outline-none focus:border-brand"
           />
           {query ? (
             <button
-              onClick={() => setQuery("")}
+              onClick={() => { setDraft(""); navigate({ q: undefined }); }}
               aria-label="Clear search"
               className="absolute top-1.5 right-1.5 h-4.5 w-4.5 cursor-pointer text-muted"
             >
@@ -271,7 +311,7 @@ export function CustomersScreen({
         </div>
         <Select
           value={status}
-          onChange={(e) => setStatus(e.target.value)}
+          onChange={(e) => navigate({ status: e.target.value === STATUSES[0] ? undefined : e.target.value })}
           className="h-8"
         >
           {STATUSES.map((s) => (
@@ -280,7 +320,7 @@ export function CustomersScreen({
         </Select>
         <Select
           value={owner}
-          onChange={(e) => setOwner(e.target.value)}
+          onChange={(e) => navigate({ owner: e.target.value === "All owners" ? undefined : e.target.value })}
           className="h-8"
         >
           <option>All owners</option>
@@ -298,7 +338,7 @@ export function CustomersScreen({
         ) : null}
         <span className="flex-1" />
         <span className="text-[13px] text-muted">
-          {filtered.length} of {rows.length}
+          {total.toLocaleString("en-IN")} of {bookTotal.toLocaleString("en-IN")}
         </span>
       </Card>
 
@@ -317,7 +357,7 @@ export function CustomersScreen({
       ) : null}
 
       <Card className="overflow-auto rounded-t-none">
-        {filtered.length ? (
+        {total ? (
           <table>
             <thead>
               <tr>
@@ -327,12 +367,12 @@ export function CustomersScreen({
                     aria-label="Select all"
                     className="accent-[#6835FB]"
                     checked={
-                      filtered.length > 0 && selected.size === filtered.length
+                      total > 0 && selected.size === total
                     }
                     onChange={(e) =>
                       setSelected(
                         e.target.checked
-                          ? new Set(filtered.map((r) => r.id))
+                          ? new Set(visible.map((r) => r.id))
                           : new Set(),
                       )
                     }
@@ -352,7 +392,7 @@ export function CustomersScreen({
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => (
+              {visible.map((r) => (
                 <Tr key={r.id} className="hover:bg-canvas">
                   <Td>
                     <input
@@ -481,6 +521,65 @@ export function CustomersScreen({
         )}
       </Card>
 
+      {total ? (
+        <div className="flex flex-wrap items-center gap-3 border-r border-b border-l border-line bg-surface px-4 py-3">
+          <span className="text-[13px] text-muted">
+            {/* The range, not just a page number: "26–50 of 1,075" says where
+                you are, which "page 2" only does once you know how big a page
+                is. */}
+            {from + 1}&ndash;{Math.min(from + perPage, total)} of{" "}
+            {total.toLocaleString("en-IN")}
+          </span>
+
+          <span className="flex items-center gap-2 text-[13px] text-muted">
+            <label htmlFor="per-page">Show</label>
+            <select
+              id="per-page"
+              value={perPage}
+              onChange={(e) => {
+                // Keep the first row of this page in view rather than jumping
+                // to the top: a page size is a change of zoom, not of place.
+                const next = Number(e.target.value);
+                navigate({ per: next, page: Math.floor(from / next) + 1 });
+              }}
+              className="h-8 cursor-pointer rounded-[4px] border border-line bg-canvas px-2 text-[13px] text-body"
+            >
+              {PER_PAGE.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </span>
+
+          <span className="flex-1" />
+
+          <span className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={page <= 1}
+              title={page <= 1 ? "This is the first page" : undefined}
+              onClick={() => navigate({ page: page - 1 })}
+            >
+              Previous
+            </Button>
+            <span className="text-[13px] text-body tabular-nums">
+              {page} / {pageCount}
+            </span>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={page >= pageCount}
+              title={page >= pageCount ? "This is the last page" : undefined}
+              onClick={() => navigate({ page: page + 1 })}
+            >
+              Next
+            </Button>
+          </span>
+        </div>
+      ) : null}
+
       <SelectionBar
         count={selected.size}
         onClear={() => setSelected(new Set())}
@@ -503,7 +602,7 @@ export function CustomersScreen({
           size="sm"
           disabled={!isManager}
           title={isManager ? undefined : "Export is a manager action"}
-          onClick={() => exportCsv(filtered.filter((r) => selected.has(r.id)))}
+          onClick={() => exportCsv(visible.filter((r) => selected.has(r.id)))}
         >
           Export
         </Button>

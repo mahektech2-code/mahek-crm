@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
   bills,
@@ -47,6 +47,157 @@ export type CustomerRow = typeof customers.$inferSelect & {
   backOfficeAmName: string | null;
   openComplaints: number;
 };
+
+/**
+ * The customer status label, in SQL.
+ *
+ * The same rule as `customerStatusLabel` in lib/format.ts, which is the
+ * definition — this exists only because the list is now filtered and counted
+ * in Postgres, and a filter cannot call a TypeScript function. Two statements
+ * of one rule is a drift risk, so an integration test asserts they agree for
+ * every combination rather than trusting that they do.
+ *
+ * Order matters and matches the original: deactivated, then inactive (which
+ * outranks slow payer, because it is the one that says stop and think), then
+ * never-ordered, then slow payer.
+ */
+const STATUS_LABEL_SQL = sql<string>`
+  case
+    when customers.status = 'deactivated' then 'Deactivated'
+    when customers.status = 'inactive'    then 'Inactive'
+    when customers.last_order_date is null then 'New'
+    when customers.slow_payer             then 'Slow payer'
+    else 'Active'
+  end
+`;
+
+export type CustomerListFilters = {
+  query?: string;
+  /** A label from customerStatusLabel, or absent for all of them. */
+  status?: string;
+  /** An owner's name as shown in the filter, or absent for all. */
+  owner?: string;
+  page?: number;
+  perPage?: number;
+};
+
+export type CustomerListPage = {
+  rows: CustomerRow[];
+  /** Matching the filters. */
+  total: number;
+  /** In the whole book, before any filter. */
+  bookTotal: number;
+  page: number;
+  pageCount: number;
+  /** Over the FILTERED set, not the page — the tiles describe the search. */
+  totals: { outstanding: number; slowPayers: number; withComplaints: number };
+};
+
+/**
+ * One page of the customer list, filtered and counted in the database.
+ *
+ * The screen used to receive every row and do this in the browser. That was
+ * honest at fifty-two records and stopped being so at eleven hundred: the page
+ * carried the entire book over the wire to show twenty-five of it, and the
+ * totals above the table were summed on the client from data it had all been
+ * sent anyway.
+ */
+export async function listCustomersPage(
+  filters: CustomerListFilters = {},
+): Promise<CustomerListPage> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const perPage = Math.min(Math.max(filters.perPage ?? 25, 1), 200);
+
+  const scoped = ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined;
+
+  const where: SQL[] = [];
+  if (scoped) where.push(scoped);
+
+  const q = filters.query?.trim();
+  if (q) {
+    const like = `%${q}%`;
+    where.push(sql`(
+      customers.name ilike ${like}
+      or customers.contact_person ilike ${like}
+      or customers.phone like ${like}
+      or customers.city ilike ${like}
+    )`);
+  }
+  if (filters.status) where.push(sql`${STATUS_LABEL_SQL} = ${filters.status}`);
+  if (filters.owner) {
+    where.push(sql`(select name from users u where u.id = customers.owner_id) = ${filters.owner}`);
+  }
+
+  const clause = where.length ? and(...where) : undefined;
+
+  // One pass for the count and the tiles. Summing these in the browser meant
+  // sending every row to add them up.
+  const [agg] = await db
+    .select({
+      total: sql<number>`count(*)::int`,
+      outstanding: sql<number>`coalesce(sum(${customers.outstanding}), 0)::bigint`,
+      slowPayers: sql<number>`count(*) filter (where ${customers.slowPayer})::int`,
+      withComplaints: sql<number>`count(*) filter (where (
+        select count(*) from ${complaints}
+         where complaints.customer_id = customers.id
+           and ${complaints.status} in ('open','in_progress','awaiting_customer')
+      ) > 0)::int`,
+    })
+    .from(customers)
+    .where(clause);
+
+  const [book] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(customers)
+    .where(scoped);
+
+  const total = Number(agg?.total ?? 0);
+  const pageCount = Math.max(1, Math.ceil(total / perPage));
+  const page = Math.min(Math.max(filters.page ?? 1, 1), pageCount);
+
+  const rows = await db
+    .select({
+      customer: customers,
+      ownerName: users.name,
+      salesAmName: sql<string | null>`(
+        select name from users u where u.id = customers.sales_am_id
+      )`,
+      backOfficeAmName: sql<string | null>`(
+        select name from users u where u.id = customers.back_office_am_id
+      )`,
+      openComplaints: sql<number>`(
+        select count(*)::int from ${complaints}
+         where complaints.customer_id = customers.id
+           and ${complaints.status} in ('open','in_progress','awaiting_customer')
+      )`,
+    })
+    .from(customers)
+    .leftJoin(users, eq(users.id, customers.ownerId))
+    .where(clause)
+    .orderBy(asc(customers.name))
+    .limit(perPage)
+    .offset((page - 1) * perPage);
+
+  return {
+    rows: rows.map((r) => ({
+      ...r.customer,
+      ownerName: r.ownerName,
+      salesAmName: r.salesAmName,
+      backOfficeAmName: r.backOfficeAmName,
+      openComplaints: Number(r.openComplaints),
+    })),
+    total,
+    bookTotal: Number(book?.n ?? 0),
+    page,
+    pageCount,
+    totals: {
+      outstanding: Number(agg?.outstanding ?? 0),
+      slowPayers: Number(agg?.slowPayers ?? 0),
+      withComplaints: Number(agg?.withComplaints ?? 0),
+    },
+  };
+}
 
 export async function listCustomers(): Promise<CustomerRow[]> {
   const ctx = await resolveScope();
