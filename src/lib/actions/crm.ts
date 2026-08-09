@@ -753,6 +753,167 @@ export async function decideDeactivation(
   }
 }
 
+/* ---------------------------------------------------------- coming back */
+
+/**
+ * Asking for a deactivated customer to be brought back.
+ *
+ * The mirror of `requestDeactivation`, and deliberately the same shape: the
+ * person who knows the account raises it with a reason, and a manager decides.
+ * `recomputeInactivity` will not do it on the strength of an order — a
+ * deactivation was somebody's decision and an order does not undo it — so this
+ * is the only way back.
+ *
+ * Only a deactivated customer can be asked for. Anybody else is already in the
+ * book, and a pending request against them would sit on a manager's list
+ * meaning nothing.
+ */
+export async function requestReactivation(
+  customerIds: string[],
+  reason: string,
+): Promise<Result> {
+  try {
+    if (!reason.trim()) return err("A reason is required.", "validation");
+    if (!customerIds.length)
+      return err("Select at least one customer.", "validation");
+    const ctx = await resolveScope();
+
+    const rows = await db
+      .select({ id: customers.id, status: customers.status })
+      .from(customers)
+      .where(inArray(customers.id, customerIds));
+
+    const deactivated = rows.filter((r) => r.status === "deactivated");
+    if (!deactivated.length) {
+      return err(
+        rows.length === 1
+          ? "That customer is not deactivated, so there is nothing to bring back."
+          : "None of those customers are deactivated.",
+        "conflict",
+      );
+    }
+
+    await db
+      .update(customers)
+      .set({ reactivationRequested: true, reactivationReason: reason.trim() })
+      .where(
+        inArray(
+          customers.id,
+          deactivated.map((r) => r.id),
+        ),
+      );
+
+    const managers = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(inArray(users.role, ["manager", "admin"]));
+    for (const m of managers) {
+      await db.insert(notifications).values({
+        id: id("ntf"),
+        userId: m.id,
+        title: "Reactivation requested",
+        body: `${ctx.user.name} asked to bring back ${deactivated.length} customer${deactivated.length === 1 ? "" : "s"}: ${reason.trim()}`,
+        kind: "info",
+        href: "/crm/customers?status=Deactivated",
+      });
+    }
+
+    refreshAll();
+    // Says how many were acted on rather than how many were selected: a bulk
+    // selection that included live customers has not done what it looks like.
+    return okVoid(
+      deactivated.length === rows.length
+        ? "Reactivation requested - a manager decides"
+        : `Reactivation requested for ${deactivated.length} of ${rows.length} - the rest were not deactivated`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * The manager's half.
+ *
+ * Approving puts the customer back at `active` and lets `recomputeInactivity`
+ * decide from there whether they are actually quiet — status is derived from
+ * behaviour once somebody is in the book again, and setting `active` by hand
+ * and leaving it would be a stored value nobody rebuilds.
+ *
+ * The deactivation fields are cleared rather than kept. They describe a state
+ * the customer is no longer in, and a stale reason sitting on a live row is
+ * how a screen ends up explaining a deactivation that was reversed in March.
+ * The audit log holds both decisions, which is what it is for.
+ */
+export async function decideReactivation(
+  customerId: string,
+  approve: boolean,
+): Promise<Result> {
+  try {
+    const ctx = await requireCapability("customer.deactivate");
+    const [existing] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customerId));
+    if (!existing) return err("That customer no longer exists.", "not_found");
+
+    if (approve && existing.status !== "deactivated") {
+      return err(
+        "That customer is already in the book. Somebody has brought them back already.",
+        "conflict",
+      );
+    }
+
+    await db
+      .update(customers)
+      .set(
+        approve
+          ? {
+              status: "active",
+              deactivatedAt: null,
+              deactivatedById: null,
+              deactivationReason: null,
+              deactivationRequested: false,
+              reactivationRequested: false,
+              reactivationReason: null,
+              updatedAt: new Date(),
+              updatedById: ctx.user.id,
+            }
+          : {
+              reactivationRequested: false,
+              reactivationReason: null,
+              updatedAt: new Date(),
+              updatedById: ctx.user.id,
+            },
+      )
+      .where(eq(customers.id, customerId));
+
+    await db.insert(auditLog).values({
+      id: id("aud"),
+      actorId: ctx.user.id,
+      action: approve ? "customer.reactivate" : "customer.reactivation_rejected",
+      entityType: "customer",
+      entityId: customerId,
+      beforeState: {
+        status: existing.status,
+        deactivationReason: existing.deactivationReason,
+      } as never,
+      afterState: {
+        status: approve ? "active" : existing.status,
+        reason: existing.reactivationReason,
+      } as never,
+    });
+
+    // A customer back in the book is a customer the queue has to place, and
+    // one who has been quiet for months goes straight onto the inactive watch
+    // rather than reading as freshly active.
+    await recomputeInactivity();
+    refreshAll();
+    return okVoid(approve ? "Customer brought back" : "Request rejected");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 /* ------------------------------------------------------------- complaints */
 
 /**

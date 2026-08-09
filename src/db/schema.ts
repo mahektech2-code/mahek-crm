@@ -501,6 +501,14 @@ export const customers = pgTable(
     deactivationReason: text("deactivation_reason"),
     /** Raised by a telecaller, decided by a manager. */
     deactivationRequested: boolean("deactivation_requested").notNull().default(false),
+    /**
+     * The same pair, in the other direction. A deactivated customer who wants
+     * to come back is a decision somebody has to take deliberately —
+     * `recomputeInactivity` will not do it on the strength of an order — so
+     * the ask needs somewhere to live while it waits for a manager.
+     */
+    reactivationRequested: boolean("reactivation_requested").notNull().default(false),
+    reactivationReason: text("reactivation_reason"),
 
     /* commercial terms */
     gstin: text("gstin"),

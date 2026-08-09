@@ -121,6 +121,8 @@ export default async function CustomerRecordPage({
         route: customer.route,
         customerSince: customer.customerSince,
         deactivationRequested: customer.deactivationRequested,
+        reactivationRequested: customer.reactivationRequested,
+        reactivationReason: customer.reactivationReason,
         deactivationReason: customer.deactivationReason,
       }}
       daysSinceOrder={
