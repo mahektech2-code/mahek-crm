@@ -338,6 +338,8 @@ export type JobOptions = {
   leads?: boolean;
   /** Write bills and payments from the Payment Status tab. */
   bills?: boolean;
+  /** Move customers that already exist to `owner`, not just new ones. */
+  reassign?: boolean;
 };
 
 export async function runJob(
@@ -539,6 +541,7 @@ async function runProjection(
       const orders = await projectSheet({
         assignToUserId: ownerId,
         includeBills: options.bills ?? false,
+        reassign: options.reassign ?? false,
       });
       const parties = await projectParties({
         createLeads: options.leads ?? false,
@@ -551,6 +554,7 @@ async function runProjection(
         `bills ${orders.bills.skipped ? "skipped" : orders.bills.created}, ` +
         `master matched ${parties.matched}, phones ${parties.phonesFilled}, ` +
         `leads ${parties.leadsCreated}/${parties.leadsAvailable}` +
+        (options.reassign ? ", reassigned to the given owner" : "") +
         (orders.customers.unassigned
           ? `, ${orders.customers.unassigned} customers in nobody's book`
           : "");

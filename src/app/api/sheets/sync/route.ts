@@ -19,7 +19,8 @@ import { runJob, type JobName } from "@/lib/jobs";
  *                     was written, which an append run would never see.
  *   ?mode=parties     the customer master. Where the phone numbers come from.
  *   ?mode=project     turn what has landed into customers, orders and — only
- *                     when asked — bills. Takes &owner=, &leads=1, &bills=1.
+ *                     when asked — bills. Takes &owner=, &leads=1, &bills=1,
+ *                     and &reassign=1 to move customers that already exist.
  *
  * `reparse` is deliberately NOT reachable here. It re-reads stored rows after
  * somebody corrects a parsing rule, which is a decision a person makes with a
@@ -81,6 +82,7 @@ export async function GET(request: Request) {
     owner: params.get("owner") ?? undefined,
     leads: params.get("leads") === "1",
     bills: params.get("bills") === "1",
+    reassign: params.get("reassign") === "1",
   };
 
   try {
