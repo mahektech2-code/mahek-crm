@@ -32,6 +32,7 @@ import {
 import { evaluateInactivity, watchAge } from "./inactivity";
 import { resolveTarget, classifyShortfall } from "./targets";
 import { aggregateEod, eodPreflight, formatMoney } from "./eod";
+import { parseJobArgs } from "../job-args";
 
 /* ---------------------------------------------------------------------------
  * Every engine takes an injected clock and injected configuration, so these
@@ -1590,5 +1591,49 @@ describe("E3 the hand-raised stage floor", () => {
         `${days} days must be unaffected`,
       );
     }
+  });
+});
+
+/* ========================================================= the job runner */
+
+describe("job runner arguments", () => {
+  test("a switch that was typed is a switch that arrives", () => {
+    // The bug: `--bills` was accepted by argv, discarded before runJob, and
+    // the run then reported "bills skipped" — so the flag looked like an
+    // answer about the data rather than an option that never arrived.
+    const r = parseJobArgs(["project-sheet", "--owner=vikram@mahek.in", "--bills"]);
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.ok && r.options, { owner: "vikram@mahek.in", bills: true });
+  });
+
+  test("a job on its own carries no options", () => {
+    const r = parseJobArgs(["nightly"]);
+    assert.deepEqual(r.ok && r.options, {});
+  });
+
+  test("a misspelt option is refused, never ignored", () => {
+    // Ignoring it is how somebody concludes the import cannot write bills.
+    const r = parseJobArgs(["project-sheet", "--bils"]);
+    assert.equal(r.ok, false);
+    assert.match(r.ok ? "" : (r.problem ?? ""), /--bils/);
+  });
+
+  test("--owner with nothing after it is refused", () => {
+    // Empty would read as "assign to nobody", which puts an imported book in
+    // no telecaller's scope and every screen stays empty.
+    const r = parseJobArgs(["project-sheet", "--owner"]);
+    assert.equal(r.ok, false);
+    assert.match(r.ok ? "" : (r.problem ?? ""), /needs a value/);
+  });
+
+  test("a switch given a value is refused rather than guessed at", () => {
+    // --bills=false must not read as true, which is what a bare presence
+    // check would do.
+    const r = parseJobArgs(["project-sheet", "--bills=false"]);
+    assert.equal(r.ok, false);
+  });
+
+  test("no job at all asks for the usage", () => {
+    assert.deepEqual(parseJobArgs([]), { ok: false, problem: null });
   });
 });
