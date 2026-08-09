@@ -1,9 +1,10 @@
 import "server-only";
-import { and, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   calls,
   customers,
+  inactiveWatchItems,
   monthlyTargets,
   orders,
   queueSnapshots,
@@ -137,6 +138,26 @@ async function queueInputs(ids: string[] | null, day: string) {
     // deactivated customer leaves the queue.
     .where(and(ne(customers.status, "deactivated"), ownerFilter));
 
+  // Who is open on the Inactive Watch. One query rather than a lookup per
+  // candidate — and only OPEN rows: a customer somebody has already decided
+  // about, or parked until a date, is off the watch and back in the queue.
+  const watched = new Set(
+    (
+      await db
+        .select({ customerId: inactiveWatchItems.customerId })
+        .from(inactiveWatchItems)
+        .where(
+          and(
+            isNull(inactiveWatchItems.outcome),
+            or(
+              isNull(inactiveWatchItems.dismissedUntil),
+              lte(inactiveWatchItems.dismissedUntil, day),
+            ),
+          ),
+        )
+    ).map((r) => r.customerId),
+  );
+
   // Pending reminders assigned to whoever is asking, in one query.
   const reminderRows = await db
     .select({
@@ -192,6 +213,7 @@ async function queueInputs(ids: string[] | null, day: string) {
       outstanding: c.outstanding,
       targetGap: Number(targetGap ?? 0),
       lastNoOrderDate: lastNoOrder ?? null,
+      onInactiveWatch: watched.has(c.id),
     }),
   );
 

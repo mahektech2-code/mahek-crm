@@ -41,6 +41,12 @@ export type QueueCandidate = {
   /** Last call that ended in no order. Starts the re-ask cooldown. */
   lastNoOrderDate: BusinessDate | null;
 
+  /**
+   * Open on the Inactive Watch — past twice their own buying cycle with no
+   * order, and nobody has decided what to do about them yet.
+   */
+  onInactiveWatch: boolean;
+
   /** Tie-breakers. */
   outstanding: number;
   targetGap: number;
@@ -90,6 +96,7 @@ export type QueueConfig = Pick<
   | "queue.noOrderCooldownDays"
   | "queue.excludeActiveInOrderSystem"
   | "queue.excludeCalledToday"
+  | "queue.excludeInactiveWatch"
   | "queue.maxSizePerUser"
   | "queue.tierWeights"
 >;
@@ -387,6 +394,16 @@ function suppressionReason(
 
   if (config["queue.excludeActiveInOrderSystem"] && c.activeInOrderSystem) {
     return "Active in the order system";
+  }
+
+  // A customer this far past their cycle is worked from the Inactive Watch,
+  // which is a different conversation: not "are you ready to reorder" but "why
+  // did you stop". Left in the queue they arrive as the most overdue customers
+  // on it — every one of them, every day — and bury the customers who are
+  // merely due. A reminder still outranks this, because a callback the
+  // customer asked for is not chasing.
+  if (config["queue.excludeInactiveWatch"] && c.onInactiveWatch && !hasReminderReason) {
+    return "On the inactive watch - worked from that list";
   }
 
   // Asked for an order and told no. Without this a customer past their call
