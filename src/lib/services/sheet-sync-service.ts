@@ -145,6 +145,17 @@ async function pullFromSheet(
       .where(eq(sheetSyncRuns.id, syncId));
   }
 
+  // An append that found nothing still knows how far it looked, and the
+  // checkpoint above only runs when there was a window to write. Without this
+  // the run records the default watermark, the next append reads it and starts
+  // from the top again — free in writes, because the hashes catch everything,
+  // but every quarter of an hour it would re-read the entire sheet to discover
+  // that nothing had changed.
+  await db
+    .update(sheetSyncRuns)
+    .set({ rowsRead, highestRow })
+    .where(eq(sheetSyncRuns.id, syncId));
+
   // Only a full read can conclude that a row has gone. An append run has not
   // looked at the rows above its watermark and must never mark them missing.
   let withdrawn = 0;

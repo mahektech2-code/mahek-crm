@@ -4,6 +4,18 @@
     {
       "path": "/api/hrms/sync",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/sheets/sync?mode=append",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/sheets/sync?mode=reconcile",
+      "schedule": "30 17 * * *"
+    },
+    {
+      "path": "/api/sheets/sync?mode=payments",
+      "schedule": "0 18 * * *"
     }
   ]
 }
