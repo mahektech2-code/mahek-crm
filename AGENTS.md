@@ -652,6 +652,17 @@ and Sales Bills stayed empty through three releases that each claimed to fix
 it. Admin Console → Order sheet → Sync runs both steps, and `triggerJob` takes
 the owner because the sheet cannot supply one. A merge has to be enough.
 
+**A bill number is unique across the TABLE, so uniqueness cannot be worked
+out from one run.** `bills_no_key` is a unique index over every row, and the
+import used to decide numbering by counting Tally numbers within its own batch
+— blind to a bill somebody typed in, one the Payment Status path wrote, or one
+a half-finished run left behind. The insert threw, and it threw after thousands
+of rows had already landed. Existing numbers are read first and a contested one
+falls back to `<tally>/<order number>`, then `ORD-<order number>`; an order
+that still cannot get a unique number is counted and skipped, never renamed
+into something nobody can reconcile and never thrown, because one unusable
+number must not cost the other ten thousand rows.
+
 **A sales bill IS the order.** Bills are projected from the Order Details tab,
 one per order, valued as the SUM of its lines — Final Amount is line-level and
 half these orders are multi-line. The number is the Tally number, gaining the

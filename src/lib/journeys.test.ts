@@ -3968,6 +3968,7 @@ describe("An imported customer reaches the calling queue", () => {
         ratePaise: 100_00,
         amountPaise: 1000_00,
         finalAmountPaise: 1180_00,
+        tallyBillNo: `MMI/26-27/${orderNumber}`,
       });
     }
     return run;
@@ -4074,6 +4075,40 @@ describe("An imported customer reaches the calling queue", () => {
       .where(eq(customers.name, "Shree Paints"));
     assert.equal(customer.outstanding, 0);
     assert.equal((await db.select().from(followUpStates)).length, 0);
+  });
+
+  test("a bill number already taken does not bring the whole import down", async () => {
+    // The insert that failed in production: bills_no_key is unique across the
+    // WHOLE table, so a number held by any other bill — typed in by hand, left
+    // by a half-finished run, or written by the Payment Status path — collided
+    // and threw, after thousands of rows had already landed.
+    const other = await makeCustomer(rakesh.id);
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+
+    // Exactly the number the import is about to want.
+    const wanted = "MMI/26-27/SO-1001";
+    await db.insert(bills).values({
+      id: id("bil"),
+      customerId: other.id,
+      billNo: wanted,
+      billDate: addDays(TODAY, -200),
+      amount: 5_000_00,
+      paidAmount: 0,
+    });
+
+    const report = await projectSheet({ assignToUserId: priya.id });
+    assert.equal(report.bills.created, 1, "the order still became a bill");
+
+    const rows = await db.select().from(bills);
+    assert.equal(rows.length, 2, "both bills exist, neither overwrote the other");
+    const mine = rows.find((b) => b.externalRef === "SHEETPAY-SO-1001");
+    assert.ok(mine, "the imported bill was written");
+    assert.notEqual(mine.billNo, wanted, "and it took a different number");
+    assert.equal(
+      mine.billNo,
+      `${wanted}/SO-1001`,
+      "the order number is what makes it unique, so it stays recognisable",
+    );
   });
 
   test("running it twice does not pay the same bill twice", async () => {

@@ -106,6 +106,13 @@ export type ProjectionReport = {
     paidWithoutDate: number;
     /** No status at all — read as unpaid, which is a choice worth counting. */
     blankStatus: number;
+    /**
+     * Orders whose bill number is already held by a different bill and could
+     * not be made unique. Skipped and counted, never renamed into something
+     * nobody can reconcile — and never thrown, because one unusable number
+     * must not cost the other ten thousand rows.
+     */
+    clashed: number;
     skipped: boolean;
   };
   skipped: { reason: string; count: number }[];
@@ -605,22 +612,39 @@ export async function projectBillsFromOrders(
   const orderByRef = new Map(orderRows.map((o) => [o.externalRef!, o]));
 
   // A Tally number carried by more than one order gains the order number, so
-  // the identifier stays unique without losing what it was.
+  // the identifier stays unique without losing what it was. Counted across
+  // EVERY line, not just each order's first: three orders here carry a
+  // different number further down, and a count that only reads the head is
+  // blind to exactly the repeats it exists to find.
   const tallyCounts = new Map<string, number>();
   for (const [, group] of grouped) {
-    const tally = group[0].tallyBillNo?.trim();
-    if (tally) tallyCounts.set(tally, (tallyCounts.get(tally) ?? 0) + 1);
+    const seen = new Set<string>();
+    for (const line of group) {
+      const t = line.tallyBillNo?.trim();
+      if (t) seen.add(t);
+    }
+    for (const t of seen) tallyCounts.set(t, (tallyCounts.get(t) ?? 0) + 1);
   }
 
+  // EVERY bill, not only the ones this importer wrote. `bills_no_key` is a
+  // unique index over the whole table, so a number is available or it is not —
+  // that is a fact about the table and cannot be worked out from this run.
+  // Reading only `SHEETPAY-%` meant a number already held by a bill somebody
+  // typed in, or written by the Payment Status path, or left behind by a run
+  // that died halfway, collided on insert and took the whole import down with
+  // it — after thousands of rows had already landed.
   const existing = await db
-    .select({ id: bills.id, externalRef: bills.externalRef })
-    .from(bills)
-    .where(sql`${bills.externalRef} like 'SHEETPAY-%'`);
-  const billByRef = new Map(existing.map((b) => [b.externalRef!, b.id]));
+    .select({ id: bills.id, billNo: bills.billNo, externalRef: bills.externalRef })
+    .from(bills);
+  const billByRef = new Map(
+    existing.filter((b) => b.externalRef).map((b) => [b.externalRef!, b.id]),
+  );
+  const billByNo = new Map(existing.map((b) => [b.billNo, b]));
 
   let created = 0;
   let updated = 0;
   let receipts = 0;
+  let clashed = 0;
 
   for (const [orderNumber, group] of grouped) {
     const head = group[0];
@@ -634,7 +658,7 @@ export async function projectBillsFromOrders(
     if (!billDate) continue;
 
     const tally = head.tallyBillNo?.trim();
-    const billNo =
+    let billNo =
       tally && (tallyCounts.get(tally) ?? 0) === 1
         ? tally
         : tally
@@ -642,6 +666,22 @@ export async function projectBillsFromOrders(
           : `ORD-${orderNumber}`;
 
     const externalRef = `SHEETPAY-${orderNumber}`;
+
+    // The number this order would like, then what it settles for. A candidate
+    // held by a DIFFERENT bill is taken; held by this one is simply itself.
+    const held = (candidate: string) => {
+      const owner = billByNo.get(candidate);
+      return Boolean(owner && owner.externalRef !== externalRef);
+    };
+    if (held(billNo)) billNo = tally ? `${tally}/${orderNumber}` : `ORD-${orderNumber}`;
+    if (held(billNo)) billNo = `ORD-${orderNumber}`;
+    // Nothing left to fall back on that is still recognisable, so the row is
+    // reported rather than renamed into something nobody can reconcile.
+    if (held(billNo)) {
+      clashed++;
+      continue;
+    }
+
     const values = {
       customerId: order.customerId,
       billNo,
@@ -671,6 +711,8 @@ export async function projectBillsFromOrders(
       await db.insert(bills).values({ id: billId, ...values });
       created++;
     }
+    // So the next order in this same pass sees the number as taken.
+    billByNo.set(billNo, { id: billId, billNo, externalRef });
 
     // Settled by instruction, not by evidence. Idempotent on the key, so a
     // re-run never pays the same bill twice.
@@ -692,6 +734,7 @@ export async function projectBillsFromOrders(
     // so there is nothing "received without a date" and nothing left blank.
     paidWithoutDate: 0,
     blankStatus: 0,
+    clashed,
     skipped: false,
   };
 }
@@ -706,6 +749,7 @@ export async function projectBills(
       payments: 0,
       paidWithoutDate: 0,
       blankStatus: 0,
+      clashed: 0,
       skipped: true,
     };
   }
@@ -854,6 +898,9 @@ export async function projectBills(
     payments: paymentsWritten,
     paidWithoutDate,
     blankStatus,
+    // The Payment Status path keys one bill per order too, so a clash here
+    // would mean the same thing — it simply has not been seen.
+    clashed: 0,
     skipped: false,
   };
 }

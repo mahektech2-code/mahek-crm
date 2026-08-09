@@ -600,7 +600,8 @@ async function runProjection(
       const detail =
         `customers ${orders.customers.created} new / ${orders.customers.updated} updated, ` +
         `orders ${orders.orders.created} new (${orders.orders.lines} lines), ` +
-        `bills ${orders.bills.skipped ? "skipped" : orders.bills.created}, ` +
+        `bills ${orders.bills.skipped ? "skipped" : orders.bills.created}` +
+        (orders.bills.clashed ? ` (${orders.bills.clashed} bill numbers already taken)` : "") + ", " +
         `master matched ${parties.matched}, phones ${parties.phonesFilled}, ` +
         `leads ${parties.leadsCreated}/${parties.leadsAvailable}` +
         (options.reassign ? ", reassigned to the given owner" : "") +
