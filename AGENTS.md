@@ -32,6 +32,10 @@ npm run db:seed      # wipe and reseed with demo data (also clears sessions)
 npm run db:studio    # Drizzle Studio
 npm run jobs -- nightly    # run a scheduled task by hand
 npm run jobs -- sheet-payments             # pull the Payment Status tab
+npm run jobs -- taken-order-sync           # pull the Taken Order tab, then
+                           # rebuild who is held back from order chasing
+npm run jobs -- taken-order-reparse        # re-read what is stored — the one
+                           # to run when the RULE changed, not the sheet
 npm run jobs -- project-sheet --owner=vikram@mahek.in --bills
                            # staged rows -> customers, orders and bills
 npm run hrms:sync    # pull the employee sheet now
@@ -59,9 +63,9 @@ Sign in with the email **or** the work number.
 | `anjali@mahek.in` | 9820011003 | telecaller | CRM | straight into the CRM |
 | `suresh@mahek.in` | 9820011004 | telecaller | CRM | straight into the CRM |
 | `neha@mahek.in` | 9820011005 | telecaller | CRM, Reports | the launcher |
-| `vikram@mahek.in` | 9820011006 | manager | CRM, Orders, Reports, People, HRMS, Admin | the launcher |
+| `vikram@mahek.in` | 9820011006 | manager | CRM, Accounts, Reports, People, HRMS, Admin | the launcher |
 | `mahesh@mahek.in` | 9820011007 | field salesman | Salesman App | straight into that app |
-| `deepa@mahek.in` | 9820011008 | accounts | Orders | straight into order approvals |
+| `deepa@mahek.in` | 9820011008 | accounts | Accounts | straight into order approvals |
 
 ## How sign-in works
 
@@ -100,7 +104,9 @@ src/
     login/                 the global sign-in
       forgot/  reset/      ask for a reset link, and spend it
     apps/                  the launcher, 1–9 opens an app
-    field/ orders/         placeholder shells for apps not built yet
+    field/                 placeholder shell for an app not built yet
+    orders/                the Accounts app — order approvals, payments to
+                           confirm, record a payment, customer account
     people/ reports/ admin/
     crm/                   the CRM — header, sidebar, toasts
       dashboard/           telecaller day + manager team overview
@@ -114,7 +120,8 @@ src/
       components/          the live design system
     hrms/employees/        HRMS — the employee master, one module
     api/search/            global search endpoint
-    api/sheets/sync/       order + payment sync, on demand, ?mode=
+    api/payments/          search and open bills, for the accounts capture form
+    api/sheets/sync/       order, payment + taken-order sync, on demand, ?mode=
     api/hrms/sync/         employee sync, on demand — no schedule, see below
   components/
     ui/                    primitives + overlays + toasts
@@ -127,9 +134,10 @@ src/
     apps.ts                the MahekOne app registry
     config/                registry.ts (every setting + validation) and
                            store.ts (cached reads, audited writes)
-    engines/               the six derived-state engines — PURE, no I/O:
+    engines/               the derived-state engines — PURE, no I/O:
                            buying-cycle, queue, escalation, inactivity,
-                           targets, eod  + engines.test.ts
+                           targets, eod, payment-followup, allocation
+                           + engines.test.ts, allocation.test.ts
     services/              engines wired to data — one file per module
     access-control.ts      scope resolution + capabilities (§8)
     recompute.ts           the rebuild path for every cached derived value
@@ -138,6 +146,8 @@ src/
     sheets.ts              the one place a Google Sheet is read — read-only
     sheet-parse.ts         the order tab's cells → typed values — PURE
     hr-parse.ts            the employee tab's cells → typed values — PURE
+    taken-order-parse.ts   the Taken Order tab's cells → typed values, and
+                           the open/dispatched rule itself — PURE
     password-reset.ts      reset tokens: minted, hashed, read back
     mailer.ts              the one place mail leaves MahekOne
     jobs.ts                scheduled work, idempotent and hand-triggerable
@@ -486,6 +496,59 @@ person chasing the target must not sign off the orders that hit it. Declining
 requires a reason, and it lands on the customer timeline, because the telecaller
 has to ring back and say something.
 
+**Money the customer says has arrived is not money the business has seen.** A
+payment reported by a telecaller sits at `reported` until accounts find it in
+the bank, and `bills.paidAmount` — and therefore outstanding, aging, the
+slow-payer flag and the collections worklist — counts CONFIRMED receipts only.
+Before this, a telecaller's word reduced outstanding on the spot, so a transfer
+that never landed erased real debt from every screen with nobody's name against
+the decision. `recomputeBillPaid` rebuilds the figure from confirmed lines
+rather than incrementing it, which is what makes confirming, rejecting and
+re-confirming all land on the same answer.
+
+**What a reported payment DOES do is stop the chasing.** The customer is held
+back from collections with the reason said plainly, never silently dropped, and
+the quiet expires after `payments.reportedQuietDays` — an unexpiring one would
+let a customer take themselves off the list by saying they had paid, and the
+account would simply stop appearing. Reported money outranks a promise, because
+it is the better news; do-not-contact still outranks it.
+
+**Rejecting is not deleting.** The receipt keeps its row and its reason, gives
+the balance back to the bills it named, and returns the customer to the worklist
+with their stage floor intact. It lands on the timeline because somebody has to
+ring back and say something. A rejected receipt stays on the customer's
+statement too — a transfer that never arrived is a fact about the account, and
+dropping it leaves the next person wondering why the balance never moved.
+
+**A receipt is one arrival of money; `payments` rows are where it went.** Which
+bills a transfer settles is a second question with a second answer, so a
+₹50,000 payment across three bills is one receipt and three allocation lines.
+Fusing the two — which is what a payment pinned to a single bill was — makes
+part payment, a transfer covering several bills, and money received in advance
+all impossible to record honestly. A line with a null `billId` is money on
+account, and a remainder becomes one rather than being refused at the door:
+refusing it is how a receipt gets recorded for the wrong amount to make the
+screen accept it.
+
+**Allocation is pure, and the screen runs the same function the server does.**
+`lib/engines/allocation.ts` takes bills, an amount and one of three
+instructions — oldest first, settle these, split it myself — and returns lines.
+Accounts are deciding where the money goes, so a preview that disagreed with
+the save would be worse than no preview. Money already REPORTED against a bill
+is subtracted before allocating, because two people writing down one transfer
+is the ordinary way an account ends up over-credited.
+
+**A reference is asked of whoever asserts the money arrived.** Accounts match a
+receipt against the bank statement by that string, so one confirmed without it
+is money nobody can find again. It is not asked of a telecaller repeating what
+a customer said: they rarely have the UTR, and refusing the save would lose the
+claim rather than improve it.
+
+**Confirming is checked server-side, and a stale allocation is refused rather
+than moved.** If a bill a pending receipt names has been settled by something
+else since, confirming fails and says so — silently re-allocating money is not
+a decision code should take on its own.
+
 **A collections call is logged in one place, and it is one transaction.** The
 follow-up panel opens over the worklist and never navigates away — a
 telecaller working a list of twelve should not lose their place to look at a
@@ -523,6 +586,39 @@ customer back — `queue.excludeActiveInOrderSystem` is on by default. The
 projection set it on every row it touched, which muted the whole book the first
 time production filled itself: a full database and an empty Call Log, with the
 cause living in a column no screen shows. `0021` clears what it wrote.
+
+**What DOES set it is the Taken Order tab, and only through a full reconcile.**
+That tab is where an order lands first — typed as the customer gives it, hours
+or days before it is dispatched, billed, or written to the Order Details tab.
+While any line of an order is still open the customer has already ordered, and
+the Call Log must stop asking them to; `recomputeOrderSystemHolds()` is the one
+thing that writes the flag and it rewrites every customer on every pass. A pass
+that only ever SET it is how the book goes quiet for good: nothing would lift a
+hold, and an order that shipped in August would still be muting its customer in
+March.
+
+**Two cells decide it, and the rule is asymmetric.** `Status` (column L) at
+`Ready` AND `Entry status` (column R) at `Done` releases the customer; either
+one falling short holds them — a Ready order the office has not finished with
+is still open, and four of them are. Everything else holds too, because the
+vocabulary is not closed: an unrecognised value must never read as dispatched,
+and the cost of holding wrongly is one early call, shown in the held-back strip
+with its reason.
+
+**`Cancel` is the exception, and it has to be.** It releases on its own,
+whatever the entry status says. Every other status eventually becomes `Ready`;
+a cancelled row never changes again, so holding it is a mute with no event left
+that could lift it — and the customer behind a cancelled order has not ordered
+anything, which makes them exactly who should be rung. Reading it as "unknown,
+therefore held" muted 294 rows' worth of customers permanently, which is how
+the carve-out was found.
+
+**A hash-driven sync needs a reparse, or a changed rule never lands.** Nothing
+was rewritten when `Cancel` changed meaning: not one of those 294 rows differed
+by a character, every hash matched, and the customers stayed muted on the
+strength of a decision already reversed in the code. `npm run jobs --
+taken-order-reparse` re-reads what is stored, touches Google not at all, and is
+the command to run whenever the READING of a row changes rather than the row.
 
 **An order is contact.** Where nothing has been logged against a customer, the
 weekly check-in dates them from their last ORDER before their record's creation

@@ -42,6 +42,11 @@ export type FollowUpSubject = {
   heldReason: string | null;
   /** A live dated promise. Chasing resumes the day after it passes. */
   promisedDate: BusinessDate | null;
+  /**
+   * Money reported against this account and not yet decided on by accounts.
+   * Paise, and the day it was reported.
+   */
+  reportedPayment: { amount: number; on: BusinessDate } | null;
 };
 
 export type FollowUpConfig = Pick<
@@ -49,6 +54,7 @@ export type FollowUpConfig = Pick<
   | "escalation.quietCallDays"
   | "escalation.messageIntervalDays"
   | "escalation.callIntervalDays"
+  | "payments.reportedQuietDays"
 >;
 
 /** Where the account sits relative to the quiet window. */
@@ -146,7 +152,7 @@ export function planPaymentFollowUps(
 
     // Whatever stops the chasing stops both channels, and says so once per
     // channel the customer would otherwise have appeared on.
-    const block = blockingReason(s, today);
+    const block = blockingReason(s, today, config);
     if (block) {
       if (messageDue) {
         heldBack.push({ customerId: s.customerId, name: s.name, channel: "whatsapp", reason: block });
@@ -214,15 +220,47 @@ export function planPaymentFollowUps(
 
 /**
  * The reasons nobody is contacted today, in the order they win. Do-not-contact
- * is absolute; a promise the customer made and has not yet broken is next,
- * because chasing inside it is what breaks it.
+ * is absolute; money the customer says has already gone comes next, because
+ * chasing somebody for a payment they have made is worse than chasing one they
+ * have merely promised; then the promise itself, because chasing inside it is
+ * what breaks it.
  */
-function blockingReason(s: FollowUpSubject, today: BusinessDate): string | null {
+function blockingReason(
+  s: FollowUpSubject,
+  today: BusinessDate,
+  config: Pick<Config, "payments.reportedQuietDays">,
+): string | null {
   if (s.doNotContact) return "Marked do not contact";
   if (s.held) return s.heldReason ?? "Held - a bill is disputed";
+
+  const reported = reportedQuiet(s, today, config);
+  if (reported) return reported;
+
   if (s.promisedDate && s.promisedDate >= today) {
     return `Payment promised by ${s.promisedDate} - not chased until it passes`;
   }
   if (s.contactedToday) return "Already contacted today";
   return null;
+}
+
+/**
+ * The quiet a reported payment buys, and when it runs out.
+ *
+ * It has to run out. The money has not been confirmed and the bill is still
+ * open, so an unexpiring quiet would let a customer take themselves off the
+ * collections list by saying they had paid — and nobody would ever notice,
+ * because the account simply stops appearing.
+ */
+export function reportedQuiet(
+  s: Pick<FollowUpSubject, "reportedPayment">,
+  today: BusinessDate,
+  config: Pick<Config, "payments.reportedQuietDays">,
+): string | null {
+  if (!s.reportedPayment) return null;
+  const age = daysBetween(s.reportedPayment.on, today);
+  if (age > config["payments.reportedQuietDays"]) return null;
+  const amount = `₹${Math.round(s.reportedPayment.amount / 100).toLocaleString("en-IN")}`;
+  return age === 0
+    ? `${amount} reported paid today - waiting for accounts to confirm it`
+    : `${amount} reported paid ${age} ${age === 1 ? "day" : "days"} ago - waiting for accounts to confirm it`;
 }

@@ -30,6 +30,7 @@ import {
   monthlyTargets,
   notifications,
   orders,
+  paymentReceipts,
   payments,
   reminders,
   sessions,
@@ -417,6 +418,7 @@ async function main() {
     productBrands,
     productFormulations,
     payments,
+    paymentReceipts,
     bills,
     monthlyTargets,
     customers,
@@ -593,6 +595,7 @@ async function main() {
 
   console.log("Creating bills and payments…");
   const billRows: Array<typeof bills.$inferInsert> = [];
+  const receiptRows: Array<typeof paymentReceipts.$inferInsert> = [];
   const paymentRows: Array<typeof payments.$inferInsert> = [];
   let billSeq = 4000;
 
@@ -623,20 +626,43 @@ async function main() {
       });
 
       if (paid > 0) {
+        const receiptId = id("rcp");
+        const paidAt = iso(-Math.max(0, raisedDaysAgo - c.paysIn));
+        const mode = pick(["Bank transfer", "Cheque", "UPI", "Cash"]);
+        const reference = `UTR${900000 + billSeq}`;
+        receiptRows.push({
+          id: receiptId,
+          customerId: c.id!,
+          amount: paid,
+          receivedAt: paidAt,
+          mode,
+          reference,
+          // Money already in the ledger is money accounts have seen. Seeding it
+          // as reported would open the demo with a confirmation queue of
+          // history nobody remembers.
+          status: "confirmed",
+          source: "accounts",
+          reportedById: c.ownerId,
+          confirmedById: c.ownerId,
+          confirmedAt: new Date(`${paidAt}T11:00:00+05:30`),
+          idempotencyKey: `SEED-RCP-${billSeq}`,
+        });
         paymentRows.push({
           id: id("pay"),
+          receiptId,
           billId,
           customerId: c.id!,
           amount: paid,
-          paidAt: iso(-Math.max(0, raisedDaysAgo - c.paysIn)),
-          mode: pick(["Bank transfer", "Cheque", "UPI", "Cash"]),
-          reference: `UTR${900000 + billSeq}`,
+          paidAt,
+          mode,
+          reference,
           recordedById: c.ownerId,
         });
       }
     }
   }
   await db.insert(bills).values(billRows);
+  await db.insert(paymentReceipts).values(receiptRows);
   await db.insert(payments).values(paymentRows);
 
   console.log("Creating calls…");

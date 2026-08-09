@@ -207,7 +207,7 @@ export function UsageTab() {
           </table>
         </div>
         <div className="bg-canvas px-5 py-2.5 text-[13px] text-muted">
-          Order Management is granted to one person who has never opened it. That grant appears in the unused-access
+          Accounts is granted to one person who has never opened it. That grant appears in the unused-access
           report.
         </div>
       </Card>

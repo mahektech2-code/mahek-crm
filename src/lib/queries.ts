@@ -327,10 +327,25 @@ export async function customerTimeline(
       from complaints cm join users u on u.id = cm.logged_by_user_id
      where cm.customer_id = ${customerId}
     union all
-    select p.id, 'Payment', p.paid_at::timestamptz, 'Accounts',
-           concat('Payment received ₹', to_char(round(p.amount / 100.0), 'FM9G99G99G999')),
-           concat_ws(' · ', p.mode, p.reference)
-      from payments p where p.customer_id = ${customerId}
+    -- Receipts, not allocation lines: one arrival of money is one entry,
+    -- however many bills it was spread across. A reported receipt appears the
+    -- moment it is reported and says it is waiting, and a rejected one STAYS —
+    -- a transfer that never landed is a fact about the account, and dropping
+    -- it leaves the next person wondering why the balance never moved.
+    select pr.id, 'Payment', pr.received_at::timestamptz,
+           coalesce(u.name, 'Accounts'),
+           case pr.status
+             when 'reported' then concat('Payment of ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'), ' reported')
+             when 'rejected' then concat('Payment of ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'), ' could not be found')
+             else concat('Payment received ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'))
+           end,
+           concat_ws(' · ', pr.mode, pr.reference,
+             case pr.status
+               when 'reported' then 'waiting for accounts to confirm'
+               when 'rejected' then pr.reject_reason
+             end)
+      from payment_receipts pr left join users u on u.id = pr.reported_by_id
+     where pr.customer_id = ${customerId}
     union all
     select b.id, 'Bill', b.bill_date::timestamptz, 'Accounts',
            concat('Bill ', b.bill_no, ' raised'),

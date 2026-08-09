@@ -50,7 +50,7 @@ export const REGISTRY: RegistryEntry[] = [
   },
   {
     id: "orders",
-    name: "Order Management",
+    name: "Accounts",
     short: "Orders",
     status: "Live",
     route: "/orders",
@@ -340,7 +340,7 @@ export type Session = {
 export const SESSIONS: Session[] = [
   { id: "s1", user: "u1", app: "Telecaller CRM", device: "Windows 11 · Chrome 128", ip: "103.21.58.14", started: "Today, 09:04", seen: "2 minutes ago", current: true },
   { id: "s2", user: "u2", app: "Telecaller CRM", device: "macOS · Safari 18", ip: "103.21.58.14", started: "Today, 08:41", seen: "6 minutes ago" },
-  { id: "s3", user: "u2", app: "Order Management", device: "Windows 11 · Edge 128", ip: "49.36.180.22", started: "Today, 10:02", seen: "20 minutes ago" },
+  { id: "s3", user: "u2", app: "Accounts", device: "Windows 11 · Edge 128", ip: "49.36.180.22", started: "Today, 10:02", seen: "20 minutes ago" },
   { id: "s4", user: "u3", app: "Telecaller CRM", device: "Windows 10 · Chrome 127", ip: "103.21.58.14", started: "Today, 09:12", seen: "1 hour ago" },
   { id: "s5", user: "u4", app: "Telecaller CRM", device: "Android · Chrome 128", ip: "182.70.44.9", started: "Yesterday, 18:20", seen: "Yesterday, 18:26", stale: true },
 ];
@@ -380,16 +380,16 @@ export const SECURITY_FLAGS = [
 export type AccessRequest = { id: string; user: string; app: string; why: string; on: string };
 
 export const REQUESTS: AccessRequest[] = [
-  { id: "q1", user: "Rakesh Yadav", app: "Order Management", why: "Needs to check dispatches against his own collections calls.", on: "Today, 10:14" },
+  { id: "q1", user: "Rakesh Yadav", app: "Accounts", why: "Needs to check dispatches against his own collections calls.", on: "Today, 10:14" },
   { id: "q2", user: "Priya Sharma", app: "Salesman App", why: "Wants to see whether a visit happened before promising a date.", on: "Yesterday, 16:30" },
 ];
 
 export const EXPIRING = [
-  { who: "Vikram Shah", app: "Order Management", kind: "Delegated from Sandeep Rao", ends: "31 Aug 2026", left: 26 },
+  { who: "Vikram Shah", app: "Accounts", kind: "Delegated from Sandeep Rao", ends: "31 Aug 2026", left: 26 },
   { who: "Rakesh Yadav", app: "Telecaller CRM", kind: "Leave cover for Priya Sharma", ends: "20 Aug 2026", left: 15 },
 ];
 
-export const UNUSED_ACCESS = [{ who: "Vikram Shah", app: "Order Management", granted: "04 Aug 2026", opened: "Never" }];
+export const UNUSED_ACCESS = [{ who: "Vikram Shah", app: "Accounts", granted: "04 Aug 2026", opened: "Never" }];
 
 export const TEAMS = [
   { id: "t1", name: "Telecalling — Vikram", app: "Telecaller CRM", manager: "Vikram Shah", members: ["Priya Sharma", "Rakesh Yadav"] },
@@ -400,7 +400,7 @@ export const TEAMS = [
 
 export const ROLE_TEMPLATES = [
   { id: "rt1", name: "Telecaller", dept: "Telecalling", apps: "Telecaller CRM", roles: "CRM: Telecaller", used: 4 },
-  { id: "rt2", name: "Telecalling Manager", dept: "Telecalling", apps: "Telecaller CRM, Order Management", roles: "CRM: Manager", used: 2 },
+  { id: "rt2", name: "Telecalling Manager", dept: "Telecalling", apps: "Telecaller CRM, Accounts", roles: "CRM: Manager", used: 2 },
   { id: "rt3", name: "Field Salesman", dept: "Field sales", apps: "Salesman App", roles: "Field: Salesman", used: 0 },
 ];
 
@@ -457,7 +457,7 @@ export const EXPORTS = [
 ];
 
 export const DEFAULT_ACCESS_RULES = [
-  { line: "Every user with the CRM Manager role also receives Order Management access", on: true },
+  { line: "Every user with the CRM Manager role also receives Accounts access", on: true },
   { line: "Every new user receives Telecaller CRM access", on: false },
 ];
 
@@ -484,9 +484,9 @@ export type AuditRow = {
 export const AUDIT: AuditRow[] = [
   { kind: "config", app: "Telecaller CRM", setting: "Stage 2 threshold", from: "18 days", to: "21 days", actor: "Vikram Shah", t: "Today, 08:52" },
   { kind: "config", app: "Telecaller CRM", setting: "Routine check-in interval", from: "21 days", to: "14 days", actor: "Vikram Shah", t: "Yesterday, 17:10" },
-  { kind: "access", app: "Platform", setting: "App access granted — Order Management", from: "—", to: "Vikram Shah", actor: "Sandeep Rao", t: "Yesterday, 11:02" },
+  { kind: "access", app: "Platform", setting: "App access granted — Accounts", from: "—", to: "Vikram Shah", actor: "Sandeep Rao", t: "Yesterday, 11:02" },
   { kind: "access", app: "Platform", setting: "User deactivated", from: "Active", to: "Deactivated", actor: "Vikram Shah", t: "28 Jul, 16:40" },
-  { kind: "admin", app: "Platform", setting: "App registered — Order Management", from: "—", to: "Coming soon", actor: "Sandeep Rao", t: "26 Jul, 10:15" },
+  { kind: "admin", app: "Platform", setting: "App registered — Accounts", from: "—", to: "Coming soon", actor: "Sandeep Rao", t: "26 Jul, 10:15" },
   { kind: "admin", app: "Telecaller CRM", setting: "Template edited — Payment reminder stage 2", from: "—", to: "—", actor: "Anjali Kulkarni", t: "25 Jul, 15:30" },
   { kind: "config", app: "Telecaller CRM", setting: "Aging bucket boundaries", from: "0 / 30 / 60 / 90", to: "0 / 7 / 21 / 45", actor: "Vikram Shah", t: "24 Jul, 09:20" },
 ];

@@ -20,6 +20,7 @@ export type SettingCategory =
   | "inactive-watch"
   | "escalation"
   | "bills"
+  | "payments"
   | "targets"
   | "working-day"
   | "reminders"
@@ -422,6 +423,56 @@ export const SETTINGS = [
     description:
       "The terms a telecaller can pick from when taking an order, in days. Any other number can still be typed in - this list is the shortcut, not the limit.",
     default: [15, 30, 45],
+  },
+
+  /* -------------------------------------------------------------- payments */
+  {
+    key: "payments.reportedQuietDays",
+    type: "integer",
+    category: "payments",
+    label: "Quiet days after a payment is reported",
+    description:
+      "Days a customer is left alone about money after somebody reports a payment that accounts have not yet confirmed. Chasing a customer who has just paid is the fastest way to lose one. It expires so that an unconfirmed claim cannot silence an account for ever - once it does, the bill is still open and the customer returns to the list.",
+    default: 3,
+    min: 0,
+    max: 60,
+  },
+  {
+    key: "payments.allowOnAccountRemainder",
+    type: "boolean",
+    category: "payments",
+    label: "Allow money on account",
+    description:
+      "Let a receipt carry more than its bills, holding the difference against the next one. Switched off, the whole amount must be split across open bills - which is how a receipt gets recorded for the wrong amount to make the screen accept it.",
+    default: true,
+  },
+  {
+    key: "payments.modes",
+    type: "structured",
+    category: "payments",
+    label: "Payment modes",
+    description: "How money is received. The first is the default on the form.",
+    default: ["Bank transfer", "UPI", "Cheque", "Cash", "Adjustment"],
+  },
+  {
+    key: "payments.referenceRequiredModes",
+    type: "structured",
+    category: "payments",
+    label: "Modes needing a reference",
+    description:
+      "Modes that cannot be CONFIRMED without a UTR, cheque number or equivalent. Accounts match a receipt against the bank statement by this string. It is asked of whoever asserts the money arrived, never of a telecaller repeating what a customer said - they rarely have the reference, and refusing the save would lose the claim rather than improve it.",
+    default: ["Bank transfer", "UPI", "Cheque"],
+  },
+  {
+    key: "payments.confirmationAgeWarningHours",
+    type: "integer",
+    category: "payments",
+    label: "Confirmation age warning",
+    description:
+      "Hours after which a reported payment still waiting on accounts is flagged on the queue. The customer has been left alone on the strength of it, so it going stale is a problem worth showing.",
+    default: 24,
+    min: 1,
+    max: 720,
   },
 
   /* --------------------------------------------------------------- targets */
@@ -935,6 +986,32 @@ export function checkConsistency(config: Config): string[] {
     problems.push("At least one working day must be configured.");
   }
 
+  const modes = config["payments.modes"];
+  if (!Array.isArray(modes) || modes.length === 0) {
+    problems.push("At least one payment mode must be offered.");
+  } else {
+    // A mode that demands a reference but is not on the form is a rule that can
+    // never fire, and reads on the settings screen as though it does.
+    const orphans = (config["payments.referenceRequiredModes"] ?? []).filter(
+      (m) => !modes.includes(m),
+    );
+    if (orphans.length) {
+      problems.push(
+        `These modes require a reference but are not offered on the form: ${orphans.join(", ")}. Add them to the payment modes, or drop them from the list.`,
+      );
+    }
+  }
+
+  // The quiet a reported payment buys must expire while the customer is still
+  // being chased at all. Set beyond the escalation ladder it would silence an
+  // account permanently on nothing more than somebody's word.
+  const reportedQuiet = config["payments.reportedQuietDays"];
+  if (reportedQuiet > stage3Days) {
+    problems.push(
+      `A reported payment buys ${reportedQuiet} days of quiet, which outlasts the stage 3 threshold of ${stage3Days} days. An unconfirmed payment would take an account off the collections list for longer than the debt takes to become urgent.`,
+    );
+  }
+
   // A price list keyed on the customer's pricelist tag is the intended answer
   // one day, but nothing stores one yet. Offering it and letting somebody pick
   // it would produce orders valued from a table that does not exist.
@@ -990,6 +1067,12 @@ export type Config = {
   "bills.agingBuckets": number[];
   "bills.defaultCreditDays": number;
   "bills.creditDayOptions": number[];
+
+  "payments.reportedQuietDays": number;
+  "payments.allowOnAccountRemainder": boolean;
+  "payments.modes": string[];
+  "payments.referenceRequiredModes": string[];
+  "payments.confirmationAgeWarningHours": number;
 
   "targets.defaultMethod": "trailing-average" | "last-month" | "fixed";
   "targets.trailingMonths": number;

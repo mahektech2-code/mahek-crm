@@ -8,6 +8,7 @@ import {
   calls,
   customers,
   followUpAttempts,
+  paymentReceipts,
 } from "@/db/schema";
 import { resolveScope, assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
@@ -37,7 +38,11 @@ const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
  *    says so, rather than losing the call the telecaller just logged.
  * ------------------------------------------------------------------------- */
 
-export type ParentType = "interaction" | "complaint" | "follow_up_attempt";
+export type ParentType =
+  | "interaction"
+  | "complaint"
+  | "follow_up_attempt"
+  | "payment_receipt";
 
 export type AttachmentView = {
   id: string;
@@ -56,6 +61,10 @@ export async function limitFor(parentType: ParentType): Promise<number> {
     case "complaint":
       return config["attachments.maxPerComplaint"];
     case "follow_up_attempt":
+    case "payment_receipt":
+      // Proof of one payment is the same handful of images as proof of one
+      // collections call, and for the same reason: it is photographed, not
+      // filed.
       return config["attachments.maxPerFollowUp"];
     default:
       // An interaction carries whatever the complaint it produced carries.
@@ -304,7 +313,9 @@ async function customerBehind(
       ? complaints
       : parentType === "follow_up_attempt"
         ? followUpAttempts
-        : calls;
+        : parentType === "payment_receipt"
+          ? paymentReceipts
+          : calls;
   const [row] = await db
     .select({ customerId: table.customerId })
     .from(table)

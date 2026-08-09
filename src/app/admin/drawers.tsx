@@ -222,7 +222,7 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
       fields.push(
         {
           key: "apps", label: "Initial app access", value: v("apps", "Telecaller CRM"),
-          select: ["Telecaller CRM", "Telecaller CRM, Order Management", "None yet"],
+          select: ["Telecaller CRM", "Telecaller CRM, Accounts", "None yet"],
           help: "One app means MahekOne takes them straight in and hides the app switcher.",
         },
         { key: "role", label: "Role in the CRM", value: v("role", "Telecaller"), select: ["Telecaller", "Manager"], half: true },

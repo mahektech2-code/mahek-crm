@@ -140,6 +140,21 @@ export const billStatusEnum = pgEnum("bill_status", [
   "paid",
 ]);
 
+/**
+ * Money the customer says arrived is not money the business has seen. A
+ * receipt reported by a telecaller on a collections call sits at `reported`
+ * until accounts find it in the bank; only `confirmed` moves the ledger.
+ *
+ * Rejecting is not deleting. A transfer that never landed is a fact about the
+ * account — the telecaller has to ring back and say something — so the row
+ * stays and carries the reason.
+ */
+export const receiptStatusEnum = pgEnum("receipt_status", [
+  "reported",
+  "confirmed",
+  "rejected",
+]);
+
 /** Three stored values only. "Due" and "overdue" are derived on read. */
 export const reminderStatusEnum = pgEnum("reminder_status", [
   "pending",
@@ -270,6 +285,8 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   "interaction",
   "complaint",
   "follow_up_attempt",
+  /** Proof of payment: a transfer screenshot, a cheque, a deposit slip. */
+  "payment_receipt",
 ]);
 
 /**
@@ -927,6 +944,13 @@ export const bills = pgTable(
       .notNull()
       .references(() => customers.id, { onDelete: "cascade" }),
     billNo: text("bill_no").notNull(),
+    /**
+     * The order this bill was raised against, where it is known. Orders carry
+     * no human-facing number of their own, so this is what lets accounts find
+     * a bill by the order number the customer quotes — previously the two were
+     * joined only by matching `SHEET-n` against `SHEETPAY-n` by hand.
+     */
+    orderId: text("order_id").references(() => orders.id, { onDelete: "set null" }),
     billDate: date("bill_date").notNull(),
     /** Null means the default credit period applies — see E3. */
     dueDate: date("due_date"),
@@ -945,16 +969,70 @@ export const bills = pgTable(
     uniqueIndex("bills_no_key").on(t.billNo),
     index("bills_customer_idx").on(t.customerId),
     index("bills_due_idx").on(t.dueDate),
+    index("bills_order_idx").on(t.orderId),
   ],
 );
 
+/**
+ * One receipt is one arrival of money: a transfer, a cheque, a cash payment.
+ * Which bills it settles is a separate question with a separate answer, and
+ * `payments` below holds that answer as one row per bill. Fusing the two —
+ * which is what a payment pinned to a single bill was — makes part payment,
+ * a transfer covering three bills, and money received in advance all
+ * impossible to record honestly.
+ */
+export const paymentReceipts = pgTable(
+  "payment_receipts",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    amount: bigint("amount", { mode: "number" }).notNull(),
+    receivedAt: date("received_at").notNull(),
+    mode: text("mode").notNull().default("Bank transfer"),
+    /** UTR, cheque number, or whatever names this money in the bank. */
+    reference: text("reference"),
+    note: text("note"),
+    status: receiptStatusEnum("status").notNull().default("reported"),
+    /** Where it came from: accounts, a collections call, the bills screen, the sheet. */
+    source: text("source").notNull().default("accounts"),
+    reportedById: text("reported_by_id").references(() => users.id),
+    confirmedById: text("confirmed_by_id").references(() => users.id),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    rejectReason: text("reject_reason"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    uniqueIndex("payment_receipts_key").on(t.idempotencyKey),
+    index("payment_receipts_customer_idx").on(t.customerId),
+    index("payment_receipts_status_idx").on(t.status),
+    index("payment_receipts_received_idx").on(t.receivedAt),
+  ],
+);
+
+/**
+ * An allocation line: this much of that receipt settles this bill. A null
+ * `billId` is money received with no bill to put it against yet — an advance,
+ * or the remainder of a round-figure transfer — which sits on account and is
+ * offered against the next bill rather than being refused at the door.
+ *
+ * A line counts against a bill only when its receipt is `confirmed`. That one
+ * rule is what keeps `bills.paidAmount` — and therefore outstanding, aging and
+ * the collections worklist — a statement about money the business has seen.
+ */
 export const payments = pgTable(
   "payments",
   {
     id: text("id").primaryKey(),
-    billId: text("bill_id")
+    receiptId: text("receipt_id")
       .notNull()
-      .references(() => bills.id, { onDelete: "cascade" }),
+      .references(() => paymentReceipts.id, { onDelete: "cascade" }),
+    billId: text("bill_id").references(() => bills.id, { onDelete: "cascade" }),
     customerId: text("customer_id")
       .notNull()
       .references(() => customers.id, { onDelete: "cascade" }),
@@ -972,6 +1050,8 @@ export const payments = pgTable(
   (t) => [
     index("payments_customer_idx").on(t.customerId),
     index("payments_paid_idx").on(t.paidAt),
+    index("payments_receipt_idx").on(t.receiptId),
+    index("payments_bill_idx").on(t.billId),
   ],
 );
 
@@ -2023,6 +2103,122 @@ export const sheetPartyRows = pgTable(
   ],
 );
 
+/* ---------------------------------------------- imported sheet: taken orders
+ *
+ * The Taken Order tab, which is where an order lands FIRST — typed as the
+ * customer gives it, before it is dispatched, billed, or written to the Order
+ * Details tab this database already imports.
+ *
+ * One row per SHEET row, which is one order LINE: the tab repeats the
+ * order-level columns down every line, so 106 rows are 47 orders.
+ *
+ * It is imported for one reason, and the reason is a column: while any line of
+ * an order is still open, the customer has already ordered and the Call Log
+ * must stop chasing them for another. `open` is that judgement, made once in
+ * `lib/taken-order-parse.ts`, and `recomputeOrderSystemHolds()` is what turns
+ * it into `customers.activeInOrderSystem`. Nothing reads the two status
+ * columns directly.
+ * ------------------------------------------------------------------------- */
+
+export const sheetTakenOrderRows = pgTable(
+  "sheet_taken_order_rows",
+  {
+    id: text("id").primaryKey(),
+    syncId: text("sync_id")
+      .notNull()
+      .references(() => sheetSyncRuns.id, { onDelete: "cascade" }),
+    /** 1-based row in the sheet, header included — what you scroll to. */
+    rowNumber: integer("row_number").notNull(),
+
+    /**
+     * The tab's own per-line identifier, e.g. ODID-09108D. Unique, and the key
+     * the import is idempotent on: a re-read after a correction updates the
+     * row in place rather than landing a second copy of it.
+     */
+    lineKey: text("line_key").notNull(),
+    /** The tab's "Order number" — shared by every line of one order. */
+    orderNumber: text("order_number"),
+
+    /** Every column as the sheet gave it. Never selected by a list query. */
+    raw: jsonb("raw").$type<Record<string, string>>().notNull(),
+    rowHash: text("row_hash").notNull(),
+
+    /** Whether the row is still in the sheet. Disappearance is a status. */
+    status: sheetRowStatusEnum("status").notNull().default("present"),
+    lastSeenSyncId: text("last_seen_sync_id"),
+
+    /* ---- order-level. Repeated across an order's lines. ---- */
+    orderDate: date("order_date"),
+    location: text("location"),
+    billingPartyName: text("billing_party_name"),
+    deliveryPartyName: text("delivery_party_name"),
+    /** Free text, and a concatenation: "Discount 4% - Door Delivery - To Pay". */
+    standingInstructions: text("standing_instructions"),
+    area: text("area"),
+    transporterName: text("transporter_name"),
+    /** Who typed the row. A name from the sheet, not a MahekOne account. */
+    userName: text("user_name"),
+    /** When it was typed, read as a wall clock in Asia/Kolkata. */
+    takenAt: timestamp("taken_at", { withTimezone: true }),
+    transportationCostPaise: bigint("transportation_cost_paise", { mode: "number" }),
+    remark: text("remark"),
+    /** The sheet's own "Party Status" — "Pending" on a handful of rows. */
+    partyStatus: text("party_status"),
+
+    /* ---------------------------- line-level ---------------------------- */
+    description: text("description"),
+    cans: integer("cans"),
+    boxes: integer("boxes"),
+    /** Paise, and per CAN — this tab's Rate is not a line total. */
+    ratePaise: bigint("rate_paise", { mode: "number" }),
+    /** Basis points. The sheet's Discount is a PERCENTAGE: "4.00%" is 400. */
+    discountBp: integer("discount_bp"),
+    tallyBillNo: text("tally_bill_no"),
+    /** Grams, so a half-kilo survives. The sheet writes kilograms. */
+    weightGrams: bigint("weight_grams", { mode: "number" }),
+
+    /* ------------------------------ the rule ------------------------------
+     * The two cells the whole import exists for, kept exactly as the sheet
+     * spells them — "Ready", "Hold From Office", "Done", "Not Done" — because
+     * a status is worth showing to a person in their own words, and because
+     * the vocabulary is not fully known and an unrecognised value must survive
+     * the round trip rather than being folded into something we do recognise.
+     */
+    officeStatus: text("office_status"),
+    entryStatus: text("entry_status"),
+    /**
+     * Derived from those two, and the only one anything downstream reads.
+     * TRUE means the order is still owed to the customer, so they are held
+     * back from order-chasing calls. Indexed with the party name because
+     * "which customers have an open line" is the one question asked of this
+     * table on every sync.
+     */
+    open: boolean("open").notNull().default(true),
+
+    /* ------------------------------ matching ------------------------------ */
+    matchedCustomerId: text("matched_customer_id").references(() => customers.id, {
+      onDelete: "set null",
+    }),
+    customerMatchStatus: sheetMatchStatusEnum("customer_match_status")
+      .notNull()
+      .default("pending"),
+
+    issues: jsonb("issues").$type<SheetRowIssue[]>().notNull().default([]),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sheet_taken_order_rows_line_key").on(t.lineKey),
+    index("sheet_taken_order_rows_sync_idx").on(t.syncId),
+    index("sheet_taken_order_rows_order_idx").on(t.orderNumber),
+    /** The hold query: open rows, by party. */
+    index("sheet_taken_order_rows_open_idx").on(t.open, t.billingPartyName),
+    index("sheet_taken_order_rows_customer_idx").on(t.matchedCustomerId),
+    index("sheet_taken_order_rows_date_idx").on(t.orderDate, t.id),
+  ],
+);
+
 /* --------------------------------------------------------------- relations */
 
 export const usersRelations = relations(users, ({ many, one }) => ({
@@ -2080,12 +2276,31 @@ export const callsRelations = relations(calls, ({ one }) => ({
 
 export const billsRelations = relations(bills, ({ one, many }) => ({
   customer: one(customers, { fields: [bills.customerId], references: [customers.id] }),
+  order: one(orders, { fields: [bills.orderId], references: [orders.id] }),
   payments: many(payments),
 }));
 
-export const ordersRelations = relations(orders, ({ one }) => ({
+export const paymentReceiptsRelations = relations(paymentReceipts, ({ one, many }) => ({
+  customer: one(customers, {
+    fields: [paymentReceipts.customerId],
+    references: [customers.id],
+  }),
+  lines: many(payments),
+}));
+
+export const paymentsRelations = relations(payments, ({ one }) => ({
+  receipt: one(paymentReceipts, {
+    fields: [payments.receiptId],
+    references: [paymentReceipts.id],
+  }),
+  bill: one(bills, { fields: [payments.billId], references: [bills.id] }),
+  customer: one(customers, { fields: [payments.customerId], references: [customers.id] }),
+}));
+
+export const ordersRelations = relations(orders, ({ one, many }) => ({
   customer: one(customers, { fields: [orders.customerId], references: [customers.id] }),
   user: one(users, { fields: [orders.userId], references: [users.id] }),
+  bills: many(bills),
 }));
 
 export const remindersRelations = relations(reminders, ({ one }) => ({
@@ -2189,3 +2404,4 @@ export type SheetOrderRow = typeof sheetOrderRows.$inferSelect;
 export type Employee = typeof employees.$inferSelect;
 export type SheetPaymentRow = typeof sheetPaymentRows.$inferSelect;
 export type SheetPartyRow = typeof sheetPartyRows.$inferSelect;
+export type SheetTakenOrderRow = typeof sheetTakenOrderRows.$inferSelect;

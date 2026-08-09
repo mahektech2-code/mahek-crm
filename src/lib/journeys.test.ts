@@ -27,6 +27,7 @@ import {
   followUpStates,
   monthlyTargets,
   orders,
+  paymentReceipts,
   reminders,
   users,
   waMessages,
@@ -70,6 +71,12 @@ import {
   popularProducts,
   customerProducts,
 } from "@/lib/services/product-service";
+import {
+  confirmReceipt,
+  pendingReceipts,
+  recordReceipt,
+  rejectReceipt,
+} from "@/lib/services/receipt-service";
 import { globalSearch ,
   listCustomersPage,
 } from "@/lib/queries";
@@ -208,6 +215,33 @@ after(async () => {
   await db.$client.end();
 });
 
+/**
+ * Accounts finding the money in the bank.
+ *
+ * Anything a telecaller records is a claim until this happens, so every
+ * journey that ends in a settled bill has to pass through it. Restores
+ * whoever was acting before, because the tests that use it are not about
+ * accounts — they are about what the money does once accounts have spoken.
+ */
+async function confirmReportedPayments(customerId: string): Promise<number> {
+  setTestUser(deepa);
+  const waiting = await db
+    .select({ id: paymentReceipts.id })
+    .from(paymentReceipts)
+    .where(
+      and(
+        eq(paymentReceipts.customerId, customerId),
+        eq(paymentReceipts.status, "reported"),
+      ),
+    );
+  for (const r of waiting) {
+    const done = await confirmReceipt(r.id);
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
+  }
+  setTestUser(priya);
+  return waiting.length;
+}
+
 /* ------------------------------------------------- journey 1: buying cycle */
 
 describe("Journey 1 - a new customer earns their own buying cycle", () => {
@@ -343,6 +377,19 @@ describe("Journey 2 - an overdue bill escalates, is chased, and is paid", () => 
       idempotencyKey: randomUUID(),
     });
     assert.equal(paid.ok, true, paid.ok ? "" : paid.error);
+
+    // A telecaller recording it is a claim, not a settlement. The bill does
+    // not move until accounts have found the money.
+    const [claimed] = await db.select().from(bills).where(eq(bills.id, bill.id));
+    assert.equal(claimed.status, "unpaid", "nothing moves on a telecaller's word");
+    assert.equal(
+      (await getFollowUpWorklist()).find((r) => r.customerId === customer.id)
+        ?.reportedAmount,
+      1_00_000_00,
+      "but the list says the money has been reported",
+    );
+
+    assert.equal(await confirmReportedPayments(customer.id), 1);
 
     const [after] = await db.select().from(bills).where(eq(bills.id, bill.id));
     assert.equal(after.status, "paid");
@@ -3043,6 +3090,7 @@ describe("The payment follow-up cycle - term, quiet window, messages, calls", ()
       idempotencyKey: randomUUID(),
     });
     assert.equal(paid.ok, true);
+    await confirmReportedPayments(customer.id);
 
     const plan = await getPaymentFollowUpPlan();
     assert.equal(
@@ -3125,7 +3173,7 @@ describe("Logging a collections call - one outcome, one transaction", () => {
     assert.equal(refused.fieldErrors?.[0].field, "amount");
   });
 
-  test("Already paid clears the bills, the outstanding and the worklist row together", async () => {
+  test("Already paid is a claim: it moves nothing until accounts confirm it", async () => {
     const customer = await onTheWorklist(30);
 
     const saved = await logPaymentFollowUp({
@@ -3136,7 +3184,32 @@ describe("Logging a collections call - one outcome, one transaction", () => {
       idempotencyKey: randomUUID(),
     });
     assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
-    assert.equal(saved.data.cleared, true, "paying in full leaves the worklist");
+    assert.ok(saved.data.produced.includes("payment"));
+
+    // The customer said the money has gone. Nobody has found it, so the
+    // ledger says exactly what it said before.
+    const [before] = await db.select().from(bills).where(eq(bills.customerId, customer.id));
+    assert.equal(before.paidAmount, 0, "a telecaller's word does not settle a bill");
+    assert.equal(before.status, "unpaid");
+
+    const [claimedRow] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(claimedRow.outstanding, 1_00_000_00, "still owed until it is found");
+    assert.ok(await stateOf(customer.id), "and still on the worklist");
+
+    // What DOES change is that they stop being chased for it.
+    const plan = await getPaymentFollowUpPlan();
+    assert.equal(plan.calls.some((c) => c.customerId === customer.id), false);
+    assert.ok(
+      plan.heldBack.some(
+        (h) => h.customerId === customer.id && /reported paid/i.test(h.reason),
+      ),
+      "held back with the reason said plainly, never silently dropped",
+    );
+
+    assert.equal(await confirmReportedPayments(customer.id), 1);
 
     const [bill] = await db.select().from(bills).where(eq(bills.customerId, customer.id));
     assert.equal(bill.paidAmount, 1_00_000_00);
@@ -3145,6 +3218,104 @@ describe("Logging a collections call - one outcome, one transaction", () => {
     const [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
     assert.equal(row.outstanding, 0, "outstanding is derived, and it was rebuilt");
     assert.equal(await stateOf(customer.id), undefined);
+  });
+
+  test("a rejected payment gives the money back and returns the customer", async () => {
+    const customer = await onTheWorklist(30);
+
+    await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "paid",
+      amount: 1_00_000,
+      chips: [],
+      idempotencyKey: randomUUID(),
+    });
+    await confirmReportedPayments(customer.id);
+    assert.equal(await stateOf(customer.id), undefined, "gone once confirmed");
+
+    const [receipt] = await db
+      .select()
+      .from(paymentReceipts)
+      .where(eq(paymentReceipts.customerId, customer.id));
+
+    setTestUser(deepa);
+    const rejected = await rejectReceipt(receipt.id, "Not in the statement");
+    assert.equal(rejected.ok, true, rejected.ok ? "" : rejected.error);
+    setTestUser(priya);
+
+    const [bill] = await db.select().from(bills).where(eq(bills.customerId, customer.id));
+    assert.equal(bill.paidAmount, 0, "the bill gets its balance back");
+    assert.equal(bill.status, "unpaid");
+
+    const [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(row.outstanding, 1_00_000_00);
+    assert.ok(await stateOf(customer.id), "and they are back on the worklist");
+  });
+
+  test("rejecting requires a reason, because somebody has to ring back", async () => {
+    const customer = await onTheWorklist(30);
+    await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "paid",
+      amount: 1_00_000,
+      chips: [],
+      idempotencyKey: randomUUID(),
+    });
+    const [receipt] = await db
+      .select()
+      .from(paymentReceipts)
+      .where(eq(paymentReceipts.customerId, customer.id));
+
+    setTestUser(deepa);
+    const refused = await rejectReceipt(receipt.id, "   ");
+    setTestUser(priya);
+    assert.equal(refused.ok, false);
+    assert.equal(refused.fieldErrors?.[0].field, "reason");
+  });
+
+  test("confirming is accounts' and nobody else's", async () => {
+    const customer = await onTheWorklist(30);
+    await logPaymentFollowUp({
+      customerId: customer.id,
+      outcome: "paid",
+      amount: 1_00_000,
+      chips: [],
+      idempotencyKey: randomUUID(),
+    });
+    const [receipt] = await db
+      .select()
+      .from(paymentReceipts)
+      .where(eq(paymentReceipts.customerId, customer.id));
+
+    // Not the telecaller who was told about it, and not a manager by
+    // seniority either — accounts hold the bank statement.
+    await assert.rejects(() => confirmReceipt(receipt.id), NotPermittedError);
+    setTestUser(manager);
+    await assert.rejects(() => confirmReceipt(receipt.id), NotPermittedError);
+    setTestUser(deepa);
+    assert.equal((await confirmReceipt(receipt.id)).ok, true);
+    setTestUser(priya);
+  });
+
+  test("a payment entered by accounts is confirmed as it is written", async () => {
+    const customer = await onTheWorklist(30);
+
+    setTestUser(deepa);
+    const saved = await recordReceipt({
+      customerId: customer.id,
+      amount: 1_00_000_00,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      reference: "UTR55512",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
+    assert.equal(saved.data.status, "confirmed", "they are the verification");
+    assert.equal((await pendingReceipts()).length, 0, "so nothing queues up");
+    setTestUser(priya);
+
+    const [bill] = await db.select().from(bills).where(eq(bills.customerId, customer.id));
+    assert.equal(bill.status, "paid");
   });
 
   test("a part payment is applied to the oldest bill first", async () => {
@@ -3171,6 +3342,9 @@ describe("Logging a collections call - one outcome, one transaction", () => {
       chips: [],
       idempotencyKey: randomUUID(),
     });
+    // The split is decided when the customer says so; it lands when accounts
+    // find the money.
+    await confirmReportedPayments(customer.id);
 
     const rows = await db.select().from(bills).where(eq(bills.customerId, customer.id));
     const oldest = rows.find((b) => b.billNo.includes("OLD"))!;
@@ -3244,6 +3418,12 @@ describe("Logging a collections call - one outcome, one transaction", () => {
       chips: [],
       idempotencyKey: randomUUID(),
     });
+    assert.ok(
+      await stateOf(customer.id),
+      "reporting a payment does not clear the debt, so the floor stands",
+    );
+
+    await confirmReportedPayments(customer.id);
     assert.equal(
       await stateOf(customer.id),
       undefined,
@@ -3284,6 +3464,13 @@ describe("Logging a collections call - one outcome, one transaction", () => {
     assert.equal(second.ok, true);
     assert.equal(second.message, "Already recorded");
 
+    const receipts = await db
+      .select()
+      .from(paymentReceipts)
+      .where(eq(paymentReceipts.customerId, customer.id));
+    assert.equal(receipts.length, 1, "a double-click is one arrival of money");
+
+    await confirmReportedPayments(customer.id);
     const [bill] = await db.select().from(bills).where(eq(bills.customerId, customer.id));
     assert.equal(bill.paidAmount, 10_000_00, "a double-click must not pay twice");
   });
@@ -3336,6 +3523,9 @@ describe("Collections figures and the stage 1 batch", () => {
       paidAt: TODAY,
       idempotencyKey: randomUUID(),
     });
+    // Collections figures are about money the business has, so the payment
+    // has to be found before any of them move.
+    await confirmReportedPayments(customer.id);
 
     const m = await collectionsMetrics();
     assert.equal(m.outstanding, 2_00_000_00 + 60_000_00, "open balance, not billed value");
@@ -3367,6 +3557,7 @@ describe("Collections figures and the stage 1 batch", () => {
       paidAt: addDays(TODAY, -6),
       idempotencyKey: randomUUID(),
     });
+    await confirmReportedPayments(kept.customer.id);
 
     // Promised for five days ago and nothing arrived: broken.
     const broken = await overdue(60);

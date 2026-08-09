@@ -16,7 +16,7 @@ export const SIGNINS_PER_DAY = [
 
 export const APP_USAGE = [
   { app: "Telecaller CRM", active: 5, of: 5, lastActive: "2 minutes ago", opens: 118 },
-  { app: "Order Management", active: 0, of: 1, lastActive: "Never", opens: 0 },
+  { app: "Accounts", active: 0, of: 1, lastActive: "Never", opens: 0 },
   { app: "Salesman App", active: 0, of: 0, lastActive: "—", opens: 0 },
 ];
 
@@ -59,7 +59,7 @@ export const CONTRACT_CHECKS: ContractCheck[] = [
     app: "Telecaller CRM", endpoint: "/api/crm/summary/user", label: "Per-user summary", ok: false, ms: null,
     note: "No response. Owned records and team workload will read empty, and offboarding cannot show its impact.",
   },
-  { app: "Order Management", endpoint: "—", label: "Configuration schema", ok: false, ms: null, note: "Not deployed. Expected while the app is Coming soon." },
+  { app: "Accounts", endpoint: "—", label: "Configuration schema", ok: false, ms: null, note: "Not deployed. Expected while the app is Coming soon." },
 ];
 
 /* ---------------------------------------------------------- feature flags */

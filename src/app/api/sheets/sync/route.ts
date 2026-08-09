@@ -17,6 +17,11 @@ import { runJob, type JobName } from "@/lib/jobs";
  *   ?mode=payments    the Payment Status tab, always a full compare — a payment
  *                     row's whole purpose is to change in place long after it
  *                     was written, which an append run would never see.
+ *   ?mode=taken       the Taken Order tab — orders as the team types them,
+ *                     before dispatch. Always a full compare, for the payments
+ *                     reason: a row's status changes in place long after it is
+ *                     written, and that change is the whole signal. It ends by
+ *                     rebuilding which customers are held from order calls.
  *   ?mode=parties     the customer master. Where the phone numbers come from.
  *   ?mode=project     turn what has landed into customers, orders and — only
  *                     when asked — bills. Takes &owner=, &leads=1, &bills=1,
@@ -57,6 +62,7 @@ const JOBS: Record<string, JobName> = {
   append: "sheet-append",
   reconcile: "sheet-reconcile",
   payments: "sheet-payments",
+  taken: "taken-order-sync",
   parties: "party-sync",
   project: "project-sheet",
   team: "provision-team",
@@ -81,7 +87,7 @@ export async function GET(request: Request) {
   const job = JOBS[mode];
   if (!job) {
     return NextResponse.json(
-      { ok: false, error: `Unknown mode "${mode}". Use append, reconcile or payments.` },
+      { ok: false, error: `Unknown mode "${mode}". Use one of: ${Object.keys(JOBS).join(", ")}.` },
       { status: 400 },
     );
   }

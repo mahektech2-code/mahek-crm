@@ -12,6 +12,7 @@ import {
   customers,
   followUpAttempts,
   followUpStates,
+  paymentReceipts,
   payments,
   reminders,
   waTemplates,
@@ -20,15 +21,12 @@ import { resolveScope, assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
 import { bindAttachments } from "./attachment-service";
 import { isAttemptAllowed } from "../engines/escalation";
+import { allocate, type AllocationLine } from "../engines/allocation";
 import { addDays, onOrAfterWorkingDay } from "../business-date";
-import {
-  recomputeBillStatuses,
-  recomputeFollowUpState,
-  recomputeOutstanding,
-  today,
-} from "../recompute";
+import { recomputeFollowUpState, today } from "../recompute";
 import { err, ok, type Result } from "../result";
 import { getFollowUpDetail, getPaymentFollowUpPlan } from "./payment-service";
+import { openBillsFor } from "./receipt-service";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -311,24 +309,50 @@ export async function logPaymentFollowUp(
     .orderBy(bills.billDate);
 
   const amountPaise = input.amount ? input.amount * 100 : 0;
-  const openTotal = openBills.reduce((sum, b) => sum + (b.amount - b.paidAmount), 0);
 
+  /*
+   * A payment reported on a call is worked out here and written below, but it
+   * settles nothing yet: the customer said the money has gone, and accounts
+   * have not found it. The allocation is decided now rather than at
+   * confirmation time so that what the telecaller was told is what gets
+   * applied — reconstructing it days later from a note is how the wrong bill
+   * gets cleared.
+   */
+  let lines: AllocationLine[] = [];
   if (input.outcome === "paid") {
     if (!openBills.length) {
       return err("There are no open bills to apply a payment to.", "rule_violation");
     }
-    if (amountPaise > openTotal) {
-      return err(
-        `That is more than the ₹${Math.round(openTotal / 100).toLocaleString("en-IN")} still open on this account.`,
-        "validation",
-        [{ field: "amount", message: "Cannot exceed the open balance." }],
-      );
+    const open = await openBillsFor(input.customerId);
+    const allocation = allocate(
+      open.map((b) => ({
+        id: b.id,
+        billNo: b.billNo,
+        billDate: b.billDate,
+        amount: b.amount,
+        // Money somebody else has already reported against this bill is not
+        // offered again — two people writing down one transfer is the ordinary
+        // way an account ends up over-credited.
+        paid: b.paid + b.reported,
+      })),
+      {
+        mode: "auto",
+        amount: amountPaise,
+        allowOnAccount: config["payments.allowOnAccountRemainder"],
+      },
+    );
+    if (allocation.errors.length) {
+      return err(allocation.errors[0], "validation", [
+        { field: "amount", message: allocation.errors.join(" ") },
+      ]);
     }
+    lines = allocation.lines;
   }
 
   /* --------------------------------------------------------- the transaction */
 
   const attemptId = id("fua");
+  const receiptId = id("rcp");
   const produced: string[] = [];
   const now = new Date();
   const notes =
@@ -409,32 +433,43 @@ export async function logPaymentFollowUp(
       produced.push("reminder");
     }
 
-    /* ---- money already paid, applied oldest bill first ---- */
+    /* ---- money the customer says has gone, reported for accounts to find ---- */
     if (input.outcome === "paid" && amountPaise > 0) {
-      let left = amountPaise;
-      for (const b of openBills) {
-        if (left <= 0) break;
-        const balance = b.amount - b.paidAmount;
-        const take = Math.min(left, balance);
+      // Written here rather than through the receipt service so the call and
+      // everything it produced remain ONE transaction. A half-saved collections
+      // call is an account describing something that never happened.
+      await tx.insert(paymentReceipts).values({
+        id: receiptId,
+        customerId: input.customerId,
+        amount: amountPaise,
+        receivedAt: day,
+        mode: "Reported on a collections call",
+        reference: input.notes?.trim() || null,
+        // Nothing moves in the ledger on a telecaller's word. Accounts hold the
+        // bank statement; until they find it, this is a claim.
+        status: "reported",
+        source: "collections_call",
+        reportedById: ctx.user.id,
+        idempotencyKey: input.idempotencyKey,
+        createdById: ctx.user.id,
+        updatedById: ctx.user.id,
+      });
+      for (const line of lines) {
         await tx.insert(payments).values({
           id: id("pay"),
-          billId: b.id,
+          receiptId,
+          billId: line.billId,
           customerId: input.customerId,
-          amount: take,
+          amount: line.amount,
           paidAt: day,
           mode: "Reported on a collections call",
           reference: input.notes?.trim() || null,
-          // One key per bill, so a retried save cannot double-apply any of them.
-          externalRef: `${input.idempotencyKey}:${b.id}`,
+          // One key per line, so a retried save cannot double-apply any of them.
+          externalRef: `${input.idempotencyKey}:${line.billId ?? "on-account"}`,
           recordedById: ctx.user.id,
           createdById: ctx.user.id,
           updatedById: ctx.user.id,
         });
-        await tx
-          .update(bills)
-          .set({ paidAmount: b.paidAmount + take, updatedAt: now })
-          .where(eq(bills.id, b.id));
-        left -= take;
       }
       produced.push("payment");
     }
@@ -528,10 +563,10 @@ export async function logPaymentFollowUp(
 
   /* ------------------------------------------------------------- recompute */
 
-  if (input.outcome === "paid") {
-    await recomputeBillStatuses();
-    await recomputeOutstanding(input.customerId);
-  }
+  // Nothing is recomputed for a reported payment, because nothing has moved:
+  // the bills still stand at what they stood at, and the account stays on the
+  // worklist until accounts confirm the money. What DOES change is that the
+  // cadence stops chasing them for it — see `payments.reportedQuietDays`.
   await recomputeFollowUpState(input.customerId);
 
   const [after] = await db
@@ -541,8 +576,8 @@ export async function logPaymentFollowUp(
 
   return ok(
     { attemptId, produced, cleared: !after },
-    !after
-      ? `${customer.name} is fully paid and has left the follow-up list`
+    input.outcome === "paid"
+      ? `Recorded — ${customer.name} will not be chased for it while accounts confirm it`
       : "Follow-up logged",
   );
 }
