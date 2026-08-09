@@ -436,6 +436,20 @@ fields deep behind a radio button, and the person on the phone was waiting.
 something supplies them; nothing on a telecaller's screen asks. The pending
 list left-joins the bill, so a request that names none still reaches accounts.
 
+**An attachment nobody can open is an attachment nobody uploaded.** Photographs
+were write-only for as long as they have existed: no screen displayed one, and
+`canRead` handed a raw snake_case row to `assertCustomerInScope`, which reads
+camelCase — with `as never` silencing the compiler. `kind` was absent and
+`ownerId` undefined, so the owner was refused their own file and every read
+answered 404. It failed SHUT, which is the safe direction and exactly why it
+survived: there was no screen to notice it on. A cast that quiets a type error
+across a naming boundary is the bug, not the fix.
+
+**A stored enum is not a label.** `packaging_damage` was reaching the screen
+unchanged. The categories a person picks from are configuration and several
+fold onto one enum value, so the way back cannot be derived from that list —
+`lib/complaint-labels.ts` holds it, pure and client-safe.
+
 **A photo picker adds, counts and lets one go.** Complaint photographs are
 taken one at a time, so a second visit to the file dialog must not discard the
 first; the limit — `attachments.maxPerComplaint`, six — is shown and refused at

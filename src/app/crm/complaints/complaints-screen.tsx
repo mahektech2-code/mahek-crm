@@ -25,8 +25,9 @@ import {
 import { Drawer, DrawerHeader, Modal, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { logComplaint, reassignComplaint, resolveComplaint } from "@/lib/actions/crm";
-import { ageLabel, shortDate, stamp } from "@/lib/format";
+import { ageLabel, money, shortDate, stamp } from "@/lib/format";
 import { ImagePicker } from "@/components/crm/image-picker";
+import { CN_STATUS_LABEL, categoryLabel } from "@/lib/complaint-labels";
 
 type Status =
   | "open"
@@ -52,7 +53,17 @@ type Row = {
   slaBreached: boolean;
   resolutionNotes: string | null;
   customerInformed: boolean;
+  mobileNumber: string | null;
+  requestCn: boolean;
+  cnStatus: string | null;
+  cnAmount: number | null;
+  cnReference: string | null;
+  goodsDescription: string | null;
+  resolvedAt: Date | null;
 };
+
+/** A photograph on a complaint. The bytes come from /api/attachments/[id]. */
+type Attachment = { id: string; filename: string; isImage: boolean };
 
 const STATUS_LABEL: Record<Status, string> = {
   open: "Open",
@@ -75,12 +86,69 @@ type Tab = "open" | "progress" | "resolved" | "all";
 
 const RESOLVERS = ["Operations", "Accounts", "Dispatch", "Quality", "Management"];
 
+/** One line of the drawer's detail grid. A blank reads as a gap, not a zero. */
+function Detail({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <>
+      <dt className="text-muted">{label}</dt>
+      <dd className="text-ink">{children || <span className="text-muted">—</span>}</dd>
+    </>
+  );
+}
+
+/**
+ * The photographs on a complaint.
+ *
+ * They were uploaded and then unreachable: nothing in the CRM had ever
+ * displayed an attachment, so a telecaller could send six pictures of damaged
+ * stock into the database and no screen would show them to whoever had to act
+ * on it. Every thumbnail opens the real file through /api/attachments/[id],
+ * which is the only route that serves bytes, because it is the one that checks
+ * the caller can see the complaint.
+ */
+function Photographs({ items }: { items: Attachment[] }) {
+  if (!items.length) return null;
+  return (
+    <>
+      <SectionLabel>
+        Photographs · {items.length}
+      </SectionLabel>
+      <div className="mt-1.5 mb-5 flex flex-wrap gap-2">
+        {items.map((a) => (
+          <a
+            key={a.id}
+            href={`/api/attachments/${a.id}`}
+            target="_blank"
+            rel="noreferrer"
+            title={a.filename}
+            className="block"
+          >
+            {a.isImage ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={`/api/attachments/${a.id}`}
+                alt={a.filename}
+                className="h-16 w-16 rounded-[4px] border border-line object-cover"
+              />
+            ) : (
+              <span className="flex h-16 w-16 items-center justify-center rounded-[4px] border border-line bg-canvas px-1 text-center text-[11px] break-all text-muted">
+                {a.filename.slice(0, 18)}
+              </span>
+            )}
+          </a>
+        ))}
+      </div>
+    </>
+  );
+}
+
 export function ComplaintsScreen({
   scopeLabel,
   isManager,
   isTeamView,
   rows,
   events,
+  attachments,
   categories,
   maxImages,
 }: {
@@ -89,6 +157,8 @@ export function ComplaintsScreen({
   isTeamView: boolean;
   rows: Row[];
   events: Record<string, Event[]>;
+  /** Photographs per complaint, read with the rows rather than per drawer. */
+  attachments: Record<string, Attachment[]>;
   /** From configuration, so a manager can change the list without a deploy. */
   categories: string[];
   /** `attachments.maxPerComplaint`, so the screen and the server agree. */
@@ -235,7 +305,7 @@ export function ComplaintsScreen({
                     className="cursor-pointer hover:bg-canvas"
                   >
                     <Td className="font-medium text-ink">{r.customerName}</Td>
-                    <Td>{r.category}</Td>
+                    <Td>{categoryLabel(r.category)}</Td>
                     <Td className="max-w-[340px] truncate text-muted" title={r.description}>
                       {r.description}
                     </Td>
@@ -308,16 +378,42 @@ export function ComplaintsScreen({
                   {current.severity}
                 </Badge>
                 <span className="text-[13px] text-muted">
-                  {current.category} · open {ageLabel(current.ageDays)}
+                  {categoryLabel(current.category)} · open {ageLabel(current.ageDays)}
                 </span>
               </div>
             </DrawerHeader>
 
             <div className="flex-1 overflow-y-auto p-5">
+              <SectionLabel>Complaint</SectionLabel>
+              <dl className="mt-1.5 mb-5 grid grid-cols-[7.5rem_1fr] gap-x-3 gap-y-1.5 text-sm">
+                <Detail label="Raised by">{current.loggedByName}</Detail>
+                <Detail label="Raised">{stamp(current.createdAt.toISOString())}</Detail>
+                <Detail label="Category">{categoryLabel(current.category)}</Detail>
+                <Detail label="Mobile">{current.mobileNumber}</Detail>
+                <Detail label="With">{current.assignedTo}</Detail>
+                <Detail label="Goods">{current.goodsDescription}</Detail>
+                <Detail label="Credit note">
+                  {current.requestCn ? (
+                    <span className="text-ink">
+                      Requested
+                      {current.cnStatus && current.cnStatus !== "requested"
+                        ? ` · ${CN_STATUS_LABEL[current.cnStatus] ?? current.cnStatus}`
+                        : ""}
+                      {current.cnAmount ? ` · ${money(current.cnAmount)}` : ""}
+                      {current.cnReference ? ` · ${current.cnReference}` : ""}
+                    </span>
+                  ) : (
+                    "Not asked for"
+                  )}
+                </Detail>
+              </dl>
+
               <SectionLabel>What the customer reported</SectionLabel>
               <p className="mt-1 mb-5 text-sm leading-[21px] text-ink">
                 {current.description}
               </p>
+
+              <Photographs items={attachments[current.id] ?? []} />
 
               <SectionLabel>Status history</SectionLabel>
               <div className="mt-2">
@@ -329,33 +425,50 @@ export function ComplaintsScreen({
                 ))}
               </div>
 
-              <Field
-                label="Resolution notes · required to close"
-                className="mt-5"
-                error={
-                  notesError
-                    ? "Write what was done before closing - this is what the customer record will show."
-                    : null
-                }
-              >
-                <Textarea
-                  value={notes}
-                  onChange={(e) => {
-                    setNotes(e.target.value);
-                    setNotesError(false);
-                  }}
-                  invalid={notesError}
-                  className="h-24"
-                  placeholder="What was done to close this"
-                />
-              </Field>
+              {CLOSED.includes(current.status) ? (
+                <div className="mt-5">
+                  <SectionLabel>How it was resolved</SectionLabel>
+                  <p className="mt-1 text-sm leading-[21px] text-ink">
+                    {current.resolutionNotes || "Closed without a note."}
+                  </p>
+                  <p className="mt-1.5 text-[13px] text-muted">
+                    {current.resolvedAt ? `${stamp(current.resolvedAt.toISOString())} · ` : ""}
+                    {current.customerInformed
+                      ? "The customer was told the outcome."
+                      : "The customer has NOT been told the outcome."}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <Field
+                    label="Resolution notes · required to close"
+                    className="mt-5"
+                    error={
+                      notesError
+                        ? "Write what was done before closing - this is what the customer record will show."
+                        : null
+                    }
+                  >
+                    <Textarea
+                      value={notes}
+                      onChange={(e) => {
+                        setNotes(e.target.value);
+                        setNotesError(false);
+                      }}
+                      invalid={notesError}
+                      className="h-24"
+                      placeholder="What was done to close this"
+                    />
+                  </Field>
 
-              <Checkbox
-                label="The customer has been told the outcome"
-                checked={told}
-                onChange={(e) => setTold(e.target.checked)}
-                className="mt-3"
-              />
+                  <Checkbox
+                    label="The customer has been told the outcome"
+                    checked={told}
+                    onChange={(e) => setTold(e.target.checked)}
+                    className="mt-3"
+                  />
+                </>
+              )}
             </div>
 
             <div className="flex gap-2.5 border-t border-line px-5 py-3">

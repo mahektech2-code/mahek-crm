@@ -2,7 +2,13 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { attachments, complaints, calls, followUpAttempts } from "@/db/schema";
+import {
+  attachments,
+  complaints,
+  calls,
+  customers,
+  followUpAttempts,
+} from "@/db/schema";
 import { resolveScope, assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
 import { fileStorage } from "../storage";
@@ -265,12 +271,24 @@ export async function canRead(attachmentId: string): Promise<boolean> {
   const customerId = await customerBehind(row.parentType, row.parentId);
   if (!customerId) return false;
 
+  // Drizzle, not raw SQL, and no cast. This was a hand-written query handing
+  // snake_case columns to a function that reads camelCase ones, with `as never`
+  // silencing the compiler: `kind` was absent and `ownerId` was undefined, so
+  // assignedUserId() answered null and EVERY read was refused. It failed shut,
+  // which is the safe direction and the reason nobody noticed — no screen had
+  // ever displayed an attachment to notice with.
+  const [customer] = await db
+    .select({
+      kind: customers.kind,
+      ownerId: customers.ownerId,
+      salesAmId: customers.salesAmId,
+    })
+    .from(customers)
+    .where(eq(customers.id, customerId));
+  if (!customer) return false;
+
   try {
-    const [customer] = await db.execute<{ id: string; owner_id: string | null; sales_am_id: string | null }>(
-      sql`select id, owner_id, sales_am_id from customers where id = ${customerId}`,
-    );
-    if (!customer) return false;
-    await assertCustomerInScope(customer as never);
+    await assertCustomerInScope(customer);
     return true;
   } catch {
     return false;

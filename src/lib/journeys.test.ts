@@ -2278,6 +2278,54 @@ describe("Attachments — what may be attached, and what removal means", () => {
     );
   });
 
+  test("the owner can read a complaint's photograph, and another telecaller cannot", async () => {
+    // canRead handed a raw snake_case row to a function reading camelCase
+    // fields, with `as never` silencing the compiler — so the owner was
+    // refused too and every attachment answered 404. It failed SHUT, which is
+    // the safe direction and exactly why it went unnoticed: nothing in the CRM
+    // had ever displayed an attachment to notice with.
+    const { canRead } = await import("@/lib/services/attachment-service");
+    const { bindAttachments } = await import("@/lib/services/attachment-service");
+
+    const customer = await makeCustomer(priya.id);
+    const [complaint] = await db
+      .insert(complaints)
+      .values({
+        id: id("cmp"),
+        customerId: customer.id,
+        loggedByUserId: priya.id,
+        category: "packaging_damage",
+        description: "Drums dented in transit",
+        severity: "medium",
+        slaDueAt: new Date(Date.now() + 86_400_000),
+      })
+      .returning();
+
+    const [file] = await db
+      .insert(attachmentsTable)
+      .values({
+        id: id("att"),
+        filename: "damage.jpg",
+        storedRef: "memory://damage",
+        contentType: "image/jpeg",
+        sizeBytes: 512,
+        status: "available",
+        uploadedById: priya.id,
+      })
+      .returning();
+    await bindAttachments([file.id], "complaint", complaint.id);
+
+    setTestUser(priya);
+    assert.equal(await canRead(file.id), true, "the owner could not read their own");
+
+    setTestUser(manager);
+    assert.equal(await canRead(file.id), true, "the manager could not read their team's");
+
+    // And it still refuses somebody else's book, which is the point of it.
+    setTestUser(rakesh);
+    assert.equal(await canRead(file.id), false, "another telecaller could read it");
+  });
+
   test("a complaint carries six photographs", async () => {
     // A short delivery gets photographed from every side, and five was one
     // short of a pallet. The limit is configuration; what this pins is that
