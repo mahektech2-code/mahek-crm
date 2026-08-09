@@ -134,6 +134,13 @@
       "when": 1786256726132,
       "tag": "0019_hrms_employees",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786261639246,
+      "tag": "0020_sales_party",
+      "breakpoints": true
     }
   ]
 }

@@ -1927,6 +1927,102 @@ export const sheetPaymentRows = pgTable(
   ],
 );
 
+/* -------------------------------------------------- imported sheet: parties
+ *
+ * The customer master, from the Sales Party tab of the Master workbook. One
+ * row per party, keyed on the name — which is the same name the order sheet
+ * calls Billing Party Name, and matches 555 of the 557 customers the orders
+ * created.
+ *
+ * This is where the CRM finally gets a phone number. Everything imported from
+ * the order sheet arrived unreachable: an order records what somebody bought,
+ * never how to ring them.
+ *
+ * 1,191 parties against 557 who have ordered, so roughly half of this list has
+ * never bought anything. Those are prospects, and the schema already has a
+ * word for them — but landing a row and deciding it is a lead worth calling
+ * are two different acts, so this table holds all of them and the projection
+ * chooses.
+ * ------------------------------------------------------------------------- */
+
+export const sheetPartyRows = pgTable(
+  "sheet_party_rows",
+  {
+    id: text("id").primaryKey(),
+    syncId: text("sync_id")
+      .notNull()
+      .references(() => sheetSyncRuns.id, { onDelete: "cascade" }),
+    rowNumber: integer("row_number").notNull(),
+
+    /** The key, and the join to customers.name. Unique across the tab. */
+    partyName: text("party_name").notNull(),
+    /** Folded for whitespace and case — what the join actually compares. */
+    partyKey: text("party_key").notNull(),
+
+    raw: jsonb("raw").$type<Record<string, string>>().notNull(),
+    rowHash: text("row_hash").notNull(),
+    status: sheetRowStatusEnum("status").notNull().default("present"),
+    lastSeenSyncId: text("last_seen_sync_id"),
+
+    /* ---- where they are ---- */
+    area: text("area"),
+    location: text("location"),
+    state: text("state"),
+
+    /* ---- how to reach them. The reason this tab matters. ---- */
+    /** Ten digits, normalised. Null when the sheet's value is not a mobile. */
+    mobileNo: text("mobile_no"),
+    whatsappNo: text("whatsapp_no"),
+    email: text("email"),
+
+    /* ---- who works them ----
+     *
+     * Names, not ids. These are people in the Employee Details tab rather than
+     * MahekOne accounts, and most have never signed in — so the name is stored
+     * as written and the projection links to a user only where one genuinely
+     * matches. An unlinked name is still worth having: it says who owns the
+     * account even when the system has no login for them.
+     */
+    salesPersonName: text("sales_person_name"),
+    backOfficeName: text("back_office_name"),
+
+    /* ---- commercial ---- */
+    creditDays: integer("credit_days"),
+    gstNumber: text("gst_number"),
+    grade: text("grade"),
+    /** Paise. The sheet writes whole rupees. */
+    monthlyTargetPaise: bigint("monthly_target_paise", { mode: "number" }),
+    tagPricelist: text("tag_pricelist"),
+    segment: text("segment"),
+    counterType: text("counter_type"),
+    standingInstructions: text("standing_instructions"),
+    callingInstructions: text("calling_instructions"),
+
+    /* ---- dispatch defaults ---- */
+    transportDetail: text("transport_detail"),
+    paymentType: text("payment_type"),
+    deliveryType: text("delivery_type"),
+    weightType: text("weight_type"),
+
+    /** "Active" / "Deactive" as the sheet spells it. */
+    partyStatus: text("party_status"),
+    companyName: text("company_name"),
+    allocateEmail: text("allocate_email"),
+    sinceDate: date("since_date"),
+
+    issues: jsonb("issues").$type<SheetRowIssue[]>().notNull().default([]),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sheet_party_rows_key").on(t.partyKey),
+    index("sheet_party_rows_sync_idx").on(t.syncId),
+    index("sheet_party_rows_name_idx").on(t.partyName),
+    index("sheet_party_rows_status_idx").on(t.partyStatus),
+  ],
+);
+
 /* --------------------------------------------------------------- relations */
 
 export const usersRelations = relations(users, ({ many, one }) => ({
@@ -2092,3 +2188,4 @@ export type SheetSyncRun = typeof sheetSyncRuns.$inferSelect;
 export type SheetOrderRow = typeof sheetOrderRows.$inferSelect;
 export type Employee = typeof employees.$inferSelect;
 export type SheetPaymentRow = typeof sheetPaymentRows.$inferSelect;
+export type SheetPartyRow = typeof sheetPartyRows.$inferSelect;

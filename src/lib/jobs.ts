@@ -35,6 +35,7 @@ import {
   syncPaymentSheet,
   type SyncMode,
 } from "./services/sheet-sync-service";
+import { syncPartySheet } from "./services/party-sync-service";
 import {
   employeeSheetId,
   syncEmployeeSheet,
@@ -70,7 +71,8 @@ export type JobName =
   | "sheet-reparse"
   | "hrms-sync"
   | "hrms-reparse"
-  | "sheet-payments";
+  | "sheet-payments"
+  | "party-sync";
 
 export type JobResult = { job: JobName; recordsAffected: number; detail: string };
 
@@ -332,6 +334,8 @@ export async function runJob(job: JobName, triggeredById?: string): Promise<JobR
       return [await runSheetSync(job, triggeredById)];
     case "sheet-payments":
       return [await runPaymentSync(triggeredById)];
+    case "party-sync":
+      return [await runPartySync(triggeredById)];
     case "hrms-sync":
     case "hrms-reparse":
       return [await runEmployeeSync(job, triggeredById)];
@@ -444,6 +448,24 @@ async function runEmployeeSync(
         triggeredById,
       });
 
+      return {
+        recordsAffected: outcome.rowsCreated + outcome.rowsUpdated,
+        detail: outcome.detail,
+      };
+    },
+    triggeredById,
+  );
+}
+
+/**
+ * The customer master. Reconcile only — the list changes in place, and an
+ * append run would never see a number corrected or a party marked Deactive.
+ */
+async function runPartySync(triggeredById?: string): Promise<JobResult> {
+  return run(
+    "party-sync",
+    async () => {
+      const outcome = await syncPartySheet({ triggeredById });
       return {
         recordsAffected: outcome.rowsCreated + outcome.rowsUpdated,
         detail: outcome.detail,
