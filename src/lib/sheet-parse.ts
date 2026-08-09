@@ -500,3 +500,158 @@ export function parseRupeesToPaise(raw: string): number | null {
 /** True when the sheet says the money arrived. */
 export const isReceived = (status: string | null) =>
   (status ?? "").trim().toLowerCase() === "received";
+
+/* ---------------------------------------------------- the Sales Party tab */
+
+/**
+ * The customer master's headers — row ONE of that tab.
+ *
+ * This tab carries two header rows: machine names above, human labels below,
+ * so the data starts at row 3. The machine names are the stable ones and are
+ * what these match.
+ */
+export const PARTY_COL = {
+  sinceDate: "Date",
+  /** The join key. The same name the order sheet calls Billing Party Name. */
+  name: "Sales Party Name",
+  area: "Area",
+  location: "Location",
+  state: "State",
+  transportDetail: "Transport Detail",
+  paymentType: "Payment type",
+  deliveryType: "Delivery Type",
+  weightType: "Weight type",
+  /** A person: the sales rep. */
+  salesPerson: "Sales Person",
+  mobileNo: "Mobile No.",
+  whatsappNo: "Whatsapp Contact",
+  email: "Party Email ID",
+  segment: "Segment",
+  counterType: "Counter type",
+  grade: "GRADE",
+  monthlyTarget: "Monthly Target",
+  allocate: "allocate",
+  companyName: "Company name",
+  standingInstructions: "Standing Instructions",
+  partyStatus: "Party Status",
+  gstNumber: "GST Number",
+  /** A person: the back office owner. */
+  tagSalesPerson: "Tag Sales Person",
+  tagPricelist: "Tag PriceList",
+  creditDays: "Credit Days",
+  callingInstructions: "Calling Instructions",
+} as const;
+
+/**
+ * An Indian mobile number, or nothing.
+ *
+ * The sheet holds both `9324181689` and `919324181689`, and occasionally a
+ * landline or a note. Taking the last ten digits handles the country code; the
+ * leading-digit check is what keeps a landline out of a field a telecaller
+ * will dial. A number that fails is dropped rather than stored badly — a wrong
+ * number in a phone field is worse than an empty one, because somebody rings
+ * it.
+ */
+export function parseIndianMobile(raw: string): string | null {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length < 10) return null;
+  const last10 = digits.slice(-10);
+  return /^[6-9]\d{9}$/.test(last10) ? last10 : null;
+}
+
+/** Folded for whitespace and case. What the join to customers compares. */
+export const partyNameKey = (name: string) =>
+  name.trim().replace(/\s+/g, " ").toUpperCase();
+
+export type ParsedPartyRow = {
+  partyName: string;
+  partyKey: string;
+  area: string | null;
+  location: string | null;
+  state: string | null;
+  mobileNo: string | null;
+  whatsappNo: string | null;
+  email: string | null;
+  salesPersonName: string | null;
+  backOfficeName: string | null;
+  creditDays: number | null;
+  gstNumber: string | null;
+  grade: string | null;
+  monthlyTargetPaise: number | null;
+  tagPricelist: string | null;
+  segment: string | null;
+  counterType: string | null;
+  standingInstructions: string | null;
+  callingInstructions: string | null;
+  transportDetail: string | null;
+  paymentType: string | null;
+  deliveryType: string | null;
+  weightType: string | null;
+  partyStatus: string | null;
+  companyName: string | null;
+  allocateEmail: string | null;
+  sinceDate: string | null;
+  issues: SheetRowIssue[];
+};
+
+export function parsePartyRow(cells: Record<string, string>): ParsedPartyRow {
+  const issues: SheetRowIssue[] = [];
+
+  const readWith = <T>(
+    column: string,
+    parse: (raw: string) => T | null,
+    expected: string,
+  ): T | null => {
+    const raw = (cells[column] ?? "").trim();
+    if (!raw) return null;
+    const parsed = parse(raw);
+    if (parsed === null) {
+      issues.push({ column, value: raw, problem: `could not be read as ${expected}` });
+    }
+    return parsed;
+  };
+
+  const partyName = (cells[PARTY_COL.name] ?? "").trim();
+
+  const row: ParsedPartyRow = {
+    partyName,
+    partyKey: partyNameKey(partyName),
+    area: text(cells, PARTY_COL.area),
+    location: text(cells, PARTY_COL.location),
+    state: text(cells, PARTY_COL.state),
+    mobileNo: readWith(PARTY_COL.mobileNo, parseIndianMobile, "a 10-digit mobile number"),
+    whatsappNo: readWith(PARTY_COL.whatsappNo, parseIndianMobile, "a 10-digit mobile number"),
+    email: text(cells, PARTY_COL.email),
+    salesPersonName: text(cells, PARTY_COL.salesPerson),
+    backOfficeName: text(cells, PARTY_COL.tagSalesPerson),
+    creditDays: readWith(PARTY_COL.creditDays, parseWholeNumber, "a whole number of days"),
+    gstNumber: text(cells, PARTY_COL.gstNumber),
+    grade: text(cells, PARTY_COL.grade),
+    monthlyTargetPaise: readWith(PARTY_COL.monthlyTarget, parseRupeesToPaise, "an amount"),
+    tagPricelist: text(cells, PARTY_COL.tagPricelist),
+    segment: text(cells, PARTY_COL.segment),
+    counterType: text(cells, PARTY_COL.counterType),
+    standingInstructions: text(cells, PARTY_COL.standingInstructions),
+    callingInstructions: text(cells, PARTY_COL.callingInstructions),
+    transportDetail: text(cells, PARTY_COL.transportDetail),
+    paymentType: text(cells, PARTY_COL.paymentType),
+    deliveryType: text(cells, PARTY_COL.deliveryType),
+    weightType: text(cells, PARTY_COL.weightType),
+    partyStatus: text(cells, PARTY_COL.partyStatus),
+    companyName: text(cells, PARTY_COL.companyName),
+    allocateEmail: text(cells, PARTY_COL.allocate),
+    sinceDate: readWith(PARTY_COL.sinceDate, parseSheetDate, "a date"),
+    issues: [],
+  };
+
+  if (!partyName) {
+    issues.push({
+      column: PARTY_COL.name,
+      value: "",
+      problem: "no party name — the row cannot be matched to a customer",
+    });
+  }
+
+  row.issues = issues;
+  return row;
+}
