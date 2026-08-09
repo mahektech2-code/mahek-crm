@@ -290,7 +290,6 @@ export const appIdEnum = pgEnum("app_id", [
   "orders",
   "people",
   "reports",
-  "hrms",
   "admin",
 ]);
 
@@ -1738,134 +1737,6 @@ export type SheetRowIssue = {
   kind?: "unreadable" | "ambiguous" | "contradiction";
 };
 
-/* ------------------------------------------------------------------- §HRMS
- * The employee master.
- *
- * Imported from the Employee Details tab of the same workbook the order sheet
- * comes from, and read-only here for the same reason: the spreadsheet is where
- * HR maintains it, so a screen that let you edit a value would create two
- * answers to one question and the spreadsheet would win at the next sync.
- * ------------------------------------------------------------------------ */
-
-export const employmentStatusEnum = pgEnum("employment_status", [
-  "active",
-  "inactive",
-  /** The cell held something that is neither. Never guessed into one. */
-  "unknown",
-]);
-
-export const employees = pgTable(
-  "employees",
-  {
-    id: text("id").primaryKey(),
-    /** Which import last wrote this row. */
-    syncId: text("sync_id").references(() => sheetSyncRuns.id, { onDelete: "set null" }),
-    /** 1-based row in the sheet — what somebody scrolls to when a cell is wrong. */
-    rowNumber: integer("row_number").notNull(),
-
-    /**
-     * The sheet's own `employee_id`, e.g. EMP-1692. Unique, and the key the
-     * import is idempotent on: a re-run updates the person in place, and a
-     * row that moves up the sheet when somebody deletes a line above it is
-     * still the same employee rather than a new one.
-     */
-    employeeCode: text("employee_code").notNull(),
-
-    name: text("name").notNull(),
-    gender: text("gender"),
-    officeName: text("office_name"),
-    /** The sheet's `report_to`. A position, not a person — it is not a link. */
-    reportsTo: text("reports_to"),
-    /** The sheet's `department` column, whose header reads "Position Type". */
-    department: text("department"),
-    position: text("position"),
-    areaAllocated: text("area_allocated"),
-
-    status: employmentStatusEnum("status").notNull().default("unknown"),
-    /** What the cell literally said. "ACTIVE" and "Active" are one status and
-     *  two spellings, and the second is worth keeping for whoever tidies it. */
-    statusRaw: text("status_raw"),
-
-    dateOfJoining: date("date_of_joining"),
-    dateOfBirth: date("date_of_birth"),
-    dateOfLeaving: date("date_of_leaving"),
-    marriageAnniversary: date("marriage_anniversary"),
-    child1Birthday: date("child1_birthday"),
-    child2Birthday: date("child2_birthday"),
-
-    email: text("email"),
-    personalMobile: text("personal_mobile"),
-    alternateMobile: text("alternate_mobile"),
-    companyMobile: text("company_mobile"),
-    emergencyContact: text("emergency_contact"),
-    address: text("address"),
-    permanentAddress: text("permanent_address"),
-
-    /** Paise, like every other amount in MahekOne. The sheet holds rupees. */
-    netSalaryPaise: bigint("net_salary_paise", { mode: "number" }),
-    conveyancePaise: bigint("conveyance_paise", { mode: "number" }),
-    otherSalaryPaise: bigint("other_salary_paise", { mode: "number" }),
-
-    monthlyPaidLeave: integer("monthly_paid_leave"),
-    yearlyMaximumLeave: integer("yearly_maximum_leave"),
-
-    pfEsicApplicable: boolean("pf_esic_applicable"),
-    uanNo: text("uan_no"),
-    esicNo: text("esic_no"),
-
-    /* --------------------------------------------------------------------
-     * Identity and banking.
-     *
-     * The bank account and the Aadhaar number are the two things on this sheet
-     * that are worth stealing, so the row carries only what a person needs to
-     * RECOGNISE the account — the bank, the IFSC, the last four digits. The
-     * full numbers stay in `raw`, which no screen and no list query reads.
-     * Putting the whole account number in a column is how it ends up in a
-     * CSV export somebody mails themselves.
-     * ------------------------------------------------------------------ */
-    bankName: text("bank_name"),
-    ifscCode: text("ifsc_code"),
-    accountNumberLast4: text("account_number_last4"),
-    aadhaarLast4: text("aadhaar_last4"),
-    panNumber: text("pan_number"),
-
-    /** The sheet's own path into its images folder. Not a URL we can serve. */
-    photoPath: text("photo_path"),
-
-    /**
-     * Every column exactly as the sheet gave it, keyed by header — minus the
-     * `passwoard` column, which is redacted on the way in. That column holds
-     * plaintext credentials to a different system; MahekOne has no use for it
-     * and storing it would make this table a password dump.
-     */
-    raw: jsonb("raw").$type<Record<string, string>>().notNull(),
-    /** SHA-256 of the row as the sheet gave it. Unchanged rows cost no writes. */
-    rowHash: text("row_hash").notNull(),
-
-    /** Whether the person is still a row in the sheet. Disappearance is a
-     *  status, not a delete — an employee removed from the sheet is somebody
-     *  whose record still has to be findable. */
-    sheetStatus: sheetRowStatusEnum("sheet_status").notNull().default("present"),
-    lastSeenSyncId: text("last_seen_sync_id"),
-
-    /** Cells that could not be read, or dates that could be read two ways.
-     *  A row with issues still imports — this is a note for whoever maintains
-     *  the sheet, never a rejection. */
-    issues: jsonb("issues").$type<SheetRowIssue[]>().notNull().default([]),
-
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    uniqueIndex("employees_code_key").on(t.employeeCode),
-    index("employees_name_idx").on(t.name),
-    index("employees_status_idx").on(t.status),
-    index("employees_department_idx").on(t.department),
-    index("employees_office_idx").on(t.officeName),
-    index("employees_row_number_idx").on(t.rowNumber),
-  ],
-);
-
 /**
  * The Payment Status tab: one row per ORDER, not per line and not per bill.
  *
@@ -2090,5 +1961,4 @@ export type JobRun = typeof jobRuns.$inferSelect;
 export type AuditEntry = typeof auditLog.$inferSelect;
 export type SheetSyncRun = typeof sheetSyncRuns.$inferSelect;
 export type SheetOrderRow = typeof sheetOrderRows.$inferSelect;
-export type Employee = typeof employees.$inferSelect;
 export type SheetPaymentRow = typeof sheetPaymentRows.$inferSelect;

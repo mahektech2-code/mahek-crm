@@ -12,7 +12,6 @@ export const APP_IDS = [
   "orders",
   "people",
   "reports",
-  "hrms",
   "admin",
 ] as const;
 
@@ -78,16 +77,6 @@ export const APPS: AppDefinition[] = [
     href: "/reports",
     tone: "neutral",
     built: false,
-  },
-  {
-    id: "hrms",
-    name: "HRMS",
-    initials: "HR",
-    description:
-      "The employee master — who works here, where, since when and on what.",
-    href: "/hrms/employees",
-    tone: "neutral",
-    built: true,
   },
   {
     id: "admin",
