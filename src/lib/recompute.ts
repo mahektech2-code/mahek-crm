@@ -318,10 +318,15 @@ export async function recomputeFollowUpState(customerId: string): Promise<void> 
 }
 
 export async function recomputeAllFollowUpStates(): Promise<number> {
-  const rows = await db
-    .select({ id: customers.id })
-    .from(customers)
-    .where(eq(customers.status, "active"));
+  // EVERY customer, whatever their status. This pass is the only thing that
+  // REMOVES a follow-up row once the debt behind it is gone, so a filter here
+  // does not skip work — it freezes it. Filtering to `active` left eight
+  // customers on the collections list at stage 3, claiming crores overdue
+  // while owing nothing, with no recompute able to reach them again.
+  //
+  // Nothing is created for a customer who owes nothing, so visiting them all
+  // costs a read and writes only deletions.
+  const rows = await db.select({ id: customers.id }).from(customers);
   for (const r of rows) await recomputeFollowUpState(r.id);
   return rows.length;
 }
