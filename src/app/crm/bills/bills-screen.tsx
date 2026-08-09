@@ -70,6 +70,9 @@ type SortKey =
 /** Rows per page. A ledger is read a screenful at a time, not scrolled. */
 const PER_PAGE = 50;
 
+/** Columns that read as dates, which sort newest-first when first clicked. */
+const DATE_KEYS: SortKey[] = ["billDate", "dueDate"];
+
 const COLUMNS: Array<{ key: SortKey; label: string; align?: "right" }> = [
   { key: "billNo", label: "Bill no" },
   { key: "billDate", label: "Date" },
@@ -102,9 +105,13 @@ export function BillsScreen({
   const router = useRouter();
   const { run, push } = useToast();
 
+  // Newest bill first. The ledger was opening on the oldest due date, so
+  // page one of FY 26-27 was last April and this week's billing sat twenty
+  // pages in — the wrong end of ten thousand rows for anybody checking what
+  // has just gone out.
   const [sort, setSort] = React.useState<{ key: SortKey; dir: 1 | -1 }>({
-    key: "dueDate",
-    dir: 1,
+    key: "billDate",
+    dir: -1,
   });
   const [status, setStatus] = React.useState("All");
   const [bucket, setBucket] = React.useState("All");
@@ -158,7 +165,13 @@ export function BillsScreen({
   const overdueCount = scoped.filter((r) => r.overdueDays > 0).length;
 
   function toggleSort(key: SortKey) {
-    setSort((s) => (s.key === key ? { key, dir: (s.dir * -1) as 1 | -1 } : { key, dir: 1 }));
+    setSort((s) =>
+      s.key === key
+        ? { key, dir: (s.dir * -1) as 1 | -1 }
+        : // A date column opens on the newest, everything else on the lowest.
+          // Clicking "Date" and being shown 2024 is not what anybody meant.
+          { key, dir: DATE_KEYS.includes(key) ? -1 : 1 },
+    );
     // Re-sorting reorders the whole year, so page seven now holds different
     // rows entirely. Going back to the first page is the honest answer.
     setPage(1);
