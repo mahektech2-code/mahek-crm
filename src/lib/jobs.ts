@@ -599,7 +599,7 @@ async function runTeamProvision(
       const detail =
         `${report.people.length} named on the master` +
         (made.length ? `, ${made.length} accounts created (${made.map((m) => m.email).join(", ")})` : ", no new accounts") +
-        `, ${report.assigned} customers handed over` +
+        `, ${report.assigned} records handed over (${report.assignedLeads} of them leads)` +
         `, ${report.untagged} parties tagged to nobody`;
       return { recordsAffected: report.assigned, detail };
     },

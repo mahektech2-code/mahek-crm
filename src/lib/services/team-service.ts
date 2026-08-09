@@ -67,6 +67,7 @@ export type TeamReport = {
     appsGranted: string[];
   }[];
   assigned: number;
+  assignedLeads: number;
   untagged: number;
   skippedNoUser: number;
 };
@@ -110,6 +111,7 @@ export async function provisionBackOffice(options: {
   const report: TeamReport = {
     people: [],
     assigned: 0,
+    assignedLeads: 0,
     untagged: 0,
     skippedNoUser: 0,
   };
@@ -183,6 +185,11 @@ export async function provisionBackOffice(options: {
     // quietly starts replacing the letter s. It matched nothing, which reads
     // exactly like a handover that ran and found nobody to hand over.
     //
+    // Leads as well as customers. A party that has never ordered is still
+    // somebody's to call — the master tags it the same way — and leaving five
+    // hundred of them with whoever ran the import recreates exactly the
+    // problem this exists to fix.
+    //
     // The join is the party NAME, folded the same way both sides fold it.
     // Not external_code: the order projection prefixes that with "SHEET:" and
     // the master's key carries no prefix, so matching them would silently
@@ -197,11 +204,14 @@ export async function provisionBackOffice(options: {
        where p.status = 'present'
          and lower(regexp_replace(trim(p.back_office_name), '\\s+', ' ', 'g')) = ${nameKey}
          and upper(regexp_replace(trim(c.name), '\\s+', ' ', 'g')) = p.party_key
-         and c.kind = 'customer'
-      returning c.id
+      returning c.kind
     `);
-    const rows = (moved as unknown as { length?: number; rows?: unknown[] });
-    report.assigned += rows.rows?.length ?? rows.length ?? 0;
+    const returned = (
+      (moved as unknown as { rows?: { kind: string }[] }).rows ??
+      (moved as unknown as { kind: string }[])
+    ) as { kind: string }[];
+    report.assigned += returned.length;
+    report.assignedLeads += returned.filter((r) => r.kind === "lead").length;
   }
 
   const [{ n }] = await db
