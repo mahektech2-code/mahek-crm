@@ -60,6 +60,12 @@ export type PartyProjectionOptions = {
   dryRun?: boolean;
 };
 
+/**
+ * Why a customer is closed, when the customer master is what closed them.
+ * Kept as a marker so a later sync can reopen what it shut, and only that.
+ */
+const DEACTIVATED_BY_MASTER = "Marked Deactive on the customer master";
+
 const normal = (s: string | null) => (s ? s.trim().toLowerCase() : null);
 
 export async function projectParties(
@@ -80,6 +86,9 @@ export async function projectParties(
       backOfficeAmId: customers.backOfficeAmId,
       gstin: customers.gstin,
       kind: customers.kind,
+      status: customers.status,
+      deactivatedAt: customers.deactivatedAt,
+      deactivationReason: customers.deactivationReason,
     })
     .from(customers);
   const byKey = new Map(existing.map((c) => [partyNameKey(c.name), c]));
@@ -134,8 +143,17 @@ export async function projectParties(
     if (fillPhone) report.phonesFilled++;
     if (fillWhatsapp) report.whatsappFilled++;
 
-    // "Deactive" on the master is the business saying stop, which is a status
-    // change and never a deletion.
+    // "Deactive" on the master is the business saying stop — which is
+    // `deactivated`, not `inactive`.
+    //
+    // Those two words are nearly synonyms in English and opposites here.
+    // `inactive` means a customer has gone quiet, and the queue keeps them on
+    // purpose: winning them back is the one thing you must still be able to do
+    // (queue-service.ts says so where it filters). `deactivated` is the one
+    // that means stop, and it is what leaves the queue.
+    //
+    // Mapping Deactive to `inactive` put 133 closed accounts into telecallers'
+    // call logs and made them look like win-back opportunities.
     const deactive = party.partyStatus?.trim().toLowerCase() === "deactive";
     if (deactive) report.deactivated++;
 
@@ -153,7 +171,23 @@ export async function projectParties(
         ...(party.area ? { city: party.area } : {}),
         ...(party.state ? { region: party.state } : {}),
         ...(party.counterType ? { leadSource: party.counterType } : {}),
-        ...(deactive ? { status: "inactive" as const } : {}),
+        ...(deactive
+          ? {
+              status: "deactivated" as const,
+              deactivatedAt: customer.deactivatedAt ?? new Date(),
+              deactivationReason: DEACTIVATED_BY_MASTER,
+            }
+          : // Reactivate only what this import closed. A customer somebody
+            // deactivated inside the CRM stays deactivated whatever the
+            // spreadsheet says, and `inactive` is the inactivity engine's to
+            // set and clear — not a sync's.
+            customer.deactivationReason === DEACTIVATED_BY_MASTER
+            ? {
+                status: "active" as const,
+                deactivatedAt: null,
+                deactivationReason: null,
+              }
+            : {}),
         updatedAt: new Date(),
       } });
   }
@@ -191,7 +225,7 @@ export async function projectParties(
         kind: "lead",
         leadSource: party.counterType ?? party.segment,
         status: party.partyStatus?.trim().toLowerCase() === "deactive"
-          ? "inactive"
+          ? "deactivated"
           : "active",
         gstin: party.gstNumber,
         creditTermDays: party.creditDays ?? 30,
