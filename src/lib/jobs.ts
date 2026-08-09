@@ -38,6 +38,7 @@ import {
 import { syncPartySheet } from "./services/party-sync-service";
 import { projectSheet } from "./services/sheet-projection-service";
 import { projectParties } from "./services/party-projection-service";
+import { provisionBackOffice } from "./services/team-service";
 import {
   employeeSheetId,
   syncEmployeeSheet,
@@ -75,7 +76,8 @@ export type JobName =
   | "hrms-reparse"
   | "sheet-payments"
   | "party-sync"
-  | "project-sheet";
+  | "project-sheet"
+  | "provision-team";
 
 export type JobResult = { job: JobName; recordsAffected: number; detail: string };
 
@@ -340,6 +342,8 @@ export type JobOptions = {
   bills?: boolean;
   /** Move customers that already exist to `owner`, not just new ones. */
   reassign?: boolean;
+  /** Password for accounts the team provisioning creates. Never for existing ones. */
+  password?: string;
 };
 
 export async function runJob(
@@ -364,6 +368,8 @@ export async function runJob(
       return [await runPartySync(triggeredById)];
     case "project-sheet":
       return [await runProjection(triggeredById, options)];
+    case "provision-team":
+      return [await runTeamProvision(triggeredById, options)];
     case "hrms-sync":
     case "hrms-reparse":
       return [await runEmployeeSync(job, triggeredById)];
@@ -564,6 +570,38 @@ async function runProjection(
           orders.customers.created + orders.orders.created + parties.matched,
         detail,
       };
+    },
+    triggeredById,
+  );
+}
+
+/**
+ * Give the back office team logins, and hand each of them the accounts the
+ * customer master says they work.
+ *
+ * Not scheduled, and never will be: it creates people and moves books.
+ */
+async function runTeamProvision(
+  triggeredById?: string,
+  options: JobOptions = {},
+): Promise<JobResult> {
+  return run(
+    "provision-team",
+    async () => {
+      if (!options.password) {
+        return {
+          recordsAffected: 0,
+          detail: "Give a password for the accounts this creates (&password=).",
+        };
+      }
+      const report = await provisionBackOffice({ password: options.password });
+      const made = report.people.filter((p) => p.created);
+      const detail =
+        `${report.people.length} named on the master` +
+        (made.length ? `, ${made.length} accounts created (${made.map((m) => m.email).join(", ")})` : ", no new accounts") +
+        `, ${report.assigned} customers handed over` +
+        `, ${report.untagged} parties tagged to nobody`;
+      return { recordsAffected: report.assigned, detail };
     },
     triggeredById,
   );
