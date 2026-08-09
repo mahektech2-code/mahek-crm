@@ -431,35 +431,62 @@ describe("E2 queue builder", () => {
 
   /* --------------------------------- the weekly check-in on good customers */
 
-  test("a fast-cycling customer still gets a weekly check-in inside the quiet window", () => {
-    // Ordered 2 days ago, so nothing to chase — but last spoken to 9 days ago.
-    // Going quiet on your best customers for weeks is how you lose them.
+  test("a fast-cycling customer gets NO weekly check-in", () => {
+    // Ordered 2 days ago on an 8-day cycle, last spoken to 9 days ago. They
+    // are in contact constantly through the orders themselves; a weekly call
+    // on top is noise on both sides of the phone.
     const c = candidate({
       lastOrderDate: addDays(TODAY, -2),
       cycleDays: 8,
       lastContactDate: addDays(TODAY, -9),
     });
-    const { entries } = buildQueue([c], TODAY, C);
-    assert.equal(entries.length, 1);
-    assert.ok(entries[0].reasons[0].kind.startsWith("checkIn"));
-    assert.match(entries[0].reasons[0].label, /Weekly check-in/);
+    const { entries, suppressed } = buildQueue([c], TODAY, C);
+    assert.equal(entries.length, 0);
+    // Not held back either — two days after an order there is simply nothing
+    // to call them about, which is a different thing from being suppressed.
+    assert.equal(suppressed.length, 0);
   });
 
-  test("that check-in is not an order chase - no order reason rides along", () => {
-    // Cycle 8, ordered 12 days ago: past their call day, but inside the quiet
-    // window. The call is "is everything running fine", and the screen must
-    // not tell the telecaller to ask for an order.
+  test("past their call day but inside the quiet window, they are held back with a reason", () => {
+    // Cycle 8, ordered 12 days ago: the order reason fires, the quiet window
+    // silences it, and the telecaller is told why rather than left wondering.
     const c = candidate({
       lastOrderDate: addDays(TODAY, -12),
       cycleDays: 8,
+      lastContactDate: addDays(TODAY, -12),
+    });
+    const { entries, suppressed } = buildQueue([c], TODAY, C);
+    assert.equal(entries.length, 0);
+    assert.equal(suppressed.length, 1);
+    assert.match(suppressed[0].reason, /order/i);
+  });
+
+  test("a fast-cycling customer comes back the moment they stop ordering", () => {
+    // The same 8-day buyer, 20 days since their last order: out of the quiet
+    // window, so the order reasons apply and they return for the reason that
+    // actually matters.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -20),
+      cycleDays: 8,
+      lastContactDate: addDays(TODAY, -20),
+    });
+    const { entries } = buildQueue([c], TODAY, C);
+    assert.equal(entries.length, 1);
+    assert.ok(entries[0].reasons.some((r) => r.kind.startsWith("order")));
+  });
+
+  test("a customer whose cycle is not measured yet still gets the check-in", () => {
+    // No cycle to time a call from, so a steady cadence is all there is.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -12),
+      cycleDays: 30,
+      cycleIsDefault: true,
       lastContactDate: addDays(TODAY, -9),
     });
     const { entries } = buildQueue([c], TODAY, C);
     assert.equal(entries.length, 1);
-    assert.ok(
-      entries[0].reasons.every((r) => !r.kind.startsWith("order")),
-      "order chasing is stripped inside the quiet window",
-    );
+    assert.ok(entries[0].reasons[0].kind.startsWith("checkIn"));
+    assert.match(entries[0].reasons[0].label, /cycle not established|Check-in due/);
   });
 
   test("a slow-cycling customer gets NO weekly check-in", () => {

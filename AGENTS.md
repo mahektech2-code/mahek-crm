@@ -232,15 +232,25 @@ on day 50. Underneath it all sits a quiet window — no order is chased inside
 serving themselves. Customers who have never ordered are prospects, worked on
 their own short cadence.
 
-**The quiet window silences order chasing, not the customer.** A fast-cycling
-customer still gets a weekly check-in inside it — that call asks whether
-everything is running fine, not for an order, and the two must never be
-confused. So the order reasons are stripped and the check-in reason is what
-the telecaller sees. Weekly check-ins go to exactly two groups: customers
-reordering faster than the quiet window, and customers whose cycle could not
-be measured yet. A customer with a measured cycle of 15 days or more gets
-neither — their cycle already says when to call, and a weekly check-in on top
+**The weekly check-in goes to one group: customers whose cycle cannot be
+measured yet.** There is no cycle to time a call from, so a steady cadence is
+all there is. Everybody else is called from their own cycle.
+
+Customers reordering FASTER than the quiet window used to get it too, on the
+reasoning that going silent on your best customers loses them. They no longer
+do: a customer buying every seven days is in contact constantly through the
+orders themselves, and a weekly call on top is noise on both sides of the
+phone. They are not lost by it — the moment they stop ordering they leave the
+quiet window, their order reasons apply, and they return for the reason that
+actually matters. A customer with a measured cycle of 15 days or more never
+had it: their cycle already says when to call, and a weekly check-in on top
 would ring a 60-day buyer eight times before their order was due.
+
+**The quiet window silences order chasing, not the customer.** The order
+reasons are stripped rather than the whole customer suppressed, so a telecaller
+with a reminder against them still sees the call they are actually making
+rather than one about an order. A customer left with nothing at all is shown
+in the held-back strip with the reason, never dropped silently.
 
 **A reminder outranks the quiet window and the no-order cooldown.** A callback
 the customer asked for is not chasing, and not making it is worse than any
