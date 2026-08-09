@@ -24,6 +24,7 @@ import {
 } from "@/lib/services/sheet-order-service";
 import { sheetsConfigured } from "@/lib/sheets";
 import { listPeople } from "@/lib/services/admin-people-service";
+import { feedbackCounts, listFeedback } from "@/lib/services/feedback-service";
 import {
   orderSheetId,
   orderTabTitle,
@@ -112,6 +113,10 @@ export default async function Page({
   // Real accounts. The People section used to render a hardcoded array.
   const people = await listPeople();
 
+  // What the team has sent in from the Feedback button. Read here like every
+  // other section's data, so the console arrives rendered.
+  const [feedbackRows, counts] = await Promise.all([listFeedback(), feedbackCounts()]);
+
   // Stored values, projected into the shapes the console's controls edit.
   const values: Record<string, unknown> = {};
   for (const f of schemaFields(crmSchema())) {
@@ -124,6 +129,13 @@ export default async function Page({
       isPlatformAdmin={isPlatformAdmin}
       initial={{ section, tab }}
       people={people}
+      feedback={{
+        rows: feedbackRows,
+        counts,
+        // Answering is a manager's, or a platform admin's. Reading is not:
+        // a CRM manager on this console sees what their own team reported.
+        canTriage: isManager(user) || isPlatformAdmin,
+      }}
       sheet={{
         summary: sheetStats,
         rows: sheetPage.rows,

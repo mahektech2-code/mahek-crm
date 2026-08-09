@@ -145,6 +145,12 @@ export const PLATFORM_TABS: Record<string, PlatformTab[]> = {
     { slug: "announcements", label: "Announcements" },
     { slug: "delivery", label: "Delivery log" },
   ],
+  feedback: [
+    { slug: "new", label: "New" },
+    { slug: "in-progress", label: "Being looked at" },
+    { slug: "requests", label: "Feature requests" },
+    { slug: "all", label: "Everything" },
+  ],
   audit: [
     { slug: "search", label: "Unified search" },
     { slug: "config", label: "Configuration changes" },
@@ -160,6 +166,8 @@ export const PLATFORM_SUBTITLES: Record<string, string> = {
   audit: "Every configuration and access change. Read-only, and never editable.",
   data: "What has been imported and exported, and whether the backup ran.",
   notifications: "What the platform sends, who receives it, and whether it arrived.",
+  feedback:
+    "What the team has reported, asked for or suggested from inside the apps. Answering one tells the person who wrote it.",
 };
 
 /* --------------------------------------------------------------- the people */

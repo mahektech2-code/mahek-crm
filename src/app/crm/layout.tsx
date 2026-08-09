@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { isManager, requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
 import { APPS } from "@/lib/apps";
-import { getDensity, getScope } from "@/lib/scope";
+import { getScope } from "@/lib/scope";
 import { listNotifications, today } from "@/lib/queries";
 import { AppShell } from "@/components/shell/app-shell";
 
@@ -17,10 +17,9 @@ export default async function AppLayout({
 
   // One wait, not four. Every one of these is a round trip to a database in
   // another continent, so they run together rather than one after another.
-  const [apps, scope, density, notifications, badges] = await Promise.all([
+  const [apps, scope, notifications, badges] = await Promise.all([
     listUserApps(user.id),
     getScope(user),
-    getDensity(),
     listNotifications(user.id),
     sidebarBadges(user),
   ]);
@@ -34,7 +33,6 @@ export default async function AppLayout({
       user={user}
       isManager={isManager(user)}
       scope={scope}
-      density={density}
       notifications={notifications}
       badges={badges}
       apps={APPS.filter((a) => apps.includes(a.id))}

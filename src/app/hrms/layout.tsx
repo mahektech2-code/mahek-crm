@@ -6,6 +6,7 @@ import { APPS, getApp } from "@/lib/apps";
 import { AppSwitcher } from "@/components/shell/app-switcher";
 import { Wordmark } from "@/components/shell/wordmark";
 import { SignOutButton } from "@/components/shell/sign-out-button";
+import { FeedbackButton } from "@/components/shell/feedback-button";
 import { ToastProvider } from "@/components/ui/toast";
 
 /**
@@ -59,6 +60,7 @@ export default async function HrmsLayout({
           <span className="text-[13px] text-muted">
             {user.name} · {user.role}
           </span>
+          <FeedbackButton compact />
           <SignOutButton />
         </header>
 

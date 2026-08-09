@@ -33,6 +33,7 @@ import { SHEET_SUBTITLE, SHEET_TABS, type SheetData } from "./sheet-data";
 import { SheetSection } from "./sheet-section";
 import type { Person } from "@/lib/services/admin-people-service";
 import { PeopleSection } from "./people-section";
+import { FeedbackSection, type FeedbackData } from "./feedback-section";
 import { UserDetail } from "./user-detail";
 import { AdminDrawer } from "./drawers";
 import { AdminStore, useAdmin } from "./store";
@@ -52,6 +53,7 @@ const PLATFORM_NAV = [
   { key: "apps", label: "Apps" },
   { key: "data", label: "Data" },
   { key: "notifications", label: "Notifications" },
+  { key: "feedback", label: "Feedback" },
   { key: "audit", label: "Audit" },
 ] as const;
 
@@ -93,6 +95,7 @@ export function AdminConsole({
   catalogue,
   sheet,
   people,
+  feedback,
   isPlatformAdmin,
   initial,
 }: {
@@ -101,6 +104,7 @@ export function AdminConsole({
   catalogue: CatalogueData;
   sheet: SheetData;
   people: Person[];
+  feedback: FeedbackData;
   isPlatformAdmin: boolean;
   /** Where the URL says to open. */
   initial: Address;
@@ -113,6 +117,7 @@ export function AdminConsole({
           crm={crm}
           catalogue={catalogue}
           sheet={sheet}
+          feedback={feedback}
           isPlatformAdmin={isPlatformAdmin}
           initial={initial}
         />
@@ -143,6 +148,7 @@ function ConsoleShell({
   crm,
   catalogue,
   sheet,
+  feedback,
   isPlatformAdmin,
   initial,
 }: {
@@ -150,6 +156,7 @@ function ConsoleShell({
   crm: CrmConfig;
   catalogue: CatalogueData;
   sheet: SheetData;
+  feedback: FeedbackData;
   isPlatformAdmin: boolean;
   initial: Address;
 }) {
@@ -389,8 +396,25 @@ function ConsoleShell({
                     key={n.key}
                     label={n.label}
                     active={section === n.key}
-                    tone={n.key === "overview" && failing ? "danger" : "neutral"}
-                    badge={n.key === "overview" && failing ? String(failing) : undefined}
+                    tone={
+                      n.key === "overview" && failing
+                        ? "danger"
+                        : n.key === "feedback" && feedback.counts.new
+                          ? "danger"
+                          : "neutral"
+                    }
+                    badge={
+                      n.key === "overview" && failing
+                        ? String(failing)
+                        : n.key === "feedback" && feedback.counts.new
+                          ? String(feedback.counts.new)
+                          : undefined
+                    }
+                    title={
+                      n.key === "feedback" && feedback.counts.new
+                        ? `${feedback.counts.new} reports nobody has read yet`
+                        : undefined
+                    }
                     onClick={() => navigate(n.key, firstTab(n.key))}
                   />
                 ))}
@@ -543,6 +567,7 @@ function ConsoleShell({
                   collections={crm.collections}
                   catalogue={catalogue}
                   sheet={sheet}
+                  feedback={feedback}
                   canWriteCatalogue={crm.canWrite}
                 />
 
@@ -687,6 +712,7 @@ function SectionBody({
   collections,
   catalogue,
   sheet,
+  feedback,
   canWriteCatalogue,
 }: {
   section: string;
@@ -706,6 +732,7 @@ function SectionBody({
   collections: Record<string, Collection>;
   catalogue: CatalogueData;
   sheet: SheetData;
+  feedback: FeedbackData;
   canWriteCatalogue: boolean;
 }) {
   if (section === CATALOGUE_SECTION) {
@@ -775,6 +802,7 @@ function SectionBody({
   if (section === "apps") return <AppsSection tab={tabIndex} />;
   if (section === "data") return <DataSection tab={tabIndex} />;
   if (section === "notifications") return <NotificationsSection tab={tabIndex} />;
+  if (section === "feedback") return <FeedbackSection data={feedback} tab={tabIndex} />;
   if (section === "audit") return <AuditSection tab={tabIndex} />;
   return null;
 }

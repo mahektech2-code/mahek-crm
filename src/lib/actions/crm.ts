@@ -25,7 +25,7 @@ import {
   resolveScope,
   assertCustomerInScope,
 } from "@/lib/access-control";
-import { SCOPE_COOKIE_NAME, DENSITY_COOKIE_NAME } from "@/lib/scope";
+import { SCOPE_COOKIE_NAME } from "@/lib/scope";
 import {
   getConfig,
   invalidateConfig,
@@ -114,14 +114,6 @@ export async function setScope(scope: "mine" | "team") {
   const jar = await cookies();
   jar.set(SCOPE_COOKIE_NAME, scope, { path: "/", maxAge: 60 * 60 * 24 * 365 });
   refreshAll();
-}
-
-export async function setDensity(density: "comfortable" | "compact") {
-  const jar = await cookies();
-  jar.set(DENSITY_COOKIE_NAME, density, {
-    path: "/",
-    maxAge: 60 * 60 * 24 * 365,
-  });
 }
 
 /* -------------------------------------------------------------- the call */

@@ -186,7 +186,7 @@ beforeEach(async () => {
   // Truncate rather than drop: the schema stays, the data does not.
   await db.execute(sql`
     truncate table
-      audit_log, job_runs, bug_reports, help_articles, notifications,
+      audit_log, job_runs, bug_reports, feedback, help_articles, notifications,
       inactive_watch_items, monthly_targets, wa_runs, wa_replies, wa_messages,
       wa_templates, complaint_status_history, complaints, reminders,
       interaction_product_lines, catalogue_exceptions, product_aliases, products,

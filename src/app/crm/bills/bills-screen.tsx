@@ -23,6 +23,7 @@ import {
 import { Modal, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { financialYearLabel } from "@/lib/financial-year";
+import { BillDetailPanel } from "./bill-detail";
 import { recordPayment } from "@/lib/actions/crm";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import {
@@ -117,6 +118,9 @@ export function BillsScreen({
   const [bucket, setBucket] = React.useState("All");
   const [paying, setPaying] = React.useState<Row | null>(null);
   const [page, setPage] = React.useState(1);
+  // One bill open at a time. A ledger with six rows expanded is a ledger you
+  // have to scroll to compare two figures in.
+  const [openBillId, setOpenBillId] = React.useState<string | null>(null);
 
   const scoped = customerFilter
     ? rows.filter((r) => r.customerId === customerFilter.id)
@@ -181,7 +185,7 @@ export function BillsScreen({
     <div className="px-6 pt-6 pb-10">
       <PageHeader
         title="Sales bills"
-        subtitle={`${scopeLabel} · Every bill with its aging bucket and payment status. Sortable on any column.`}
+        subtitle={`${scopeLabel} · Every bill with its aging bucket and payment status. Open a bill number to see what was ordered.`}
         actions={
           <Button
             variant="secondary"
@@ -367,8 +371,32 @@ export function BillsScreen({
             </thead>
             <tbody>
               {visible.map((r) => (
-                <Tr key={r.id} className="hover:bg-canvas">
-                  <Td className="font-medium text-ink">{r.billNo}</Td>
+                <React.Fragment key={r.id}>
+                <Tr className="hover:bg-canvas">
+                  <Td className="font-medium text-ink">
+                    {/* The bill number opens the order behind it. A ledger row
+                        says how much and when; what was actually bought is the
+                        question anybody reading it asks next. */}
+                    <button
+                      onClick={() =>
+                        setOpenBillId(openBillId === r.id ? null : r.id)
+                      }
+                      aria-expanded={openBillId === r.id}
+                      className="inline-flex cursor-pointer items-center gap-1.5 text-left font-medium text-ink hover:underline"
+                      title={openBillId === r.id ? "Hide the order" : "Show what was ordered"}
+                    >
+                      <span
+                        aria-hidden
+                        className={cx(
+                          "text-[10px] text-muted transition-transform",
+                          openBillId === r.id && "rotate-90",
+                        )}
+                      >
+                        ▶
+                      </span>
+                      {r.billNo}
+                    </button>
+                  </Td>
                   <Td>{shortDate(r.billDate)}</Td>
                   <Td className={r.overdueDays > 0 ? "text-danger" : ""}>
                     {shortDate(r.dueDate)}
@@ -437,6 +465,16 @@ export function BillsScreen({
                     </span>
                   </Td>
                 </Tr>
+                {openBillId === r.id ? (
+                  <tr>
+                    <td colSpan={COLUMNS.length + 3} className="p-0">
+                      {/* Keyed on the bill, so opening another row mounts a
+                          fresh panel rather than resetting one in an effect. */}
+                      <BillDetailPanel key={r.id} billId={r.id} />
+                    </td>
+                  </tr>
+                ) : null}
+                </React.Fragment>
               ))}
               <tr className="border-t border-line bg-canvas">
                 <Td colSpan={4} className="font-semibold text-ink">
