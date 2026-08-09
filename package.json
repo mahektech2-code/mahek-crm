@@ -13,8 +13,6 @@
     "demo:clear": "tsx --conditions=react-server --env-file=.env.local scripts/clear-demo-data.ts",
     "demo:clear:url": "tsx --conditions=react-server scripts/clear-demo-data.ts",
     "jobs": "tsx --conditions=react-server --env-file=.env.local scripts/run-job.ts",
-    "app:grant": "tsx --conditions=react-server --env-file=.env.local scripts/grant-app.ts",
-    "hrms:sync": "tsx --conditions=react-server --env-file=.env.local scripts/run-job.ts hrms-sync",
     "catalogue:import": "tsx --conditions=react-server --env-file=.env.local scripts/import-catalogue.ts",
     "catalogue:deploy": "tsx --conditions=react-server --env-file-if-exists=.env.local scripts/import-catalogue.ts",
     "catalogue:parse": "node scripts/parse-catalogue.mjs",
@@ -23,7 +21,7 @@
     "db:generate": "drizzle-kit generate",
     "db:deploy": "drizzle-kit migrate",
     "check:links": "node --env-file=.env.local scripts/check-links.mjs",
-    "test": "tsx --conditions=react-server --test src/lib/engines/*.test.ts src/lib/csv.test.ts src/lib/catalogue.test.ts src/lib/notes.test.ts src/lib/hr-parse.test.ts",
+    "test": "tsx --conditions=react-server --test src/lib/engines/*.test.ts src/lib/csv.test.ts src/lib/catalogue.test.ts src/lib/notes.test.ts",
     "test:db": "node --env-file=.env.local scripts/make-test-db.mjs",
     "test:integration": "node --env-file=.env.local scripts/run-integration.mjs",
     "test:all": "npm run test && npm run test:integration"

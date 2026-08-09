@@ -125,7 +125,7 @@ const TEAM = [
     email: "vikram@mahek.in",
     phone: "9820011006",
     role: "manager" as const,
-    apps: ["crm", "orders", "reports", "people", "hrms", "admin"],
+    apps: ["crm", "orders", "reports", "people", "admin"],
   },
   {
     name: "Mahesh Parab",

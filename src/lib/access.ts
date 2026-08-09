@@ -16,7 +16,6 @@ import { isManager } from "./auth";
 // that started yesterday, and the boundary is configurable.
 import { today } from "./recompute";
 import { pendingOrderCount } from "./services/order-approval-service";
-import { activeEmployeeCount } from "./services/employee-service";
 
 /* ---------------------------------------------------------------------------
  * Who can open what, and what is waiting for them inside it.
@@ -73,22 +72,6 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
         status: waiting
           ? `${waiting} order${waiting === 1 ? "" : "s"} waiting for approval`
           : "Nothing waiting",
-      });
-      continue;
-    }
-
-    // The employee master has nothing waiting in it — it is a record, not a
-    // worklist — so the tile says how many people are on the books. The badge
-    // stays at zero deliberately: a headcount is not a task, and a red pill
-    // over it would read as seventy things somebody has to do.
-    if (app.id === "hrms") {
-      const headcount = await activeEmployeeCount();
-      out.push({
-        ...app,
-        count: 0,
-        status: headcount
-          ? `${headcount} active employee${headcount === 1 ? "" : "s"}`
-          : "No employees imported yet",
       });
       continue;
     }
