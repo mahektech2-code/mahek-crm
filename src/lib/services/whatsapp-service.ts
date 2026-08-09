@@ -13,6 +13,7 @@ import {
   waTemplates,
 } from "@/db/schema";
 import {
+  ASSIGNED_TO_SQL,
   assertCustomerInScope,
   requireCapability,
   resolveScope,
@@ -485,7 +486,7 @@ export async function listReplies() {
     .select({ reply: waReplies, customerName: customers.name })
     .from(waReplies)
     .innerJoin(customers, eq(customers.id, waReplies.customerId))
-    .where(and(eq(waReplies.actioned, false), ids ? inArray(customers.ownerId, ids) : undefined))
+    .where(and(eq(waReplies.actioned, false), ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined))
     .orderBy(desc(waReplies.receivedAt));
   return rows.map(({ reply, customerName }) => ({ ...reply, customerName }));
 }

@@ -289,7 +289,13 @@ function reasonsFor(
   const fastCycling =
     !c.cycleIsDefault && c.cycleDays < config["queue.quietDaysAfterOrder"];
   if (c.lastOrderDate && (c.cycleIsDefault || fastCycling)) {
-    const since = c.lastContactDate ?? c.createdDate;
+    // When contact was last made, as well as it can be known. An ORDER is
+    // contact — somebody spoke to them to take it — and for a book imported
+    // from elsewhere it is the only evidence there is. Falling straight to the
+    // record's creation date dates a customer of four years from the afternoon
+    // their row was written, which holds an entire imported book off the queue
+    // for a week on the strength of it.
+    const since = c.lastContactDate ?? c.lastOrderDate;
     const daysSince = daysBetween(since, today);
     const interval = config["queue.checkInIntervalDays"];
 
