@@ -21,6 +21,12 @@ import { runJob, type JobName } from "@/lib/jobs";
  *   ?mode=project     turn what has landed into customers, orders and — only
  *                     when asked — bills. Takes &owner=, &leads=1, &bills=1,
  *                     and &reassign=1 to move customers that already exist.
+ *   ?mode=nightly     rebuilds every derived value. Nothing else does: buying
+ *                     cycles, the inactive watch, follow-up stages and slow
+ *                     payers are caches, and on a deployment with no cron they
+ *                     stay at whatever the last import left them — an empty
+ *                     Inactive Watch reads as "nobody has gone quiet" when it
+ *                     means "nothing has looked".
  *   ?mode=team        gives the back office team logins and hands each of them
  *                     the accounts the master says they work. Takes &password=
  *                     for the accounts it creates — never for existing ones.
@@ -54,6 +60,9 @@ const JOBS: Record<string, JobName> = {
   parties: "party-sync",
   project: "project-sheet",
   team: "provision-team",
+  // The derived values: buying cycles, the inactive watch, follow-up stages,
+  // slow payers, bill statuses, today's queue snapshot.
+  nightly: "nightly",
 };
 
 export async function GET(request: Request) {
