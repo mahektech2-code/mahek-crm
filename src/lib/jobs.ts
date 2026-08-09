@@ -36,6 +36,7 @@ import {
   type SyncMode,
 } from "./services/sheet-sync-service";
 import { syncPartySheet } from "./services/party-sync-service";
+import { syncTakenOrderSheet } from "./services/taken-order-sync-service";
 import { projectSheet } from "./services/sheet-projection-service";
 import { projectParties } from "./services/party-projection-service";
 import { provisionBackOffice } from "./services/team-service";
@@ -75,6 +76,8 @@ export type JobName =
   | "hrms-sync"
   | "hrms-reparse"
   | "sheet-payments"
+  | "taken-order-sync"
+  | "taken-order-reparse"
   | "party-sync"
   | "project-sheet"
   | "provision-team";
@@ -364,6 +367,9 @@ export async function runJob(
       return [await runSheetSync(job, triggeredById)];
     case "sheet-payments":
       return [await runPaymentSync(triggeredById)];
+    case "taken-order-sync":
+    case "taken-order-reparse":
+      return [await runTakenOrderSync(job, triggeredById)];
     case "party-sync":
       return [await runPartySync(triggeredById)];
     case "project-sheet":
@@ -482,6 +488,43 @@ async function runEmployeeSync(
         triggeredById,
       });
 
+      return {
+        recordsAffected: outcome.rowsCreated + outcome.rowsUpdated,
+        detail: outcome.detail,
+      };
+    },
+    triggeredById,
+  );
+}
+
+/**
+ * The Taken Order tab: orders as the team types them, before dispatch.
+ *
+ * Reconcile only, for the payment tab's reason rather than the party tab's. A
+ * row here exists in order to change after it is written — `Hold From Office`
+ * becomes `Ready` days later, in place — and an append run, which reads only
+ * past the highest row it has seen, would never witness a single release.
+ *
+ * It ends by rebuilding `customers.activeInOrderSystem`, which is what the
+ * calling queue suppresses on. That is the point of the job; landing the rows
+ * is how it gets there.
+ *
+ * `taken-order-reparse` touches Google not at all and re-reads what is stored.
+ * It is the one to run after the meaning of a status changes — the hashes make
+ * an unchanged sheet free, which is exactly wrong when it is the rule that
+ * moved rather than the rows.
+ */
+async function runTakenOrderSync(
+  job: "taken-order-sync" | "taken-order-reparse",
+  triggeredById?: string,
+): Promise<JobResult> {
+  return run(
+    job,
+    async () => {
+      const outcome = await syncTakenOrderSheet({
+        mode: job === "taken-order-reparse" ? "reparse" : "reconcile",
+        triggeredById,
+      });
       return {
         recordsAffected: outcome.rowsCreated + outcome.rowsUpdated,
         detail: outcome.detail,

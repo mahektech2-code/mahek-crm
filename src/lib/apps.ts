@@ -53,10 +53,14 @@ export const APPS: AppDefinition[] = [
   },
   {
     id: "orders",
-    name: "Order Management",
-    initials: "OM",
+    // The app grew past its name: orders wait here to be accepted, and so does
+    // money. The id and the route stay `orders` — they are what `app_access`
+    // rows and every bookmark already say, and renaming those would revoke the
+    // app from everybody who has it.
+    name: "Accounts",
+    initials: "AC",
     description:
-      "Orders taken on a call wait here for accounts to accept them.",
+      "Orders taken on a call, and payments reported against them, wait here to be accepted.",
     href: "/orders",
     tone: "neutral",
     built: true,

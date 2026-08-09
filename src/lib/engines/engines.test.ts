@@ -1370,6 +1370,7 @@ function subject(over: Partial<FollowUpSubject> = {}): FollowUpSubject {
     held: false,
     heldReason: null,
     promisedDate: null,
+    reportedPayment: null,
     ...over,
   };
 }
@@ -1543,6 +1544,86 @@ describe("E7 payment follow-up cadence", () => {
       C,
     );
     assert.deepEqual(plan.calls.map((c) => c.customerId), ["old", "young"]);
+  });
+
+  test("a reported payment stops the chasing without clearing the debt", () => {
+    const plan = planPaymentFollowUps(
+      [
+        subject({
+          anchorDueDate: addDays(TODAY, -40),
+          reportedPayment: { amount: 250_000, on: TODAY },
+        }),
+      ],
+      TODAY,
+      C,
+    );
+    assert.equal(plan.calls.length, 0);
+    assert.equal(plan.messages.length, 0);
+    assert.match(plan.heldBack[0].reason, /₹2,500 reported paid today/);
+    assert.match(plan.heldBack[0].reason, /waiting for accounts/);
+  });
+
+  test("the quiet a reported payment buys expires, and the customer comes back", () => {
+    const overdue = { anchorDueDate: addDays(TODAY, -40) };
+    const inside = planPaymentFollowUps(
+      [
+        subject({
+          ...overdue,
+          reportedPayment: {
+            amount: 250_000,
+            on: addDays(TODAY, -C["payments.reportedQuietDays"]),
+          },
+        }),
+      ],
+      TODAY,
+      C,
+    );
+    assert.equal(inside.calls.length, 0, "still quiet on the last day of the window");
+
+    const expired = planPaymentFollowUps(
+      [
+        subject({
+          ...overdue,
+          reportedPayment: {
+            amount: 250_000,
+            on: addDays(TODAY, -C["payments.reportedQuietDays"] - 1),
+          },
+        }),
+      ],
+      TODAY,
+      C,
+    );
+    assert.equal(expired.calls.length, 1, "a day later they are chased again");
+  });
+
+  test("reported money outranks a promise, because it is the better news", () => {
+    const plan = planPaymentFollowUps(
+      [
+        subject({
+          anchorDueDate: addDays(TODAY, -40),
+          promisedDate: TODAY,
+          reportedPayment: { amount: 100_000, on: TODAY },
+        }),
+      ],
+      TODAY,
+      C,
+    );
+    assert.match(plan.heldBack[0].reason, /reported paid/);
+  });
+
+  test("do-not-contact still wins over money somebody says they sent", () => {
+    const plan = planPaymentFollowUps(
+      [
+        subject({
+          anchorDueDate: addDays(TODAY, -40),
+          doNotContact: true,
+          reportedPayment: { amount: 100_000, on: TODAY },
+        }),
+      ],
+      TODAY,
+      C,
+    );
+    assert.match(plan.heldBack[0].reason, /do not contact/i);
   });
 
   test("the dates the cadence is built from are stated, not implied", () => {

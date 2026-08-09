@@ -11,7 +11,9 @@ import {
   inactiveWatchItems,
   monthlyTargets,
   orders,
+  paymentReceipts,
   payments,
+  sheetTakenOrderRows,
   waMessages,
 } from "@/db/schema";
 import { getConfig } from "./config/store";
@@ -150,6 +152,45 @@ export async function recomputeAllBuyingCycles(): Promise<number> {
 }
 
 /* --------------------------------------------------- outstanding and bills */
+
+/**
+ * What a bill has been paid is the sum of the allocation lines belonging to
+ * CONFIRMED receipts, and nothing else.
+ *
+ * That single condition is what makes outstanding, aging, the slow-payer flag
+ * and the collections worklist statements about money the business has seen
+ * rather than money it has been told about. A reported payment writes its
+ * lines immediately — so the allocation is not re-derived later from a
+ * half-remembered conversation — but they weigh nothing until accounts confirm
+ * the receipt, and they weigh nothing again the moment one is rejected.
+ *
+ * Rebuilt rather than incremented, so confirming, rejecting and re-confirming
+ * all land on the same answer however many times they happen.
+ */
+export async function recomputeBillPaid(customerId: string): Promise<void> {
+  await db.execute(sql`
+    update bills b set paid_amount = coalesce((
+      select sum(p.amount)
+        from payments p
+        join payment_receipts r on r.id = p.receipt_id
+       where p.bill_id = b.id and r.status = 'confirmed'
+    ), 0), updated_at = now()
+     where b.customer_id = ${customerId}
+  `);
+}
+
+export async function recomputeAllBillPaid(): Promise<number> {
+  await db.execute(sql`
+    update bills b set paid_amount = coalesce((
+      select sum(p.amount)
+        from payments p
+        join payment_receipts r on r.id = p.receipt_id
+       where p.bill_id = b.id and r.status = 'confirmed'
+    ), 0), updated_at = now()
+  `);
+  const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(bills);
+  return row?.n ?? 0;
+}
 
 /** Outstanding is derived from bills, never typed in. */
 export async function recomputeOutstanding(customerId: string): Promise<void> {
@@ -300,7 +341,11 @@ export async function recomputeSlowPayers(): Promise<number> {
       paidAt: payments.paidAt,
     })
     .from(payments)
-    .innerJoin(bills, eq(bills.id, payments.billId));
+    .innerJoin(bills, eq(bills.id, payments.billId))
+    // Confirmed money only. A customer does not earn — or escape — the
+    // slow-payer flag on a payment nobody has found in the bank yet.
+    .innerJoin(paymentReceipts, eq(paymentReceipts.id, payments.receiptId))
+    .where(eq(paymentReceipts.status, "confirmed"));
 
   const byCustomer = new Map<string, Array<{ dueDate: string; paidOn: string }>>();
   for (const r of rows) {
@@ -332,6 +377,191 @@ export async function recomputeSlowPayers(): Promise<number> {
       .where(eq(customers.id, c.id));
   }
   return all.length;
+}
+
+/* ------------------------------------------------- the order-system hold */
+
+export type OrderSystemHolds = {
+  /** How many customers are held back from order-chasing calls, in total. */
+  held: number;
+  /** Of those, how many this pass is the first to hold. */
+  newlyHeld: number;
+  /** Customers whose last open line closed, put back on their own cycle. */
+  released: number;
+  /**
+   * Parties with an open order that no customer here answers to — so nobody
+   * was held for them. Counted separately from parties with no open order,
+   * which are unmatched too and cost nothing.
+   */
+  unmatched: number;
+};
+
+/**
+ * `customers.activeInOrderSystem`, rebuilt from the Taken Order tab.
+ *
+ * The flag means what it has always meant — there is live activity in the
+ * external order system — and the queue has suppressed on it since it existed.
+ * What it has never had until now is anything setting it honestly. The
+ * projection deliberately refused to (it would have flagged every customer it
+ * touched, which is what `0021` had to undo), so the switch has been wired to
+ * nothing.
+ *
+ * This is the source. A customer is held while ANY line of theirs on that tab
+ * is still open — Status not `Ready`, or Entry status not `Done` — and
+ * released the moment the last one closes.
+ *
+ * FULL RECONCILE, and that is not a detail. A pass that only ever sets the
+ * flag is how a book goes quiet permanently: nothing would ever clear a hold,
+ * and a customer whose order shipped in August would still be off the queue in
+ * March. Every customer is written on every pass, so the flag can only ever
+ * say what the sheet currently says.
+ *
+ * This function OWNS the column. Anything else that writes it will be undone
+ * on the next sync, which is the correct behaviour for a derived value and the
+ * reason it should not be written anywhere else.
+ */
+export async function recomputeOrderSystemHolds(): Promise<OrderSystemHolds> {
+  // Never synced, or synced and the table is empty. Either way the sheet has
+  // told us nothing, and "nothing" must not be read as "every order in the
+  // company is dispatched" — which is what releasing the whole book on an
+  // empty table would mean. `recomputeEverything()` reaches this function on
+  // databases that have never seen the tab, so the guard belongs here rather
+  // than only in the sync.
+  const [{ rows }] = await db
+    .select({ rows: sql<number>`count(*)::int` })
+    .from(sheetTakenOrderRows)
+    .where(eq(sheetTakenOrderRows.status, "present"));
+  if (!rows) return { held: 0, newlyHeld: 0, released: 0, unmatched: 0 };
+
+  // Every party the tab names, and whether any of their lines is still open.
+  // Resolving all of them rather than only the open ones is what makes the
+  // landing table traceable: a row whose customer was never worked out is a
+  // row nobody can answer a question with, and the parties with no open order
+  // are most of the table.
+  const parties = await db
+    .select({
+      billingPartyName: sheetTakenOrderRows.billingPartyName,
+      anyOpen: sql<boolean>`bool_or(${sheetTakenOrderRows.open})`,
+    })
+    .from(sheetTakenOrderRows)
+    .where(
+      and(
+        eq(sheetTakenOrderRows.status, "present"),
+        isNotNull(sheetTakenOrderRows.billingPartyName),
+      ),
+    )
+    .groupBy(sheetTakenOrderRows.billingPartyName);
+
+  const all = await db
+    .select({
+      id: customers.id,
+      name: customers.name,
+      externalCode: customers.externalCode,
+      active: customers.activeInOrderSystem,
+    })
+    .from(customers);
+
+  // Two ways to the same customer. The projection stamps `SHEET:NAME` on the
+  // rows it creates, which is the exact and preferred match; a customer added
+  // in the CRM by hand has no external code at all and can only be found by
+  // their name. Both are folded the same way, because a stray double space in
+  // a spreadsheet is not a different company.
+  const byCode = new Map<string, string>();
+  const byName = new Map<string, string[]>();
+  for (const c of all) {
+    if (c.externalCode) byCode.set(c.externalCode, c.id);
+    const key = takenPartyKey(c.name);
+    byName.set(key, [...(byName.get(key) ?? []), c.id]);
+  }
+
+  const hold = new Set<string>();
+  const matchedNames = new Map<string, string>();
+  const unresolved: string[] = [];
+  let unmatchedOpen = 0;
+
+  for (const party of parties) {
+    const name = party.billingPartyName!;
+    const key = takenPartyKey(name);
+    const viaCode = byCode.get(`SHEET:${key}`);
+    const candidates = viaCode ? [viaCode] : byName.get(key) ?? [];
+
+    // One candidate resolves. None cannot. Two is left for a person rather
+    // than guessed at: picking one would mute a customer who has not ordered,
+    // and the cost of the other direction is a call that turns out early.
+    if (candidates.length === 1) {
+      matchedNames.set(name, candidates[0]);
+      if (party.anyOpen) hold.add(candidates[0]);
+    } else {
+      unresolved.push(name);
+      if (party.anyOpen) unmatchedOpen++;
+    }
+  }
+
+  const ids = [...hold];
+  const wasActive = new Set(all.filter((c) => c.active).map((c) => c.id));
+
+  // Only the differences are written. Every customer is CONSIDERED on every
+  // pass — that is what makes this a reconcile — but a book where nothing
+  // changed costs no writes at all.
+  const toHold = ids.filter((id) => !wasActive.has(id));
+  if (toHold.length) {
+    await db
+      .update(customers)
+      .set({ activeInOrderSystem: true, updatedAt: new Date() })
+      .where(inArray(customers.id, toHold));
+  }
+
+  const toRelease = [...wasActive].filter((id) => !hold.has(id));
+  if (toRelease.length) {
+    await db
+      .update(customers)
+      .set({ activeInOrderSystem: false, updatedAt: new Date() })
+      .where(inArray(customers.id, toRelease));
+  }
+
+  await linkTakenOrderRows(matchedNames, unresolved);
+
+  return {
+    held: ids.length,
+    newlyHeld: toHold.length,
+    released: toRelease.length,
+    unmatched: unmatchedOpen,
+  };
+}
+
+/** The same folding the projection's `partyKey` applies, minus its prefix. */
+const takenPartyKey = (name: string) => name.trim().replace(/\s+/g, " ").toUpperCase();
+
+/**
+ * Write the resolution back onto the staged rows.
+ *
+ * Not needed to hold anybody — the hold is computed from names above — but a
+ * landing table whose rows cannot be traced to a customer is one nobody can
+ * answer a question with. It also puts the unmatched parties somewhere a
+ * person can list them, rather than only in a count at the end of a sync.
+ */
+async function linkTakenOrderRows(
+  matched: Map<string, string>,
+  unresolved: string[],
+): Promise<void> {
+  const namesByCustomer = new Map<string, string[]>();
+  for (const [name, customerId] of matched) {
+    namesByCustomer.set(customerId, [...(namesByCustomer.get(customerId) ?? []), name]);
+  }
+
+  for (const [customerId, names] of namesByCustomer) {
+    await db
+      .update(sheetTakenOrderRows)
+      .set({ matchedCustomerId: customerId, customerMatchStatus: "matched" })
+      .where(inArray(sheetTakenOrderRows.billingPartyName, names));
+  }
+
+  if (unresolved.length) {
+    await db
+      .update(sheetTakenOrderRows)
+      .set({ matchedCustomerId: null, customerMatchStatus: "unmatched" })
+      .where(inArray(sheetTakenOrderRows.billingPartyName, unresolved));
+  }
 }
 
 /* --------------------------------------------------------- E4 inactivity */
@@ -512,17 +742,23 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
 /** Everything, in dependency order. Used after a migration or a config change. */
 export async function recomputeEverything(): Promise<Record<string, number>> {
   const cycles = await recomputeAllBuyingCycles();
+  // Paid amounts before statuses, and statuses before outstanding: each reads
+  // what the one before it wrote.
+  await recomputeAllBillPaid();
   await recomputeBillStatuses();
   const outstanding = await recomputeAllOutstanding();
   const slowPayers = await recomputeSlowPayers();
   const followUps = await recomputeAllFollowUpStates();
   const inactive = await recomputeInactivity();
   const targets = await seedMonthlyTargets();
+  // From what the Taken Order tab last said. A no-op until that tab has been
+  // synced at least once — see the guard at the top of it.
+  const { held } = await recomputeOrderSystemHolds();
 
   const all = await db.select({ id: customers.id }).from(customers);
   for (const c of all) await recomputeLastContact(c.id);
 
-  return { cycles, outstanding, slowPayers, followUps, inactive, targets };
+  return { cycles, outstanding, slowPayers, followUps, inactive, targets, held };
 }
 
 export { isNotNull };

@@ -26,7 +26,8 @@ import {
   type FollowUpDue,
   type FollowUpHeldBack,
 } from "../engines/payment-followup";
-import { recomputeFollowUpState, recomputeOutstanding, recomputeBillStatuses, today } from "../recompute";
+import { recomputeFollowUpState, today } from "../recompute";
+import { recordReceipt, reportedQuietByCustomer } from "./receipt-service";
 import {
   addDays,
   daysBetween,
@@ -64,6 +65,9 @@ export type WorklistRow = {
   promisedAmount: number | null;
   promisedDate: string | null;
   promiseBroken: boolean;
+  /** Paise reported paid and still waiting on accounts, and the day it was. */
+  reportedAmount: number | null;
+  reportedOn: string | null;
 };
 
 const NEXT_ACTION: Record<number, Record<"whatsapp" | "call", string>> = {
@@ -99,6 +103,18 @@ export async function getFollowUpWorklist(filters?: {
          where a.customer_id = customers.id and a.promised_date is not null
          order by a.attempted_at desc limit 1
       )`,
+      // Money reported against this account and not yet decided on. Shown
+      // beside the name so a telecaller looking at an untouched balance knows
+      // it is with accounts rather than with them.
+      reportedAmount: sql<number | null>`(
+        select sum(r.amount) from payment_receipts r
+         where r.customer_id = customers.id and r.status = 'reported'
+      )`,
+      reportedOn: sql<string | null>`(
+        select max((r.created_at at time zone 'Asia/Kolkata')::date)
+          from payment_receipts r
+         where r.customer_id = customers.id and r.status = 'reported'
+      )`,
     })
     .from(followUpStates)
     .innerJoin(customers, eq(customers.id, followUpStates.customerId))
@@ -132,9 +148,14 @@ export async function getFollowUpWorklist(filters?: {
     promisedDate: promise.promisedDate,
     // Promised, the date has passed, and the money is still outstanding.
     promiseBroken: Boolean(promise.promisedDate && promise.promisedDate < day),
+    reportedAmount:
+      promise.reportedAmount === null ? null : Number(promise.reportedAmount),
+    reportedOn: promise.reportedOn,
     nextAction: state.held
       ? "Held - dispute open"
-      : promise.promisedDate && promise.promisedDate < day
+      : promise.reportedAmount
+        ? "Reported paid - with accounts"
+        : promise.promisedDate && promise.promisedDate < day
         ? "Promise broken - call today"
         : (NEXT_ACTION[state.stage]?.[state.nextChannel] ?? "Follow up"),
   }));
@@ -193,6 +214,10 @@ export async function getPaymentFollowUpPlan(): Promise<PaymentFollowUpPlan> {
     .innerJoin(customers, eq(customers.id, followUpStates.customerId))
     .where(ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined);
 
+  // Money somebody has reported and accounts have not yet decided on. Read
+  // once for the whole plan rather than per customer.
+  const reported = await reportedQuietByCustomer();
+
   const plan = planPaymentFollowUps(
     rows.map(({ state, customer, ...last }) => ({
       customerId: customer.id,
@@ -213,6 +238,10 @@ export async function getPaymentFollowUpPlan(): Promise<PaymentFollowUpPlan> {
       held: state.held,
       heldReason: state.heldReason,
       promisedDate: last.promisedDate,
+      reportedPayment: (() => {
+        const r = reported.get(customer.id);
+        return r ? { amount: r.amount, on: r.reportedOn } : null;
+      })(),
     })),
     day,
     config,
@@ -408,6 +437,17 @@ export const paymentSchema = z.object({
   idempotencyKey: z.string().min(8),
 });
 
+/**
+ * A payment against one named bill, as the bills ledger and the collections
+ * screens ask for it.
+ *
+ * Kept as its own entry point because that is genuinely how it is asked from
+ * those screens — the person is already looking at a bill — but it is a
+ * receipt underneath like everything else, so it goes through the same
+ * confirmation, the same audit trail and the same ledger. What it no longer
+ * does is move `bills.paidAmount` itself: whether this money counts depends on
+ * whether whoever recorded it can confirm money, and that lives in one place.
+ */
 export async function recordPayment(
   raw: z.input<typeof paymentSchema>,
 ): Promise<Result<{ paymentId: string }>> {
@@ -419,68 +459,24 @@ export async function recordPayment(
     ]);
   }
   const input = parsed.data;
-  const ctx = await resolveScope();
 
   const [bill] = await db.select().from(bills).where(eq(bills.id, input.billId));
   if (!bill) return err("That bill no longer exists.", "not_found");
 
-  const [customer] = await db
-    .select()
-    .from(customers)
-    .where(eq(customers.id, bill.customerId));
-  await assertCustomerInScope(customer ?? null);
-
-  const balance = bill.amount - bill.paidAmount;
-  if (input.amount > balance) {
-    return err(
-      `That is more than the ₹${Math.round(balance / 100).toLocaleString("en-IN")} still open on this bill.`,
-      "validation",
-      [{ field: "amount", message: "Cannot exceed the outstanding balance." }],
-    );
-  }
-
-  const [dupe] = await db
-    .select({ id: payments.id })
-    .from(payments)
-    .where(eq(payments.externalRef, input.idempotencyKey));
-  if (dupe) return ok({ paymentId: dupe.id }, "Already recorded");
-
-  const paymentId = id("pay");
-  await db.transaction(async (tx) => {
-    await tx.insert(payments).values({
-      id: paymentId,
-      billId: bill.id,
-      customerId: bill.customerId,
-      amount: input.amount,
-      paidAt: input.paidAt,
-      mode: input.mode,
-      reference: input.reference ?? null,
-      externalRef: input.idempotencyKey,
-      recordedById: ctx.user.id,
-      createdById: ctx.user.id,
-      updatedById: ctx.user.id,
-    });
-    await tx
-      .update(bills)
-      .set({ paidAmount: bill.paidAmount + input.amount, updatedAt: new Date() })
-      .where(eq(bills.id, bill.id));
-    await tx.insert(auditLog).values({
-      id: id("aud"),
-      actorId: ctx.user.id,
-      action: "payment.record",
-      entityType: "bill",
-      entityId: bill.id,
-      beforeState: { paidAmount: bill.paidAmount } as never,
-      afterState: { paidAmount: bill.paidAmount + input.amount } as never,
-    });
+  const result = await recordReceipt({
+    customerId: bill.customerId,
+    amount: input.amount,
+    receivedAt: input.paidAt,
+    mode: input.mode,
+    reference: input.reference,
+    allocation: "custom",
+    custom: { [bill.id]: input.amount },
+    source: "bills_screen",
+    idempotencyKey: input.idempotencyKey,
   });
+  if (!result.ok) return result;
 
-  await recomputeBillStatuses();
-  await recomputeOutstanding(bill.customerId);
-  // Full payment removes the customer from the worklist immediately.
-  await recomputeFollowUpState(bill.customerId);
-
-  return ok({ paymentId }, "Payment recorded");
+  return ok({ paymentId: result.data.receiptId }, result.message);
 }
 
 /* ----------------------------------------------------------------- bills */

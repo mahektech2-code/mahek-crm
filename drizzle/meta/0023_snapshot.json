@@ -1,6 +1,6 @@
 {
-  "id": "120c17b7-1684-4041-8d71-135d60a26fc0",
-  "prevId": "b4224378-85ca-443d-95fb-f303563406d0",
+  "id": "56c3244d-fc4f-437d-8f4b-fe0697a398c5",
+  "prevId": "120c17b7-1684-4041-8d71-135d60a26fc0",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -7332,7 +7332,8 @@
       "values": [
         "interaction",
         "complaint",
-        "follow_up_attempt"
+        "follow_up_attempt",
+        "payment_receipt"
       ]
     },
     "public.attachment_status": {

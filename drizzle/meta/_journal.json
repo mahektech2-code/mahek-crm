@@ -155,6 +155,27 @@
       "when": 1786261641246,
       "tag": "0022_six_complaint_photos",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1786277845293,
+      "tag": "0023_payment_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1786278114054,
+      "tag": "0024_payment_proof_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1786278115054,
+      "tag": "0025_taken_order_rows",
+      "breakpoints": true
     }
   ]
 }

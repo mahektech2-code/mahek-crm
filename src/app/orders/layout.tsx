@@ -6,6 +6,9 @@ import { AppSwitcher } from "@/components/shell/app-switcher";
 import { Wordmark } from "@/components/shell/wordmark";
 import { SignOutButton } from "@/components/shell/sign-out-button";
 import { ToastProvider } from "@/components/ui/toast";
+import { pendingOrderCount } from "@/lib/services/order-approval-service";
+import { pendingReceiptCount } from "@/lib/services/receipt-service";
+import { OrdersNav } from "./nav";
 
 /**
  * The Orders app's own shell.
@@ -30,6 +33,13 @@ export default async function OrdersLayout({
 
   const app = getApp("orders")!;
 
+  // Both counts are what the tabs badge, so they are read once here rather
+  // than by each screen for itself.
+  const [orderCount, paymentCount] = await Promise.all([
+    pendingOrderCount(),
+    pendingReceiptCount(),
+  ]);
+
   return (
     <ToastProvider>
       <div className="animate-fade-in flex min-h-screen flex-col bg-canvas">
@@ -47,6 +57,8 @@ export default async function OrdersLayout({
           </span>
           <SignOutButton />
         </header>
+
+        <OrdersNav pendingOrders={orderCount} pendingPayments={paymentCount} />
 
         <div className="flex-1">{children}</div>
       </div>

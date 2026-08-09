@@ -435,6 +435,12 @@ export function PaymentsScreen({
                     {r.slowPayer ? <SlowPayerBadge /> : null}
                     {r.held ? <Badge tone="warn">Held</Badge> : null}
                     {r.promiseBroken ? <Badge tone="danger">Promise broken</Badge> : null}
+                    {/* Money reported and not yet found. The balance beside the
+                        name has not moved, and without this that reads as
+                        nobody having done anything about it. */}
+                    {r.reportedAmount ? (
+                      <Badge tone="warn">Reported paid · with accounts</Badge>
+                    ) : null}
                   </div>
                   <div className="mt-1 text-[13px] text-muted">
                     {r.overdueBillCount} bill{r.overdueBillCount === 1 ? "" : "s"} overdue ·
@@ -448,6 +454,11 @@ export function PaymentsScreen({
                       ? ` · promised ${money(r.promisedAmount ?? 0)} by ${shortDate(r.promisedDate)}`
                       : ""}
                     {r.heldReason ? ` · ${r.heldReason}` : ""}
+                    {r.reportedAmount
+                      ? ` · ${money(r.reportedAmount)} reported paid ${
+                          r.reportedOn ? `on ${shortDate(r.reportedOn)}` : ""
+                        }, waiting for accounts`
+                      : ""}
                   </div>
                   {dueReason.get(r.customerId) &&
                   (tab === "calls" || tab === "messages") ? (

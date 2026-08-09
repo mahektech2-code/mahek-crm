@@ -128,6 +128,8 @@ export const CAPABILITIES = [
   "team.report",
   "config.write",
   "order.approve",
+  "payment.record",
+  "payment.confirm",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -148,13 +150,30 @@ const MANAGER_ONLY: ReadonlySet<Capability> = new Set<Capability>([
 /**
  * Accepting an order is accounts' job and nobody else's. A manager is not
  * given it by seniority: the person chasing the target must not also be the
- * one signing off the orders that hit it.
+ * one signing off the orders that hit it. Confirming that money arrived is the
+ * same kind of decision: accounts hold the bank statement, and nobody else can
+ * honestly say a transfer landed.
  */
 const ACCOUNTS_ONLY: ReadonlySet<Capability> = new Set<Capability>([
   "order.approve",
+  "payment.confirm",
+]);
+
+/**
+ * Held by every signed-in role, including accounts.
+ *
+ * Reporting that a customer has paid is not a privilege — a telecaller told it
+ * on a call has to be able to write it down, or it lives in their head and the
+ * customer gets chased anyway. What separates the roles is not who may record
+ * a payment but whether recording it is believed: without `payment.confirm` a
+ * receipt lands as `reported` and moves no money.
+ */
+const SHARED: ReadonlySet<Capability> = new Set<Capability>([
+  "payment.record",
 ]);
 
 export function can(role: string, capability: Capability): boolean {
+  if (SHARED.has(capability)) return true;
   if (ACCOUNTS_ONLY.has(capability)) {
     return role === "accounts" || role === "admin";
   }

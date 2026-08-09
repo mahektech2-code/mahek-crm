@@ -6,6 +6,7 @@ import {
   bills,
   customers,
   orders,
+  paymentReceipts,
   payments,
   sheetOrderRows,
   sheetPaymentRows,
@@ -14,6 +15,7 @@ import {
 } from "@/db/schema";
 import { isReceived } from "@/lib/sheet-parse";
 import {
+  recomputeAllBillPaid,
   recomputeAllBuyingCycles,
   recomputeAllFollowUpStates,
   recomputeAllOutstanding,
@@ -490,6 +492,59 @@ export async function projectOrders(
  *   rule already resolves one from the order's term, then the customer's, then
  *   the configured default — which is better than inventing a date here.
  */
+/**
+ * A payment the Payment Status tab reports, as a CONFIRMED receipt.
+ *
+ * Confirmed, not reported, because that tab IS accounts' own record of what
+ * reached the bank — it is not a telecaller relaying what a customer said.
+ * Putting a year of it into the confirmation queue would ask accounts to
+ * re-verify their own ledger.
+ *
+ * Idempotent on the external reference, so a re-sync writes nothing twice.
+ */
+async function writeSheetReceipt(input: {
+  billId: string;
+  customerId: string;
+  amount: number;
+  paidAt: string;
+  externalRef: string;
+}): Promise<boolean> {
+  const [already] = await db
+    .select({ id: paymentReceipts.id })
+    .from(paymentReceipts)
+    .where(eq(paymentReceipts.idempotencyKey, input.externalRef))
+    .limit(1);
+  if (already) return false;
+
+  const receiptId = newId("rcp");
+  await db.transaction(async (tx) => {
+    await tx.insert(paymentReceipts).values({
+      id: receiptId,
+      customerId: input.customerId,
+      amount: input.amount,
+      receivedAt: input.paidAt,
+      // The tab says the money arrived, never how. Naming a mode would be
+      // inventing a fact that reconciliation later depends on.
+      mode: "Not stated",
+      status: "confirmed",
+      source: "sheet_import",
+      confirmedAt: new Date(),
+      idempotencyKey: input.externalRef,
+    });
+    await tx.insert(payments).values({
+      id: newId("pay"),
+      receiptId,
+      billId: input.billId,
+      customerId: input.customerId,
+      amount: input.amount,
+      paidAt: input.paidAt,
+      mode: "Not stated",
+      externalRef: input.externalRef,
+    });
+  });
+  return true;
+}
+
 export async function projectBills(
   options: ProjectionOptions = {},
 ): Promise<ProjectionReport["bills"]> {
@@ -526,11 +581,18 @@ export async function projectBills(
   const refs = rows.map((r) => `SHEET-${r.orderNumber}`);
   const orderRows = refs.length
     ? await db
-        .select({ externalRef: orders.externalRef, customerId: orders.customerId })
+        .select({
+          id: orders.id,
+          externalRef: orders.externalRef,
+          customerId: orders.customerId,
+        })
         .from(orders)
         .where(inArray(orders.externalRef, refs))
     : [];
   const orderByRef = new Map(orderRows.map((o) => [o.externalRef!, o.customerId]));
+  // The bill records which order it came from, rather than leaving the two
+  // joined by a naming convention only this file knows about.
+  const orderIdByRef = new Map(orderRows.map((o) => [o.externalRef!, o.id]));
 
   // Tally numbers that repeat, so those bills can be disambiguated.
   const tallyCounts = new Map<string, number>();
@@ -577,10 +639,13 @@ export async function projectBills(
     const values = {
       customerId,
       billNo,
+      orderId: orderIdByRef.get(`SHEET-${row.orderNumber}`) ?? null,
       billDate: row.dispatchDate ?? row.dueDate!,
       dueDate: row.dueDate,
       amount: row.billAmountPaise,
-      paidAmount: received ? row.billAmountPaise : 0,
+      // `paidAmount` is not set here. It is derived from confirmed receipts by
+      // `recomputeBillPaid`, and writing it directly would make the importer a
+      // second author of a cached figure that already has one.
       externalRef,
       lastSyncedAt: new Date(),
       updatedAt: new Date(),
@@ -598,43 +663,38 @@ export async function projectBills(
       await db.update(bills).set(values).where(eq(bills.id, billId));
       updated++;
       if (received && row.paymentReceivedDate) {
-        const already = await db
-          .select({ id: payments.id })
-          .from(payments)
-          .where(eq(payments.externalRef, externalRef))
-          .limit(1);
-        if (!already.length) {
-          await db.insert(payments).values({
-            id: newId("pay"),
-            billId,
-            customerId,
-            amount: row.billAmountPaise,
-            paidAt: row.paymentReceivedDate,
-            mode: "Not stated",
-            externalRef,
-          });
-          paymentsWritten++;
-        }
+        const wrote = await writeSheetReceipt({
+          billId,
+          customerId,
+          amount: row.billAmountPaise,
+          paidAt: row.paymentReceivedDate,
+          externalRef,
+        });
+        if (wrote) paymentsWritten++;
       }
     } else {
       const id = newId("bil");
       await db.insert(bills).values({ id, ...values });
       created++;
       if (received && row.paymentReceivedDate) {
-        await db.insert(payments).values({
-          id: newId("pay"),
+        const wrote = await writeSheetReceipt({
           billId: id,
           customerId,
           amount: row.billAmountPaise,
           paidAt: row.paymentReceivedDate,
-          // The tab says the money arrived, never how. Naming a mode would be
-          // inventing a fact that reconciliation later depends on.
-          mode: "Not stated",
           externalRef,
         });
-        paymentsWritten++;
+        if (wrote) paymentsWritten++;
       }
     }
+  }
+
+  // The importer writes the money and the bills together, so the cached paid
+  // amounts and everything downstream of them are rebuilt once at the end
+  // rather than per row.
+  if (!options.dryRun) {
+    await recomputeAllBillPaid();
+    await recomputeBillStatuses();
   }
 
   return {
