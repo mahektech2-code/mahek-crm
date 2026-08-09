@@ -34,6 +34,7 @@ import {
   attachments as attachmentsTable,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
+import { customerStatusLabel } from "@/lib/format";
 import {
   seedConfig,
   updateSetting,
@@ -67,7 +68,9 @@ import {
   popularProducts,
   customerProducts,
 } from "@/lib/services/product-service";
-import { globalSearch } from "@/lib/queries";
+import { globalSearch ,
+  listCustomersPage,
+} from "@/lib/queries";
 import { describeQuantity } from "@/lib/catalogue";
 import {
   chooseCanonicalId,
@@ -565,6 +568,85 @@ describe("Journey 3 - copying is not sending", () => {
 
     assert.equal(legs.length, 1);
     assert.equal(legs[0].destKind, "personal");
+  });
+});
+
+/* ------------------------------- the customer list, filtered in the database */
+
+describe("The customer list is filtered where it is counted", () => {
+  /**
+   * The status shown on this list is derived — from the stored status, whether
+   * anything has ever been ordered, and the slow-payer flag. It is written
+   * twice now: once in TypeScript for the screen, once in SQL because the list
+   * is filtered and counted in Postgres and a WHERE clause cannot call a
+   * function.
+   *
+   * Two statements of one rule drift. This is what stops them.
+   */
+  test("every status label means the same thing in SQL as in TypeScript", async () => {
+    await makeCustomer(priya.id, { name: "Status Active", lastOrderDate: TODAY });
+    await makeCustomer(priya.id, { name: "Status New", lastOrderDate: null });
+    await makeCustomer(priya.id, {
+      name: "Status Slow",
+      lastOrderDate: TODAY,
+      slowPayer: true,
+    });
+    await makeCustomer(priya.id, { name: "Status Inactive", status: "inactive" });
+    await makeCustomer(priya.id, {
+      name: "Status Deactivated",
+      status: "deactivated",
+    });
+    // Inactive outranks slow payer, and the SQL has to agree about that too.
+    await makeCustomer(priya.id, {
+      name: "Status Inactive And Slow",
+      status: "inactive",
+      slowPayer: true,
+      lastOrderDate: TODAY,
+    });
+
+    const rows = await db.select().from(customers);
+    const fromTypescript = new Map<string, number>();
+    for (const c of rows) {
+      const label = customerStatusLabel(c);
+      fromTypescript.set(label, (fromTypescript.get(label) ?? 0) + 1);
+    }
+
+    for (const [label, expected] of fromTypescript) {
+      const page = await listCustomersPage({ status: label, perPage: 200 });
+      assert.equal(
+        page.total,
+        expected,
+        `SQL and TypeScript disagree about "${label}"`,
+      );
+      for (const row of page.rows) {
+        assert.equal(customerStatusLabel(row), label);
+      }
+    }
+  });
+
+  test("a page is a slice, and the totals describe the whole filter", async () => {
+    for (let i = 0; i < 7; i++) {
+      await makeCustomer(priya.id, { name: `Pager ${i}`, outstanding: 1000 });
+    }
+    const all = await listCustomersPage({ perPage: 200 });
+    const first = await listCustomersPage({ perPage: 3, page: 1 });
+    const second = await listCustomersPage({ perPage: 3, page: 2 });
+
+    assert.equal(first.rows.length, 3);
+    assert.equal(first.total, all.total, "the count is of the filter, not the page");
+    assert.equal(
+      first.totals.outstanding,
+      all.totals.outstanding,
+      "the tiles sum the filter, not the page in front of you",
+    );
+    assert.notEqual(first.rows[0].id, second.rows[0].id, "page 2 is different rows");
+  });
+
+  test("asking past the last page lands on the last page, not on nothing", async () => {
+    for (let i = 0; i < 4; i++) await makeCustomer(priya.id, { name: `Clamp ${i}` });
+    const far = await listCustomersPage({ perPage: 2, page: 99 });
+    assert.equal(far.page, far.pageCount);
+    assert.ok(far.rows.length > 0, "a filter that shortens the list must not strand somebody");
   });
 });
 
