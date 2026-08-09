@@ -36,6 +36,8 @@ import {
   type SyncMode,
 } from "./services/sheet-sync-service";
 import { syncPartySheet } from "./services/party-sync-service";
+import { projectSheet } from "./services/sheet-projection-service";
+import { projectParties } from "./services/party-projection-service";
 import {
   employeeSheetId,
   syncEmployeeSheet,
@@ -72,7 +74,8 @@ export type JobName =
   | "hrms-sync"
   | "hrms-reparse"
   | "sheet-payments"
-  | "party-sync";
+  | "party-sync"
+  | "project-sheet";
 
 export type JobResult = { job: JobName; recordsAffected: number; detail: string };
 
@@ -320,7 +323,28 @@ export async function runDayBoundary(triggeredById?: string): Promise<JobResult[
 
 /* ---------------------------------------------------------- manual trigger */
 
-export async function runJob(job: JobName, triggeredById?: string): Promise<JobResult[]> {
+/**
+ * Options a job may be given.
+ *
+ * Most jobs need none — a nightly recompute has nothing to decide. The
+ * projections do: who imported customers answer to, and whether parties that
+ * have never ordered become leads. Both are business decisions, so they are
+ * passed in at the call rather than buried in a default nobody sees.
+ */
+export type JobOptions = {
+  /** Email of the user imported customers are assigned to. */
+  owner?: string;
+  /** Create the never-ordered parties as leads. */
+  leads?: boolean;
+  /** Write bills and payments from the Payment Status tab. */
+  bills?: boolean;
+};
+
+export async function runJob(
+  job: JobName,
+  triggeredById?: string,
+  options: JobOptions = {},
+): Promise<JobResult[]> {
   switch (job) {
     case "nightly":
       return runNightly(triggeredById);
@@ -336,6 +360,8 @@ export async function runJob(job: JobName, triggeredById?: string): Promise<JobR
       return [await runPaymentSync(triggeredById)];
     case "party-sync":
       return [await runPartySync(triggeredById)];
+    case "project-sheet":
+      return [await runProjection(triggeredById, options)];
     case "hrms-sync":
     case "hrms-reparse":
       return [await runEmployeeSync(job, triggeredById)];
@@ -469,6 +495,70 @@ async function runPartySync(triggeredById?: string): Promise<JobResult> {
       return {
         recordsAffected: outcome.rowsCreated + outcome.rowsUpdated,
         detail: outcome.detail,
+      };
+    },
+    triggeredById,
+  );
+}
+
+/**
+ * Landing the sheets is not the same as believing them, and this is the second
+ * act: imported rows become customers, orders, and — only if asked — bills.
+ *
+ * It is a job rather than a script because production has no shell, and the
+ * whole point of the last few changes is that a deployed machine can do what a
+ * laptop could. It is not on any schedule: a projection assigns accounts to
+ * people and can create leads, and neither should happen because a clock went
+ * round.
+ *
+ * Order matters. Orders first, because they create the customer rows the party
+ * master then fills in — running the master first would find nobody to give a
+ * phone number to.
+ */
+async function runProjection(
+  triggeredById?: string,
+  options: JobOptions = {},
+): Promise<JobResult> {
+  return run(
+    "project-sheet",
+    async () => {
+      let ownerId: string | null = null;
+      if (options.owner) {
+        const owner = await db.query.users.findFirst({
+          where: eq(users.email, options.owner),
+        });
+        if (!owner) {
+          return {
+            recordsAffected: 0,
+            detail: `No user with the email ${options.owner}, so nothing was assigned.`,
+          };
+        }
+        ownerId = owner.id;
+      }
+
+      const orders = await projectSheet({
+        assignToUserId: ownerId,
+        includeBills: options.bills ?? false,
+      });
+      const parties = await projectParties({
+        createLeads: options.leads ?? false,
+        leadOwnerId: ownerId,
+      });
+
+      const detail =
+        `customers ${orders.customers.created} new / ${orders.customers.updated} updated, ` +
+        `orders ${orders.orders.created} new (${orders.orders.lines} lines), ` +
+        `bills ${orders.bills.skipped ? "skipped" : orders.bills.created}, ` +
+        `master matched ${parties.matched}, phones ${parties.phonesFilled}, ` +
+        `leads ${parties.leadsCreated}/${parties.leadsAvailable}` +
+        (orders.customers.unassigned
+          ? `, ${orders.customers.unassigned} customers in nobody's book`
+          : "");
+
+      return {
+        recordsAffected:
+          orders.customers.created + orders.orders.created + parties.matched,
+        detail,
       };
     },
     triggeredById,
