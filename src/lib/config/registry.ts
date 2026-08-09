@@ -680,8 +680,9 @@ export const SETTINGS = [
     type: "integer",
     category: "attachments",
     label: "Attachments per complaint",
-    description: "Photographs and documents supporting one complaint.",
-    default: 5,
+    description:
+      "Photographs and documents supporting one complaint. Six covers a pallet photographed from every side.",
+    default: 6,
     min: 0,
     max: 20,
   },

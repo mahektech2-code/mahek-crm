@@ -417,6 +417,25 @@ opens it next. Requests have nowhere to go yet — there is no Accounts app — 
 they surface on a manager's pending list rather than sitting invisible. That is
 interim, and a credit note has financial consequences.
 
+**A credit-note request is a yes, and nothing more.** The telecaller answers
+whether the customer asked for one; which bill it is against and what it is
+worth are accounts' work, because they hold the ledger. Asking mid-call for the
+bill produced either the wrong one or no request at all — the form was three
+fields deep behind a radio button, and the person on the phone was waiting.
+`bill_id` and `goods_description` stay on the row and are still stored when
+something supplies them; nothing on a telecaller's screen asks. The pending
+list left-joins the bill, so a request that names none still reaches accounts.
+
+**A photo picker adds, counts and lets one go.** Complaint photographs are
+taken one at a time, so a second visit to the file dialog must not discard the
+first; the limit — `attachments.maxPerComplaint`, six — is shown and refused at
+the picker rather than silently truncated by `bindAttachments` after the save;
+and a wrong photograph comes out on its own. One component, `crm/image-picker`,
+because the complaints dialog and the call drawer ask the same question and had
+drifted into two answers. Its accept list is `ACCEPTED_IMAGE_TYPES` and never a
+literal: both screens offered WebP for months while `sniffContentType` refused
+it, so the picker took a file the save would not.
+
 **An order taken on a call is the customer saying yes, not the business.**
 Accounts check who they are and what they already owe before it is accepted,
 so a new order sits at `pending_approval` until they decide. Two different

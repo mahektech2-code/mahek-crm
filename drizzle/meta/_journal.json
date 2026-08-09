@@ -148,6 +148,13 @@
       "when": 1786261640246,
       "tag": "0021_unmute_imported_customers",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786261641246,
+      "tag": "0022_six_complaint_photos",
+      "breakpoints": true
     }
   ]
 }

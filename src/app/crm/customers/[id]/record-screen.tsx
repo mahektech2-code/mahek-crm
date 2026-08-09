@@ -76,6 +76,7 @@ export function RecordScreen({
   complaintCategories,
   quickNotes,
   singleSelectOutcomes,
+  maxComplaintImages,
   searchEnabled,
   userName,
   products,
@@ -137,6 +138,7 @@ export function RecordScreen({
   complaintCategories: Array<{ value: string; label: string }>;
   quickNotes: QuickNoteOption[];
   singleSelectOutcomes: string[];
+  maxComplaintImages: number;
   /** products.searchOnOrderForms — checked here as well as in the API. */
   searchEnabled: boolean;
   /** The signed-in telecaller, for script placeholders. */
@@ -463,6 +465,7 @@ export function RecordScreen({
           complaintCategories={complaintCategories}
           quickNotes={quickNotes}
           singleSelectOutcomes={singleSelectOutcomes}
+          maxComplaintImages={maxComplaintImages}
           searchEnabled={searchEnabled}
           userName={userName}
           products={products}
