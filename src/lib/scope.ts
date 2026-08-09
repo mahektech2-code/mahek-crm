@@ -6,7 +6,6 @@ import type { User } from "@/db/schema";
 export type Scope = "mine" | "team";
 
 const SCOPE_COOKIE = "mahekone_scope";
-const DENSITY_COOKIE = "mahekone_density";
 
 /**
  * Managers can flip every screen between their own book and the whole team's.
@@ -20,12 +19,8 @@ export async function getScope(user: User): Promise<Scope> {
   return chosen === "mine" ? "mine" : "team";
 }
 
-export async function getDensity(): Promise<"comfortable" | "compact"> {
-  return (await readCookie(DENSITY_COOKIE)) === "compact" ? "compact" : "comfortable";
-}
-
 /**
- * These two cookies are display preferences, not permissions — nothing here can
+ * This cookie is a display preference, not a permission — nothing here can
  * widen what a user may read. Outside a request (jobs, scripts, tests) there is
  * no jar, and falling back to the default is correct rather than fatal.
  */
@@ -42,4 +37,3 @@ export function scopeLabel(scope: Scope, user: User): string {
 }
 
 export const SCOPE_COOKIE_NAME = SCOPE_COOKIE;
-export const DENSITY_COOKIE_NAME = DENSITY_COOKIE;

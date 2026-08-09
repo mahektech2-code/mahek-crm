@@ -46,11 +46,9 @@
 }
 
 :root {
-  /* Row height, driven by the density toggle in the header. */
+  /* Default table row height. Screens that need a different one set --rowh on
+     the scroller around their table. */
   --rowh: 44px;
-}
-:root[data-density="compact"] {
-  --rowh: 36px;
 }
 
 /*

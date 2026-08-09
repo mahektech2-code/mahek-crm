@@ -1418,6 +1418,13 @@ export const helpArticles = pgTable("help_articles", {
   updatedById: text("updated_by_id"),
 });
 
+/**
+ * Superseded by `feedback`, which is where anything the team sends in now
+ * lands. Nothing has ever written to this table and no screen reads it; it is
+ * left in place rather than dropped so a migration is a decision somebody
+ * takes deliberately. Do not start writing to it — two tables meaning "what
+ * somebody reported" is one table too many.
+ */
 export const bugReports = pgTable("bug_reports", {
   id: text("id").primaryKey(),
   userId: text("user_id").references(() => users.id),
@@ -1485,6 +1492,79 @@ export const notifications = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("notifications_user_idx").on(t.userId, t.read)],
+);
+
+/* ------------------------------------------------------------------ feedback */
+
+/**
+ * What the person is telling us, in their own words. Four kinds and no more:
+ * a list long enough to need reading is a list somebody picks the first item
+ * from, and the difference between "suggestion" and "feature request" is
+ * already finer than most people mid-shift will care about.
+ */
+export const feedbackKindEnum = pgEnum("feedback_kind", [
+  "bug",
+  "suggestion",
+  "feature",
+  "question",
+]);
+
+/**
+ * Where it got to. `new` until somebody has read it — which is the only
+ * status a submitter ever sees change without being told, so it is worth
+ * moving off it promptly.
+ */
+export const feedbackStatusEnum = pgEnum("feedback_status", [
+  "new",
+  "in_progress",
+  "done",
+  "declined",
+]);
+
+/**
+ * One report from somebody using MahekOne.
+ *
+ * Not a customer interaction, so it does not belong on the timeline; not
+ * configuration, so it does not belong in `app_settings`. It is the team
+ * talking to whoever builds this, and it is stored rather than sent, because
+ * a message in somebody's WhatsApp is a message nobody can triage.
+ *
+ * Where they were standing is CAPTURED, never typed: "it broke" plus the
+ * screen it broke on is a bug report, and "it broke" on its own is not. The
+ * same reason `userAgent` is here — a fault that only happens on one browser
+ * costs an afternoon to find and one column to explain.
+ *
+ * Nothing here is ever hard-deleted. A report somebody declined is a decision
+ * that was made, and the person who wrote it is entitled to see it stand.
+ */
+export const feedback = pgTable(
+  "feedback",
+  {
+    id: text("id").primaryKey(),
+    /** Who wrote it. Never anonymous — the reply goes back to a person. */
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    kind: feedbackKindEnum("kind").notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    /** The path they were on, e.g. `/crm/queue`. Captured by the form. */
+    path: text("path"),
+    /** Which app that path belongs to, derived from it on the way in. */
+    app: text("app"),
+    userAgent: text("user_agent"),
+    status: feedbackStatusEnum("status").notNull().default("new"),
+    /** What whoever triaged it wrote back. Shown to the submitter. */
+    adminNote: text("admin_note"),
+    handledById: text("handled_by_id").references(() => users.id),
+    handledAt: timestamp("handled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("feedback_status_idx").on(t.status, t.createdAt),
+    index("feedback_user_idx").on(t.userId, t.createdAt),
+  ],
 );
 
 export const eodReports = pgTable(
@@ -2347,6 +2427,11 @@ export const waRunsRelations = relations(waRuns, ({ one, many }) => ({
   messages: many(waMessages),
 }));
 
+export const feedbackRelations = relations(feedback, ({ one }) => ({
+  user: one(users, { fields: [feedback.userId], references: [users.id] }),
+  handledBy: one(users, { fields: [feedback.handledById], references: [users.id] }),
+}));
+
 export const followUpStatesRelations = relations(followUpStates, ({ one }) => ({
   customer: one(customers, {
     fields: [followUpStates.customerId],
@@ -2395,6 +2480,7 @@ export type WaReply = typeof waReplies.$inferSelect;
 export type InactiveWatchItem = typeof inactiveWatchItems.$inferSelect;
 export type HelpArticle = typeof helpArticles.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
+export type Feedback = typeof feedback.$inferSelect;
 export type EodReport = typeof eodReports.$inferSelect;
 export type AppSetting = typeof appSettings.$inferSelect;
 export type JobRun = typeof jobRuns.$inferSelect;

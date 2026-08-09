@@ -5,10 +5,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "./icons";
 import { GlobalSearch } from "./global-search";
+import { FeedbackButton } from "./feedback-button";
 import { AppSwitcher } from "./app-switcher";
 import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
-import { setDensity, setScope, markNotificationsRead, markNotificationRead } from "@/lib/actions/crm";
+import { setScope, markNotificationsRead, markNotificationRead } from "@/lib/actions/crm";
 import { signOut } from "@/lib/actions/auth";
 import { stamp } from "@/lib/format";
 import type { Notification, User } from "@/db/schema";
@@ -27,7 +28,6 @@ export function Header({
   user,
   isManager,
   scope,
-  density,
   notifications,
   apps,
   onToggleSidebar,
@@ -35,7 +35,6 @@ export function Header({
   user: User;
   isManager: boolean;
   scope: "mine" | "team";
-  density: "comfortable" | "compact";
   notifications: Notification[];
   /** Every app this account opens — the switcher lists them. */
   apps: AppDefinition[];
@@ -76,13 +75,6 @@ export function Header({
     return () => document.removeEventListener("mousedown", handler);
   }, [notifOpen]);
 
-  function toggleDensity() {
-    const next = density === "comfortable" ? "compact" : "comfortable";
-    document.documentElement.dataset.density = next;
-    void setDensity(next);
-    router.refresh();
-  }
-
   return (
     <header className="z-30 flex h-14 flex-none items-center gap-5 border-b border-line bg-surface px-4">
       <div className="flex w-[216px] flex-none items-center gap-2">
@@ -110,14 +102,6 @@ export function Header({
       <div className="flex-1" />
 
       <div className="flex items-center gap-2">
-        <button
-          onClick={toggleDensity}
-          className="inline-flex h-7.5 cursor-pointer items-center gap-1.5 rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-body hover:bg-canvas"
-        >
-          <Icon name="menu" size={16} />
-          {density === "comfortable" ? "Comfortable" : "Compact"}
-        </button>
-
         {isManager ? (
           <div className="flex h-7.5 items-center gap-1.5 rounded-[4px] border border-dashed border-line-strong pr-1 pl-2">
             <span className="text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
@@ -142,6 +126,8 @@ export function Header({
             ))}
           </div>
         ) : null}
+
+        <FeedbackButton />
 
         <button
           onClick={() => setShortcutsOpen(true)}

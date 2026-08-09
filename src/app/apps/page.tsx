@@ -10,6 +10,7 @@ import {
 import { Wordmark } from "@/components/shell/wordmark";
 import { Icon } from "@/components/shell/icons";
 import { SignOutButton } from "@/components/shell/sign-out-button";
+import { FeedbackButton } from "@/components/shell/feedback-button";
 import { cx } from "@/components/ui/primitives";
 import { clock, longDate, today } from "@/lib/format";
 import { AppShortcuts } from "./app-shortcuts";
@@ -61,6 +62,7 @@ export default async function LauncherPage() {
             </span>
           </span>
         </span>
+        <FeedbackButton />
         <SignOutButton />
       </header>
 

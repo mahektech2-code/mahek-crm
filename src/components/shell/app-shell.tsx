@@ -11,7 +11,6 @@ export function AppShell({
   user,
   isManager,
   scope,
-  density,
   notifications,
   badges,
   apps,
@@ -20,17 +19,12 @@ export function AppShell({
   user: User;
   isManager: boolean;
   scope: "mine" | "team";
-  density: "comfortable" | "compact";
   notifications: Notification[];
   badges: { reminders: number; complaints: number };
   apps: AppDefinition[];
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = React.useState(false);
-
-  React.useEffect(() => {
-    document.documentElement.dataset.density = density;
-  }, [density]);
 
   return (
     <ToastProvider>
@@ -41,7 +35,6 @@ export function AppShell({
           user={user}
           isManager={isManager}
           scope={scope}
-          density={density}
           notifications={notifications}
           apps={apps}
           onToggleSidebar={() => setCollapsed((c) => !c)}

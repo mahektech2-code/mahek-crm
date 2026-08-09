@@ -123,10 +123,14 @@ src/
     api/payments/          search and open bills, for the accounts capture form
     api/sheets/sync/       order, payment + taken-order sync, on demand, ?mode=
     api/hrms/sync/         employee sync, on demand — no schedule, see below
+    admin/feedback/        the console section where the team's reports are
+                           read and answered (feedback-section.tsx)
   components/
     ui/                    primitives + overlays + toasts
     shell/                 header, sidebar, icons, search, wordmark,
-                           app chip, app placeholder, brand panel
+                           app chip, app placeholder, brand panel,
+                           feedback-button.tsx — the Tell us dialog, in the
+                           header of every app
     crm/call-panel.tsx     the call drawer, used by four screens
   db/                      schema, client, seed
     catalogue-seed.ts      the product master, GENERATED from the document
@@ -149,6 +153,8 @@ src/
     taken-order-parse.ts   the Taken Order tab's cells → typed values, and
                            the open/dispatched rule itself — PURE
     password-reset.ts      reset tokens: minted, hashed, read back
+    feedback-labels.ts     the four kinds and four statuses, and their
+                           sentences — PURE, because the form is a client
     mailer.ts              the one place mail leaves MahekOne
     jobs.ts                scheduled work, idempotent and hand-triggerable
     result.ts              the Result type every action returns
@@ -707,6 +713,27 @@ changed the totals under it would show a different figure on every click.
 the *inner* table and the condition silently becomes false — types and unit
 tests both pass. Write `customers.id` in the string instead. This one shipped
 once; the integration tests exist partly to catch it.
+
+**Feedback is a row, not a message.** The Tell us button sits in the header
+of every app, and what it writes lands in `feedback` — kind, heading, detail,
+and the screen the person was standing on, captured rather than asked for.
+Anybody signed in may write one, because a form the telecallers cannot reach
+only ever hears from managers. Answering one is a manager's or a platform
+admin's, checked in the action rather than by hiding the control, and it is
+the same shape as everything else here: reads in
+`lib/services/feedback-service.ts`, writes in `lib/actions/feedback.ts`.
+
+**Both ends of it are told.** A new report notifies whoever can triage it, and
+a status change notifies whoever wrote it — including `Not doing`, which is
+the whole point: silence is what teaches a team to stop reporting things.
+Nothing is deleted, a declined report keeps its row and its reply, and the
+reply is written to the submitter rather than kept as an internal note.
+
+**Its vocabulary is client-safe, and separate from the service.**
+`lib/feedback-labels.ts` holds the kinds, the statuses and their sentences,
+because the form that writes them runs in the browser and the service that
+reads them is `server-only`. `bug_reports` is the empty table this replaced —
+nothing writes to it; do not start.
 
 **The employee master is a mirror, and mirrors do not get edited.** HRMS reads
 the workbook's `Employee Details` tab and nothing on its screens can be
