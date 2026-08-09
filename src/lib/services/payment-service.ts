@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -34,6 +34,7 @@ import {
   daysInMonth,
   onOrAfterWorkingDay,
 } from "../business-date";
+import { financialYearRange } from "../financial-year";
 import { err, ok, type Result } from "../result";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -481,7 +482,33 @@ export async function recordPayment(
 
 /* ----------------------------------------------------------------- bills */
 
-export async function listBills(filters?: { customerId?: string; status?: string }) {
+export type BillFilters = {
+  customerId?: string;
+  status?: string;
+  /** "26-27". Absent means every year, which the export uses. */
+  financialYear?: string;
+};
+
+/** 1 April to 31 March, as SQL. The end is exclusive — see financial-year.ts. */
+function financialYearWhere(fy?: string) {
+  if (!fy) return undefined;
+  const { start, end } = financialYearRange(fy);
+  return and(gte(bills.billDate, start), lt(bills.billDate, end));
+}
+
+/** The oldest bill in scope, so the filter offers only years that exist. */
+export async function earliestBillDate(): Promise<string | null> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const [row] = await db
+    .select({ d: sql<string | null>`min(${bills.billDate})` })
+    .from(bills)
+    .innerJoin(customers, eq(customers.id, bills.customerId))
+    .where(ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined);
+  return row?.d ?? null;
+}
+
+export async function listBills(filters?: BillFilters) {
   const ctx = await resolveScope();
   const ids = scopedUserIds(ctx.scope);
   const config = await getConfig();
@@ -500,6 +527,7 @@ export async function listBills(filters?: { customerId?: string; status?: string
       and(
         ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined,
         filters?.customerId ? eq(bills.customerId, filters.customerId) : undefined,
+        financialYearWhere(filters?.financialYear),
       ),
     )
     .orderBy(desc(bills.billDate));
@@ -531,9 +559,9 @@ export async function listBills(filters?: { customerId?: string; status?: string
   });
 }
 
-export async function agingSummary() {
+export async function agingSummary(filters?: BillFilters) {
   const config = await getConfig();
-  const rows = await listBills();
+  const rows = await listBills(filters);
   const buckets = new Map<string, number>();
   for (const r of rows) {
     if (r.balance <= 0) continue;

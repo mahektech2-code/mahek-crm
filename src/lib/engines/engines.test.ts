@@ -33,6 +33,11 @@ import { evaluateInactivity, watchAge } from "./inactivity";
 import { resolveTarget, classifyShortfall } from "./targets";
 import { aggregateEod, eodPreflight, formatMoney } from "./eod";
 import { parseJobArgs } from "../job-args";
+import {
+  financialYearOf,
+  financialYearRange,
+  financialYearsBetween,
+} from "../financial-year";
 
 /* ---------------------------------------------------------------------------
  * Every engine takes an injected clock and injected configuration, so these
@@ -1716,5 +1721,35 @@ describe("job runner arguments", () => {
 
   test("no job at all asks for the usage", () => {
     assert.deepEqual(parseJobArgs([]), { ok: false, problem: null });
+  });
+});
+
+/* ======================================================= the financial year */
+
+describe("financial years", () => {
+  test("April opens a new year and March still belongs to the old one", () => {
+    assert.equal(financialYearOf("2026-04-01"), "26-27");
+    assert.equal(financialYearOf("2027-03-31"), "26-27");
+    assert.equal(financialYearOf("2027-04-01"), "27-28");
+  });
+
+  test("the range ends exclusively, so 31 March is inside it", () => {
+    // An inclusive end is how the last trading day of the year goes missing.
+    const r = financialYearRange("26-27");
+    assert.deepEqual(r, { start: "2026-04-01", end: "2027-04-01" });
+    assert.ok("2027-03-31" >= r.start && "2027-03-31" < r.end);
+  });
+
+  test("the years offered run from the oldest record to today, newest first", () => {
+    assert.deepEqual(financialYearsBetween("2024-06-01", "2026-08-09"), [
+      "26-27",
+      "25-26",
+      "24-25",
+    ]);
+  });
+
+  test("with no records at all, this year is still offered", () => {
+    // 1 April, nothing billed yet, and the filter must not be empty.
+    assert.deepEqual(financialYearsBetween(null, "2026-04-01"), ["26-27"]);
   });
 });
