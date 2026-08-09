@@ -545,6 +545,157 @@ async function writeSheetReceipt(input: {
   return true;
 }
 
+/**
+ * Bills from the ORDER history, one per order, every one marked paid.
+ *
+ * A sales bill in this business IS the order — the Order Details tab carries a
+ * Tally bill number on 23,593 of its 23,619 lines and the amount on all of
+ * them, and that ledger is what Sales Bills is meant to show. Sourcing bills
+ * from the Payment Status tab alone left the screen empty whenever that tab
+ * had not been pulled, which is a bill list missing because of a second
+ * document rather than because there are no bills.
+ *
+ * PAID IS THE STARTING POSITION, and that is a deliberate instruction rather
+ * than a fact the sheet supplies. The order tab records what was billed and
+ * never what was received — its Payment Status column is empty on every row —
+ * so the only two options are to assume everything is owed or to assume
+ * everything is settled. Assuming owed invents roughly nine crore of debt and
+ * puts every customer on the collections list. Assuming settled shows nothing
+ * owed until somebody says otherwise, which understates rather than fabricates
+ * and is the safer of the two lies. Marking the genuinely unpaid ones is a
+ * person's job from here.
+ *
+ * The receipt carries `mode: "Not stated"` and `source: "sheet_import"` so
+ * nothing downstream mistakes it for a payment somebody witnessed, and its
+ * date is the bill's own date because that is the only date this tab has.
+ *
+ * Keyed `SHEETPAY-<order number>`, the same key the Payment Status path uses,
+ * so the two can never produce two bills for one order.
+ */
+export async function projectBillsFromOrders(
+  options: ProjectionOptions = {},
+): Promise<ProjectionReport["bills"]> {
+  const lines = await db
+    .select()
+    .from(sheetOrderRows)
+    .where(
+      and(
+        eq(sheetOrderRows.status, "present"),
+        sql`${sheetOrderRows.orderNumber} is not null`,
+      ),
+    )
+    .orderBy(sheetOrderRows.orderNumber, sheetOrderRows.rowNumber);
+
+  // One order is one bill, and its value is the SUM of its lines — Final
+  // Amount is line-level and roughly half these orders are multi-line.
+  const grouped = new Map<string, typeof lines>();
+  for (const line of lines) {
+    const list = grouped.get(line.orderNumber!) ?? [];
+    list.push(line);
+    grouped.set(line.orderNumber!, list);
+  }
+
+  const refs = [...grouped.keys()].map((n) => `SHEET-${n}`);
+  const orderRows = refs.length
+    ? await db
+        .select({ id: orders.id, externalRef: orders.externalRef, customerId: orders.customerId })
+        .from(orders)
+        .where(inArray(orders.externalRef, refs))
+    : [];
+  const orderByRef = new Map(orderRows.map((o) => [o.externalRef!, o]));
+
+  // A Tally number carried by more than one order gains the order number, so
+  // the identifier stays unique without losing what it was.
+  const tallyCounts = new Map<string, number>();
+  for (const [, group] of grouped) {
+    const tally = group[0].tallyBillNo?.trim();
+    if (tally) tallyCounts.set(tally, (tallyCounts.get(tally) ?? 0) + 1);
+  }
+
+  const existing = await db
+    .select({ id: bills.id, externalRef: bills.externalRef })
+    .from(bills)
+    .where(sql`${bills.externalRef} like 'SHEETPAY-%'`);
+  const billByRef = new Map(existing.map((b) => [b.externalRef!, b.id]));
+
+  let created = 0;
+  let updated = 0;
+  let receipts = 0;
+
+  for (const [orderNumber, group] of grouped) {
+    const head = group[0];
+    const order = orderByRef.get(`SHEET-${orderNumber}`);
+    if (!order) continue;
+
+    const amount = group.reduce((sum, l) => sum + (l.finalAmountPaise ?? 0), 0);
+    if (amount <= 0) continue;
+
+    const billDate = head.dispatchDate ?? head.orderDate;
+    if (!billDate) continue;
+
+    const tally = head.tallyBillNo?.trim();
+    const billNo =
+      tally && (tallyCounts.get(tally) ?? 0) === 1
+        ? tally
+        : tally
+          ? `${tally}/${orderNumber}`
+          : `ORD-${orderNumber}`;
+
+    const externalRef = `SHEETPAY-${orderNumber}`;
+    const values = {
+      customerId: order.customerId,
+      billNo,
+      orderId: order.id,
+      billDate,
+      // Left null on purpose: E3 resolves a due date from the order's term,
+      // then the customer's, then the configured default. This tab has none.
+      dueDate: null,
+      amount,
+      externalRef,
+      lastSyncedAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    if (options.dryRun) {
+      if (billByRef.has(externalRef)) updated++;
+      else created++;
+      continue;
+    }
+
+    let billId = billByRef.get(externalRef);
+    if (billId) {
+      await db.update(bills).set(values).where(eq(bills.id, billId));
+      updated++;
+    } else {
+      billId = newId("bil");
+      await db.insert(bills).values({ id: billId, ...values });
+      created++;
+    }
+
+    // Settled by instruction, not by evidence. Idempotent on the key, so a
+    // re-run never pays the same bill twice.
+    const wrote = await writeSheetReceipt({
+      billId,
+      customerId: order.customerId,
+      amount,
+      paidAt: billDate,
+      externalRef,
+    });
+    if (wrote) receipts++;
+  }
+
+  return {
+    created,
+    updated,
+    payments: receipts,
+    // Neither figure applies here: this tab states no payment status at all,
+    // so there is nothing "received without a date" and nothing left blank.
+    paidWithoutDate: 0,
+    blankStatus: 0,
+    skipped: false,
+  };
+}
+
 export async function projectBills(
   options: ProjectionOptions = {},
 ): Promise<ProjectionReport["bills"]> {
@@ -714,7 +865,16 @@ export async function projectSheet(
 ): Promise<ProjectionReport> {
   const customerResult = await projectCustomers(options);
   const { orders: orderResult, skipped } = await projectOrders(options);
-  const billResult = await projectBills(options);
+
+  // A sales bill is the order, so bills come from the order history by
+  // default and every one starts settled. `--bills` swaps the source to the
+  // Payment Status tab, which carries real received/not-received for 8,277 of
+  // its rows — better evidence where it has been pulled. Never both: they key
+  // on the same `SHEETPAY-<order number>`, and running one after the other
+  // would have two authors for one bill.
+  const billResult = options.includeBills
+    ? await projectBills(options)
+    : await projectBillsFromOrders(options);
 
   if (!options.dryRun) {
     // Derived values are never written by hand — they are rebuilt from the
@@ -722,12 +882,15 @@ export async function projectSheet(
     // outstanding from the bills, and the follow-up stage from what is
     // outstanding and how old it is.
     await recomputeAllBuyingCycles();
-    if (options.includeBills) {
-      await recomputeBillStatuses();
-      await recomputeAllOutstanding();
-      await recomputeAllFollowUpStates();
-      await recomputeSlowPayers();
-    }
+    // Unconditional now: bills are written on every run, so the figures over
+    // them are always stale by the time we get here. paid_amount comes from
+    // the confirmed receipts first, then statuses from that, then outstanding,
+    // then the follow-up stage from what is outstanding and how old it is.
+    await recomputeAllBillPaid();
+    await recomputeBillStatuses();
+    await recomputeAllOutstanding();
+    await recomputeAllFollowUpStates();
+    await recomputeSlowPayers();
 
     // The flag finally means something. It was written on every sync and read
     // only to warn that nothing was derived from these rows — which stopped

@@ -643,6 +643,33 @@ command said so in words that sounded like an explanation. Parsing lives in
 `lib/job-args.ts` so it has tests; an unknown option, a `--owner` with nothing
 after it, and a switch given a value are all refused rather than guessed at.
 
+**A sales bill IS the order.** Bills are projected from the Order Details tab,
+one per order, valued as the SUM of its lines — Final Amount is line-level and
+half these orders are multi-line. The number is the Tally number, gaining the
+order number where that repeats. Every bill starts PAID, which is an
+instruction and not a fact the sheet carries: that tab records what was billed
+and never what was received, so the only choice is to assume everything is owed
+or everything is settled, and assuming owed invents the whole order book as
+debt and puts every customer on the collections list. Marking the genuinely
+unpaid ones is a person's job. `--bills` swaps the source to the Payment Status
+tab, which has real received/not-received — never both, since they key on the
+same `SHEETPAY-<order number>` and would give one bill two authors.
+
+**A recompute that filters is a recompute that freezes.**
+`recomputeAllFollowUpStates` is the only thing that REMOVES a follow-up row
+when the debt behind it goes, so restricting it to active customers did not
+skip work — it stranded eight customers at stage 3 claiming crores overdue
+while owing nothing, beyond the reach of any later run. It visits every
+customer; nothing is created for one who owes nothing.
+
+**The ledger is cut by financial year, not paged from the top.** Ten thousand
+bills across three years is not a list anybody scrolls, and Mahek's own bill
+numbers already carry the year — MMI/26-27/1119. The current year is the
+default, the server filters to it, and the table pages within it. Paging is
+over what is filtered IN, so the totals row, the aging strip and the export all
+describe the whole year while only the table is cut into pages — a page that
+changed the totals under it would show a different figure on every click.
+
 **In raw SQL, qualify every column of the outer table.** Drizzle renders
 `${customers.id}` as a bare `"id"`. Inside a correlated subquery that binds to
 the *inner* table and the condition silently becomes false — types and unit

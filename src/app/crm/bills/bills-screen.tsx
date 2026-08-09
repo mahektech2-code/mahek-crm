@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/primitives";
 import { Modal, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
+import { financialYearLabel } from "@/lib/financial-year";
 import { recordPayment } from "@/lib/actions/crm";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import {
@@ -66,6 +67,9 @@ type SortKey =
   | "balance"
   | "overdueDays";
 
+/** Rows per page. A ledger is read a screenful at a time, not scrolled. */
+const PER_PAGE = 50;
+
 const COLUMNS: Array<{ key: SortKey; label: string; align?: "right" }> = [
   { key: "billNo", label: "Bill no" },
   { key: "billDate", label: "Date" },
@@ -83,12 +87,17 @@ export function BillsScreen({
   rows,
   aging,
   customerFilter,
+  financialYear,
+  financialYears,
 }: {
   scopeLabel: string;
   isManager: boolean;
   rows: Row[];
   aging: { total: number; buckets: Array<{ label: string; amount: number }> };
   customerFilter: { id: string; name: string } | null;
+  /** The year on screen, and every year that has bills in it. */
+  financialYear: string;
+  financialYears: string[];
 }) {
   const router = useRouter();
   const { run, push } = useToast();
@@ -100,6 +109,7 @@ export function BillsScreen({
   const [status, setStatus] = React.useState("All");
   const [bucket, setBucket] = React.useState("All");
   const [paying, setPaying] = React.useState<Row | null>(null);
+  const [page, setPage] = React.useState(1);
 
   const scoped = customerFilter
     ? rows.filter((r) => r.customerId === customerFilter.id)
@@ -117,6 +127,23 @@ export function BillsScreen({
     });
   }, [scoped, status, bucket, sort]);
 
+  // Paging is over what is filtered IN, not over what the server sent: the
+  // totals row, the aging strip and the export all describe the whole year,
+  // and only the table is cut into pages. A page that changed the totals under
+  // it would be a different figure every time somebody clicked next.
+  const pages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+  const current = Math.min(page, pages);
+  const visible = filtered.slice((current - 1) * PER_PAGE, current * PER_PAGE);
+
+  // Narrowing the list returns to the first page — filtering down to twelve
+  // rows while sitting on page seven would otherwise show nothing. Done in the
+  // handlers rather than an effect: setState inside one cascades renders, and
+  // the React Compiler rules refuse it.
+  function narrow(change: () => void) {
+    change();
+    setPage(1);
+  }
+
   const outstanding = scoped.reduce((a, r) => a + r.balance, 0);
   // Bucket labels come from configuration via the server; the screen only
   // re-totals them for whatever is currently filtered in.
@@ -132,6 +159,9 @@ export function BillsScreen({
 
   function toggleSort(key: SortKey) {
     setSort((s) => (s.key === key ? { key, dir: (s.dir * -1) as 1 | -1 } : { key, dir: 1 }));
+    // Re-sorting reorders the whole year, so page seven now holds different
+    // rows entirely. Going back to the first page is the honest answer.
+    setPage(1);
   }
 
   return (
@@ -226,7 +256,7 @@ export function BillsScreen({
           {buckets.map((b, i) => (
             <button
               key={b.label}
-              onClick={() => setBucket(bucket === b.label ? "All" : b.label)}
+              onClick={() => narrow(() => setBucket(bucket === b.label ? "All" : b.label))}
               className={cx(
                 "flex cursor-pointer items-center gap-1.5 text-[13px]",
                 bucket === b.label ? "font-medium text-ink" : "text-body",
@@ -246,7 +276,7 @@ export function BillsScreen({
       <Card className="flex items-center gap-2.5 rounded-b-none border-b-0 px-4 py-2.5">
         <Select
           value={status}
-          onChange={(e) => setStatus(e.target.value)}
+          onChange={(e) => narrow(() => setStatus(e.target.value))}
           className="h-8"
         >
           <option value="All">All</option>
@@ -258,7 +288,7 @@ export function BillsScreen({
         </Select>
         <Select
           value={bucket}
-          onChange={(e) => setBucket(e.target.value)}
+          onChange={(e) => narrow(() => setBucket(e.target.value))}
           className="h-8"
         >
           <option>All</option>
@@ -266,11 +296,29 @@ export function BillsScreen({
             <option key={b.label}>{b.label}</option>
           ))}
         </Select>
+        <Select
+          value={financialYear}
+          onChange={(e) => {
+            const next = new URLSearchParams(window.location.search);
+            next.set("fy", e.target.value);
+            router.push(`/crm/bills?${next.toString()}`);
+          }}
+          className="h-8"
+          aria-label="Financial year"
+        >
+          {financialYears.map((y) => (
+            <option key={y} value={y}>
+              {financialYearLabel(y)}
+            </option>
+          ))}
+        </Select>
         {status !== "All" || bucket !== "All" ? (
           <button
             onClick={() => {
-              setStatus("All");
-              setBucket("All");
+              narrow(() => {
+                setStatus("All");
+                setBucket("All");
+              });
             }}
             className="h-8 cursor-pointer px-2.5 text-sm text-brand"
           >
@@ -279,7 +327,7 @@ export function BillsScreen({
         ) : null}
         <span className="flex-1" />
         <span className="text-[13px] text-muted">
-          {filtered.length} of {scoped.length} bills
+          {filtered.length} of {scoped.length} bills · {financialYearLabel(financialYear)}
         </span>
       </Card>
 
@@ -305,7 +353,7 @@ export function BillsScreen({
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => (
+              {visible.map((r) => (
                 <Tr key={r.id} className="hover:bg-canvas">
                   <Td className="font-medium text-ink">{r.billNo}</Td>
                   <Td>{shortDate(r.billDate)}</Td>
@@ -397,10 +445,32 @@ export function BillsScreen({
         ) : (
           <EmptyState
             title="No bills match these filters"
-            body="Clear the status or aging filter to see the full ledger."
+            body={`Clear the status or aging filter, or try another year — this is ${financialYearLabel(financialYear)}.`}
           />
         )}
       </Card>
+
+      {pages > 1 ? (
+        <div className="mt-3 flex items-center gap-3">
+          <Button
+            variant="secondary"
+            disabled={current === 1}
+            onClick={() => setPage(current - 1)}
+          >
+            Previous
+          </Button>
+          <span className="text-[13px] text-muted">
+            Page {current} of {pages} · showing {visible.length} of {filtered.length}
+          </span>
+          <Button
+            variant="secondary"
+            disabled={current === pages}
+            onClick={() => setPage(current + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      ) : null}
 
       <BillPaymentModal
         bill={paying}

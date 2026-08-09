@@ -4008,6 +4008,84 @@ describe("An imported customer reaches the calling queue", () => {
     assert.ok(seen, "the imported customer reached neither the queue nor the held-back list");
   });
 
+  test("a follow-up row is cleared even for a customer nobody calls any more", async () => {
+    // The recompute visited only `active` customers, so a customer who went
+    // quiet — or was deactivated — kept whatever follow-up row they had at
+    // that moment, for ever. Eight of them sat at stage 3 claiming crores
+    // overdue while owing nothing, and no recompute could reach them again.
+    const customer = await makeCustomer(priya.id);
+    await db.insert(bills).values({
+      id: id("bil"),
+      customerId: customer.id,
+      billNo: `INV-${randomUUID().slice(0, 6)}`,
+      billDate: addDays(TODAY, -120),
+      dueDate: addDays(TODAY, -90),
+      amount: 40_000_00,
+      paidAmount: 0,
+    });
+    await recomputeFollowUpState(customer.id);
+    assert.equal(
+      (await db.select().from(followUpStates)).length,
+      1,
+      "overdue and unpaid, so they belong on the list",
+    );
+
+    // The debt is settled and they leave the book on the same day.
+    await db
+      .update(bills)
+      .set({ paidAmount: 40_000_00 })
+      .where(eq(bills.customerId, customer.id));
+    await db
+      .update(customers)
+      .set({ status: "deactivated" })
+      .where(eq(customers.id, customer.id));
+
+    const { recomputeAllFollowUpStates } = await import("@/lib/recompute");
+    await recomputeAllFollowUpStates();
+    assert.equal(
+      (await db.select().from(followUpStates)).length,
+      0,
+      "a row describing a debt that no longer exists must go, whatever the customer's status",
+    );
+  });
+
+  test("a sales bill is the order, and it starts settled", async () => {
+    // The Order Details tab carries the bill number and the amount on every
+    // line and a payment status on none, so bills come from it and every one
+    // starts paid. Assuming the opposite would invent the entire order book
+    // as debt and put every customer on the collections list.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    const report = await projectSheet({ assignToUserId: priya.id });
+
+    assert.equal(report.bills.skipped, false, "bills are no longer opt-in");
+    assert.equal(report.bills.created, 1, "one order is one bill");
+
+    const [bill] = await db.select().from(bills);
+    // Two lines at 1180.00 each — the value is the SUM, never one line's.
+    assert.equal(bill.amount, 2360_00);
+    assert.equal(bill.paidAmount, bill.amount, "settled by instruction");
+    assert.equal(bill.status, "paid");
+    assert.ok(bill.orderId, "the bill records which order it came from");
+
+    // Nothing owed anywhere, so nobody is chased for it.
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.name, "Shree Paints"));
+    assert.equal(customer.outstanding, 0);
+    assert.equal((await db.select().from(followUpStates)).length, 0);
+  });
+
+  test("running it twice does not pay the same bill twice", async () => {
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await projectSheet({ assignToUserId: priya.id });
+    await projectSheet({ assignToUserId: priya.id });
+
+    const rows = await db.select().from(bills);
+    assert.equal(rows.length, 1, "one bill, not two");
+    assert.equal(rows[0].paidAmount, rows[0].amount, "and paid once, not twice");
+  });
+
   test("the order lands, and the cycle is rebuilt from it", async () => {
     await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
     const report = await projectSheet({ assignToUserId: priya.id });
