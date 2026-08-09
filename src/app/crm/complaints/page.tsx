@@ -38,7 +38,6 @@ export default async function ComplaintsPage() {
       rows={rows}
       events={events}
       billsByCustomer={Object.fromEntries(billsByCustomer)}
-      loggedInUserName={user.name}
       // Categories are configuration, not a constant — a manager edits the
       // list in the Admin Console without a deploy.
       categories={config["complaints.categories"]}

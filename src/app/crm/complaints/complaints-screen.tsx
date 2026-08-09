@@ -83,7 +83,6 @@ export function ComplaintsScreen({
   rows,
   events,
   billsByCustomer,
-  loggedInUserName,
   categories,
 }: {
   scopeLabel: string;
@@ -92,7 +91,6 @@ export function ComplaintsScreen({
   rows: Row[];
   events: Record<string, Event[]>;
   billsByCustomer: Record<string, BillOption[]>;
-  loggedInUserName: string;
   /** From configuration, so a manager can change the list without a deploy. */
   categories: string[];
 }) {
@@ -420,7 +418,6 @@ export function ComplaintsScreen({
         open={logging}
         onClose={() => setLogging(false)}
         billsByCustomer={billsByCustomer}
-        employeeName={loggedInUserName}
         categories={categories}
         onSubmit={async (input) => {
           const result = await run(logComplaint(input));
@@ -509,14 +506,12 @@ function LogComplaintModal({
   open,
   onClose,
   billsByCustomer,
-  employeeName,
   categories,
   onSubmit,
 }: {
   open: boolean;
   onClose: () => void;
   billsByCustomer: Record<string, BillOption[]>;
-  employeeName: string;
   categories: string[];
   onSubmit: (input: LogComplaintInput) => Promise<void>;
 }) {
@@ -524,7 +519,6 @@ function LogComplaintModal({
   return (
     <LogComplaintModalBody
       billsByCustomer={billsByCustomer}
-      employeeName={employeeName}
       categories={categories}
       onClose={onClose}
       onSubmit={onSubmit}
@@ -534,13 +528,11 @@ function LogComplaintModal({
 
 function LogComplaintModalBody({
   billsByCustomer,
-  employeeName,
   categories,
   onClose,
   onSubmit,
 }: {
   billsByCustomer: Record<string, BillOption[]>;
-  employeeName: string;
   categories: string[];
   onClose: () => void;
   onSubmit: (input: LogComplaintInput) => Promise<void>;
@@ -656,10 +648,6 @@ function LogComplaintModalBody({
       }
     >
       <div className="grid gap-3">
-        <Field label="Employee name">
-          <Input value={employeeName} readOnly disabled />
-        </Field>
-
         <Field label="Company / Customer Name" error={errors.customer ?? null}>
           {customer ? (
             <div className="flex h-8.5 items-center justify-between rounded-[4px] border border-line bg-canvas px-2.5 text-sm text-ink">
