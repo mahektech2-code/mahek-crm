@@ -2432,7 +2432,11 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     );
   });
 
-  test("but a fast-cycling customer still gets their weekly check-in", async () => {
+  test("and a fast-cycling customer gets no check-in either", async () => {
+    // They are in contact constantly through the orders themselves, so a
+    // weekly call on top is noise on both sides of the phone. Not suppressed
+    // either: two days after an order there is simply nothing to call them
+    // about, which is a different thing from being held back.
     const customer = await makeCustomer(priya.id, {
       lastOrderDate: addDays(TODAY, -2),
       lastContactDate: addDays(TODAY, -9),
@@ -2440,12 +2444,31 @@ describe("Who the Call Log puts in front of a telecaller", () => {
       cycleIsDefault: false,
     });
     const q = await getQueue();
+    assert.equal(
+      q.entries.some((e) => e.customerId === customer.id),
+      false,
+    );
+    assert.equal(
+      q.suppressed.some((x) => x.customerId === customer.id),
+      false,
+    );
+  });
+
+  test("and comes back the moment they stop ordering", async () => {
+    // The other half of the same rule, and the reason dropping the check-in
+    // does not lose them: out of the quiet window, the order reasons apply.
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -20),
+      lastContactDate: addDays(TODAY, -9),
+      cycleDays: 8,
+      cycleIsDefault: false,
+    });
+    const q = await getQueue();
     const entry = q.entries.find((e) => e.customerId === customer.id);
-    assert.ok(entry, "going quiet on your best customers is how you lose them");
-    assert.ok(entry.reasons[0].kind.startsWith("checkIn"));
+    assert.ok(entry, "an 8-day buyer 20 days silent is exactly who to ring");
     assert.ok(
-      entry.reasons.every((r) => !r.kind.startsWith("order")),
-      "and it is a service call, not an order chase",
+      entry.reasons.some((r) => r.kind.startsWith("order")),
+      "and the reason is the order, not a check-in",
     );
   });
 
