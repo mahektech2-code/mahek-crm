@@ -32,6 +32,8 @@ import {
   waMessages,
   waTemplates,
   attachments as attachmentsTable,
+  sheetOrderRows,
+  sheetSyncRuns,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import {
@@ -106,6 +108,7 @@ import {
   prepareMessage,
 } from "@/lib/services/whatsapp-service";
 import { eodMetricsFor, eodPreflightFor } from "@/lib/services/eod-service";
+import { projectSheet } from "@/lib/services/sheet-projection-service";
 
 /* ------------------------------------------------------------------ harness */
 
@@ -3530,5 +3533,149 @@ describe("The catalogue as the telecaller meets it", () => {
       }),
       "12 cans · 60 L · 2 boxes",
     );
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * The imported sheet reaching the CRM.
+ *
+ * The staging tables are not the CRM. Turning them into customers and orders
+ * is a second, deliberate act, and these pin the two things that decide
+ * whether anybody ever sees the result: whose book the records land in, and
+ * whether the calling queue is allowed to offer them.
+ * ------------------------------------------------------------------------- */
+
+describe("Projecting the order sheet into the CRM", () => {
+  /** One order, two lines, for one billing party. */
+  async function stageSheetRows(party: string, orderNumber: string, orderDate: string) {
+    const [run] = await db
+      .insert(sheetSyncRuns)
+      .values({
+        id: id("syn"),
+        source: "order_details",
+        spreadsheetId: "test-sheet",
+        tabTitle: "Order Details",
+        mode: "reconcile",
+        status: "ok",
+      })
+      .returning();
+
+    for (const [i, description] of ["Nano Thinner", "Mylac Primer"].entries()) {
+      await db.insert(sheetOrderRows).values({
+        id: id("shr"),
+        syncId: run.id,
+        rowNumber: 2 + i,
+        lineKey: `ODID-${orderNumber}-${i}`,
+        orderNumber,
+        raw: {},
+        rowHash: randomUUID(),
+        orderDate,
+        billingPartyName: party,
+        area: "Bhiwandi",
+        creditDays: 45,
+        description,
+        cans: 10,
+        ratePaise: 100_00,
+        amountPaise: 1000_00,
+        finalAmountPaise: 1180_00,
+      });
+    }
+    return run;
+  }
+
+  test("an imported customer is not flagged active in the order system", async () => {
+    // The flag means live activity somewhere else, and the queue holds such a
+    // customer back. Setting it from an import of order HISTORY would mute the
+    // whole book: every customer imported, every customer suppressed, and an
+    // empty calling queue with no visible reason.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await projectSheet({ assignToUserId: priya.id });
+
+    const [imported] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.name, "Shree Paints"));
+    assert.ok(imported, "the projection created no customer");
+    assert.equal(imported.activeInOrderSystem, false);
+
+    // And the proof that matters: the telecaller can actually see them.
+    setTestUser(priya);
+    const queue = await getQueue();
+    const seen = [...queue.entries, ...queue.suppressed].some(
+      (r) => r.customerId === imported.id,
+    );
+    assert.ok(seen, "the imported customer reached neither the queue nor the held-back list");
+  });
+
+  test("an imported order lands, and the cycle is rebuilt from it", async () => {
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    const report = await projectSheet({ assignToUserId: priya.id });
+
+    assert.equal(report.customers.created, 1);
+    assert.equal(report.orders.created, 1);
+    // Two lines, one order — the value is the SUM, never one line's figure.
+    assert.equal(report.orders.lines, 2);
+
+    const [imported] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.name, "Shree Paints"));
+    assert.equal(imported.lastOrderDate, addDays(TODAY, -40));
+    assert.equal(imported.avgOrderValue, 2360_00);
+  });
+
+  test("a record left in nobody's book is adopted, and an owned one is never reassigned", async () => {
+    // The failure this pins: an import run without an assignee writes rows
+    // that sit in no scope, so every screen stays empty and reads as a broken
+    // import rather than an unassigned book.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+
+    const first = await projectSheet({});
+    assert.equal(first.customers.unassigned, 1);
+    const [ownerless] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.name, "Shree Paints"));
+    assert.equal(ownerless.salesAmId, null);
+    assert.equal(ownerless.ownerId, null);
+
+    // Nobody's book means nobody's screen — including the manager's team view.
+    setTestUser(manager);
+    const before = await getQueue();
+    assert.ok(
+      ![...before.entries, ...before.suppressed].some((r) => r.customerId === ownerless.id),
+      "an ownerless customer appeared in a scoped list",
+    );
+
+    // A second run repairs it. Null is the absence of a decision, so adopting
+    // it undoes nothing.
+    const second = await projectSheet({ assignToUserId: priya.id });
+    assert.equal(second.customers.unassigned, 0);
+    const [adopted] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, ownerless.id));
+    assert.equal(adopted.salesAmId, priya.id);
+
+    // A third run naming somebody else must not take the account off Priya.
+    await projectSheet({ assignToUserId: rakesh.id });
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, ownerless.id));
+    assert.equal(after.salesAmId, priya.id, "an owned account was reassigned by a re-run");
+  });
+
+  test("bills are written only when asked for", async () => {
+    // The order tab records what was billed and never what was paid, so bills
+    // built from it alone read as "everybody owes us everything" rather than
+    // "we do not know". Off is the default, and it stays off.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    const report = await projectSheet({ assignToUserId: priya.id });
+    assert.equal(report.bills.skipped, true);
+    assert.equal(report.bills.created, 0);
+
+    const written = await db.select().from(bills);
+    assert.equal(written.length, 0);
   });
 });
