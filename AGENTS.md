@@ -567,6 +567,18 @@ debt, and never reads below what the refusal earned. The floor leaves with the
 row when nothing is overdue, because it described a debt that no longer exists.
 A floor a recompute erases is not a floor, and there is a test saying so.
 
+**The slow-payer flag has a grace period, and the grace is on the due date.**
+A payment landing a day or two past its term is ordinary business — a cheque in
+the post, a bank holiday, an accounts department that pays on Fridays — and
+counting those flagged customers who pay perfectly reliably, just not to the
+calendar. `escalation.slowPayerGraceDays` (7) is what a payment has to exceed
+before it counts as late at all; `slowPayerLateCount` still decides how many
+late ones earn the flag. Forgiving the count instead would let a customer who
+is genuinely a fortnight late three times over pass as reliable. The flag is
+read as "be careful with this one", so it has to mean it, and it is a derived
+cache — changing the grace and re-running `recomputeSlowPayers` reclassifies
+the whole book without touching a row.
+
 **A late bill is messaged before it is called.** For the quiet window — 15 days
 past the due date — the customer gets a reminder message every four days and no
 call at all, because a bill a few days late is usually paperwork rather than

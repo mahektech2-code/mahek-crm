@@ -956,6 +956,45 @@ describe("E3 escalation", () => {
       false,
     );
   });
+
+  test("a few days past the due date is not late — the grace period covers it", () => {
+    const grace = C["escalation.slowPayerGraceDays"];
+    // The last forgiven day, however many times it happens.
+    const justInside = {
+      dueDate: "2026-07-01",
+      paidOn: addDays("2026-07-01", grace),
+    };
+    assert.equal(isSlowPayer([justInside], TODAY, C).latePayments, 0);
+    assert.equal(
+      isSlowPayer([justInside, justInside, justInside, justInside], TODAY, C)
+        .slowPayer,
+      false,
+      "a customer who is always a few days late is not a slow payer",
+    );
+
+    // The first day that counts.
+    const justOutside = {
+      dueDate: "2026-07-01",
+      paidOn: addDays("2026-07-01", grace + 1),
+    };
+    assert.equal(isSlowPayer([justOutside], TODAY, C).latePayments, 1);
+  });
+
+  test("grace forgives the due date, never the count", () => {
+    // A fortnight late, three times over, is still a slow payer.
+    const properlyLate = { dueDate: "2026-07-01", paidOn: "2026-07-15" };
+    assert.equal(
+      isSlowPayer([properlyLate, properlyLate, properlyLate], TODAY, C).slowPayer,
+      true,
+    );
+  });
+
+  test("with no grace configured, a single day late counts again", () => {
+    const none = { ...C, "escalation.slowPayerGraceDays": 0 };
+    const oneDay = { dueDate: "2026-07-01", paidOn: "2026-07-02" };
+    assert.equal(isSlowPayer([oneDay], TODAY, none).latePayments, 1);
+    assert.equal(isSlowPayer([oneDay], TODAY, C).latePayments, 0);
+  });
 });
 
 /* ========================================================== E4 inactivity */
