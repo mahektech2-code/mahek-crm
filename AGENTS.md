@@ -31,6 +31,9 @@ npm run db:migrate   # apply migrations locally
 npm run db:seed      # wipe and reseed with demo data (also clears sessions)
 npm run db:studio    # Drizzle Studio
 npm run jobs -- nightly    # run a scheduled task by hand
+npm run jobs -- sheet-payments             # pull the Payment Status tab
+npm run jobs -- project-sheet --owner=vikram@mahek.in --bills
+                           # staged rows -> customers, orders and bills
 npm run hrms:sync    # pull the employee sheet now
 npm run app:grant -- hrms vikram@mahek.in   # give somebody an app
 npm run catalogue:parse    # regenerate the product master from the document
@@ -520,6 +523,15 @@ the owner. Every scoped list reads it — the queue, collections, bills,
 complaints, targets, the inactive watch, WhatsApp replies and global search.
 Reading `owner_id` alone silently drops every customer whose sales AM has been
 set, including off the collections list while they still owe money.
+
+**A flag that is silently discarded is worse than one that is rejected.**
+`npm run jobs -- project-sheet --bills` used to run the projection with no
+options whatsoever: the argument was read into argv, dropped before `runJob`,
+and the run then reported "bills skipped" — which reads as a fact about the
+data rather than an option that never arrived. Sales Bills was empty and the
+command said so in words that sounded like an explanation. Parsing lives in
+`lib/job-args.ts` so it has tests; an unknown option, a `--owner` with nothing
+after it, and a switch given a value are all refused rather than guessed at.
 
 **In raw SQL, qualify every column of the outer table.** Drizzle renders
 `${customers.id}` as a bare `"id"`. Inside a correlated subquery that binds to
