@@ -77,7 +77,10 @@ function Detail({ detail }: { detail: BillDetail }) {
     }
     if (o.transportName) facts.push(["Transport", o.transportName]);
     if (o.area) facts.push(["Area", o.area]);
-    if (o.salesMan) facts.push(["Sales man", o.salesMan]);
+    // The same person the customer record calls their salesperson, named the
+    // same way. This one is the ORDER's own — who sold this, which is not
+    // always who the master names today.
+    if (o.salesMan) facts.push(["Sales person", o.salesMan]);
     if (o.segmentCounterType) facts.push(["Segment", o.segmentCounterType]);
     if (o.orderFulfillDays !== null) {
       facts.push([

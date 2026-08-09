@@ -130,6 +130,8 @@ export const CAPABILITIES = [
   "order.approve",
   "payment.record",
   "payment.confirm",
+  "creditnote.issue",
+  "sheet.import",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -157,6 +159,23 @@ const MANAGER_ONLY: ReadonlySet<Capability> = new Set<Capability>([
 const ACCOUNTS_ONLY: ReadonlySet<Capability> = new Set<Capability>([
   "order.approve",
   "payment.confirm",
+  // Issuing a credit note takes money off what a customer owes, which is the
+  // same kind of decision as confirming that money arrived — and for the same
+  // reason it is not a manager's by seniority. The telecaller answers only
+  // whether the customer asked.
+  "creditnote.issue",
+]);
+
+/**
+ * Running the bill import.
+ *
+ * Not `config.write`: that is manager-only, and accounts are the people who
+ * notice Sales Bills is empty. On a deployment with no shell the screen is the
+ * only door, so the desk that needs the bills must be able to open it. A
+ * manager keeps it because they run the console today — nothing is taken away.
+ */
+const ACCOUNTS_OR_MANAGER: ReadonlySet<Capability> = new Set<Capability>([
+  "sheet.import",
 ]);
 
 /**
@@ -176,6 +195,9 @@ export function can(role: string, capability: Capability): boolean {
   if (SHARED.has(capability)) return true;
   if (ACCOUNTS_ONLY.has(capability)) {
     return role === "accounts" || role === "admin";
+  }
+  if (ACCOUNTS_OR_MANAGER.has(capability)) {
+    return role === "accounts" || role === "manager" || role === "admin";
   }
   if (role === "admin" || role === "manager") return true;
   // Accounts do not work the calling book, so they get none of the rest.

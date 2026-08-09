@@ -229,7 +229,9 @@ export function BillsScreen({
           { label: "Outstanding", value: money(outstanding), tone: outstanding ? "danger" : "ink" },
           { label: "Overdue bills", value: String(overdueCount), tone: overdueCount ? "danger" : "ink" },
           {
-            label: `Over ${buckets.at(-1)?.label ?? "90 days"}`,
+            // The oldest band names itself — "30+ days" already says "over",
+            // and prefixing it gave "Over 30+ days".
+            label: buckets.at(-1)?.label ?? "Oldest band",
             value: money(buckets.at(-1)?.amount ?? 0),
             tone: buckets.at(-1)?.amount ? "danger" : "ink",
           },
@@ -382,7 +384,11 @@ export function BillsScreen({
                         setOpenBillId(openBillId === r.id ? null : r.id)
                       }
                       aria-expanded={openBillId === r.id}
-                      className="inline-flex cursor-pointer items-center gap-1.5 text-left font-medium text-ink hover:underline"
+                      // No underline: a bill number is a row that opens, not a
+                      // link off the page, and underlining every one of them
+                      // reads as a page full of links. The chevron carries the
+                      // affordance and the colour answers the hover.
+                      className="inline-flex cursor-pointer items-center gap-1.5 text-left font-medium text-ink no-underline transition-colors hover:text-brand hover:no-underline"
                       title={openBillId === r.id ? "Hide the order" : "Show what was ordered"}
                     >
                       <span

@@ -560,7 +560,14 @@ export async function rejectReceipt(
       entityType: "payment_receipt",
       entityId: receiptId,
       beforeState: { status: receipt.status } as never,
-      afterState: { status: "rejected", reason: reason.trim() } as never,
+      // The amount is recorded here, not left to be joined back later: the log
+      // has to say what was rejected, and a receipt somebody later re-records
+      // under a new id would leave this row describing nothing.
+      afterState: {
+        status: "rejected",
+        reason: reason.trim(),
+        amount: Number(receipt.amount),
+      } as never,
     });
   });
 

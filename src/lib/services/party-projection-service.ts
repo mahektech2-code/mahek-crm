@@ -163,6 +163,10 @@ export async function projectParties(
         ...(fillPhone ? { phone: party.mobileNo! } : {}),
         ...(fillWhatsapp ? { whatsappPhone: party.whatsappNo! } : {}),
         ...(salesId ? { salesAmId: salesId } : {}),
+        // The NAME lands whether or not it matched an account, because the
+        // name is what the screens say. Linking is a separate question and it
+        // fails for most of these rows by design — see the header.
+        ...(party.salesPersonName ? { salesPersonName: party.salesPersonName } : {}),
         ...(backId ? { backOfficeAmId: backId } : {}),
         ...(party.gstNumber && !customer.gstin ? { gstin: party.gstNumber } : {}),
         ...(party.creditDays !== null
