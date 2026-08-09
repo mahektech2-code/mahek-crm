@@ -28,6 +28,9 @@ import { isWorkingDay, nextWorkingDay, type BusinessDate } from "./business-date
 import { buildQueue } from "./engines/queue";
 import { queueCandidatesFor } from "./services/queue-service";
 import {
+  orderSheetId,
+  orderTabTitle,
+  paymentTabTitle,
   syncOrderSheet,
   syncPaymentSheet,
   type SyncMode,
@@ -360,17 +363,10 @@ async function runSheetSync(
   return run(
     job,
     async () => {
-      const spreadsheetId = process.env.ORDERS_SHEET_ID;
-      if (!spreadsheetId) {
-        // Not an error and not a silent success: nothing is configured, and
-        // the job log should say exactly that rather than "0 rows".
-        return { recordsAffected: 0, detail: "ORDERS_SHEET_ID is not set — nothing to sync." };
-      }
-
       const outcome = await syncOrderSheet({
         source: "order_details",
-        spreadsheetId,
-        tabTitle: process.env.ORDERS_SHEET_TAB ?? "Order Details",
+        spreadsheetId: orderSheetId(),
+        tabTitle: orderTabTitle(),
         mode,
         triggeredById,
       });
@@ -394,14 +390,10 @@ async function runPaymentSync(triggeredById?: string): Promise<JobResult> {
   return run(
     "sheet-payments",
     async () => {
-      const spreadsheetId = process.env.ORDERS_SHEET_ID;
-      if (!spreadsheetId) {
-        return { recordsAffected: 0, detail: "ORDERS_SHEET_ID is not set — nothing to sync." };
-      }
       const outcome = await syncPaymentSheet({
         source: "payment_status",
-        spreadsheetId,
-        tabTitle: process.env.PAYMENTS_SHEET_TAB ?? "Payment Status",
+        spreadsheetId: orderSheetId(),
+        tabTitle: paymentTabTitle(),
         mode: "reconcile",
         triggeredById,
       });

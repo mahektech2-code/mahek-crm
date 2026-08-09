@@ -389,11 +389,7 @@ function SyncPanel({ data }: { data: SheetData }) {
         <CardHeader title="Source" hint="Where these rows come from." />
         <div className="space-y-2 px-5 pb-5 text-[13px]">
           <Row label="Spreadsheet">
-            {data.source.spreadsheetId ? (
-              <code className="text-[12px]">{data.source.spreadsheetId}</code>
-            ) : (
-              <span className="text-danger">ORDERS_SHEET_ID is not set</span>
-            )}
+            <code className="text-[12px]">{data.source.spreadsheetId}</code>
           </Row>
           <Row label="Tab">{data.source.tabTitle}</Row>
           <Row label="Access">

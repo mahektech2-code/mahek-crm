@@ -26,7 +26,7 @@ export type SheetData = {
   issues: Unwrap<typeof listSheetIssues>;
   filters: { query?: string; issuesOnly?: boolean; withdrawn?: boolean };
   /** Which sheet and tab this came from, so the screen can name its source. */
-  source: { spreadsheetId: string | null; tabTitle: string; configured: boolean };
+  source: { spreadsheetId: string; tabTitle: string; configured: boolean };
 };
 
 export const SHEET_TABS = [

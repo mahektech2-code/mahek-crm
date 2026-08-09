@@ -17,6 +17,39 @@ import {
   type SyncOutcome,
 } from "./sheet-sync-core";
 
+/**
+ * The order workbook.
+ *
+ * Hardcoded, and deliberately: a spreadsheet id NAMES a document, it does not
+ * grant access to one. What opens it is the service account credential, which
+ * is configuration and stays configuration. Naming the document here means
+ * production reads the same workbook as a developer's machine without anybody
+ * having to remember to set a variable — and a deploy where nobody did reads
+ * as a broken feature rather than a missing setting.
+ *
+ * `ORDERS_SHEET_ID` still wins where it is set, so a staging deploy can be
+ * pointed at a copy without touching this file.
+ *
+ * Note this is NOT the workbook HRMS reads. Only the older one carries an
+ * `Employee Details` tab, and only this one carries current orders — two
+ * documents, deliberately, and neither is a fallback for the other.
+ */
+export const ORDERS_SPREADSHEET_ID = "1YjLquBct-cv27ugjtXM3RgyLiDaAXx-224myOjsNMdM";
+
+export function orderSheetId(): string {
+  return process.env.ORDERS_SHEET_ID || ORDERS_SPREADSHEET_ID;
+}
+
+/** The tab carrying one row per order LINE. */
+export function orderTabTitle(): string {
+  return process.env.ORDERS_SHEET_TAB || "Order Details";
+}
+
+/** The tab carrying one row per order, with what was billed and received. */
+export function paymentTabTitle(): string {
+  return process.env.PAYMENTS_SHEET_TAB || "Payment Status";
+}
+
 /* ---------------------------------------------------------------------------
  * Pulling the order sheet into MahekOne, at the size it actually is.
  *
