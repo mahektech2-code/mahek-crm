@@ -14,6 +14,10 @@ import {
   cx,
 } from "@/components/ui/primitives";
 import { money, shortDate, stamp } from "@/lib/format";
+import { useRouter } from "next/navigation";
+import { Button, Field, Select } from "@/components/ui/primitives";
+import { useToast } from "@/components/ui/toast";
+import { triggerJob } from "@/lib/actions/crm";
 import { pinnedCell, pinnedHead } from "./pinned";
 import type { SheetData } from "./sheet-data";
 
@@ -385,6 +389,7 @@ function SyncPanel({ data }: { data: SheetData }) {
   const s = data.summary.lastSync;
   return (
     <div className="space-y-4">
+      <ImportPanel data={data} />
       <Card>
         <CardHeader title="Source" hint="Where these rows come from." />
         <div className="space-y-2 px-5 pb-5 text-[13px]">
@@ -479,5 +484,113 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <span className="w-40 flex-none text-muted">{label}</span>
       <span className="text-body">{children}</span>
     </div>
+  );
+}
+
+
+/**
+ * Running the import from the screen.
+ *
+ * This exists because a deploy nobody has shell access to has no other door.
+ * The jobs were reachable from a terminal and from a cron endpoint guarded by
+ * a secret, which on this deployment meant they were reachable from neither —
+ * so the sheet synced into staging tables and stopped there, and Sales Bills
+ * stayed empty through three releases that each claimed to fix it.
+ *
+ * Two steps rather than one button, deliberately. Reading the sheet and
+ * rewriting the CRM's own rows are different acts with different blast radii,
+ * and somebody should be able to pull the sheet and look at it before letting
+ * it touch customers, orders and bills.
+ */
+function ImportPanel({ data }: { data: SheetData }) {
+  const router = useRouter();
+  const toast = useToast();
+  const [owner, setOwner] = React.useState("");
+  const [busy, setBusy] = React.useState<string | null>(null);
+
+  async function run(
+    job: "sheet-reconcile" | "sheet-payments" | "project-sheet",
+    options: { owner?: string } = {},
+  ) {
+    setBusy(job);
+    try {
+      const result = await triggerJob(job, options);
+      if (result.ok) {
+        // The detail line is the answer — "0 new, 4 changed" is what somebody
+        // came to find out, and a bare "done" would send them to the database.
+        toast.push(result.data?.ran.join(" · ") ?? result.message ?? "Finished");
+        router.refresh();
+      } else {
+        toast.push(result.error);
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const blocked = !data.canImport
+    ? "Importing is a manager action."
+    : !data.source.configured
+      ? "The Google service account is not configured on this deployment."
+      : null;
+
+  return (
+    <Card>
+      <CardHeader
+        title="Bring the sheet into the CRM"
+        hint="Both steps are idempotent — running either twice changes nothing the second time."
+      />
+      <div className="space-y-4 px-5 py-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <Field
+            label="Whose book"
+            hint="The sheet names sales channels, not people, so new customers need an owner. Existing ones keep theirs."
+            className="min-w-64"
+          >
+            <Select
+              value={owner}
+              disabled={Boolean(blocked) || Boolean(busy)}
+              onChange={(e) => setOwner(e.target.value)}
+            >
+              <option value="">Choose a person…</option>
+              {data.owners.map((o) => (
+                <option key={o.id} value={o.email}>
+                  {o.name} · {o.role}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="secondary"
+            disabled={Boolean(blocked) || Boolean(busy)}
+            title={blocked ?? undefined}
+            onClick={() => run("sheet-reconcile")}
+          >
+            {busy === "sheet-reconcile" ? "Reading…" : "1 · Read the sheet"}
+          </Button>
+          <Button
+            variant="primary"
+            disabled={Boolean(blocked) || Boolean(busy) || !owner}
+            title={blocked ?? (owner ? undefined : "Choose whose book first.")}
+            onClick={() => run("project-sheet", { owner })}
+          >
+            {busy === "project-sheet" ? "Importing…" : "2 · Import into the CRM"}
+          </Button>
+          <span className="text-[13px] text-muted">
+            Step 1 refreshes the staged rows; step 2 turns them into customers,
+            orders and bills.
+          </span>
+        </div>
+
+        <p className="text-[13px] text-muted">
+          Bills are the order history, one per order, and every one is imported
+          as paid — the order tab records what was billed and never what was
+          received. Mark the genuinely unpaid ones on Sales Bills.
+        </p>
+      </div>
+    </Card>
   );
 }

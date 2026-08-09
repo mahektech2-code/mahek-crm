@@ -18,6 +18,7 @@ import { SOURCE_DISCREPANCIES } from "@/db/catalogue-seed";
 import {
   listSheetIssues,
   listSheetOrders,
+  assignableOwners,
   listSheetRows,
   sheetSummary,
 } from "@/lib/services/sheet-order-service";
@@ -95,7 +96,7 @@ export default async function Page({
 
   // The imported order sheet. Read here rather than in the client component so
   // the section arrives rendered, like every other section in this console.
-  const [sheetStats, sheetPage, sheetOrders, sheetIssues] = await Promise.all([
+  const [sheetStats, sheetPage, sheetOrders, sheetIssues, owners] = await Promise.all([
     sheetSummary(),
     listSheetRows({
       query: one("sq"),
@@ -105,6 +106,7 @@ export default async function Page({
     }),
     listSheetOrders(200),
     listSheetIssues(),
+    assignableOwners(),
   ]);
 
   // Real accounts. The People section used to render a hardcoded array.
@@ -136,6 +138,8 @@ export default async function Page({
           tabTitle: orderTabTitle(),
           configured: sheetsConfigured(),
         },
+        owners,
+        canImport: canConfigureCrm || (isPlatformAdmin && isManager(user)),
       }}
       catalogue={{
         summary,

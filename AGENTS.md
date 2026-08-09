@@ -643,6 +643,15 @@ command said so in words that sounded like an explanation. Parsing lives in
 `lib/job-args.ts` so it has tests; an unknown option, a `--owner` with nothing
 after it, and a switch given a value are all refused rather than guessed at.
 
+**The import has to be runnable from the screen.** On a deploy nobody has
+shell access to, a terminal is not a fallback — it is the only door and it is
+locked. The sheet jobs were reachable from a CLI and from a cron endpoint
+guarded by a secret, which on this deployment meant neither, so the import ran
+on somebody's laptop against the production database or it did not run at all,
+and Sales Bills stayed empty through three releases that each claimed to fix
+it. Admin Console → Order sheet → Sync runs both steps, and `triggerJob` takes
+the owner because the sheet cannot supply one. A merge has to be enough.
+
 **A sales bill IS the order.** Bills are projected from the Order Details tab,
 one per order, valued as the SUM of its lines — Final Amount is line-level and
 half these orders are multi-line. The number is the Tally number, gaining the

@@ -1,7 +1,7 @@
 import "server-only";
-import { and, desc, eq, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { sheetOrderRows, sheetSyncRuns } from "@/db/schema";
+import { sheetOrderRows, sheetSyncRuns, users } from "@/db/schema";
 import { DISPLAY_COLUMNS, isLineLevel } from "@/lib/sheet-parse";
 
 /* ---------------------------------------------------------------------------
@@ -292,4 +292,25 @@ export function displayColumns() {
     column,
     level: isLineLevel(column) ? ("line" as const) : ("order" as const),
   }));
+}
+
+
+/* -------------------------------------------------- who can own a book */
+
+/**
+ * The people imported customers can be assigned to.
+ *
+ * The sheet's only ownership column holds sales channels rather than people,
+ * so nothing in the document says who works these accounts — somebody picks,
+ * and a customer left with neither a sales AM nor an owner is in nobody's
+ * scope and therefore on nobody's screen.
+ */
+export async function assignableOwners(): Promise<
+  Array<{ id: string; name: string; email: string; role: string }>
+> {
+  return db
+    .select({ id: users.id, name: users.name, email: users.email, role: users.role })
+    .from(users)
+    .where(and(eq(users.active, true), inArray(users.role, ["telecaller", "manager", "admin"])))
+    .orderBy(asc(users.name));
 }
