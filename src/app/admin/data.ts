@@ -134,6 +134,10 @@ export const PLATFORM_TABS: Record<string, PlatformTab[]> = {
   notifications: [{ slug: "sent", label: "What was sent" }],
   feedback: [
     { slug: "new", label: "New" },
+    // The one tab that is about an obligation rather than a state: somebody
+    // wrote something and nobody has answered it. A report can sit at "Being
+    // looked at" for a week with a question against it that nobody has read.
+    { slug: "awaiting", label: "Waiting on us" },
     { slug: "in-progress", label: "Being looked at" },
     { slug: "requests", label: "Feature requests" },
     { slug: "all", label: "Everything" },

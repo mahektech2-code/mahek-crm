@@ -41,12 +41,19 @@ export function ImagePicker({
   onChange,
   max,
   label = "Upload picture",
+  hint,
 }: {
   files: File[];
   onChange: (files: File[]) => void;
   /** From configuration — `attachments.maxPerComplaint`, never a constant. */
   max: number;
   label?: string;
+  /**
+   * What these pictures are FOR. The default names damaged goods, which is
+   * what the first two callers wanted and exactly the wrong sentence over a
+   * bug report's screenshot.
+   */
+  hint?: string;
 }) {
   const [error, setError] = React.useState<string | null>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -94,7 +101,11 @@ export function ImagePicker({
   return (
     <Field
       label={label}
-      hint={`${EXTENSIONS} - photos of the damaged or short goods, if any. Up to ${max}.`}
+      hint={
+        hint
+          ? `${EXTENSIONS}. ${hint} Up to ${max}.`
+          : `${EXTENSIONS} - photos of the damaged or short goods, if any. Up to ${max}.`
+      }
       error={error}
     >
       <input

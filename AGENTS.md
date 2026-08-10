@@ -127,8 +127,11 @@ src/
     api/hrms/sync/         employee sync, on demand — no schedule, see below
     admin/feedback/        the console section where the team's reports are
                            read and answered (feedback-section.tsx)
+    feedback/              the other end of it — where the person who reported
+                           something reads the reply and answers back
   components/
-    ui/                    primitives + overlays + toasts
+    feedback/              the thread, rendered the same for both sides
+    ui/                    primitives + overlays + toasts + attachment-strip
     shell/                 header, sidebar, icons, search, wordmark,
                            app chip, app placeholder, brand panel,
                            feedback-button.tsx — the Tell us dialog, in the
@@ -157,6 +160,9 @@ src/
     password-reset.ts      reset tokens: minted, hashed, read back
     feedback-labels.ts     the four kinds and four statuses, and their
                            sentences — PURE, because the form is a client
+    services/feedback-access.ts
+                           who may read and answer a thread — its own file so
+                           attachments can ask without importing the service
     mailer.ts              the one place mail leaves MahekOne
     jobs.ts                scheduled work, idempotent and hand-triggerable
     result.ts              the Result type every action returns
@@ -768,20 +774,57 @@ console's list of never-used accounts accuse the entire company. Attendance is
 the fallback for accounts that signed in before the column was filled: a day
 recorded is a sign-in, whatever the column says.
 
-**Feedback is a row, not a message.** The Tell us button sits in the header
-of every app, and what it writes lands in `feedback` — kind, heading, detail,
-and the screen the person was standing on, captured rather than asked for.
-Anybody signed in may write one, because a form the telecallers cannot reach
-only ever hears from managers. Answering one is a manager's or a platform
+**Feedback is a conversation, not a note.** The Tell us button sits in the
+header of every app, and what it writes lands in `feedback` — kind, heading,
+detail, and the screen the person was standing on, captured rather than asked
+for. Anybody signed in may write one, because a form the telecallers cannot
+reach only ever hears from managers. Answering one is a manager's or a platform
 admin's, checked in the action rather than by hiding the control, and it is
 the same shape as everything else here: reads in
 `lib/services/feedback-service.ts`, writes in `lib/actions/feedback.ts`.
 
-**Both ends of it are told.** A new report notifies whoever can triage it, and
-a status change notifies whoever wrote it — including `Not doing`, which is
-the whole point: silence is what teaches a team to stop reporting things.
-Nothing is deleted, a declined report keeps its row and its reply, and the
-reply is written to the submitter rather than kept as an internal note.
+**Every line of it is a row in `feedback_messages`, from either side.**
+`feedback.admin_note` was a single overwritable cell: a second answer erased
+the first, and the person who reported the fault could not say "not quite" —
+which, for a bug report, is usually the sentence that solves it. Both sides
+write through one action, `replyToFeedback`, because the two directions are
+the same act and splitting them would give one conversation two sets of rules
+about length, files and who gets told. `0032` carried every existing note in
+as the message it always was, and refuses to run rather than lose one whose
+author was never recorded.
+
+**A status change is a line of the conversation too.** `statusTo` on a message
+carries it, so "Not doing" sits in the thread beside the reply that explains
+it rather than in a column somebody has to go and look at. A row that says
+neither — no body, no status — is refused by a check constraint, because an
+empty message notifies somebody about nothing.
+
+**Both ends read the SAME thread.** One component, `components/feedback/
+feedback-thread.tsx`, renders it in the Admin Console and on `/feedback`,
+where the reporter reads the answer; what differs is only which side is "you".
+A submitter shown a shorter version of the conversation they are in is how
+somebody concludes nobody answered them, and stops reporting.
+
+**Both ends are told.** A new report notifies whoever can triage it — managers
+AND whoever holds the Admin app, exactly the set `canTriageFeedback` lets in,
+because notifying fewer people than may answer is how a report sits unread in
+front of the one person who could have fixed it. Every reply and every status
+change notifies the other side, and the submitter's notification carries an
+href to `/feedback`: a bell saying somebody answered, with nowhere to go and
+read the answer, is what this was before. Nothing is ever deleted.
+
+**A screenshot is part of the report, and it must be openable.** The Tell us
+form and every reply take images, bound to `feedback` and `feedback_message`
+respectively. Feedback is the one attachment parent with no customer behind
+it, so `canRead` cannot fall through to a customer's scope — the two sides of
+the thread may open the file and nobody else, asked once in
+`lib/services/feedback-access.ts`. That file exists to keep attachments from
+importing the feedback service while the feedback service imports attachments.
+
+**Who may see and answer a thread is defined once.** `canSeeFeedback` and
+`canTriageFeedback` live in `feedback-access.ts` and are read by the action,
+the console's read-only banner and the attachment endpoint. Three copies of a
+permission rule is how one of them ends up more generous than the others.
 
 **Its vocabulary is client-safe, and separate from the service.**
 `lib/feedback-labels.ts` holds the kinds, the statuses and their sentences,
@@ -862,10 +905,11 @@ bookmarks, in emails and in screenshots long after it has changed in the code.
 `npm run test` runs the engine tests: pure, fast, no database. They pin the
 business rules themselves.
 
-`npm run test:integration` runs the six §11 journeys against `mahekone_test`
-using the real services. Create it with `npm run test:db` first, and again
-after any schema change. The runner refuses to start against a database not
-named `mahekone_test`, and truncates between tests.
+`npm run test:integration` runs the six §11 journeys, the Accounts app and the
+feedback threads against `mahekone_test` using the real services. Create it
+with `npm run test:db` first, and again after any schema change. The runner
+refuses to start against a database not named `mahekone_test`, and truncates
+between tests.
 
 Integration tests sign in through `setTestUser()`, a seam in `lib/auth.ts`
 that only exists under `NODE_ENV=test`. Everything downstream — scope,

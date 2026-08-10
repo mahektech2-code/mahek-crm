@@ -27,6 +27,7 @@ try {
       "--test-concurrency=1",
       "src/lib/journeys.test.ts",
       "src/lib/accounts.test.ts",
+      "src/lib/feedback.test.ts",
     ],
     { stdio: "inherit", env: { ...process.env, NODE_ENV: "test", DATABASE_URL: testUrl } },
   );
