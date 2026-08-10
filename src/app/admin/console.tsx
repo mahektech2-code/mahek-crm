@@ -46,6 +46,7 @@ import type { CatalogueData } from "./catalogue-data";
 import { SHEET_SUBTITLE, SHEET_TABS, type SheetData } from "./sheet-data";
 import { SheetSection } from "./sheet-section";
 import { VoiceSection, VOICE_SUBTITLE, type VoiceData } from "./voice-section";
+import { ComponentsScreen } from "./components-section";
 import type { Person } from "@/lib/services/admin-people-service";
 import { PeopleSection } from "./people-section";
 import { FeedbackSection, type FeedbackData } from "./feedback-section";
@@ -70,6 +71,7 @@ const PLATFORM_NAV = [
   { key: "notifications", label: "Notifications" },
   { key: "feedback", label: "Feedback" },
   { key: "voice", label: "Voice" },
+  { key: "components", label: "Components" },
   { key: "audit", label: "Audit" },
 ] as const;
 
@@ -790,6 +792,17 @@ function SectionBody({
         <VoiceSection data={voice} />
       </div>
     );
+  }
+
+  /*
+   * The design system, rendered. It lived at /crm/components, which put a
+   * build-facing handoff artifact one click from a telecaller's Help centre —
+   * every component in every state, useful to whoever writes the screens and
+   * to nobody who works the queue. It is a platform section now, so it is
+   * reachable only by somebody holding the Admin app.
+   */
+  if (section === "components") {
+    return <ComponentsScreen />;
   }
 
   if (comingSoon) {

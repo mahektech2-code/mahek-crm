@@ -389,7 +389,7 @@ function PaymentForm({
                   onImport={(text, replace) =>
                     setNote(replace ? text : joinDictation(note, text))
                   }
-                  className="absolute right-1 bottom-2"
+                  className="absolute right-2 bottom-3"
                 />
               </span>
             </div>

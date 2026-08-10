@@ -169,7 +169,7 @@ function ConfirmDialogBody({
                 setReason(replace ? text : joinDictation(reason, text));
                 setError(null);
               }}
-              className="absolute right-1 bottom-2"
+              className="absolute right-2 bottom-3"
             />
           </span>
           {error ? (

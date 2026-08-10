@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import {
   Badge,
@@ -14,7 +13,6 @@ import {
   Input,
   MetricStrip,
   MoneyInput,
-  PageHeader,
   Progress,
   Radio,
   SectionLabel,
@@ -96,19 +94,9 @@ export function ComponentsScreen() {
   const [toggle, setToggle] = React.useState(true);
 
   return (
-    <div className="max-w-[1440px] px-6 pt-6 pb-10">
-      <PageHeader
-        title="Components"
-        subtitle="Every component in every state. This page is the handoff artifact."
-        actions={
-          <Link
-            href="/crm/help"
-            className="inline-flex h-9 items-center rounded-[4px] border border-line-strong bg-surface px-4 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            Back to Help center
-          </Link>
-        }
-      />
+    /* No PageHeader: the console draws the title, the subtitle and the tab
+     * row above this, and a second heading inside the body would repeat it. */
+    <div className="mt-5 max-w-[1440px]">
 
       {/* ------------------------------------------------------------ colour */}
       <Group title="Colour">
@@ -305,7 +293,7 @@ export function ComponentsScreen() {
           </Spec>
           <Spec
             label="Textarea with dictation"
-            note="The microphone is absent unless dictation is switched on and the deployment has a gateway credential — a mic that fails when pressed is worse than none."
+            note="Tinted rather than grey, and clear of the resize grip it used to sit on. A muted glyph beside a muted grip reads as furniture, and nobody presses furniture. The words appear on hover with no delay, and are read out for screen readers. Absent entirely unless dictation is switched on and a provider has a key: a mic that fails when pressed is worse than none."
           >
             <VoiceTextareaDemo />
           </Spec>

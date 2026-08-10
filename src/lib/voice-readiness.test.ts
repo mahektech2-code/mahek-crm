@@ -101,17 +101,52 @@ describe("what dictation is able to do", () => {
     assert.equal(r.maxSeconds, 120);
   });
 
-  test("OpenAI only, Sarvam chosen, fallback OFF: nothing can hear", () => {
-    // The key exists but nothing is allowed to reach it.
+  test("OpenAI only, Sarvam chosen, fallback OFF: OpenAI still serves", () => {
+    // OpenAI is the floor. The fallback switch exists to honour a DELIBERATE
+    // Sarvam-only deployment — a Sarvam key, kept inside India, paying the
+    // 30-second ceiling for it. With no Sarvam key there is no such
+    // deployment, and the switch was refusing OpenAI on behalf of a provider
+    // nothing was going to ask: a configured account sitting unused behind a
+    // microphone nobody was shown.
     const r = resolveReadiness({
       ...BASE,
       hasSarvamKey: false,
       fallbackToOpenai: false,
     });
-    assert.equal(r.canHear, false);
-    // Tighten and Rewrite are a separate question and still work: they are a
-    // text call that never goes near the transcription route.
+    assert.equal(r.canHear, true);
     assert.equal(r.canRefine, true);
+    // And at its own limit, not Sarvam's — Sarvam is not in this deployment.
+    assert.equal(r.maxSeconds, 120);
+  });
+
+  test("Sarvam-only stays possible: a key, the fallback off, the ceiling kept", () => {
+    // The case the switch is actually for. Turning it off with a Sarvam key
+    // present must still mean what it always meant, or the fix above would
+    // have quietly removed somebody's data-residency choice.
+    const r = resolveReadiness({
+      ...BASE,
+      hasOpenaiKey: false,
+      fallbackToOpenai: false,
+    });
+    assert.equal(r.canHear, true);
+    assert.equal(r.maxSeconds, SARVAM_MAX_SECONDS);
+  });
+
+  test("no Sarvam key: OpenAI carries the whole feature, however it is configured", () => {
+    // The plain statement of the rule: Sarvam is optional, OpenAI is not.
+    for (const fallbackToOpenai of [true, false]) {
+      for (const provider of ["sarvam", "openai"] as const) {
+        const r = resolveReadiness({
+          ...BASE,
+          provider,
+          fallbackToOpenai,
+          hasSarvamKey: false,
+        });
+        assert.equal(r.canHear, true, `provider=${provider} fallback=${fallbackToOpenai}`);
+        assert.equal(r.canRefine, true);
+        assert.equal(r.maxSeconds, 120);
+      }
+    }
   });
 
   test("no keys at all: nothing", () => {
