@@ -126,7 +126,6 @@ src/
                            the record carries the full message history
       complaints/  targets/  eod/  whatsapp/
       help/  settings/     SOPs and the manager configuration screen
-      components/          the live design system
     hrms/employees/        HRMS — the employee master, one module
     api/search/            global search endpoint
     api/payments/          search and open bills, for the accounts capture form
@@ -134,6 +133,8 @@ src/
     api/hrms/sync/         employee sync, on demand — no schedule, see below
     api/dictate/           whether to draw a microphone, and the two calls
                            behind it: transcribe/ and refine/
+    admin/components/      the live design system, a console section rather
+                           than a CRM screen (components-section.tsx)
     admin/feedback/        the console section where the team's reports are
                            read and answered (feedback-section.tsx)
     feedback/              the other end of it — where the person who reported
@@ -507,6 +508,22 @@ drifted into two answers. Its accept list is `ACCEPTED_IMAGE_TYPES` and never a
 literal: both screens offered WebP for months while `sniffContentType` refused
 it, so the picker took a file the save would not.
 
+**The microphone is tinted, small, and inside the box.** It shipped as a
+muted grey glyph in the bottom corner, the same weight as the resize grip and
+overlapping it — and the two read as one piece of furniture. Nobody presses
+furniture, least of all the telecaller who is not confident with computers and
+is exactly who it was built for. What fixed it was not size: it is that the
+control is coloured, so it registers as something offered rather than
+something structural, and that it is nudged clear of the grip it used to sit
+on. Its words — "speak instead of typing, say it in any language" — ride on
+`title` for hover and for screen readers, not in the layout, because twenty
+prose fields each carrying a sentence of guidance is clutter, not help.
+
+**No screen names a language.** Not the button, not the modal. A list of four
+reads as the set of allowed answers, and somebody whose language is missing
+from it stops before they start — which is the exact fear the sentence exists
+to remove. "Any language" says more by naming none.
+
 **Dictation shows what it heard before it writes anything.** A telecaller
 thinks in Hindi, Marathi or Gujarati and types in English slowly with the
 customer waiting, so the note that gets written is the short version of what
@@ -549,6 +566,20 @@ recording is never lost to a provider's ceiling, and `checkConsistency`
 refuses a recording limit above 30 seconds only when the fallback is off —
 otherwise the limit and the ceiling are allowed to differ, because the routing
 is what reconciles them.
+
+**OpenAI is the floor; Sarvam is an improvement on it.** A deployment with
+only an OpenAI key runs the whole feature — hearing, writing, tightening — at
+the full recording limit, whatever the provider and fallback settings say.
+Sarvam is what makes the short recordings better, not what makes dictation
+work. The fallback switch exists to honour the opposite deployment, one that
+HAS a Sarvam key and wants audio kept inside India at the cost of the
+30-second ceiling; with no Sarvam key there is no such deployment to honour,
+and the switch used to refuse OpenAI on behalf of a provider nothing was going
+to ask — a configured account sitting unused behind a microphone nobody was
+shown. Both `resolveReadiness` and the guard in `transcribeSpeech` now require
+a Sarvam key to be present before the switch means anything, and the tests
+sweep every provider/fallback combination against a missing Sarvam key to say
+so.
 
 **The duration comes from the browser, and being wrong about it is cheap.**
 The recorder already counted the seconds for the timer on screen, so the
@@ -937,6 +968,14 @@ screen asking when somebody last signed in answered "never" — which made the
 console's list of never-used accounts accuse the entire company. Attendance is
 the fallback for accounts that signed in before the column was filled: a day
 recorded is a sign-in, whatever the column says.
+
+**The design system is a console section, not a CRM screen.** It sat at
+`/crm/components` with a link from the telecaller Help centre, which put a
+build-facing handoff artifact one click from somebody working a calling queue.
+Every component in every state is exactly what whoever writes the screens
+needs, and exactly nothing to whoever uses them. It is `admin/components` now,
+under the platform nav, where the rest of the build-facing material already
+lives.
 
 **Feedback is a conversation, not a note.** The Tell us button sits in the
 header of every app, and what it writes lands in `feedback` — kind, heading,

@@ -133,6 +133,7 @@ export const PLATFORM_TABS: Record<string, PlatformTab[]> = {
   ],
   notifications: [{ slug: "sent", label: "What was sent" }],
   voice: [{ slug: "credentials", label: "Credentials" }],
+  components: [{ slug: "library", label: "Library" }],
   feedback: [
     { slug: "new", label: "New" },
     // The one tab that is about an obligation rather than a state: somebody
@@ -161,6 +162,8 @@ export const PLATFORM_SUBTITLES: Record<string, string> = {
   notifications: "What the platform has sent, to whom, and whether they have read it.",
   voice:
     "The credentials dictation calls outside services with. Set here so a deploy nobody has shell access to can still turn the microphone on.",
+  components:
+    "Every component in every state, so a change to a token or a primitive can be checked in one place rather than hunted for across fifteen screens. A handoff artifact for whoever builds the screens.",
   feedback:
     "What the team has reported, asked for or suggested from inside the apps. Answering one tells the person who wrote it.",
 };

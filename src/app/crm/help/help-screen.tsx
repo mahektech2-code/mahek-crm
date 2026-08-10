@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { Card, Input, PageHeader, Select, cx } from "@/components/ui/primitives";
 import { longDate } from "@/lib/format";
 
@@ -57,13 +56,10 @@ export function HelpScreen({
         title="Help center"
         subtitle="SOPs and call scripts, filtered to your role."
         actions={
-          <>
-          <Link
-            href="/crm/components"
-            className="inline-flex h-9 items-center rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            Component library
-          </Link>
+          /* The component library used to sit beside this. It is a handoff
+             artifact for whoever builds the screens, not something a
+             telecaller has any use for, and it now lives in the Admin
+             Console where the rest of the build-facing material is. */
           <a
             href="https://wa.me/919820011000"
             target="_blank"
@@ -72,7 +68,6 @@ export function HelpScreen({
           >
             Report a problem on WhatsApp
           </a>
-          </>
         }
       />
 
