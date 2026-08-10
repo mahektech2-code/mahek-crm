@@ -225,6 +225,13 @@
       "when": 1786342374105,
       "tag": "0032_feedback_threads",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786364161431,
+      "tag": "0033_voice_credentials",
+      "breakpoints": true
     }
   ]
 }

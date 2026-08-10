@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { Button, Input, Select, Textarea, cx } from "@/components/ui/primitives";
+import { Button, Input, Select, cx } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import type { EntityKind, EntityRow } from "./data";
 import { RichTextEditor } from "./rich-text";
 import { saveTemplate } from "@/lib/actions/crm";
@@ -374,9 +375,10 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
                   onChange={(next) => setDraft((d) => ({ ...d, [f.key]: next }))}
                 />
               ) : f.area ? (
-                <Textarea
+                <VoiceTextarea
                   value={f.value}
                   onChange={set(f.key)}
+                  onDictate={(v) => setDraft((d) => ({ ...d, [f.key]: v }))}
                   placeholder={f.placeholder}
                   invalid={!!f.error}
                   className="h-[180px] font-mono text-[13px]"

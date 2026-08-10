@@ -16,7 +16,6 @@ import {
   SlowPayerBadge,
   Td,
   Th,
-  Textarea,
   Tr,
 } from "@/components/ui/primitives";
 import {
@@ -26,6 +25,7 @@ import {
   SelectionBar,
 } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import { Icon } from "@/components/shell/icons";
 import {
   createCustomer,
@@ -1021,9 +1021,10 @@ function BulkReminderModal({
           label="What is the reminder for · required"
           hint="Every selected customer gets this same note - write it so it still makes sense in a week."
         >
-          <Textarea
+          <VoiceTextarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
+            onDictate={setNote}
             className="h-20"
             placeholder="Follow up on the month-end order"
           />

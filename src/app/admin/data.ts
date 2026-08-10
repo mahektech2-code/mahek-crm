@@ -132,6 +132,7 @@ export const PLATFORM_TABS: Record<string, PlatformTab[]> = {
     { slug: "migration", label: "Schema migrations" },
   ],
   notifications: [{ slug: "sent", label: "What was sent" }],
+  voice: [{ slug: "credentials", label: "Credentials" }],
   feedback: [
     { slug: "new", label: "New" },
     // The one tab that is about an obligation rather than a state: somebody
@@ -158,6 +159,8 @@ export const PLATFORM_SUBTITLES: Record<string, string> = {
   audit: "Everything MahekOne has recorded happening. Read-only, and never editable.",
   data: "What has been imported from the sheets, and whether this database's schema is up to date.",
   notifications: "What the platform has sent, to whom, and whether they have read it.",
+  voice:
+    "The credentials dictation calls outside services with. Set here so a deploy nobody has shell access to can still turn the microphone on.",
   feedback:
     "What the team has reported, asked for or suggested from inside the apps. Answering one tells the person who wrote it.",
 };

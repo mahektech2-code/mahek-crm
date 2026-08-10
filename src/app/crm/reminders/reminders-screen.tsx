@@ -13,10 +13,10 @@ import {
   MetricStrip,
   PageHeader,
   Select,
-  Textarea,
   cx,
 } from "@/components/ui/primitives";
 import { Modal, RowMenu, Tabs } from "@/components/ui/overlays";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import {
   cancelReminder,
@@ -386,10 +386,14 @@ function DismissModal({
         label="Why is this no longer needed?"
         error={error ? "Give a reason - this stays on the customer record." : null}
       >
-        <Textarea
+        <VoiceTextarea
           value={reason}
           onChange={(e) => {
             setReason(e.target.value);
+            setError(false);
+          }}
+          onDictate={(v) => {
+            setReason(v);
             setError(false);
           }}
           className="h-16"
@@ -465,9 +469,10 @@ function NewReminderModal({
           label="What was promised · required"
           hint="This note is what you will see in the reminders list - write it for your future self."
         >
-          <Textarea
+          <VoiceTextarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
+            onDictate={setNote}
             className="h-20"
             placeholder="Call back with the revised drum rate"
           />
@@ -531,9 +536,10 @@ function RescheduleModalBody({ reminder, onClose, onSubmit }: RescheduleProps) {
           />
         </Field>
         <Field label="Note" hint="Update it if the promise itself has changed.">
-          <Textarea
+          <VoiceTextarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
+            onDictate={setNote}
             className="h-20"
           />
         </Field>

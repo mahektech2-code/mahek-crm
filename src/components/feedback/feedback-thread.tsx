@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Button, Textarea, cx } from "@/components/ui/primitives";
+import { Button, cx } from "@/components/ui/primitives";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import { AttachmentStrip } from "@/components/ui/attachment-strip";
 import { ImagePicker } from "@/components/crm/image-picker";
 import { stamp } from "@/lib/format";
@@ -104,7 +105,11 @@ export function FeedbackThread({
 
       {canReply ? (
         <div className="mt-4 border-t border-divider pt-4">
-          <Textarea
+          {/* Both ends of the thread get the microphone. A telecaller
+              describing a fault in Hindi types the short version of it in
+              English, which is exactly the loss dictation exists to close —
+              and a report nobody can act on is the one that gets shrugged at. */}
+          <VoiceTextarea
             rows={3}
             value={body}
             maxLength={2000}
@@ -115,6 +120,7 @@ export function FeedbackThread({
                 : `What you are doing about it, or why not. ${report.byName.split(" ")[0]} sees this.`
             }
             onChange={(e) => setBody(e.target.value)}
+            onDictate={setBody}
           />
 
           {maxImages > 0 ? (

@@ -339,6 +339,37 @@ export const appSettings = pgTable("app_settings", {
   updatedById: text("updated_by_id"),
 });
 
+/**
+ * Credentials for outside services, set from the Admin Console.
+ *
+ * A DELIBERATELY separate table from `app_settings`, because everything that
+ * makes that table good makes it wrong for a secret: settings are rendered on
+ * a screen, exported and imported as JSON, and written to `audit_log` with
+ * their before and after values. A key stored there would be readable in four
+ * places at once, and one of them is a log nobody prunes.
+ *
+ * `value` is the secret and NOTHING selects it except the code that is about
+ * to make the call. Screens read `last4` and `updatedAt` — enough to tell one
+ * key from another and to know when it changed, useless to whoever is looking
+ * over somebody's shoulder.
+ *
+ * It is stored as written rather than encrypted, and the screen says so. There
+ * is nowhere to keep an encryption key that the app can read and a database
+ * backup cannot — a key in the environment would put us back to needing shell
+ * access, which is the problem this table exists to solve. What it buys is a
+ * credential a manager can rotate from a screen; what it costs is that a
+ * database dump carries it. Treat a dump accordingly.
+ */
+export const appSecrets = pgTable("app_secrets", {
+  /** `openai.apiKey`, `anthropic.apiKey`, `gateway.apiKey`. */
+  name: text("name").primaryKey(),
+  value: text("value").notNull(),
+  /** The tail of the key, for telling one from another on a screen. */
+  last4: text("last4").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id"),
+});
+
 /* ------------------------------------------------------------------ §3.2 user */
 
 export const users = pgTable(

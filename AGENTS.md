@@ -132,13 +132,18 @@ src/
     api/payments/          search and open bills, for the accounts capture form
     api/sheets/sync/       order, payment + taken-order sync, on demand, ?mode=
     api/hrms/sync/         employee sync, on demand — no schedule, see below
+    api/dictate/           whether to draw a microphone, and the two calls
+                           behind it: transcribe/ and refine/
     admin/feedback/        the console section where the team's reports are
                            read and answered (feedback-section.tsx)
     feedback/              the other end of it — where the person who reported
                            something reads the reply and answers back
   components/
     feedback/              the thread, rendered the same for both sides
-    ui/                    primitives + overlays + toasts + attachment-strip
+    ui/                    primitives + modal + overlays + toasts +
+                           attachment-strip
+                           dictate.tsx — the microphone, its modal, and
+                           VoiceTextarea, the box that carries one
     shell/                 header, sidebar, icons, search, wordmark,
                            app chip, app placeholder, brand panel,
                            feedback-button.tsx — the Tell us dialog, in the
@@ -171,6 +176,8 @@ src/
                            who may read and answer a thread — its own file so
                            attachments can ask without importing the service
     mailer.ts              the one place mail leaves MahekOne
+    dictation.ts           the one place speech becomes text — transcribe,
+                           render into English, tighten, rewrite
     jobs.ts                scheduled work, idempotent and hand-triggerable
     result.ts              the Result type every action returns
     queries.ts             every scope-aware read
@@ -499,6 +506,103 @@ because the complaints dialog and the call drawer ask the same question and had
 drifted into two answers. Its accept list is `ACCEPTED_IMAGE_TYPES` and never a
 literal: both screens offered WebP for months while `sniffContentType` refused
 it, so the picker took a file the save would not.
+
+**Dictation shows what it heard before it writes anything.** A telecaller
+thinks in Hindi, Marathi or Gujarati and types in English slowly with the
+customer waiting, so the note that gets written is the short version of what
+was actually said — a loss nobody can see later, because "will pay" reads
+exactly like a sentence that never named a date or an amount. The microphone
+on every prose box is there to close that gap, and it opens a modal rather
+than writing into the box: the person reads the English, edits it, and decides
+to import it. Nothing arrives in a field unseen.
+
+**The English it shows first is faithful, not a summary.** Transcription and
+translation are two passes and the second is instructed to drop nothing —
+numbers, bill numbers, product names and commitments all survive. Tightening
+is a THIRD pass somebody asks for by pressing a button, having read the long
+version, and Undo puts it back. A summariser on the way in would quietly lose
+the bill number, and the note it produced would look exactly like an honest
+one. The original-language transcript is a click away, because the only way to
+know a translation went wrong is to read the sentence it came from.
+
+**The audio is never stored.** It is read from the request, sent to the model
+and dropped: no `attachments` row, no blob key, no retention window and no id
+to fetch it back by. A recording of a customer conversation is a different
+thing to hold than a photograph of a damaged can, and nothing here has asked
+to hold it. That is also why dictation is a route handler rather than a server
+action — two minutes of Opus is past the 1MB action body limit, and raising
+that ceiling for every action in the app to carry one feature's audio is the
+wrong trade.
+
+**A microphone that fails when pressed is worse than one never offered.** It
+draws nothing at all when `voice.enabled` is off, when there is no key, or
+when the browser cannot record — and the setting is checked in the route as
+well as in the interface, because a hidden box is not a disabled feature.
+
+**Sarvam is asked first, and OpenAI catches what it cannot take.** `saaras`
+is built for Indian languages and code-mixed speech — Hindi with English words
+dropped in mid-sentence is what it is FOR rather than something it copes with,
+which is how a telecaller actually talks. Its synchronous endpoint refuses
+audio over 30 seconds, and rather than cap every recording at half a minute,
+anything longer goes to OpenAI instead, as does anything Sarvam fails on. The
+recording is never lost to a provider's ceiling, and `checkConsistency`
+refuses a recording limit above 30 seconds only when the fallback is off —
+otherwise the limit and the ceiling are allowed to differ, because the routing
+is what reconciles them.
+
+**The duration comes from the browser, and being wrong about it is cheap.**
+The recorder already counted the seconds for the timer on screen, so the
+client sends them and the server routes on that. Decoding the audio
+server-side would ship a decoder to answer a question the recorder had already
+answered; a tampered value costs one refused Sarvam call and a fallback, which
+is what would have happened anyway. A missing value reads as long, which is
+the safe direction.
+
+**Sarvam is asked twice, in parallel, on the same audio.** `transcribe` gives
+what was said in the language it was said in; `translate` gives the English.
+Both are needed because the "show what was heard" panel is the only way anyone
+catches a translation that went wrong, and they run together so the person
+waits for the slower rather than the sum. Where OpenAI serves instead, the
+English is a second, text-only pass over the transcript — same two answers,
+different shape.
+
+**Claude could not have been the ear.** Its inputs are text, images and
+documents, with no audio modality at all, so an Anthropic key buys the writing
+half and none of the hearing half. Transcription is the half that decides
+whether a microphone can do anything, which is why it is not offered there.
+
+**Tighten and Rewrite are left out rather than shown broken.** They are a text
+call and need OpenAI even where Sarvam did the hearing, so `/api/dictate`
+answers `canRefine` and the modal omits the buttons when it is false.
+Dictation itself still works — the same rule as the microphone one level up.
+
+**The keys are set from a screen, because a terminal is not a fallback.** On a
+deploy nobody has shell access to, an environment variable is a door somebody
+else has to open, and the feature stays off until they do with nothing saying
+why — the same lesson the sheet import already learned. `app_secrets` is
+DELIBERATELY not `app_settings`: settings are rendered on screens, exported as
+JSON, and audited with their before and after values, so a key kept there
+would be readable in four places and one of them is a log nobody prunes.
+`readSecret` is the only function that selects the value and it is called by
+the request about to spend it; screens call `secretStatuses`, which selects
+the last four characters and nothing else. The audit row records who changed
+which credential and when, never what to. The console wins over the
+environment where both are set, and the environment still works alone, so a
+deploy that already has variables needs no migration.
+
+**A key is stored as written, and the screen says so.** There is nowhere to
+keep an encryption key that MahekOne can read and a database backup cannot —
+one in the environment puts us back to needing shell access, which is the
+problem the table exists to solve. Pretending otherwise on the screen would be
+worse than the storage itself, so the screen states the trade and says to
+rotate at the provider if a dump ever leaves your hands.
+
+**Dictated text is added, never substituted, unless somebody says otherwise.**
+Where the box already has words, Add and Replace are two buttons and Add is
+the default one. `VoiceTextarea` decides the joining and the `maxLength`
+ceiling in one place rather than at twenty call sites that would each get one
+of them slightly wrong — `maxLength` stops typing but not a programmatic set,
+so the box would otherwise accept more than the field will save.
 
 **An order taken on a call is the customer saying yes, not the business.**
 Accounts check who they are and what they already owe before it is accepted,

@@ -10,10 +10,10 @@ import {
   MoneyInput,
   Select,
   SlowPayerBadge,
-  Textarea,
   cx,
 } from "@/components/ui/primitives";
 import { useEscape } from "@/components/ui/overlays";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import {
   logPaymentFollowUpAction,
@@ -976,11 +976,12 @@ function LogTab(props: {
               label="Notes"
               hint="Quick notes add to this - you can still edit or type your own."
             >
-              <Textarea
+              <VoiceTextarea
                 rows={4}
                 placeholder="Who you spoke to and exactly what they said"
                 value={props.notes}
                 onChange={(e) => props.setTyped(e.target.value)}
+                onDictate={props.setTyped}
               />
             </Field>
 

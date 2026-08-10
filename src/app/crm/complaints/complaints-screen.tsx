@@ -17,12 +17,12 @@ import {
   SectionLabel,
   Select,
   Td,
-  Textarea,
   Th,
   Tr,
   cx,
 } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader, Modal, Tabs } from "@/components/ui/overlays";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { logComplaint, reassignComplaint, resolveComplaint } from "@/lib/actions/crm";
 import { ageLabel, money, shortDate, stamp } from "@/lib/format";
@@ -449,10 +449,14 @@ export function ComplaintsScreen({
                         : null
                     }
                   >
-                    <Textarea
+                    <VoiceTextarea
                       value={notes}
                       onChange={(e) => {
                         setNotes(e.target.value);
+                        setNotesError(false);
+                      }}
+                      onDictate={(v) => {
+                        setNotes(v);
                         setNotesError(false);
                       }}
                       invalid={notesError}
@@ -804,10 +808,14 @@ function LogComplaintModalBody({
           label="Complaint description"
           error={errors.description ?? null}
         >
-          <Textarea
+          <VoiceTextarea
             value={description}
             onChange={(e) => {
               setDescription(e.target.value);
+              setErrors({});
+            }}
+            onDictate={(v) => {
+              setDescription(v);
               setErrors({});
             }}
             className="h-24"
