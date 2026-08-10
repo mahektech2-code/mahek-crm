@@ -83,9 +83,16 @@ Where you land depends on what you can open:
 just used to hide launcher tiles — a bookmarked `/accounts` must not open for
 somebody who was never given it.
 
-**Signing in opens an attendance record for the day; signing out closes it.** A
-second sign-in the same day reopens the same row, so a lunch break does not read
-as two shifts.
+**Signing in writes a sign-in log, and that is NOT attendance.** One row per
+person per day in `attendance` — a table whose name is a misnomer kept until
+the real thing takes it. A sign-in says somebody opened MahekOne, from home,
+on a phone, at 2am; `signedOutAt` fills in only for the few who press Sign out
+rather than closing the tab, so hours cannot be derived from a pair of these.
+Two screens used to say "attendance recorded for today" and "signing in opens
+your attendance", and both have been corrected — no screen may present this as
+a record of who was at work. **Attendance is a check-in system with its own
+screens, and it is not built yet.** A second sign-in the same day reopens the
+same row, so a lunch break does not read as two sessions.
 
 **A forgotten password is the person's own problem to solve.** `/login/forgot`
 mails a link to the work email on the account; `/login/reset` spends it. Only

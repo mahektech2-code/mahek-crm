@@ -9,9 +9,10 @@ import { SignOutButton } from "./sign-out-button";
 
 /**
  * The shell every MahekOne app sits in, standing in for the ones not built yet.
- * Sign-in, access control, attendance and the app switcher all work already —
- * only the app's own screens are missing, and the page says exactly that rather
- * than pretending to be broken.
+ * Sign-in, access control and the app switcher all work already — only the
+ * app's own screens are missing, and the page says exactly that rather than
+ * pretending to be broken. It does NOT claim attendance among them: a sign-in
+ * log is not attendance, and the check-in system is not built either.
  */
 export async function AppPlaceholder({ app: appId }: { app: AppId }) {
   const user = await requireUser();
@@ -45,8 +46,8 @@ export async function AppPlaceholder({ app: appId }: { app: AppId }) {
           </div>
           <p className="mt-2 text-[15px] leading-[22px] text-muted">
             Not built yet - this is where {app.name} will open. The sign-in,
-            app access, attendance and the switcher already work, and it shares
-            the same database as the CRM.
+            app access and the switcher already work, and it shares the same
+            database as the CRM.
           </p>
           <div className="mt-5 flex justify-center gap-2.5">
             {multi ? (

@@ -377,7 +377,9 @@ export async function usageStats(): Promise<{
 
   return {
     facts: [
-      { label: "Signed in today", value: String(signedInToday), sub: "Attendance opened for the day" },
+      // Not "attendance opened": this counts accounts that opened MahekOne
+      // today, which is a usage figure and never a record of who was at work.
+      { label: "Signed in today", value: String(signedInToday), sub: "Accounts that opened an app" },
       { label: "Calls logged today", value: String(callsToday), sub: "Across every telecaller" },
       { label: "Calls this week", value: String(callsWeek), sub: "Rolling seven days" },
     ],
