@@ -14,6 +14,8 @@
     "demo:clear:url": "tsx --conditions=react-server scripts/clear-demo-data.ts",
     "jobs": "tsx --conditions=react-server --env-file=.env.local scripts/run-job.ts",
     "app:grant": "tsx --conditions=react-server --env-file=.env.local scripts/grant-app.ts",
+    "users:accounts": "tsx --conditions=react-server --env-file=.env.local scripts/create-accounts-users.ts",
+    "users:accounts:url": "tsx --conditions=react-server scripts/create-accounts-users.ts",
     "hrms:sync": "tsx --conditions=react-server --env-file=.env.local scripts/run-job.ts hrms-sync",
     "catalogue:import": "tsx --conditions=react-server --env-file=.env.local scripts/import-catalogue.ts",
     "catalogue:deploy": "tsx --conditions=react-server --env-file-if-exists=.env.local scripts/import-catalogue.ts",
