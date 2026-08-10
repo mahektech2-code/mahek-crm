@@ -87,9 +87,12 @@ export default async function LauncherPage() {
               {apps.length === 1
                 ? "One app on your account."
                 : `You have access to ${apps.length} apps.`}
-              {attendance
-                ? ` Signed in at ${clock(attendance.signedInAt)} - attendance recorded for today.`
-                : ""}
+              {/* When they signed in, and nothing more. This said "attendance
+                  recorded for today", which it is not: a sign-in says somebody
+                  opened MahekOne, not that they were at work — and a person who
+                  never presses Sign out has a day that never closes. Attendance
+                  is a check-in system, and it is not built yet. */}
+              {attendance ? ` Signed in at ${clock(attendance.signedInAt)}.` : ""}
             </p>
           </div>
 

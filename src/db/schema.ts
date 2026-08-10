@@ -383,6 +383,20 @@ export const appAccess = pgTable(
   ],
 );
 
+/**
+ * One row per person per day they opened MahekOne.
+ *
+ * The name is a misnomer kept for now, and the misnomer had consequences: two
+ * screens told people their attendance was recorded, which it is not. A
+ * sign-in says somebody opened the app — from home, on a phone, at 2am — and
+ * `signedOutAt` only fills in for the few who press Sign out rather than
+ * closing the tab, so no hours can be derived from a pair of these.
+ *
+ * Attendance is a check-in system with its own screens and its own rules, and
+ * it is not built yet. When it is, it takes this name and this table becomes
+ * what it always was: a sign-in log. Until then, nothing may present it as a
+ * record of who was at work.
+ */
 export const attendance = pgTable(
   "attendance",
   {

@@ -63,8 +63,8 @@ export default async function LoginPage({
           <BrandUnderline>one sign-in</BrandUnderline>.
         </BrandPanelHeading>
         <p className="animate-rise mt-3.5 text-[15px] leading-6 text-balance text-white/70 [animation-delay:80ms]">
-          Calling, collections, orders, dispatch, targets and attendance were
-          separate books and separate WhatsApp threads. MahekOne puts them in one
+          Calling, collections, orders, dispatch and targets were separate
+          books and separate WhatsApp threads. MahekOne puts them in one
           place so a customer&rsquo;s history follows them wherever the work
           happens.
         </p>
@@ -104,8 +104,8 @@ export default async function LoginPage({
             Welcome back
           </h1>
           <p className="mt-1 text-[15px] leading-[23px] text-muted">
-            Sign in to pick up where you left off. Signing in opens your
-            attendance for the day.
+            Sign in to pick up where you left off. One sign-in opens every app
+            on your account.
           </p>
 
           {justReset ? (

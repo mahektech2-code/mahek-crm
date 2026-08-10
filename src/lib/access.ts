@@ -175,12 +175,23 @@ export function lockedApps(ids: AppId[]): AppDefinition[] {
   return APPS.filter((a) => !ids.includes(a.id));
 }
 
-/* ------------------------------------------------------------- attendance */
+/* ------------------------------------------------------- the sign-in log */
 
 /**
- * Signing in opens the day. A second sign-in on the same day reopens the same
- * row rather than starting a new one, so a lunch break does not read as two
- * shifts.
+ * When somebody opened MahekOne, and when they last closed it. Despite the
+ * table's name this is NOT attendance, and no screen may present it as such.
+ *
+ * A sign-in says a person opened the app, not that they were at work — from
+ * home, on a phone, at 2am, or not at all if they left a session open from
+ * yesterday. Sign-out is worse: most people close the tab, so `signedOutAt`
+ * stays null and the day never closes. Hours cannot be derived from either.
+ *
+ * Attendance is a check-in system with its own screens, and it is not built
+ * yet. This log is a useful signal for it — and for "has this account ever
+ * been used" in the console — but it is not the record.
+ *
+ * A second sign-in on the same day reopens the same row rather than starting
+ * a new one, so a lunch break does not read as two sessions.
  */
 export async function recordSignIn(userId: string, id: string) {
   await db
