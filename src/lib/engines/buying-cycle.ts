@@ -1,5 +1,4 @@
-import type { BusinessDate } from "../business-date";
-import { daysBetween } from "../business-date";
+import { calendarDaysBetween, type CalendarDate } from "../business-date";
 import type { Config } from "../config/registry";
 
 /* ---------------------------------------------------------------------------
@@ -35,7 +34,9 @@ export type BuyingCycleConfig = Pick<
  *   see still count — that is why the caller merges before calling.
  */
 export function buyingCycle(
-  orderDates: BusinessDate[],
+  /* CALENDAR dates: an order placed at 2am belongs to that date, and these
+   * are differenced against each other rather than against today. */
+  orderDates: CalendarDate[],
   config: BuyingCycleConfig,
 ): BuyingCycle {
   const fallback: BuyingCycle = {
@@ -51,7 +52,7 @@ export function buyingCycle(
 
   const intervals: number[] = [];
   for (let i = 1; i < recent.length; i++) {
-    const gap = daysBetween(recent[i - 1], recent[i]);
+    const gap = calendarDaysBetween(recent[i - 1], recent[i]);
     // Two orders on the same day are one purchase split across bills, not an
     // interval of zero; counting them would drag every cycle towards nothing.
     if (gap > 0) intervals.push(gap);

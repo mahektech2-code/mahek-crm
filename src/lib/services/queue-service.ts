@@ -19,7 +19,7 @@ import {
 } from "../engines/queue";
 import { today } from "../recompute";
 import {
-  calendarDate,
+  businessDate,
   dayBoundaryWindow,
   monthKey,
   previousWorkingDay,
@@ -206,9 +206,17 @@ async function queueInputs(ids: string[] | null, day: string) {
       lastContactDate: c.lastContactDate,
       // In the business's own zone, never UTC. `toISOString()` on a
       // timestamptz is the same bug as a bare `::date` in SQL wearing different
-      // clothes: a customer created at 2am IST would be dated to the previous
-      // day, and a prospect would come up for their first call a day early.
-      createdDate: calendarDate(c.createdAt),
+      // clothes.
+      //
+      // A BUSINESS date, because the queue differences it against today to
+      // decide when a prospect is due their first call. It was a calendar
+      // date, so for the five hours before the day boundary a customer added
+      // overnight was measured on one scale against a today on the other.
+      createdDate: businessDate(c.createdAt, {
+        timezone: config["workingDay.timezone"],
+        dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+        workingDays: config["workingDay.workingDays"],
+      }),
       reminders: remindersByCustomer.get(c.id) ?? [],
       lastConfirmedWhatsappDate: c.lastConfirmedWhatsappDate,
       activeInOrderSystem: c.activeInOrderSystem,

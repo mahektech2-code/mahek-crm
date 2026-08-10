@@ -320,7 +320,13 @@ export async function recomputeFollowUpState(customerId: string): Promise<void> 
     existing?.lastChannel && existing.lastFollowUpAt
       ? {
           channel: existing.lastChannel,
-          attemptedAt: calendarDate(existing.lastFollowUpAt),
+          /* Compared against `day` inside the engine, so it must be the same
+           * kind: an attempt made at 1am belongs to the previous shift. */
+          attemptedAt: businessDate(existing.lastFollowUpAt, {
+            timezone: config["workingDay.timezone"],
+            dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+            workingDays: config["workingDay.workingDays"],
+          }),
         }
       : null,
     day,
