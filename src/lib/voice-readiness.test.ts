@@ -1,7 +1,11 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveReadiness, SARVAM_MAX_SECONDS } from "./voice-readiness";
+import {
+  isPermanentRefusal,
+  resolveReadiness,
+  SARVAM_MAX_SECONDS,
+} from "./voice-readiness";
 
 /* ---------------------------------------------------------------------------
  * What dictation can do, given which keys exist.
@@ -107,5 +111,41 @@ describe("what dictation is able to do", () => {
     });
     assert.equal(r.canHear, false);
     assert.equal(r.canRefine, false);
+  });
+});
+
+describe("telling a refusal from a stumble", () => {
+  test("out of credit is permanent — this exact string came off the wire", () => {
+    // Verified against the live API while chasing "the transcription service
+    // did not answer": the account had no credits, and the old code invited a
+    // retry that could never have worked.
+    assert.equal(
+      isPermanentRefusal(
+        "Failed after 3 attempts. Last error: AI_APICallError: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.",
+      ),
+      true,
+    );
+  });
+
+  test("the machine-readable forms of the same thing", () => {
+    assert.equal(isPermanentRefusal("insufficient_quota"), true);
+    assert.equal(isPermanentRefusal("credit_balance_exhausted"), true);
+    assert.equal(isPermanentRefusal("You exceeded your current quota"), true);
+  });
+
+  test("a bad or revoked key is permanent", () => {
+    assert.equal(isPermanentRefusal("401 Incorrect API key provided"), true);
+    assert.equal(isPermanentRefusal("invalid_api_key"), true);
+    assert.equal(isPermanentRefusal("403 Unauthorized"), true);
+  });
+
+  test("a timeout, a 500 and rate limiting are NOT permanent", () => {
+    // Rate limiting is the one worth being careful about: it shares a status
+    // code with the quota error and is the one case where trying again is
+    // exactly right.
+    assert.equal(isPermanentRefusal("The operation was aborted due to timeout"), false);
+    assert.equal(isPermanentRefusal("500 Internal Server Error"), false);
+    assert.equal(isPermanentRefusal("429 Rate limit reached for requests"), false);
+    assert.equal(isPermanentRefusal("fetch failed"), false);
   });
 });

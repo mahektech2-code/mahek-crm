@@ -100,9 +100,21 @@ export async function POST(request: Request) {
               503,
               "That recording was too long for the service that hears them — it takes 30 seconds at a time. Say it again in shorter goes.",
             ]
-          : outcome.reason === "no_speech"
-            ? [200, "Nothing was heard in that recording. Try again, closer to the microphone."]
-            : [502, "The transcription service did not answer. Your recording is still here — try again."];
+          : outcome.reason === "provider_refused"
+            ? /*
+               * The service said no and will keep saying no. Asking a
+               * telecaller to try again is asking them to waste a second
+               * minute of a live call on something that cannot work, so this
+               * says the opposite: stop, type it, tell somebody. It is the one
+               * message here aimed past the person reading it.
+               */
+              [
+                503,
+                "Dictation is unavailable — the account behind it has stopped accepting requests, which nobody on this screen can fix. Type the note this time, and tell your manager so it gets sorted.",
+              ]
+            : outcome.reason === "no_speech"
+              ? [200, "Nothing was heard in that recording. Try again, closer to the microphone."]
+              : [502, "The transcription service did not answer. Your recording is still here — try again."];
     return NextResponse.json({ ok: false, reason: outcome.reason, error }, { status });
   }
 

@@ -4,6 +4,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { readSecret } from "@/lib/secrets";
 import { sarvamSpeechToText } from "@/lib/sarvam";
 import {
+  isPermanentRefusal,
   resolveReadiness,
   SARVAM_MAX_SECONDS,
   type TranscriptionProvider,
@@ -129,6 +130,12 @@ export type DictationOutcome =
    * of this one recording.
    */
   | { ok: false; reason: "too_long"; detail: string }
+  /**
+   * A provider answered and said no in a way that will not change on a retry:
+   * out of credit, key revoked, project unbudgeted. Separate from `failed`
+   * because "try again" is the wrong instruction and wastes a call.
+   */
+  | { ok: false; reason: "provider_refused"; detail: string }
   /** The recording carried no intelligible speech. */
   | { ok: false; reason: "no_speech" }
   /** A provider is configured and the call failed. */
@@ -234,7 +241,10 @@ export async function transcribeSpeech({
   openaiTranscriptionModel: string;
   languageModel: string;
 }): Promise<DictationOutcome> {
-  const sarvamKey = await readSecret("sarvam.apiKey");
+  const [sarvamKey, openaiKey] = await Promise.all([
+    readSecret("sarvam.apiKey"),
+    readSecret("openai.apiKey"),
+  ]);
 
   /*
    * Sarvam is tried only when it could actually succeed. Sending it audio it
@@ -279,7 +289,7 @@ export async function transcribeSpeech({
    * two things actually worth knowing: the recording was too long for the one
    * provider that has a key, or that provider refused it.
    */
-  if (sarvamKey) {
+  if (sarvamKey && !openaiKey) {
     return seconds > SARVAM_MAX_SECONDS
       ? {
           ok: false,
@@ -299,7 +309,38 @@ export async function transcribeSpeech({
         };
   }
 
-  return viaOpenai({ audio, openaiTranscriptionModel, languageModel });
+  const openaiOutcome = await viaOpenai({
+    audio,
+    openaiTranscriptionModel,
+    languageModel,
+  });
+
+  /*
+   * OpenAI refused for a reason no retry will change — an exhausted credit
+   * balance, a revoked key, a project with no budget. Where Sarvam has a key
+   * and this recording is inside its ceiling, ask IT instead, even though the
+   * configuration put OpenAI first. The fallback was written one-directional
+   * on the assumption that OpenAI is the reliable one; a billing page says
+   * otherwise, and the person on the phone does not care which way round it
+   * was meant to be.
+   */
+  if (
+    !openaiOutcome.ok &&
+    openaiOutcome.reason === "provider_refused" &&
+    sarvamKey &&
+    !trySarvam &&
+    seconds <= SARVAM_MAX_SECONDS
+  ) {
+    const rescued = await viaSarvam({
+      apiKey: sarvamKey,
+      audio,
+      mediaType,
+      model: sarvamModel,
+    });
+    if (rescued) return rescued;
+  }
+
+  return openaiOutcome;
 }
 
 /**
@@ -377,7 +418,9 @@ async function viaOpenai({
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     console.error("Dictation: transcription failed:", detail);
-    return { ok: false, reason: "failed", detail };
+    return isPermanentRefusal(detail)
+      ? { ok: false, reason: "provider_refused", detail }
+      : { ok: false, reason: "failed", detail };
   }
 
   /*
