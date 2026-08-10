@@ -2,7 +2,16 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Button, Callout, Card, CardHeader, Input, cx } from "@/components/ui/primitives";
+import {
+  Badge,
+  Button,
+  Callout,
+  Card,
+  CardHeader,
+  Dot,
+  Input,
+} from "@/components/ui/primitives";
+import { ConfirmDialog } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { stamp } from "@/lib/format";
 import { clearSecretAction, setSecretAction } from "@/lib/actions/secrets";
@@ -20,6 +29,13 @@ import { clearSecretAction, setSecretAction } from "@/lib/actions/secrets";
  * that has been saved can never be read back out — not by this screen, not by
  * the action behind it, not by anything except the request about to spend it.
  * Replacing one means pasting a new one.
+ *
+ * Which is exactly why a set key has to LOOK set. The only question this
+ * screen is ever asked is "is there a key", and the answer has to survive
+ * being read at a glance: a dot, a badge, and a row of bullets ending in the
+ * four characters that say WHICH key it is against the provider's dashboard.
+ * A row whose loudest element was an empty paste box answered "no" no matter
+ * what the small print beside it said.
  *
  * It also says plainly that a saved key is stored in the database as written.
  * A screen that quietly implied otherwise would be worse than the storage.
@@ -173,12 +189,7 @@ function Half({
         {title}
       </div>
       <div className="mt-1.5 flex items-center gap-2">
-        <span
-          className={cx(
-            "inline-block h-2 w-2 flex-none rounded-full",
-            ready ? "bg-success" : "bg-danger",
-          )}
-        />
+        <Dot tone={ready ? "success" : "danger"} />
         <span className="text-sm font-medium text-ink">{who}</span>
         <span className="truncate font-mono text-[13px] text-muted">{model}</span>
       </div>
@@ -195,6 +206,15 @@ function SecretRowForm({ row, canWrite }: { row: SecretRow; canWrite: boolean })
   const { run } = useToast();
   const [value, setValue] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const [confirming, setConfirming] = React.useState(false);
+
+  // A key that is already set does NOT show a paste box until asked for. An
+  // empty input is the loudest thing in a row, and it reads as "nothing here"
+  // however carefully the line above it says otherwise — which is exactly the
+  // wrong answer to the only question this screen is asked: is a key set.
+  const held = row.source !== "unset";
+  const [editing, setEditing] = React.useState(false);
+  const open = editing || !held;
 
   async function save() {
     setBusy(true);
@@ -202,6 +222,7 @@ function SecretRowForm({ row, canWrite }: { row: SecretRow; canWrite: boolean })
       const result = await run(setSecretAction(row.name, value));
       if (result.ok) {
         setValue("");
+        setEditing(false);
         router.refresh();
       }
     } finally {
@@ -221,65 +242,150 @@ function SecretRowForm({ row, canWrite }: { row: SecretRow; canWrite: boolean })
 
   return (
     <div className="px-4 py-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div className="text-sm font-medium text-ink">{meta?.label ?? row.name}</div>
-        <Status row={row} />
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+        <div className="flex items-center gap-2">
+          <Dot tone={held ? "success" : "danger"} />
+          <span className="text-sm font-medium text-ink">
+            {meta?.label ?? row.name}
+          </span>
+          <Badge tone={held ? "success" : "danger"}>
+            {row.source === "console"
+              ? "Set here"
+              : row.source === "environment"
+                ? "On the deployment"
+                : "Not set"}
+          </Badge>
+        </div>
+
+        {canWrite && held && !editing ? (
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
+              {/* Replacing a key kept here and overriding one the deployment
+                  sets are different acts, and the button says which. */}
+              {row.source === "console" ? "Replace" : "Set one here"}
+            </Button>
+            {row.source === "console" ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => setConfirming(true)}
+              >
+                Remove
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-      <p className="mt-1 text-[13px] text-pretty text-muted">{meta?.what}</p>
+
+      <p className="mt-1.5 text-[13px] text-pretty text-muted">{meta?.what}</p>
+
+      {/* The key itself, as much of it as anybody may see. A row of dots and
+          the last four characters is what makes "a key is stored" legible at a
+          glance — and the four characters are enough to tell WHICH key it is
+          against the provider's own dashboard, which is the question somebody
+          rotating one actually has. */}
+      {held ? (
+        <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <span className="inline-flex items-center gap-1.5 rounded-[3px] border border-line bg-canvas px-2 py-1 font-mono text-[13px] text-body">
+            <span aria-hidden className="tracking-[0.15em] text-muted">
+              ••••••••••••
+            </span>
+            {row.source === "console" && row.last4 ? (
+              row.last4
+            ) : (
+              <span className="font-sans text-[12px] text-muted">
+                hidden by the deployment
+              </span>
+            )}
+          </span>
+          <span className="text-[13px] text-muted">
+            {row.source === "console"
+              ? row.updatedAt
+                ? `Changed ${stamp(new Date(row.updatedAt))}`
+                : "Set from this screen"
+              : `From ${meta?.env} — this screen cannot show or change it`}
+          </span>
+        </div>
+      ) : null}
 
       {canWrite ? (
-        <div className="mt-2.5 flex flex-wrap items-center gap-2">
-          <Input
-            type="password"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            /* A saved key is never read back, so there is nothing to prefill
-             * and the box is always empty. The placeholder says which. */
-            placeholder={
-              row.source === "console" ? "Paste a new key to replace it" : "Paste the key"
-            }
-            autoComplete="off"
-            spellCheck={false}
-            className="min-w-[260px] flex-1 font-mono"
-          />
-          <Button size="sm" disabled={busy || !value.trim()} onClick={save}>
-            {busy ? "Saving…" : row.source === "console" ? "Replace" : "Save"}
-          </Button>
-          {row.source === "console" ? (
-            <Button size="sm" variant="secondary" disabled={busy} onClick={clear}>
-              Clear
+        open ? (
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            <Input
+              type="password"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              /* A saved key is never read back, so there is nothing to prefill
+               * and the box is always empty. The placeholder says which. */
+              placeholder={held ? "Paste the new key" : "Paste the key"}
+              autoComplete="off"
+              spellCheck={false}
+              className="min-w-[260px] flex-1 font-mono"
+            />
+            <Button size="sm" disabled={busy || !value.trim()} onClick={save}>
+              {busy ? "Saving…" : held ? "Replace" : "Save"}
             </Button>
-          ) : null}
-        </div>
+            {held ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => {
+                  setValue("");
+                  setEditing(false);
+                }}
+              >
+                Cancel
+              </Button>
+            ) : null}
+          </div>
+        ) : null
       ) : (
-        <p className="mt-2 text-[13px] text-muted">
+        <p className="mt-2.5 text-[13px] text-muted">
           Only a platform admin can change credentials.
         </p>
       )}
 
-      <p className="mt-2 text-[13px] text-muted">
-        From <span className="font-mono">{meta?.where}</span>. Without a key here,{" "}
-        <span className="font-mono">{meta?.env}</span> on the deployment is used instead.
+      {/* Where to get one, and what happens to the other place it can live.
+          Each state gets the sentence that is actually true of it — the row
+          used to say "without a key here, the environment is used" even while
+          showing a key that was here, which is the sort of line somebody reads
+          twice and then stops trusting. */}
+      <p className="mt-2.5 text-[13px] text-muted">
+        From <span className="font-mono">{meta?.where}</span>.{" "}
+        {row.source === "console" ? (
+          <>
+            Remove it and <span className="font-mono">{meta?.env}</span> on the
+            deployment is used instead.
+          </>
+        ) : row.source === "environment" ? (
+          <>A key set here wins over the deployment&rsquo;s.</>
+        ) : (
+          <>
+            Without one here, <span className="font-mono">{meta?.env}</span> on
+            the deployment is used instead.
+          </>
+        )}
       </p>
+
+      <ConfirmDialog
+        open={confirming}
+        title={`Remove the ${meta?.label ?? row.name} key?`}
+        body={
+          <>
+            It cannot be recovered from here — a saved key is never read back,
+            so putting it again means pasting it again.{" "}
+            {row.name === "sarvam.apiKey"
+              ? "Dictation falls back to whatever the deployment sets, and to OpenAI where that is allowed."
+              : "Tighten and Rewrite disappear from the dictation modal."}
+          </>
+        }
+        confirmLabel="Remove"
+        destructive
+        onConfirm={clear}
+        onClose={() => setConfirming(false)}
+      />
     </div>
   );
-}
-
-function Status({ row }: { row: SecretRow }) {
-  if (row.source === "console") {
-    return (
-      <span className="text-[13px] text-muted">
-        Set here · ends <span className="font-mono text-body">{row.last4}</span>
-        {row.updatedAt ? ` · ${stamp(new Date(row.updatedAt))}` : ""}
-      </span>
-    );
-  }
-  if (row.source === "environment") {
-    return (
-      <span className="text-[13px] text-muted">
-        Set on the deployment, not here — this screen cannot show or change it
-      </span>
-    );
-  }
-  return <span className="text-[13px] text-danger">Not set</span>;
 }
