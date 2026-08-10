@@ -2143,6 +2143,47 @@ describe("The business day is Asia/Kolkata, whatever the database thinks", () =>
       "cast these through `at time zone 'Asia/Kolkata'` — see APP_TIMEZONE",
     );
   });
+
+  test("no JavaScript turns a stored timestamp into a date without saying which zone", async () => {
+    // The same rule, the other spelling. `toISOString()` answers in UTC, so
+    // `.slice(0, 10)` on it dates a 2am IST row to the previous day — and it
+    // hides even better than the SQL version, because it is wrong on every
+    // machine equally and so never looks like a timezone bug. It reached the
+    // buying cycle, where the dates it produced became the intervals a
+    // customer's whole calling schedule is derived from.
+    const { readFileSync, readdirSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (
+          (full.endsWith(".ts") || full.endsWith(".tsx")) &&
+          !full.includes(".test.")
+        ) {
+          files.push(full);
+        }
+      }
+    };
+    walk("src");
+
+    // Only the truncation to a DAY is the bug. A full ISO timestamp is an
+    // instant and carries its own zone, so it is left alone.
+    const UTC_DATE = /toISOString\(\)\s*\.\s*slice\(\s*0\s*,\s*10\s*\)/;
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      for (const [i, line] of readFileSync(file, "utf8").split("\n").entries()) {
+        const code = line.trim();
+        if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*")) continue;
+        if (UTC_DATE.test(line)) offenders.push(`${file}:${i + 1}`);
+      }
+    }
+
+    assert.deepEqual(offenders, [], "use `calendarDate()` — see APP_TIMEZONE");
+  });
 });
 
 /* ------------------------------------------------------- order approval */

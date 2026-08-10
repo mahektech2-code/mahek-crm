@@ -30,6 +30,7 @@ import { recomputeFollowUpState, today } from "../recompute";
 import { recordReceipt, reportedQuietByCustomer } from "./receipt-service";
 import {
   addDays,
+  calendarDate,
   daysBetween,
   daysInMonth,
   onOrAfterWorkingDay,
@@ -718,7 +719,7 @@ export async function collectionsMetrics(): Promise<CollectionsMetrics> {
       customerId: p.customerId,
       amount: Number(p.amount),
       date: p.date!,
-      madeOn: p.at.toISOString().slice(0, 10),
+      madeOn: calendarDate(p.at),
     }));
 
   const open = promises.filter((p) => p.date >= day);

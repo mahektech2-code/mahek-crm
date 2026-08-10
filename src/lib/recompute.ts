@@ -33,6 +33,7 @@ import { resolveTarget } from "./engines/targets";
 import {
   APP_TIMEZONE,
   businessDate,
+  calendarDate,
   monthKey,
   addMonths,
   type BusinessDate,
@@ -128,7 +129,11 @@ async function writeCycle(
   config: Config,
   placedOn: string | null,
 ): Promise<void> {
-  const dates = rows.map((r) => r.orderedAt.toISOString().slice(0, 10));
+  // In Asia/Kolkata, never UTC. These dates become the INTERVALS the cycle is
+  // the median of, so an order placed at 2am read as the previous day shortens
+  // one gap and lengthens its neighbour — and the cycle decides when the whole
+  // book is called. The SQL beside this already names the zone; this did not.
+  const dates = rows.map((r) => calendarDate(r.orderedAt));
   const cycle = buyingCycle(dates, config);
   const avg = rows.length
     ? Math.round(rows.reduce((sum, r) => sum + r.totalAmount, 0) / rows.length)
@@ -315,7 +320,7 @@ export async function recomputeFollowUpState(customerId: string): Promise<void> 
     existing?.lastChannel && existing.lastFollowUpAt
       ? {
           channel: existing.lastChannel,
-          attemptedAt: existing.lastFollowUpAt.toISOString().slice(0, 10),
+          attemptedAt: calendarDate(existing.lastFollowUpAt),
         }
       : null,
     day,

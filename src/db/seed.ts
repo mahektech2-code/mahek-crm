@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { APP_TIMEZONE } from "@/lib/business-date";
+import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import { db, sql as client } from "./index";
 import {
   appAccess,
@@ -893,7 +893,7 @@ async function main() {
     if (m.confirmedSentAt) {
       await client`
         update customers
-           set last_confirmed_whatsapp_date = ${m.confirmedSentAt.toISOString().slice(0, 10)}
+           set last_confirmed_whatsapp_date = ${calendarDate(m.confirmedSentAt)}
          where id = ${m.customerId}`;
     }
   }

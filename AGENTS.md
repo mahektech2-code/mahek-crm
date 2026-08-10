@@ -287,10 +287,15 @@ with a reminder against them still sees the call they are actually making
 rather than one about an order. A customer left with nothing at all is shown
 in the held-back strip with the reason, never dropped silently.
 
-**A reminder outranks the quiet window and the no-order cooldown.** A callback
-the customer asked for is not chasing, and not making it is worse than any
-wasted call. It does not outrank do-not-contact, and it does not outrank
-having already called them today.
+**A reminder outranks the quiet window, the no-order cooldown, the inactive
+watch and the WhatsApp cooldown.** A callback the customer asked for is not
+chasing, and not making it is worse than any wasted call. The WhatsApp cooldown
+was the one that did not bend, so a marketing message sent on Tuesday silently
+cancelled a call promised for Wednesday — a broken promise caused by something
+we chose to do, which is the worst kind. It does not outrank do-not-contact, it
+does not outrank having already called them today, and it does not outrank the
+external order system: the first is a standing instruction and the other two
+mean the contact has already happened.
 
 **Asking for an order and being told no buys quiet.** Without the cooldown, a
 customer past their call day returns to the top of the list every single day
@@ -654,12 +659,29 @@ strength of a decision already reversed in the code. `npm run jobs --
 taken-order-reparse` re-reads what is stored, touches Google not at all, and is
 the command to run whenever the READING of a row changes rather than the row.
 
-**An order is contact.** Where nothing has been logged against a customer, the
-weekly check-in dates them from their last ORDER before their record's creation
-date — somebody spoke to them to take it. Reading the creation date first dates
-a customer of four years from the afternoon their row was written, so an
-imported book sits off the queue for a week. Prospects still fall back to the
-creation date: they have no order to be dated from.
+**An order is contact, and the check-in dates from the LATER of the two.**
+Somebody spoke to the customer to take that order, so an order that arrived
+through the sheet counts as much as a logged call. Preferring the call and
+falling back to the order only where there was none — which is what `??` did —
+rang a customer who ordered on Tuesday to ask how they were getting on, on the
+strength of a call three weeks old. Below both sits the record's creation date:
+reading that first dates a customer of four years from the afternoon their row
+was written, so an imported book sits off the queue for a week. Prospects still
+fall back to it, having no order to be dated from.
+
+**A date derived from a timestamp names its zone in JavaScript too.**
+`createdAt.toISOString().slice(0, 10)` is a bare `::date` in different clothes —
+it answers in UTC, so a row written at 2am IST is dated to the previous day.
+`calendarDate()` is the way. This one hides better than the SQL spelling, which
+at least behaves differently on a database running in GMT: `toISOString()` is
+wrong on every machine equally, so it never looks like a timezone bug. It had
+reached ten places, and the one that mattered was `writeCycle` — those dates
+become the INTERVALS the buying cycle is the median of, so a 2am order
+shortened one gap and lengthened its neighbour, and the cycle is what decides
+when the entire book is called. A second grep test now guards `src/` for it,
+beside the one that guards `lib/` for the SQL spelling. A full ISO timestamp is
+left alone: an instant carries its own zone, and only truncating it to a day
+loses one.
 
 **A salesperson is a name, not an account.** The Sales Party tab's `Sales
 Person` is who sells to a customer, and most of those people have never signed
