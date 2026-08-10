@@ -2,62 +2,15 @@
 
 import * as React from "react";
 import { Button, cx } from "./primitives";
+import { DictateButton, joinDictation } from "./dictate";
+import { Modal, useEscape } from "./modal";
 
-export function useEscape(onClose: () => void) {
-  React.useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
-}
-
-/* ----------------------------------------------------------------- modal */
-
-export function Modal({
-  open,
-  onClose,
-  title,
-  children,
-  footer,
-  width = 520,
-}: {
-  open: boolean;
-  onClose: () => void;
-  title: React.ReactNode;
-  children: React.ReactNode;
-  footer?: React.ReactNode;
-  width?: number;
-}) {
-  useEscape(onClose);
-  if (!open) return null;
-
-  return (
-    <div
-      onClick={onClose}
-      className="animate-fade-in fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(22,22,22,0.35)] p-6"
-      role="dialog"
-      aria-modal="true"
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ width }}
-        className="max-h-[88vh] overflow-hidden rounded-[6px] bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
-      >
-        <div className="border-b border-divider px-5 py-4 text-lg font-semibold text-ink">
-          {title}
-        </div>
-        <div className="max-h-[62vh] overflow-y-auto px-5 py-4">{children}</div>
-        {footer ? (
-          <div className="flex justify-end gap-2.5 border-t border-divider px-5 py-3">
-            {footer}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
+/*
+ * Both moved to `modal.tsx` so that `dictate.tsx` — which the confirm dialog
+ * below now uses — can open one without the two files importing each other.
+ * Re-exported here because half the app imports them from this path.
+ */
+export { Modal, useEscape };
 
 /* ---------------------------------------------------------------- drawer */
 
@@ -198,17 +151,27 @@ function ConfirmDialogBody({
           <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
             {reasonLabel} · required
           </span>
-          <textarea
-            value={reason}
-            onChange={(e) => {
-              setReason(e.target.value);
-              setError(null);
-            }}
-            className={cx(
-              "h-16 w-full resize-y rounded-[4px] border bg-surface px-2.5 py-2 text-sm outline-none focus:border-brand",
-              error ? "border-danger" : "border-line",
-            )}
-          />
+          <span className="relative block">
+            <textarea
+              value={reason}
+              onChange={(e) => {
+                setReason(e.target.value);
+                setError(null);
+              }}
+              className={cx(
+                "h-16 w-full resize-y rounded-[4px] border bg-surface px-2.5 py-2 pr-9 text-sm outline-none focus:border-brand",
+                error ? "border-danger" : "border-line",
+              )}
+            />
+            <DictateButton
+              hasExistingText={reason.trim().length > 0}
+              onImport={(text, replace) => {
+                setReason(replace ? text : joinDictation(reason, text));
+                setError(null);
+              }}
+              className="absolute right-1 bottom-2"
+            />
+          </span>
           {error ? (
             <span className="mt-1 block text-[13px] text-danger">{error}</span>
           ) : null}

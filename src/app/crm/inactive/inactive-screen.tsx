@@ -13,7 +13,6 @@ import {
   MetricStrip,
   PageHeader,
   Td,
-  Textarea,
   Th,
   Tr,
   cx,
@@ -25,6 +24,7 @@ import {
   SelectionBar,
 } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import {
   createRemindersBulk,
   decideDeactivation,
@@ -343,9 +343,10 @@ function BulkRemind({
           />
         </Field>
         <Field label="What the reminder says · required">
-          <Textarea
+          <VoiceTextarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
+            onDictate={setNote}
             className="h-20"
           />
         </Field>

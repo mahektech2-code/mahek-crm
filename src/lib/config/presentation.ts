@@ -74,6 +74,7 @@ export const TABS = [
   { slug: "complaints", label: "Complaints" },
   { slug: "workday", label: "Workday" },
   { slug: "attachments", label: "Attachments" },
+  { slug: "voice", label: "Voice" },
 ] as const;
 
 export const TAB_ORDER = TABS.map((t) => t.label);
@@ -91,6 +92,7 @@ export const GROUP_ORDER: Record<string, string[]> = {
   Complaints: ["Classification", "Resolution"],
   Workday: ["Hours", "Holidays"],
   Attachments: ["Files", "Lifecycle", "Limits"],
+  Voice: ["Dictation", "Models"],
 };
 
 /**
@@ -114,6 +116,10 @@ export const GROUP_NOTES: Record<string, string> = {
     "The working day is Asia/Kolkata and does not start at midnight — a call logged at 2am belongs to the shift that started yesterday.",
   "Attachments · Files":
     "A file is validated on its bytes, never on its name. Removing a type takes effect immediately.",
+  "Voice · Dictation":
+    "The microphone appears on every box where somebody writes a sentence, in every app — it belongs to the text box rather than to the CRM. The recording is transcribed and dropped; nothing keeps the audio.",
+  "Voice · Models":
+    "Sarvam is asked first because it is built for Indian languages and code-mixed speech; OpenAI catches what it cannot take, which is anything over its 30-second ceiling. Keys live in Admin Console → Voice. Claude is not an option here and could not be — it has no audio input at all.",
   "Attachments · Lifecycle":
     "An upload starts before its parent record exists, so a form abandoned mid-call keeps its files for the cleanup window first. Removing an attachment is a status, not a delete.",
 };
@@ -246,6 +252,15 @@ export const PRESENTATION: Record<string, Presentation> = {
   "attachments.retentionDays": { tab: "Attachments", group: "Lifecycle", unit: "days" },
   "attachments.maxPerComplaint": { tab: "Attachments", group: "Limits", unit: "files" },
   "attachments.maxPerFollowUp": { tab: "Attachments", group: "Limits", unit: "files" },
+
+  "voice.enabled": { tab: "Voice", group: "Dictation", control: "bool" },
+  "voice.maxSeconds": { tab: "Voice", group: "Dictation", unit: "seconds" },
+  "voice.maxSizeMb": { tab: "Voice", group: "Dictation", unit: "MB" },
+  "voice.transcriptionProvider": { tab: "Voice", group: "Models", control: "choice" },
+  "voice.fallbackToOpenai": { tab: "Voice", group: "Models", control: "bool" },
+  "voice.transcriptionModel": { tab: "Voice", group: "Models", control: "text" },
+  "voice.openaiTranscriptionModel": { tab: "Voice", group: "Models", control: "text" },
+  "voice.languageModel": { tab: "Voice", group: "Models", control: "text" },
 };
 
 /* ------------------------------------------------------ entity collections */

@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { Button, Textarea, cx } from "@/components/ui/primitives";
+import { Button, cx } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import type { useToast } from "@/components/ui/toast";
 import { longDate, money, stamp } from "@/lib/format";
 import { describeQuantity } from "@/lib/catalogue";
@@ -182,11 +183,12 @@ export function ReviewDrawer({
             <div className="mb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
               {copy.reasonLabel}
             </div>
-            <Textarea
+            <VoiceTextarea
               autoFocus
               rows={3}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
+              onDictate={setReason}
               placeholder={copy.reasonPlaceholder}
             />
             <p className="mt-1.5 text-[13px] text-pretty text-muted">{copy.reasonHint}</p>

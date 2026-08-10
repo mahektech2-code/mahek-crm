@@ -9,10 +9,10 @@ import {
   Input,
   Radio,
   Select,
-  Textarea,
   cx,
 } from "@/components/ui/primitives";
 import { ConfirmDialog, useEscape } from "@/components/ui/overlays";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { saveInteractionAction } from "@/lib/actions/crm";
@@ -1612,11 +1612,12 @@ function CallPanelForm({
                             label="Complaint description"
                             error={errors.complaintDescription ?? null}
                           >
-                            <Textarea
+                            <VoiceTextarea
                               value={complaintDescription}
                               onChange={(e) => {
                                 setComplaintDescription(e.target.value);
                               }}
+                              onDictate={setComplaintDescription}
                               className="h-20"
                               placeholder="Describe the complaint in detail."
                             />
@@ -1952,9 +1953,10 @@ function CallPanelForm({
                         hint="Quick notes add to this - you can still edit or type your own."
                         error={errors.notes ?? null}
                       >
-                        <Textarea
+                        <VoiceTextarea
                           value={notes}
                           onChange={(e) => setNotes(e.target.value)}
+                          onDictate={setNotes}
                           className="h-20"
                           placeholder="What was said, in your own words"
                         />

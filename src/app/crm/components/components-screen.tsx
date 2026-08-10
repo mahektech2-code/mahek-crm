@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import {
   Badge,
   Button,
@@ -301,6 +302,12 @@ export function ComponentsScreen() {
             note="A reason is required - it is kept on the customer record."
           >
             <Textarea className="h-16" placeholder="Shop closed permanently" />
+          </Spec>
+          <Spec
+            label="Textarea with dictation"
+            note="The microphone is absent unless dictation is switched on and the deployment has a gateway credential — a mic that fails when pressed is worse than none."
+          >
+            <VoiceTextareaDemo />
           </Spec>
           <Spec label="Checkbox and radio">
             <div className="flex flex-wrap items-center gap-5">
@@ -716,5 +723,23 @@ export function ComponentsScreen() {
         onConfirm={async () => push("Customer deleted")}
       />
     </div>
+  );
+}
+
+/**
+ * Dictation on a real box, with real state — a `defaultValue` demo could not
+ * show the thing worth showing, which is that imported text is ADDED to what
+ * is already there rather than replacing it.
+ */
+function VoiceTextareaDemo() {
+  const [value, setValue] = React.useState("");
+  return (
+    <VoiceTextarea
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onDictate={setValue}
+      className="h-20"
+      placeholder="Type it, or press the microphone and say it"
+    />
   );
 }

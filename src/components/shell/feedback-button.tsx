@@ -5,7 +5,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "./icons";
 import { Modal } from "@/components/ui/overlays";
-import { Button, Field, Input, Textarea, cx } from "@/components/ui/primitives";
+import { Button, Field, Input, cx } from "@/components/ui/primitives";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import { ImagePicker } from "@/components/crm/image-picker";
 import { myFeedbackSummary, submitFeedback } from "@/lib/actions/feedback";
 import { FEEDBACK_KINDS, KIND_LABELS, type FeedbackKind } from "@/lib/feedback-labels";
@@ -234,12 +235,13 @@ function FeedbackForm({ onDone }: { onDone: () => void }) {
         }
         error={field === "body" ? error : null}
       >
-        <Textarea
+        <VoiceTextarea
           rows={5}
           value={body}
           maxLength={4000}
           invalid={field === "body"}
           onChange={(e) => setBody(e.target.value)}
+          onDictate={setBody}
         />
       </Field>
 

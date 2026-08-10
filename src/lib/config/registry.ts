@@ -28,7 +28,8 @@ export type SettingCategory =
   | "products"
   | "attachments"
   | "interactions"
-  | "whatsapp";
+  | "whatsapp"
+  | "voice";
 
 export type SettingDefinition = {
   key: string;
@@ -845,6 +846,89 @@ export const SETTINGS = [
     min: 0,
     max: 168,
   },
+
+  /*
+   * Dictation. These govern the microphone on every prose field in MahekOne,
+   * not just the CRM's — it is a property of the text box rather than of an
+   * app, and this is the only settings surface there is.
+   */
+  {
+    key: "voice.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Dictate by voice",
+    description:
+      "Puts a microphone on every box where somebody writes a sentence. Off hides it everywhere immediately; nothing already typed is affected. The recording is never stored — it is transcribed and dropped.",
+    default: true,
+  },
+  {
+    key: "voice.maxSeconds",
+    type: "integer",
+    category: "voice",
+    label: "Longest recording",
+    description:
+      "Recording stops itself here. Two minutes is a long note read aloud; the limit exists so a phone left in a pocket does not send ten minutes of a live call to a transcription provider.",
+    default: 120,
+    min: 10,
+    max: 600,
+  },
+  {
+    key: "voice.maxSizeMb",
+    type: "integer",
+    category: "voice",
+    label: "Largest recording",
+    description:
+      "Megabytes of audio the server will accept. Opus speech runs about half a megabyte a minute, so this is a backstop against a browser that ignores the time limit rather than a limit anybody meets.",
+    default: 15,
+    min: 1,
+    max: 50,
+  },
+  {
+    key: "voice.transcriptionProvider",
+    type: "text",
+    category: "voice",
+    label: "Who hears the speech",
+    description:
+      "Sarvam's saaras is built for Indian languages and code-mixed speech — Hindi with English words dropped in mid-sentence is what it is FOR, rather than something it copes with. Its synchronous endpoint refuses audio over 30 seconds, which is what the OpenAI fallback below is for.",
+    default: "sarvam",
+    options: ["sarvam", "openai"],
+  },
+  {
+    key: "voice.fallbackToOpenai",
+    type: "boolean",
+    category: "voice",
+    label: "Fall back to OpenAI",
+    description:
+      "Send the recording to OpenAI when Sarvam cannot take it — anything over its 30-second ceiling, and anything it refuses or fails on. This is what lets a telecaller record for a minute and still get a note back. Turned off, a long recording is refused outright and the recording limit must be 30 seconds or less.",
+    default: true,
+  },
+  {
+    key: "voice.transcriptionModel",
+    type: "text",
+    category: "voice",
+    label: "Sarvam model",
+    description:
+      "Sarvam's speech model. It is asked for the same audio twice — once to write down what was said, once for the English — so the two can be shown side by side and a bad translation can be caught against the sentence it came from.",
+    default: "saaras:v3",
+  },
+  {
+    key: "voice.openaiTranscriptionModel",
+    type: "text",
+    category: "voice",
+    label: "OpenAI transcription model",
+    description:
+      "Used when OpenAI is the chosen provider, and whenever the fallback takes over. It writes the speech down in whatever language it was spoken in; the English is a second pass by the writing model below.",
+    default: "gpt-4o-transcribe",
+  },
+  {
+    key: "voice.languageModel",
+    type: "text",
+    category: "voice",
+    label: "Writing model",
+    description:
+      "An OpenAI text model. It renders the transcript into English without summarising, and does the tightening and rewriting the person asks for.",
+    default: "gpt-5-mini",
+  },
 ] as const satisfies readonly SettingDefinition[];
 
 export type SettingKey = (typeof SETTINGS)[number]["key"];
@@ -957,6 +1041,23 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
  */
 export function checkConsistency(config: Config): string[] {
   const problems: string[] = [];
+
+  /*
+   * Sarvam's synchronous endpoint refuses audio over 30 seconds. With the
+   * fallback on, a longer recording simply goes to OpenAI instead and the
+   * limit can be whatever suits a telecaller. With it off, a limit above 30
+   * would let somebody speak for a minute into a recorder that was always
+   * going to refuse it — the wasted minute is paid by the person on the phone.
+   */
+  if (
+    config["voice.transcriptionProvider"] === "sarvam" &&
+    !config["voice.fallbackToOpenai"] &&
+    config["voice.maxSeconds"] > 30
+  ) {
+    problems.push(
+      `Voice: Sarvam refuses audio over 30 seconds and the OpenAI fallback is off, so the recording limit cannot be ${config["voice.maxSeconds"]}s. Lower it to 30, or turn the fallback back on.`,
+    );
+  }
 
   const { stage1Days, stage2Days, stage3Days } = {
     stage1Days: config["escalation.stage1Days"],
@@ -1145,6 +1246,15 @@ export type Config = {
   "whatsapp.contactsPerWeekLimit": number;
   "whatsapp.unconfirmedExpiryHours": number;
   "whatsapp.autoConfirmAfterHours": number;
+
+  "voice.enabled": boolean;
+  "voice.maxSeconds": number;
+  "voice.maxSizeMb": number;
+  "voice.transcriptionProvider": "sarvam" | "openai";
+  "voice.fallbackToOpenai": boolean;
+  "voice.transcriptionModel": string;
+  "voice.openaiTranscriptionModel": string;
+  "voice.languageModel": string;
 };
 
 export type QueueReasonKind =

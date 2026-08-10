@@ -17,10 +17,10 @@ import {
   PageHeader,
   Select,
   SlowPayerBadge,
-  Textarea,
   cx,
 } from "@/components/ui/primitives";
 import { Modal, RowMenu, Tabs } from "@/components/ui/overlays";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import {
   recordPayment,
@@ -682,9 +682,10 @@ function PromiseModalBody({ row, onClose, onSubmit }: PromiseProps) {
         </Field>
       </div>
       <Field label="Note" className="mt-3">
-        <Textarea
+        <VoiceTextarea
           value={note}
           onChange={(e) => setNote(e.target.value)}
+          onDictate={setNote}
           className="h-16"
           placeholder="Who promised, and how it will be paid"
         />

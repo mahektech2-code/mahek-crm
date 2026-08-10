@@ -22,6 +22,7 @@ import {
   cx,
 } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader, Modal, Tabs } from "@/components/ui/overlays";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import {
   actionReply,
@@ -715,10 +716,16 @@ function SendComposer({
               </button>
             ) : null}
           </div>
-          <Textarea
+          <VoiceTextarea
             value={body}
             onChange={(e) => {
               setBody(e.target.value);
+              setEdited(true);
+            }}
+            /* Dictating over a merged template is editing it, and the log has
+             * to say so — the same as typing a character into it would. */
+            onDictate={(v) => {
+              setBody(v);
               setEdited(true);
             }}
             className="h-40"
@@ -1821,9 +1828,10 @@ function TemplateDrawerBody({
                 hint="Merge fields: {{customer}} {{contact}} {{city}} {{outstanding}} {{bill_no}} {{bill_due}} {{last_order_date}} {{last_order_value}} {{owner}}"
                 error={tooLong ? "Long messages get skimmed - try to stay under 700 characters." : null}
               >
-                <Textarea
+                <VoiceTextarea
                   value={body}
                   onChange={(e) => setBody(e.target.value)}
+                  onDictate={setBody}
                   disabled={!isManager}
                   className="h-56"
                 />

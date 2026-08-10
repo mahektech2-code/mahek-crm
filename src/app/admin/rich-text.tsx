@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { cx } from "@/components/ui/primitives";
+import { DictateButton, joinDictation } from "@/components/ui/dictate";
 
 /* ---------------------------------------------------------------------------
  * The formatted editor, for help articles and anything else an app declares as
@@ -87,13 +88,22 @@ export function RichTextEditor({
         <span className="flex-1" />
         <span className="pr-1 text-[11px] tracking-[0.04em] text-muted uppercase">Markdown</span>
       </span>
-      <textarea
-        ref={ref}
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-[200px] w-full resize-y rounded-[4px] rounded-t-none border border-line bg-surface px-2.5 py-2 font-mono text-[13px] leading-[20px] text-ink outline-none focus:border-brand"
-      />
+      <span className="relative block">
+        <textarea
+          ref={ref}
+          value={value}
+          placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-[200px] w-full resize-y rounded-[4px] rounded-t-none border border-line bg-surface px-2.5 py-2 pr-9 font-mono text-[13px] leading-[20px] text-ink outline-none focus:border-brand"
+        />
+        {/* Dictation writes plain prose — the markdown around it stays whatever
+            the author typed. Appending, not replacing, is what a long SOP wants. */}
+        <DictateButton
+          hasExistingText={value.trim().length > 0}
+          onImport={(text, replace) => onChange(replace ? text : joinDictation(value, text))}
+          className="absolute right-1 bottom-2"
+        />
+      </span>
       <span className="mt-3 block">
         <span className="mb-1.5 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
           What the reader sees

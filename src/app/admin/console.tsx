@@ -45,6 +45,7 @@ import { CATALOGUE_SUBTITLE, CATALOGUE_TABS, CatalogueSection } from "./catalogu
 import type { CatalogueData } from "./catalogue-data";
 import { SHEET_SUBTITLE, SHEET_TABS, type SheetData } from "./sheet-data";
 import { SheetSection } from "./sheet-section";
+import { VoiceSection, VOICE_SUBTITLE, type VoiceData } from "./voice-section";
 import type { Person } from "@/lib/services/admin-people-service";
 import { PeopleSection } from "./people-section";
 import { FeedbackSection, type FeedbackData } from "./feedback-section";
@@ -68,6 +69,7 @@ const PLATFORM_NAV = [
   { key: "data", label: "Data" },
   { key: "notifications", label: "Notifications" },
   { key: "feedback", label: "Feedback" },
+  { key: "voice", label: "Voice" },
   { key: "audit", label: "Audit" },
 ] as const;
 
@@ -113,6 +115,7 @@ export function AdminConsole({
   crm,
   catalogue,
   sheet,
+  voice,
   people,
   feedback,
   platform,
@@ -124,6 +127,7 @@ export function AdminConsole({
   crm: CrmConfig;
   catalogue: CatalogueData;
   sheet: SheetData;
+  voice: VoiceData;
   people: Person[];
   feedback: FeedbackData;
   platform: PlatformData;
@@ -141,6 +145,7 @@ export function AdminConsole({
           crm={crm}
           catalogue={catalogue}
           sheet={sheet}
+          voice={voice}
           feedback={feedback}
           platform={platform}
           me={me}
@@ -189,6 +194,7 @@ function ConsoleShell({
   crm,
   catalogue,
   sheet,
+  voice,
   feedback,
   platform,
   me,
@@ -199,6 +205,7 @@ function ConsoleShell({
   crm: CrmConfig;
   catalogue: CatalogueData;
   sheet: SheetData;
+  voice: VoiceData;
   feedback: FeedbackData;
   platform: PlatformData;
   me: { name: string; initials: string; role: string };
@@ -521,7 +528,9 @@ function ConsoleShell({
                           ? CATALOGUE_SUBTITLE
                           : section === SHEET_SECTION
                             ? SHEET_SUBTITLE
-                            : PLATFORM_SUBTITLES[section]}
+                            : section === "voice"
+                              ? VOICE_SUBTITLE
+                              : PLATFORM_SUBTITLES[section]}
                     </p>
                   </div>
                   <PrimaryAction section={section} />
@@ -587,6 +596,7 @@ function ConsoleShell({
                   collections={crm.collections}
                   catalogue={catalogue}
                   sheet={sheet}
+                  voice={voice}
                   feedback={feedback}
                   platform={platform}
                   canWriteCatalogue={crm.canWrite}
@@ -733,6 +743,7 @@ function SectionBody({
   collections,
   catalogue,
   sheet,
+  voice,
   feedback,
   platform,
   canWriteCatalogue,
@@ -754,6 +765,7 @@ function SectionBody({
   collections: Record<string, Collection>;
   catalogue: CatalogueData;
   sheet: SheetData;
+  voice: VoiceData;
   feedback: FeedbackData;
   platform: PlatformData;
   canWriteCatalogue: boolean;
@@ -768,6 +780,14 @@ function SectionBody({
     return (
       <div className="mt-5">
         <SheetSection data={sheet} tab={tabIndex} />
+      </div>
+    );
+  }
+
+  if (section === "voice") {
+    return (
+      <div className="mt-5">
+        <VoiceSection data={voice} />
       </div>
     );
   }

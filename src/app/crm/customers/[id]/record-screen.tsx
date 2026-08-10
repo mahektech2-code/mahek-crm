@@ -13,11 +13,11 @@ import {
   Progress,
   SectionLabel,
   SlowPayerBadge,
-  Textarea,
   Select,
   cx,
 } from "@/components/ui/primitives";
 import { FilterPills, Modal } from "@/components/ui/overlays";
+import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import {
@@ -604,9 +604,10 @@ export function QuickReminder({
           label="What was promised · required"
           hint="This note is what you will see in the reminders list - write it for your future self."
         >
-          <Textarea
+          <VoiceTextarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
+            onDictate={setNote}
             className="h-20"
             placeholder="Call back with the revised drum rate"
           />
@@ -678,9 +679,10 @@ export function QuickComplaint({
           label="Description · required"
           hint="Write it in the customer's words - this is what the resolver reads."
         >
-          <Textarea
+          <VoiceTextarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
+            onDictate={setDescription}
             className="h-20"
           />
         </Field>

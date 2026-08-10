@@ -23,6 +23,7 @@ import {
   sheetSummary,
 } from "@/lib/services/sheet-order-service";
 import { sheetsConfigured } from "@/lib/sheets";
+import { secretStatuses } from "@/lib/secrets";
 import { listPeople } from "@/lib/services/admin-people-service";
 import { feedbackCounts, listFeedback } from "@/lib/services/feedback-service";
 import {
@@ -130,6 +131,7 @@ export default async function Page({
   // What the team has sent in from the Feedback button. Read here like every
   // other section's data, so the console arrives rendered.
   const [feedbackRows, counts] = await Promise.all([listFeedback(), feedbackCounts()]);
+  const secrets = await secretStatuses();
 
   // The platform sections. Every one of these was a fixture until now, so they
   // are read here with everything else rather than fetched by a client.
@@ -228,6 +230,27 @@ export default async function Page({
         priceSource: config["products.priceSource"],
         discrepancies: SOURCE_DISCREPANCIES,
         lastReport: null,
+      }}
+      voice={{
+        /*
+         * Statuses only — which credentials exist, from where, and their last
+         * four characters. `secretStatuses` cannot return a key, so a future
+         * edit here cannot start leaking one onto the page.
+         */
+        secrets: secrets.map((s) => ({
+          name: s.name,
+          source: s.source,
+          last4: s.last4,
+          updatedAt: s.updatedAt ? s.updatedAt.toISOString() : null,
+        })),
+        provider: config["voice.transcriptionProvider"],
+        fallbackToOpenai: config["voice.fallbackToOpenai"],
+        sarvamModel: config["voice.transcriptionModel"],
+        openaiTranscriptionModel: config["voice.openaiTranscriptionModel"],
+        languageModel: config["voice.languageModel"],
+        maxSeconds: config["voice.maxSeconds"],
+        enabled: config["voice.enabled"],
+        canWrite: isPlatformAdmin,
       }}
       crm={{
         values,

@@ -33,7 +33,9 @@
     "receivables": "tsx --conditions=react-server --env-file=.env.local scripts/apply-receivables.ts"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^4.0.36",
     "@vercel/blob": "^2.7.0",
+    "ai": "^7.0.58",
     "drizzle-orm": "^0.45.2",
     "next": "16.2.12",
     "postgres": "^3.4.9",

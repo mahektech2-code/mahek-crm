@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
+import { DictateButton, joinDictation } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { recordReceiptAction } from "@/lib/actions/payments";
 import { longDate, money, parseRupees } from "@/lib/format";
@@ -375,13 +376,22 @@ function PaymentForm({
 
             <div className="mt-3">
               <Label>Note</Label>
-              <textarea
-                rows={2}
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="Part payment against the June bills…"
-                className="w-full resize-y rounded-[4px] border border-line px-2.5 py-2 text-sm focus:border-brand focus:outline-none"
-              />
+              <span className="relative block">
+                <textarea
+                  rows={2}
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Part payment against the June bills…"
+                  className="w-full resize-y rounded-[4px] border border-line px-2.5 py-2 pr-9 text-sm focus:border-brand focus:outline-none"
+                />
+                <DictateButton
+                  hasExistingText={note.trim().length > 0}
+                  onImport={(text, replace) =>
+                    setNote(replace ? text : joinDictation(note, text))
+                  }
+                  className="absolute right-1 bottom-2"
+                />
+              </span>
             </div>
           </section>
 
