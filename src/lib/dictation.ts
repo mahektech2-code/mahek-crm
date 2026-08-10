@@ -296,7 +296,14 @@ export async function transcribeSpeech({
    * could not take this recording. Both are ordinary, and neither is worth
    * telling the person on the phone about — they asked for a note.
    */
-  if (provider === "sarvam" && !fallbackToOpenai && !trySarvam) {
+  /*
+   * Refusing here is only right where a Sarvam-only deployment is being
+   * honoured — a key exists, the fallback is deliberately off, and this
+   * recording is past Sarvam's ceiling. Without a Sarvam key there is nothing
+   * to honour, and this guard was turning "no Sarvam key" into "no dictation"
+   * on a deployment whose OpenAI account was working.
+   */
+  if (provider === "sarvam" && sarvamKey && !fallbackToOpenai && !trySarvam) {
     return {
       ok: false,
       reason: "failed",

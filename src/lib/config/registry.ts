@@ -899,7 +899,7 @@ export const SETTINGS = [
     category: "voice",
     label: "Fall back to OpenAI",
     description:
-      "Send the recording to OpenAI when Sarvam cannot take it — anything over its 30-second ceiling, and anything it refuses or fails on. This is what lets a telecaller record for a minute and still get a note back. Turned off, a long recording is refused outright and the recording limit must be 30 seconds or less.",
+      "Send the recording to OpenAI when Sarvam cannot take it — anything over its 30-second ceiling, and anything it refuses or fails on. This is what lets a telecaller record for a minute and still get a note back. Turning it off keeps every recording with Sarvam and caps them at 30 seconds, which is the setting for a deployment that wants audio kept inside India. It has no effect where there is no Sarvam key: OpenAI serves the whole feature on its own rather than switching itself off on behalf of a provider nothing was going to ask.",
     default: true,
   },
   {
@@ -1063,7 +1063,7 @@ export function checkConsistency(config: Config): string[] {
     config["voice.maxSeconds"] > 30
   ) {
     problems.push(
-      `Voice: Sarvam refuses audio over 30 seconds and the OpenAI fallback is off, so recordings stop at 30s whatever this says — the ${config["voice.maxSeconds"]}s limit has no effect. Lower it to 30, or turn the fallback back on.`,
+      `Voice: Sarvam refuses audio over 30 seconds and the OpenAI fallback is off, so wherever a Sarvam key is set, recordings stop at 30s and the ${config["voice.maxSeconds"]}s limit has no effect. Lower it to 30, or turn the fallback back on. (With no Sarvam key this setting does nothing — OpenAI serves every recording at the full limit.)`,
     );
   }
 

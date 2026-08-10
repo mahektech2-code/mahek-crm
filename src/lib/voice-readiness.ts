@@ -49,11 +49,25 @@ export function resolveReadiness({
   hasSarvamKey: boolean;
   hasOpenaiKey: boolean;
 }): VoiceReadiness {
-  // Sarvam is only reachable when it is the chosen provider; OpenAI serves
-  // either as the choice or as the fallback behind Sarvam. A key for a
+  // Sarvam is only reachable when it is the chosen provider. A key for a
   // provider nothing will ask is not a provider.
   const sarvam = provider === "sarvam" && hasSarvamKey;
-  const openai = hasOpenaiKey && (provider === "openai" || fallbackToOpenai);
+
+  /*
+   * OPENAI IS THE FLOOR. It serves when it is the choice, when it is the
+   * fallback behind Sarvam, and — the case this clause exists for — whenever
+   * there is no Sarvam key at all.
+   *
+   * The fallback switch is there to protect a DELIBERATE Sarvam-only
+   * deployment: somewhere that has a Sarvam key and wants recordings kept
+   * inside India, accepting the 30-second ceiling to get it. That is a real
+   * choice and it still works. But with no Sarvam key there is no such
+   * deployment to protect — the switch was then refusing OpenAI on behalf of
+   * a provider that was never going to be asked, which left a configured
+   * OpenAI account sitting unused behind a microphone nobody was shown.
+   */
+  const openai =
+    hasOpenaiKey && (provider === "openai" || fallbackToOpenai || !hasSarvamKey);
 
   return {
     canHear: sarvam || openai,

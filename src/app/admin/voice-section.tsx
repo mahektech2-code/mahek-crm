@@ -149,9 +149,12 @@ function Wiring({ data }: { data: VoiceData }) {
                the setting is overridden rather than disappointed. */
             `Sarvam only — OpenAI has no key to catch the long ones, so recordings stop at 30s rather than the ${data.maxSeconds}s configured.`
         : "Sarvam. Recordings are capped at its 30-second ceiling."
-      : openai && data.fallbackToOpenai
-        ? "Sarvam is chosen but has no key, so every recording falls through to OpenAI."
-        : "Sarvam is chosen and has no key — no microphone is drawn anywhere."
+      : openai
+        ? /* No Sarvam key. The fallback switch is not consulted here: it
+             exists to honour a deliberate Sarvam-only deployment, and there
+             is no Sarvam in this one to keep anything inside. */
+          "Sarvam is chosen but has no key, so every recording goes to OpenAI. Adding a Sarvam key improves the short ones; nothing breaks without it."
+        : "Neither provider has a key — no microphone is drawn anywhere."
     : openai
       ? "OpenAI."
       : "OpenAI is chosen and has no key — no microphone is drawn anywhere. A Sarvam key does not help: it is only reached when Sarvam is the chosen provider.";
