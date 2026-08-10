@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/primitives";
 import { ConfirmDialog } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
+import { resolveReadiness, SARVAM_MAX_SECONDS } from "@/lib/voice-readiness";
 import { stamp } from "@/lib/format";
 import { clearSecretAction, setSecretAction } from "@/lib/actions/secrets";
 
@@ -119,23 +120,38 @@ function Wiring({ data }: { data: VoiceData }) {
   const openai = set("openai.apiKey");
 
   const sarvamFirst = data.provider === "sarvam";
-  const longOnes = data.maxSeconds > 30;
+
+  /* The same function the route answers from, so this panel cannot describe a
+   * deployment the runtime does not agree with. It is pure and has no server
+   * imports, which is what lets a client component read it. */
+  const ready = resolveReadiness({
+    provider: data.provider,
+    fallbackToOpenai: data.fallbackToOpenai,
+    maxSeconds: data.maxSeconds,
+    hasSarvamKey: sarvam,
+    hasOpenaiKey: openai,
+  });
+  const longOnes = data.maxSeconds > SARVAM_MAX_SECONDS;
 
   const hearing = sarvamFirst
     ? sarvam
       ? longOnes && data.fallbackToOpenai
         ? openai
           ? `Sarvam up to 30s, then OpenAI — recordings run to ${data.maxSeconds}s.`
-          : `Sarvam up to 30s. Anything longer has nowhere to go: the fallback is on but OpenAI has no key, so recordings over 30s will fail.`
+          : /* This used to say recordings over 30s "will fail", which was true
+               and was the bug: the recorder ran to the configured limit and
+               the telecaller found out afterwards. The limit is now capped to
+               Sarvam's ceiling wherever OpenAI cannot catch the long ones, so
+               the setting is overridden rather than disappointed. */
+            `Sarvam only — OpenAI has no key to catch the long ones, so recordings stop at 30s rather than the ${data.maxSeconds}s configured.`
         : "Sarvam. Recordings are capped at its 30-second ceiling."
       : openai && data.fallbackToOpenai
         ? "Sarvam is chosen but has no key, so every recording falls through to OpenAI."
         : "Sarvam is chosen and has no key — no microphone is drawn anywhere."
     : openai
       ? "OpenAI."
-      : "OpenAI is chosen and has no key — no microphone is drawn anywhere.";
+      : "OpenAI is chosen and has no key — no microphone is drawn anywhere. A Sarvam key does not help: it is only reached when Sarvam is the chosen provider.";
 
-  const canHear = sarvamFirst ? sarvam || (openai && data.fallbackToOpenai) : openai;
 
   return (
     <Card>
@@ -145,7 +161,7 @@ function Wiring({ data }: { data: VoiceData }) {
           title="Hearing the speech"
           who={sarvamFirst ? "Sarvam, then OpenAI" : "OpenAI"}
           model={sarvamFirst ? data.sarvamModel : data.openaiTranscriptionModel}
-          ready={canHear}
+          ready={ready.canHear}
           consequence={hearing}
         />
         <Half

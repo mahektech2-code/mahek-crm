@@ -89,9 +89,20 @@ export async function POST(request: Request) {
     const [status, error] =
       outcome.reason === "not_configured"
         ? [503, "Dictation is not set up on this deployment yet."]
-        : outcome.reason === "no_speech"
-          ? [200, "Nothing was heard in that recording. Try again, closer to the microphone."]
-          : [502, "The transcription service did not answer. Your recording is still here — try again."];
+        : outcome.reason === "too_long"
+          ? /*
+             * Dictation IS set up — they were offered a microphone. What is
+             * missing is the second provider this particular recording needed,
+             * so the sentence names the recording rather than the deployment
+             * and says what to do with the one in hand.
+             */
+            [
+              503,
+              "That recording was too long for the service that hears them — it takes 30 seconds at a time. Say it again in shorter goes.",
+            ]
+          : outcome.reason === "no_speech"
+            ? [200, "Nothing was heard in that recording. Try again, closer to the microphone."]
+            : [502, "The transcription service did not answer. Your recording is still here — try again."];
     return NextResponse.json({ ok: false, reason: outcome.reason, error }, { status });
   }
 

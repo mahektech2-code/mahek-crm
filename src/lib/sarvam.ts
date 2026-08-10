@@ -31,7 +31,7 @@ import "server-only";
 const ENDPOINT = "https://api.sarvam.ai/speech-to-text";
 
 /** The sync endpoint's own ceiling. Mirrored in `checkConsistency`. */
-export const SARVAM_MAX_SECONDS = 30;
+export { SARVAM_MAX_SECONDS } from "@/lib/voice-readiness";
 
 export type SarvamMode = "transcribe" | "translate";
 

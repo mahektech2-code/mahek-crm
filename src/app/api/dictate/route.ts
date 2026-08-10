@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
-import { dictationConfigured, refinementConfigured } from "@/lib/dictation";
+import { voiceReadiness } from "@/lib/dictation";
 
 /* ---------------------------------------------------------------------------
  * Whether to draw a microphone, and what it is allowed to do.
@@ -35,20 +35,35 @@ export async function GET() {
   if (!config["voice.enabled"]) {
     return NextResponse.json({ available: false, reason: "disabled" });
   }
-  /* No key, no microphone — rather than a button that fails when pressed. */
-  if (!(await dictationConfigured())) {
+
+  const ready = await voiceReadiness({
+    provider: config["voice.transcriptionProvider"],
+    fallbackToOpenai: config["voice.fallbackToOpenai"],
+    maxSeconds: config["voice.maxSeconds"],
+  });
+
+  /* No key that the chosen provider can use, no microphone — rather than a
+   * button that fails when pressed. */
+  if (!ready.canHear) {
     return NextResponse.json({ available: false, reason: "not_configured" });
   }
 
   return NextResponse.json({
     available: true,
-    maxSeconds: config["voice.maxSeconds"],
+    /*
+     * The EFFECTIVE limit, not the configured one. Where OpenAI has no key to
+     * catch the long recordings, this is Sarvam's own 30-second ceiling, and
+     * the recorder stops there — a limit that lets somebody talk for two
+     * minutes into a provider that will refuse it is a promise the deployment
+     * cannot keep.
+     */
+    maxSeconds: ready.maxSeconds,
     maxSizeMb: config["voice.maxSizeMb"],
     /*
      * Tighten and Rewrite are a text call and need OpenAI even where Sarvam
      * did the hearing. Told here so the modal can leave the buttons out
      * rather than offer two that fail.
      */
-    canRefine: await refinementConfigured(),
+    canRefine: ready.canRefine,
   });
 }
