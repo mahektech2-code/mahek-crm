@@ -58,3 +58,32 @@ export function resolveReadiness({
     maxSeconds: openai ? maxSeconds : Math.min(maxSeconds, SARVAM_MAX_SECONDS),
   };
 }
+
+/**
+ * A refusal no retry will change, told apart from a service that stumbled.
+ *
+ * An exhausted credit balance, a revoked key and a project with no budget all
+ * arrive looking like an ordinary failure, and the sentence for an ordinary
+ * failure is "try again" — which a telecaller then does, twice, mid-call,
+ * because we asked them to. None of the three will succeed on the second press.
+ *
+ * Matched on the provider's own words rather than on a status code: 429 is
+ * also honest rate limiting, which IS worth retrying, and the two say very
+ * different things in the body. The strings are the ones OpenAI and Sarvam
+ * actually return — `credit_balance_exhausted` was copied from a live reply,
+ * not guessed at.
+ */
+export function isPermanentRefusal(detail: string): boolean {
+  const said = detail.toLowerCase();
+  return (
+    said.includes("insufficient_quota") ||
+    said.includes("credit_balance_exhausted") ||
+    said.includes("no credits remaining") ||
+    said.includes("exceeded your current quota") ||
+    said.includes("invalid_api_key") ||
+    said.includes("incorrect api key") ||
+    said.includes("account is not active") ||
+    said.includes("invalid api key") ||
+    said.includes("unauthorized")
+  );
+}
