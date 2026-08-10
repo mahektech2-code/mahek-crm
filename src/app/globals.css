@@ -263,6 +263,28 @@
     transform: scaleX(1);
   }
 }
+/* Dictation. The bars carry the same identity through both phases: driven by
+   the microphone while recording, and breathing on their own while the models
+   are working, so the modal never goes still and stops looking alive. */
+@keyframes dictate-bar {
+  0%,
+  100% {
+    transform: scaleY(0.22);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+/* The note arriving. A band of light crossing skeleton lines reads as text
+   being written, which is exactly what is happening behind it. */
+@keyframes dictate-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(220%);
+  }
+}
 @keyframes float {
   0%,
   100% {
@@ -305,6 +327,13 @@
 }
 .animate-underline-in {
   animation: underline-in 700ms var(--ease-swift) 700ms both;
+}
+.animate-dictate-bar {
+  animation: dictate-bar 1.1s ease-in-out infinite;
+  transform-origin: center;
+}
+.animate-dictate-shimmer {
+  animation: dictate-shimmer 1.6s var(--ease-swift) infinite;
 }
 .animate-float {
   animation: float 4s ease-in-out infinite;

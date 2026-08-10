@@ -46,6 +46,8 @@ type Availability =
       maxSeconds: number;
       maxSizeMb: number;
       canRefine: boolean;
+      /** Optional so an older cached response still opens a microphone. */
+      capture?: CaptureSettings;
     }
   | { available: false };
 
@@ -147,18 +149,160 @@ function StopIcon({ size = 16 }: { size?: number }) {
 const clock = (seconds: number) =>
   `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
+/* ------------------------------------------------------------ level meter */
+
+const BAR_COUNT = 27;
+
+/**
+ * The bars that make the modal feel like something is happening.
+ *
+ * While RECORDING they are driven by the microphone itself, through an
+ * AnalyserNode on the same stream the recorder is using. That matters more
+ * than decoration: a telecaller who has just been asked to speak into a phone
+ * has no other way to know the browser can hear them, and a dead meter is the
+ * difference between saying it again now and discovering the silence after the
+ * call is over.
+ *
+ * Heights are written straight to the DOM from `requestAnimationFrame`. Sixty
+ * state updates a second would re-render the whole modal for an animation.
+ *
+ * While WORKING there is no stream left to read — the tracks stop the moment
+ * the recorder does — so the same bars breathe on a CSS loop instead. Same
+ * shape, same identity, and nothing pretends to be measuring anything.
+ */
+function LevelMeter({
+  stream,
+  live,
+  tone = "danger",
+}: {
+  stream: MediaStream | null;
+  /** True while the microphone is open; false animates on a loop instead. */
+  live: boolean;
+  tone?: "danger" | "brand";
+}) {
+  const bars = React.useRef<Array<HTMLSpanElement | null>>([]);
+
+  React.useEffect(() => {
+    if (!live || !stream) return;
+
+    const Ctor =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!Ctor) return; /* No Web Audio: the CSS loop is the fallback. */
+
+    const context = new Ctor();
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 64;
+    analyser.smoothingTimeConstant = 0.75;
+    context.createMediaStreamSource(stream).connect(analyser);
+
+    const spectrum = new Uint8Array(analyser.frequencyBinCount);
+    let frame = 0;
+
+    const draw = () => {
+      analyser.getByteFrequencyData(spectrum);
+      for (let i = 0; i < BAR_COUNT; i++) {
+        const node = bars.current[i];
+        if (!node) continue;
+        /* Mirrored around the middle, so speech pushes the meter outwards
+         * from the centre rather than filling it left to right. */
+        const from = Math.abs(i - (BAR_COUNT - 1) / 2);
+        const bin = Math.min(
+          spectrum.length - 1,
+          Math.round((from / (BAR_COUNT / 2)) * (spectrum.length * 0.6)),
+        );
+        const level = spectrum[bin] / 255;
+        node.style.transform = `scaleY(${Math.max(0.16, Math.min(1, level * 1.6))})`;
+      }
+      frame = requestAnimationFrame(draw);
+    };
+    frame = requestAnimationFrame(draw);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      void context.close();
+    };
+  }, [live, stream]);
+
+  return (
+    <div className="flex h-12 items-center justify-center gap-[3px]" aria-hidden>
+      {Array.from({ length: BAR_COUNT }, (_, i) => (
+        <span
+          key={i}
+          ref={(node) => {
+            bars.current[i] = node;
+          }}
+          className={cx(
+            "block w-[3px] rounded-full",
+            tone === "danger" ? "bg-danger" : "bg-brand",
+            !live && "animate-dictate-bar",
+          )}
+          style={{
+            height: `${18 + Math.round(Math.sin((i / BAR_COUNT) * Math.PI) * 26)}px`,
+            transform: "scaleY(0.16)",
+            /* Staggered from the middle out, so the idle loop travels rather
+             * than flashing all twenty-seven bars in unison. */
+            animationDelay: `${Math.abs(i - (BAR_COUNT - 1) / 2) * 55}ms`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** The note arriving: lines of text, before there is any text. */
+function SkeletonNote() {
+  return (
+    <div className="mx-auto mt-6 w-full max-w-[320px] space-y-2.5" aria-hidden>
+      {[100, 92, 74].map((width, i) => (
+        <div
+          key={i}
+          className="relative h-2.5 overflow-hidden rounded-full bg-divider"
+          style={{ width: `${width}%` }}
+        >
+          <div
+            className="animate-dictate-shimmer absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-surface to-transparent"
+            style={{ animationDelay: `${i * 180}ms` }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* ----------------------------------------------------------------- modal */
+
+/** How the microphone is opened. Decided by configuration, not the browser. */
+export type CaptureSettings = {
+  noiseSuppression: boolean;
+  autoGainControl: boolean;
+  echoCancellation: boolean;
+};
+
+/* If the endpoint ever answers without these — an older cached response, say —
+ * favour hearing everything. A whisper lost is a fact lost; background noise
+ * is only noise, and the models are better at ignoring it than a filter tuned
+ * for conference calls is at keeping the quiet parts. */
+const CAPTURE_FALLBACK: CaptureSettings = {
+  noiseSuppression: false,
+  autoGainControl: true,
+  echoCancellation: false,
+};
 
 type Phase = "recording" | "working" | "review" | "failed";
 
 function DictationBody({
   maxSeconds,
+  capture,
   canRefine,
   hasExistingText,
   onImport,
   onClose,
 }: {
   maxSeconds: number;
+  /** How to open the microphone. Configuration, not the browser's guess. */
+  capture: CaptureSettings;
   /** Tighten and Rewrite need a text model; without one they are not offered. */
   canRefine: boolean;
   hasExistingText: boolean;
@@ -182,6 +326,9 @@ function DictationBody({
 
   const recorderRef = React.useRef<MediaRecorder | null>(null);
   const streamRef = React.useRef<MediaStream | null>(null);
+  /* The same stream as the ref, in state, because the level meter is an
+   * effect and a ref assignment does not wake one. */
+  const [micStream, setMicStream] = React.useState<MediaStream | null>(null);
   /*
    * The same count as `elapsed`, readable from the send callback without
    * putting it in that callback's dependencies — re-creating `send` every
@@ -231,7 +378,26 @@ function DictationBody({
     (async () => {
       let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        /*
+         * Never a bare `{ audio: true }`. That takes the browser's defaults,
+         * which turn on noise suppression, echo cancellation and gain control
+         * because they assume a video call — and the first of those is built
+         * to remove exactly the sort of low-level signal a whisper is made of,
+         * or a telecaller speaking quietly with a customer still on the line.
+         * It was deleting the words along with the fan.
+         *
+         * Mono at 48kHz: speech is one voice and every model here downmixes
+         * anyway, so a second channel doubles the bytes for nothing.
+         */
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            noiseSuppression: capture.noiseSuppression,
+            autoGainControl: capture.autoGainControl,
+            echoCancellation: capture.echoCancellation,
+            channelCount: 1,
+            sampleRate: 48_000,
+          },
+        });
       } catch (e) {
         if (cancelled) return;
         const denied =
@@ -250,11 +416,17 @@ function DictationBody({
       }
 
       streamRef.current = stream;
+      setMicStream(stream);
       const mimeType = pickContainer();
-      const recorder = new MediaRecorder(
-        stream,
-        mimeType ? { mimeType } : undefined,
-      );
+      /*
+       * An explicit bitrate. Left to itself a browser picks something sized
+       * for a call rather than for a model reading the result, and a quiet
+       * consonant is the first thing a low bitrate spends.
+       */
+      const recorder = new MediaRecorder(stream, {
+        ...(mimeType ? { mimeType } : {}),
+        audioBitsPerSecond: 96_000,
+      });
       recorderRef.current = recorder;
 
       recorder.ondataavailable = (e) => {
@@ -273,7 +445,12 @@ function DictationBody({
         }
         void send(blob);
       };
-      recorder.start();
+      /*
+       * A chunk a second rather than one at the end. The bytes are identical,
+       * but a recording interrupted by a closed laptop has already delivered
+       * most of itself instead of nothing at all.
+       */
+      recorder.start(1000);
     })();
 
     return () => {
@@ -285,8 +462,9 @@ function DictationBody({
       streamRef.current?.getTracks().forEach((t) => t.stop());
       recorderRef.current = null;
       streamRef.current = null;
+      setMicStream(null);
     };
-  }, [take, send]);
+  }, [take, send, capture]);
 
   /* The timer, and the ceiling it enforces. */
   React.useEffect(() => {
@@ -360,12 +538,20 @@ function DictationBody({
     const remaining = maxSeconds - elapsed;
     return (
       <div className="py-4 text-center">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-danger-soft text-danger">
-          <span className="animate-pulse">
+        <div className="relative mx-auto flex h-16 w-16 items-center justify-center">
+          {/* A ring going out on a loop, so the modal is never still even
+              during a pause for breath. */}
+          <span className="animate-pulse-ring absolute inset-0 rounded-full bg-danger-soft" />
+          <span className="relative flex h-16 w-16 items-center justify-center rounded-full bg-danger-soft text-danger">
             <MicIcon size={28} />
           </span>
         </div>
-        <p className="mt-4 text-2xl font-semibold tabular-nums text-ink">
+        {/* Driven by the microphone itself — the only proof a telecaller has
+            that the browser can hear them before they say the whole thing. */}
+        <div className="mt-4">
+          <LevelMeter stream={micStream} live />
+        </div>
+        <p className="mt-1 text-2xl font-semibold tabular-nums text-ink">
           {clock(elapsed)}
         </p>
         <p className="mt-1 text-[13px] text-muted">
@@ -395,13 +581,19 @@ function DictationBody({
 
   if (phase === "working") {
     return (
-      <div className="py-10 text-center">
-        <p className="text-sm font-medium text-ink">
+      <div className="py-8 text-center">
+        {/* The same bars, now breathing on their own: the microphone is closed
+            by this point and there is nothing left to measure, so nothing here
+            claims to be measuring. It keeps the modal alive rather than
+            leaving a sentence sitting still on a white screen. */}
+        <LevelMeter stream={null} live={false} tone="brand" />
+        <p className="mt-5 text-sm font-medium text-ink">
           Writing down what you said…
         </p>
         <p className="mt-1 text-[13px] text-muted">
           {clock(elapsed)} of speech. This usually takes a few seconds.
         </p>
+        <SkeletonNote />
       </div>
     );
   }
@@ -660,6 +852,7 @@ export function DictateButton({
         {/* Unmounted on close, so every visit starts a fresh recording. */}
         <DictationBody
           maxSeconds={dictation.maxSeconds}
+          capture={dictation.capture ?? CAPTURE_FALLBACK}
           canRefine={dictation.canRefine}
           hasExistingText={hasExistingText}
           onClose={() => setOpen(false)}

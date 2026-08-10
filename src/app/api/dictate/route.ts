@@ -60,6 +60,18 @@ export async function GET() {
     maxSeconds: ready.maxSeconds,
     maxSizeMb: config["voice.maxSizeMb"],
     /*
+     * How the microphone itself is opened. The browser's defaults are tuned
+     * for a conference call and cost us quiet speech, so they are decided
+     * here rather than left to it — and they are settings, because how loud a
+     * calling floor is differs by floor and nobody should need a deploy to
+     * find out which way suits theirs.
+     */
+    capture: {
+      noiseSuppression: config["voice.noiseSuppression"],
+      autoGainControl: config["voice.autoGainControl"],
+      echoCancellation: config["voice.echoCancellation"],
+    },
+    /*
      * Tighten and Rewrite are a text call and need OpenAI even where Sarvam
      * did the hearing. Told here so the modal can leave the buttons out
      * rather than offer two that fail.
