@@ -32,6 +32,18 @@ describe("what dictation is able to do", () => {
     assert.equal(r.maxSeconds, 120);
   });
 
+  test("Sarvam only: it can still WRITE, so Tighten and Rewrite stay offered", () => {
+    // Sarvam has a chat model of its own. Refinement is a text call, so an
+    // empty OpenAI account is no reason to take the buttons away.
+    const r = resolveReadiness({ ...BASE, hasOpenaiKey: false });
+    assert.equal(r.canRefine, true);
+  });
+
+  test("no keys at all: nothing can write either", () => {
+    const r = resolveReadiness({ ...BASE, hasSarvamKey: false, hasOpenaiKey: false });
+    assert.equal(r.canRefine, false);
+  });
+
   test("Sarvam only: the recorder stops at Sarvam's own ceiling", () => {
     // The bug this exists for. A 120-second limit against a provider that
     // refuses anything over 30 let somebody talk for two minutes into a
@@ -39,7 +51,6 @@ describe("what dictation is able to do", () => {
     // the recording, which is the worst moment to find out.
     const r = resolveReadiness({ ...BASE, hasOpenaiKey: false });
     assert.equal(r.canHear, true);
-    assert.equal(r.canRefine, false);
     assert.equal(r.maxSeconds, SARVAM_MAX_SECONDS);
   });
 

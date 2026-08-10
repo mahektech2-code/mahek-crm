@@ -19,6 +19,16 @@ export type TranscriptionProvider = "sarvam" | "openai";
  */
 export const SARVAM_MAX_SECONDS = 30;
 
+/**
+ * Sarvam's flagship text model, used to WRITE where OpenAI cannot. Not
+ * configuration: it is the fallback's only sensible choice, and a setting
+ * nobody can test from a screen is a way for a deployment to be quietly
+ * broken. `voice.languageModel` still names the OpenAI one, which is the one
+ * worth tuning. It lives here rather than beside the calling code because the
+ * Admin Console prints it, and that screen is a client component.
+ */
+export const SARVAM_LANGUAGE_MODEL = "sarvam-105b";
+
 export type VoiceReadiness = {
   canHear: boolean;
   canRefine: boolean;
@@ -47,10 +57,14 @@ export function resolveReadiness({
 
   return {
     canHear: sarvam || openai,
-    /* Tighten and Rewrite are a text call: they need OpenAI whoever did the
-     * hearing, and they work even where nothing is allowed to reach it for
-     * transcription. */
-    canRefine: hasOpenaiKey,
+    /* Tighten and Rewrite are a text call, and EITHER provider can make one:
+     * Sarvam has a chat model too. Demanding OpenAI hid both buttons on a
+     * deployment whose Sarvam key was working perfectly well, which is the
+     * same mistake as the microphone one level up — a capability withheld
+     * because of who was asked, not because of what could be done. They work
+     * even where nothing is allowed to reach a provider for TRANSCRIPTION,
+     * since text needs no audio. */
+    canRefine: hasOpenaiKey || hasSarvamKey,
     /* Where OpenAI cannot catch the long ones, the recorder stops at Sarvam's
      * own ceiling. A limit that lets somebody talk for two minutes into a
      * provider documented to refuse them is a promise the deployment cannot
