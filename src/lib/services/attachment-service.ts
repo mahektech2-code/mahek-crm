@@ -11,6 +11,7 @@ import {
   paymentReceipts,
 } from "@/db/schema";
 import { resolveScope, assertCustomerInScope } from "../access-control";
+import { canSeeFeedback, feedbackBehindMessage } from "./feedback-access";
 import { getConfig } from "../config/store";
 import { fileStorage } from "../storage";
 import { sniffContentType } from "../file-types";
@@ -42,7 +43,9 @@ export type ParentType =
   | "interaction"
   | "complaint"
   | "follow_up_attempt"
-  | "payment_receipt";
+  | "payment_receipt"
+  | "feedback"
+  | "feedback_message";
 
 export type AttachmentView = {
   id: string;
@@ -66,6 +69,9 @@ export async function limitFor(parentType: ParentType): Promise<number> {
       // collections call, and for the same reason: it is photographed, not
       // filed.
       return config["attachments.maxPerFollowUp"];
+    case "feedback":
+    case "feedback_message":
+      return config["attachments.maxPerFeedback"];
     default:
       // An interaction carries whatever the complaint it produced carries.
       return config["attachments.maxPerComplaint"];
@@ -275,6 +281,20 @@ export async function canRead(attachmentId: string): Promise<boolean> {
   if (!row.parentType || !row.parentId) {
     const ctx = await resolveScope();
     return row.uploadedById === ctx.user.id;
+  }
+
+  // Feedback is the one parent with no customer behind it, so it cannot be
+  // answered by a customer's scope. The two sides of the thread may see the
+  // screenshot and nobody else — the same rule that decides who may read the
+  // words it was attached to, asked in one place.
+  if (row.parentType === "feedback" || row.parentType === "feedback_message") {
+    const ctx = await resolveScope();
+    const feedbackId =
+      row.parentType === "feedback"
+        ? row.parentId
+        : await feedbackBehindMessage(row.parentId);
+    if (!feedbackId) return false;
+    return canSeeFeedback(ctx.user, feedbackId);
   }
 
   const customerId = await customerBehind(row.parentType, row.parentId);

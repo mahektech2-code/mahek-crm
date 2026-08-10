@@ -194,6 +194,8 @@ export default async function Page({
         // Answering is a manager's, or a platform admin's. Reading is not:
         // a CRM manager on this console sees what their own team reported.
         canTriage: isManager(user) || isPlatformAdmin,
+        viewerId: user.id,
+        maxImages: config["attachments.maxPerFeedback"],
       }}
       sheet={{
         summary: sheetStats,

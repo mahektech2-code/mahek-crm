@@ -4,11 +4,9 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import {
   Badge,
-  Button,
   Card,
   EmptyState,
   Select,
-  Textarea,
   Th,
   Td,
   Tr,
@@ -16,6 +14,7 @@ import {
   type Tone,
 } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { FeedbackThread } from "@/components/feedback/feedback-thread";
 import { stamp } from "@/lib/format";
 import {
   FEEDBACK_STATUSES,
@@ -25,7 +24,7 @@ import {
   type FeedbackStatus,
 } from "@/lib/feedback-labels";
 import type { FeedbackRow } from "@/lib/services/feedback-service";
-import { setFeedbackNote, setFeedbackStatus } from "@/lib/actions/feedback";
+import { setFeedbackStatus } from "@/lib/actions/feedback";
 import { PLATFORM_TABS } from "./data";
 
 /* ---------------------------------------------------------------------------
@@ -45,9 +44,20 @@ const TABS = PLATFORM_TABS.feedback;
 
 export type FeedbackData = {
   rows: FeedbackRow[];
-  counts: { new: number; in_progress: number; done: number; declined: number; total: number };
+  counts: {
+    new: number;
+    in_progress: number;
+    done: number;
+    declined: number;
+    total: number;
+    awaitingReply: number;
+  };
   /** Whether this person may move a report along, or only read them. */
   canTriage: boolean;
+  /** Who is reading — their own lines in a thread sit on the right. */
+  viewerId: string;
+  /** `attachments.maxPerFeedback`, from configuration. */
+  maxImages: number;
 };
 
 const KIND_TONE: Record<FeedbackKind, Tone> = {
@@ -69,6 +79,12 @@ export function FeedbackSection({ data, tab }: { data: FeedbackData; tab: number
 
   const rows = data.rows.filter((r) => {
     if (slug === "new") return r.status === "new";
+    if (slug === "awaiting") {
+      // Answered-and-closed threads are excluded: a thank-you left on a done
+      // report is not work, and a list that counts it stops being a list of
+      // what is owed.
+      return r.awaitingReply && (r.status === "new" || r.status === "in_progress");
+    }
     if (slug === "in-progress") return r.status === "in_progress";
     // Both kinds are somebody asking for something MahekOne does not do; the
     // line between them is finer than anybody triaging wants to care about.
@@ -80,6 +96,11 @@ export function FeedbackSection({ data, tab }: { data: FeedbackData; tab: number
     <div className="mt-5">
       <div className="mb-4 flex flex-wrap gap-2.5">
         <Count label="New" value={data.counts.new} tone={data.counts.new ? "warn" : "neutral"} />
+        <Count
+          label="Waiting on us"
+          value={data.counts.awaitingReply}
+          tone={data.counts.awaitingReply ? "warn" : "neutral"}
+        />
         <Count label="Being looked at" value={data.counts.in_progress} tone="brand" />
         <Count label="Done" value={data.counts.done} tone="success" />
         <Count label="Not doing" value={data.counts.declined} tone="neutral" />
@@ -91,7 +112,9 @@ export function FeedbackSection({ data, tab }: { data: FeedbackData; tab: number
             title={
               slug === "new"
                 ? "Nothing new to read"
-                : slug === "in-progress"
+                : slug === "awaiting"
+                  ? "Nobody is waiting on an answer"
+                  : slug === "in-progress"
                   ? "Nothing is being worked on"
                   : slug === "requests"
                     ? "Nobody has asked for anything yet"
@@ -107,7 +130,13 @@ export function FeedbackSection({ data, tab }: { data: FeedbackData; tab: number
       ) : (
         <div className="flex flex-col gap-2.5">
           {rows.map((r) => (
-            <Report key={r.id} row={r} canTriage={data.canTriage} />
+            <Report
+              key={r.id}
+              row={r}
+              canTriage={data.canTriage}
+              viewerId={data.viewerId}
+              maxImages={data.maxImages}
+            />
           ))}
         </div>
       )}
@@ -137,27 +166,29 @@ function Count({ label, value, tone }: { label: string; value: number; tone: Ton
   );
 }
 
-function Report({ row, canTriage }: { row: FeedbackRow; canTriage: boolean }) {
+function Report({
+  row,
+  canTriage,
+  viewerId,
+  maxImages,
+}: {
+  row: FeedbackRow;
+  canTriage: boolean;
+  viewerId: string;
+  maxImages: number;
+}) {
   const router = useRouter();
   const { run } = useToast();
   const [open, setOpen] = React.useState(false);
-  const [note, setNote] = React.useState(row.adminNote ?? "");
   const [busy, setBusy] = React.useState(false);
+
+  const files = row.attachments.length + row.messages.reduce((n, m) => n + m.attachments.length, 0);
+  const replies = row.messages.filter((m) => m.body !== null).length;
 
   async function changeStatus(status: FeedbackStatus) {
     setBusy(true);
     try {
       const result = await run(setFeedbackStatus(row.id, status));
-      if (result.ok) router.refresh();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function saveNote() {
-    setBusy(true);
-    try {
-      const result = await run(setFeedbackNote(row.id, note));
       if (result.ok) router.refresh();
     } finally {
       setBusy(false);
@@ -191,6 +222,10 @@ function Report({ row, canTriage }: { row: FeedbackRow; canTriage: boolean }) {
                 <span className="font-mono">{row.path}</span>
               </>
             ) : null}
+            {/* Both counted on the closed row, because a screenshot nobody
+                knows is there is a screenshot nobody opens. */}
+            {files ? ` · ${files} screenshot${files === 1 ? "" : "s"}` : ""}
+            {replies ? ` · ${replies} repl${replies === 1 ? "y" : "ies"}` : ""}
           </span>
         </button>
 
@@ -212,11 +247,9 @@ function Report({ row, canTriage }: { row: FeedbackRow; canTriage: boolean }) {
 
       {open ? (
         <div className="border-t border-divider bg-canvas px-5 py-4">
-          <div className="text-sm leading-[21px] whitespace-pre-wrap text-body">
-            {row.body}
-          </div>
-
-          <table className="mt-4 w-auto">
+          {/* Where they were standing, first — a bug report is the words plus
+              the screen, and reading them apart is reading half of it. */}
+          <table className="w-auto">
             <tbody>
               <Tr>
                 <Th>Screen</Th>
@@ -244,34 +277,18 @@ function Report({ row, canTriage }: { row: FeedbackRow; canTriage: boolean }) {
           </table>
 
           <div className="mt-4">
-            <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
-              Reply to {row.byName.split(" ")[0]}
+            <span className="mb-2 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
+              The conversation
             </span>
-            {canTriage ? (
-              <>
-                <Textarea
-                  rows={3}
-                  value={note}
-                  maxLength={2000}
-                  placeholder="What you are doing about it, or why not. They see this."
-                  onChange={(e) => setNote(e.target.value)}
-                />
-                <div className="mt-2 flex justify-end">
-                  <Button
-                    variant="secondary"
-                    disabled={busy || note === (row.adminNote ?? "")}
-                    title={note === (row.adminNote ?? "") ? "Nothing to save" : undefined}
-                    onClick={saveNote}
-                  >
-                    Save reply
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <div className="text-sm text-body">
-                {row.adminNote ?? "Nobody has answered this yet."}
-              </div>
-            )}
+            {/* The same component the reporter sees on their own screen, with
+                the same messages in the same order. Two renderings of one
+                conversation is how the two ends stop agreeing about it. */}
+            <FeedbackThread
+              report={row}
+              viewerId={viewerId}
+              maxImages={maxImages}
+              canReply={canTriage}
+            />
           </div>
         </div>
       ) : null}

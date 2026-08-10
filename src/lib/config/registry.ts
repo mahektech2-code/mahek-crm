@@ -770,6 +770,17 @@ export const SETTINGS = [
     max: 20,
   },
   {
+    key: "attachments.maxPerFeedback",
+    type: "integer",
+    category: "attachments",
+    label: "Attachments per feedback message",
+    description:
+      "Screenshots on one report or one reply in its thread. Three covers the screen that is wrong, what was expected, and the error itself — which is usually the whole bug report.",
+    default: 3,
+    min: 0,
+    max: 20,
+  },
+  {
     key: "attachments.orphanCleanupHours",
     type: "integer",
     category: "attachments",
@@ -1119,6 +1130,7 @@ export type Config = {
   "attachments.acceptedTypes": string[];
   "attachments.maxPerComplaint": number;
   "attachments.maxPerFollowUp": number;
+  "attachments.maxPerFeedback": number;
   "attachments.orphanCleanupHours": number;
   "attachments.retentionDays": number;
 

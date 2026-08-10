@@ -11,6 +11,7 @@ import {
   index,
   pgEnum,
   primaryKey,
+  check,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 
@@ -287,6 +288,15 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   "follow_up_attempt",
   /** Proof of payment: a transfer screenshot, a cheque, a deposit slip. */
   "payment_receipt",
+  /**
+   * A screenshot of the fault, sent with the report itself. The first two
+   * parents behind a file that has no customer at all — which is why
+   * `canRead` asks who may see the THREAD rather than falling through to a
+   * customer's scope.
+   */
+  "feedback",
+  /** A screenshot attached to one reply in the thread, either direction. */
+  "feedback_message",
 ]);
 
 /**
@@ -1586,16 +1596,69 @@ export const feedback = pgTable(
     app: text("app"),
     userAgent: text("user_agent"),
     status: feedbackStatusEnum("status").notNull().default("new"),
-    /** What whoever triaged it wrote back. Shown to the submitter. */
-    adminNote: text("admin_note"),
+    /**
+     * Who last said something on the thread from the triage side, and when.
+     * The reply itself is a row in `feedback_messages` — this pair is what the
+     * list needs to say "answered by X" without reading every message.
+     */
     handledById: text("handled_by_id").references(() => users.id),
     handledAt: timestamp("handled_at", { withTimezone: true }),
+    /**
+     * When the person who wrote it last opened the thread. Anything said after
+     * this is a reply they have not seen, which is what the dot on the Feedback
+     * button counts. Null until they open it once.
+     */
+    submitterReadAt: timestamp("submitter_read_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("feedback_status_idx").on(t.status, t.createdAt),
     index("feedback_user_idx").on(t.userId, t.createdAt),
+  ],
+);
+
+/**
+ * One line of the conversation about a report — from either side.
+ *
+ * This replaces `feedback.admin_note`, which was a single overwritable cell:
+ * a second answer erased the first, the person who wrote the report could not
+ * say anything back, and "what did we tell them" had no answer beyond the
+ * latest edit. A report is a conversation between two people who work here,
+ * and a conversation is rows.
+ *
+ * A status change is a line of it too. Being told "not doing" is the message
+ * that matters most, and a thread that showed the reply but not the decision
+ * would make somebody read both screens to learn what happened. So `statusTo`
+ * carries the transition where there was one — a reply, a status change, or
+ * one of each in a single line — and the check constraint refuses a row that
+ * says neither, because an empty message is a notification nobody can read.
+ *
+ * Nothing here is edited or deleted. The submitter sees what was said to them,
+ * and it stands.
+ */
+export const feedbackMessages = pgTable(
+  "feedback_messages",
+  {
+    id: text("id").primaryKey(),
+    feedbackId: text("feedback_id")
+      .notNull()
+      .references(() => feedback.id, { onDelete: "cascade" }),
+    /** Whoever wrote this line. Compare with `feedback.userId` for which side. */
+    authorId: text("author_id")
+      .notNull()
+      .references(() => users.id),
+    body: text("body"),
+    /** Set where this line also moved the report along. */
+    statusTo: feedbackStatusEnum("status_to"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("feedback_messages_idx").on(t.feedbackId, t.createdAt),
+    check(
+      "feedback_messages_say_something",
+      sql`${t.body} is not null or ${t.statusTo} is not null`,
+    ),
   ],
 );
 
@@ -2459,9 +2522,18 @@ export const waRunsRelations = relations(waRuns, ({ one, many }) => ({
   messages: many(waMessages),
 }));
 
-export const feedbackRelations = relations(feedback, ({ one }) => ({
+export const feedbackRelations = relations(feedback, ({ one, many }) => ({
   user: one(users, { fields: [feedback.userId], references: [users.id] }),
   handledBy: one(users, { fields: [feedback.handledById], references: [users.id] }),
+  messages: many(feedbackMessages),
+}));
+
+export const feedbackMessagesRelations = relations(feedbackMessages, ({ one }) => ({
+  feedback: one(feedback, {
+    fields: [feedbackMessages.feedbackId],
+    references: [feedback.id],
+  }),
+  author: one(users, { fields: [feedbackMessages.authorId], references: [users.id] }),
 }));
 
 export const followUpStatesRelations = relations(followUpStates, ({ one }) => ({
@@ -2513,6 +2585,7 @@ export type InactiveWatchItem = typeof inactiveWatchItems.$inferSelect;
 export type HelpArticle = typeof helpArticles.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type Feedback = typeof feedback.$inferSelect;
+export type FeedbackMessage = typeof feedbackMessages.$inferSelect;
 export type EodReport = typeof eodReports.$inferSelect;
 export type AppSetting = typeof appSettings.$inferSelect;
 export type JobRun = typeof jobRuns.$inferSelect;

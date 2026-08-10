@@ -1,11 +1,13 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "./icons";
 import { Modal } from "@/components/ui/overlays";
 import { Button, Field, Input, Textarea, cx } from "@/components/ui/primitives";
-import { submitFeedback } from "@/lib/actions/feedback";
+import { ImagePicker } from "@/components/crm/image-picker";
+import { myFeedbackSummary, submitFeedback } from "@/lib/actions/feedback";
 import { FEEDBACK_KINDS, KIND_LABELS, type FeedbackKind } from "@/lib/feedback-labels";
 
 /* ---------------------------------------------------------------------------
@@ -75,15 +77,41 @@ export function FeedbackButton({
   );
 }
 
+/**
+ * How many screenshots the form offers. Configuration owns the real limit —
+ * `attachments.maxPerFeedback` — and the server refuses anything over it, but
+ * this dialog is a client with no async config above it, so it offers a number
+ * and lets the save be the authority. Three is the shipped default; a limit
+ * lowered in the console shows up as "2 of 3 attached" rather than a refusal.
+ */
+const OFFERED_IMAGES = 3;
+
 function FeedbackForm({ onDone }: { onDone: () => void }) {
   const path = usePathname();
   const [kind, setKind] = React.useState<FeedbackKind>("bug");
   const [title, setTitle] = React.useState("");
   const [body, setBody] = React.useState("");
+  const [images, setImages] = React.useState<File[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [field, setField] = React.useState<string | null>(null);
   const [sent, setSent] = React.useState<string | null>(null);
+  const [mine, setMine] = React.useState<{ total: number; unreadReplies: number } | null>(
+    null,
+  );
+
+  // What they have already sent, so the way back to the answers is on the
+  // screen they would go looking on. Read on open rather than passed in: five
+  // different app shells mount this button.
+  React.useEffect(() => {
+    let live = true;
+    myFeedbackSummary().then((r) => {
+      if (live && r.ok) setMine(r.data);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   async function send() {
     setBusy(true);
@@ -94,6 +122,7 @@ function FeedbackForm({ onDone }: { onDone: () => void }) {
         kind,
         title,
         body,
+        images,
         path,
         userAgent:
           typeof navigator === "undefined" ? undefined : navigator.userAgent.slice(0, 400),
@@ -121,7 +150,11 @@ function FeedbackForm({ onDone }: { onDone: () => void }) {
             <div className="mt-1 text-[13px] leading-[19px] text-muted">
               It goes to whoever looks after MahekOne. You will get a
               notification here when somebody answers it — including if the
-              answer is no.
+              answer is no. The whole conversation is under{" "}
+              <Link href="/feedback" className="text-brand hover:underline">
+                Your feedback
+              </Link>
+              , and you can add to it there.
             </div>
           </div>
         </div>
@@ -210,6 +243,20 @@ function FeedbackForm({ onDone }: { onDone: () => void }) {
         />
       </Field>
 
+      {/* A screenshot of the wrong screen settles in one picture what a
+          paragraph describes badly, and the person reporting it is standing on
+          the fault right now. Never required, and never able to fail the
+          report: what does not upload is reported by count. */}
+      <div className="mt-3.5">
+        <ImagePicker
+          files={images}
+          onChange={setImages}
+          max={OFFERED_IMAGES}
+          label="Screenshot, if it helps"
+          hint="A picture of the screen that is wrong settles in one look what a paragraph describes badly."
+        />
+      </div>
+
       {error && !field ? (
         <div className="mt-3 text-[13px] text-danger">{error}</div>
       ) : null}
@@ -219,7 +266,18 @@ function FeedbackForm({ onDone }: { onDone: () => void }) {
         and your name, so somebody can come back to you.
       </div>
 
-      <div className="mt-5 flex justify-end gap-2.5">
+      <div className="mt-5 flex items-center justify-end gap-2.5">
+        {mine && mine.total ? (
+          <Link
+            href="/feedback"
+            className="mr-auto text-[13px] font-medium text-brand hover:underline"
+          >
+            Your {mine.total} report{mine.total === 1 ? "" : "s"}
+            {mine.unreadReplies
+              ? ` · ${mine.unreadReplies} new repl${mine.unreadReplies === 1 ? "y" : "ies"}`
+              : ""}
+          </Link>
+        ) : null}
         <Button variant="secondary" onClick={onDone} disabled={busy}>
           Cancel
         </Button>
