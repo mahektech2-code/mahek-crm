@@ -232,6 +232,13 @@
       "when": 1786364161431,
       "tag": "0033_voice_credentials",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786395151695,
+      "tag": "0034_sync_conflicts",
+      "breakpoints": true
     }
   ]
 }

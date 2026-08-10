@@ -36,6 +36,7 @@ import {
   attachments as attachmentsTable,
   sheetOrderRows,
   sheetSyncRuns,
+  syncConflicts,
   sheetTakenOrderRows,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
@@ -4314,6 +4315,109 @@ describe("An imported customer reaches the calling queue", () => {
       (r) => r.customerId === imported.id,
     );
     assert.ok(seen, "the imported customer reached neither the queue nor the held-back list");
+  });
+
+  test("a decision accounts made survives the next sheet sync", async () => {
+    /*
+     * The sheet says `dispatched` on every row and the projection used to
+     * write that unconditionally, so an order accounts had declined was reset
+     * to dispatched on the next pass — silently, every thirty minutes once a
+     * schedule exists.
+     *
+     * Worse than the reset: `approved_at`, `approved_by_id` and
+     * `decline_reason` are not part of that overwrite, so the row was left
+     * saying "declined by Deepa, over credit limit" while its status read
+     * dispatched. And approved status drives EOD value, targets, the buying
+     * cycle, the product history and outstanding — five screens moved with
+     * nobody's name against the change.
+     */
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await projectSheet({ assignToUserId: priya.id });
+
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(eq(orders.externalRef, "SHEET-SO-1001"));
+    assert.ok(order, "the projection created no order");
+    assert.equal(order.status, "dispatched", "the sheet wins on an untouched order");
+
+    // Accounts decide. `approvedAt` is the mark of a decision and is written
+    // by decline as well as approve.
+    await db
+      .update(orders)
+      .set({
+        status: "declined",
+        approvedById: priya.id,
+        approvedAt: new Date(),
+        declineReason: "Over credit limit",
+      })
+      .where(eq(orders.id, order.id));
+
+    // The sheet is read again, unchanged, exactly as a schedule would.
+    await projectSheet({ assignToUserId: priya.id });
+
+    const [after] = await db.select().from(orders).where(eq(orders.id, order.id));
+    assert.equal(after.status, "declined", "the sheet overwrote a decision");
+    assert.equal(after.declineReason, "Over credit limit");
+  });
+
+  test("and the disagreement is written down rather than swallowed", async () => {
+    // Keeping the decision quietly would trade one silent loss for another:
+    // the sheet still says dispatched and somebody has to reconcile the two.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await projectSheet({ assignToUserId: priya.id });
+
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(eq(orders.externalRef, "SHEET-SO-1001"));
+    await db
+      .update(orders)
+      .set({ status: "declined", approvedById: priya.id, approvedAt: new Date() })
+      .where(eq(orders.id, order.id));
+
+    await projectSheet({ assignToUserId: priya.id });
+
+    const [conflict] = await db
+      .select()
+      .from(syncConflicts)
+      .where(eq(syncConflicts.entityId, order.id));
+    assert.ok(conflict, "nothing recorded the disagreement");
+    assert.equal(conflict.field, "status");
+    assert.equal(conflict.sheetValue, "dispatched");
+    assert.equal(conflict.appValue, "declined");
+    assert.equal(conflict.decidedById, priya.id);
+
+    // A second pass must not open a second row. An uncorrected sheet is
+    // re-read every thirty minutes, and a list that grows by forty-eight rows
+    // a day is one nobody reads.
+    await projectSheet({ assignToUserId: priya.id });
+    const all = await db
+      .select()
+      .from(syncConflicts)
+      .where(eq(syncConflicts.entityId, order.id));
+    assert.equal(all.length, 1, "the same disagreement was recorded twice");
+  });
+
+  test("an order nobody has touched still follows the sheet", async () => {
+    // The guard must not freeze the ordinary case: without a decision, the
+    // sheet is the source and stays it.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await projectSheet({ assignToUserId: priya.id });
+
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(eq(orders.externalRef, "SHEET-SO-1001"));
+    await db
+      .update(orders)
+      .set({ status: "captured" })
+      .where(eq(orders.id, order.id));
+
+    await projectSheet({ assignToUserId: priya.id });
+
+    const [after] = await db.select().from(orders).where(eq(orders.id, order.id));
+    assert.equal(after.status, "dispatched", "the sheet stopped winning where it should");
   });
 
   test("a follow-up row is cleared even for a customer nobody calls any more", async () => {

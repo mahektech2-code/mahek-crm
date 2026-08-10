@@ -1825,6 +1825,67 @@ export const sheetRowStatusEnum = pgEnum("sheet_row_status", [
  * One row per sync. Kept as history rather than overwritten: when a figure on
  * a screen looks wrong, the first question is which pull it came from.
  */
+/**
+ * Where the sheet and the app disagree, and nothing was overwritten.
+ *
+ * The team works in the spreadsheet and the CRM projects what they type, so
+ * for almost every column the sheet is simply right and should win. There is
+ * one exception, and it is expensive: an order the sheet calls `dispatched`
+ * that accounts have APPROVED or DECLINED in the app. The projection used to
+ * reset it on the next pass, silently — and because the approval columns are
+ * not part of that overwrite, the row was left saying "declined by Deepa at
+ * 3pm, reason: over credit limit" while its status read `dispatched`.
+ *
+ * That is not a cosmetic disagreement. Approved status drives EOD value,
+ * targets, the buying cycle, the product history and outstanding, so a reset
+ * moves real figures on five screens with nobody's name against it.
+ *
+ * So the decision stands and the disagreement is written down here instead.
+ * A row in this table means: the sheet says one thing, a person decided
+ * another, and a human has to choose. Nothing is lost either way, which is
+ * the only property that matters — the alternative was losing one of them and
+ * not saying which.
+ */
+export const syncConflicts = pgTable(
+  "sync_conflicts",
+  {
+    id: text("id").primaryKey(),
+    /** Which sync produced it, so it can be traced to a pull. */
+    syncId: text("sync_id"),
+    /** `orders` today. Named because the next one will not be. */
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    /** The column that disagreed. */
+    field: text("field").notNull(),
+    /** What the sheet wanted to write. */
+    sheetValue: text("sheet_value"),
+    /** What the app holds, and what was KEPT. */
+    appValue: text("app_value"),
+    /** Who made the app-side decision, where that is known. */
+    decidedById: text("decided_by_id"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    detectedAt: timestamp("detected_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Cleared when somebody has looked, never deleted. */
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedById: text("resolved_by_id"),
+    /** Which way they went, in their own words. */
+    resolution: text("resolution"),
+  },
+  (t) => [
+    /*
+     * One OPEN conflict per field per record. A sheet nobody has corrected
+     * re-reports the same disagreement on every pass — every thirty minutes,
+     * forever — and a list that grows by forty-eight rows a day is a list
+     * nobody reads. Re-detecting an unresolved one is a no-op; once it is
+     * resolved, a fresh disagreement opens a new row.
+     */
+    uniqueIndex("sync_conflicts_open_key")
+      .on(t.entityType, t.entityId, t.field)
+      .where(sql`${t.resolvedAt} is null`),
+    index("sync_conflicts_open_idx").on(t.resolvedAt, t.detectedAt),
+  ],
+);
+
 export const sheetSyncRuns = pgTable(
   "sheet_sync_runs",
   {
