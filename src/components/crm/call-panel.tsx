@@ -20,7 +20,14 @@ import {
   OUTCOMES_BY_TYPE,
   OUTCOME_LABEL as CATALOGUE_OUTCOME_LABEL,
 } from "@/db/catalogue";
-import { addDays, money, phoneDisplay, shortDate, today } from "@/lib/format";
+import {
+  addDays,
+  daysBetween,
+  money,
+  phoneDisplay,
+  shortDate,
+  today,
+} from "@/lib/format";
 import { describeQuantity } from "@/lib/catalogue";
 import { addLabel, dropLabel } from "@/lib/notes";
 import { ImagePicker } from "@/components/crm/image-picker";
@@ -150,9 +157,20 @@ function scriptBlocks(script: ScriptOption, fill: Record<string, string> = {}) {
       .split(/(\{[^}]+\})/g)
       .filter(Boolean)
       .map((text) => {
-        if (!text.startsWith("{")) return { text, placeholder: false };
+        if (!text.startsWith("{")) {
+          return { text, placeholder: false, resolved: false };
+        }
         const key = text.slice(1, -1).trim().toLowerCase();
-        return { text: fill[key] ?? text, placeholder: true };
+        const value = fill[key];
+        // Resolved and unresolved are told apart on the screen. A real name
+        // reads as part of the sentence; braces are an instruction to the
+        // reader, and dressing the two identically means somebody says the
+        // word "bill number" out loud on a live call.
+        return {
+          text: value ?? text,
+          placeholder: true,
+          resolved: value !== undefined,
+        };
       });
 
   const blocks: Array<{ label: string; lines: string[] }> = [];
@@ -466,15 +484,82 @@ function CallPanelForm({
   }, [productQuery, target, searchEnabled]);
 
   /**
+   * The bill a payment script is about.
+   *
+   * Fetched when the panel opens rather than carried on every queue row: sixty
+   * customers are listed and one is called, so this is one query at the moment
+   * somebody actually needs it. `openBillsFor` behind the endpoint resolves
+   * each due date through the term chain and enforces scope, so this screen
+   * does not get its own second opinion about either.
+   */
+  /* The clock, read ONCE on mount. Reading it during render is impure and the
+   * React Compiler rules reject it; a lazy initialiser runs once and is stable
+   * for the life of the panel, which is a single call. */
+  const [todayIso] = React.useState(today);
+
+  const [scriptBill, setScriptBill] = React.useState<{
+    billNo: string;
+    dueDate: string | null;
+    balance: number;
+  } | null>(null);
+
+  React.useEffect(() => {
+    if (!target) return;
+    const controller = new AbortController();
+    fetch(`/api/payments/open-bills?customerId=${target.customerId}`, {
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : { bills: [] }))
+      .then((d: { bills?: Array<{ billNo: string; dueDate: string | null; balance: number }> }) => {
+        const open = d.bills ?? [];
+        /*
+         * The OLDEST overdue one, which is the bill this call is about — a
+         * collections call opens on the debt that has been waiting longest,
+         * and quoting the newest invites "that one is not due yet". Where
+         * nothing is overdue the oldest open bill still beats a placeholder.
+         */
+        const overdue = open.filter((b) => b.dueDate && b.dueDate < todayIso);
+        setScriptBill((overdue.length ? overdue : open)[0] ?? null);
+      })
+      /* A script that keeps its braces is the failure this already handles. */
+      .catch(() => {});
+    return () => controller.abort();
+  }, [target, todayIso]);
+
+  /**
    * What a script's placeholders resolve to for this call. Only what the CRM
    * actually knows — anything absent stays in braces rather than becoming an
    * empty gap in a sentence somebody is about to read aloud.
    */
   const scriptFill: Record<string, string> = {};
   if (target?.contactPerson) scriptFill["contact name"] = target.contactPerson;
-  if (target?.name) scriptFill["customer"] = target.name;
-  if (userName) scriptFill["your name"] = userName;
-  if (target?.outstanding) scriptFill["outstanding"] = money(target.outstanding);
+  if (target?.name) {
+    scriptFill["customer"] = target.name;
+    scriptFill["customer name"] = target.name;
+  }
+  if (target?.city) scriptFill["city"] = target.city;
+  if (userName) {
+    scriptFill["your name"] = userName;
+    scriptFill["my name"] = userName;
+  }
+  if (target?.outstanding) {
+    scriptFill["outstanding"] = money(target.outstanding);
+    scriptFill["outstanding amount"] = money(target.outstanding);
+  }
+  if (target?.lastOrderDate) scriptFill["last order date"] = shortDate(target.lastOrderDate);
+  if (target?.lastOrderValue) scriptFill["last order value"] = money(target.lastOrderValue);
+  if (scriptBill) {
+    scriptFill["bill number"] = scriptBill.billNo;
+    scriptFill["bill no"] = scriptBill.billNo;
+    scriptFill["invoice number"] = scriptBill.billNo;
+    scriptFill["amount"] = money(scriptBill.balance);
+    scriptFill["bill amount"] = money(scriptBill.balance);
+    if (scriptBill.dueDate) {
+      scriptFill["due date"] = shortDate(scriptBill.dueDate);
+      const late = daysBetween(scriptBill.dueDate, todayIso);
+      if (late > 0) scriptFill["days overdue"] = String(late);
+    }
+  }
 
   const isOrderReceived = type === "order_received";
   const chosen = isOrderReceived || Boolean(outcome);
@@ -1325,10 +1410,17 @@ function CallPanelForm({
                             {line.map((part, pi) => (
                               <span
                                 key={pi}
-                                className={
-                                  part.placeholder
-                                    ? "rounded-[3px] bg-brand-soft px-1 font-medium text-[#5223E0]"
+                                title={
+                                  part.placeholder && !part.resolved
+                                    ? "MahekOne does not know this one — say it in your own words"
                                     : undefined
+                                }
+                                className={
+                                  !part.placeholder
+                                    ? undefined
+                                    : part.resolved
+                                      ? "rounded-[3px] bg-brand-soft px-1 font-medium text-[#5223E0]"
+                                      : "rounded-[3px] border border-dashed border-line px-1 font-medium text-muted"
                                 }
                               >
                                 {part.text}
@@ -1470,9 +1562,11 @@ function CallPanelForm({
                                           <span
                                             key={pi}
                                             className={
-                                              part.placeholder
-                                                ? "font-medium text-[#5223E0]"
-                                                : undefined
+                                              !part.placeholder
+                                                ? undefined
+                                                : part.resolved
+                                                  ? "font-medium text-[#5223E0]"
+                                                  : "font-medium text-muted"
                                             }
                                           >
                                             {part.text}
