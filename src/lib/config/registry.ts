@@ -903,6 +903,33 @@ export const SETTINGS = [
     default: true,
   },
   {
+    key: "voice.noiseSuppression",
+    type: "boolean",
+    category: "voice",
+    label: "Browser noise suppression",
+    description:
+      "OFF by default, and deliberately. The browser turns this on unless told otherwise, and it is built for conference calls: it gates low-level signal, which is exactly what a whisper, a tired voice at the end of a shift, or somebody speaking quietly because the customer is still on the other line all look like. It removed the words along with the fan. Turn it on only for a floor loud enough that the noise costs more than the whispers.",
+    default: false,
+  },
+  {
+    key: "voice.autoGainControl",
+    type: "boolean",
+    category: "voice",
+    label: "Automatic gain",
+    description:
+      "Lifts a quiet voice towards a usable level before it is ever encoded, which is the half of the problem noise suppression was making worse. On by default. Turn it off only if recordings come back pumping or breathing between words.",
+    default: true,
+  },
+  {
+    key: "voice.echoCancellation",
+    type: "boolean",
+    category: "voice",
+    label: "Echo cancellation",
+    description:
+      "For a two-way call, where the far end coming back through the speaker has to be subtracted. Dictation has no far end, so this is off: it is a filter on the voice being recorded, buying nothing.",
+    default: false,
+  },
+  {
     key: "voice.transcriptionModel",
     type: "text",
     category: "voice",
@@ -1259,6 +1286,9 @@ export type Config = {
   "voice.maxSeconds": number;
   "voice.maxSizeMb": number;
   "voice.transcriptionProvider": "sarvam" | "openai";
+  "voice.noiseSuppression": boolean;
+  "voice.autoGainControl": boolean;
+  "voice.echoCancellation": boolean;
   "voice.fallbackToOpenai": boolean;
   "voice.transcriptionModel": string;
   "voice.openaiTranscriptionModel": string;
