@@ -25,7 +25,7 @@
     "db:generate": "drizzle-kit generate",
     "db:deploy": "drizzle-kit migrate",
     "check:links": "node --env-file=.env.local scripts/check-links.mjs",
-    "test": "tsx --conditions=react-server --test src/lib/engines/*.test.ts src/lib/csv.test.ts src/lib/catalogue.test.ts src/lib/notes.test.ts src/lib/hr-parse.test.ts src/lib/taken-order-parse.test.ts src/lib/voice-readiness.test.ts",
+    "test": "tsx --conditions=react-server --test src/lib/engines/*.test.ts src/lib/csv.test.ts src/lib/catalogue.test.ts src/lib/notes.test.ts src/lib/hr-parse.test.ts src/lib/taken-order-parse.test.ts src/lib/business-date.test.ts src/lib/voice-readiness.test.ts",
     "test:db": "node --env-file=.env.local scripts/make-test-db.mjs",
     "test:integration": "node --env-file=.env.local scripts/run-integration.mjs",
     "test:accounts": "node --env-file=.env.local scripts/run-accounts-tests.mjs",

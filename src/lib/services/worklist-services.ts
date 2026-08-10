@@ -29,7 +29,7 @@ import { recomputeInactivity, today } from "../recompute";
 import {
   addDays,
   addMonths,
-  calendarDate,
+  businessDate,
   daysBetween,
   monthKey,
   onOrAfterWorkingDay,
@@ -272,6 +272,14 @@ export async function listComplaints(status?: string) {
   const ctx = await resolveScope();
   const ids = scopedUserIds(ctx.scope);
   const day = await today();
+  /* Needed because the age below is measured against `day`, which is a
+   * business date — see the comment on that line. */
+  const config = await getConfig();
+  const workingDay = {
+    timezone: config["workingDay.timezone"],
+    dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+    workingDays: config["workingDay.workingDays"],
+  };
 
   const rows = await db
     .select({
@@ -294,7 +302,10 @@ export async function listComplaints(status?: string) {
     ...c,
     customerName,
     loggedByName,
-    ageDays: daysBetween(calendarDate(c.createdAt), day),
+    /* Both sides business dates. A complaint logged at 1am is a day old the
+     * moment the shift it belongs to ends, not a day before it started —
+     * mixing the two put a negative age on complaints raised overnight. */
+    ageDays: daysBetween(businessDate(c.createdAt, workingDay), day),
     slaBreached: !c.resolvedAt && c.slaDueAt < new Date(),
   }));
 }
@@ -517,7 +528,13 @@ export async function listInactiveWatch(): Promise<WatchRow[]> {
 
   return rows
     .map(({ item, customer, ownerName }) => {
-      const flaggedDate = calendarDate(item.flaggedAt);
+      /* Business date: `watchAge` differences it against `day`. Flagged
+       * overnight, it used to come out a day adrift. */
+      const flaggedDate = businessDate(item.flaggedAt, {
+        timezone: config["workingDay.timezone"],
+        dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+        workingDays: config["workingDay.workingDays"],
+      });
       const age = watchAge(flaggedDate, Boolean(item.outcome), day, config);
       return {
         customerId: customer.id,

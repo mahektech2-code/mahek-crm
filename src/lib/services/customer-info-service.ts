@@ -9,6 +9,7 @@ import { customerProducts, type FrequentProduct } from "./product-service";
 import { today } from "../recompute";
 import {
   addDays,
+  businessDate,
   calendarDate,
   daysBetween,
   daysInMonth,
@@ -102,7 +103,13 @@ export type CustomerInformation = {
  * Calendar days, per §13.7 — chosen once and applied to every "days ago"
  * figure on the tab, so two numbers side by side cannot use different rules.
  */
-function daysAgo(from: string | null, day: BusinessDate): number | null {
+/*
+ * `from` must be a BUSINESS date, like `day`. The clamp below is why this
+ * needed saying out loud: a calendar date one day ahead produced minus one,
+ * `Math.max` turned that into a confident "0 days ago", and the date printed
+ * beside it disagreed with the queue about which day the call happened on.
+ */
+function daysAgo(from: BusinessDate | null, day: BusinessDate): number | null {
   return from ? Math.max(0, daysBetween(from, day)) : null;
 }
 
@@ -162,7 +169,15 @@ export async function customerInformation(
     .orderBy(desc(calls.startedAt))
     .limit(1);
 
-  const lastCallDate = lastCall ? calendarDate(lastCall.at) : null;
+  /*
+   * A BUSINESS date, not a calendar one, because it is shown beside `day` and
+   * subtracted from it below. A call at 1am belongs to the shift that started
+   * the previous morning — which is what the queue already believes, and the
+   * Information tab used to contradict it for the five hours before the day
+   * boundary. The compiler enforces the pairing now: `daysAgo` will not take
+   * a calendar date.
+   */
+  const lastCallDate = lastCall ? businessDate(lastCall.at, workingDay) : null;
 
   const purchase: PurchaseSummary = {
     lastOrderDate: customer.lastOrderDate,
