@@ -36,6 +36,7 @@ import {
   attachments as attachmentsTable,
   sheetOrderRows,
   sheetSyncRuns,
+  sheetTakenOrderRows,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { customerStatusLabel } from "@/lib/format";
@@ -1005,6 +1006,139 @@ describe("Journey 5 - a customer goes quiet and gets a decision", () => {
     // bought nothing for a year comes back onto the watch, not onto the
     // dashboard as a healthy account.
     assert.equal(row.status, "inactive");
+  });
+
+  /*
+   * The Taken Order tab is where an order lands FIRST — typed as the customer
+   * gives it, hours or days before it is dispatched, billed, or written to
+   * Order Details and projected into `orders`.
+   *
+   * Two things were meant to cover a customer between ordering and being
+   * chased again: `activeInOrderSystem` holds them while any line is open, and
+   * `lastOrderDate` keeps them quiet afterwards. The hold released on dispatch
+   * and handed over to a date that knew nothing about the order, so the
+   * customer went back on the Call Log days after their material shipped.
+   */
+  describe("an order on the Taken Order tab counts as an order placed", () => {
+    async function takenOrderRow(
+      customerId: string,
+      orderDate: string,
+      over: Partial<typeof sheetTakenOrderRows.$inferInsert> = {},
+    ) {
+      const [run] = await db
+        .insert(sheetSyncRuns)
+        .values({
+          id: id("syn"),
+          source: "taken_order",
+          spreadsheetId: "sheet",
+          tabTitle: "Taken Order",
+          status: "ok",
+        })
+        .returning();
+
+      await db.insert(sheetTakenOrderRows).values({
+        id: id("tak"),
+        syncId: run.id,
+        rowNumber: 1,
+        lineKey: randomUUID(),
+        raw: {},
+        rowHash: randomUUID(),
+        orderDate,
+        billingPartyName: "Whoever",
+        matchedCustomerId: customerId,
+        // Dispatched and filed: the hold has already let go.
+        officeStatus: "Ready",
+        entryStatus: "Done",
+        open: false,
+        ...over,
+      });
+    }
+
+    test("a dispatched line still stops the queue chasing them", async () => {
+      const customer = await makeCustomer(priya.id, {
+        cycleDays: 10,
+        cycleIsDefault: false,
+        // What `orders` knows: nothing since June.
+        lastOrderDate: addDays(TODAY, -55),
+      });
+      await takenOrderRow(customer.id, addDays(TODAY, -3));
+
+      await recomputeBuyingCycle(customer.id);
+
+      const [row] = await db
+        .select({ last: customers.lastOrderDate })
+        .from(customers)
+        .where(eq(customers.id, customer.id));
+      assert.equal(
+        row.last,
+        addDays(TODAY, -3),
+        "the tab knew about the order before `orders` did",
+      );
+
+      setTestUser(priya);
+      const queue = await getQueue();
+      const chased = queue.entries.find((e) => e.customerId === customer.id);
+      assert.equal(
+        chased,
+        undefined,
+        "a customer whose material shipped three days ago is not asked to order again",
+      );
+    });
+
+    test("a cancelled line is not an order", async () => {
+      const customer = await makeCustomer(priya.id);
+      // A real order, seven weeks ago.
+      await db.insert(orders).values({
+        id: id("ord"),
+        customerId: customer.id,
+        userId: priya.id,
+        orderedAt: new Date(`${addDays(TODAY, -55)}T09:00:00+05:30`),
+        totalAmount: 5_000_00,
+        status: "confirmed",
+      });
+      // And a cancelled line three days ago. Cancel releases the hold on its
+      // own, precisely because the customer behind it has not ordered
+      // anything — counting it here would mute the one person who should be
+      // rung.
+      await takenOrderRow(customer.id, addDays(TODAY, -3), {
+        officeStatus: "Cancel",
+        entryStatus: null,
+        open: false,
+      });
+
+      await recomputeBuyingCycle(customer.id);
+
+      const [row] = await db
+        .select({ last: customers.lastOrderDate })
+        .from(customers)
+        .where(eq(customers.id, customer.id));
+      assert.equal(
+        row.last,
+        addDays(TODAY, -55),
+        "the cancelled line is ignored and the real order stands",
+      );
+    });
+
+    test("a CRM order still wins when it is the newer of the two", async () => {
+      const customer = await makeCustomer(priya.id);
+      await takenOrderRow(customer.id, addDays(TODAY, -30));
+      await db.insert(orders).values({
+        id: id("ord"),
+        customerId: customer.id,
+        userId: priya.id,
+        orderedAt: new Date(`${addDays(TODAY, -2)}T09:00:00+05:30`),
+        totalAmount: 5_000_00,
+        status: "pending_approval",
+      });
+
+      await recomputeBuyingCycle(customer.id);
+
+      const [row] = await db
+        .select({ last: customers.lastOrderDate })
+        .from(customers)
+        .where(eq(customers.id, customer.id));
+      assert.equal(row.last, addDays(TODAY, -2), "the later of the two is the answer");
+    });
   });
 });
 

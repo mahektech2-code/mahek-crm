@@ -30,7 +30,14 @@ import { billCreditDaysSql } from "./bill-terms";
 import { partyNameKey } from "./sheet-parse";
 import { evaluateInactivity } from "./engines/inactivity";
 import { resolveTarget } from "./engines/targets";
-import { businessDate, monthKey, addMonths, type BusinessDate } from "./business-date";
+import {
+  APP_TIMEZONE,
+  businessDate,
+  monthKey,
+  addMonths,
+  type BusinessDate,
+} from "./business-date";
+import { CANCELLED_STATUS } from "./taken-order-parse";
 
 /* ---------------------------------------------------------------------------
  * Recompute paths for every cached derived value.
@@ -74,13 +81,42 @@ export async function recomputeBuyingCycle(customerId: string): Promise<void> {
  * stops the calling queue chasing somebody who ordered this morning, and it
  * would be wrong to make a telecaller ring them because approval is slow.
  * A declined order drops out of both.
+ *
+ * The TAKEN ORDER tab counts too, and it has to.
+ *
+ * That tab is where an order lands first — typed as the customer gives it,
+ * hours or days before it is dispatched, billed, or written to Order Details
+ * and projected into `orders`. Two things were supposed to cover a customer
+ * between ordering and being chased again: `activeInOrderSystem` holds them
+ * while any line is still open, and this date keeps them quiet afterwards. The
+ * hold released on dispatch and handed over to a date that knew nothing about
+ * the order, so the customer went back on the list days after their material
+ * shipped — asked to order the thing they had just received. GMP Technical
+ * Solutions ordered on 7 August and the Call Log had them "overdue by 6 days".
+ *
+ * Cancelled lines are excluded. A cancelled row is the one status that
+ * releases the hold on its own, precisely because the customer behind it has
+ * not ordered anything — counting it here would mute exactly the person who
+ * should be rung.
  */
+const TAKEN_ORDER_PLACED_SQL = sql`
+  select max(t.order_date)::text as d
+    from sheet_taken_order_rows t
+   where t.matched_customer_id = customers.id
+     and t.status = 'present'
+     and lower(coalesce(t.office_status, '')) <> ${CANCELLED_STATUS}`;
+
 async function lastPlaced(customerId: string): Promise<string | null> {
   const rows = await db.execute<{ d: string | null }>(sql`
-    select max((o.ordered_at at time zone 'Asia/Kolkata'))::date::text as d
-      from orders o
-     where o.customer_id = ${customerId}
-       and o.status in ('captured', 'pending_approval', 'confirmed', 'dispatched')
+    select greatest(
+      (select max((o.ordered_at at time zone ${APP_TIMEZONE}))::date::text
+         from orders o
+        where o.customer_id = customers.id
+          and o.status in ('captured', 'pending_approval', 'confirmed', 'dispatched')),
+      (${TAKEN_ORDER_PLACED_SQL})
+    ) as d
+    from customers
+    where customers.id = ${customerId}
   `);
   return rows[0]?.d ?? null;
 }
@@ -137,12 +173,27 @@ export async function recomputeAllBuyingCycles(): Promise<number> {
 
   // Customers with no orders still need their cycle written — that is how a
   // brand-new customer gets the configured default.
-  // One pass for the placed dates too, rather than a query per customer.
+  //
+  // One pass for the placed dates too, rather than a query per customer, and
+  // the same union `lastPlaced` takes: an order the Taken Order tab has and
+  // `orders` has not yet is still an order the customer placed. Kept in step
+  // with `lastPlaced` deliberately — the nightly pass and the per-customer one
+  // disagreeing about when somebody last ordered is a queue that changes its
+  // mind overnight.
   const placed = await db.execute<{ customer_id: string; d: string | null }>(sql`
-    select o.customer_id, max((o.ordered_at at time zone 'Asia/Kolkata'))::date::text as d
-      from orders o
-     where o.status in ('captured', 'pending_approval', 'confirmed', 'dispatched')
-     group by o.customer_id
+    select c.id as customer_id,
+           greatest(
+             (select max((o.ordered_at at time zone ${APP_TIMEZONE}))::date::text
+                from orders o
+               where o.customer_id = c.id
+                 and o.status in ('captured', 'pending_approval', 'confirmed', 'dispatched')),
+             (select max(t.order_date)::text
+                from sheet_taken_order_rows t
+               where t.matched_customer_id = c.id
+                 and t.status = 'present'
+                 and lower(coalesce(t.office_status, '')) <> ${CANCELLED_STATUS})
+           ) as d
+      from customers c
   `);
   const placedBy = new Map(placed.map((r) => [r.customer_id, r.d]));
 
