@@ -11,6 +11,7 @@ import {
   sheetOrderRows,
   sheetPaymentRows,
   sheetSyncRuns,
+  syncConflicts,
   type OrderLine,
 } from "@/db/schema";
 import { isReceived } from "@/lib/sheet-parse";
@@ -438,6 +439,15 @@ export async function projectOrders(
   // One statement per five hundred orders rather than one per order. The
   // external reference is unique, so an order already here is updated in place
   // and the pass stays re-runnable.
+  /*
+   * Read the decided orders BEFORE the upsert, because after it the kept
+   * status and the sheet's are indistinguishable — the whole point of the
+   * guard is that the row comes out unchanged.
+   */
+  if (!options.dryRun) {
+    await recordStatusConflicts(pending);
+  }
+
   if (!options.dryRun) {
     for (const batch of chunked(pending)) {
       await db
@@ -447,7 +457,23 @@ export async function projectOrders(
           target: orders.externalRef,
           set: {
             customerId: sql`excluded.customer_id`,
-            status: sql`excluded.status`,
+            /*
+             * THE ONE COLUMN THE SHEET DOES NOT ALWAYS WIN.
+             *
+             * Every other field here is the sheet's to state and the sheet is
+             * simply right about it. Status is different, because accounts
+             * decide it in the app: approving or declining an order is a
+             * person taking responsibility, and this statement used to undo
+             * that on the next pass without telling anybody.
+             *
+             * `approved_at` is the evidence a decision was made — it is set by
+             * both approve and decline, and never by this projection. Where it
+             * is null the order is untouched by anybody and the sheet wins as
+             * before; where it is set, the decision stands and the
+             * disagreement is written to `sync_conflicts` instead.
+             */
+            status: sql`case when ${orders.approvedAt} is null
+                             then excluded.status else ${orders.status} end`,
             orderedAt: sql`excluded.ordered_at`,
             totalAmount: sql`excluded.total_amount`,
             lineItems: sql`excluded.line_items`,
@@ -463,6 +489,68 @@ export async function projectOrders(
     orders: { created, updated, lines: lineCount },
     skipped: [...skipReasons].map(([reason, count]) => ({ reason, count })),
   };
+}
+
+
+/**
+ * Write down the orders where the sheet and a person disagree.
+ *
+ * Called before the upsert, because afterwards there is nothing to see: the
+ * guard keeps the app's status, so the row that was protected and a row that
+ * simply agreed look identical.
+ *
+ * Only orders with `approvedAt` set are considered — that is the mark of a
+ * decision, written by approve and decline alike and never by this projection.
+ * Of those, only the ones whose status the sheet actually contradicts, so an
+ * order approved and then dispatched in the sheet raises nothing.
+ */
+async function recordStatusConflicts(
+  pending: Array<{ externalRef?: string | null; status?: string }>,
+): Promise<void> {
+  const refs = pending
+    .map((p) => p.externalRef)
+    .filter((r): r is string => Boolean(r));
+  if (!refs.length) return;
+
+  const wanted = new Map(
+    pending.flatMap((p) =>
+      p.externalRef && p.status ? [[p.externalRef, p.status] as const] : [],
+    ),
+  );
+
+  const decided = await db
+    .select({
+      id: orders.id,
+      externalRef: orders.externalRef,
+      status: orders.status,
+      approvedById: orders.approvedById,
+      approvedAt: orders.approvedAt,
+    })
+    .from(orders)
+    .where(and(inArray(orders.externalRef, refs), sql`${orders.approvedAt} is not null`));
+
+  const rows = decided
+    .filter((o) => o.externalRef && wanted.get(o.externalRef) !== o.status)
+    .map((o) => ({
+      id: newId("cfl"),
+      entityType: "orders",
+      entityId: o.id,
+      field: "status",
+      sheetValue: wanted.get(o.externalRef as string) ?? null,
+      appValue: o.status,
+      decidedById: o.approvedById,
+      decidedAt: o.approvedAt,
+    }));
+
+  if (!rows.length) return;
+
+  /*
+   * An unresolved conflict is re-detected on every pass — every thirty
+   * minutes, for as long as nobody corrects the sheet. Doing nothing on
+   * conflict keeps the ORIGINAL detection time, which is the useful one: how
+   * long this has been waiting, not how recently a schedule ran.
+   */
+  await db.insert(syncConflicts).values(rows).onConflictDoNothing();
 }
 
 /* ----------------------------------------------------------------- bills */

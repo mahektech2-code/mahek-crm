@@ -872,6 +872,46 @@ complaints, targets, the inactive watch, WhatsApp replies and global search.
 Reading `owner_id` alone silently drops every customer whose sales AM has been
 set, including off the collections list while they still owe money.
 
+**The sheet wins every column except a decision somebody made.** The team
+works in the spreadsheet and the CRM projects what they type, so for almost
+everything the sheet is simply right and should overwrite. `orders.status` is
+the exception: accounts approve and decline in the app, and the projection
+used to reset that to `dispatched` on every pass. The approval columns are not
+part of that overwrite, so the row was left reading "declined by Deepa, over
+credit limit" beside a status of `dispatched` — and approved status drives EOD
+value, targets, the buying cycle, the product history and outstanding, so the
+reset moved figures on five screens with nobody's name against it. `approvedAt`
+is the mark of a decision, written by decline as well as approve and never by
+the projection, so the upsert keeps the app's status wherever it is set.
+
+**A kept decision is written down, not just kept.** Silence would trade one
+invisible loss for another: the sheet still says something different and
+somebody has to reconcile the two. `sync_conflicts` records what the sheet
+wanted, what the app holds and who decided, with a partial unique index on the
+unresolved ones — an uncorrected sheet is re-read every thirty minutes, and a
+list that grows by forty-eight rows a day is one nobody reads.
+
+**One sync per source at a time.** Nothing checked this, which was fine on a
+laptop and is not on a schedule: a run that hangs on a slow Google response is
+still `running` when the next fires, and two passes race through the same
+upserts. A `running` row older than ten minutes is treated as dead rather than
+blocking forever, because the route is capped at five — waiting on a killed
+process would let one timeout stop every future sync. Refusing returns **409
+and not 500**: two overlapping calls are the ordinary result of a slow run and
+a fixed interval, and a scheduler must not page somebody about a sync that was
+working perfectly.
+
+**The schedule lives in GitHub Actions, because Vercel Cron is paid.** Two
+workflows: every thirty minutes for the read modes and the projection, and one
+a day for `reconcile` — the only pass that sees an edit to an old row or a
+deletion — followed by `nightly`, which is the only thing that rebuilds the
+derived caches. Steps run in sequence inside one job on purpose: no single
+call may exceed the route's five-minute ceiling, but a job may take twenty
+minutes, so the cycle is chunked into calls rather than made into one long
+one. Reading is cheap when nothing changed, since every row carries a content
+hash — an untouched tab costs a read and no writes, which is what makes the
+cadence affordable.
+
 **A flag that is silently discarded is worse than one that is rejected.**
 `npm run jobs -- project-sheet --bills` used to run the projection with no
 options whatsoever: the argument was read into argv, dropped before `runJob`,

@@ -1,0 +1,97 @@
+# -----------------------------------------------------------------------------
+# Pulling the Google Sheets into MahekOne, every thirty minutes.
+#
+# WHY HERE AND NOT VERCEL CRON: Vercel Cron is a paid feature and this account
+# is on the free plan, so the schedule has to live outside the deployment.
+# GitHub Actions keeps a log of every run and gives a manual "sync now" button
+# through workflow_dispatch without touching the app.
+#
+# WHY SEQUENTIAL STEPS AND NOT SEPARATE CRONS: the sync route is capped at five
+# minutes — the Vercel function ceiling, not a setting — so no single call may
+# take longer. A job can run for hours. Each mode below waits for the last, so
+# the cycle is free to take twenty minutes while every request stays inside its
+# own cap.
+#
+# The order matters. The read modes land rows in the staging tables; `project`
+# turns what has landed into customers, orders and bills. Projecting first
+# would publish the previous cycle's data and call it fresh.
+#
+# Reading is cheap when nothing changed: every row carries a content hash, so a
+# pass over an untouched tab is a read and no writes. That is what makes a
+# thirty-minute cadence affordable.
+#
+# Set up once, in the repository settings:
+#   Variables → SYNC_URL           https://<your-deployment>/api/sheets/sync
+#   Variables → SYNC_OWNER_EMAIL   who imported customers answer to
+#   Secrets   → CRON_SECRET        the same value the deployment holds
+# -----------------------------------------------------------------------------
+name: Sheet sync
+
+on:
+  schedule:
+    # Every 30 minutes. GitHub's scheduler is best-effort and runs late under
+    # load; nothing here assumes it is punctual.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  # A cycle that overruns must not have the next start on top of it. The server
+  # refuses overlapping runs of the same source anyway, but stopping it here
+  # keeps the log readable instead of full of 409s.
+  group: sheet-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Sync every source, in order
+        env:
+          SYNC_URL: ${{ vars.SYNC_URL }}
+          SYNC_OWNER_EMAIL: ${{ vars.SYNC_OWNER_EMAIL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${SYNC_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::SYNC_URL or CRON_SECRET is not set. See the header of this file."
+            exit 1
+          fi
+
+          sync () {
+            mode="$1"
+            echo "--- $mode"
+            # --max-time just above the server's own five-minute ceiling, so a
+            # hung request fails here rather than holding the job open.
+            code=$(curl -sS -o /tmp/out.json -w '%{http_code}' --max-time 310 \
+                   -H "Authorization: Bearer $CRON_SECRET" \
+                   "$SYNC_URL?mode=$mode")
+
+            case "$code" in
+              200)
+                echo "ok"; cat /tmp/out.json; echo ;;
+              409)
+                # Already running. Not a failure: two overlapping calls are the
+                # ordinary result of a slow run and a fixed interval, and the
+                # right response is to leave the first one alone.
+                echo "::notice::$mode skipped, a run was already in progress"; echo ;;
+              *)
+                echo "::error::$mode failed with HTTP $code"; cat /tmp/out.json; echo
+                return 1 ;;
+            esac
+          }
+
+          sync append   || exit 1
+          sync taken    || exit 1
+          sync payments || exit 1
+          sync parties  || exit 1
+
+          # The projection needs an owner: nothing in the sheet says who works
+          # an account, and a customer in nobody's book appears on no list for
+          # anybody. Skipped rather than guessed if it is unset.
+          if [ -n "${SYNC_OWNER_EMAIL:-}" ]; then
+            sync "project&owner=$SYNC_OWNER_EMAIL" || exit 1
+          else
+            echo "::warning::SYNC_OWNER_EMAIL unset, so nothing was projected. Staged rows are waiting."
+          fi

@@ -1,0 +1,71 @@
+# -----------------------------------------------------------------------------
+# The full compare, and the rebuild of everything derived. Once a day.
+#
+# Separate from the half-hourly cycle because these two do what that one
+# deliberately does not:
+#
+#   RECONCILE reads the whole tab rather than only what is past the highest row
+#   seen. That is the only pass that notices an EDIT to an old row or a
+#   DELETION, and it is too expensive to run every thirty minutes.
+#
+#   NIGHTLY rebuilds the derived caches: buying cycles, the inactive watch,
+#   follow-up stages, slow payers, bill statuses. Nothing else does. Left
+#   unrun they sit at whatever the last import left them, and an empty Inactive
+#   Watch reads as "nobody has gone quiet" when it means "nothing has looked".
+#
+# 01:30 IST, which is 20:00 UTC the day before. After the working day, before
+# anybody opens the CRM in the morning.
+# -----------------------------------------------------------------------------
+name: Sheet sync (nightly)
+
+on:
+  schedule:
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+
+concurrency:
+  # Shares a group with the half-hourly cycle: a full compare and an append
+  # pass over the same tab have no business running together.
+  group: sheet-sync
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Full compare, then rebuild the derived values
+        env:
+          SYNC_URL: ${{ vars.SYNC_URL }}
+          SYNC_OWNER_EMAIL: ${{ vars.SYNC_OWNER_EMAIL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${SYNC_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::SYNC_URL or CRON_SECRET is not set."
+            exit 1
+          fi
+
+          sync () {
+            mode="$1"
+            echo "--- $mode"
+            code=$(curl -sS -o /tmp/out.json -w '%{http_code}' --max-time 310 \
+                   -H "Authorization: Bearer $CRON_SECRET" \
+                   "$SYNC_URL?mode=$mode")
+            case "$code" in
+              200) echo "ok"; cat /tmp/out.json; echo ;;
+              409) echo "::notice::$mode skipped, a run was already in progress"; echo ;;
+              *)   echo "::error::$mode failed with HTTP $code"; cat /tmp/out.json; echo
+                   return 1 ;;
+            esac
+          }
+
+          sync reconcile || exit 1
+
+          if [ -n "${SYNC_OWNER_EMAIL:-}" ]; then
+            sync "project&owner=$SYNC_OWNER_EMAIL" || exit 1
+          fi
+
+          # Last, because it rebuilds from whatever the projection just wrote.
+          sync nightly || exit 1

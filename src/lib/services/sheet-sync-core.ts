@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gt } from "drizzle-orm";
 import { db } from "@/db";
 import { sheetSyncRuns } from "@/db/schema";
 import type { ReadRange, SheetTable } from "@/lib/sheets";
@@ -122,10 +122,63 @@ export type RunOptions = {
  * deleted. Both are needed: one to tell somebody what happened, the other to
  * carry on from.
  */
+/**
+ * How long a `running` row is believed before it is treated as abandoned.
+ *
+ * The sync route is capped at five minutes, so anything older than this was
+ * killed rather than finished. Ten minutes leaves room for a slow finish
+ * without letting one dead run block a schedule indefinitely.
+ */
+const STALE_RUN_MS = 10 * 60 * 1000;
+
+/** Refused because the same source is already being read. Not a failure. */
+export class SyncAlreadyRunningError extends Error {
+  readonly source: string;
+  readonly since: Date;
+  constructor(source: string, since: Date) {
+    super(`A ${source} sync started at ${since.toISOString()} is still running.`);
+    this.name = "SyncAlreadyRunningError";
+    this.source = source;
+    this.since = since;
+  }
+}
+
 export async function runSync(
   options: RunOptions,
   work: (syncId: string) => Promise<SyncCounts>,
 ): Promise<SyncOutcome> {
+  /*
+   * ONE RUN PER SOURCE AT A TIME.
+   *
+   * Nothing used to check this. On a laptop it did not matter — a person runs
+   * one command and waits. On a schedule it does: a run that hangs on a slow
+   * Google response is still `running` when the next fires, and two passes
+   * over the same tab race through the same upserts. The writes are
+   * idempotent, so the cost is doubled work and a doubled API bill rather than
+   * corruption, but both runs also believe they own the cursor.
+   *
+   * A run older than the stale window is treated as dead rather than blocking
+   * forever: the route is capped at five minutes, so a `running` row from an
+   * hour ago is a process that was killed mid-write and never got to mark
+   * itself failed. Waiting on it would let one timeout stop every future sync,
+   * which is a worse failure than the one being prevented.
+   */
+  const inFlight = await db
+    .select({ id: sheetSyncRuns.id, startedAt: sheetSyncRuns.startedAt })
+    .from(sheetSyncRuns)
+    .where(
+      and(
+        eq(sheetSyncRuns.source, options.source),
+        eq(sheetSyncRuns.status, "running"),
+        gt(sheetSyncRuns.startedAt, new Date(Date.now() - STALE_RUN_MS)),
+      ),
+    )
+    .limit(1);
+
+  if (inFlight.length) {
+    throw new SyncAlreadyRunningError(options.source, inFlight[0].startedAt);
+  }
+
   const syncId = newSyncId("sync");
   await db.insert(sheetSyncRuns).values({
     id: syncId,

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { runJob, type JobName } from "@/lib/jobs";
+import { SyncAlreadyRunningError } from "@/lib/services/sheet-sync-core";
 
 /* ---------------------------------------------------------------------------
  * The order sheet's only trigger on a deployed machine.
@@ -109,6 +110,20 @@ export async function GET(request: Request) {
     const [result] = await runJob(job, undefined, options);
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
+    /*
+     * Already running is not a failure, and a scheduler must not read it as
+     * one. Two overlapping calls are the ordinary result of a slow run and a
+     * fixed interval; the right response is to leave the first one alone.
+     * 409 rather than 500 so a workflow can pass on it deliberately instead
+     * of alerting somebody at two in the morning about a sync that was
+     * working perfectly.
+     */
+    if (e instanceof SyncAlreadyRunningError) {
+      return NextResponse.json(
+        { ok: false, skipped: "already_running", since: e.since, error: e.message },
+        { status: 409 },
+      );
+    }
     // The job row already carries the failure; this is what the cron log sees.
     return NextResponse.json(
       { ok: false, error: e instanceof Error ? e.message : String(e) },
