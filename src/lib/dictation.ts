@@ -2,7 +2,14 @@ import "server-only";
 import { transcribe, generateText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { readSecret } from "@/lib/secrets";
-import { sarvamSpeechToText, SARVAM_MAX_SECONDS } from "@/lib/sarvam";
+import { sarvamSpeechToText } from "@/lib/sarvam";
+import {
+  resolveReadiness,
+  SARVAM_MAX_SECONDS,
+  type TranscriptionProvider,
+  type VoiceReadiness,
+} from "@/lib/voice-readiness";
+export { SARVAM_MAX_SECONDS, type TranscriptionProvider };
 
 /* ---------------------------------------------------------------------------
  * The one place speech becomes text in MahekOne.
@@ -51,15 +58,38 @@ import { sarvamSpeechToText, SARVAM_MAX_SECONDS } from "@/lib/sarvam";
  *
  * ------------------------------------------------------------------------- */
 
-export type TranscriptionProvider = "sarvam" | "openai";
-
-/** Whether ANY provider could hear a recording right now. */
-export async function dictationConfigured(): Promise<boolean> {
-  const [sarvam, openaiKey] = await Promise.all([
+/**
+ * What dictation can actually do right now, given the keys that exist and the
+ * provider that was chosen.
+ *
+ * This used to be "is there any key at all", which is a different question and
+ * answered yes in two situations where nothing worked. A key for Sarvam with
+ * OpenAI chosen drew a microphone that could not transcribe a word. And a
+ * Sarvam-only deployment drew one that recorded for the configured 120 seconds
+ * and then handed the audio to a fallback with no key — reported to the
+ * telecaller as "dictation is not set up on this deployment yet", after they
+ * had said their piece.
+ *
+ * `maxSeconds` is the fix for the second: where OpenAI cannot catch the long
+ * ones, the recorder is told to stop at Sarvam's own ceiling. The rule one
+ * level up is that a microphone which fails when pressed is worse than one
+ * never offered; a recording that fails when it passes thirty seconds is the
+ * same fault wearing a clock.
+ */
+export async function voiceReadiness(config: {
+  provider: TranscriptionProvider;
+  fallbackToOpenai: boolean;
+  maxSeconds: number;
+}): Promise<VoiceReadiness> {
+  const [sarvamKey, openaiKey] = await Promise.all([
     readSecret("sarvam.apiKey"),
     readSecret("openai.apiKey"),
   ]);
-  return Boolean(sarvam || openaiKey);
+  return resolveReadiness({
+    ...config,
+    hasSarvamKey: Boolean(sarvamKey),
+    hasOpenaiKey: Boolean(openaiKey),
+  });
 }
 
 /**
@@ -92,6 +122,13 @@ export type DictationOutcome =
     }
   /** No provider configured — nothing was sent anywhere. */
   | { ok: false; reason: "not_configured" }
+  /**
+   * Past Sarvam's ceiling with no OpenAI key behind it. A provider IS
+   * configured — kept apart from `not_configured`, which sends somebody to
+   * check a setting that is already correct, when what is wrong is the length
+   * of this one recording.
+   */
+  | { ok: false; reason: "too_long"; detail: string }
   /** The recording carried no intelligible speech. */
   | { ok: false; reason: "no_speech" }
   /** A provider is configured and the call failed. */
@@ -232,6 +269,34 @@ export async function transcribeSpeech({
       reason: "failed",
       detail: `Longer than Sarvam's ${SARVAM_MAX_SECONDS}s limit and the fallback is off.`,
     };
+  }
+
+  /*
+   * Sarvam is set up and OpenAI, which this recording now needs, is not. That
+   * is NOT "dictation is not configured" — dictation is configured, and the
+   * telecaller has just proved it by being offered a microphone. Saying so
+   * sends somebody to check a setting that is already correct, and hides the
+   * two things actually worth knowing: the recording was too long for the one
+   * provider that has a key, or that provider refused it.
+   */
+  if (sarvamKey) {
+    return seconds > SARVAM_MAX_SECONDS
+      ? {
+          ok: false,
+          reason: "too_long",
+          detail: `Longer than Sarvam's ${SARVAM_MAX_SECONDS}s limit, and OpenAI has no key to catch it.`,
+        }
+      : /*
+         * A recording Sarvam's ceiling allowed and Sarvam still refused. That
+         * is the provider failing, not the length, and it gets the answer that
+         * asks somebody to try again rather than one that asks them to say
+         * less.
+         */
+        {
+          ok: false,
+          reason: "failed",
+          detail: "Sarvam could not take the recording and OpenAI has no key to catch it.",
+        };
   }
 
   return viaOpenai({ audio, openaiTranscriptionModel, languageModel });

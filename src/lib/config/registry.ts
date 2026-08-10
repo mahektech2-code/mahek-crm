@@ -1048,6 +1048,14 @@ export function checkConsistency(config: Config): string[] {
    * limit can be whatever suits a telecaller. With it off, a limit above 30
    * would let somebody speak for a minute into a recorder that was always
    * going to refuse it — the wasted minute is paid by the person on the phone.
+   *
+   * The recorder now caps itself at 30 in that case rather than running on and
+   * failing, so this is no longer a broken deployment; it is a setting that
+   * does not mean what it says, which a manager reading the number should
+   * still be told. Note what this check CANNOT see: whether OpenAI has a key.
+   * Configuration validation has no business reading secrets, so a fallback
+   * that is switched on but has nothing behind it passes here and is caught
+   * where the keys are actually known — see `resolveReadiness`.
    */
   if (
     config["voice.transcriptionProvider"] === "sarvam" &&
@@ -1055,7 +1063,7 @@ export function checkConsistency(config: Config): string[] {
     config["voice.maxSeconds"] > 30
   ) {
     problems.push(
-      `Voice: Sarvam refuses audio over 30 seconds and the OpenAI fallback is off, so the recording limit cannot be ${config["voice.maxSeconds"]}s. Lower it to 30, or turn the fallback back on.`,
+      `Voice: Sarvam refuses audio over 30 seconds and the OpenAI fallback is off, so recordings stop at 30s whatever this says — the ${config["voice.maxSeconds"]}s limit has no effect. Lower it to 30, or turn the fallback back on.`,
     );
   }
 
