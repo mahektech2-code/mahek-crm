@@ -101,7 +101,7 @@ export function RichTextEditor({
         <DictateButton
           hasExistingText={value.trim().length > 0}
           onImport={(text, replace) => onChange(replace ? text : joinDictation(value, text))}
-          className="absolute right-1 bottom-2"
+          className="absolute right-2 bottom-3"
         />
       </span>
       <span className="mt-3 block">

@@ -41,7 +41,12 @@ import { Modal } from "./overlays";
 /* ---------------------------------------------------------- availability */
 
 type Availability =
-  | { available: true; maxSeconds: number; maxSizeMb: number; canRefine: boolean }
+  | {
+      available: true;
+      maxSeconds: number;
+      maxSizeMb: number;
+      canRefine: boolean;
+    }
   | { available: false };
 
 /*
@@ -127,7 +132,13 @@ function MicIcon({ size = 16 }: { size?: number }) {
 
 function StopIcon({ size = 16 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
       <rect x="6" y="6" width="12" height="12" rx="2" />
     </svg>
   );
@@ -189,7 +200,10 @@ function DictationBody({
      */
     form.append("seconds", String(elapsedRef.current));
     try {
-      const res = await fetch("/api/dictate/transcribe", { method: "POST", body: form });
+      const res = await fetch("/api/dictate/transcribe", {
+        method: "POST",
+        body: form,
+      });
       const json = await res.json().catch(() => null);
       if (!json?.ok) {
         setError(json?.error ?? "That did not come back. Try recording again.");
@@ -220,7 +234,8 @@ function DictationBody({
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       } catch (e) {
         if (cancelled) return;
-        const denied = e instanceof DOMException && e.name === "NotAllowedError";
+        const denied =
+          e instanceof DOMException && e.name === "NotAllowedError";
         setError(
           denied
             ? "The browser is not letting this page use the microphone. Allow it in the address bar, then try again."
@@ -236,7 +251,10 @@ function DictationBody({
 
       streamRef.current = stream;
       const mimeType = pickContainer();
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const recorder = new MediaRecorder(
+        stream,
+        mimeType ? { mimeType } : undefined,
+      );
       recorderRef.current = recorder;
 
       recorder.ondataavailable = (e) => {
@@ -245,7 +263,9 @@ function DictationBody({
       recorder.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
         if (cancelled) return;
-        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        const blob = new Blob(chunks, {
+          type: recorder.mimeType || "audio/webm",
+        });
         if (blob.size === 0) {
           setError("Nothing was recorded.");
           setPhase("failed");
@@ -260,7 +280,8 @@ function DictationBody({
       cancelled = true;
       /* Closing mid-recording must release the microphone, or the browser
        * keeps showing the recording indicator over an app nobody is using. */
-      if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+      if (recorderRef.current?.state === "recording")
+        recorderRef.current.stop();
       streamRef.current?.getTracks().forEach((t) => t.stop());
       recorderRef.current = null;
       streamRef.current = null;
@@ -317,7 +338,9 @@ function DictationBody({
       });
       const json = await res.json().catch(() => null);
       if (!json?.ok) {
-        setError(json?.error ?? "That did not come back. Your text is unchanged.");
+        setError(
+          json?.error ?? "That did not come back. Your text is unchanged.",
+        );
         return;
       }
       setPrevious(english);
@@ -342,10 +365,14 @@ function DictationBody({
             <MicIcon size={28} />
           </span>
         </div>
-        <p className="mt-4 text-2xl font-semibold tabular-nums text-ink">{clock(elapsed)}</p>
+        <p className="mt-4 text-2xl font-semibold tabular-nums text-ink">
+          {clock(elapsed)}
+        </p>
         <p className="mt-1 text-[13px] text-muted">
-          Listening. Speak in whatever language you like — Hindi, Marathi, Gujarati, English, or
-          a mix of them.
+          {/* No language is named here. A list reads as the set of allowed
+              answers, and somebody whose language is missing from it stops
+              before they start — the opposite of what this sentence is for. */}
+          Listening. Speak in any language, or a mix of them.
         </p>
         {remaining <= 20 ? (
           <p className="mt-1 text-[13px] text-danger">
@@ -369,7 +396,9 @@ function DictationBody({
   if (phase === "working") {
     return (
       <div className="py-10 text-center">
-        <p className="text-sm font-medium text-ink">Writing down what you said…</p>
+        <p className="text-sm font-medium text-ink">
+          Writing down what you said…
+        </p>
         <p className="mt-1 text-[13px] text-muted">
           {clock(elapsed)} of speech. This usually takes a few seconds.
         </p>
@@ -410,7 +439,8 @@ function DictationBody({
         /* Edit it here. Most corrections are one word and do not need a model. */
       />
       <p className="mt-1 text-[13px] text-muted">
-        This is everything you said, not a summary. Edit it directly, or ask below.
+        This is everything you said, not a summary. Edit it directly, or ask
+        below.
       </p>
 
       {spoken && spoken !== english ? (
@@ -468,7 +498,12 @@ function DictationBody({
             Undo
           </Button>
         ) : null}
-        <Button size="sm" variant="ghost" disabled={busy !== null} onClick={again}>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy !== null}
+          onClick={again}
+        >
           <MicIcon size={14} /> Record again
         </Button>
       </div>
@@ -511,7 +546,10 @@ function DictationBody({
             Replace what is there
           </Button>
         ) : null}
-        <Button disabled={!english.trim()} onClick={() => onImport(english.trim(), false)}>
+        <Button
+          disabled={!english.trim()}
+          onClick={() => onImport(english.trim(), false)}
+        >
           {hasExistingText ? "Add to what is there" : "Put it in the box"}
         </Button>
       </div>
@@ -526,7 +564,9 @@ export function DictateButton({
   hasExistingText = false,
   disabled,
   className,
-  title = "Dictate",
+  /* Shown on hover and read out by a screen reader. The words live here
+   * rather than in the layout, so twenty fields do not each carry a sentence. */
+  title = "Speak instead of typing. Say it in any language.",
 }: {
   /** `replace` is false for an append — the default, and the safe one. */
   onImport: (text: string, replace: boolean) => void;
@@ -543,21 +583,73 @@ export function DictateButton({
 
   return (
     <>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen(true)}
-        title={title}
-        aria-label={title}
-        className={cx(
-          "flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-[4px]",
-          "text-muted hover:bg-canvas hover:text-brand",
-          "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
-          className,
-        )}
-      >
-        <MicIcon />
-      </button>
+      {/*
+       * SMALL, IN THE CORNER OF THE BOX — but coloured, not grey.
+       *
+       * It began as a muted glyph the same weight as the resize handle beside
+       * it, and the two read as one piece of furniture. A telecaller who is
+       * not confident with computers does not press furniture. The fix is not
+       * size: it is that the control is TINTED, so it registers as something
+       * offered rather than something structural, and carries its words on
+       * hover and for a screen reader rather than in the layout.
+       *
+       * Nudged up and left of the corner so it stops sharing pixels with the
+       * resize grip — the two were overlapping, which is most of what made it
+       * look like part of the frame.
+       *
+       * THE LABEL IS OURS, NOT THE BROWSER'S. `title` was doing this job and
+       * browsers sit on it for about a second before showing anything — long
+       * enough that somebody who hovers to find out what a button does has
+       * already moved on. The whole point of the words is to answer that
+       * question at the moment it is asked, so they appear on hover with no
+       * delay at all. `aria-label` still carries them for a screen reader;
+       * `title` is gone so the native tooltip cannot arrive late on top.
+       */}
+      {/*
+       * Two spans, and they are not interchangeable. The OUTER one takes the
+       * caller's positioning; the INNER one is `relative`, which is what the
+       * tooltip anchors to. Putting both on one element silently breaks it:
+       * `absolute` and `relative` are the same property, Tailwind emits
+       * `relative` last, and the caller's placement is thrown away — the
+       * button drops out of the corner and lands wherever the flow puts it.
+       */}
+      <span className={className}>
+        <span className="group relative inline-flex">
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => setOpen(true)}
+            aria-label={title}
+            className={cx(
+              "inline-flex cursor-pointer items-center justify-center rounded-[4px]",
+              "h-6.5 w-6.5 border border-brand-softer bg-brand-soft text-brand",
+              "transition-colors duration-100 hover:border-brand hover:bg-brand-softer",
+              "disabled:cursor-not-allowed disabled:border-line disabled:bg-canvas",
+              "disabled:text-muted disabled:hover:border-line disabled:hover:bg-canvas",
+            )}
+          >
+            <MicIcon size={13} />
+          </button>
+
+          {/* Right-aligned and above: the button lives in the bottom-right of a
+            field, so a tooltip growing left and up is the only direction that
+            stays on screen. Not rendered for a disabled button — there is
+            nothing being offered to explain. */}
+          {disabled ? null : (
+            <span
+              role="tooltip"
+              className={cx(
+                "pointer-events-none absolute right-0 bottom-full z-20 mb-1.5 hidden",
+                "rounded-[4px] bg-ink px-2 py-1 text-[12px] whitespace-nowrap text-white",
+                "shadow-[0_2px_8px_rgba(22,22,22,0.18)]",
+                "group-hover:block group-focus-within:block",
+              )}
+            >
+              {title}
+            </span>
+          )}
+        </span>
+      </span>
       <Modal
         open={open}
         onClose={() => setOpen(false)}
@@ -615,7 +707,7 @@ export function VoiceTextarea({
 
   return (
     <span className="relative block">
-      {/* Room for the button, so a long line never runs underneath it. */}
+      {/* Room on the right so a long line never runs under the button. */}
       <Textarea {...props} className={cx("pr-9", className)} />
       <DictateButton
         title={dictateTitle}
@@ -633,7 +725,10 @@ export function VoiceTextarea({
               : joined,
           );
         }}
-        className="absolute right-1 bottom-2"
+        /* Clear of the resize grip in the very corner, which it used to sit
+         * on top of — that overlap is most of what made it read as part of
+         * the frame rather than as a control. */
+        className="absolute right-2 bottom-3"
       />
     </span>
   );
