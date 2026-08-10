@@ -16,6 +16,7 @@ import { popularProducts } from "@/lib/services/product-service";
 import { quickNotes as quickNotesTable } from "@/db/schema";
 import { listTargets } from "@/lib/services/worklist-services";
 import { customerStatusLabel, daysBetween } from "@/lib/format";
+import { calendarDate } from "@/lib/business-date";
 import { RecordScreen } from "./record-screen";
 
 export async function generateMetadata({
@@ -103,7 +104,7 @@ export default async function CustomerRecordPage({
         ownerName: customer.ownerName,
         kind: customer.kind,
         leadSource: customer.leadSource,
-        createdAt: customer.createdAt.toISOString().slice(0, 10),
+        createdAt: calendarDate(customer.createdAt),
         salesAmName: customer.salesAmName,
         backOfficeAmName: customer.backOfficeAmName,
         status: customerStatusLabel(customer),

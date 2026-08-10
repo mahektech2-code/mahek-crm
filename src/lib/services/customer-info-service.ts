@@ -9,6 +9,7 @@ import { customerProducts, type FrequentProduct } from "./product-service";
 import { today } from "../recompute";
 import {
   addDays,
+  calendarDate,
   daysBetween,
   daysInMonth,
   isWorkingDay,
@@ -161,7 +162,7 @@ export async function customerInformation(
     .orderBy(desc(calls.startedAt))
     .limit(1);
 
-  const lastCallDate = lastCall ? lastCall.at.toISOString().slice(0, 10) : null;
+  const lastCallDate = lastCall ? calendarDate(lastCall.at) : null;
 
   const purchase: PurchaseSummary = {
     lastOrderDate: customer.lastOrderDate,
@@ -285,7 +286,7 @@ export async function customerInformation(
     lead: isLead
       ? {
           source: customer.leadSource,
-          addedDate: customer.createdAt.toISOString().slice(0, 10),
+          addedDate: calendarDate(customer.createdAt),
           ownerName: names?.owner ?? null,
         }
       : null,

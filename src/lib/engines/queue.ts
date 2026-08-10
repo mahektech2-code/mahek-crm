@@ -301,7 +301,12 @@ function reasonsFor(
     // record's creation date dates a customer of four years from the afternoon
     // their row was written, which holds an entire imported book off the queue
     // for a week on the strength of it.
-    const since = c.lastContactDate ?? c.lastOrderDate;
+    //
+    // The LATER of the two, not the logged call in preference to the order. An
+    // order that arrived through the sheet is evidence somebody spoke to them
+    // that day, and reading a three-week-old call first would ring a customer
+    // who ordered on Tuesday to ask how they are getting on.
+    const since = laterOf(c.lastContactDate, c.lastOrderDate);
     const daysSince = daysBetween(since, today);
     const interval = config["queue.checkInIntervalDays"];
 
@@ -321,6 +326,11 @@ function reasonsFor(
   }
 
   return reasons;
+}
+
+/** The more recent of two dates. ISO dates sort lexically, so `>` is enough. */
+function laterOf(a: BusinessDate | null, b: BusinessDate): BusinessDate {
+  return a && a > b ? a : b;
 }
 
 /**
@@ -370,6 +380,10 @@ function quietWindow(
   const sinceOrder = daysBetween(c.lastOrderDate, today);
   if (sinceOrder >= quiet) return null;
   const left = quiet - sinceOrder;
+  // The cycle is safe to name here. This sentence is only ever SHOWN when the
+  // stripping above emptied the reason list, which takes an order reason, which
+  // takes a measured cycle — so `cycleDays` is never the guessed default by the
+  // time a telecaller reads it.
   return `Orders every ${c.cycleDays} days · ordered ${sinceOrder === 0 ? "today" : `${sinceOrder} day${sinceOrder === 1 ? "" : "s"} ago`} - no order chased for ${left} more day${left === 1 ? "" : "s"}`;
 }
 
@@ -417,7 +431,14 @@ function suppressionReason(
   // the system does not know it was sent, and suppressing on that would drop
   // customers out of the calling list on the strength of something that may
   // never have happened.
-  if (c.lastConfirmedWhatsappDate) {
+  //
+  // A reminder outranks this for the same reason it outranks the quiet window:
+  // the callback was promised to the customer, and a message we chose to send
+  // afterwards must not be what cancels it. Being called the day after a
+  // WhatsApp is a small cost; not ringing somebody who asked to be rung is the
+  // failure the cooldown was never meant to cause. `calledToday` still wins —
+  // they have already been spoken to.
+  if (c.lastConfirmedWhatsappDate && !hasReminderReason) {
     const cooldown = config["queue.whatsappCooldownDays"];
     const elapsed = daysBetween(c.lastConfirmedWhatsappDate, today);
     if (elapsed < cooldown) {

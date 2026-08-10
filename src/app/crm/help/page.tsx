@@ -1,5 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { listHelpArticles } from "@/lib/queries";
+import { calendarDate } from "@/lib/business-date";
 import { HelpScreen } from "./help-screen";
 
 export const metadata = { title: "Help center - MahekOne CRM" };
@@ -19,7 +20,7 @@ export default async function HelpPage() {
         isScript: a.type === "call_script",
         scriptBody: a.scriptBody,
         body: a.body,
-        updatedOn: a.updatedAt.toISOString().slice(0, 10),
+        updatedOn: calendarDate(a.updatedAt),
       }))}
     />
   );

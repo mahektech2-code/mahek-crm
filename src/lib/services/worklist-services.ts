@@ -29,6 +29,7 @@ import { recomputeInactivity, today } from "../recompute";
 import {
   addDays,
   addMonths,
+  calendarDate,
   daysBetween,
   monthKey,
   onOrAfterWorkingDay,
@@ -293,7 +294,7 @@ export async function listComplaints(status?: string) {
     ...c,
     customerName,
     loggedByName,
-    ageDays: daysBetween(c.createdAt.toISOString().slice(0, 10), day),
+    ageDays: daysBetween(calendarDate(c.createdAt), day),
     slaBreached: !c.resolvedAt && c.slaDueAt < new Date(),
   }));
 }
@@ -516,7 +517,7 @@ export async function listInactiveWatch(): Promise<WatchRow[]> {
 
   return rows
     .map(({ item, customer, ownerName }) => {
-      const flaggedDate = item.flaggedAt.toISOString().slice(0, 10);
+      const flaggedDate = calendarDate(item.flaggedAt);
       const age = watchAge(flaggedDate, Boolean(item.outcome), day, config);
       return {
         customerId: customer.id,

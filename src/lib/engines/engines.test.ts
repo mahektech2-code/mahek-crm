@@ -383,6 +383,34 @@ describe("E2 queue builder", () => {
     assert.equal(buildQueue([c], TODAY, C).entries.length, 1);
   });
 
+  test("a reminder outranks the WhatsApp cooldown", () => {
+    // A message we chose to send must not cancel a callback the customer
+    // asked for. The cooldown exists to stop us contacting somebody twice for
+    // no reason; a promised call is a reason.
+    const c = candidate({
+      lastContactDate: addDays(TODAY, -40),
+      lastConfirmedWhatsappDate: addDays(TODAY, -1),
+      reminders: [{ id: "r1", dueDate: TODAY, note: "Call back after 3" }],
+    });
+    const r = buildQueue([c], TODAY, C);
+    assert.equal(r.entries.length, 1);
+    assert.equal(r.suppressed.length, 0);
+    assert.ok(r.entries[0].reasons.some((x) => x.kind === "reminderDueToday"));
+  });
+
+  test("a reminder does NOT outrank having already been called today", () => {
+    // The opposite half of the rule above, and the reason it is not simply
+    // "reminders always win": they have been spoken to, so the promise is kept.
+    const c = candidate({
+      lastContactDate: addDays(TODAY, -40),
+      calledToday: true,
+      reminders: [{ id: "r1", dueDate: TODAY, note: "Call back after 3" }],
+    });
+    const r = buildQueue([c], TODAY, C);
+    assert.equal(r.entries.length, 0);
+    assert.match(r.suppressed[0].reason, /already called today/i);
+  });
+
   test("a customer already called today never appears", () => {
     const c = candidate({
       lastContactDate: addDays(TODAY, -40),
@@ -510,6 +538,60 @@ describe("E2 queue builder", () => {
     assert.equal(entries.length, 1);
     assert.ok(entries[0].reasons[0].kind.startsWith("checkIn"));
     assert.match(entries[0].reasons[0].label, /cycle not established|Check-in due/);
+  });
+
+  test("an ORDER counts as contact for the check-in, even against an older call", () => {
+    // Ordered through the sheet on Saturday, last logged call three weeks ago.
+    // Somebody spoke to them to take that order, so the check-in dates from it
+    // — reading the stale call first would ring a customer who ordered two
+    // days ago to ask how they are getting on.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -2),
+      cycleIsDefault: true,
+      lastContactDate: addDays(TODAY, -21),
+    });
+    const r = buildQueue([c], TODAY, C);
+    assert.equal(r.entries.length, 0);
+  });
+
+  test("a stale order does not hold back a check-in the calls have earned", () => {
+    // The other direction: contacted 9 days ago, ordered 40 days ago. The
+    // later of the two is the call, and the check-in is due from it.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleIsDefault: true,
+      lastContactDate: addDays(TODAY, -9),
+    });
+    const { entries } = buildQueue([c], TODAY, C);
+    assert.equal(entries.length, 1);
+    assert.ok(entries[0].reasons[0].kind.startsWith("checkIn"));
+  });
+
+  test("a guessed cycle never reaches the held-back sentence at all", () => {
+    // Pins why that sentence is allowed to name `cycleDays`. Ordered 3 days
+    // ago with an unmeasured cycle: no order reason is generated, so the quiet
+    // window strips nothing, so the customer is never suppressed BY it — they
+    // simply have no reason to be called today. The guessed default cannot
+    // reach a telecaller's eyes through this path.
+    // An 8-day cycle 12 days on: past the call day (5), inside the quiet
+    // window (15) — the one shape that produces the sentence.
+    const guessed = candidate({
+      lastOrderDate: addDays(TODAY, -12),
+      cycleDays: 8,
+      cycleIsDefault: true,
+      lastContactDate: addDays(TODAY, -1),
+    });
+    const r = buildQueue([guessed], TODAY, C);
+    assert.equal(r.entries.length, 0);
+    assert.equal(r.suppressed.length, 0);
+
+    // The same customer with a MEASURED cycle IS held back, and the sentence
+    // states the cycle because there it is a fact.
+    const measured = candidate({ ...guessed, cycleIsDefault: false });
+    assert.match(
+      buildQueue([measured], TODAY, C).suppressed[0].reason,
+      /every 8 days/,
+    );
   });
 
   test("a slow-cycling customer gets NO weekly check-in", () => {
