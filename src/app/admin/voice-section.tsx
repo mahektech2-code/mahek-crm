@@ -13,7 +13,11 @@ import {
 } from "@/components/ui/primitives";
 import { ConfirmDialog } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { resolveReadiness, SARVAM_MAX_SECONDS } from "@/lib/voice-readiness";
+import {
+  resolveReadiness,
+  SARVAM_LANGUAGE_MODEL,
+  SARVAM_MAX_SECONDS,
+} from "@/lib/voice-readiness";
 import { stamp } from "@/lib/format";
 import { clearSecretAction, setSecretAction } from "@/lib/actions/secrets";
 
@@ -165,14 +169,16 @@ function Wiring({ data }: { data: VoiceData }) {
           consequence={hearing}
         />
         <Half
-          title="Tighten and Rewrite"
-          who="OpenAI"
-          model={data.languageModel}
-          ready={openai}
+          title="Writing the English"
+          who={openai ? "OpenAI" : "Sarvam"}
+          model={openai ? data.languageModel : SARVAM_LANGUAGE_MODEL}
+          ready={ready.canRefine}
           consequence={
             openai
-              ? "Offered in the dictation modal."
-              : "Left out of the modal — they are a text call and there is no key for one. Dictation itself still works."
+              ? "Renders every note, whichever provider heard it, and powers Tighten and Rewrite."
+              : ready.canRefine
+                ? "OpenAI has no key, so Sarvam writes the English and powers Tighten and Rewrite. Plainer prose than OpenAI, and the note still gets written."
+                : "No key for either, so notes arrive as raw transcription and Tighten and Rewrite are left out of the modal."
           }
         />
       </div>

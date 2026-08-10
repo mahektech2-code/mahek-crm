@@ -571,10 +571,41 @@ documents, with no audio modality at all, so an Anthropic key buys the writing
 half and none of the hearing half. Transcription is the half that decides
 whether a microphone can do anything, which is why it is not offered there.
 
+**Hearing and WRITING are two jobs, and only one of them needs a particular
+provider.** The bytes can only go where the audio is sent, but turning what
+was heard into English is a text call any chat model can make, so
+`lib/writing-model.ts` tries OpenAI and then Sarvam and the note gets written
+either way. Welding both jobs to one account is what produced a deployment
+whose Sarvam key worked perfectly and whose notes were raw machine
+translation, with Tighten and Rewrite hidden and nothing saying why. OpenAI is
+asked first because English prose is what it is best at; Sarvam second because
+a plainer sentence beats no sentence. A permanent refusal — no credit, revoked
+key — moves straight to the next provider rather than being reported, because
+the person is mid-call and does not care whose billing failed.
+
+**Every path runs the written pass, including Sarvam's.** Sarvam's `translate`
+is a translation and reads like one: correct in substance, rough in grammar,
+unpunctuated where speech was. It was going to the telecaller verbatim, which
+made them the proofreader mid-call — most of what dictation was supposed to
+give back. The writing model is handed BOTH the original-language transcript
+and Sarvam's English, because the two disagree usefully: the transcript holds
+what was said, the draft holds a reading of it by a model built for these
+languages. Rendering from the transcript alone throws away the better half of
+the evidence for a name or a number.
+
+**Correct English is a rule of the prompt, not a hope.** `RENDER_SYSTEM` makes
+grammar, tense, agreement, articles, prepositions, word order and awkward
+machine-translation phrasing all the model's to fix — and says in the same
+breath that fixing the English is not licence to change a fact. A note somebody
+has to decode is a note they stop trusting; a note that reads well and quietly
+lost the bill number is worse than both.
+
 **Tighten and Rewrite are left out rather than shown broken.** They are a text
-call and need OpenAI even where Sarvam did the hearing, so `/api/dictate`
-answers `canRefine` and the modal omits the buttons when it is false.
-Dictation itself still works — the same rule as the microphone one level up.
+call, so `/api/dictate` answers `canRefine` and the modal omits the buttons
+when it is false — but that is now false only when NEITHER provider has a key.
+Requiring OpenAI hid both buttons on a deployment that could have run them,
+which is the microphone mistake one level down: a capability withheld because
+of who was asked rather than because of what could be done.
 
 **The keys are set from a screen, because a terminal is not a fallback.** On a
 deploy nobody has shell access to, an environment variable is a door somebody
