@@ -2,8 +2,10 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Badge,
+  Button,
   Card,
   CardHeader,
   EmptyState,
@@ -13,6 +15,8 @@ import {
   cx,
   type Tone,
 } from "@/components/ui/primitives";
+import { useToast } from "@/components/ui/toast";
+import { triggerJob } from "@/lib/actions/crm";
 import { stamp, shortDate } from "@/lib/format";
 import type {
   AppHealth,
@@ -395,8 +399,63 @@ export function DriftTab({
 
 /* ------------------------------------------------------------------ jobs */
 
+/**
+ * The jobs a person runs once, by hand.
+ *
+ * Everything else on this tab runs on a schedule. These do not: a backfill is
+ * a one-off that somebody decides to do, usually straight after the release
+ * that made it necessary.
+ *
+ * It is here rather than left to the CLI because of the rule the sheet import
+ * already learned the hard way — on a deploy nobody has shell access to, a
+ * terminal is not a fallback, it is the only door and it is locked. A job that
+ * can only be run from a laptop is a job that does not get run.
+ */
+function RunByHand() {
+  const router = useRouter();
+  const toast = useToast();
+  const [busy, setBusy] = React.useState<string | null>(null);
+
+  async function run(job: "backfill-timeline") {
+    setBusy(job);
+    try {
+      const result = await triggerJob(job);
+      if (result.ok) {
+        /* The count is the answer. "Done" would send somebody to the database
+           to find out whether it actually did anything. */
+        toast.push(result.data?.ran.join(" · ") ?? result.message ?? "Finished");
+        router.refresh();
+      } else {
+        toast.push(result.error);
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <Card className="mt-5 p-4 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
+      <div className="text-[13px] font-semibold uppercase tracking-[0.04em] text-muted">
+        Run once, by hand
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <Button variant="secondary" disabled={Boolean(busy)} onClick={() => void run("backfill-timeline")}>
+          {busy === "backfill-timeline" ? "Projecting…" : "Backfill the customer timeline"}
+        </Button>
+        <span className="max-w-[520px] text-[13px] leading-[19px] text-muted">
+          Projects every telecaller call already recorded into the shared timeline, so a
+          salesman opening a customer sees what the desk team was told. Safe to run twice —
+          a call already projected is skipped rather than duplicated.
+        </span>
+      </div>
+    </Card>
+  );
+}
+
 export function JobsTab({ data }: { data: PlatformData }) {
   return (
+    <>
+    <RunByHand />
     <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
       <CardHeader
         title="Scheduled work"
@@ -443,6 +502,7 @@ export function JobsTab({ data }: { data: PlatformData }) {
         </div>
       )}
     </Card>
+    </>
   );
 }
 

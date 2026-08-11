@@ -38,6 +38,10 @@ npm run jobs -- taken-order-reparse        # re-read what is stored — the one
                            # to run when the RULE changed, not the sheet
 npm run jobs -- project-sheet --owner=vikram@mahek.in --bills
                            # staged rows -> customers, orders and bills
+npm run jobs -- revert-sheet-paid --dry-run
+                           # what a default-settled run wrote over the Payment
+                           # Status tab's word, and what undoing it gives back
+npm run jobs -- revert-sheet-paid          # undo it, then rebuild the caches
 npm run hrms:sync    # pull the employee sheet now
 npm run app:grant -- hrms vikram@mahek.in   # give somebody an app
 npm run catalogue:parse    # regenerate the product master from the document
@@ -901,16 +905,44 @@ and not 500**: two overlapping calls are the ordinary result of a slow run and
 a fixed interval, and a scheduler must not page somebody about a sync that was
 working perfectly.
 
-**The schedule lives in GitHub Actions, because Vercel Cron is paid.** Two
-workflows: every thirty minutes for the read modes and the projection, and one
-a day for `reconcile` — the only pass that sees an edit to an old row or a
+**The schedule lives outside the deployment, because Vercel Cron is paid.**
+Two cycles: every thirty minutes for the read modes and the projection, and
+one a day for `reconcile` — the only pass that sees an edit to an old row or a
 deletion — followed by `nightly`, which is the only thing that rebuilds the
-derived caches. Steps run in sequence inside one job on purpose: no single
-call may exceed the route's five-minute ceiling, but a job may take twenty
-minutes, so the cycle is chunked into calls rather than made into one long
-one. Reading is cheap when nothing changed, since every row carries a content
-hash — an untouched tab costs a read and no writes, which is what makes the
-cadence affordable.
+derived caches. Steps run in sequence on purpose: no single call may exceed
+the route's five-minute ceiling, but a caller may take twenty minutes, so the
+cycle is chunked into calls rather than made into one long one, and the order
+matters — the read modes land rows in the staging tables and `project`
+publishes what has landed, so projecting first ships the previous cycle's data
+as though it were fresh. Reading is cheap when nothing changed, since every
+row carries a content hash — an untouched tab costs a read and no writes,
+which is what makes the cadence affordable.
+
+**A `schedule:` in GitHub Actions is a hope, not a cadence.** It is
+best-effort, and on a private repo belonging to a free account it is the
+lowest priority tier there is: a tick that cannot be served is DROPPED, never
+queued, so the interval you wrote is an upper bound on frequency and nothing
+more. `*/30` delivered three runs in eleven hours here — gaps of 2h01, 4h48
+and 4h07, about one tick in ten — with every run green and finishing in two
+minutes, which is what makes it so hard to notice: nothing fails, the log
+looks healthy, and the CRM is just quietly hours stale. The half-hourly cycle
+is an Apps Script time-driven trigger on the workbook instead
+(`scripts/sheet-sync-trigger.gs`), which is not best-effort and lives beside
+the sheet it reads. Cron minutes are `:07`/`:37` and `:13` rather than `:00`,
+because the top of the hour is exactly when ticks get dropped.
+
+**The nightly stays in Actions, because `curl` waits and `UrlFetchApp` does
+not.** The daily pass is the one place ORDER is load-bearing across a
+five-minute boundary — `nightly` rebuilds the caches from what `reconcile`
+landed, so starting it early rebuilds them from half a compare.
+`--max-time 310` blocks until the server answers; Apps Script gives up at
+about sixty seconds with no way to raise it, and a full compare takes longer
+than that, so the script would start the second step over an unfinished first
+and have no way to know it had. One tick a day also has far better odds of
+being delivered than forty-eight. Where a fetch DOES time out in the
+half-hourly script it is logged and the cycle carries on: the request reached
+the deployment and the job runs to completion server-side, so only the answer
+is lost, and the next tick's 409 guard stops a second pass climbing on top.
 
 **A flag that is silently discarded is worse than one that is rejected.**
 `npm run jobs -- project-sheet --bills` used to run the projection with no
@@ -944,14 +976,108 @@ number must not cost the other ten thousand rows.
 **A sales bill IS the order.** Bills are projected from the Order Details tab,
 one per order, valued as the SUM of its lines — Final Amount is line-level and
 half these orders are multi-line. The number is the Tally number, gaining the
-order number where that repeats. Every bill starts PAID, which is an
-instruction and not a fact the sheet carries: that tab records what was billed
-and never what was received, so the only choice is to assume everything is owed
-or everything is settled, and assuming owed invents the whole order book as
-debt and puts every customer on the collections list. Marking the genuinely
-unpaid ones is a person's job. `--bills` swaps the source to the Payment Status
-tab, which has real received/not-received — never both, since they key on the
-same `SHEETPAY-<order number>` and would give one bill two authors.
+order number where that repeats. `--bills` swaps the source to the Payment
+Status tab — never both, since they key on the same `SHEETPAY-<order number>`
+and would give one bill two authors.
+
+**The sheet never writes money. Not in any column, not by any path.** No
+receipt, no `paid_amount`, no `status`, no `outstanding`. Whether money arrived
+is the app's to record and nobody else's, and a sync that touches a payment
+figure is a bug however reasonable its reading of the tab was.
+
+It was not always so, and the reasoning that got it wrong was good. The Order
+Details tab records what was billed and never what was received, so the only
+two readings were assume-everything-owed — which invents the whole order book,
+nine crore of it, as debt and puts every customer on the collections list — or
+assume-everything-settled, which understates rather than fabricates and was
+called the safer of two lies. It was still a lie, and it was the one that hides
+money: every customer's every bill read as paid on a spreadsheet's authority
+with no person behind any of it.
+
+**So there is a third position, and it is stated rather than guessed.**
+`bills.paymentPosition` is `stated` or `unstated`, and `unstated` counts as
+NEITHER paid nor owed. The bill exists and shows on the customer record; it is
+held out of outstanding, the aging strip, the collections worklist, the
+slow-payer flag and the WhatsApp reminders until somebody speaks. Nothing
+chases a debt nobody has vouched for, and nothing is written off either. The
+column defaults to `stated`, deliberately: every row that existed when it
+arrived kept exactly the behaviour it had, so adding it moved no figure on any
+screen. Only the projection writes `unstated`, and only on INSERT — a bill
+somebody has since spoken for must not be returned to silence because a
+scheduled pass re-read the row it came from.
+
+**What states a bill is a person.** Recording or confirming a receipt against
+it — every route to confirmed money passes through `applyToLedger`, which is
+where the mark is set, because a decision recorded in three places is a
+decision missed in one — or Tally's receivables report naming it through
+`leaveOwing`. `payment_decided_at` says WHEN and is set once; `paymentPosition`
+says THAT, and is set unconditionally, because a bill can carry a decided
+timestamp from before the column existed while still reading `unstated`.
+`source <> 'sheet_import'` is what keeps the two apart: a receipt the
+spreadsheet wrote is not somebody deciding.
+
+**A screen showing a balance has to say which kind of number it is.** On an
+`unstated` bill the balance is the full amount purely because nothing has been
+recorded against it, so the bill screen says "no payment recorded either way"
+rather than "₹0 received" and explains why. Rendering it beside real balances
+presents an unknown as a debt, which is the original mistake wearing different
+clothes.
+
+**The Payment Status tab is evidence, not an author.** It has the best claim of
+anything in the workbook — real received/not-received on 8,277 rows — and it
+still does not write money. A receipt is the assertion that funds reached the
+bank; a spreadsheet cell cannot make that assertion, because no person is
+behind it and there is nobody to ask when it turns out to be wrong. What it
+says is COUNTED and reported — `paidWithoutDate`, `blankStatus` — so accounts
+can go and confirm it. A BLANK status is no longer read as settled, nor as
+unpaid as it was before that; it is read as what it is, the same `unstated`
+every other row gets.
+
+**What the old assumption did is still in the database, and the revert is kept
+for it.** Production carries thousands of `source = 'sheet_import'` receipts
+and they are why the book reads as paid; they were deliberately left in place
+when the writing stopped, so that no figure moved on the day of the change.
+`revertSheetSettledBills` deletes only those whose order the Payment Status tab
+affirmatively calls unpaid — silence is not evidence in either direction — and
+`unpaidPerPaymentTab()` is the single definition both it and the old importer
+shared, because two copies of that rule would clean up a different set to the
+one the importer stopped writing, and the difference is money. The projection
+can no longer produce that damage, so the tests build it by hand.
+
+**The projection no longer rebuilds paid amounts.** `recomputeAllBillPaid` and
+`recomputeBillStatuses` derive from confirmed receipts, and the sheet writes
+none, so there is nothing new for them to read and running them would make a
+pass that touches no money look like one that rewrites the ledger every thirty
+minutes. Outstanding IS still rebuilt, because a corrected bill AMOUNT changes
+what a stated bill is worth, and the follow-up stage and slow-payer flag follow
+it in that order.
+
+**The mark goes on before the receipt comes off.** `leaveOwing` writes
+`paymentDecidedAt` first and unconditionally — including for a bill it finds no
+assumed receipt to cut. The report naming a bill IS the decision, and a bill it
+names must not be settled by assumption later just because there was nothing to
+delete at the time. Marking it after the delete would leave a window, and the
+window is exactly where the cron lives.
+
+**A part payment is locked too.** Where some money did arrive `leaveOwing`
+REDUCES the assumed receipt rather than deleting it, so the key stays taken and
+the old bug could not bite — but the lock applies anyway, because "the customer
+paid ₹1,000 of ₹2,360" is as much a decision as "they paid nothing", and a
+later pass must not decide the remainder arrived too. There is a test for each
+of the three: fully owed, part owed, and five consecutive syncs.
+
+**The fix went in the projection, not in the two callers that spell the URL
+out.** Adding `bills=1` to the workflow and the Apps Script would have worked
+until the third caller, and a rule about money that lives in a query string is
+one deployment away from being forgotten. The staging tables are what make the
+damage reversible at all: `sheet_payment_rows` holds the tab's own verdict,
+the projection reads it and never writes to it, so the receipts that SHOULD
+exist stay derivable however badly the published side is mangled. `npm run
+jobs -- revert-sheet-paid --dry-run` reports the count, the money and the
+customers affected; without the flag it deletes and rebuilds the caches. It
+touches `source = 'sheet_import'` receipts only — a telecaller's reported
+payment and an accounts confirmation are somebody's word, and no cleanup of an
+import's mistake may reach them.
 
 **A recompute that filters is a recompute that freezes.**
 `recomputeAllFollowUpStates` is the only thing that REMOVES a follow-up row

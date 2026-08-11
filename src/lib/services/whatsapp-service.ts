@@ -72,7 +72,17 @@ async function mergeValuesFor(customerId: string): Promise<MergeValues> {
   const billRows = await db
     .select({ bill: bills, creditDays: billCreditDaysSql })
     .from(bills)
-    .where(and(eq(bills.customerId, customerId), sql`${bills.amount} > ${bills.paidAmount}`))
+    .where(
+      and(
+        eq(bills.customerId, customerId),
+        sql`${bills.amount} > ${bills.paidAmount}`,
+        // Never a bill nobody has stated a position for. This composes a
+        // message that goes to the CUSTOMER asking for money — the one place
+        // an unverified balance leaves the building, and the one that cannot
+        // be taken back once sent.
+        eq(bills.paymentPosition, "stated"),
+      ),
+    )
     .orderBy(asc(bills.billDate));
 
   const oldest = billRows[0]?.bill;

@@ -4,6 +4,7 @@ import {
   integer,
   bigint,
   boolean,
+  doublePrecision,
   timestamp,
   date,
   jsonb,
@@ -115,7 +116,14 @@ export const sourceModuleEnum = pgEnum("source_module", [
   "ad_hoc",
 ]);
 
-export const orderSourceEnum = pgEnum("order_source", ["crm", "external"]);
+/**
+ * Where the order came from. `external` means the external ORDER SYSTEM the
+ * office types into — it is not a catch-all for "not the CRM", which is why
+ * field orders taken on a handset get their own value rather than borrowing
+ * one that already means something else. A source that lies is a source no
+ * report can be built on.
+ */
+export const orderSourceEnum = pgEnum("order_source", ["crm", "external", "mbos"]);
 /**
  * An order taken on a call is not yet an order the business has agreed to:
  * accounts check the customer first. New CRM orders start at
@@ -139,6 +147,37 @@ export const billStatusEnum = pgEnum("bill_status", [
   "unpaid",
   "partially_paid",
   "paid",
+]);
+
+/**
+ * Whether anybody has actually SAID what this bill's payment position is.
+ *
+ * `bill_status` answers paid/part/unpaid and is derived from `paid_amount`, so
+ * it has no way to express "nobody has told us" — a bill nobody has spoken for
+ * comes out `unpaid`, which is a claim of debt. That is the whole problem: the
+ * Order Details tab records what was BILLED and never what was RECEIVED, so a
+ * bill projected from it carries no payment evidence in either direction.
+ *
+ * The old answer was to assume settled and write a confirmed receipt for the
+ * full amount, because assuming owed invents the entire order book as debt and
+ * puts every customer on the collections list. Both assumptions are wrong, and
+ * assuming settled is the one that hides money: it marked all the customers and
+ * all the bills paid on the sheet's authority, with no person behind it.
+ *
+ * So there is a third position and it is stated rather than guessed.
+ * `unstated` counts as NEITHER paid nor owed — the bill exists, it shows on the
+ * customer record, and it is held out of outstanding, aging, the collections
+ * worklist and the slow-payer flag until the app or the Tally receivables
+ * report says something. Nothing chases a debt nobody has vouched for, and
+ * nothing is written off either.
+ *
+ * DEFAULT `stated`, deliberately: every row that existed when this column
+ * arrived keeps exactly the behaviour it had, so adding it moved no figure on
+ * any screen. Only the projection writes `unstated`, and only on INSERT.
+ */
+export const billPaymentPositionEnum = pgEnum("bill_payment_position", [
+  "stated",
+  "unstated",
 ]);
 
 /**
@@ -297,6 +336,23 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   "feedback",
   /** A screenshot attached to one reply in the thread, either direction. */
   "feedback_message",
+  /* ------------------------------------------------------------------
+   * MBOS parents. A shop photograph, a bill photograph, a check-in selfie
+   * and a sample handover are all files somebody has to be able to OPEN
+   * later, and `/api/attachments/[id]` decides that from the parent kind —
+   * so a file whose parent has no kind is a file nobody can read.
+   *
+   * They are declared here and USED by nothing yet, deliberately: Postgres
+   * refuses to use an enum value in the transaction that adds it, and
+   * drizzle-kit applies every pending migration in one. Declaring them a
+   * migration early is what lets the MBOS routes use them at all.
+   * ------------------------------------------------------------------ */
+  "mbos_visit",
+  "mbos_expense",
+  "mbos_attendance",
+  "mbos_sample",
+  "mbos_task",
+  "mbos_document",
 ]);
 
 /**
@@ -488,6 +544,27 @@ export const passwordResets = pgTable(
 /** A record is one or the other, and the difference decides what is shown. */
 export const customerKindEnum = pgEnum("customer_kind", ["lead", "customer"]);
 
+/**
+ * What the account IS in the trade — a dealer, a manufacturer who buys to
+ * consume, a distributor who resells, a retailer. It decides which price list
+ * applies and how the field team filters a customer list, and it is a fact
+ * about the customer rather than a segment somebody assigns, which is why it
+ * sits here and not on an MBOS-private table.
+ */
+export const customerTypeEnum = pgEnum("customer_type", [
+  "dealer",
+  "manufacturer",
+  "distributor",
+  "retailer",
+]);
+
+/** How much this account could be worth, in a salesman's judgement. */
+export const customerPotentialEnum = pgEnum("customer_potential", [
+  "high",
+  "medium",
+  "low",
+]);
+
 export const customers = pgTable(
   "customers",
   {
@@ -600,6 +677,65 @@ export const customers = pgTable(
     /* flags */
     doNotContact: boolean("do_not_contact").notNull().default(false),
 
+    /* ------------------------------------------------------------------
+     * MBOS — field sales.
+     *
+     * The handset works the SAME customer master the CRM does. A second one
+     * would give the business two answers to "who is this and what do they
+     * owe", and the whole point of one database is that it cannot. Every
+     * column here is nullable: the book was imported from a spreadsheet that
+     * knows none of it, and a field team fills it in one shop at a time.
+     * ------------------------------------------------------------------ */
+
+    /**
+     * Where the shop actually is, captured by standing in it. `gpsAccuracyM`
+     * is the handset's own claim about the fix, and it is stored rather than
+     * thrown away because a 900-metre fix and a 6-metre fix are not the same
+     * pin — visit verification reads it before deciding anything.
+     */
+    gpsLat: doublePrecision("gps_lat"),
+    gpsLng: doublePrecision("gps_lng"),
+    gpsAccuracyM: integer("gps_accuracy_m"),
+    gpsCapturedAt: timestamp("gps_captured_at", { withTimezone: true }),
+
+    /** The route a salesman walks, and where it sits. Free text, from the beat master. */
+    beat: text("beat"),
+    area: text("area"),
+    /** Wider than `region`, which the sheet fills — this is the sales territory. */
+    territoryRegion: text("territory_region"),
+
+    customerType: customerTypeEnum("customer_type"),
+    potential: customerPotentialEnum("potential"),
+
+    /** Paise, like every other amount. Null means no limit has been set. */
+    creditLimitPaise: bigint("credit_limit_paise", { mode: "number" }),
+    /**
+     * A DECISION, not a derivation: accounts block an account and say why. The
+     * handset refuses an order against a blocked customer and the sync rejects
+     * one that was written offline, quoting this reason back.
+     */
+    creditBlocked: boolean("credit_blocked").notNull().default(false),
+    creditBlockReason: text("credit_block_reason"),
+
+    /* ---- derived and cached: never hand-edited, always recomputable ----
+     *
+     * The health score is a CACHE, in exactly the sense `outstanding`,
+     * `cycleDays` and `slowPayer` above are. It is computed from orders,
+     * payments, visits and complaints against the weights in
+     * `mbos.health.componentWeights`, and if one looks wrong the fix is to
+     * re-run its recompute, never to type over the row. `healthComponents`
+     * keeps the parts it was made of, so a salesman shown 42 can be told why.
+     */
+    healthScore: integer("health_score"),
+    healthComponents: jsonb("health_components"),
+    healthComputedAt: timestamp("health_computed_at", { withTimezone: true }),
+    /** Derived from `mbos_visits`. Rebuilt, never typed. */
+    lastVisitDate: date("last_visit_date"),
+    /** How often this customer should be SEEN, as against called. */
+    visitFrequencyDays: integer("visit_frequency_days"),
+    /** The code the trade knows them by, searched on the customer list. */
+    dealerCode: text("dealer_code"),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id"),
@@ -611,6 +747,9 @@ export const customers = pgTable(
     index("customers_phone_idx").on(t.phone),
     index("customers_status_idx").on(t.status),
     uniqueIndex("customers_external_code_key").on(t.externalCode),
+    /** The field team's two lists: a beat to walk, and a code to search by. */
+    index("customers_beat_idx").on(t.beat),
+    index("customers_dealer_code_idx").on(t.dealerCode),
   ],
 );
 
@@ -977,6 +1116,13 @@ export const orders = pgTable(
     /** Kept from day one: Inactive Watch produces false positives without it. */
     source: orderSourceEnum("source").notNull().default("crm"),
     externalRef: text("external_ref"),
+    /**
+     * The number a human quotes: `MBOS/26-27/0041`. Allocated server-side from
+     * a series on first sync and NEVER the identity — two salesmen offline
+     * would otherwise mint the same one. Null for orders that were never given
+     * a number, which is most of the CRM's own.
+     */
+    orderNo: text("order_no"),
     /* ---- approval, §order-approval ---- */
     approvedById: text("approved_by_id"),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
@@ -1010,6 +1156,7 @@ export const orders = pgTable(
     index("orders_customer_idx").on(t.customerId),
     index("orders_ordered_idx").on(t.orderedAt),
     uniqueIndex("orders_external_ref_key").on(t.externalRef),
+    uniqueIndex("orders_order_no_key").on(t.orderNo),
   ],
 );
 
@@ -1044,6 +1191,15 @@ export const bills = pgTable(
     amount: bigint("amount", { mode: "number" }).notNull(),
     paidAmount: bigint("paid_amount", { mode: "number" }).notNull().default(0),
     status: billStatusEnum("status").notNull().default("unpaid"),
+    /**
+     * Whether anybody has stated this bill's payment position — see
+     * `billPaymentPositionEnum`. `unstated` is held out of every money figure
+     * rather than counted as debt. The sheet may write it on INSERT and never
+     * again; only the app moves a bill to `stated`.
+     */
+    paymentPosition: billPaymentPositionEnum("payment_position")
+      .notNull()
+      .default("stated"),
     disputed: boolean("disputed").notNull().default(false),
     /**
      * When somebody DECIDED what this bill's payment position is, as opposed to
@@ -1100,6 +1256,13 @@ export const paymentReceipts = pgTable(
     mode: text("mode").notNull().default("Bank transfer"),
     /** UTR, cheque number, or whatever names this money in the bank. */
     reference: text("reference"),
+    /**
+     * The receipt number a salesman reads back to the shop: `MRCP/26-27/0007`.
+     * Allocated server-side from a series on first sync. It is OURS — the
+     * bank's own name for the money is `reference`, and the two are not the
+     * same fact. Null where nothing issued one.
+     */
+    receiptNo: text("receipt_no"),
     note: text("note"),
     status: receiptStatusEnum("status").notNull().default("reported"),
     /** Where it came from: accounts, a collections call, the bills screen, the sheet. */
@@ -1116,6 +1279,7 @@ export const paymentReceipts = pgTable(
   },
   (t) => [
     uniqueIndex("payment_receipts_key").on(t.idempotencyKey),
+    uniqueIndex("payment_receipts_receipt_no_key").on(t.receiptNo),
     index("payment_receipts_customer_idx").on(t.customerId),
     index("payment_receipts_status_idx").on(t.status),
     index("payment_receipts_received_idx").on(t.receivedAt),
@@ -2520,6 +2684,1070 @@ export const sheetTakenOrderRows = pgTable(
   ],
 );
 
+/* ═══════════════════════════════════════════════════════ MBOS — field sales
+ *
+ * The Mahek Business Operating System's field app: a salesman's handset,
+ * offline first, syncing into this database. It is another MahekOne app on the
+ * same schema — it does not own a customer master, a product catalogue or a
+ * ledger, and it must never grow one.
+ *
+ * Two things are true of every table below and of nothing else here.
+ *
+ * 1. **The id is the CLIENT's.** A record is created on a handset with no
+ *    signal, gets `mbos_<entity>_<uuid>` there, and that id is the primary key
+ *    on both sides — the server does not mint a replacement (PROTOCOL.md §1).
+ *    It is what lets an offline visit own an offline order that owns an
+ *    offline payment, with all three referencing each other before any of them
+ *    has ever reached a server.
+ * 2. **Two clocks, and they disagree.** `clientCreatedAt` is when the handset
+ *    says it happened and `serverCreatedAt` is when we heard about it. A
+ *    handset's clock is wrong and its owner can set it, so ordering, conflict
+ *    resolution and anything anybody is paid on read the server's (§7).
+ *    Keeping only one of the two would either lose the field truth or trust it.
+ *
+ * `deviceId` rides on every row because "which handset wrote this" is the
+ * first question asked of a record that looks wrong.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The universal MBOS columns, §2.1. A function rather than a constant so each
+ * table gets its own column instances — Drizzle mutates them with the table
+ * they belong to, and a shared object would bind every table to the first.
+ */
+function mbosColumns() {
+  return {
+    /** Minted on the DEVICE. See the note above; never regenerated here. */
+    id: text("id").primaryKey(),
+    /** What the handset's clock said. Believed for display, never for order. */
+    clientCreatedAt: timestamp("client_created_at", { withTimezone: true }),
+    serverCreatedAt: timestamp("server_created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdById: text("created_by_id"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id"),
+    /** Which install wrote it. One per handset, from SecureStore. */
+    deviceId: text("device_id"),
+  };
+}
+
+/* ------------------------------------------------------- the shared stream */
+
+/** Which app wrote the event. Deliberately not a role — apps write, people act. */
+export const timelineSourceAppEnum = pgEnum("timeline_source_app", ["crm", "mbos"]);
+
+/**
+ * One chronological stream per customer, written by BOTH apps (brief §1.1).
+ *
+ * Not prefixed `mbos_`, because it is not MBOS's. A telecaller's call, a
+ * salesman's visit, an order, a payment and a complaint are one story about
+ * one customer, and the reason this table exists is that the story was
+ * previously only assemblable by querying six tables in the right order and
+ * knowing all six existed.
+ *
+ * It is a PROJECTION and it is read-only: entries are written by the module
+ * that owns the underlying record, never edited here, and `sourceRecordId`
+ * always leads back to the row that is the actual truth. Nothing may be
+ * derived from this table that is not already derivable from its sources — a
+ * timeline that starts being believed becomes a second ledger.
+ */
+export const timelineEvents = pgTable(
+  "timeline_events",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /** `visit`, `call`, `order`, `payment`, `complaint`, `sample`, `whatsapp`… */
+    eventType: text("event_type").notNull(),
+    sourceApp: timelineSourceAppEnum("source_app").notNull(),
+    /** The id of the row this describes, in whichever table owns it. */
+    sourceRecordId: text("source_record_id"),
+    /** When it HAPPENED, not when it was projected. */
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    actorUserId: text("actor_user_id").references(() => users.id),
+    /** One line a human reads. Never parsed by anything. */
+    summary: text("summary").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    /** The only query this table has: one customer, newest first. */
+    index("timeline_events_customer_idx").on(t.customerId, t.occurredAt.desc()),
+    index("timeline_events_source_idx").on(t.eventType, t.sourceRecordId),
+    /*
+     * The natural key: one projection per source row per kind of event.
+     *
+     * A projection has to be safe to re-run — the backfill of five years of
+     * calls is going to be run twice by somebody, and a stream that grew a
+     * second copy of every call would be read as the telecaller having rung
+     * twice. `source_record_id` null is left alone, because Postgres treats
+     * nulls as distinct in a unique index and an event with no source row is
+     * not a projection of anything.
+     */
+    uniqueIndex("timeline_events_natural_key").on(
+      t.sourceApp,
+      t.eventType,
+      t.sourceRecordId,
+    ),
+  ],
+);
+
+/* --------------------------------------------------------------- devices */
+
+/**
+ * §2.2 — device binding. One install, bound to one employee.
+ *
+ * A shared handset is how one salesman's visits get attributed to another, and
+ * a lost handset with a live session is a customer book somebody else is
+ * carrying. Binding is recorded rather than assumed: `active` false is a
+ * device that has been released, and the row stays because "whose phone wrote
+ * this record in March" outlives the phone.
+ */
+export const mbosDevices = pgTable(
+  "mbos_devices",
+  {
+    ...mbosColumns(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** The install's own id. Unique — one row per handset, whoever holds it. */
+    deviceId: text("device_id").notNull(),
+    /** What the handset says it is, for a human reading the list. */
+    model: text("model"),
+    platform: text("platform"),
+    appVersion: text("app_version"),
+    boundAt: timestamp("bound_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    active: boolean("active").notNull().default(true),
+    /** Why it was released, where somebody said. */
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    releaseReason: text("release_reason"),
+  },
+  (t) => [
+    uniqueIndex("mbos_devices_device_key").on(t.deviceId),
+    index("mbos_devices_user_idx").on(t.userId, t.active),
+  ],
+);
+
+/* --------------------------------------------------------- journey planner */
+
+export const mbosJourneyPlanStatusEnum = pgEnum("mbos_journey_plan_status", [
+  "draft",
+  "active",
+  "completed",
+  "abandoned",
+]);
+
+export const mbosJourneyStopStatusEnum = pgEnum("mbos_journey_stop_status", [
+  "planned",
+  "visited",
+  "skipped",
+]);
+
+/** §2.6 — a day's route: which shops, in which order, on which beat. */
+export const mbosJourneyPlans = pgTable(
+  "mbos_journey_plans",
+  {
+    ...mbosColumns(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** The day it is FOR. A business date in Asia/Kolkata, never a timestamp. */
+    planDate: date("plan_date").notNull(),
+    beat: text("beat"),
+    area: text("area"),
+    status: mbosJourneyPlanStatusEnum("status").notNull().default("draft"),
+    /** Set when the salesman actually started walking it. */
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    /** True once auto-optimise reordered the stops. */
+    optimised: boolean("optimised").notNull().default(false),
+    estimatedTravelMinutes: integer("estimated_travel_minutes"),
+    notes: text("notes"),
+  },
+  (t) => [
+    uniqueIndex("mbos_journey_plans_user_day_key").on(t.userId, t.planDate),
+    index("mbos_journey_plans_date_idx").on(t.planDate),
+  ],
+);
+
+/** One shop on a plan. `sequence` is the order to walk them in. */
+export const mbosJourneyStops = pgTable(
+  "mbos_journey_stops",
+  {
+    ...mbosColumns(),
+    planId: text("plan_id")
+      .notNull()
+      .references(() => mbosJourneyPlans.id, { onDelete: "cascade" }),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    plannedAt: timestamp("planned_at", { withTimezone: true }),
+    actualVisitAt: timestamp("actual_visit_at", { withTimezone: true }),
+    status: mbosJourneyStopStatusEnum("status").notNull().default("planned"),
+    /** Mandatory in the interface when a stop is skipped — the plan is a promise. */
+    skipReason: text("skip_reason"),
+  },
+  (t) => [
+    index("mbos_journey_stops_plan_idx").on(t.planId, t.sequence),
+    index("mbos_journey_stops_customer_idx").on(t.customerId),
+  ],
+);
+
+/* --------------------------------------------------------------- samples */
+
+/** §2.11 — where a sample got to. `pending` is an answer, not a gap. */
+export const mbosSampleOutcomeEnum = pgEnum("mbos_sample_outcome", [
+  "pending",
+  "approved",
+  "rejected",
+]);
+
+/**
+ * A sample handed to a customer, tracked to the order it did or did not
+ * become. The point of the table is the last column: a sample nobody followed
+ * up is stock given away.
+ */
+export const mbosSamples = pgTable(
+  "mbos_samples",
+  {
+    ...mbosColumns(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    salesmanId: text("salesman_id")
+      .notNull()
+      .references(() => users.id),
+    productId: text("product_id").references(() => products.id),
+    /** CANS, like every other quantity in MahekOne. See `products`. */
+    quantityCans: integer("quantity_cans"),
+    requestedDate: date("requested_date"),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    /** Proof of handover — an `attachments` id, never a URL. */
+    deliveryPhotoId: text("delivery_photo_id").references(() => attachments.id),
+    trialOutcome: mbosSampleOutcomeEnum("trial_outcome").notNull().default("pending"),
+    followUpDate: date("follow_up_date"),
+    feedbackNotes: text("feedback_notes"),
+    /** Set when the trial became a sale. The conversion report is this column. */
+    convertedOrderId: text("converted_order_id").references(() => orders.id, {
+      onDelete: "set null",
+    }),
+  },
+  (t) => [
+    index("mbos_samples_customer_idx").on(t.customerId),
+    index("mbos_samples_follow_up_idx").on(t.trialOutcome, t.followUpDate),
+  ],
+);
+
+/* ---------------------------------------------------------------- visits */
+
+/**
+ * §2.4 — what a visit produced. `visited` is the honest answer for a call that
+ * produced nothing, and it is kept distinct from `not_available` and `closed`,
+ * which are facts about the shop rather than about the sale.
+ */
+export const mbosVisitOutcomeEnum = pgEnum("mbos_visit_outcome", [
+  "visited",
+  "order",
+  "payment",
+  "complaint",
+  "sample",
+  "not_available",
+  "closed",
+]);
+
+/**
+ * §2.4 — one visit to one shop.
+ *
+ * Append-only in the protocol's sense: a visit created on two handsets is two
+ * visits, never a conflict (PROTOCOL.md §7). Nothing here is edited after the
+ * salesman leaves the shop.
+ *
+ * `verified` and `locationMismatch` are the honest part. A check-in 400 metres
+ * from the shop's own pin is not proof of anything — the pin may be wrong, the
+ * fix may be poor, the shop may have moved — so the visit is RECORDED with the
+ * mismatch beside it and a reason, rather than refused at the door or accepted
+ * silently. Refusing it loses the visit; accepting it silently makes every
+ * visit worth the same, which is worse.
+ */
+export const mbosVisits = pgTable(
+  "mbos_visits",
+  {
+    ...mbosColumns(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    salesmanId: text("salesman_id")
+      .notNull()
+      .references(() => users.id),
+
+    /* ---- where and when, both ends ---- */
+    checkInLat: doublePrecision("check_in_lat"),
+    checkInLng: doublePrecision("check_in_lng"),
+    checkInAccuracyM: integer("check_in_accuracy_m"),
+    checkInAt: timestamp("check_in_at", { withTimezone: true }),
+    checkOutLat: doublePrecision("check_out_lat"),
+    checkOutLng: doublePrecision("check_out_lng"),
+    checkOutAccuracyM: integer("check_out_accuracy_m"),
+    checkOutAt: timestamp("check_out_at", { withTimezone: true }),
+    /**
+     * Derived from the two timestamps and stored, because a visit synced
+     * without its check-out — the salesman walked out of signal — still has a
+     * duration the handset measured. Null means the visit never closed.
+     */
+    durationSeconds: integer("duration_seconds"),
+
+    /* ---- what was captured. All three are `attachments` ids. ---- */
+    shopPhotoId: text("shop_photo_id").references(() => attachments.id),
+    custPhotoId: text("cust_photo_id").references(() => attachments.id),
+    voiceNoteId: text("voice_note_id").references(() => attachments.id),
+    /**
+     * The voice note as text. `transcriptIsAi` says a machine wrote it, and it
+     * is a separate column rather than a convention in the text because a
+     * report that reaches a manager has to say whose words it is — the brief's
+     * rule that AI-generated content affecting a customer record is tagged.
+     */
+    transcript: text("transcript"),
+    transcriptIsAi: boolean("transcript_is_ai").notNull().default(false),
+
+    outcome: mbosVisitOutcomeEnum("outcome").notNull().default("visited"),
+    notes: text("notes"),
+
+    /* ---- what the visit produced, in the tables that own those things ---- */
+    linkedOrderId: text("linked_order_id").references(() => orders.id, {
+      onDelete: "set null",
+    }),
+    linkedPaymentId: text("linked_payment_id").references(() => paymentReceipts.id, {
+      onDelete: "set null",
+    }),
+    linkedComplaintId: text("linked_complaint_id").references(() => complaints.id, {
+      onDelete: "set null",
+    }),
+    linkedSampleId: text("linked_sample_id").references(() => mbosSamples.id, {
+      onDelete: "set null",
+    }),
+    nextFollowUpDate: date("next_follow_up_date"),
+
+    /* ---- against the plan ---- */
+    journeyPlanStopId: text("journey_plan_stop_id").references(() => mbosJourneyStops.id, {
+      onDelete: "set null",
+    }),
+    wasPlanned: boolean("was_planned").notNull().default(false),
+    /** Why an unplanned shop was visited. Asked for, not inferred. */
+    deviationReason: text("deviation_reason"),
+
+    /* ---- verification ---- */
+    locationMismatch: boolean("location_mismatch").notNull().default(false),
+    verified: boolean("verified").notNull().default(false),
+    /** The sentence a manager reads: poor fix, no customer pin, too far. */
+    unverifiedReason: text("unverified_reason"),
+  },
+  (t) => [
+    index("mbos_visits_customer_idx").on(t.customerId, t.checkInAt.desc()),
+    index("mbos_visits_salesman_idx").on(t.salesmanId, t.checkInAt.desc()),
+    index("mbos_visits_unverified_idx").on(t.verified, t.checkInAt),
+  ],
+);
+
+/* ----------------------------------------------------------------- leads */
+
+/** §2.5 — where the prospect came from. Conversion is reported by this. */
+export const mbosLeadSourceEnum = pgEnum("mbos_lead_source", [
+  "manual",
+  "website",
+  "referral",
+  "exhibition",
+  "cold_call",
+  "whatsapp",
+  "campaign",
+]);
+
+/** The qualification ladder. `won` is the stage a conversion leaves behind. */
+export const mbosLeadStageEnum = pgEnum("mbos_lead_stage", [
+  "new",
+  "contacted",
+  "qualified",
+  "negotiation",
+  "won",
+  "lost",
+]);
+
+/**
+ * §2.5 — a prospect the field team is working.
+ *
+ * `customers.kind = 'lead'` already exists and is a different animal: it is a
+ * party the sheet knows about that has never ordered. This is a lead somebody
+ * MET, before there is any reason to put a row in the customer master at all —
+ * a name and a mobile number from an exhibition is not a customer, and writing
+ * one would put it on the collections list's outer joins and the queue's
+ * prospect cadence on the strength of a business card.
+ *
+ * Conversion writes a customer and records its id here; the lead row stays, so
+ * "where did this account come from" keeps its answer.
+ */
+export const mbosLeads = pgTable(
+  "mbos_leads",
+  {
+    ...mbosColumns(),
+    name: text("name").notNull(),
+    companyName: text("company_name"),
+    /** Mandatory in the form, and the duplicate check runs on it. */
+    mobile: text("mobile"),
+    city: text("city"),
+    area: text("area"),
+    source: mbosLeadSourceEnum("source").notNull().default("manual"),
+    /** Paise. What the salesman thinks the account could be worth in a month. */
+    estimatedPotentialPaise: bigint("estimated_potential_paise", { mode: "number" }),
+    assignedToUserId: text("assigned_to_user_id").references(() => users.id),
+    stage: mbosLeadStageEnum("stage").notNull().default("new"),
+    nextFollowUpDate: date("next_follow_up_date"),
+    notes: text("notes"),
+    gpsLat: doublePrecision("gps_lat"),
+    gpsLng: doublePrecision("gps_lng"),
+
+    /** Set on conversion. The lead is not deleted — it is where the account began. */
+    convertedCustomerId: text("converted_customer_id").references(() => customers.id, {
+      onDelete: "set null",
+    }),
+    convertedAt: timestamp("converted_at", { withTimezone: true }),
+    /** Mandatory when the stage is `lost`: a loss nobody explained teaches nothing. */
+    lostReason: text("lost_reason"),
+    /**
+     * A lead nobody has touched for the configured window archives itself. It
+     * is a flag rather than a delete, because a cold lead is exactly who a
+     * campaign goes back to next year.
+     */
+    archived: boolean("archived").notNull().default(false),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    /**
+     * Derived cache: the last day anything happened on this lead. It drives
+     * the stale flag and the auto-archive, and it is rebuilt from activity
+     * rather than typed.
+     */
+    lastActivityDate: date("last_activity_date"),
+  },
+  (t) => [
+    index("mbos_leads_assigned_idx").on(t.assignedToUserId, t.stage),
+    index("mbos_leads_mobile_idx").on(t.mobile),
+    index("mbos_leads_stale_idx").on(t.archived, t.lastActivityDate),
+  ],
+);
+
+/* -------------------------------------------------------------- expenses */
+
+/** §2.9 — what the money went on. Caps are configured per category. */
+export const mbosExpenseCategoryEnum = pgEnum("mbos_expense_category", [
+  "travel",
+  "food",
+  "lodging",
+  "other",
+]);
+
+/**
+ * A bundle of expense lines submitted together. The claim is what a manager
+ * approves; the lines are what it is made of.
+ *
+ * There is no `status` column, and that is deliberate — see `mbosApprovals`.
+ */
+export const mbosExpenseClaims = pgTable(
+  "mbos_expense_claims",
+  {
+    ...mbosColumns(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    periodFrom: date("period_from"),
+    periodTo: date("period_to"),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    /** Derived cache: the sum of its lines, in paise. Rebuilt, never typed. */
+    totalPaise: bigint("total_paise", { mode: "number" }).notNull().default(0),
+    note: text("note"),
+  },
+  (t) => [index("mbos_expense_claims_user_idx").on(t.userId, t.submittedAt)],
+);
+
+/** §2.9 — one expense. Unclaimed lines roll into the next claim cycle. */
+export const mbosExpenses = pgTable(
+  "mbos_expenses",
+  {
+    ...mbosColumns(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    expenseDate: date("expense_date").notNull(),
+    category: mbosExpenseCategoryEnum("category").notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    /** An `attachments` id. Mandatory above `mbos.expenses.billPhotoThresholdPaise`. */
+    billPhotoId: text("bill_photo_id").references(() => attachments.id),
+    remarks: text("remarks"),
+    /** Null until it is bundled into a claim. */
+    claimId: text("claim_id").references(() => mbosExpenseClaims.id, {
+      onDelete: "set null",
+    }),
+    /** Set where the expense belongs to an outstation tour. */
+    tourId: text("tour_id"),
+  },
+  (t) => [
+    index("mbos_expenses_user_idx").on(t.userId, t.expenseDate),
+    index("mbos_expenses_claim_idx").on(t.claimId),
+  ],
+);
+
+/* ------------------------------------------------------------ attendance */
+
+/** §2.10 — the day's verdict. Derived from the hours, and overridable by leave. */
+export const mbosAttendanceStatusEnum = pgEnum("mbos_attendance_status", [
+  "present",
+  "half_day",
+  "absent",
+  "on_leave",
+  "holiday",
+]);
+
+/**
+ * §2.10 — the real attendance system.
+ *
+ * This is NOT the `attendance` table above, and the two must never be
+ * confused. That one is a sign-in log with an unfortunate name: it says
+ * somebody opened MahekOne, from home, on a phone, at 2am, and its
+ * `signedOutAt` fills in only for the few who press Sign out — so no hours can
+ * be derived from a pair of them, and AGENTS.md forbids any screen presenting
+ * it as a record of who was at work.
+ *
+ * Attendance is a check-in system with its own screens and its own rules, and
+ * this is it: a deliberate act, with a location, a selfie and a geofence
+ * behind it. When the old table is finally renamed to what it is, nothing here
+ * changes.
+ *
+ * `withinGeofence` is recorded rather than enforced. A salesman starting the
+ * day at a customer's factory forty kilometres out is doing his job, and a
+ * check-in refused at the door is a day's work with no record of it — so the
+ * distance is stored, the flag is set, and a manager decides.
+ */
+export const mbosAttendanceDays = pgTable(
+  "mbos_attendance_days",
+  {
+    ...mbosColumns(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** The business day in Asia/Kolkata. One row per person per day. */
+    day: date("day").notNull(),
+
+    checkInAt: timestamp("check_in_at", { withTimezone: true }),
+    checkInLat: doublePrecision("check_in_lat"),
+    checkInLng: doublePrecision("check_in_lng"),
+    checkInAccuracyM: integer("check_in_accuracy_m"),
+    /** An `attachments` id — the selfie the check-in captured. */
+    checkInSelfieId: text("check_in_selfie_id").references(() => attachments.id),
+    checkInAddress: text("check_in_address"),
+
+    checkOutAt: timestamp("check_out_at", { withTimezone: true }),
+    checkOutLat: doublePrecision("check_out_lat"),
+    checkOutLng: doublePrecision("check_out_lng"),
+    checkOutAccuracyM: integer("check_out_accuracy_m"),
+    checkOutAddress: text("check_out_address"),
+    /** True where the day closed itself because nobody checked out. */
+    autoCheckedOut: boolean("auto_checked_out").notNull().default(false),
+
+    /** Derived cache: seconds between the two marks. Rebuilt, never typed. */
+    workedSeconds: integer("worked_seconds"),
+    /** Derived from the hours and the half-day threshold, or set by leave. */
+    status: mbosAttendanceStatusEnum("status").notNull().default("absent"),
+
+    withinGeofence: boolean("within_geofence"),
+    /** Metres from the designated start location, where one is defined. */
+    geofenceDistanceM: integer("geofence_distance_m"),
+
+    /** A correction the employee asked for. The decision lives in `mbos_approvals`. */
+    regularisationRequested: boolean("regularisation_requested").notNull().default(false),
+    regularisationReason: text("regularisation_reason"),
+  },
+  (t) => [
+    uniqueIndex("mbos_attendance_days_user_day_key").on(t.userId, t.day),
+    index("mbos_attendance_days_day_idx").on(t.day),
+  ],
+);
+
+/* ----------------------------------------------------------------- leave */
+
+export const mbosLeaveTypeEnum = pgEnum("mbos_leave_type", [
+  "casual",
+  "sick",
+  "earned",
+  "loss_of_pay",
+]);
+
+/**
+ * §2.11 — a leave request. Whether it was granted is `mbos_approvals`; what is
+ * here is what was asked for, and a withdrawal, which is not an approval
+ * decision and so has its own two columns.
+ */
+export const mbosLeaveRequests = pgTable(
+  "mbos_leave_requests",
+  {
+    ...mbosColumns(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    leaveType: mbosLeaveTypeEnum("leave_type").notNull(),
+    fromDate: date("from_date").notNull(),
+    toDate: date("to_date").notNull(),
+    /** A single day taken as a half. Whole days otherwise. */
+    halfDay: boolean("half_day").notNull().default(false),
+    /** Derived from the dates and the working calendar. Rebuilt, never typed. */
+    days: integer("days").notNull().default(0),
+    reason: text("reason"),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancelReason: text("cancel_reason"),
+  },
+  (t) => [
+    index("mbos_leave_requests_user_idx").on(t.userId, t.fromDate),
+    index("mbos_leave_requests_window_idx").on(t.fromDate, t.toDate),
+  ],
+);
+
+/**
+ * §2.11 — entitlement and consumption, per person per year per type.
+ *
+ * `usedDays` is a derived cache rebuilt from approved requests; the balance is
+ * the subtraction and is not stored at all, because a stored balance is a
+ * number two writers can disagree about.
+ */
+export const mbosLeaveBalances = pgTable(
+  "mbos_leave_balances",
+  {
+    ...mbosColumns(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    year: integer("year").notNull(),
+    leaveType: mbosLeaveTypeEnum("leave_type").notNull(),
+    entitledDays: integer("entitled_days").notNull().default(0),
+    usedDays: integer("used_days").notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex("mbos_leave_balances_key").on(t.userId, t.year, t.leaveType),
+  ],
+);
+
+/* ----------------------------------------------------------------- tours */
+
+/** §2.11 — a multi-day outstation tour, distinct from a daily journey plan. */
+export const mbosTours = pgTable(
+  "mbos_tours",
+  {
+    ...mbosColumns(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    /** The cities as typed, in order. A list, because a tour is a route. */
+    cities: jsonb("cities").$type<string[]>().notNull().default([]),
+    purpose: text("purpose"),
+    /** Paise. What it was expected to cost when it was asked for. */
+    estimatedCostPaise: bigint("estimated_cost_paise", { mode: "number" }),
+    notes: text("notes"),
+  },
+  (t) => [index("mbos_tours_user_idx").on(t.userId, t.startDate)],
+);
+
+/* ----------------------------------------------------------------- tasks */
+
+export const mbosTaskPriorityEnum = pgEnum("mbos_task_priority", [
+  "low",
+  "medium",
+  "high",
+]);
+
+export const mbosTaskStatusEnum = pgEnum("mbos_task_status", [
+  "open",
+  "in_progress",
+  "done",
+  "cancelled",
+]);
+
+/**
+ * §2.11 — an action item with somebody's name and a date on it.
+ *
+ * `sourceType`/`sourceId` are how the system assigns itself work: a rejected
+ * order raises a task against that customer (PROTOCOL.md §6), because the
+ * salesman stood in the shop and said the order was placed, and a notification
+ * can be missed where a task on the list cannot.
+ */
+export const mbosTasks = pgTable(
+  "mbos_tasks",
+  {
+    ...mbosColumns(),
+    title: text("title").notNull(),
+    description: text("description"),
+    assignedToUserId: text("assigned_to_user_id")
+      .notNull()
+      .references(() => users.id),
+    assignedByUserId: text("assigned_by_user_id").references(() => users.id),
+    priority: mbosTaskPriorityEnum("priority").notNull().default("medium"),
+    dueDate: date("due_date"),
+    customerId: text("customer_id").references(() => customers.id, {
+      onDelete: "cascade",
+    }),
+    status: mbosTaskStatusEnum("status").notNull().default("open"),
+    completionNote: text("completion_note"),
+    /** An `attachments` id — proof, where the manager flagged it mandatory. */
+    completionPhotoId: text("completion_photo_id").references(() => attachments.id),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    snoozedTo: date("snoozed_to"),
+    snoozeReason: text("snooze_reason"),
+    /** Set when an overdue task was escalated to a manager. Written once. */
+    escalatedAt: timestamp("escalated_at", { withTimezone: true }),
+    /** Where the system raised it itself: `rejected_order`, `sample`, `visit`. */
+    sourceType: text("source_type"),
+    sourceId: text("source_id"),
+  },
+  (t) => [
+    index("mbos_tasks_assignee_idx").on(t.assignedToUserId, t.status, t.dueDate),
+    index("mbos_tasks_customer_idx").on(t.customerId),
+    index("mbos_tasks_overdue_idx").on(t.status, t.dueDate),
+  ],
+);
+
+/* ---------------------------------------------------- competitor records */
+
+/**
+ * §2.11 — what the competition is doing in this shop, as the shopkeeper says
+ * it. Captured on a visit, which is why it links to one.
+ */
+export const mbosCompetitorRecords = pgTable(
+  "mbos_competitor_records",
+  {
+    ...mbosColumns(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    visitId: text("visit_id").references(() => mbosVisits.id, { onDelete: "set null" }),
+    competitorName: text("competitor_name").notNull(),
+    productName: text("product_name"),
+    /** Paise. Their rate as quoted to this customer, not a list price. */
+    pricePaise: bigint("price_paise", { mode: "number" }),
+    creditDays: integer("credit_days"),
+    deliveryNote: text("delivery_note"),
+    strengths: text("strengths"),
+    weaknesses: text("weaknesses"),
+    recordedOn: date("recorded_on"),
+  },
+  (t) => [index("mbos_competitor_records_customer_idx").on(t.customerId, t.recordedOn)],
+);
+
+/* -------------------------------------------------------- internal notes */
+
+/**
+ * §2.11 — a note about a customer that the customer must never see, and that a
+ * Field Sales Executive is never sent either.
+ *
+ * The visibility is enforced by the bootstrap payload, not only by a screen:
+ * a note that could leak is not on the device to leak (PROTOCOL.md §9).
+ * `visibleToRoles` is the list of MahekOne roles allowed to read it.
+ */
+export const mbosInternalNotes = pgTable(
+  "mbos_internal_notes",
+  {
+    ...mbosColumns(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    authorId: text("author_id")
+      .notNull()
+      .references(() => users.id),
+    body: text("body").notNull(),
+    visibleToRoles: jsonb("visible_to_roles").$type<string[]>().notNull().default([]),
+    /** Removal is a status. A note somebody wrote is a fact about the account. */
+    removedAt: timestamp("removed_at", { withTimezone: true }),
+    removedById: text("removed_by_id"),
+  },
+  (t) => [index("mbos_internal_notes_customer_idx").on(t.customerId)],
+);
+
+/* ------------------------------------------------------------- documents */
+
+export const mbosDocumentCategoryEnum = pgEnum("mbos_document_category", [
+  "price_list",
+  "catalogue",
+  "agreement",
+  "kyc",
+  "policy",
+  "marketing",
+]);
+
+/** §2.11 — the document library. The bytes are an `attachments` row. */
+export const mbosDocuments = pgTable(
+  "mbos_documents",
+  {
+    ...mbosColumns(),
+    title: text("title").notNull(),
+    category: mbosDocumentCategoryEnum("category").notNull(),
+    attachmentId: text("attachment_id").references(() => attachments.id),
+    /** Set where the document belongs to one customer — a KYC file, an agreement. */
+    customerId: text("customer_id").references(() => customers.id, {
+      onDelete: "cascade",
+    }),
+    visibleToRoles: jsonb("visible_to_roles").$type<string[]>().notNull().default([]),
+    active: boolean("active").notNull().default(true),
+  },
+  (t) => [
+    index("mbos_documents_category_idx").on(t.category, t.active),
+    index("mbos_documents_customer_idx").on(t.customerId),
+  ],
+);
+
+/* --------------------------------------------------------------- courses */
+
+/** §2.11 — the knowledge centre: a training module and who has finished it. */
+export const mbosCourses = pgTable(
+  "mbos_courses",
+  {
+    ...mbosColumns(),
+    title: text("title").notNull(),
+    category: text("category"),
+    durationMinutes: integer("duration_minutes"),
+    /** The material itself, where it is a file we hold. */
+    attachmentId: text("attachment_id").references(() => attachments.id),
+    /** Percentage a quiz must reach to count as passed. */
+    passMarkPercent: integer("pass_mark_percent"),
+    mandatory: boolean("mandatory").notNull().default(false),
+    /** Only meaningful where `mandatory` — the deadline it must be done by. */
+    dueDate: date("due_date"),
+    active: boolean("active").notNull().default(true),
+  },
+  (t) => [index("mbos_courses_active_idx").on(t.active, t.mandatory)],
+);
+
+export const mbosCourseProgress = pgTable(
+  "mbos_course_progress",
+  {
+    ...mbosColumns(),
+    courseId: text("course_id")
+      .notNull()
+      .references(() => mbosCourses.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    quizScorePercent: integer("quiz_score_percent"),
+    passed: boolean("passed").notNull().default(false),
+    /** The certificate's own reference, once one has been issued. */
+    certificateRef: text("certificate_ref"),
+  },
+  (t) => [
+    uniqueIndex("mbos_course_progress_key").on(t.courseId, t.userId),
+    index("mbos_course_progress_user_idx").on(t.userId),
+  ],
+);
+
+/* ------------------------------------------------------------- approvals */
+
+/**
+ * §5 — the six things somebody has to say yes to. One vocabulary, because the
+ * approval hierarchy is one hierarchy and a second list of kinds would drift
+ * from it.
+ */
+export const mbosApprovalTypeEnum = pgEnum("mbos_approval_type", [
+  "order",
+  "expense_claim",
+  "leave",
+  "tour",
+  "sample",
+  "attendance_regularisation",
+]);
+
+export const mbosApprovalStateEnum = pgEnum("mbos_approval_state", [
+  "pending",
+  "approved",
+  "rejected",
+  /** An expense claim approved for less than it asked for. */
+  "partially_approved",
+]);
+
+/**
+ * §5 — ONE table for every approval in MBOS.
+ *
+ * Six kinds of thing get approved and the questions asked of them are
+ * identical: who asked, what for, who decided, when, what did they say, and
+ * how much did they allow. Six status columns on six tables would be six
+ * places for "pending" to mean something slightly different, and the sixth
+ * would be forgotten when the escalation rule changed.
+ *
+ * **The subject's state is DERIVED from this table and never set beside it.**
+ * That is why `mbos_expense_claims`, `mbos_leave_requests` and `mbos_tours`
+ * carry no status column: a claim is approved because there is an approved row
+ * here naming it, not because somebody wrote `approved` on the claim as well.
+ * Two copies of one decision is how a screen ends up showing a rejection
+ * beside a payment.
+ *
+ * `approvedAmountPaise` is what makes `partially_approved` mean anything: a
+ * claim for ₹4,200 allowed at ₹3,000 is a decision with a number in it, and
+ * without the number the state is a shrug.
+ */
+export const mbosApprovals = pgTable(
+  "mbos_approvals",
+  {
+    ...mbosColumns(),
+    type: mbosApprovalTypeEnum("type").notNull(),
+    requestedByUserId: text("requested_by_user_id")
+      .notNull()
+      .references(() => users.id),
+    /** The table the subject lives in: `mbos_expense_claims`, `orders`, … */
+    subjectType: text("subject_type").notNull(),
+    subjectId: text("subject_id").notNull(),
+    reason: text("reason"),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    approverUserId: text("approver_user_id").references(() => users.id),
+    state: mbosApprovalStateEnum("state").notNull().default("pending"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /** Mandatory on a rejection — somebody has to be told something. */
+    decisionNote: text("decision_note"),
+    approvedAmountPaise: bigint("approved_amount_paise", { mode: "number" }),
+  },
+  (t) => [
+    /** The approver's queue, and the only hot query on this table. */
+    index("mbos_approvals_pending_idx").on(t.state, t.requestedAt),
+    index("mbos_approvals_subject_idx").on(t.subjectType, t.subjectId),
+    index("mbos_approvals_requester_idx").on(t.requestedByUserId, t.state),
+  ],
+);
+
+/* ------------------------------------------------------- the sync ledger */
+
+/**
+ * The idempotency ledger — PROTOCOL.md §4. This table is what makes a retry
+ * safe, and a retry is most of them: a handset on 2G in a market sends a
+ * payment, never sees the response, and sends it again.
+ *
+ * The key is `<entityId>:<op>:<payloadHash>`. A replayed key returns the
+ * result stored here and writes NOTHING — which is why `resultJson` holds the
+ * whole original response rather than a status: the second caller has to
+ * receive exactly what the first one did, including the server number the
+ * record was given.
+ */
+export const mbosSyncReceipts = pgTable(
+  "mbos_sync_receipts",
+  {
+    id: text("id").primaryKey(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    deviceId: text("device_id"),
+    userId: text("user_id").references(() => users.id),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    /** The response as it was sent the first time. Replayed verbatim. */
+    resultJson: jsonb("result_json").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("mbos_sync_receipts_key").on(t.idempotencyKey),
+    index("mbos_sync_receipts_entity_idx").on(t.entityType, t.entityId),
+  ],
+);
+
+/**
+ * §2.11 — the conflict log. A mutable record edited on two devices.
+ *
+ * Append-only entities cannot conflict: a visit, an order or a payment created
+ * twice is two records (PROTOCOL.md §7). Only edits to the same mutable row —
+ * customer details, task state, lead stage — can, and they resolve by
+ * server-received time, never by device time, because a handset's clock is
+ * wrong and its owner can set it.
+ *
+ * Both versions are kept. The losing edit is a thing somebody typed, and
+ * discarding it silently is how a manager finds out months later that the
+ * correction they made never took.
+ */
+export const mbosConflicts = pgTable(
+  "mbos_conflicts",
+  {
+    ...mbosColumns(),
+    /** The record that conflicted, in whichever table owns it. */
+    recordId: text("record_id").notNull(),
+    entityType: text("entity_type").notNull(),
+    /** What the handset held, whole. Kept even when it lost. */
+    localVersion: jsonb("local_version"),
+    serverVersion: jsonb("server_version"),
+    /** `server_wins`, `client_wins`, `manual` — which way it went, and why. */
+    resolution: text("resolution"),
+    flaggedForReview: boolean("flagged_for_review").notNull().default(false),
+    reviewedByUserId: text("reviewed_by_user_id").references(() => users.id),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("mbos_conflicts_record_idx").on(t.entityType, t.recordId),
+    index("mbos_conflicts_review_idx").on(t.flaggedForReview, t.serverCreatedAt),
+  ],
+);
+
+/* ------------------------------------------------------ prices and schemes */
+
+/**
+ * Brief §11 decision 1 — the customer price list, keyed on the PRICE TAG
+ * rather than on the customer.
+ *
+ * The Sales Party tab already carries a `tagPricelist` per party and prices
+ * vary by what the account is, not by which account it is: every dealer on the
+ * "DEALER" tag gets the dealer rate. Keying on the customer would mean 1,191
+ * rows per product and a new one every time a party is added.
+ *
+ * A row here does NOT on its own make an order valuable. `products.priceSource`
+ * is still `unset` and `canValueOrders()` still decides — the check exists
+ * because a half-populated price list is worse than none, and switching the
+ * source to `pricelist` has to be somebody's deliberate act.
+ */
+export const mbosPriceList = pgTable(
+  "mbos_price_list",
+  {
+    ...mbosColumns(),
+    /** Matches `sheet_party_rows.tagPricelist` — "DEALER", "DISTRIBUTOR", … */
+    customerPriceTag: text("customer_price_tag").notNull(),
+    productId: text("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    /** Paise, per CAN — the unit an order line is counted in. */
+    ratePaise: bigint("rate_paise", { mode: "number" }).notNull(),
+    validFrom: date("valid_from"),
+    /** Null means open-ended. A superseded rate is dated out, never deleted. */
+    validTo: date("valid_to"),
+  },
+  (t) => [
+    index("mbos_price_list_lookup_idx").on(t.customerPriceTag, t.productId, t.validFrom),
+    index("mbos_price_list_product_idx").on(t.productId),
+  ],
+);
+
+/**
+ * Brief §4.7 — promotional schemes.
+ *
+ * Eligibility and benefit are DATA, not code. "Buy 10 cans of X, get 1 free"
+ * and "5% off above ₹50,000 for distributors in Nagpur" are the same shape of
+ * thing, and expressing them as a rule engine's input is what lets a manager
+ * add one in October without a deploy — the same reason quick notes and
+ * thresholds are configuration. A scheme hardcoded in the order form is a
+ * scheme that outlives the festival it was written for.
+ */
+export const mbosSchemes = pgTable(
+  "mbos_schemes",
+  {
+    ...mbosColumns(),
+    name: text("name").notNull(),
+    description: text("description"),
+    active: boolean("active").notNull().default(true),
+    /** Who and what it applies to: products, tags, areas, minimum quantities. */
+    eligibility: jsonb("eligibility").notNull().default({}),
+    /** What they get: free quantity, a discount, a slab. */
+    benefit: jsonb("benefit").notNull().default({}),
+    validFrom: date("valid_from"),
+    validTo: date("valid_to"),
+  },
+  (t) => [index("mbos_schemes_active_idx").on(t.active, t.validFrom)],
+);
+
 /* --------------------------------------------------------------- relations */
 
 export const usersRelations = relations(users, ({ many, one }) => ({
@@ -2722,3 +3950,30 @@ export type Employee = typeof employees.$inferSelect;
 export type SheetPaymentRow = typeof sheetPaymentRows.$inferSelect;
 export type SheetPartyRow = typeof sheetPartyRows.$inferSelect;
 export type SheetTakenOrderRow = typeof sheetTakenOrderRows.$inferSelect;
+
+/* ------------------------------------------------------------- MBOS types */
+
+export type TimelineEvent = typeof timelineEvents.$inferSelect;
+export type MbosDevice = typeof mbosDevices.$inferSelect;
+export type MbosJourneyPlan = typeof mbosJourneyPlans.$inferSelect;
+export type MbosJourneyStop = typeof mbosJourneyStops.$inferSelect;
+export type MbosSample = typeof mbosSamples.$inferSelect;
+export type MbosVisit = typeof mbosVisits.$inferSelect;
+export type MbosLead = typeof mbosLeads.$inferSelect;
+export type MbosExpense = typeof mbosExpenses.$inferSelect;
+export type MbosExpenseClaim = typeof mbosExpenseClaims.$inferSelect;
+export type MbosAttendanceDay = typeof mbosAttendanceDays.$inferSelect;
+export type MbosLeaveRequest = typeof mbosLeaveRequests.$inferSelect;
+export type MbosLeaveBalance = typeof mbosLeaveBalances.$inferSelect;
+export type MbosTour = typeof mbosTours.$inferSelect;
+export type MbosTask = typeof mbosTasks.$inferSelect;
+export type MbosCompetitorRecord = typeof mbosCompetitorRecords.$inferSelect;
+export type MbosInternalNote = typeof mbosInternalNotes.$inferSelect;
+export type MbosDocument = typeof mbosDocuments.$inferSelect;
+export type MbosCourse = typeof mbosCourses.$inferSelect;
+export type MbosCourseProgress = typeof mbosCourseProgress.$inferSelect;
+export type MbosApproval = typeof mbosApprovals.$inferSelect;
+export type MbosSyncReceipt = typeof mbosSyncReceipts.$inferSelect;
+export type MbosConflict = typeof mbosConflicts.$inferSelect;
+export type MbosPriceListEntry = typeof mbosPriceList.$inferSelect;
+export type MbosScheme = typeof mbosSchemes.$inferSelect;

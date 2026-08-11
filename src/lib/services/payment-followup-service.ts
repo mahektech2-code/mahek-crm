@@ -27,6 +27,8 @@ import { recomputeFollowUpState, today } from "../recompute";
 import { err, ok, type Result } from "../result";
 import { getFollowUpDetail, getPaymentFollowUpPlan } from "./payment-service";
 import { openBillsFor } from "./receipt-service";
+import { CRM_EVENT, callTimelineSummary, writeTimelineEvents } from "../timeline";
+import { money } from "../format";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -353,6 +355,7 @@ export async function logPaymentFollowUp(
 
   const attemptId = id("fua");
   const receiptId = id("rcp");
+  const callId = id("ixn");
   const produced: string[] = [];
   const now = new Date();
   const notes =
@@ -381,7 +384,7 @@ export async function logPaymentFollowUp(
     // The call belongs in the interaction log too, attributed to this module —
     // reporting has to be able to tell collections from routine calling.
     await tx.insert(calls).values({
-      id: id("ixn"),
+      id: callId,
       customerId: input.customerId,
       userId: ctx.user.id,
       interactionType: "outbound_call",
@@ -392,6 +395,25 @@ export async function logPaymentFollowUp(
       createdById: ctx.user.id,
       updatedById: ctx.user.id,
     });
+
+    // §1.1 — and in the shared stream, in the same transaction. A salesman
+    // walking into a shop that was rung about money yesterday needs to know
+    // before he asks for an order.
+    await writeTimelineEvents(tx, [
+      {
+        customerId: input.customerId,
+        eventType: CRM_EVENT.call,
+        sourceApp: "crm",
+        sourceRecordId: callId,
+        occurredAt: now,
+        actorUserId: ctx.user.id,
+        summary: callTimelineSummary({
+          interactionType: "outbound_call",
+          outcome: input.outcome === "noanswer" ? "no_answer" : "payment_promised",
+          notes: `Collections — ${notes}`,
+        }),
+      },
+    ]);
 
     /* ---- a promise, and the reminder that chases it ---- */
     if (input.outcome === "promised" && input.date) {
@@ -471,6 +493,20 @@ export async function logPaymentFollowUp(
           updatedById: ctx.user.id,
         });
       }
+      // Reported, not confirmed, and the sentence says so: money the customer
+      // says has arrived is not money the business has seen, and a salesman
+      // reading this stream must not tell the shop their account is clear.
+      await writeTimelineEvents(tx, [
+        {
+          customerId: input.customerId,
+          eventType: CRM_EVENT.payment,
+          sourceApp: "crm",
+          sourceRecordId: receiptId,
+          occurredAt: now,
+          actorUserId: ctx.user.id,
+          summary: `${money(amountPaise)} reported paid on a collections call — awaiting confirmation by accounts`,
+        },
+      ]);
       produced.push("payment");
     }
 

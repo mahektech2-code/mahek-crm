@@ -64,6 +64,13 @@ export type BillDetail = {
   paid: number;
   balance: number;
   status: "unpaid" | "partially_paid" | "paid";
+  /**
+   * `unstated` means nobody has said whether this bill was paid — it came from
+   * the sheet, which records what was billed and never what was received. Its
+   * `balance` is the full amount for want of anything recorded against it, and
+   * is NOT a debt. The screen has to say which of the two it is showing.
+   */
+  paymentPosition: "stated" | "unstated";
   disputed: boolean;
   customerId: string;
   customerName: string;
@@ -281,6 +288,13 @@ export async function getBillDetail(billId: string): Promise<BillDetail | null> 
     paid: b.paidAmount,
     balance: b.amount - b.paidAmount,
     status: b.status,
+    /*
+     * Carried to the screen so a balance can say which KIND of number it is.
+     * On an `unstated` bill, `balance` is the full amount purely because
+     * nothing has been recorded against it — it is not a debt, and a screen
+     * that renders it beside real balances presents it as one.
+     */
+    paymentPosition: b.paymentPosition,
     disputed: b.disputed,
     customerId: b.customerId,
     customerName: row.customerName,

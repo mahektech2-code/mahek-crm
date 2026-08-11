@@ -71,9 +71,17 @@ async function leaveOwing(billId: string, amount: number, pending: number) {
   // August run was undone by a cron fourteen hours later. This is what tells
   // the importer to keep its hands off: from here the bill's paid position is
   // somebody's decision, and only the app may change it.
+  // `paymentPosition` too: the report naming this bill IS somebody stating its
+  // position, which is exactly what lifts it out of `unstated` and into the
+  // outstanding figure, the aging strip and the collections worklist. A bill
+  // Tally says is owed is a debt a person has vouched for.
   await db
     .update(bills)
-    .set({ paymentDecidedAt: new Date(), updatedAt: new Date() })
+    .set({
+      paymentDecidedAt: new Date(),
+      paymentPosition: "stated",
+      updatedAt: new Date(),
+    })
     .where(eq(bills.id, billId));
 
   const rows = await db

@@ -13,6 +13,7 @@
     "demo:clear": "tsx --conditions=react-server --env-file=.env.local scripts/clear-demo-data.ts",
     "demo:clear:url": "tsx --conditions=react-server scripts/clear-demo-data.ts",
     "jobs": "tsx --conditions=react-server --env-file=.env.local scripts/run-job.ts",
+    "jobs:prod": "tsx --conditions=react-server --env-file=.env.prod.local scripts/run-job.ts",
     "app:grant": "tsx --conditions=react-server --env-file=.env.local scripts/grant-app.ts",
     "users:accounts": "tsx --conditions=react-server --env-file=.env.local scripts/create-accounts-users.ts",
     "users:accounts:url": "tsx --conditions=react-server scripts/create-accounts-users.ts",
@@ -30,7 +31,8 @@
     "test:integration": "node --env-file=.env.local scripts/run-integration.mjs",
     "test:accounts": "node --env-file=.env.local scripts/run-accounts-tests.mjs",
     "test:all": "npm run test && npm run test:integration",
-    "receivables": "tsx --conditions=react-server --env-file=.env.local scripts/apply-receivables.ts"
+    "receivables": "tsx --conditions=react-server --env-file=.env.local scripts/apply-receivables.ts",
+    "receivables:prod": "tsx --conditions=react-server --env-file=.env.prod.local scripts/apply-receivables.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.36",

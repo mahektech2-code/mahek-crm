@@ -41,3 +41,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# throwaway scripts written against a live database while working something out
+# — never part of the app, and one `git add -A` away from being committed.
+scratch-*.mjs
+*.tmp.mjs

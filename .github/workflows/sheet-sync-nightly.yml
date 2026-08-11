@@ -20,7 +20,19 @@ name: Sheet sync (nightly)
 
 on:
   schedule:
-    - cron: "0 20 * * *"
+    # :13 rather than :00 — the top of the hour is when every other cron on
+    # GitHub fires, and a `schedule:` tick that cannot be served is dropped
+    # rather than queued. One tick a day has far better odds than the
+    # half-hourly cycle's forty-eight, which is why this one stays here while
+    # that one moved to an Apps Script trigger on the workbook.
+    #
+    # It stays here for a second reason: `curl --max-time 310` WAITS for the
+    # server to finish, so `nightly` starts only once `reconcile` has landed.
+    # Apps Script cannot promise that — UrlFetchApp gives up at about sixty
+    # seconds with no way to raise it, and a full compare takes longer than
+    # that, so the script would start the cache rebuild over a half-landed
+    # reconcile and have no way to know it had.
+    - cron: "13 20 * * *"
   workflow_dispatch:
 
 concurrency:

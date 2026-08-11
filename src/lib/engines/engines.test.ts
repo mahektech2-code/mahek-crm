@@ -1835,6 +1835,28 @@ describe("job runner arguments", () => {
     assert.deepEqual(r.ok && r.options, {});
   });
 
+  test("--dry-run arrives as dryRun", () => {
+    // The hyphen is the whole point of the test: the flag is typed one way and
+    // read another, and a switch that parses but sets nothing would let a
+    // destructive job run for real while its output said "dry run".
+    const r = parseJobArgs(["revert-sheet-paid", "--dry-run"]);
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.ok && r.options, { dryRun: true });
+  });
+
+  test("--dryRun is refused rather than guessed at", () => {
+    // One spelling, and it is the one in the usage text. Accepting both would
+    // make the usage text a suggestion.
+    const r = parseJobArgs(["revert-sheet-paid", "--dryRun"]);
+    assert.equal(r.ok, false);
+  });
+
+  test("--dry-run given a value is refused", () => {
+    const r = parseJobArgs(["revert-sheet-paid", "--dry-run=yes"]);
+    assert.equal(r.ok, false);
+    assert.match(r.ok ? "" : (r.problem ?? ""), /switch/);
+  });
+
   test("a misspelt option is refused, never ignored", () => {
     // Ignoring it is how somebody concludes the import cannot write bills.
     const r = parseJobArgs(["project-sheet", "--bils"]);
