@@ -104,9 +104,27 @@ function Detail({ detail }: { detail: BillDetail }) {
             {detail.customerName}
           </Link>
           {" · "}
-          Billed {money(detail.amount)} · {money(detail.paid)} received
+          Billed {money(detail.amount)}
+          {" · "}
+          {/* "Nothing received" and "nobody has said" are different sentences,
+              and on an imported bill the second is the true one. Rendering
+              ₹0 received for both is how a bill nobody has looked at reads as
+              a bill that has not been paid. */}
+          {detail.paymentPosition === "unstated"
+            ? "no payment recorded either way"
+            : `${money(detail.paid)} received`}
         </span>
       </div>
+
+      {detail.paymentPosition === "unstated" ? (
+        <p className="mb-3 text-[13px] text-muted">
+          Nobody has said whether this bill was paid. It came from the order
+          sheet, which records what was billed and never what was received, so
+          it counts as neither settled nor owed — it is left out of outstanding,
+          the aging strip and the collections list until somebody records a
+          payment against it or Tally&rsquo;s receivables report names it.
+        </p>
+      ) : null}
 
       {facts.length ? (
         <dl className="mb-4 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3 lg:grid-cols-5">

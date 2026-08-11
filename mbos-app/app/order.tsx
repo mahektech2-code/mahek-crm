@@ -362,6 +362,11 @@ export default function OrderScreen() {
                         onPress={() => dropLine(line.productId)}
                         accessibilityRole="button"
                         accessibilityLabel="Remove this line"
+                        /* The design draws this at 36, and 36 is under the
+                           platform minimum. `hitSlop` keeps the drawing and
+                           gives the thumb the area — which matters more here
+                           than most: a mis-tap deletes a line off an order. */
+                        hitSlop={8}
                         style={{ width: 36, height: 36, marginTop: -6, marginRight: -8, alignItems: 'center', justifyContent: 'center' }}>
                         <Icon name="close" size={18} color={C.faint} />
                       </Pressable>
@@ -475,6 +480,7 @@ export default function OrderScreen() {
             label={needsApproval ? 'Send for approval' : 'Submit order'}
             onPress={submit}
             disabled={!canSubmit}
+            whyDisabled="Add a product and set a quantity on every line first."
             tone={needsApproval ? 'warn' : 'primary'}
             style={{ marginTop: 16 }}
           />

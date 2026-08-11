@@ -243,6 +243,10 @@ export async function agingAcrossTheBook(
       (bills.amount - bills.paid_amount)::bigint as balance
     from bills
     where bills.amount > bills.paid_amount
+      -- Aging is a statement about debt: this bucket is money that is ninety
+      -- days late. A bill nobody has stated a position for is not late, it is
+      -- unknown, and putting it in a bucket makes it look decided.
+      and bills.payment_position = 'stated'
   `);
 
   return bucketise(

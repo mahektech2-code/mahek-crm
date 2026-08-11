@@ -1,5 +1,5 @@
 import React from 'react';
-import { Animated, Easing, View, Text, Pressable, Modal, Platform, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
+import { Animated, Easing, View, Text, Pressable, Modal, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 import { color as C, HIT, radius, shadow, type, weight, tabular } from '../../theme/tokens';
 import { Icon } from './Icon';
 import { Input, PrimaryButton, SecondaryButton } from './primitives';
@@ -136,21 +136,29 @@ export function BottomSheet({
   const { height: screenHeight } = useWindowDimensions();
 
   /**
-   * The sheet sits ON the keyboard rather than under it.
+   * The sheet sits ON the keyboard, on BOTH platforms.
+   *
+   * The first attempt lifted it on iOS and added padding INSIDE it on Android,
+   * which was the wrong lever entirely: padding makes the sheet taller without
+   * moving its bottom edge, so the form grew downwards and the field being
+   * typed into stayed behind the keys. The sheet has to MOVE.
+   *
+   * `marginBottom` does it, because the scrim aligns to `flex-end` — pushing
+   * the bottom edge up by exactly the keyboard's height puts the whole sheet
+   * above it. Android needs this more than iOS, since an edge-to-edge window
+   * never resizes for the keyboard at all.
    *
    * These sheets are where the writing happens — the reason for a leave
    * request, what the customer actually said about a complaint — so a field
-   * hidden behind the keys is the form being unusable, not merely awkward.
-   * The height is measured too: a fixed 560 was taller than the space left on
-   * a small phone with the keyboard up, so the buttons fell off the bottom.
+   * behind the keyboard is the form being unusable, not merely awkward.
    */
-  const available = Math.max(240, screenHeight - keyboardHeight - 80);
-  const pad = { padding: 20, paddingBottom: 24 + (Platform.OS === 'android' ? keyboardHeight : 0) };
+  const available = Math.max(200, screenHeight - keyboardHeight - 80);
+  const pad = { padding: 20, paddingBottom: 24 };
 
   return (
     <Modal visible={open} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <Scrim onPress={onClose}>
-        <View style={[st.sheet, keyboardHeight > 0 && Platform.OS === 'ios' && { marginBottom: keyboardHeight }]}>
+        <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }]}>
           {scroll ? (
             <ScrollView
               style={{ maxHeight: available }}
@@ -185,10 +193,11 @@ export function ActionSheet({
   items: { glyph: string; label: string; sub: string; run: () => void }[];
   onClose: () => void;
 }) {
+  const keyboardHeight = useKeyboardHeight();
   return (
     <Modal visible={open} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <Scrim onPress={onClose}>
-        <View style={[st.sheet, { borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card, paddingTop: 8, paddingBottom: 24, boxShadow: shadow.sheet }]}>
+        <View style={[st.sheet, keyboardHeight > 0 && { marginBottom: keyboardHeight }, { borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card, paddingTop: 8, paddingBottom: 24, boxShadow: shadow.sheet }]}>
           <View style={st.grabber} />
           <Text style={[{ fontSize: 15, color: C.ink, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }, weight(600)]}>
             {title}

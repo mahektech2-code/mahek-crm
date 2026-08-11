@@ -17,7 +17,7 @@ export type ApprovalType =
   | 'order_over_credit' | 'order_over_threshold' | 'expense_claim'
   | 'leave' | 'tour' | 'sample' | 'attendance_regularisation' | 'out_of_territory';
 
-async function raiseApproval(args: {
+export async function raiseApproval(args: {
   type: ApprovalType;
   subjectType: string;
   subjectId: string;

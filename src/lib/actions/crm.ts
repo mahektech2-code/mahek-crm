@@ -1515,7 +1515,8 @@ export async function triggerJob(
     | "day-boundary"
     | "sheet-reconcile"
     | "sheet-payments"
-    | "project-sheet",
+    | "project-sheet"
+    | "backfill-timeline",
   options: { owner?: string; bills?: boolean } = {},
 ): Promise<Result<{ ran: string[] }>> {
   try {

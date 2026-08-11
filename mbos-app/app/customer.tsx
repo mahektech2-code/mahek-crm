@@ -8,6 +8,7 @@ import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
 import { competitorRecords, customerTimeline, type TimelineEvent } from '../src/data/customers';
 import { inr, isoDate, pretty } from '../src/lib/format';
+import { callNumber, openWhatsApp } from '../src/lib/messaging';
 
 /**
  * The customer record.
@@ -145,8 +146,20 @@ export default function CustomerRecord() {
             <Text style={[{ fontSize: 15, color: '#FFFFFF' }, weight(600)]}>Visit</Text>
           </Pressable>
           {[
-            { g: 'call', l: 'Call ' + owner, run: () => notify('Calling ' + owner) },
-            { g: 'chat', l: 'WhatsApp ' + owner, run: () => notify('WhatsApp to ' + owner) },
+            {
+              g: 'call',
+              l: 'Call ' + owner,
+              run: () => (c.phone ? void callNumber(c.phone) : notify('No number on this customer')),
+            },
+            {
+              g: 'chat',
+              l: 'WhatsApp ' + owner,
+              run: async () => {
+                if (!c.phone) return notify('No number on this customer');
+                const out = await openWhatsApp(c.phone, '');
+                if (out.status !== 'handed_off') notify(out.reason);
+              },
+            },
             { g: 'order', l: 'New order', run: () => router.push('/order?from=customer') },
           ].map((b) => (
             <Pressable

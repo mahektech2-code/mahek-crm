@@ -14,6 +14,39 @@ import { BADGE, color as C, HIT, radius, shadow, type, weight, tabular, type Bad
 import { usePressScale } from './motion';
 
 /**
+ * A pressable that scales has two boxes: the wrapper that carries the
+ * transform, and the button inside it. Layout has to go on the OUTER one and
+ * appearance on the inner, or the two fight.
+ *
+ * This is not theoretical. `style={{ flex: 1 }}` on a Cancel/Save pair landed
+ * on the inner button while the wrapper sized to its content, so thirteen
+ * paired buttons across the app stopped dividing their row — the symptom being
+ * two buttons huddled at one end of a sheet instead of filling it.
+ *
+ * Splitting here means every call site keeps writing the obvious thing and it
+ * simply works.
+ */
+const LAYOUT_KEYS = [
+  'flex', 'flexGrow', 'flexShrink', 'flexBasis', 'alignSelf',
+  'width', 'minWidth', 'maxWidth',
+  'margin', 'marginTop', 'marginBottom', 'marginLeft', 'marginRight',
+  'marginHorizontal', 'marginVertical', 'marginStart', 'marginEnd',
+  'position', 'top', 'bottom', 'left', 'right', 'zIndex',
+] as const;
+
+function splitStyle(style: StyleProp<ViewStyle>): { outer: ViewStyle; inner: ViewStyle } {
+  const flat = (StyleSheet.flatten(style) ?? {}) as Record<string, unknown>;
+  const outer: Record<string, unknown> = {};
+  const inner: Record<string, unknown> = {};
+
+  for (const [k, v] of Object.entries(flat)) {
+    if ((LAYOUT_KEYS as readonly string[]).includes(k)) outer[k] = v;
+    else inner[k] = v;
+  }
+  return { outer: outer as ViewStyle, inner: inner as ViewStyle };
+}
+
+/**
  * The pieces the design repeats on nearly every screen.
  *
  * Each one is the design's own recipe, not a generic component library: the
@@ -116,6 +149,14 @@ export function PrimaryButton({
    * the screen rather than a way out of a dead end.
    */
   fullWidth = true,
+  /**
+   * Why the button is off, in a sentence.
+   *
+   * A greyed-out "Submit order" with nothing saying why leaves somebody
+   * tapping it and guessing. It reaches a screen reader, and pressing the
+   * disabled button surfaces it as a toast rather than doing nothing at all.
+   */
+  whyDisabled,
   style,
 }: {
   label: string;
@@ -123,29 +164,39 @@ export function PrimaryButton({
   disabled?: boolean;
   tone?: 'primary' | 'warn';
   fullWidth?: boolean;
+  whyDisabled?: string;
   style?: StyleProp<ViewStyle>;
 }) {
   const bg = disabled ? C.hairline : tone === 'warn' ? C.warn : C.primary;
   const fg = disabled ? C.faint : '#FFFFFF';
   const press = usePressScale();
+  const { outer, inner } = splitStyle(style);
 
-  /* `style` describes the BUTTON, never the wrapper. The wrapper exists only
-     to carry the press transform, and anything landing on it instead — a
-     height, a padding — silently fights the button's own box. */
   return (
-    <Animated.View style={[!disabled && press.style, { alignSelf: fullWidth ? 'stretch' : 'center' }]}>
+    <Animated.View
+      style={[
+        !disabled && press.style,
+        { alignSelf: fullWidth ? 'stretch' : 'center' },
+        outer,
+      ]}>
       <Pressable
-        onPress={disabled ? undefined : onPress}
+        /* When a reason exists the button stays PRESSABLE and the press runs
+           the handler, which already refuses with that reason in words — see
+           `collect()` in pay.tsx. A button that swallows the tap teaches
+           people it is broken; one that answers teaches them what is missing. */
+        onPress={disabled && !whyDisabled ? undefined : onPress}
         onPressIn={disabled ? undefined : press.onPressIn}
         onPressOut={disabled ? undefined : press.onPressOut}
-        disabled={disabled}
+        disabled={disabled && !whyDisabled}
         accessibilityRole="button"
+        accessibilityState={{ disabled: Boolean(disabled) }}
+        accessibilityHint={disabled ? whyDisabled : undefined}
         style={[
           s.primaryBtn,
           !fullWidth && s.autoWidthBtn,
           { backgroundColor: bg },
           !disabled && { boxShadow: shadow.primary },
-          style,
+          inner,
         ]}>
         <Text style={[{ fontSize: 16, color: fg }, weight(600)]}>{label}</Text>
       </Pressable>
@@ -165,8 +216,10 @@ export function SecondaryButton({
   style?: StyleProp<ViewStyle>;
 }) {
   const press = usePressScale();
+  const { outer, inner } = splitStyle(style);
   return (
-    <Animated.View style={[press.style, { alignSelf: fullWidth ? 'stretch' : 'center' }]}>
+    <Animated.View
+      style={[press.style, { alignSelf: fullWidth ? 'stretch' : 'center' }, outer]}>
       <Pressable
         onPress={onPress}
         onPressIn={press.onPressIn}
@@ -176,7 +229,7 @@ export function SecondaryButton({
           s.secondaryBtn,
           !fullWidth && s.autoWidthBtn,
           pressed && { backgroundColor: C.wash },
-          style,
+          inner,
         ]}>
         <Text style={[{ fontSize: 16, color: C.body }, weight(500)]}>{label}</Text>
       </Pressable>

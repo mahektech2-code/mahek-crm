@@ -250,14 +250,27 @@ export async function recomputeAllBillPaid(): Promise<number> {
   return row?.n ?? 0;
 }
 
-/** Outstanding is derived from bills, never typed in. */
+/**
+ * Outstanding is derived from bills, never typed in.
+ *
+ * A bill nobody has stated a payment position for contributes NOTHING, in
+ * either direction. It is not debt — no person has said the money is owed, and
+ * the sheet it came from records what was billed and never what was received —
+ * and it is not settled either. Counting it as debt is how the whole order
+ * book, nine crore of it, lands on the collections worklist on the strength of
+ * an import; counting it as paid is what the sheet used to do, and is what
+ * this change exists to stop. So it waits, and outstanding describes only the
+ * bills somebody has actually spoken for.
+ */
 export async function recomputeOutstanding(customerId: string): Promise<void> {
   const [row] = await db
     .select({
       total: sql<number>`coalesce(sum(${bills.amount} - ${bills.paidAmount}), 0)::bigint`,
     })
     .from(bills)
-    .where(eq(bills.customerId, customerId));
+    .where(
+      and(eq(bills.customerId, customerId), eq(bills.paymentPosition, "stated")),
+    );
 
   await db
     .update(customers)
@@ -268,7 +281,8 @@ export async function recomputeOutstanding(customerId: string): Promise<void> {
 export async function recomputeAllOutstanding(): Promise<number> {
   const result = await db.execute(sql`
     update customers c set outstanding = coalesce((
-      select sum(b.amount - b.paid_amount) from bills b where b.customer_id = c.id
+      select sum(b.amount - b.paid_amount) from bills b
+       where b.customer_id = c.id and b.payment_position = 'stated'
     ), 0), updated_at = now()
   `);
   return Array.isArray(result) ? result.length : 0;
@@ -293,7 +307,13 @@ async function escalationBillsFor(customerId: string): Promise<EscalationBill[]>
   const rows = await db
     .select({ bill: bills, creditDays: billCreditDaysSql })
     .from(bills)
-    .where(eq(bills.customerId, customerId));
+    // Only bills somebody has spoken for. A telecaller must never be sent to
+    // chase money on the strength of a spreadsheet row nobody has confirmed is
+    // owed — the customer is on the phone being asked for a payment that may
+    // already have been made, and the call cannot be taken back.
+    .where(
+      and(eq(bills.customerId, customerId), eq(bills.paymentPosition, "stated")),
+    );
   return rows.map(({ bill: b, creditDays }) => ({
     id: b.id,
     billNo: b.billNo,
@@ -414,7 +434,15 @@ export async function recomputeSlowPayers(): Promise<number> {
     // Confirmed money only. A customer does not earn — or escape — the
     // slow-payer flag on a payment nobody has found in the bank yet.
     .innerJoin(paymentReceipts, eq(paymentReceipts.id, payments.receiptId))
-    .where(eq(paymentReceipts.status, "confirmed"));
+    // And only against a bill somebody has stated a position for. The flag is
+    // read as "be careful with this one", so every payment behind it has to
+    // have a due date that means something.
+    .where(
+      and(
+        eq(paymentReceipts.status, "confirmed"),
+        eq(bills.paymentPosition, "stated"),
+      ),
+    );
 
   const byCustomer = new Map<string, Array<{ dueDate: string; paidOn: string }>>();
   for (const r of rows) {

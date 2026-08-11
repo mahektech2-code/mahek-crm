@@ -42,6 +42,8 @@ export const FROM_LABEL: Record<string, string> = {
   knowledge: 'Knowledge',
   reports: 'Reports',
   notifications: 'Notifications',
+  leads: 'Leads',
+  lead: 'Lead',
 };
 
 /** Reads the recorded entry route, so the label and the destination agree. */
@@ -107,7 +109,6 @@ export function AppFrame({
   const clearToast = useStore((s) => s.clearToast);
   const sheet = useStore((s) => s.sheet);
   const set = useStore((s) => s.set);
-  const notify = useStore((s) => s.notify);
   const beginVisit = useStore((s) => s.beginVisit);
   const custId = useStore((s) => s.custId);
   const confirm = useStore((s) => s.confirm);
@@ -140,7 +141,9 @@ export function AppFrame({
     { glyph: 'visit', label: 'Start visit', sub: 'GPS, photos, voice note', run: () => { beginVisit(custId); router.push('/visit'); } },
     { glyph: 'order', label: 'Punch order', sub: 'From their usual products', run: () => router.push('/order?from=home') },
     { glyph: 'money', label: 'Collect payment', sub: 'Cash, cheque, UPI or transfer', run: () => router.push('/pay?from=home') },
-    { glyph: 'add', label: 'Add lead', sub: 'A shop you just walked past', run: () => notify('New lead') },
+    /* The form is asked for here and opened by the Leads screen, so the shop
+       he is standing outside is typed in rather than found for a second time. */
+    { glyph: 'add', label: 'Add lead', sub: 'A shop you just walked past', run: () => { set({ sheet: 'leadForm' }); router.push('/leads?from=home'); } },
     { glyph: 'camera', label: 'Log expense', sub: 'Photograph the bill', run: () => router.push('/expenses?from=home') },
     { glyph: 'task', label: 'Create task', sub: 'For you or for someone else', run: () => router.push('/tasks?from=home') },
     { glyph: 'sample', label: 'Request sample', sub: 'Sent for approval', run: () => router.push('/samples?from=home') },

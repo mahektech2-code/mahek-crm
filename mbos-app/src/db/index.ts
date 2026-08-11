@@ -13,17 +13,51 @@ import { createSerialiser } from './serialise';
 
 let db: SQLite.SQLiteDatabase | null = null;
 
-export async function openDb(): Promise<SQLite.SQLiteDatabase> {
-  if (db) return db;
-  const handle = await SQLite.openDatabaseAsync('mbos.db');
-  await migrate(handle);
-  db = handle;
-  return handle;
+/**
+ * The IN-FLIGHT open, not just the finished one.
+ *
+ * This is the whole trick, and getting it wrong is a real bug rather than a
+ * tidiness point. Checking only the resolved handle —
+ *
+ *     if (db) return db;
+ *     const handle = await SQLite.openDatabaseAsync('mbos.db');
+ *
+ * — means every caller that arrives before the first `await` settles sees
+ * `null` and opens a connection of its own. Home fires nine queries in one
+ * `Promise.all` on mount, the status strip polls two more, and boot adds
+ * another: fourteen connections, all running the migration at once, and
+ * Android answers with fourteen `NativeDatabase.prepareAsync` NullPointer
+ * rejections.
+ *
+ * Memoising the PROMISE means the fourteenth caller waits on the first
+ * caller's open instead of starting a fifteenth.
+ */
+let opening: Promise<SQLite.SQLiteDatabase> | null = null;
+
+export function openDb(): Promise<SQLite.SQLiteDatabase> {
+  if (db) return Promise.resolve(db);
+
+  if (!opening) {
+    opening = (async () => {
+      const handle = await SQLite.openDatabaseAsync('mbos.db');
+      await migrate(handle);
+      db = handle;
+      return handle;
+    })().catch((e) => {
+      /* A failed open must not poison every later attempt — the next caller
+         gets a fresh try rather than this rejection forever. */
+      opening = null;
+      throw e;
+    });
+  }
+
+  return opening;
 }
 
 /** For tests and for sign-out, which throws the whole store away. */
 export function resetHandle() {
   db = null;
+  opening = null;
 }
 
 async function migrate(handle: SQLite.SQLiteDatabase) {

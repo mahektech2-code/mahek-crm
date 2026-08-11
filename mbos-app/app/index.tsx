@@ -2,9 +2,9 @@ import React from 'react';
 import { View, Text, Pressable, ScrollView, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
+import { color as C, HIT, radius, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
-import { Toggle } from '../src/components/ui/primitives';
+import { PrimaryButton, Toggle } from '../src/components/ui/primitives';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { signIn as signInReal, type LoginStep } from '../src/data/session';
@@ -313,11 +313,7 @@ export default function Login() {
                   <Toggle on={bio} onPress={() => set({ bio: !bio })} />
                 </View>
 
-                <Pressable
-                  onPress={() => void submit()}
-                  style={{ width: '100%', height: 52, marginTop: 24, borderRadius: radius.lg, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 10px rgba(104,53,251,0.28)' }}>
-                  <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>Sign in</Text>
-                </Pressable>
+                <PrimaryButton label="Sign in" onPress={() => void submit()} style={{ marginTop: 24 }} />
 
                 {bio ? (
                   <Pressable
@@ -339,7 +335,8 @@ export default function Login() {
                 <Text style={[type.body, { color: C.muted, marginTop: 16 }]}>
                   We send a six-digit code by SMS. No password to remember.
                 </Text>
-                <Pressable
+                <PrimaryButton
+                  label="Send the code"
                   onPress={() => {
                     if (mob.length !== MOBILE_DIGITS) return setErr('mob');
                     setStage('otp');
@@ -347,9 +344,8 @@ export default function Login() {
                     setOtpErr(false);
                     notify('Code sent by SMS');
                   }}
-                  style={{ width: '100%', height: 52, marginTop: 24, borderRadius: radius.lg, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 10px rgba(104,53,251,0.28)' }}>
-                  <Text style={[{ fontSize: 14, color: '#FFFFFF' }, weight(600)]}>Send the code</Text>
-                </Pressable>
+                  style={{ marginTop: 24 }}
+                />
               </View>
             )}
           </View>
@@ -401,15 +397,16 @@ export default function Login() {
               <Text style={{ fontSize: 14, color: C.danger, marginTop: 8 }}>That code is not right. Check the SMS again.</Text>
             ) : null}
 
-            <Pressable
+            {/* The one button on this screen that was hand-rolled. Through the
+                primitive it gets the same press feedback, the same disabled
+                treatment and the same explanation as every other. */}
+            <PrimaryButton
+              label="Sign in"
               onPress={() => (digits.length === 6 ? void submit(true) : notify('Type all six digits'))}
               disabled={digits.length !== 6}
-              style={[
-                { width: '100%', height: 52, marginTop: 16, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: digits.length === 6 ? C.primary : C.hairline },
-                digits.length === 6 && { boxShadow: shadow.primary },
-              ]}>
-              <Text style={[{ fontSize: 16, color: digits.length === 6 ? '#FFFFFF' : C.faint }, weight(600)]}>Sign in</Text>
-            </Pressable>
+              whyDisabled="Type all six digits from the SMS."
+              style={{ marginTop: 16 }}
+            />
 
             <Pressable
               onPress={() => notify('Code sent again to ' + masked)}

@@ -1,9 +1,10 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { mbosHourly, mbosNightly } from "@/lib/mbos-jobs";
 import {
+  calls,
   complaints,
   jobRuns,
   notifications,
@@ -11,6 +12,7 @@ import {
   reminders,
   users,
 } from "@/db/schema";
+import { CRM_EVENT, callTimelineSummary, writeTimelineEvents } from "./timeline";
 import { getConfig } from "./config/store";
 import { money } from "./format";
 import {
@@ -84,6 +86,7 @@ export type JobName =
   | "project-sheet"
   | "revert-sheet-paid"
   | "provision-team"
+  | "backfill-timeline"
   | "mbos-nightly"
   | "mbos-hourly";
 
@@ -399,6 +402,8 @@ export async function runJob(
       return [await runRevertSheetPaid(triggeredById, options)];
     case "provision-team":
       return [await runTeamProvision(triggeredById, options)];
+    case "backfill-timeline":
+      return [await runBackfillTimeline(triggeredById)];
     case "hrms-sync":
     case "hrms-reparse":
       return [await runEmployeeSync(job, triggeredById)];
@@ -625,8 +630,8 @@ async function runProjection(
         `orders ${orders.orders.created} new (${orders.orders.lines} lines), ` +
         `bills ${orders.bills.skipped ? "skipped" : orders.bills.created}` +
         (orders.bills.clashed ? ` (${orders.bills.clashed} bill numbers already taken)` : "") +
-        (orders.bills.leftUnpaid
-          ? ` (${orders.bills.leftUnpaid} left unpaid on the Payment Status tab's word)`
+        (orders.bills.unstated
+          ? ` (${orders.bills.unstated} awaiting somebody to say whether they are paid)`
           : "") + ", " +
         `master matched ${parties.matched}, phones ${parties.phonesFilled}, ` +
         `leads ${parties.leadsCreated}/${parties.leadsAvailable}` +
@@ -707,6 +712,94 @@ async function runTeamProvision(
         `, ${report.assigned} records handed over (${report.assignedLeads} of them leads)` +
         `, ${report.untagged} parties tagged to nobody`;
       return { recordsAffected: report.assigned, detail };
+    },
+    triggeredById,
+  );
+}
+
+/* ------------------------------------------------------ the shared timeline */
+
+/**
+ * Five years of telecaller calls, projected into the stream both apps read.
+ *
+ * The CRM writes `timeline_events` as it goes now, but everything logged
+ * before it did is invisible to a salesman standing in a shop — and the whole
+ * point of the stream is that he can see the telecaller rang. This is the one
+ * pass that fixes the history.
+ *
+ * IDEMPOTENT by the natural key: one event per call row, per app, per kind, so
+ * a second run inserts nothing rather than telling every shop it was rung
+ * twice. That matters more here than anywhere, because a backfill is exactly
+ * the sort of job somebody runs again when they are not sure the first one
+ * finished.
+ *
+ * By hand, not scheduled. Once it has run there is nothing left for it to do,
+ * and the going-forward writes are in the transactions that log the calls.
+ */
+async function runBackfillTimeline(triggeredById?: string): Promise<JobResult> {
+  return run(
+    "backfill-timeline",
+    async () => {
+      const BATCH = 500;
+      let scanned = 0;
+      let written = 0;
+      let cursor: string | null = null;
+
+      /* Keyset paging on the id, not offset: the table grows underneath a long
+         run, and an offset silently skips rows when it does. */
+      for (;;) {
+        const rows: Array<{
+          id: string;
+          customerId: string;
+          userId: string;
+          interactionType: string;
+          outcome: string | null;
+          notes: string | null;
+          startedAt: Date;
+        }> = await db
+          .select({
+            id: calls.id,
+            customerId: calls.customerId,
+            userId: calls.userId,
+            interactionType: calls.interactionType,
+            outcome: calls.outcome,
+            notes: calls.notes,
+            startedAt: calls.startedAt,
+          })
+          .from(calls)
+          .where(cursor ? gt(calls.id, cursor) : undefined)
+          .orderBy(calls.id)
+          .limit(BATCH);
+
+        if (!rows.length) break;
+        scanned += rows.length;
+        cursor = rows[rows.length - 1].id;
+
+        written += await writeTimelineEvents(
+          db,
+          rows.map((row) => ({
+            customerId: row.customerId,
+            eventType: CRM_EVENT.call,
+            sourceApp: "crm" as const,
+            sourceRecordId: row.id,
+            // When the call HAPPENED. `started_at` is the timestamp, carrying
+            // its own zone — nothing here truncates it to a date.
+            occurredAt: row.startedAt,
+            actorUserId: row.userId,
+            summary: callTimelineSummary(row),
+          })),
+        );
+
+        if (rows.length < BATCH) break;
+      }
+
+      const skipped = scanned - written;
+      return {
+        recordsAffected: written,
+        detail:
+          `${scanned} calls read, ${written} projected into the timeline` +
+          (skipped > 0 ? `, ${skipped} already there` : ""),
+      };
     },
     triggeredById,
   );

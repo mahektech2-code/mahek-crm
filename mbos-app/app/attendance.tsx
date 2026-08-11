@@ -4,7 +4,7 @@ import { useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, DashedButton, ListCard, T } from '../src/components/ui/primitives';
-import { recentDays, sessionsOf, todayRow, workedMinutes, type AttendanceDay } from '../src/data/attendance';
+import { recentDays, requestRegularisation, sessionsOf, todayRow, workedMinutes, type AttendanceDay } from '../src/data/attendance';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { dmy } from '../src/lib/format';
@@ -49,20 +49,15 @@ export default function AttendanceScreen() {
     return () => clearInterval(t);
   }, []);
 
-  useFocusEffect(
-    React.useCallback(() => {
-      let live = true;
-      if (!userId) return;
-      void Promise.all([recentDays(userId), todayRow(userId)]).then(([rows, t]) => {
-        if (!live) return;
-        setDays(rows);
-        setToday(t);
-      });
-      return () => {
-        live = false;
-      };
-    }, [userId]),
-  );
+  const load = React.useCallback(() => {
+    if (!userId) return;
+    void Promise.all([recentDays(userId), todayRow(userId)]).then(([rows, t]) => {
+      setDays(rows);
+      setToday(t);
+    });
+  }, [userId]);
+
+  useFocusEffect(load);
 
   /* The clock ticks while he is on the road, so "so far" counts against now
      rather than the last write — and it SUMS the sessions, because the day may
@@ -185,7 +180,12 @@ export default function AttendanceScreen() {
             body: 'Your manager sees the day, what the app recorded, and your reason. Nothing changes until they approve it.',
             reasonLabel: 'What happened · required',
             confirmLabel: 'Send to manager',
-            run: (r) => notify('Correction sent · ' + r),
+            run: async (r) => {
+              if (!today) return notify('There is no day recorded to correct.');
+              await requestRegularisation(today.id, r);
+              load();
+              notify('Sent to your manager · nothing changes until they approve it');
+            },
           })
         }
       />

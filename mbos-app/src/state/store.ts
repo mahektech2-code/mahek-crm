@@ -25,7 +25,10 @@ import type { OutcomeKey } from '../data/fixtures';
 export type GpsState = 'acquiring' | 'locked' | 'off';
 export type RecState = 'idle' | 'rec' | 'busy' | 'done' | 'failed';
 export type LoginMethod = 'password' | 'otp';
-export type SheetKind = 'action' | 'journeyMore' | 'filters' | 'rowMore' | null;
+/** `leadForm` is asked for on one screen and answered on another — the `+`
+ *  sheet offers "Add lead" from anywhere, and the Leads screen opens the form
+ *  as it arrives rather than making him find the button again. */
+export type SheetKind = 'action' | 'journeyMore' | 'filters' | 'rowMore' | 'leadForm' | null;
 export type FormKind = 'complaint' | 'sample' | null;
 
 export type Confirm = {

@@ -189,6 +189,8 @@ export const ROUTE_MOTION: Record<string, ScreenMotion> = {
   pay: 'deeper',
   samples: 'deeper',
   tasks: 'deeper',
+  leads: 'deeper',
+  lead: 'deeper',
   catalogue: 'deeper',
   attendance: 'deeper',
   leave: 'deeper',

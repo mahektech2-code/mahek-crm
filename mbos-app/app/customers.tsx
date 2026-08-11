@@ -8,6 +8,7 @@ import { BottomSheet } from '../src/components/ui/overlays';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
 import { inr, isoDate, plural, pretty } from '../src/lib/format';
+import { callNumber, openWhatsApp } from '../src/lib/messaging';
 import { customerStage, daysSince, listCustomers, type Customer } from '../src/data/customers';
 
 /**
@@ -142,8 +143,25 @@ export default function Customers() {
                 common thing does not require opening the record first. */}
             <View style={{ flexDirection: 'row', borderTopWidth: 1, borderTopColor: C.hairline }}>
               {[
-                { g: 'call', l: 'Call', run: () => notify('Calling ' + (x.contactPerson ?? x.name)) },
-                { g: 'chat', l: 'WhatsApp', run: () => notify('WhatsApp to ' + (x.contactPerson ?? x.name)) },
+                {
+                  g: 'call',
+                  l: 'Call',
+                  run: () => {
+                    if (!x.phone) return notify('No number on this customer');
+                    void callNumber(x.phone);
+                  },
+                },
+                {
+                  g: 'chat',
+                  l: 'WhatsApp',
+                  run: async () => {
+                    if (!x.phone) return notify('No number on this customer');
+                    /* Handed to his own WhatsApp — nothing is sent on the
+                       company's behalf, and nothing is recorded as sent. */
+                    const out = await openWhatsApp(x.phone, '');
+                    if (out.status !== 'handed_off') notify(out.reason);
+                  },
+                },
                 { g: 'nav', l: 'Navigate', run: () => notify('Maps to ' + x.name) },
                 { g: 'visit', l: 'Visit', run: () => { beginVisit(x.id); router.push('/visit'); } },
                 { g: 'order', l: 'Order', run: () => { set({ custId: x.id }); router.push('/order?from=customers'); } },

@@ -5,8 +5,9 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Card, Input, PrimaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, radius, shadow, tabular, weight } from '../src/theme/tokens';
-import { inr } from '../src/lib/format';
+import { inr, isoDate, pretty } from '../src/lib/format';
 import { cashInHand, collectPayment, type PaymentMode } from '../src/data/payments';
+import { copyToClipboard, openWhatsApp, receiptMessage } from '../src/lib/messaging';
 import { takePhoto } from '../src/native/capture';
 import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
@@ -45,6 +46,7 @@ export default function PayScreen() {
   const set = useStore((s) => s.set);
   const notify = useStore((s) => s.notify);
   const markVisitDone = useStore((s) => s.markVisitDone);
+  const askConfirm = useStore((s) => s.askConfirm);
 
   const [cash, setCash] = React.useState<{ totalPaise: number; sentence: string; nextDeadline: number | null } | null>(null);
   const [chequePhotoId, setChequePhotoId] = React.useState<string | null>(null);
@@ -96,9 +98,45 @@ export default function PayScreen() {
     });
 
     markVisitDone('payment', payMode + ' · ' + inr(amt));
+
+    /*
+     * The receipt is written HERE, on the handset, so it can be shown and sent
+     * with no signal at all — the customer has just handed over money and
+     * wants something for it now, not when the phone next finds a tower.
+     *
+     * The reference is marked provisional: the office issues the real receipt
+     * number on sync, and printing a temporary one as though it were final is
+     * how a payment ends up with two numbers against it.
+     */
+    const slip = receiptMessage({
+      customerName: c.name,
+      amountRupees: inr(amt),
+      mode: payMode,
+      reference: receiptRef,
+      confirmed: false,
+      collectedBy: boot.session?.user.name ?? 'your salesman',
+      when: pretty(isoDate(new Date())),
+      chequeNumber: needsCheque ? payChq.trim() : null,
+    });
+
+    const phone = c.phone;
     set({ payAmt: '', payChq: '', payMode: null });
     setChequePhotoId(null);
-    notify('Receipt ' + receiptRef + ' made · send it on WhatsApp from the customer');
+
+    /* Offered, never sent. Nothing goes out on the company's behalf, and the
+       payment is not recorded as receipted until a human presses send. */
+    askConfirm({
+      title: 'Send the receipt?',
+      body: phone
+        ? `${inr(amt)} recorded for ${c.name}. Your WhatsApp opens with the receipt written — you press send.`
+        : `${inr(amt)} recorded for ${c.name}. There is no number on this customer, so the receipt can only be copied.`,
+      confirmLabel: phone ? 'Open WhatsApp' : 'Copy the receipt',
+      run: async () => {
+        const out = phone ? await openWhatsApp(phone, slip) : await copyToClipboard(slip);
+        if (out.status !== 'handed_off') notify(out.reason);
+      },
+    });
+
     back.go();
   };
 
@@ -208,6 +246,7 @@ export default function PayScreen() {
         label="Collect and make receipt"
         onPress={collect}
         disabled={!payOk}
+        whyDisabled="Pick how they are paying and enter the amount first."
         style={{ marginTop: 16 }}
       />
       <View style={{ height: 8 }} />

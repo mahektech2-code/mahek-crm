@@ -10,6 +10,7 @@ import { useBoot } from '../src/state/boot';
 import { signOut as signOutReal } from '../src/data/session';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
 import { leaveBalances, listExpenses, listSamples } from '../src/data/requests';
+import { openLeadCount } from '../src/data/leads';
 import { pendingCount, queueCounts } from '../src/sync/queue';
 import { isoDate, plural } from '../src/lib/format';
 
@@ -27,6 +28,7 @@ type Item = { label: string; badge: string; route?: string };
 
 type Counts = {
   overdueTasks: number;
+  openLeads: number;
   leaveLeft: number;
   pendingExpenses: number;
   openSamples: number;
@@ -36,6 +38,7 @@ type Counts = {
 
 const EMPTY: Counts = {
   overdueTasks: 0,
+  openLeads: 0,
   leaveLeft: 0,
   pendingExpenses: 0,
   openSamples: 0,
@@ -49,6 +52,7 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
       label: 'Work',
       items: [
         { label: 'Tasks', badge: n.overdueTasks ? plural(n.overdueTasks, 'overdue', 'overdue') : '', route: 'tasks' },
+        { label: 'Leads', badge: n.openLeads ? plural(n.openLeads, 'open', 'open') : '', route: 'leads' },
         { label: 'Orders', badge: '', route: 'order' },
         { label: 'Payments', badge: '', route: 'pay' },
         { label: 'Samples', badge: n.openSamples ? plural(n.openSamples, 'open', 'open') : '', route: 'samples' },
@@ -103,15 +107,17 @@ export default function MoreScreen() {
       const today = isoDate(new Date());
       void Promise.all([
         listOpenTasks(),
+        openLeadCount(),
         leaveBalances(),
         listExpenses(),
         listSamples(),
         pendingCount(),
         queueCounts(),
-      ]).then(([tasks, balances, expenses, samples, toSend, queue]) => {
+      ]).then(([tasks, openLeads, balances, expenses, samples, toSend, queue]) => {
         if (!live) return;
         setCounts({
           overdueTasks: tasks.filter((t) => bucketOf(t.dueDate, today) === 'Overdue').length,
+          openLeads,
           leaveLeft: Math.round(balances.reduce((a, b) => a + b.available, 0)),
           pendingExpenses: expenses.filter((e) => e.state === 'Pending').length,
           openSamples: samples.filter((s) => s.state !== 'Converted' && s.state !== 'Rejected').length,

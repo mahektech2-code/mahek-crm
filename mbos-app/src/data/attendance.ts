@@ -281,3 +281,38 @@ export async function autoCloseMissedCheckouts(userId: string): Promise<number> 
   }
   return rows.length;
 }
+
+/**
+ * Asking for a day to be corrected.
+ *
+ * The record is never edited here — that is the whole point of it. What this
+ * does is raise an approval against the day, so a manager sees what the app
+ * recorded, what the salesman says happened, and decides. The day changes only
+ * if they approve.
+ *
+ * Before this, the dialog collected a reason and then did nothing but toast:
+ * the salesman believed he had asked, and nobody had been asked.
+ */
+export async function requestRegularisation(dayId: string, reason: string): Promise<string> {
+  const { raiseApproval } = await import('./requests');
+  const deviceId = (await import('../sync/api')).deviceId;
+
+  const approvalId = await raiseApproval({
+    type: 'attendance_regularisation',
+    subjectType: 'attendance',
+    subjectId: dayId,
+    reason,
+    deviceId: await deviceId(),
+  });
+
+  await run('UPDATE attendance_days SET regularizationId = ? WHERE id = ?', [approvalId, dayId]);
+
+  await enqueue({
+    entityType: 'attendance',
+    entityId: dayId,
+    op: 'update',
+    payload: { id: dayId, regularisationRequested: true, regularisationReason: reason, approvalId },
+  });
+
+  return approvalId;
+}

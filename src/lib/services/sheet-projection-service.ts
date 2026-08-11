@@ -7,7 +7,6 @@ import {
   customers,
   orders,
   paymentReceipts,
-  payments,
   sheetOrderRows,
   sheetPaymentRows,
   sheetSyncRuns,
@@ -101,11 +100,17 @@ export type ProjectionReport = {
   bills: {
     created: number;
     updated: number;
-    /** Written only where a received date exists. */
+    /**
+     * Always 0, and kept so a caller reading the report can SEE that it is 0.
+     * The sheet no longer writes money in any form — no receipt, no
+     * `paid_amount`, no `status`, no `outstanding` — so a projection that
+     * reported nothing about payments would look like one that had not been
+     * asked rather than one that is forbidden.
+     */
     payments: number;
-    /** Marked Received with no date: the bill is settled, the date unknown. */
+    /** Marked Received with no date. Counted as evidence to act on, not acted on. */
     paidWithoutDate: number;
-    /** No status at all — read as unpaid, which is a choice worth counting. */
+    /** No status at all — the blank that used to be read as settled. */
     blankStatus: number;
     /**
      * Orders whose bill number is already held by a different bill and could
@@ -115,12 +120,12 @@ export type ProjectionReport = {
      */
     clashed: number;
     /**
-     * Orders the order-history path would have settled by default, held back
-     * because the Payment Status tab affirmatively says the money has not
-     * arrived. Zero on the Payment Status path, which never settles by
-     * default in the first place.
+     * Bills created carrying no payment position, because nobody has stated
+     * one. They count as neither paid nor owed until somebody does. This is
+     * the number worth watching: it is how much of the book is waiting on a
+     * person rather than how much has been decided.
      */
-    leftUnpaid: number;
+    unstated: number;
     skipped: boolean;
   };
   skipped: { reason: string; count: number }[];
@@ -563,7 +568,7 @@ async function recordStatusConflicts(
 /* ----------------------------------------------------------------- bills */
 
 /**
- * Bills and payments, from the Payment Status tab.
+ * Bills — and NOT payments — from the Payment Status tab.
  *
  * That tab is one row per ORDER, and Order Number is its key — the Tally bill
  * number cannot be, because 113 of them repeat across 539 rows and
@@ -571,82 +576,30 @@ async function recordStatusConflicts(
  * number is appended so the human-readable identifier stays unique without
  * losing what it was; `external_ref` carries the stable key either way.
  *
- * What the tab supports, and what it does not:
+ * This path used to write money, and it had the best claim to: the tab really
+ * does carry received/not-received, on 8,277 rows, which is evidence and not
+ * an assumption. It still does not write money, because a receipt is the
+ * assertion that funds reached the bank and a spreadsheet cell cannot make
+ * that assertion — no person is behind it, and there is nobody to ask when it
+ * turns out to be wrong. The tab now informs accounts rather than acting for
+ * them.
  *
- *   RECEIVED means the bill is settled, so `paid_amount` is set to the full
- *   amount. That matches how the app already works — the payment action
- *   maintains paid_amount incrementally rather than deriving it, so writing it
- *   here is consistent rather than a shortcut.
+ * What the tab supports, and what is done with it:
  *
- *   A PAYMENT ROW is written only where a received DATE exists. 2,302 rows say
- *   Received without saying when, and `payments.paid_at` is not nullable. An
- *   invented date would flow straight into ageing, slow-payer flags and every
- *   collections figure built on them. So the bill is marked paid — which is
- *   known — and no payment row is fabricated to carry a date that is not.
+ *   RECEIVED is COUNTED, not applied. `paidWithoutDate` and `blankStatus` come
+ *   back on the report so somebody can see how much of the book the tab claims
+ *   to know about, and go and confirm it. Nothing is written to `paid_amount`,
+ *   no receipt is created, and no bill changes status.
  *
- *   A BLANK STATUS is treated as unpaid. It is genuinely ambiguous: 2,383 rows
- *   say nothing at all, and "not yet paid" and "nobody has updated this" wear
- *   the same blank. Unpaid is the conservative reading for collections, and
- *   the count is reported so it is a known quantity rather than an assumption
- *   nobody sees.
+ *   A BLANK STATUS is neither paid nor unpaid. 2,383 rows say nothing at all,
+ *   and "not yet paid" and "nobody has updated this" wear the same blank. It
+ *   was read as settled once and as unpaid before that; it is now read as what
+ *   it is, which is the same `unstated` every other row gets.
  *
  *   A MISSING DUE DATE is left null. 87% of rows have none, and the existing
  *   rule already resolves one from the order's term, then the customer's, then
  *   the configured default — which is better than inventing a date here.
  */
-/**
- * A payment the Payment Status tab reports, as a CONFIRMED receipt.
- *
- * Confirmed, not reported, because that tab IS accounts' own record of what
- * reached the bank — it is not a telecaller relaying what a customer said.
- * Putting a year of it into the confirmation queue would ask accounts to
- * re-verify their own ledger.
- *
- * Idempotent on the external reference, so a re-sync writes nothing twice.
- */
-async function writeSheetReceipt(input: {
-  billId: string;
-  customerId: string;
-  amount: number;
-  paidAt: string;
-  externalRef: string;
-}): Promise<boolean> {
-  const [already] = await db
-    .select({ id: paymentReceipts.id })
-    .from(paymentReceipts)
-    .where(eq(paymentReceipts.idempotencyKey, input.externalRef))
-    .limit(1);
-  if (already) return false;
-
-  const receiptId = newId("rcp");
-  await db.transaction(async (tx) => {
-    await tx.insert(paymentReceipts).values({
-      id: receiptId,
-      customerId: input.customerId,
-      amount: input.amount,
-      receivedAt: input.paidAt,
-      // The tab says the money arrived, never how. Naming a mode would be
-      // inventing a fact that reconciliation later depends on.
-      mode: "Not stated",
-      status: "confirmed",
-      source: "sheet_import",
-      confirmedAt: new Date(),
-      idempotencyKey: input.externalRef,
-    });
-    await tx.insert(payments).values({
-      id: newId("pay"),
-      receiptId,
-      billId: input.billId,
-      customerId: input.customerId,
-      amount: input.amount,
-      paidAt: input.paidAt,
-      mode: "Not stated",
-      externalRef: input.externalRef,
-    });
-  });
-  return true;
-}
-
 /**
  * Order numbers the Payment Status tab affirmatively says are NOT settled.
  *
@@ -688,38 +641,33 @@ export async function unpaidPerPaymentTab(): Promise<Set<string>> {
  * had not been pulled, which is a bill list missing because of a second
  * document rather than because there are no bills.
  *
- * PAID IS THE STARTING POSITION, and that is a deliberate instruction rather
- * than a fact the sheet supplies. The order tab records what was billed and
- * never what was received — its Payment Status column is empty on every row —
- * so the only two options are to assume everything is owed or to assume
- * everything is settled. Assuming owed invents roughly nine crore of debt and
- * puts every customer on the collections list. Assuming settled shows nothing
- * owed until somebody says otherwise, which understates rather than fabricates
- * and is the safer of the two lies. Marking the genuinely unpaid ones is a
- * person's job from here.
+ * IT STATES NO PAYMENT POSITION AT ALL, and that is the point.
  *
- * The receipt carries `mode: "Not stated"` and `source: "sheet_import"` so
- * nothing downstream mistakes it for a payment somebody witnessed, and its
- * date is the bill's own date because that is the only date this tab has.
+ * This path used to assume every bill was settled and write a confirmed
+ * receipt for the full amount to say so. The reasoning was that the order tab
+ * records what was billed and never what was received, so the only options
+ * were to assume everything owed — roughly nine crore of invented debt, every
+ * customer on the collections list — or to assume everything settled, which
+ * understates rather than fabricates. It was called the safer of two lies.
  *
- * Keyed `SHEETPAY-<order number>`, the same key the Payment Status path uses,
- * so the two can never produce two bills for one order.
+ * It was still a lie, and it was the one that hides money. Every customer's
+ * every bill read as paid on the authority of a spreadsheet, with no person
+ * behind any of it, and the assumption twice overwrote a real decision: the 9
+ * August receivables report marked 395 bills owed and a scheduled pass settled
+ * 348 of them again, Rs 1.18 crore, fourteen hours later.
  *
- * WHAT IT WILL NOT SETTLE is an order the Payment Status tab has already said
- * is unpaid. "Assume settled" is a reading of SILENCE, and that tab is the one
- * place in the workbook that breaks the silence — so where it speaks, it wins.
- * Without this the two paths were two authors of one bill: the screen import
- * passes `bills: true` and writes the real received/not-received, and every
- * scheduled `mode=project` call — which passes no such flag — came along
- * behind it and settled the unpaid ones with a receipt for the full amount.
- * The bills it erased were exactly the ones carrying real debt, because a bill
- * the tab marked received already had a receipt on the idempotency key and was
- * skipped. Reading the staging table here fixes it once, for every caller,
- * rather than in the two places that spell the URL out.
+ * So the third answer is the true one: nobody has said. A bill lands
+ * `payment_position = 'unstated'` and counts as NEITHER paid nor owed — held
+ * out of outstanding, aging, the collections worklist and the slow-payer flag
+ * until the app or the Tally receivables report speaks. Nothing chases a debt
+ * nobody has vouched for, and nothing is written off either.
  *
- * A BLANK status is still settled. It is genuinely ambiguous — "not yet paid"
- * and "nobody has updated this" wear the same blank — and this path's whole
- * premise is that absent evidence understates rather than fabricates.
+ * THE SHEET NEVER WRITES MONEY. Not a receipt, not `paid_amount`, not
+ * `status`, not `outstanding`. Those are the app's, and only the app's. What
+ * this function writes is what the tab actually knows: which bill exists,
+ * against which order and customer, for how much, on what date. `unstated` is
+ * written on INSERT and never on UPDATE, because a bill somebody has since
+ * spoken for must not be returned to silence by the next scheduled pass.
  */
 export async function projectBillsFromOrders(
   options: ProjectionOptions = {},
@@ -744,11 +692,13 @@ export async function projectBillsFromOrders(
     grouped.set(line.orderNumber!, list);
   }
 
-  // The orders the Payment Status tab says are NOT settled. Read straight
-  // from staging rather than from what a previous projection made of it: this
-  // is the tab's own words, and it is the only evidence in the workbook that
-  // outranks this path's assumption.
-  const unpaidOrders = await unpaidPerPaymentTab();
+  /*
+   * The Payment Status tab used to be read here, to hold back the orders it
+   * affirmatively called unpaid from being settled by assumption. There is no
+   * assumption left to hold back — nothing on this path settles anything — so
+   * the read is gone with it. `unpaidPerPaymentTab()` remains, because the
+   * revert that undoes the receipts this path once wrote still needs it.
+   */
 
   const refs = [...grouped.keys()].map((n) => `SHEET-${n}`);
   const orderRows = refs.length
@@ -793,18 +743,14 @@ export async function projectBillsFromOrders(
     existing.filter((b) => b.externalRef).map((b) => [b.externalRef!, b.id]),
   );
   const billByNo = new Map(existing.map((b) => [b.billNo, b]));
-  // Bills whose payment position somebody has DECIDED. Settling by assumption
-  // may not touch these, however free the idempotency key looks.
-  const decided = new Set(existing.filter((b) => b.paymentDecidedAt).map((b) => b.id));
 
   let created = 0;
   let updated = 0;
-  let receipts = 0;
   let clashed = 0;
-  // Reported, not silent. "Settled everything except the ones the other tab
-  // called unpaid" is a different sentence to "settled everything", and the
-  // person reading the run output is entitled to the difference.
-  let leftUnpaid = 0;
+  // Reported, not silent. How much of the book is waiting on a person to say
+  // what happened to the money is a fact the person reading the run output is
+  // entitled to, and it is the number that should be falling over time.
+  let unstated = 0;
 
   for (const [orderNumber, group] of grouped) {
     const head = group[0];
@@ -864,49 +810,44 @@ export async function projectBillsFromOrders(
 
     let billId = billByRef.get(externalRef);
     if (billId) {
+      /*
+       * `payment_position` is NOT in `values`, so an update never touches it.
+       * A bill somebody has since spoken for — a receipt recorded, the
+       * receivables report applied — must not be returned to silence because
+       * a scheduled pass re-read the row it came from.
+       */
       await db.update(bills).set(values).where(eq(bills.id, billId));
       updated++;
     } else {
       billId = newId("bil");
-      await db.insert(bills).values({ id: billId, ...values });
+      /*
+       * Nobody has said what this bill's payment position is, and this tab
+       * cannot say: it records what was billed and never what was received.
+       * So it is written down as unsaid rather than assumed either way, and
+       * counts as neither paid nor owed until somebody speaks.
+       */
+      await db.insert(bills).values({ id: billId, ...values, paymentPosition: "unstated" });
       created++;
+      unstated++;
     }
     // So the next order in this same pass sees the number as taken. A bill
     // this pass just wrote carries no decision — the projection never makes
     // one — so the mark is null whether it was created or updated here.
     billByNo.set(billNo, { id: billId, billNo, externalRef, paymentDecidedAt: null });
-
-    // Settled by instruction, not by evidence — and instruction yields to both
-    // kinds of evidence there are. The Payment Status tab saying "Pending" is
-    // the sheet telling us the money has not arrived; `paymentDecidedAt` is a
-    // person telling us, through the receivables report or the Accounts app.
-    // Neither may be overwritten by an assumption.
-    if (unpaidOrders.has(orderNumber) || decided.has(billId)) {
-      leftUnpaid++;
-      continue;
-    }
-
-    // Idempotent on the key, so a re-run never pays the same bill twice.
-    const wrote = await writeSheetReceipt({
-      billId,
-      customerId: order.customerId,
-      amount,
-      paidAt: billDate,
-      externalRef,
-    });
-    if (wrote) receipts++;
   }
 
   return {
     created,
     updated,
-    payments: receipts,
+    // Structurally zero: this function writes no money and has no branch that
+    // could. Reported rather than omitted so the run output says so out loud.
+    payments: 0,
     // Neither figure applies here: this tab states no payment status at all,
     // so there is nothing "received without a date" and nothing left blank.
     paidWithoutDate: 0,
     blankStatus: 0,
     clashed,
-    leftUnpaid,
+    unstated,
     skipped: false,
   };
 }
@@ -922,7 +863,7 @@ export async function projectBills(
       paidWithoutDate: 0,
       blankStatus: 0,
       clashed: 0,
-      leftUnpaid: 0,
+      unstated: 0,
       skipped: true,
     };
   }
@@ -970,24 +911,16 @@ export async function projectBills(
   }
 
   const existing = await db
-    .select({
-      id: bills.id,
-      externalRef: bills.externalRef,
-      paymentDecidedAt: bills.paymentDecidedAt,
-    })
+    .select({ id: bills.id, externalRef: bills.externalRef })
     .from(bills)
     .where(sql`${bills.externalRef} like 'SHEETPAY-%'`);
   const billByRef = new Map(existing.map((b) => [b.externalRef!, b.id]));
-  // Same rule as the order-history path. This tab is better evidence than an
-  // assumption, but it is still a sheet, and it does not outrank somebody
-  // reading Tally's receivables or recording a payment in Accounts.
-  const decided = new Set(existing.filter((b) => b.paymentDecidedAt).map((b) => b.id));
 
   let created = 0;
   let updated = 0;
-  let paymentsWritten = 0;
   let paidWithoutDate = 0;
   let blankStatus = 0;
+  let unstated = 0;
 
   for (const row of rows) {
     const externalRef = `SHEETPAY-${row.orderNumber}`;
@@ -1036,55 +969,51 @@ export async function projectBills(
 
     const billId = billByRef.get(externalRef);
     if (billId) {
+      // `payment_position` is not in `values`, so an update never touches it.
       await db.update(bills).set(values).where(eq(bills.id, billId));
       updated++;
-      if (received && row.paymentReceivedDate && !decided.has(billId)) {
-        const wrote = await writeSheetReceipt({
-          billId,
-          customerId,
-          amount: row.billAmountPaise,
-          paidAt: row.paymentReceivedDate,
-          externalRef,
-        });
-        if (wrote) paymentsWritten++;
-      }
     } else {
-      const id = newId("bil");
-      await db.insert(bills).values({ id, ...values });
+      /*
+       * `unstated` even here, where the tab DOES carry a received flag.
+       *
+       * This is the harder call of the two, because this tab genuinely knows
+       * something — 8,277 of its rows say received or not received, and that
+       * is real evidence rather than the order tab's silence. It is still a
+       * spreadsheet cell, and a receipt is the assertion that money reached
+       * the bank. Writing one from a cell puts a confirmed receipt in the
+       * ledger with no person behind it, which is the thing we are removing,
+       * and it does not become acceptable because this cell is better
+       * informed than that one.
+       *
+       * The evidence is not thrown away: the tab is read every pass and
+       * `paidWithoutDate` and `blankStatus` still count what it says, so
+       * accounts can act on it. What changes is that a person does the acting.
+       */
+      await db.insert(bills).values({ id: newId("bil"), ...values, paymentPosition: "unstated" });
       created++;
-      if (received && row.paymentReceivedDate) {
-        const wrote = await writeSheetReceipt({
-          billId: id,
-          customerId,
-          amount: row.billAmountPaise,
-          paidAt: row.paymentReceivedDate,
-          externalRef,
-        });
-        if (wrote) paymentsWritten++;
-      }
+      unstated++;
     }
   }
 
-  // The importer writes the money and the bills together, so the cached paid
-  // amounts and everything downstream of them are rebuilt once at the end
-  // rather than per row.
-  if (!options.dryRun) {
-    await recomputeAllBillPaid();
-    await recomputeBillStatuses();
-  }
+  /*
+   * No recompute here any more. This function no longer writes money, so
+   * `paid_amount` and the statuses over it cannot have changed — and running
+   * them anyway would make a read-only import look like one that touches the
+   * ledger every pass.
+   */
 
   return {
     created,
     updated,
-    payments: paymentsWritten,
+    // Structurally zero, like the order-history path: no branch writes money.
+    payments: 0,
+    // What the tab SAYS, still counted, so somebody can act on it.
     paidWithoutDate,
     blankStatus,
     // The Payment Status path keys one bill per order too, so a clash here
     // would mean the same thing — it simply has not been seen.
     clashed: 0,
-    // Nothing to hold back: this path settles only what the tab says arrived,
-    // so it has no default for the tab to override.
-    leftUnpaid: 0,
+    unstated,
     skipped: false,
   };
 }
@@ -1115,12 +1044,22 @@ export async function projectSheet(
     // outstanding from the bills, and the follow-up stage from what is
     // outstanding and how old it is.
     await recomputeAllBuyingCycles();
-    // Unconditional now: bills are written on every run, so the figures over
-    // them are always stale by the time we get here. paid_amount comes from
-    // the confirmed receipts first, then statuses from that, then outstanding,
-    // then the follow-up stage from what is outstanding and how old it is.
-    await recomputeAllBillPaid();
-    await recomputeBillStatuses();
+
+    /*
+     * `recomputeAllBillPaid` and `recomputeBillStatuses` are deliberately NOT
+     * here any more. Both derive from confirmed receipts, and the projection
+     * no longer writes one — so there is nothing new for them to read, and
+     * running them would make a pass that touches no money look like a pass
+     * that rewrites the ledger every thirty minutes. Nothing else calls them
+     * on this path either: the money screens rebuild them when a person
+     * records or confirms something, which is now the only way they change.
+     *
+     * Outstanding IS still rebuilt, because bills arriving changes it: a new
+     * `unstated` bill contributes nothing, but a bill whose AMOUNT the sheet
+     * corrected changes what a stated bill is worth. The follow-up stage and
+     * the slow-payer flag follow outstanding, so they come after it, in that
+     * order.
+     */
     await recomputeAllOutstanding();
     await recomputeAllFollowUpStates();
     await recomputeSlowPayers();

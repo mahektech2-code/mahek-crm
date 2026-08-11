@@ -25,6 +25,8 @@ import {
 } from "../recompute";
 import { bindAttachments } from "./attachment-service";
 import { err, ok, type Result } from "../result";
+import { CRM_EVENT, writeTimelineEvents } from "../timeline";
+import { money } from "../format";
 
 /* ---------------------------------------------------------------------------
  * Receipts — money arriving, and whether the business has seen it.
@@ -302,6 +304,23 @@ export async function recordReceipt(
       });
     }
 
+    // §1.1 — into the shared stream, in the same transaction. Whether the
+    // business has SEEN the money is the whole difference between these two
+    // sentences, so the status is in the words rather than implied.
+    await writeTimelineEvents(tx, [
+      {
+        customerId: input.customerId,
+        eventType: CRM_EVENT.payment,
+        sourceApp: "crm",
+        sourceRecordId: receiptId,
+        occurredAt: now,
+        actorUserId: ctx.user.id,
+        summary: confirms
+          ? `${money(input.amount)} received by ${input.mode.toLowerCase()} — confirmed by accounts`
+          : `${money(input.amount)} reported by ${input.mode.toLowerCase()} — awaiting confirmation by accounts`,
+      },
+    ]);
+
     await tx.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
@@ -350,21 +369,36 @@ export async function recordReceipt(
  * cosmetic.
  */
 async function applyToLedger(customerId: string): Promise<void> {
-  // A bill that money recorded in the APP has touched is a bill whose payment
-  // position somebody decided, and the order sheet's settle-by-assumption must
-  // never write over it again. Marked here rather than at each call site
-  // because every route to confirmed money passes through this function, and a
-  // decision recorded in three places is a decision missed in one.
+  /*
+   * A bill that money recorded in the APP has touched is a bill somebody has
+   * spoken for. Two marks, both set here rather than at each call site,
+   * because every route to confirmed money passes through this function and a
+   * decision recorded in three places is a decision missed in one:
+   *
+   *   `payment_decided_at` — when it was decided. Only ever set once, so it
+   *   keeps saying WHEN rather than drifting to the latest touch.
+   *
+   *   `payment_position`   — that it has been stated at all. Unconditional,
+   *   because a bill can be `unstated` while already carrying a decided
+   *   timestamp from before this column existed, and the whole point is that
+   *   `unstated` means nobody has said. Recording money against it IS saying.
+   *
+   * `source <> 'sheet_import'` is what keeps the two apart: a receipt the
+   * spreadsheet wrote is not somebody deciding, which is the entire subject of
+   * this change.
+   */
   await db.execute(sql`
-    update bills set payment_decided_at = now()
-    where bills.payment_decided_at is null
-      and bills.id in (
+    update bills set
+      payment_decided_at = coalesce(bills.payment_decided_at, now()),
+      payment_position = 'stated'
+    where bills.id in (
         select p.bill_id from payments p
         join payment_receipts r on r.id = p.receipt_id
         where r.customer_id = ${customerId}
           and r.source <> 'sheet_import'
           and p.bill_id is not null
-      )`);
+      )
+      and (bills.payment_decided_at is null or bills.payment_position <> 'stated')`);
 
   await recomputeBillPaid(customerId);
   await recomputeBillStatuses();

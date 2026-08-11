@@ -12,8 +12,8 @@ npm run typecheck
 npm test             # engines + sync ordering, no device needed
 ```
 
-Expo Go is not on the stores for SDK 57 — use `eas go` for a physical iPhone,
-or the Expo CLI for Android and the iOS simulator.
+Built on **Expo SDK 54**, so it runs in the Expo Go on the app stores today.
+Scan the QR, or open `exp://<your-lan-ip>:8081`.
 
 Point it at MahekOne with `EXPO_PUBLIC_API_BASE` (defaults to
 `http://localhost:3000`).
@@ -124,18 +124,44 @@ Named plainly rather than implied:
 |---|---|
 | Push notifications | In-app only. No device tokens, no APNs/FCM. |
 | Reports and exports | Screens exist; no server-side report or PDF/Excel. |
-| WhatsApp send | Inherits the CRM's copy-to-send. No API path. |
 | Offline documents | Listed, not downloadable. |
-| Leads | Table and rules exist; no screens beyond "Add lead". |
-| Salary | Reads fixtures — no payroll source exists. |
-| Route optimisation | Engine is written and tested; screen wiring is thin. |
-| CRM → timeline | MBOS writes `timeline_events`; the CRM does not yet. |
+| Salary, performance | Read fixtures — no payroll or ranking source exists. |
+| Conflict resolution | Implemented for customer edits only, the one mutable record the handset touches. |
 
-**No SQL has been executed.** There is no database on the build machine, so the
-migration and every server query are written and typechecked but unrun. That is
-the first thing to do on a machine with Postgres:
+**WhatsApp is copy-to-send, and that is the design.** The Business API is not
+live, so nothing here sends on the company's behalf. `src/lib/messaging.ts`
+prepares the message exactly and hands it to the salesman's own WhatsApp, where
+he presses send — which is why a message is only ever recorded as sent when a
+human confirms it, and sits as `copied` until then. Marking it sent because we
+opened WhatsApp would be a guess wearing the clothes of a fact.
+
+## Running it against MahekOne
+
+The MBOS migration **has been applied** to the local Postgres — all 24 `mbos_*`
+tables and the `customers` extensions exist, and sign-in has been verified
+end-to-end returning a real book and the real catalogue.
 
 ```bash
-npm run db:migrate     # from the repo root
+# from the repo root
+npm run db:migrate
+npm run dev                    # MahekOne on :3000
+```
+
+`MBOS_JWT_SECRET` must be set or `/api/mbos/auth/login` refuses with a 503 that
+says so — deliberately, rather than falling back to a default secret.
+
+Point the handset at the machine's LAN address, not localhost:
+
+```
+mbos-app/.env →  EXPO_PUBLIC_API_BASE=http://<your-lan-ip>:3000
+```
+
+**One device per person.** A second handset is refused until the first is
+released — that is brief §2.2 working, not a bug. To clear it in development:
+`delete from mbos_devices;`
+
+The integration tests still need a test database:
+
+```bash
 npm run test:db && npm run test:integration
 ```

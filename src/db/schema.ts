@@ -116,7 +116,14 @@ export const sourceModuleEnum = pgEnum("source_module", [
   "ad_hoc",
 ]);
 
-export const orderSourceEnum = pgEnum("order_source", ["crm", "external"]);
+/**
+ * Where the order came from. `external` means the external ORDER SYSTEM the
+ * office types into — it is not a catch-all for "not the CRM", which is why
+ * field orders taken on a handset get their own value rather than borrowing
+ * one that already means something else. A source that lies is a source no
+ * report can be built on.
+ */
+export const orderSourceEnum = pgEnum("order_source", ["crm", "external", "mbos"]);
 /**
  * An order taken on a call is not yet an order the business has agreed to:
  * accounts check the customer first. New CRM orders start at
@@ -140,6 +147,37 @@ export const billStatusEnum = pgEnum("bill_status", [
   "unpaid",
   "partially_paid",
   "paid",
+]);
+
+/**
+ * Whether anybody has actually SAID what this bill's payment position is.
+ *
+ * `bill_status` answers paid/part/unpaid and is derived from `paid_amount`, so
+ * it has no way to express "nobody has told us" — a bill nobody has spoken for
+ * comes out `unpaid`, which is a claim of debt. That is the whole problem: the
+ * Order Details tab records what was BILLED and never what was RECEIVED, so a
+ * bill projected from it carries no payment evidence in either direction.
+ *
+ * The old answer was to assume settled and write a confirmed receipt for the
+ * full amount, because assuming owed invents the entire order book as debt and
+ * puts every customer on the collections list. Both assumptions are wrong, and
+ * assuming settled is the one that hides money: it marked all the customers and
+ * all the bills paid on the sheet's authority, with no person behind it.
+ *
+ * So there is a third position and it is stated rather than guessed.
+ * `unstated` counts as NEITHER paid nor owed — the bill exists, it shows on the
+ * customer record, and it is held out of outstanding, aging, the collections
+ * worklist and the slow-payer flag until the app or the Tally receivables
+ * report says something. Nothing chases a debt nobody has vouched for, and
+ * nothing is written off either.
+ *
+ * DEFAULT `stated`, deliberately: every row that existed when this column
+ * arrived keeps exactly the behaviour it had, so adding it moved no figure on
+ * any screen. Only the projection writes `unstated`, and only on INSERT.
+ */
+export const billPaymentPositionEnum = pgEnum("bill_payment_position", [
+  "stated",
+  "unstated",
 ]);
 
 /**
@@ -1078,6 +1116,13 @@ export const orders = pgTable(
     /** Kept from day one: Inactive Watch produces false positives without it. */
     source: orderSourceEnum("source").notNull().default("crm"),
     externalRef: text("external_ref"),
+    /**
+     * The number a human quotes: `MBOS/26-27/0041`. Allocated server-side from
+     * a series on first sync and NEVER the identity — two salesmen offline
+     * would otherwise mint the same one. Null for orders that were never given
+     * a number, which is most of the CRM's own.
+     */
+    orderNo: text("order_no"),
     /* ---- approval, §order-approval ---- */
     approvedById: text("approved_by_id"),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
@@ -1111,6 +1156,7 @@ export const orders = pgTable(
     index("orders_customer_idx").on(t.customerId),
     index("orders_ordered_idx").on(t.orderedAt),
     uniqueIndex("orders_external_ref_key").on(t.externalRef),
+    uniqueIndex("orders_order_no_key").on(t.orderNo),
   ],
 );
 
@@ -1145,6 +1191,15 @@ export const bills = pgTable(
     amount: bigint("amount", { mode: "number" }).notNull(),
     paidAmount: bigint("paid_amount", { mode: "number" }).notNull().default(0),
     status: billStatusEnum("status").notNull().default("unpaid"),
+    /**
+     * Whether anybody has stated this bill's payment position — see
+     * `billPaymentPositionEnum`. `unstated` is held out of every money figure
+     * rather than counted as debt. The sheet may write it on INSERT and never
+     * again; only the app moves a bill to `stated`.
+     */
+    paymentPosition: billPaymentPositionEnum("payment_position")
+      .notNull()
+      .default("stated"),
     disputed: boolean("disputed").notNull().default(false),
     /**
      * When somebody DECIDED what this bill's payment position is, as opposed to
@@ -1201,6 +1256,13 @@ export const paymentReceipts = pgTable(
     mode: text("mode").notNull().default("Bank transfer"),
     /** UTR, cheque number, or whatever names this money in the bank. */
     reference: text("reference"),
+    /**
+     * The receipt number a salesman reads back to the shop: `MRCP/26-27/0007`.
+     * Allocated server-side from a series on first sync. It is OURS — the
+     * bank's own name for the money is `reference`, and the two are not the
+     * same fact. Null where nothing issued one.
+     */
+    receiptNo: text("receipt_no"),
     note: text("note"),
     status: receiptStatusEnum("status").notNull().default("reported"),
     /** Where it came from: accounts, a collections call, the bills screen, the sheet. */
@@ -1217,6 +1279,7 @@ export const paymentReceipts = pgTable(
   },
   (t) => [
     uniqueIndex("payment_receipts_key").on(t.idempotencyKey),
+    uniqueIndex("payment_receipts_receipt_no_key").on(t.receiptNo),
     index("payment_receipts_customer_idx").on(t.customerId),
     index("payment_receipts_status_idx").on(t.status),
     index("payment_receipts_received_idx").on(t.receivedAt),
@@ -2711,6 +2774,21 @@ export const timelineEvents = pgTable(
     /** The only query this table has: one customer, newest first. */
     index("timeline_events_customer_idx").on(t.customerId, t.occurredAt.desc()),
     index("timeline_events_source_idx").on(t.eventType, t.sourceRecordId),
+    /*
+     * The natural key: one projection per source row per kind of event.
+     *
+     * A projection has to be safe to re-run — the backfill of five years of
+     * calls is going to be run twice by somebody, and a stream that grew a
+     * second copy of every call would be read as the telecaller having rung
+     * twice. `source_record_id` null is left alone, because Postgres treats
+     * nulls as distinct in a unique index and an event with no source row is
+     * not a projection of anything.
+     */
+    uniqueIndex("timeline_events_natural_key").on(
+      t.sourceApp,
+      t.eventType,
+      t.sourceRecordId,
+    ),
   ],
 );
 

@@ -3,7 +3,7 @@ import { View, Text, Pressable } from 'react-native';
 import { router } from 'expo-router';
 import { color as C, HIT, radius, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
-import { Card } from '../src/components/ui/primitives';
+import { Card, PrimaryButton } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
 import { plural, pretty } from '../src/lib/format';
@@ -69,11 +69,11 @@ export default function Saved() {
           ))}
         </View>
 
-        <Pressable
+        <PrimaryButton
+          label="Next stop"
           onPress={() => router.replace('/customers')}
-          style={{ width: '100%', height: 52, marginTop: 16, borderRadius: radius.sm, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={[{ fontSize: 15, color: '#FFFFFF' }, weight(600)]}>Next stop</Text>
-        </Pressable>
+          style={{ marginTop: 16, borderRadius: radius.sm }}
+        />
         <Pressable
           onPress={() => router.replace('/home')}
           style={{ width: '100%', height: HIT, marginTop: 8, alignItems: 'center', justifyContent: 'center' }}>

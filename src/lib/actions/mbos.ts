@@ -22,10 +22,10 @@ import {
   paymentReceipts,
   payments,
   products,
-  timelineEvents,
   users,
   type OrderLine,
 } from "@/db/schema";
+import { writeTimelineEvent, type TimelineWriter } from "../timeline";
 import { ASSIGNED_TO_SQL } from "../access-control";
 import { getConfig } from "../config/store";
 import { financialYearOf } from "../financial-year";
@@ -899,7 +899,7 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
    * handset changed and resent, not a retry. Accepting it would put a second
    * order in the book under one id. */
   const existing = await db
-    .select({ id: orders.id, externalRef: orders.externalRef })
+    .select({ id: orders.id, orderNo: orders.orderNo })
     .from(orders)
     .where(eq(orders.id, item.entityId))
     .limit(1);
@@ -909,7 +909,7 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       value: reject(
         "duplicate",
         `This order has already been recorded for ${customer.name}${
-          existing[0].externalRef ? ` as ${existing[0].externalRef}` : ""
+          existing[0].orderNo ? ` as ${existing[0].orderNo}` : ""
         }. Nothing was written twice.`,
       ),
     };
@@ -1076,10 +1076,14 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       id: item.entityId,
       customerId: customer.id,
       userId: principal.user.id,
-      // `orderSourceEnum` has no `mbos` value and the schema is another
-      // agent's — `external` means the external ORDER SYSTEM, which this is
-      // not, so `crm` is the honest of the two. See the schema gap note.
-      source: "crm",
+      // A field order is its own source. `external` means the external ORDER
+      // SYSTEM the office types into and `crm` means a telecaller took it;
+      // reading either of those off a report would be reading a lie.
+      source: "mbos",
+      orderNo: serverNumber,
+      // `external_ref` carries the same string because two existing readers
+      // want it there: the bill detail screen resolves an order number from
+      // it, and the accounts payment-capture search matches customers on it.
       externalRef: serverNumber,
       // An order taken in a shop is the customer saying yes, not the business.
       // Accounts check who they are and what they already owe.
@@ -1235,10 +1239,10 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
       receivedAt,
       mode: p.mode ?? "Cash",
       reference: p.reference ?? null,
-      // The receipt number has no column of its own on `payment_receipts`, so
-      // it rides on the note as well as on the allocation lines until one
-      // exists. See the schema gap note.
-      note: [`Receipt ${serverNumber}`, p.note].filter(Boolean).join(" — "),
+      receiptNo: serverNumber,
+      // The note is the salesman's own sentence and nothing else. The receipt
+      // number used to be prefixed onto it for want of a column; it has one.
+      note: p.note ?? null,
       // Money the customer says has arrived is not money the business has
       // seen. It sits at `reported` and moves nothing in the ledger until
       // accounts find it in the bank.
@@ -2044,27 +2048,37 @@ function seriesPrefix(configured: string, fallback: string): string {
  *
  * The highest number is read from the table rather than from a counter,
  * because a counter is a second place the truth lives and the two drift the
- * first time a row is inserted by anything else.
+ * first time a row is inserted by anything else. It is read from the column
+ * that MEANS the number — `orders.order_no`, `payment_receipts.receipt_no` —
+ * rather than from `external_ref`, which is a shared scratch column that also
+ * holds sheet keys and allocation-line keys and would one day hand out a
+ * number already in use.
  */
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+const NUMBER_COLUMN = {
+  orders: { table: "orders", column: "order_no" },
+  payments: { table: "payment_receipts", column: "receipt_no" },
+} as const;
 
 async function allocateNumber(
   tx: Tx,
   prefix: string,
   fy: string,
-  table: "orders" | "payments",
+  series: "orders" | "payments",
 ): Promise<string> {
-  const lockKey = `mbos:number:${table}:${prefix}:${fy}`;
+  const { table, column } = NUMBER_COLUMN[series];
+  const lockKey = `mbos:number:${series}:${prefix}:${fy}`;
   await tx.execute<Record<string, unknown>>(
     sql`select pg_advisory_xact_lock(hashtext(${lockKey}))`,
   );
 
   const pattern = `${prefix}/${fy}/%`;
   const rows = await tx.execute<{ n: number }>(sql`
-    select coalesce(max(split_part(external_ref, '/', 3)::bigint), 0)::int as n
+    select coalesce(max(split_part(${sql.raw(column)}, '/', 3)::bigint), 0)::int as n
       from ${sql.raw(table)}
-     where external_ref like ${pattern}
-       and split_part(external_ref, '/', 3) ~ '^[0-9]+$'
+     where ${sql.raw(column)} like ${pattern}
+       and split_part(${sql.raw(column)}, '/', 3) ~ '^[0-9]+$'
   `);
 
   const next = Number(rows[0]?.n ?? 0) + 1;
@@ -2073,8 +2087,13 @@ async function allocateNumber(
 
 /* ═══════════════════════════════════════════════════════════════ the timeline */
 
+/**
+ * The handset's half of the shared stream. The CRM writes its own half through
+ * the same helper — see `lib/timeline.ts` — so the two cannot drift apart in
+ * id shape, conflict handling or which column means what.
+ */
 async function writeTimeline(
-  tx: { insert: typeof db.insert },
+  tx: TimelineWriter,
   event: {
     customerId: string;
     eventType: string;
@@ -2084,16 +2103,7 @@ async function writeTimeline(
     summary: string;
   },
 ) {
-  await tx.insert(timelineEvents).values({
-    id: gen("tl"),
-    customerId: event.customerId,
-    eventType: event.eventType,
-    sourceApp: "mbos",
-    sourceRecordId: event.sourceRecordId,
-    occurredAt: event.occurredAt,
-    actorUserId: event.actorUserId,
-    summary: event.summary,
-  });
+  await writeTimelineEvent(tx, { ...event, sourceApp: "mbos" });
 }
 
 /* ═════════════════════════════════════════════════════════════ the health score */

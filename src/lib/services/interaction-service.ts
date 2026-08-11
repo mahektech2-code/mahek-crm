@@ -30,6 +30,7 @@ import {
 import { isAttemptAllowed } from "../engines/escalation";
 import { addDays, onOrAfterWorkingDay } from "../business-date";
 import { err, ok, type Result } from "../result";
+import { CRM_EVENT, callTimelineSummary, writeTimelineEvents } from "../timeline";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -332,6 +333,8 @@ export async function saveInteraction(
   const warnings: string[] = [];
 
   let orderId: string | null = null;
+  /** When the order was PLACED — user-entered for an order received. */
+  let orderedAtTs: Date | null = null;
   let reminderId: string | null = null;
   let complaintId: string | null = null;
   let complaintUpdated = false;
@@ -352,6 +355,7 @@ export async function saveInteraction(
       orderValue = 0;
       orderId = id("ord");
       const orderedOn = isOrderReceived ? input.orderDate! : day;
+      orderedAtTs = new Date(`${orderedOn}T09:00:00+05:30`);
       // The term is no longer agreed call by call — it comes from the standing
       // one on the customer, or the configured default. Still recorded on the
       // order, so the bill raised against it inherits a due date nobody has to
@@ -363,7 +367,7 @@ export async function saveInteraction(
         customerId: customer.id,
         userId: ctx.user.id,
         source: "crm",
-        orderedAt: new Date(`${orderedOn}T09:00:00+05:30`),
+        orderedAt: orderedAtTs,
         totalAmount: orderValue,
         // Not a sale until accounts say so. The customer HAS ordered, which
         // is what stops the queue chasing them, but nothing about money moves
@@ -534,6 +538,49 @@ export async function saveInteraction(
       createdById: ctx.user.id,
       updatedById: ctx.user.id,
     });
+
+    /* ------------------------------------------------- the shared timeline */
+    /*
+     * §1.1 — the stream both apps write. In THIS transaction, because a
+     * timeline entry for a call that rolled back is a call that never
+     * happened, on a screen somebody standing in the shop believes.
+     *
+     * The order gets its own entry rather than being folded into the call's
+     * sentence: a salesman scanning a customer wants "they ordered" to be its
+     * own line, and the order is a different source row with a different life.
+     * No value is quoted, because the CRM holds no rates and every one of
+     * these orders is worth a confident zero.
+     */
+    await writeTimelineEvents(tx, [
+      {
+        customerId: customer.id,
+        eventType: CRM_EVENT.call,
+        sourceApp: "crm",
+        sourceRecordId: interactionId,
+        occurredAt: now,
+        actorUserId: ctx.user.id,
+        summary: callTimelineSummary({
+          interactionType: input.interactionType,
+          outcome: input.outcome ?? null,
+          notes: input.notes ?? null,
+        }),
+      },
+      ...(orderId
+        ? [
+            {
+              customerId: customer.id,
+              eventType: CRM_EVENT.order,
+              sourceApp: "crm" as const,
+              sourceRecordId: orderId,
+              // The date the order was PLACED, which for an order logged on
+              // Monday for Friday's WhatsApp is not today.
+              occurredAt: orderedAtTs ?? now,
+              actorUserId: ctx.user.id,
+              summary: `Order taken by ${ctx.user.name} — awaiting approval by accounts`,
+            },
+          ]
+        : []),
+    ]);
 
     /* ------------------------------------------------------ product lines */
     for (const l of lines) {

@@ -9,6 +9,7 @@
     "expo": "~54.0.0",
     "expo-asset": "~12.0.13",
     "expo-audio": "~1.1.1",
+    "expo-clipboard": "~8.0.8",
     "expo-constants": "~18.0.13",
     "expo-crypto": "~15.0.9",
     "expo-device": "~8.0.10",
@@ -49,7 +50,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/sync/*.test.ts src/engines/*.test.ts src/db/*.test.ts",
+    "test": "tsx --test src/sync/*.test.ts src/engines/*.test.ts src/db/*.test.ts src/data/*.test.ts src/components/ui/*.test.ts",
     "lint": "eslint app src"
   },
   "private": true
