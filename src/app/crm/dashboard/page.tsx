@@ -1,3 +1,4 @@
+import * as React from "react";
 import Link from "next/link";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -412,6 +413,50 @@ export default async function DashboardPage({
   );
 }
 
+function RedFlags({ flags }: { flags: React.ReactNode[] }) {
+  const raised = flags.filter(Boolean);
+  const clear = raised.length === 0;
+
+  return (
+    <div
+      className={`mb-4 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-[6px] border px-4 py-3 ${
+        clear ? "border-line bg-canvas" : "border-warn-line bg-warn-soft"
+      }`}
+    >
+      <span
+        className={`text-xs font-medium tracking-[0.04em] uppercase ${
+          clear ? "text-muted" : "text-warn-ink"
+        }`}
+      >
+        {clear ? "All clear" : "Red flags"}
+      </span>
+
+      {clear ? (
+        <span className="text-sm text-body">
+          Nothing overdue, unresolved or growing.
+        </span>
+      ) : (
+        raised.map((flag, i) => (
+          <React.Fragment key={i}>
+            {i > 0 ? <Divider /> : null}
+            <span className="text-sm text-body">{flag}</span>
+          </React.Fragment>
+        ))
+      )}
+
+      <span className="hidden flex-1 sm:block" />
+      {/* flex-none and nowrap: the link was being squeezed until its two words
+          broke onto separate lines inside the button. */}
+      <Link
+        href="/crm/payments"
+        className="flex h-7.5 flex-none items-center rounded-[4px] border border-line-strong bg-surface px-3 text-[13px] font-medium whitespace-nowrap text-body no-underline hover:bg-canvas hover:no-underline"
+      >
+        Review collections
+      </Link>
+    </div>
+  );
+}
+
 function TeamView({
   activity,
   yesterday,
@@ -447,44 +492,57 @@ function TeamView({
 
   return (
     <div>
-      <div className="mb-4 flex items-center gap-5 rounded-[6px] border border-warn-line bg-warn-soft px-4 py-3">
-        <span className="text-xs font-medium tracking-[0.04em] text-warn-ink uppercase">
-          Red flags
-        </span>
-        <span className="text-sm text-body">
-          {/* It read "missed calls yesterday, up from N" while the figure
-              beside it was today's and the direction was never checked — it
-              said "up from" on a day the number had halved. */}
-          <strong className="font-semibold text-danger">{activity.callsMissed}</strong>{" "}
-          missed calls {spanWord}
-          {activity.callsMissed === yesterdayMissed
-            ? `, the same as ${deltaSuffix}`
-            : `, ${activity.callsMissed > yesterdayMissed ? "up" : "down"} from ${yesterdayMissed} ${deltaSuffix}`}
-        </span>
-        <Divider />
-        <span className="text-sm text-body">
-          <strong className="font-semibold text-danger">{remindersFlagged}</strong>{" "}
-          reminders overdue more than {flagDays.reminders} days
-        </span>
-        <Divider />
-        <span className="text-sm text-body">
-          <strong className="font-semibold text-danger">{complaintsFlagged}</strong>{" "}
-          complaints unresolved past {flagDays.complaints} days
-        </span>
-        <Divider />
-        <span className="text-sm text-body">
-          Overdue balance grew{" "}
-          <strong className="font-semibold text-danger">{money(overdueGrowth)}</strong>{" "}
-          this week
-        </span>
-        <span className="flex-1" />
-        <Link
-          href="/crm/payments"
-          className="flex h-7.5 items-center rounded-[4px] border border-line-strong bg-surface px-3 text-[13px] font-medium text-body no-underline hover:bg-canvas hover:no-underline"
-        >
-          Review collections
-        </Link>
-      </div>
+      {/*
+        A red flag is something WRONG, so the strip only alarms when there is
+        something to alarm about.
+
+        It used to render every figure unconditionally, in warning colours,
+        with a red zero in front of each — "0 missed calls, 0 reminders
+        overdue, 0 complaints unresolved, overdue balance grew Rs 0". A manager
+        opening a clean day was met with a yellow band and four red numbers
+        telling them nothing was wrong, which is worse than showing nothing: an
+        alarm that fires on every good day is one people learn to skim, and
+        then it fires on a bad one and gets skimmed too.
+
+        So the flags shown are the ones actually raised, and a clear day is
+        said in a sentence rather than drawn as a warning. Not hidden outright
+        — a section that vanishes leaves somebody wondering whether it failed
+        to load, and "nothing is flagged" is a real answer worth giving.
+      */}
+      <RedFlags
+        flags={[
+          activity.callsMissed > 0 ? (
+            <>
+              <strong className="font-semibold text-danger">{activity.callsMissed}</strong>{" "}
+              missed calls {spanWord}
+              {activity.callsMissed === yesterdayMissed
+                ? `, the same as ${deltaSuffix}`
+                : `, ${activity.callsMissed > yesterdayMissed ? "up" : "down"} from ${yesterdayMissed} ${deltaSuffix}`}
+            </>
+          ) : null,
+          remindersFlagged > 0 ? (
+            <>
+              <strong className="font-semibold text-danger">{remindersFlagged}</strong>{" "}
+              reminders overdue more than {flagDays.reminders} days
+            </>
+          ) : null,
+          complaintsFlagged > 0 ? (
+            <>
+              <strong className="font-semibold text-danger">{complaintsFlagged}</strong>{" "}
+              complaints unresolved past {flagDays.complaints} days
+            </>
+          ) : null,
+          // Only GROWTH is a flag. A balance that shrank is the opposite, and
+          // "grew -Rs 4,000" is not a sentence anybody should have to parse.
+          overdueGrowth > 0 ? (
+            <>
+              Overdue balance grew{" "}
+              <strong className="font-semibold text-danger">{money(overdueGrowth)}</strong>{" "}
+              this week
+            </>
+          ) : null,
+        ]}
+      />
 
       <div className="mb-4 grid grid-cols-[repeat(auto-fit,minmax(216px,1fr))] gap-4">
         <Card className="p-5">
