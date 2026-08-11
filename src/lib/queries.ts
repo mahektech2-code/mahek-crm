@@ -7,6 +7,7 @@ import {
   complaints,
   customerAmChanges,
   customers,
+  employees,
   helpArticles,
   notifications,
   orders,
@@ -38,6 +39,85 @@ export async function listTeam() {
       and(eq(users.active, true), ids ? inArray(users.id, ids) : undefined),
     )
     .orderBy(asc(users.name));
+}
+
+/**
+ * Everybody who can HOLD a book, which is not the same question as whose book
+ * the reader may see.
+ *
+ * `listTeam()` is scoped, and the reassignment picker was built from it — so
+ * an admin looking at My book was offered exactly one person, themselves, and
+ * a manager was offered their own reporting line. Whose account it becomes is
+ * a fact about the staff list, not about the actor's view, and scoping it
+ * turned a choice of ten into a choice of one with nothing saying why.
+ *
+ * Deliberately unscoped, and it is a list of NAMES AND ROLES — no customer
+ * data, nothing a scope exists to protect. The capability check on the action
+ * is what decides whether anybody may act on it.
+ *
+ * Inactive accounts are left out: giving a book to somebody who has left is
+ * the thing reassignment exists to undo.
+ */
+export async function listAssignableUsers(): Promise<
+  Array<{ id: string; name: string; role: string }>
+> {
+  return db
+    .select({ id: users.id, name: users.name, role: users.role })
+    .from(users)
+    .where(eq(users.active, true))
+    .orderBy(asc(users.name));
+}
+
+/**
+ * Who may be the BACK OFFICE account manager: every account, plus every
+ * CURRENT employee from the HRMS master.
+ *
+ * The two seats take different lists on purpose. Sales decides whose calling
+ * queue an account lands in, so it can only be somebody who signs in — a name
+ * with no account cannot be given work to do, and `ASSIGNED_TO_SQL` would
+ * resolve it to nobody. Back office is dispatch, billing and paperwork: it
+ * drives no queue and no scope, so the seventy-one people on the employee
+ * sheet are as valid an answer as the ten who have logins, and refusing them
+ * meant the real answer usually could not be recorded at all.
+ *
+ * An employee is returned with an `emp:` id, which is not a `users` id and is
+ * never written to one — the action resolves it back to a name. `customers
+ * .backOfficeName` already exists for exactly this: the sheet has always
+ * named people who have no account.
+ */
+export async function listBackOfficeCandidates(): Promise<
+  Array<{ id: string; name: string; role: string }>
+> {
+  const [accounts, staff] = await Promise.all([
+    listAssignableUsers(),
+    db
+      .select({ id: employees.id, name: employees.name })
+      .from(employees)
+      /*
+       * CURRENT employees, and only them. The master is a lifetime record —
+       * 45 of its 71 rows are leavers, and a leaver is never a valid answer
+       * to "who handles the paperwork on this account". They are kept in the
+       * table rather than deleted, because payroll history outlives a
+       * spreadsheet edit; they are simply not offered.
+       *
+       * `eq(active)` rather than `ne(inactive)`: `unknown` means the sheet did
+       * not state a status, and an unstated one must not read as "still
+       * here" on a list whose whole job is to name somebody who is.
+       */
+      .where(eq(employees.status, "active"))
+      .orderBy(asc(employees.name)),
+  ]);
+
+  const takenNames = new Set(accounts.map((a) => a.name.trim().toLowerCase()));
+  return [
+    ...accounts,
+    // Somebody with both an account and an employee row is ONE person, and the
+    // account is the better half of them — it can be given a queue. Offering
+    // both spellings would make the list a puzzle about which Sunita to pick.
+    ...staff
+      .filter((e) => !takenNames.has(e.name.trim().toLowerCase()))
+      .map((e) => ({ id: `emp:${e.id}`, name: e.name, role: "employee" })),
+  ];
 }
 
 /* ------------------------------------------------------------- customers */
