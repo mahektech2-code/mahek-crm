@@ -65,6 +65,10 @@ export default async function PaymentsPage() {
   return (
     <PaymentsScreen
       scopeLabel={scopeLabel(scope, user)}
+      // On a team list a row is somebody else's account, and whoever is
+      // reading it has to know whose. On their own book every row is theirs,
+      // so naming a person on each one is a column of the same word repeated.
+      showAssignee={scope === "team"}
       isManager={isManager(user)}
       aging={aging}
       workingDaysLeft={workingDaysLeft}

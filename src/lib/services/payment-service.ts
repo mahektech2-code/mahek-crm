@@ -52,6 +52,8 @@ export type WorklistRow = {
   customerId: string;
   name: string;
   ownerName: string | null;
+  /** Whose account this is, by the assignment rule. Shown on team lists. */
+  assignedToName: string | null;
   slowPayer: boolean;
   stage: number;
   daysOverdue: number;
@@ -93,6 +95,15 @@ export async function getFollowUpWorklist(filters?: {
       state: followUpStates,
       customer: customers,
       ownerName: sql<string | null>`(select name from users u where u.id = customers.owner_id)`,
+      // Whose account this is, for the team list. Not the owner: whose book a
+      // record sits in is ASSIGNED_TO_SQL, so the owner's name would put a
+      // debt against somebody it was reassigned away from. The sheet's
+      // salesperson is a NAME and most of those people have no account, so it
+      // is preferred where there is one and the assigned user read underneath.
+      assignedToName: sql<string | null>`coalesce(
+        nullif(customers.sales_person_name, ''),
+        (select name from users u where u.id = ${ASSIGNED_TO_SQL})
+      )`,
       // The latest dated promise. A promise stays interesting after its date
       // passes — that is exactly when it becomes a broken promise.
       promisedAmount: sql<number | null>`(
@@ -132,10 +143,13 @@ export async function getFollowUpWorklist(filters?: {
       ),
     );
 
-  const mapped: WorklistRow[] = rows.map(({ state, customer, ownerName, ...promise }) => ({
+  const mapped: WorklistRow[] = rows.map((
+    { state, customer, ownerName, assignedToName, ...promise },
+  ) => ({
     customerId: customer.id,
     name: customer.name,
     ownerName,
+    assignedToName,
     slowPayer: customer.slowPayer,
     stage: state.stage,
     daysOverdue: state.daysOverdue,
@@ -620,15 +634,22 @@ export async function collectionsMetrics(): Promise<CollectionsMetrics> {
   // month's own length.
   const monthEnd = `${day.slice(0, 8)}${String(daysInMonth(day)).padStart(2, "0")}`;
 
-  const inScope = (ownerId: string | null) =>
-    !ids || (ownerId !== null && ids.includes(ownerId));
+  // Whose book, by the single definition — the same one the worklist below
+  // these figures is filtered by. Reading owner_id here made the strip and the
+  // list two answers to one question: every customer whose sales account
+  // manager had been set counted for nobody, so a manager or an admin looking
+  // at their own book saw an outstanding figure of zero above a list of
+  // accounts that plainly owed money.
+  const assignedTo = sql<string | null>`${ASSIGNED_TO_SQL}`;
+  const inScope = (assigned: string | null) =>
+    !ids || (assigned !== null && ids.includes(assigned));
 
   /* ---- bills: the open balance, and what falls due this month ---- */
 
   const billRows = await db
     .select({
       customerId: bills.customerId,
-      ownerId: customers.ownerId,
+      assignedTo,
       billDate: bills.billDate,
       dueDate: bills.dueDate,
       creditDays: billCreditDaysSql,
@@ -641,7 +662,7 @@ export async function collectionsMetrics(): Promise<CollectionsMetrics> {
     .from(bills)
     .innerJoin(customers, eq(customers.id, bills.customerId));
 
-  const mine = billRows.filter((b) => inScope(b.ownerId));
+  const mine = billRows.filter((b) => inScope(b.assignedTo));
 
   let outstanding = 0;
   let dueThisMonth = 0;
@@ -676,14 +697,14 @@ export async function collectionsMetrics(): Promise<CollectionsMetrics> {
   const paymentRows = await db
     .select({
       customerId: payments.customerId,
-      ownerId: customers.ownerId,
+      assignedTo,
       amount: payments.amount,
       paidAt: payments.paidAt,
     })
     .from(payments)
     .innerJoin(customers, eq(customers.id, payments.customerId));
 
-  const minePayments = paymentRows.filter((p) => inScope(p.ownerId));
+  const minePayments = paymentRows.filter((p) => inScope(p.assignedTo));
   const collectedThisMonth = minePayments
     .filter((p) => p.paidAt >= monthStart && p.paidAt <= day)
     .reduce((sum, p) => sum + p.amount, 0);
@@ -694,17 +715,17 @@ export async function collectionsMetrics(): Promise<CollectionsMetrics> {
   /* ---- the urgent stage ---- */
 
   const stateRows = await db
-    .select({ state: followUpStates, ownerId: customers.ownerId })
+    .select({ state: followUpStates, assignedTo })
     .from(followUpStates)
     .innerJoin(customers, eq(customers.id, followUpStates.customerId));
-  const urgentRows = stateRows.filter((r) => inScope(r.ownerId) && r.state.stage === 3);
+  const urgentRows = stateRows.filter((r) => inScope(r.assignedTo) && r.state.stage === 3);
 
   /* ---- promises: what is open, and what was kept ---- */
 
   const promiseRows = await db
     .select({
       customerId: followUpAttempts.customerId,
-      ownerId: customers.ownerId,
+      assignedTo,
       amount: followUpAttempts.promisedAmount,
       date: followUpAttempts.promisedDate,
       at: followUpAttempts.attemptedAt,
@@ -714,7 +735,7 @@ export async function collectionsMetrics(): Promise<CollectionsMetrics> {
     .where(and(isNotNull(followUpAttempts.promisedDate), isNotNull(followUpAttempts.promisedAmount)));
 
   const promises = promiseRows
-    .filter((p) => inScope(p.ownerId))
+    .filter((p) => inScope(p.assignedTo))
     .map((p) => ({
       customerId: p.customerId,
       amount: Number(p.amount),
