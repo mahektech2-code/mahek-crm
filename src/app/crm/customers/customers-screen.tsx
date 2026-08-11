@@ -757,7 +757,8 @@ export function CustomersScreen({
         title="Add lead"
         team={team}
         kind="lead"
-        isManager={isManager}
+        canReassign={canReassign}
+        amReasons={amReasons}
         onClose={() => setAddOpen(false)}
         onSubmit={async (values) => {
           const result = await run(createCustomer(values));
@@ -774,12 +775,53 @@ export function CustomersScreen({
         title={`Edit ${editing?.name ?? ""}`}
         team={team}
         kind={editing?.kind ?? "customer"}
-        isManager={isManager}
+        canReassign={canReassign}
+        amReasons={amReasons}
         initial={editing ?? undefined}
         onClose={() => setEditing(null)}
         onSubmit={async (values) => {
           if (!editing) return false;
-          const result = await run(updateCustomer(editing.id, values));
+
+          /*
+           * Two saves, because two different things can be in this form and
+           * only one of them is an ordinary edit.
+           *
+           * The ordinary fields go to `updateCustomer`. Moving an account
+           * between managers goes to `updateAccountManagers`, which is the one
+           * place that writes a history row, notifies both people and marks
+           * the account so the nightly sheet sync stops restating the old
+           * answer. Writing those columns here instead would be a second door
+           * to the same fact, and the unaudited one always wins in the end.
+           *
+           * The managers go FIRST. If that call is refused — no permission, a
+           * missing reason — nothing has been written yet, and the form comes
+           * back with everything still in it rather than half saved.
+           */
+          const amMoved =
+            (String(values.ownerId ?? "") !== (editing.ownerId ?? "")) ||
+            (String(values.backOfficeAmId ?? "") !== (editing.backOfficeAmId ?? ""));
+
+          if (amMoved) {
+            const moved = await run(
+              updateAccountManagers({
+                customerIds: [editing.id],
+                salesAmId: String(values.ownerId ?? "") || null,
+                backOfficeAmId: String(values.backOfficeAmId ?? "") || null,
+                reasonCode: String(values.amReasonCode ?? ""),
+              }),
+            );
+            if (!moved.ok) return false;
+          }
+
+          // The manager columns and the reason are never sent as ordinary
+          // fields, whether or not they moved — `updateCustomer` has no
+          // business writing them.
+          const rest = Object.fromEntries(
+            Object.entries(values).filter(
+              ([k]) => !["ownerId", "backOfficeAmId", "amReasonCode"].includes(k),
+            ),
+          );
+          const result = await run(updateCustomer(editing.id, rest));
           if (result.ok) {
             setEditing(null);
             router.refresh();
@@ -879,7 +921,14 @@ type CustomerFormProps = {
   team: Array<{ id: string; name: string }>;
   /** A new record is a lead. An existing one is whatever it already is. */
   kind: "lead" | "customer";
-  isManager: boolean;
+  /**
+   * Whether this person may move an account between managers. Not the same as
+   * `isManager` — it is accounts' and admin's, because whose book an account
+   * is in decides whose targets it counts toward.
+   */
+  canReassign: boolean;
+  /** `people.amChangeReasons`, asked for whenever a manager changes. */
+  amReasons: string[];
   initial?: Partial<Row>;
   onClose: () => void;
   onSubmit: (values: Record<string, unknown>) => Promise<boolean>;
@@ -896,12 +945,15 @@ function CustomerFormBody({
   title,
   team,
   kind,
-  isManager,
+  canReassign,
+  amReasons,
   initial,
   onClose,
   onSubmit,
 }: CustomerFormProps) {
   const isLead = kind === "lead";
+  /* Set once, on the way in. See the Source field. */
+  const isNew = !initial?.id;
   const [busy, setBusy] = React.useState(false);
   const [values, setValues] = React.useState<Record<string, string>>({
     name: initial?.name ?? "",
@@ -911,16 +963,27 @@ function CustomerFormBody({
     ownerId: initial?.ownerId ?? team[0]?.id ?? "",
     gstin: initial?.gstin ?? "",
     creditTermDays: String(initial?.creditTermDays ?? 30),
-    cycleDays: String(initial?.cycleDays ?? 30),
     route: initial?.route ?? "",
     leadSource: initial?.leadSource ?? "",
     backOfficeAmId: initial?.backOfficeAmId ?? "",
+    // Only sent when a manager actually changed — see below.
+    amReasonCode: amReasons[0] ?? "",
   });
 
   const set =
     (k: string) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
       setValues((v) => ({ ...v, [k]: e.target.value }));
+
+  /*
+   * Whether either account manager actually moved, compared against what the
+   * record held when the form opened. This is what decides whether a reason is
+   * asked for and whether the audited action is called at all — saving a form
+   * where somebody only fixed a spelling must not write a reassignment.
+   */
+  const amChanged =
+    (values.ownerId ?? "") !== (initial?.ownerId ?? "") ||
+    (values.backOfficeAmId ?? "") !== (initial?.backOfficeAmId ?? "");
 
   return (
     <Modal
@@ -975,8 +1038,37 @@ function CustomerFormBody({
         <Field label="City · required">
           <Input value={values.city ?? ""} onChange={set("city")} />
         </Field>
-        <Field label="Owner">
-          <Select value={values.ownerId ?? ""} onChange={set("ownerId")}>
+        {/*
+          The two account managers, named as the roles they are.
+
+          An account answers to a SALES manager — its owner while it is still a
+          lead, its sales account manager once it is a customer, which is the
+          same job under two column names — and to a BACK OFFICE manager for
+          dispatch, billing and paperwork. Both are offered here because this
+          is the form somebody already has open when they discover the wrong
+          name on an account.
+
+          Changing one is not an ordinary field edit, though. It moves the
+          account between books, so it carries a reason, writes a history row,
+          notifies both people and marks the account so the nightly sheet sync
+          stops restating the old answer. All of that lives in one action, and
+          this form calls it rather than writing the columns itself — two doors
+          to the same fact is how one of them ends up unaudited.
+        */}
+        <Field
+          label={isLead ? "Lead owner" : "Account manager · sales"}
+          hint={
+            canReassign
+              ? "Whose book this account is in."
+              : "Only accounts or an admin can move an account."
+          }
+        >
+          <Select
+            value={values.ownerId ?? ""}
+            onChange={set("ownerId")}
+            disabled={!canReassign}
+          >
+            <option value="">Unassigned</option>
             {team.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
@@ -984,47 +1076,64 @@ function CustomerFormBody({
             ))}
           </Select>
         </Field>
+        <Field
+          label="Account manager · back office"
+          hint={
+            canReassign
+              ? "Dispatch, billing and paperwork for this account."
+              : "Only accounts or an admin can move an account."
+          }
+        >
+          <Select
+            value={values.backOfficeAmId ?? ""}
+            onChange={set("backOfficeAmId")}
+            disabled={!canReassign}
+          >
+            <option value="">Unassigned</option>
+            {team.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        {/*
+          Where a lead came from is READ ONLY. It is set once, when the record
+          is created, and it is the only thing that explains a lead months
+          later — a field somebody can quietly retype is not an origin, it is
+          whatever the last person thought it should say.
+        */}
         {isLead ? (
-          <Field
-            label="Source"
-            hint="Where they came from. It is the only thing that explains a lead months later."
-            className="col-span-2"
-          >
-            <Input
-              value={values.leadSource ?? ""}
-              onChange={set("leadSource")}
-              list="lead-sources"
-              placeholder="Walk-in, referral, exhibition…"
-            />
-            <datalist id="lead-sources">
-              {LEAD_SOURCES.map((source) => (
-                <option key={source} value={source} />
-              ))}
-            </datalist>
-          </Field>
-        ) : (
-          <Field
-            label="Account manager · back office"
-            hint={
-              isManager
-                ? "Dispatch, billing and paperwork for this account."
-                : "Only a manager can change this."
-            }
-          >
-            <Select
-              value={values.backOfficeAmId ?? ""}
-              onChange={set("backOfficeAmId")}
-              disabled={!isManager}
+          isNew ? (
+            <Field
+              label="Source"
+              hint="Where they came from. It is the only thing that explains a lead months later, which is also why it cannot be retyped afterwards."
+              className="col-span-2"
             >
-              <option value="">Unassigned</option>
-              {team.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        )}
+              <Input
+                value={values.leadSource ?? ""}
+                onChange={set("leadSource")}
+                list="lead-sources"
+                placeholder="Walk-in, referral, exhibition…"
+              />
+              <datalist id="lead-sources">
+                {LEAD_SOURCES.map((source) => (
+                  <option key={source} value={source} />
+                ))}
+              </datalist>
+            </Field>
+          ) : (
+            <Field label="Source" className="col-span-2">
+              <p className="text-[13px] text-body">
+                {initial?.leadSource || (
+                  <span className="text-muted">Not recorded</span>
+                )}
+              </p>
+            </Field>
+          )
+        ) : null}
+
         <Field label="GSTIN">
           <Input value={values.gstin ?? ""} onChange={set("gstin")} />
         </Field>
@@ -1038,20 +1147,36 @@ function CustomerFormBody({
             onChange={set("creditTermDays")}
           />
         </Field>
-        {/* A buying cycle is measured from orders. Asking for one on a record
-            that has never ordered invites a number that then looks measured. */}
-        {isLead ? null : (
+        {/*
+          The buying cycle is GONE from this form, not merely hidden.
+
+          It is measured from the intervals between a customer's own orders and
+          rebuilt by `recomputeAllBuyingCycles()` on every nightly pass, so a
+          number typed here survives until that runs and is then silently
+          replaced. A field that accepts a value and discards it overnight is
+          worse than no field: somebody sets it, sees it take, and trusts a
+          figure that is about to change back.
+        */}
+
+        {/*
+          The reason, asked only when a manager actually changed.
+
+          Not a field somebody fills in on every edit — a reason attached to a
+          phone-number correction is noise in the history that the real moves
+          then hide in. It appears when there is something to explain.
+        */}
+        {amChanged ? (
           <Field
-            label="Buying cycle (days)"
-            hint="Twice this without an order puts them on the inactive watch"
+            label="Why is the account manager changing · required"
+            className="col-span-2"
           >
-            <Input
-              type="number"
-              value={values.cycleDays ?? ""}
-              onChange={set("cycleDays")}
-            />
+            <Select value={values.amReasonCode ?? ""} onChange={set("amReasonCode")}>
+              {amReasons.map((r) => (
+                <option key={r}>{r}</option>
+              ))}
+            </Select>
           </Field>
-        )}
+        ) : null}
       </div>
     </Modal>
   );
