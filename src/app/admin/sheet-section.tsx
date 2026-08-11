@@ -18,7 +18,7 @@ import { useRouter } from "next/navigation";
 import { Button, Field, Select } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { triggerJob } from "@/lib/actions/crm";
-import { pinnedCell, pinnedHead } from "./pinned";
+import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
 import type { SheetData } from "./sheet-data";
 
 /* ---------------------------------------------------------------------------

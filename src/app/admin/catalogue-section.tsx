@@ -30,7 +30,7 @@ import {
   setSkuActive,
   updateSku,
 } from "@/lib/actions/catalogue";
-import { pinnedCell, pinnedHead } from "./pinned";
+import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
 import type { CatalogueData } from "./catalogue-data";
 
 /* ---------------------------------------------------------------------------

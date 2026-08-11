@@ -29,6 +29,7 @@ import { AccountManagerDialog } from "@/components/crm/account-manager-dialog";
 import { updateAccountManagers } from "@/lib/actions/account-manager";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { Icon } from "@/components/shell/icons";
+import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
 import {
   createCustomer,
   createRemindersBulk,
@@ -419,11 +420,13 @@ export function CustomersScreen({
                 <Th>Last contact</Th>
                 <Th align="right">Outstanding</Th>
                 <Th>City</Th>
-                <Th align="right">Actions</Th>
+                <Th align="right" className={pinnedHead("right")}>
+                  Actions
+                </Th>
               </tr>
             </thead>
             <tbody>
-              {visible.map((r) => (
+              {visible.map((r, i) => (
                 <Tr key={r.id} className="hover:bg-canvas">
                   <Td>
                     <input
@@ -548,7 +551,14 @@ export function CustomersScreen({
                     {money(r.outstanding)}
                   </Td>
                   <Td>{r.city}</Td>
-                  <Td align="right">
+                  {/*
+                    Pinned, because the table is wide enough to scroll and the
+                    way to act on a row must not depend on where it happens to
+                    be scrolled to. `i` continues the zebra striping by hand:
+                    a cell lifted out of the normal flow has to paint its own
+                    background or the row scrolls visibly underneath it.
+                  */}
+                  <Td align="right" className={pinnedCell("right", i)}>
                     <span className="flex justify-end">
                       <RowMenu
                         items={[

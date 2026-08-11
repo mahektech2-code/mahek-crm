@@ -17,7 +17,7 @@ import {
 import { FilterPills, Modal, RowMenu, SelectionBar } from "@/components/ui/overlays";
 import type { AdminUser, UserStatus } from "./data";
 import { endSessionsFor, sendPasswordResetFor } from "@/lib/actions/people";
-import { pinnedCell, pinnedHead } from "./pinned";
+import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
 import { useAdmin } from "./store";
 
 export function statusTone(status: UserStatus): Tone {
