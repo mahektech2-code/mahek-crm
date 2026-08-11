@@ -77,6 +77,7 @@ type Tab =
 
 export function PaymentsScreen({
   scopeLabel,
+  showAssignee,
   isManager,
   rows,
   aging,
@@ -87,6 +88,8 @@ export function PaymentsScreen({
   batchCount,
 }: {
   scopeLabel: string;
+  /** Team view: every row belongs to somebody, so every row says who. */
+  showAssignee: boolean;
   isManager: boolean;
   rows: Row[];
   aging: { total: number; buckets: Array<{ label: string; amount: number }> };
@@ -190,10 +193,13 @@ export function PaymentsScreen({
               downloadCsv(
                 "mahek-collections",
                 toCsv(
-                  ["Customer", "Owner", "Stage", "Bills overdue", "Oldest (days)", "Outstanding (₹)", "Next action"],
+                  // "Assigned to", not "Owner": the export has to name the
+                  // same person the list does, or the two disagree about whose
+                  // account it is the moment one is reassigned.
+                  ["Customer", "Assigned to", "Stage", "Bills overdue", "Oldest (days)", "Outstanding (₹)", "Next action"],
                   visible.map((r) => [
                     r.name,
-                    r.ownerName ?? "",
+                    r.assignedToName ?? "Unassigned",
                     STAGE_LABEL[r.stage] ?? r.stage,
                     r.overdueBillCount,
                     r.daysOverdue,
@@ -467,6 +473,25 @@ export function PaymentsScreen({
                     </div>
                   ) : null}
                 </div>
+
+                {showAssignee ? (
+                  <div className="w-[140px] flex-none">
+                    <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                      Assigned to
+                    </div>
+                    <div
+                      className={cx(
+                        "truncate text-sm",
+                        r.assignedToName ? "text-ink" : "text-muted",
+                      )}
+                      title={r.assignedToName ?? undefined}
+                    >
+                      {/* Unassigned is said, not left blank: a debt nobody owns
+                          is the one a manager most needs to see on this list. */}
+                      {r.assignedToName ?? "Unassigned"}
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="w-[130px] flex-none text-right">
                   <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">

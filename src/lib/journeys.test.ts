@@ -4990,6 +4990,44 @@ describe("An imported customer reaches the calling queue", () => {
       "an overdue customer with a sales AM was missing from the collections worklist",
     );
   });
+
+  test("the collections figures count the same book the list shows", async () => {
+    // The strip above the worklist scoped by owner_id while the list under it
+    // scoped by the assignment rule, so a manager or an admin working their
+    // own accounts read an outstanding figure of zero over a list of accounts
+    // that plainly owed money.
+    const customer = await makeCustomer(manager.id, {
+      ownerId: null,
+      salesAmId: manager.id,
+    });
+    await db.insert(bills).values({
+      id: id("bil"),
+      customerId: customer.id,
+      billNo: `INV-${randomUUID().slice(0, 6)}`,
+      billDate: addDays(TODAY, -90),
+      dueDate: addDays(TODAY, -60),
+      amount: 40_000_00,
+      paidAmount: 0,
+    });
+    await recomputeOutstanding(customer.id);
+    await recomputeFollowUpState(customer.id);
+
+    setTestUser(manager);
+    const row = (await getFollowUpWorklist()).find(
+      (r) => r.customerId === customer.id,
+    );
+    assert.ok(row, "the account is on the list");
+
+    const metrics = await collectionsMetrics();
+    assert.ok(
+      metrics.outstanding >= 40_000_00,
+      "the figures left out an account the list beside them was showing",
+    );
+
+    // And the row says whose account it is, by the same rule — the owner is
+    // null here, so reading owner_id would have left the column blank.
+    assert.equal(row.assignedToName, manager.name);
+  });
 });
 
 /* ---------------------------------------------------------------------------
