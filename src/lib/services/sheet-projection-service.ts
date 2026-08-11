@@ -631,6 +631,7 @@ export async function unpaidPerPaymentTab(): Promise<Set<string>> {
   return unpaid;
 }
 
+
 /**
  * Bills from the ORDER history, one per order, every one marked paid.
  *
@@ -743,6 +744,14 @@ export async function projectBillsFromOrders(
     existing.filter((b) => b.externalRef).map((b) => [b.externalRef!, b.id]),
   );
   const billByNo = new Map(existing.map((b) => [b.billNo, b]));
+  /*
+   * The `decided` guard that used to sit here is gone with the thing it
+   * guarded. It listed the bills a person had spoken for so that settling by
+   * assumption would skip them; nothing on either path settles anything now,
+   * so there is no assumption left to hold back. `payment_decided_at` is still
+   * written and still read — by the app, which is the only thing that moves a
+   * bill's paid position at all.
+   */
 
   let created = 0;
   let updated = 0;
@@ -911,11 +920,14 @@ export async function projectBills(
   }
 
   const existing = await db
-    .select({ id: bills.id, externalRef: bills.externalRef })
+    .select({
+      id: bills.id,
+      externalRef: bills.externalRef,
+      paymentDecidedAt: bills.paymentDecidedAt,
+    })
     .from(bills)
     .where(sql`${bills.externalRef} like 'SHEETPAY-%'`);
   const billByRef = new Map(existing.map((b) => [b.externalRef!, b.id]));
-
   let created = 0;
   let updated = 0;
   let paidWithoutDate = 0;
