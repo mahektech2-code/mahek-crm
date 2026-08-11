@@ -5210,7 +5210,7 @@ describe("updating an account manager", () => {
     const refused = await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      reasonCode: "Salesperson left",
+      sales: { reasonCode: "Salesperson left" },
     });
     assert.equal(refused.ok, false, "a manager reassigned an account");
 
@@ -5225,7 +5225,7 @@ describe("updating an account manager", () => {
     const allowed = await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      reasonCode: "Salesperson left",
+      sales: { reasonCode: "Salesperson left" },
     });
     assert.equal(allowed.ok, true, allowed.ok ? "" : allowed.error);
     setTestUser(priya);
@@ -5238,9 +5238,11 @@ describe("updating an account manager", () => {
     const res = await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      backOfficeAmId: manager.id,
-      reasonCode: "Territory reassigned",
-      note: "Western line handed over",
+      backOffice: { kind: "user", userId: manager.id },
+      // Two seats, two reasons — the point of the change. The back office did
+      // not move because a salesperson left.
+      sales: { reasonCode: "Territory reassigned", note: "Western line handed over" },
+      backOfficeReason: { reasonCode: "Workload rebalanced" },
     });
     assert.equal(res.ok, true, res.ok ? "" : res.error);
     setTestUser(priya);
@@ -5277,7 +5279,7 @@ describe("updating an account manager", () => {
     await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      reasonCode: "Salesperson left",
+      sales: { reasonCode: "Salesperson left" },
     });
     setTestUser(priya);
 
@@ -5309,7 +5311,7 @@ describe("updating an account manager", () => {
     await updateAccountManagers({
       customerIds: [lead.id],
       salesAmId: rakesh.id,
-      reasonCode: "Salesperson left",
+      sales: { reasonCode: "Salesperson left" },
     });
     setTestUser(priya);
 
@@ -5324,22 +5326,21 @@ describe("updating an account manager", () => {
     const unknown = await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      reasonCode: "Because I said so",
+      sales: { reasonCode: "Because I said so" },
     });
     assert.equal(unknown.ok, false, "an unlabelled reason was stored");
 
     const bare = await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      reasonCode: "Other",
+      sales: { reasonCode: "Other" },
     });
     assert.equal(bare.ok, false, "Other without a note tells nobody anything");
 
     const withNote = await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      reasonCode: "Other",
-      note: "Covering maternity leave",
+      sales: { reasonCode: "Other", note: "Covering maternity leave" },
     });
     assert.equal(withNote.ok, true, withNote.ok ? "" : withNote.error);
     setTestUser(priya);
@@ -5353,7 +5354,7 @@ describe("updating an account manager", () => {
     const res = await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: priya.id,
-      reasonCode: "Workload rebalanced",
+      sales: { reasonCode: "Workload rebalanced" },
     });
     setTestUser(priya);
     assert.equal(res.ok, true);
@@ -5385,7 +5386,7 @@ describe("updating an account manager", () => {
     await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      reasonCode: "Salesperson left",
+      sales: { reasonCode: "Salesperson left" },
     });
     setTestUser(priya);
 
