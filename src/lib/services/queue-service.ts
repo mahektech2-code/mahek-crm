@@ -42,6 +42,8 @@ export type QueueRow = QueueResult["entries"][number] & {
   phone: string;
   city: string;
   ownerName: string | null;
+  /** Whose call this is, by the assignment rule. Shown on team lists. */
+  assignedToName: string | null;
   kind: "lead" | "customer";
   slowPayer: boolean;
   lastOrderDate: string | null;
@@ -99,6 +101,16 @@ async function queueInputs(ids: string[] | null, day: string) {
       ownerName: sql<
         string | null
       >`(select name from users u where u.id = customers.owner_id)`,
+      // Who is actually to make this call. Not the owner: whose book a record
+      // sits in is ASSIGNED_TO_SQL, so on a team list the owner's name would
+      // put a call against somebody it was reassigned away from. The sheet's
+      // salesperson is a NAME and may be nobody with an account, so it is
+      // shown where there is one and the assigned user underneath — the
+      // person who can sign in and work the row is the answer that matters.
+      assignedToName: sql<string | null>`coalesce(
+        nullif(customers.sales_person_name, ''),
+        (select name from users u where u.id = ${ASSIGNED_TO_SQL})
+      )`,
       openComplaint: sql<string | null>`(
         select c.description from complaints c
          where c.customer_id = customers.id
@@ -263,6 +275,7 @@ export async function getQueue(): Promise<QueueView> {
       phone: c.phone,
       city: c.city,
       ownerName: row.ownerName,
+      assignedToName: row.assignedToName,
       kind: c.kind,
       slowPayer: c.slowPayer,
       lastOrderDate: c.lastOrderDate,

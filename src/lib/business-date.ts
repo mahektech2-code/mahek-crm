@@ -71,6 +71,23 @@ export function dayBoundaryWindow(
   };
 }
 
+/**
+ * The window of instants belonging to a RANGE of business dates, [start, end).
+ *
+ * The first day's opening boundary to the last day's closing one — built from
+ * `dayBoundaryWindow` rather than beside it, so a range of one day and that
+ * day on its own can never answer differently.
+ */
+export function rangeBoundaryWindow(
+  range: { from: BusinessDate; to: BusinessDate },
+  config: WorkingDayConfig,
+): { start: string; end: string } {
+  return {
+    start: dayBoundaryWindow(range.from, config).start,
+    end: dayBoundaryWindow(range.to, config).end,
+  };
+}
+
 export function isWorkingDay(
   date: BusinessDate,
   config: WorkingDayConfig,
@@ -204,6 +221,96 @@ export function addMonths(key: string, months: number): string {
   const year = Math.floor(total / 12);
   const month = (total % 12) + 1;
   return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+/* --------------------------------------------------------------- periods */
+
+/**
+ * The four spans the dashboard can be read over.
+ *
+ * They are BUSINESS dates throughout, so the day boundary decides which span a
+ * call at half past midnight falls in — exactly as it decides which day it
+ * falls on. A period that computed its own calendar days would disagree with
+ * every figure on the screen for the hours around the boundary.
+ */
+export type DashboardPeriod = "today" | "yesterday" | "week" | "month";
+
+export type DateRange = { from: BusinessDate; to: BusinessDate };
+
+export const DASHBOARD_PERIODS: DashboardPeriod[] = [
+  "today",
+  "yesterday",
+  "week",
+  "month",
+];
+
+export function isDashboardPeriod(v: string | undefined): v is DashboardPeriod {
+  return !!v && (DASHBOARD_PERIODS as string[]).includes(v);
+}
+
+/**
+ * The span a period covers, ending today (or on the day itself).
+ *
+ * "Yesterday" is the previous WORKING day, not the previous calendar one —
+ * the same rule the day-on-day comparison already uses, so a Monday morning
+ * reads against Saturday rather than against a Sunday nobody worked and every
+ * figure of zero. The screen prints the dates, so a Monday saying Saturday is
+ * visible rather than surprising.
+ *
+ * Week and month run from their start UP TO today, never to a future end
+ * date: a month-to-date figure beside a whole-month target is a comparison
+ * somebody can make, and a whole-month range that is mostly days that have
+ * not happened is not.
+ */
+export function periodRange(
+  day: BusinessDate,
+  period: DashboardPeriod,
+  config: WorkingDayConfig,
+): DateRange {
+  switch (period) {
+    case "today":
+      return { from: day, to: day };
+    case "yesterday": {
+      const previous = previousWorkingDay(day, config);
+      return { from: previous, to: previous };
+    }
+    case "week":
+      return { from: startOfWeek(day), to: day };
+    case "month":
+      return { from: startOfMonth(day), to: day };
+  }
+}
+
+/**
+ * What the period is measured AGAINST: the equally long span immediately
+ * before it.
+ *
+ * Not "the same dates last month" — a month-to-date of twelve days compared
+ * against a full previous month reads as a collapse every time, on the first
+ * of the month worst of all. An equal span is the only comparison that is
+ * fair on every day of the period, and the screen names the number of days so
+ * nobody has to guess what it was measured against.
+ */
+export function previousRange(
+  range: DateRange,
+  config: WorkingDayConfig,
+): DateRange {
+  // Yesterday is a working day, so its comparison is the working day before
+  // it — otherwise a Monday would be measured against a Sunday of zeroes.
+  if (range.from === range.to) {
+    const previous = previousWorkingDay(range.from, config);
+    return { from: previous, to: previous };
+  }
+  const length = daysBetween(range.from, range.to) + 1;
+  return {
+    from: addDays(range.from, -length),
+    to: addDays(range.from, -1),
+  };
+}
+
+/** The Monday on or before `date`. Weeks start Monday, as ISO weekdays do. */
+export function startOfWeek(date: BusinessDate): BusinessDate {
+  return addDays(date, -(isoWeekday(date) - 1));
 }
 
 /* ----------------------------------------------------------------- internals */
