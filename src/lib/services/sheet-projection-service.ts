@@ -114,6 +114,13 @@ export type ProjectionReport = {
      * must not cost the other ten thousand rows.
      */
     clashed: number;
+    /**
+     * Orders the order-history path would have settled by default, held back
+     * because the Payment Status tab affirmatively says the money has not
+     * arrived. Zero on the Payment Status path, which never settles by
+     * default in the first place.
+     */
+    leftUnpaid: number;
     skipped: boolean;
   };
   skipped: { reason: string; count: number }[];
@@ -641,6 +648,37 @@ async function writeSheetReceipt(input: {
 }
 
 /**
+ * Order numbers the Payment Status tab affirmatively says are NOT settled.
+ *
+ * One definition, read by the projection that must not settle them and by the
+ * revert that undoes the ones already settled. Two copies of this rule is how
+ * a cleanup deletes a different set to the one the importer stopped writing,
+ * and the difference would be money.
+ *
+ * Affirmative is the operative word. A row must EXIST, be present, carry a
+ * non-blank status, and that status must not be "received". A blank says
+ * nothing and is not evidence; an order with no row at all is not evidence
+ * either. Neither is claimed as debt.
+ */
+export async function unpaidPerPaymentTab(): Promise<Set<string>> {
+  const rows = await db
+    .select({
+      orderNumber: sheetPaymentRows.orderNumber,
+      paymentStatus: sheetPaymentRows.paymentStatus,
+    })
+    .from(sheetPaymentRows)
+    .where(eq(sheetPaymentRows.status, "present"));
+
+  const unpaid = new Set<string>();
+  for (const row of rows) {
+    if (!row.paymentStatus?.trim()) continue;
+    if (isReceived(row.paymentStatus)) continue;
+    unpaid.add(row.orderNumber);
+  }
+  return unpaid;
+}
+
+/**
  * Bills from the ORDER history, one per order, every one marked paid.
  *
  * A sales bill in this business IS the order — the Order Details tab carries a
@@ -666,6 +704,22 @@ async function writeSheetReceipt(input: {
  *
  * Keyed `SHEETPAY-<order number>`, the same key the Payment Status path uses,
  * so the two can never produce two bills for one order.
+ *
+ * WHAT IT WILL NOT SETTLE is an order the Payment Status tab has already said
+ * is unpaid. "Assume settled" is a reading of SILENCE, and that tab is the one
+ * place in the workbook that breaks the silence — so where it speaks, it wins.
+ * Without this the two paths were two authors of one bill: the screen import
+ * passes `bills: true` and writes the real received/not-received, and every
+ * scheduled `mode=project` call — which passes no such flag — came along
+ * behind it and settled the unpaid ones with a receipt for the full amount.
+ * The bills it erased were exactly the ones carrying real debt, because a bill
+ * the tab marked received already had a receipt on the idempotency key and was
+ * skipped. Reading the staging table here fixes it once, for every caller,
+ * rather than in the two places that spell the URL out.
+ *
+ * A BLANK status is still settled. It is genuinely ambiguous — "not yet paid"
+ * and "nobody has updated this" wear the same blank — and this path's whole
+ * premise is that absent evidence understates rather than fabricates.
  */
 export async function projectBillsFromOrders(
   options: ProjectionOptions = {},
@@ -689,6 +743,12 @@ export async function projectBillsFromOrders(
     list.push(line);
     grouped.set(line.orderNumber!, list);
   }
+
+  // The orders the Payment Status tab says are NOT settled. Read straight
+  // from staging rather than from what a previous projection made of it: this
+  // is the tab's own words, and it is the only evidence in the workbook that
+  // outranks this path's assumption.
+  const unpaidOrders = await unpaidPerPaymentTab();
 
   const refs = [...grouped.keys()].map((n) => `SHEET-${n}`);
   const orderRows = refs.length
@@ -722,17 +782,29 @@ export async function projectBillsFromOrders(
   // that died halfway, collided on insert and took the whole import down with
   // it — after thousands of rows had already landed.
   const existing = await db
-    .select({ id: bills.id, billNo: bills.billNo, externalRef: bills.externalRef })
+    .select({
+      id: bills.id,
+      billNo: bills.billNo,
+      externalRef: bills.externalRef,
+      paymentDecidedAt: bills.paymentDecidedAt,
+    })
     .from(bills);
   const billByRef = new Map(
     existing.filter((b) => b.externalRef).map((b) => [b.externalRef!, b.id]),
   );
   const billByNo = new Map(existing.map((b) => [b.billNo, b]));
+  // Bills whose payment position somebody has DECIDED. Settling by assumption
+  // may not touch these, however free the idempotency key looks.
+  const decided = new Set(existing.filter((b) => b.paymentDecidedAt).map((b) => b.id));
 
   let created = 0;
   let updated = 0;
   let receipts = 0;
   let clashed = 0;
+  // Reported, not silent. "Settled everything except the ones the other tab
+  // called unpaid" is a different sentence to "settled everything", and the
+  // person reading the run output is entitled to the difference.
+  let leftUnpaid = 0;
 
   for (const [orderNumber, group] of grouped) {
     const head = group[0];
@@ -799,11 +871,22 @@ export async function projectBillsFromOrders(
       await db.insert(bills).values({ id: billId, ...values });
       created++;
     }
-    // So the next order in this same pass sees the number as taken.
-    billByNo.set(billNo, { id: billId, billNo, externalRef });
+    // So the next order in this same pass sees the number as taken. A bill
+    // this pass just wrote carries no decision — the projection never makes
+    // one — so the mark is null whether it was created or updated here.
+    billByNo.set(billNo, { id: billId, billNo, externalRef, paymentDecidedAt: null });
 
-    // Settled by instruction, not by evidence. Idempotent on the key, so a
-    // re-run never pays the same bill twice.
+    // Settled by instruction, not by evidence — and instruction yields to both
+    // kinds of evidence there are. The Payment Status tab saying "Pending" is
+    // the sheet telling us the money has not arrived; `paymentDecidedAt` is a
+    // person telling us, through the receivables report or the Accounts app.
+    // Neither may be overwritten by an assumption.
+    if (unpaidOrders.has(orderNumber) || decided.has(billId)) {
+      leftUnpaid++;
+      continue;
+    }
+
+    // Idempotent on the key, so a re-run never pays the same bill twice.
     const wrote = await writeSheetReceipt({
       billId,
       customerId: order.customerId,
@@ -823,6 +906,7 @@ export async function projectBillsFromOrders(
     paidWithoutDate: 0,
     blankStatus: 0,
     clashed,
+    leftUnpaid,
     skipped: false,
   };
 }
@@ -838,6 +922,7 @@ export async function projectBills(
       paidWithoutDate: 0,
       blankStatus: 0,
       clashed: 0,
+      leftUnpaid: 0,
       skipped: true,
     };
   }
@@ -885,10 +970,18 @@ export async function projectBills(
   }
 
   const existing = await db
-    .select({ id: bills.id, externalRef: bills.externalRef })
+    .select({
+      id: bills.id,
+      externalRef: bills.externalRef,
+      paymentDecidedAt: bills.paymentDecidedAt,
+    })
     .from(bills)
     .where(sql`${bills.externalRef} like 'SHEETPAY-%'`);
   const billByRef = new Map(existing.map((b) => [b.externalRef!, b.id]));
+  // Same rule as the order-history path. This tab is better evidence than an
+  // assumption, but it is still a sheet, and it does not outrank somebody
+  // reading Tally's receivables or recording a payment in Accounts.
+  const decided = new Set(existing.filter((b) => b.paymentDecidedAt).map((b) => b.id));
 
   let created = 0;
   let updated = 0;
@@ -945,7 +1038,7 @@ export async function projectBills(
     if (billId) {
       await db.update(bills).set(values).where(eq(bills.id, billId));
       updated++;
-      if (received && row.paymentReceivedDate) {
+      if (received && row.paymentReceivedDate && !decided.has(billId)) {
         const wrote = await writeSheetReceipt({
           billId,
           customerId,
@@ -989,6 +1082,9 @@ export async function projectBills(
     // The Payment Status path keys one bill per order too, so a clash here
     // would mean the same thing — it simply has not been seen.
     clashed: 0,
+    // Nothing to hold back: this path settles only what the tab says arrived,
+    // so it has no default for the tab to override.
+    leftUnpaid: 0,
     skipped: false,
   };
 }
@@ -1002,11 +1098,13 @@ export async function projectSheet(
   const { orders: orderResult, skipped } = await projectOrders(options);
 
   // A sales bill is the order, so bills come from the order history by
-  // default and every one starts settled. `--bills` swaps the source to the
-  // Payment Status tab, which carries real received/not-received for 8,277 of
-  // its rows — better evidence where it has been pulled. Never both: they key
-  // on the same `SHEETPAY-<order number>`, and running one after the other
-  // would have two authors for one bill.
+  // default and every one starts settled EXCEPT the ones the Payment Status
+  // tab calls unpaid. `--bills` swaps the source to that tab outright, which
+  // carries real received/not-received for 8,277 of its rows. The two are
+  // still not interchangeable — they key on the same `SHEETPAY-<order
+  // number>` — but they no longer contradict each other on the one question
+  // that moves money, so a caller that forgets the flag understates the bill
+  // list rather than erasing the debt on it.
   const billResult = options.includeBills
     ? await projectBills(options)
     : await projectBillsFromOrders(options);
@@ -1044,4 +1142,111 @@ export async function projectSheet(
     bills: billResult,
     skipped,
   };
+}
+
+/* -------------------------------------------------- undoing a settled book */
+
+export type RevertReport = {
+  /** Receipts deleted, and the money they wrongly claimed had arrived. */
+  deleted: number;
+  restoredPaise: number;
+  /** Customers whose outstanding the deletion gives back a balance to. */
+  customers: number;
+  /**
+   * Receipts left alone because the tab says the money DID arrive. Counted so
+   * the run says what it kept as well as what it took.
+   */
+  kept: number;
+  dryRun: boolean;
+};
+
+/**
+ * Undo the receipts the order-history path wrote over known debt.
+ *
+ * WHAT WENT WRONG: `projectBillsFromOrders` settles by default, and every
+ * scheduled `mode=project` call took that path because only the Admin Console
+ * passes `bills: true`. Both key on `SHEETPAY-<order number>`, so the
+ * scheduled run walked over the bills the screen import had correctly marked
+ * unpaid and gave each a confirmed receipt for its full amount. Bills the tab
+ * marked RECEIVED already held a receipt on that key and were skipped by the
+ * idempotency check — so the set it damaged is exactly the set carrying real
+ * debt, and outstanding went to zero across the book.
+ *
+ * WHY IT IS RECOVERABLE: the projection reads `sheet_payment_rows` and never
+ * writes to it, and `mode=payments` keeps it current. The tab's own verdict
+ * was never overwritten, so the receipts that should exist are derivable
+ * rather than guessed at — `unpaidPerPaymentTab()` is that derivation, and
+ * this function and the importer share it so they cannot disagree.
+ *
+ * WHAT IT DELETES is narrow on purpose: a receipt at `source = 'sheet_import'`
+ * whose key names an order the tab affirmatively calls unpaid. Nothing a
+ * person recorded is touched — a telecaller's reported payment and an
+ * accounts confirmation both carry a different source. `payments.receipt_id`
+ * cascades, so the allocation lines go with the receipt they belonged to.
+ *
+ * WHAT IT DELIBERATELY LEAVES: orders the tab calls Received, orders it
+ * leaves BLANK, and orders it has no row for. The last two are silence, not
+ * evidence, and turning silence into debt is the nine-crore mistake this
+ * whole path exists to avoid. That is why "all the outstanding" does not come
+ * back — only the outstanding the workbook can actually vouch for does.
+ */
+export async function revertSheetSettledBills(
+  options: { dryRun?: boolean } = {},
+): Promise<RevertReport> {
+  const unpaid = await unpaidPerPaymentTab();
+
+  const sheetReceipts = await db
+    .select({
+      id: paymentReceipts.id,
+      customerId: paymentReceipts.customerId,
+      amount: paymentReceipts.amount,
+      key: paymentReceipts.idempotencyKey,
+    })
+    .from(paymentReceipts)
+    .where(eq(paymentReceipts.source, "sheet_import"));
+
+  const doomed: typeof sheetReceipts = [];
+  let kept = 0;
+  for (const receipt of sheetReceipts) {
+    // The key is `SHEETPAY-<order number>`, and an order number may itself
+    // contain a hyphen — so strip the known prefix rather than splitting.
+    const orderNumber = receipt.key?.startsWith("SHEETPAY-")
+      ? receipt.key.slice("SHEETPAY-".length)
+      : null;
+    if (orderNumber && unpaid.has(orderNumber)) doomed.push(receipt);
+    else kept++;
+  }
+
+  const report: RevertReport = {
+    deleted: doomed.length,
+    restoredPaise: doomed.reduce((sum, r) => sum + r.amount, 0),
+    customers: new Set(doomed.map((r) => r.customerId)).size,
+    kept,
+    dryRun: Boolean(options.dryRun),
+  };
+
+  if (options.dryRun || doomed.length === 0) return report;
+
+  // One transaction. A half-deleted set would leave the book in a state
+  // neither the sheet nor the app describes, and the next scheduled pass
+  // would build on it.
+  await db.transaction(async (tx) => {
+    for (let i = 0; i < doomed.length; i += 500) {
+      const batch = doomed.slice(i, i + 500).map((r) => r.id);
+      await tx.delete(paymentReceipts).where(inArray(paymentReceipts.id, batch));
+    }
+  });
+
+  // Derived values are never hand-edited — they are rebuilt. Same order as the
+  // projection: paid_amount from the confirmed receipts that remain, statuses
+  // from that, outstanding from the bills, then the follow-up stage from what
+  // is outstanding and how old it is. The slow-payer flag comes last because
+  // it reads the payment history the earlier passes have just corrected.
+  await recomputeAllBillPaid();
+  await recomputeBillStatuses();
+  await recomputeAllOutstanding();
+  await recomputeAllFollowUpStates();
+  await recomputeSlowPayers();
+
+  return report;
 }
