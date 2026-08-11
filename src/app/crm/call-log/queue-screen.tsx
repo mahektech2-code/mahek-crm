@@ -44,6 +44,8 @@ type Row = {
   lastOrderDate: string | null;
   lastNote: string | null;
   hasComplaint: boolean;
+  /** Whose call it is. Null where the record answers to nobody. */
+  assignedToName: string | null;
 };
 
 type Suppressed = { customerId: string; name: string; reason: string };
@@ -68,6 +70,7 @@ const CHECKIN_KINDS = ["checkInOverdue", "checkInDue"];
 
 export function QueueScreen({
   scopeLabel,
+  showAssignee,
   rows,
   suppressed,
   progress,
@@ -85,6 +88,8 @@ export function QueueScreen({
   scripts,
 }: {
   scopeLabel: string;
+  /** Team view: every row belongs to somebody, so every row says who. */
+  showAssignee: boolean;
   rows: Row[];
   suppressed: Suppressed[];
   progress: { worked: number; total: number; percent: number };
@@ -412,6 +417,25 @@ export function QueueScreen({
                   {r.lastNote ? `Last note: ${r.lastNote}` : "No notes yet"}
                 </div>
               </div>
+
+              {showAssignee ? (
+                <div className="w-[140px] flex-none">
+                  <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                    Assigned to
+                  </div>
+                  <div
+                    className={cx(
+                      "truncate text-sm",
+                      r.assignedToName ? "text-ink" : "text-muted",
+                    )}
+                    title={r.assignedToName ?? undefined}
+                  >
+                    {/* Unassigned is said, not left blank: a call nobody owns
+                        is the one a manager most needs to see on this list. */}
+                    {r.assignedToName ?? "Unassigned"}
+                  </div>
+                </div>
+              ) : null}
 
               <div className="w-[120px] flex-none text-right">
                 <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
