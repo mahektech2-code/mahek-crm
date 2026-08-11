@@ -86,6 +86,9 @@ const pick = <T>(list: T[]): T => list[Math.floor(rand() * list.length)];
 const between = (lo: number, hi: number) =>
   lo + Math.floor(rand() * (hi - lo + 1));
 
+/** The one account the reporting line is built around. */
+const MANAGER_EMAIL = "vikram@mahek.in";
+
 const TEAM = [
   {
     name: "Priya Sharma",
@@ -126,7 +129,11 @@ const TEAM = [
     name: "Vikram Rao",
     email: "vikram@mahek.in",
     phone: "9820011006",
-    role: "manager" as const,
+    // The admin ROLE, not merely the Admin app. Holding the app is what opens
+    // the console; the role is what `can()` reads, and the two were different
+    // things — he ran every screen in the product and still could not change
+    // an account manager, because that capability is accounts-and-admin only.
+    role: "admin" as const,
     apps: ["crm", "accounts", "reports", "people", "hrms", "admin"],
   },
   {
@@ -470,7 +477,11 @@ async function main() {
   const passwordHash = await hashPassword("mahek1234");
   const managerId = id("usr");
   const userRows = TEAM.map((t) => ({
-    id: t.role === "manager" ? managerId : id("usr"),
+    // By EMAIL, not by role. This used to read `role === "manager"`, and the
+    // day Vikram became an admin it would have matched nobody — every row
+    // would then carry a `reportsToId` pointing at an id no user has, and the
+    // seed would fail on the foreign key with nothing saying why.
+    id: t.email === MANAGER_EMAIL ? managerId : id("usr"),
     name: t.name,
     email: t.email,
     phone: t.phone,

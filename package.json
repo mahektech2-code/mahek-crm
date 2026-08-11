@@ -15,6 +15,7 @@
     "jobs": "tsx --conditions=react-server --env-file=.env.local scripts/run-job.ts",
     "jobs:prod": "tsx --conditions=react-server --env-file=.env.prod.local scripts/run-job.ts",
     "app:grant": "tsx --conditions=react-server --env-file=.env.local scripts/grant-app.ts",
+    "user:role": "tsx --conditions=react-server --env-file=.env.local scripts/set-role.ts",
     "users:accounts": "tsx --conditions=react-server --env-file=.env.local scripts/create-accounts-users.ts",
     "users:accounts:url": "tsx --conditions=react-server scripts/create-accounts-users.ts",
     "hrms:sync": "tsx --conditions=react-server --env-file=.env.local scripts/run-job.ts hrms-sync",
