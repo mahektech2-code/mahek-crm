@@ -11,8 +11,28 @@ import type { JobOptions } from "./jobs";
  * output as an answer about their data.
  * ------------------------------------------------------------------------- */
 
-/** Options that are switches: present means true, and they take no value. */
-const FLAGS = ["bills", "leads", "reassign"] as const;
+/**
+ * Options that are switches: present means true, and they take no value.
+ *
+ * Written as typed-on-the-command-line → the option it sets, because the two
+ * are not always the same word: `--dry-run` reads better than `--dryRun` at a
+ * prompt, and this map is the one place that difference is spelt out. The
+ * `satisfies` is what makes a typo here a compile error rather than a flag
+ * that parses and then sets nothing.
+ */
+const FLAGS = {
+  bills: "bills",
+  leads: "leads",
+  reassign: "reassign",
+  "dry-run": "dryRun",
+} as const satisfies Record<string, BooleanOption>;
+
+/** The options that are booleans, which is what a switch is allowed to set. */
+type BooleanOption = {
+  [K in keyof JobOptions]-?: boolean extends JobOptions[K] ? K : never;
+}[keyof JobOptions];
+
+const isFlag = (name: string): name is keyof typeof FLAGS => name in FLAGS;
 
 /** Options that carry a value, as --name=value. */
 const VALUES = ["owner", "password"] as const;
@@ -30,11 +50,11 @@ export function parseJobArgs(argv: string[]): ParsedJobArgs {
   for (const arg of argv.slice(1)) {
     const [name, value] = arg.replace(/^--/, "").split("=", 2);
 
-    if ((FLAGS as readonly string[]).includes(name)) {
+    if (isFlag(name)) {
       if (value !== undefined) {
         return { ok: false, problem: `--${name} is a switch and takes no value.` };
       }
-      options[name as (typeof FLAGS)[number]] = true;
+      options[FLAGS[name]] = true;
       continue;
     }
 
@@ -65,8 +85,10 @@ export const JOB_USAGE = [
   "  --leads           create never-ordered parties as leads",
   "  --reassign        move customers that already exist to --owner",
   "  --password=<pw>   for accounts provision-team creates",
+  "  --dry-run         report what would change and write nothing",
   "",
   "  npm run jobs -- nightly",
   "  npm run jobs -- sheet-payments",
   "  npm run jobs -- project-sheet --owner=vikram@mahek.in --bills",
+  "  npm run jobs -- revert-sheet-paid --dry-run",
 ].join("\n");

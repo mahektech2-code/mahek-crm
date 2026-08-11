@@ -1,0 +1,1 @@
+ALTER TABLE "bills" ADD COLUMN "payment_decided_at" timestamp with time zone;

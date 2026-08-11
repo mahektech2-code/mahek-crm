@@ -1,10 +1,14 @@
 # -----------------------------------------------------------------------------
-# Pulling the Google Sheets into MahekOne, every thirty minutes.
+# Pulling the Google Sheets into MahekOne — the manual button, and the backstop.
 #
-# WHY HERE AND NOT VERCEL CRON: Vercel Cron is a paid feature and this account
-# is on the free plan, so the schedule has to live outside the deployment.
-# GitHub Actions keeps a log of every run and gives a manual "sync now" button
-# through workflow_dispatch without touching the app.
+# WHY NOT VERCEL CRON: Vercel Cron is a paid feature and this account is on the
+# free plan, so the schedule has to live outside the deployment.
+#
+# WHY THIS IS NOT THE SCHEDULE EITHER: see the `on:` block below. GitHub drops
+# most of the ticks. What actually keeps the CRM current is the Apps Script
+# trigger on the workbook, `scripts/sheet-sync-trigger.gs`; this file is the
+# manual "sync now" button and a second caller that costs nothing when the
+# first is working.
 #
 # WHY SEQUENTIAL STEPS AND NOT SEPARATE CRONS: the sync route is capped at five
 # minutes — the Vercel function ceiling, not a setting — so no single call may
@@ -29,9 +33,20 @@ name: Sheet sync
 
 on:
   schedule:
-    # Every 30 minutes. GitHub's scheduler is best-effort and runs late under
-    # load; nothing here assumes it is punctual.
-    - cron: "*/30 * * * *"
+    # THIS IS THE SAFETY NET, NOT THE SCHEDULE. `schedule:` is best-effort, and
+    # on a private repo belonging to a free account it is the lowest priority
+    # tier there is — GitHub does not queue a tick it cannot serve, it drops it.
+    # Measured here: three runs in eleven hours against a promised thirty
+    # minutes, gaps of 2h01, 4h48 and 4h07, roughly one tick in ten. What keeps
+    # the CRM current is the Apps Script trigger on the workbook itself,
+    # `scripts/sheet-sync-trigger.gs`. This stays because a second, independent
+    # caller costs nothing when the first one is working: every read is
+    # hash-compared, so a pass over an untouched tab is a read and no writes,
+    # and the server answers 409 to whichever of the two arrives second.
+    #
+    # :07 and :37 rather than :00 and :30 because the top of the hour is when
+    # every other cron on GitHub fires too, and that is when ticks get dropped.
+    - cron: "7,37 * * * *"
   workflow_dispatch:
 
 concurrency:

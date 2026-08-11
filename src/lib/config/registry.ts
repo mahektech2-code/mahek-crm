@@ -29,7 +29,19 @@ export type SettingCategory =
   | "attachments"
   | "interactions"
   | "whatsapp"
-  | "voice";
+  | "voice"
+  /* ---- MBOS, the field sales app. Same rule: no threshold is a constant. ---- */
+  | "mbos-location"
+  | "mbos-orders"
+  | "mbos-credit"
+  | "mbos-payments"
+  | "mbos-expenses"
+  | "mbos-attendance"
+  | "mbos-leave"
+  | "mbos-health"
+  | "mbos-sync"
+  | "mbos-leads"
+  | "mbos-tasks";
 
 export type SettingDefinition = {
   key: string;
@@ -956,6 +968,484 @@ export const SETTINGS = [
       "An OpenAI text model. It renders the transcript into English without summarising, and does the tightening and rewriting the person asks for.",
     default: "gpt-5-mini",
   },
+
+  /* ═══════════════════════════════════════════════ MBOS — field sales, §9
+   *
+   * Every one of these is a number somebody in the field will argue with, and
+   * every argument is a settings change rather than a deploy. Distances are
+   * metres, money is paise, and anything measured in hours says so in its key.
+   */
+
+  /* ------------------------------------------------------- where they are */
+  {
+    key: "mbos.location.gpsAccuracyThresholdM",
+    type: "integer",
+    category: "mbos-location",
+    label: "Usable GPS accuracy",
+    description:
+      "Metres. A fix the handset itself rates worse than this is not evidence of where anybody was standing — a visit captured on one is still saved, but it is not marked verified and it never counts as a location mismatch. Refusing the check-in instead would lose a real visit to a cloudy afternoon indoors.",
+    default: 50,
+    min: 5,
+    max: 1000,
+  },
+  {
+    key: "mbos.location.visitMismatchM",
+    type: "integer",
+    category: "mbos-location",
+    label: "Visit location mismatch distance",
+    description:
+      "Metres between the check-in and the customer's own pin before the visit is flagged for a manager. It must be comfortably larger than the accuracy above, or an honest fix on a busy street reads as somebody checking in from the tea shop.",
+    default: 200,
+    min: 20,
+    max: 5000,
+  },
+  {
+    key: "mbos.location.routeDeviationM",
+    type: "integer",
+    category: "mbos-location",
+    label: "Route deviation distance",
+    description:
+      "Metres a salesman may stray from the planned beat before the day is flagged as a deviation. Not a fence — nothing is blocked by it; it decides what a manager is told about.",
+    default: 2000,
+    min: 100,
+    max: 50000,
+  },
+  {
+    key: "mbos.location.unplannedVisitsPerDay",
+    type: "integer",
+    category: "mbos-location",
+    label: "Unplanned visits before the manager is told",
+    description:
+      "An unplanned visit is ordinary — a shop that called, a walk-in on the way past. A day made entirely of them is a plan nobody worked. This is how many are allowed before the day is raised, not how many are permitted.",
+    default: 3,
+    min: 0,
+    max: 50,
+  },
+
+  /* ------------------------------------------------------------ ordering */
+  {
+    key: "mbos.orders.approvalThresholdPaise",
+    type: "integer",
+    category: "mbos-orders",
+    label: "Order value needing approval",
+    description:
+      "Paise. An order at or above this waits for a manager before dispatch. Below it, accounts still check the customer — this threshold governs the manager's sign-off, not the credit check.",
+    default: 5000000,
+    min: 0,
+    max: 1000000000,
+  },
+  {
+    key: "mbos.orders.secondTierThresholdPaise",
+    type: "integer",
+    category: "mbos-orders",
+    label: "Order value needing the second approver",
+    description:
+      "Paise. Above this the approval goes a level further up the reporting hierarchy. Must exceed the first threshold, or the two tiers are one.",
+    default: 25000000,
+    min: 0,
+    max: 1000000000,
+  },
+  {
+    key: "mbos.orders.minimumQuantityCans",
+    type: "integer",
+    category: "mbos-orders",
+    label: "Minimum order quantity",
+    description:
+      "Cans, per line, because cans are what a salesman counts and what the customer says. 0 means no minimum.",
+    default: 0,
+    min: 0,
+    max: 1000,
+  },
+
+  /* -------------------------------------------------------------- credit */
+  {
+    key: "mbos.credit.blockOnLimitExceeded",
+    type: "boolean",
+    category: "mbos-credit",
+    label: "Refuse orders over the credit limit",
+    description:
+      "On, an order taking a customer past `creditLimitPaise` is rejected at sync with `credit_exceeded` and the salesman is told, naming the customer. Off, it is accepted and flagged for accounts. Rejecting is the safer default and the more painful one — the salesman was standing in the shop when they promised it.",
+    default: true,
+  },
+  {
+    key: "mbos.credit.outstandingStaleHours",
+    type: "integer",
+    category: "mbos-credit",
+    label: "Outstanding figure goes stale after",
+    description:
+      "Hours. The handset carries a cached outstanding per customer, and a credit decision taken against a figure older than this is refused with `outstanding_stale` rather than taken on a number from last week. The screen shows the age wherever the decision hangs on it.",
+    default: 24,
+    min: 1,
+    max: 720,
+  },
+  {
+    key: "mbos.credit.overdueDaysBlockOrders",
+    type: "integer",
+    category: "mbos-credit",
+    label: "Days overdue that block new orders",
+    description:
+      "A customer with a bill this far past its due date stops being offered new orders in the field. 0 switches the rule off. This is a policy about debt, not about the credit limit — an account inside its limit can still be months late.",
+    default: 0,
+    min: 0,
+    max: 365,
+  },
+
+  /* ------------------------------------------------------------ payments */
+  {
+    key: "mbos.payments.cashDepositSlaHours",
+    type: "integer",
+    category: "mbos-payments",
+    label: "Cash deposit SLA",
+    description:
+      "Hours a salesman may hold cash collected in the field before it is deposited or handed over. Past it the collection is shown as undeposited on a manager's screen — tracked separately from the payment itself, because the customer has paid either way.",
+    default: 48,
+    min: 1,
+    max: 720,
+  },
+  {
+    key: "mbos.payments.managerNotifyThresholdPaise",
+    type: "integer",
+    category: "mbos-payments",
+    label: "Collection value the manager is told about",
+    description:
+      "Paise. A collection at or above this notifies the manager when it syncs. Money reported from the field is still money the business has not seen — confirming it stays accounts' work.",
+    default: 10000000,
+    min: 0,
+    max: 1000000000,
+  },
+
+  /* ------------------------------------------------------------ expenses */
+  {
+    key: "mbos.expenses.billPhotoThresholdPaise",
+    type: "integer",
+    category: "mbos-expenses",
+    label: "Expense needing a bill photograph",
+    description:
+      "Paise. At or above this a bill photograph is required before the line can be claimed. 0 requires one on every expense.",
+    default: 20000,
+    min: 0,
+    max: 100000000,
+  },
+  {
+    key: "mbos.expenses.categoryCapsPaise",
+    type: "structured",
+    category: "mbos-expenses",
+    label: "Daily caps by category",
+    description:
+      "Paise per day per category. A claim above a cap is not refused — it goes up as a partial approval decision, which is what the approver's `approvedAmountPaise` is for.",
+    default: { travel: 100000, food: 40000, lodging: 250000, other: 50000 },
+  },
+  {
+    key: "mbos.expenses.backdatedDaysAllowed",
+    type: "integer",
+    category: "mbos-expenses",
+    label: "How far back an expense may be dated",
+    description:
+      "Days. An expense dated further back than this cannot be entered without a manager. A future date is never accepted at all.",
+    default: 30,
+    min: 0,
+    max: 365,
+  },
+
+  /* ---------------------------------------------------------- attendance */
+  {
+    key: "mbos.attendance.geofenceRadiusM",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Check-in geofence radius",
+    description:
+      "Metres from the designated start location within which a check-in counts as on-site. Outside it the check-in still SAVES, with the distance recorded and the day flagged — a salesman starting at a customer's factory is doing his job, and a refused check-in is a day's work with no record of it.",
+    default: 500,
+    min: 25,
+    max: 20000,
+  },
+  {
+    key: "mbos.attendance.fullDayHours",
+    type: "decimal",
+    category: "mbos-attendance",
+    label: "Full day",
+    description: "Hours between check-in and check-out that count as a full day.",
+    default: 8,
+    min: 1,
+    max: 24,
+  },
+  {
+    key: "mbos.attendance.halfDayHours",
+    type: "decimal",
+    category: "mbos-attendance",
+    label: "Half day threshold",
+    description:
+      "Hours below which a day is a half day rather than a full one. Below it entirely and the day is absent unless leave says otherwise. Must be under the full day, or every full day is also a half one.",
+    default: 4,
+    min: 0.5,
+    max: 24,
+  },
+  {
+    key: "mbos.attendance.autoCheckOutHour",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Hour a missed check-out is closed",
+    description:
+      "A day nobody checked out of is closed at this hour and flagged for regularisation, rather than left open for ever. Local hour, in the working-day timezone.",
+    default: 22,
+    min: 0,
+    max: 23,
+  },
+  {
+    key: "mbos.attendance.selfieRequired",
+    type: "boolean",
+    category: "mbos-attendance",
+    label: "Selfie on check-in",
+    description:
+      "A photograph at check-in. Off where the team finds it intrusive and the geofence is enough; it changes what the check-in asks for, never whether it is allowed.",
+    default: true,
+  },
+
+  /* --------------------------------------------------------------- leave */
+  {
+    key: "mbos.leave.noticeDays",
+    type: "integer",
+    category: "mbos-leave",
+    label: "Notice for planned leave",
+    description:
+      "Days ahead a casual or earned leave should be applied for. Sick leave is exempt, because nobody schedules it. Applying later is allowed and flagged, never blocked.",
+    default: 2,
+    min: 0,
+    max: 90,
+  },
+  {
+    key: "mbos.leave.allowLossOfPay",
+    type: "boolean",
+    category: "mbos-leave",
+    label: "Allow leave beyond the balance",
+    description:
+      "On, an employee out of balance may still apply, as loss of pay. Off, the application is refused — which turns a conversation with a manager into an error message.",
+    default: true,
+  },
+
+  /* -------------------------------------------------------- health score */
+  {
+    key: "mbos.health.componentWeights",
+    type: "structured",
+    category: "mbos-health",
+    label: "Health score weights",
+    description:
+      "How much each part counts towards a customer's health score, out of 100. The score is a DERIVED cache like outstanding and the buying cycle: change these and re-run the recompute, never edit a customer's score. Every weight together should come to 100, or the score is out of something nobody stated.",
+    default: {
+      orderRecency: 25,
+      orderValueTrend: 20,
+      paymentBehaviour: 25,
+      visitEngagement: 15,
+      complaints: 15,
+    },
+  },
+  {
+    key: "mbos.health.atRiskBelow",
+    type: "integer",
+    category: "mbos-health",
+    label: "At-risk score",
+    description:
+      "A customer scoring below this is shown as at risk on the salesman's list and in the AI assistant's suggestions. Advisory — nothing is blocked by a score.",
+    default: 40,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "mbos.health.staleAfterHours",
+    type: "integer",
+    category: "mbos-health",
+    label: "Score goes stale after",
+    description:
+      "Hours after which a health score is shown with its age rather than as a current figure. A cache nobody has rebuilt is a number that was true once.",
+    default: 24,
+    min: 1,
+    max: 720,
+  },
+
+  /* ---------------------------------------------------------------- sync */
+  {
+    key: "mbos.sync.imageMaxDimensionPx",
+    type: "integer",
+    category: "mbos-sync",
+    label: "Image longest side",
+    description:
+      "Pixels. Photographs are resized on the handset before they are queued — a shop front at 4000px costs a salesman on 2G several minutes and tells a manager nothing a 1600px one does not.",
+    default: 1600,
+    min: 320,
+    max: 4096,
+  },
+  {
+    key: "mbos.sync.imageQualityPercent",
+    type: "integer",
+    category: "mbos-sync",
+    label: "Image quality",
+    description:
+      "JPEG quality after the resize above. Low enough to move on a bad connection, high enough that a damaged can is still legible in the photograph.",
+    default: 70,
+    min: 30,
+    max: 100,
+  },
+  {
+    key: "mbos.sync.offlineLoginValidityDays",
+    type: "integer",
+    category: "mbos-sync",
+    label: "Offline sign-in validity",
+    description:
+      "Days a handset may be signed in without ever reaching the server. Past it the app asks for a real sign-in — which is what stops a device that left the company from staying open indefinitely on a book of customers.",
+    default: 7,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "mbos.sync.retryBackoffSeconds",
+    type: "structured",
+    category: "mbos-sync",
+    label: "Retry backoff",
+    description:
+      "Seconds between sync attempts, in order. After the last one the item is `failed` and shown for a person to retry by hand. Jittered on the device, and the schedule resumes rather than restarts across an app restart.",
+    default: [2, 8, 30, 120, 600, 1800],
+  },
+  {
+    key: "mbos.sync.maxItemsPerRequest",
+    type: "integer",
+    category: "mbos-sync",
+    label: "Queue items per sync request",
+    description:
+      "How many outbox items one request carries. Small enough that thirty seconds of signal between two shops is enough for a round trip.",
+    default: 50,
+    min: 1,
+    max: 500,
+  },
+  {
+    key: "mbos.sync.accessTokenMinutes",
+    type: "integer",
+    category: "mbos-sync",
+    label: "Access token life",
+    description:
+      "Minutes an access token is good for. Short, because it carries no revocation of its own — moving somebody off the field app takes effect when the next one is asked for. The refresh token, which does check the database, lives for the offline login validity above.",
+    default: 60,
+    min: 5,
+    max: 1440,
+  },
+  {
+    key: "mbos.orders.numberSeriesPrefix",
+    type: "text",
+    category: "mbos-orders",
+    label: "Order number series",
+    description:
+      "The prefix of a field order's display number — `MBOS/26-27/0041`. The financial year and the sequence are added by the server, in a transaction, because two salesmen offline must never produce the same number.",
+    default: "MBOS",
+  },
+  {
+    key: "mbos.payments.receiptSeriesPrefix",
+    type: "text",
+    category: "mbos-payments",
+    label: "Receipt number series",
+    description:
+      "The prefix of a field receipt's display number — `MRCP/26-27/0041`. Allocated server-side for the same reason the order series is.",
+    default: "MRCP",
+  },
+
+  /* --------------------------------------------------------------- leads */
+  {
+    key: "mbos.leads.staleDays",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Lead goes stale after",
+    description:
+      "Days with no activity before a lead is tagged stale and surfaced to its owner and their manager.",
+    default: 30,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "mbos.leads.archiveDays",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Lead is archived after",
+    description:
+      "Days with no activity and no conversion before a lead archives itself. Archiving is a flag, never a delete — a cold lead is exactly who next year's campaign goes back to. Must be longer than the stale window, or nothing is ever merely stale.",
+    default: 90,
+    min: 2,
+    max: 1095,
+  },
+  {
+    key: "mbos.leads.escalateAfterDays",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Untouched lead escalates after",
+    description:
+      "Days with no activity before the manager is told. Deliberately shorter than the stale window: the point is to save the lead, not to record that it died.",
+    default: 7,
+    min: 1,
+    max: 90,
+  },
+
+  /* --------------------------------------------------------------- tasks */
+  {
+    key: "mbos.tasks.escalationHours",
+    type: "integer",
+    category: "mbos-tasks",
+    label: "Overdue task escalates after",
+    description:
+      "Hours past its due date before a task is escalated to the assignee's manager. Escalation is a notification and a flag; the task stays with whoever it was given to.",
+    default: 24,
+    min: 1,
+    max: 720,
+  },
+  {
+    key: "mbos.tasks.requireCompletionNote",
+    type: "boolean",
+    category: "mbos-tasks",
+    label: "Require a note to close a task",
+    description:
+      "On, a task cannot be marked done without saying what was done. A closed task with nothing against it tells the person who raised it nothing at all.",
+    default: true,
+  },
+  {
+    key: "mbos.approvals.escalationHours",
+    type: "integer",
+    category: "mbos-tasks",
+    label: "Approval escalates after",
+    description:
+      "Hours a request may sit undecided before it escalates. An approval with nowhere to go is a salesman waiting in a shop for an answer nobody is coming with.",
+    default: 24,
+    min: 1,
+    max: 720,
+  },
+
+  /* --------------------------------------------------------------- visits */
+  {
+    key: "mbos.visits.minimumDwellSeconds",
+    type: "integer",
+    category: "mbos-location",
+    label: "A visit must last at least",
+    description:
+      "Seconds in the shop before a visit counts as verified. Under it the visit still saves — it is marked unverified with the salesman's reason, because refusing the save teaches people to stop logging visits at all.",
+    default: 120,
+    min: 0,
+    max: 3600,
+  },
+
+  /* ------------------------------------------------------------------ sync */
+  {
+    key: "mbos.sync.mediaWifiOnly",
+    type: "boolean",
+    category: "mbos-sync",
+    label: "Upload photos on Wi-Fi only",
+    description:
+      "On, photographs and audio wait for Wi-Fi. Records NEVER wait — a payment reaches the office the moment there is any signal. What waits is the picture of the cheque, not the fact of it.",
+    default: false,
+  },
+  {
+    key: "mbos.ai.retainAudioAfterTranscription",
+    type: "boolean",
+    category: "mbos-sync",
+    label: "Keep the recording after transcription",
+    description:
+      "On, voice notes are kept on the handset once transcribed. Off, they are deleted — but only ever after the transcript is confirmed stored, never merely because the upload finished.",
+    default: false,
+  },
 ] as const satisfies readonly SettingDefinition[];
 
 export type SettingKey = (typeof SETTINGS)[number]["key"];
@@ -1180,6 +1670,103 @@ export function checkConsistency(config: Config): string[] {
   // A price list keyed on the customer's pricelist tag is the intended answer
   // one day, but nothing stores one yet. Offering it and letting somebody pick
   // it would produce orders valued from a table that does not exist.
+  /* ------------------------------------------------- MBOS — field sales */
+
+  // A fix the handset rates worse than the mismatch distance cannot tell the
+  // two apart: every honest check-in on a poor signal would read as somebody
+  // standing somewhere else, and a flag raised on all of them is a flag a
+  // manager stops opening.
+  const accuracy = config["mbos.location.gpsAccuracyThresholdM"];
+  const mismatch = config["mbos.location.visitMismatchM"];
+  if (mismatch <= accuracy) {
+    problems.push(
+      `A visit is flagged as a location mismatch at ${mismatch}m, but a fix is trusted down to ${accuracy}m of error. The mismatch distance must be comfortably larger than the accuracy threshold, or an honest check-in on a poor signal is flagged as a false one.`,
+    );
+  }
+
+  // Two approval tiers that are one tier. The second approver would never be
+  // asked, and the screen would say they were.
+  const tier1 = config["mbos.orders.approvalThresholdPaise"];
+  const tier2 = config["mbos.orders.secondTierThresholdPaise"];
+  if (tier2 <= tier1) {
+    problems.push(
+      "The second approval tier must be above the first, or every order needing approval needs both approvers and the two tiers are one.",
+    );
+  }
+
+  // Below the half-day threshold is a half day; at or above it is a full one.
+  // Equal or inverted, a day is both or neither.
+  if (config["mbos.attendance.halfDayHours"] >= config["mbos.attendance.fullDayHours"]) {
+    problems.push(
+      "The half-day threshold must be below the full day, or every full day also counts as a half day.",
+    );
+  }
+
+  // A score out of an unstated total. Every screen reads it as a percentage.
+  const weights = config["mbos.health.componentWeights"];
+  if (!weights || typeof weights !== "object") {
+    problems.push("Health score weights must be an object of component names to numbers.");
+  } else {
+    const values = Object.values(weights);
+    if (values.some((v) => typeof v !== "number" || !Number.isFinite(v) || v < 0)) {
+      problems.push("Every health score weight must be a number, none of them negative.");
+    } else {
+      const total = values.reduce((a, b) => a + b, 0);
+      if (total !== 100) {
+        problems.push(
+          `Health score weights total ${total}, not 100. The score is shown as a figure out of a hundred, so the parts have to add up to one.`,
+        );
+      }
+    }
+  }
+
+  // Archiving before staleness means nothing is ever merely stale: a lead the
+  // owner could still have saved would be filed away without being surfaced.
+  const staleDays = config["mbos.leads.staleDays"];
+  const archiveDays = config["mbos.leads.archiveDays"];
+  const escalateDays = config["mbos.leads.escalateAfterDays"];
+  if (archiveDays <= staleDays) {
+    problems.push(
+      `Leads archive after ${archiveDays} days but only go stale at ${staleDays}. Archiving must come later, or a lead is filed away before anybody is told it needs working.`,
+    );
+  }
+  if (escalateDays > staleDays) {
+    problems.push(
+      `A lead escalates to the manager after ${escalateDays} days but is not stale until ${staleDays}. Escalation is meant to save the lead, so it has to come first.`,
+    );
+  }
+
+  // The backoff is what stands between a handset with no signal and a battery
+  // spent retrying. An empty or unordered list is neither a schedule nor a give-up point.
+  const backoff = config["mbos.sync.retryBackoffSeconds"];
+  if (!Array.isArray(backoff) || backoff.length === 0) {
+    problems.push("At least one retry backoff interval must be configured.");
+  } else if (backoff.some((s) => typeof s !== "number" || s <= 0)) {
+    problems.push("Every retry backoff interval must be a positive number of seconds.");
+  } else if (!backoff.every((v, i, a) => i === 0 || a[i - 1] < v)) {
+    problems.push(
+      "Retry backoff intervals must increase — a backoff that does not back off is a retry loop.",
+    );
+  }
+
+  // Caps for categories the expense form does not offer are rules that can
+  // never fire, and read on the settings screen as though they do.
+  const caps = config["mbos.expenses.categoryCapsPaise"];
+  if (!caps || typeof caps !== "object") {
+    problems.push("Expense caps must be an object of category names to amounts in paise.");
+  } else {
+    const known = ["travel", "food", "lodging", "other"];
+    const unknown = Object.keys(caps).filter((k) => !known.includes(k));
+    if (unknown.length) {
+      problems.push(
+        `These expense categories have caps but are not categories anybody can pick: ${unknown.join(", ")}. The categories are ${known.join(", ")}.`,
+      );
+    }
+    if (Object.values(caps).some((v) => typeof v !== "number" || v < 0)) {
+      problems.push("Every expense cap must be an amount in paise, none of them negative.");
+    }
+  }
+
   if (config["products.priceSource"] === "pricelist") {
     problems.push(
       "Prices are set to come from a customer price list, but no price list exists yet - nothing is keyed on a pricelist tag. Until one is built, order value has to stay manual.",
@@ -1293,7 +1880,72 @@ export type Config = {
   "voice.transcriptionModel": string;
   "voice.openaiTranscriptionModel": string;
   "voice.languageModel": string;
+
+  /* ------------------------------------------------- MBOS — field sales */
+  "mbos.location.gpsAccuracyThresholdM": number;
+  "mbos.location.visitMismatchM": number;
+  "mbos.location.routeDeviationM": number;
+  "mbos.location.unplannedVisitsPerDay": number;
+
+  "mbos.orders.approvalThresholdPaise": number;
+  "mbos.orders.secondTierThresholdPaise": number;
+  "mbos.orders.minimumQuantityCans": number;
+  "mbos.orders.numberSeriesPrefix": string;
+
+  "mbos.credit.blockOnLimitExceeded": boolean;
+  "mbos.credit.outstandingStaleHours": number;
+  "mbos.credit.overdueDaysBlockOrders": number;
+
+  "mbos.payments.cashDepositSlaHours": number;
+  "mbos.payments.managerNotifyThresholdPaise": number;
+  "mbos.payments.receiptSeriesPrefix": string;
+
+  "mbos.expenses.billPhotoThresholdPaise": number;
+  "mbos.expenses.categoryCapsPaise": Record<MbosExpenseCategory, number>;
+  "mbos.expenses.backdatedDaysAllowed": number;
+
+  "mbos.attendance.geofenceRadiusM": number;
+  "mbos.attendance.fullDayHours": number;
+  "mbos.attendance.halfDayHours": number;
+  "mbos.attendance.autoCheckOutHour": number;
+  "mbos.attendance.selfieRequired": boolean;
+
+  "mbos.leave.noticeDays": number;
+  "mbos.leave.allowLossOfPay": boolean;
+
+  "mbos.health.componentWeights": Record<MbosHealthComponent, number>;
+  "mbos.health.atRiskBelow": number;
+  "mbos.health.staleAfterHours": number;
+
+  "mbos.sync.imageMaxDimensionPx": number;
+  "mbos.sync.imageQualityPercent": number;
+  "mbos.sync.offlineLoginValidityDays": number;
+  "mbos.sync.retryBackoffSeconds": number[];
+  "mbos.sync.maxItemsPerRequest": number;
+  "mbos.sync.accessTokenMinutes": number;
+
+  "mbos.leads.staleDays": number;
+  "mbos.leads.archiveDays": number;
+  "mbos.leads.escalateAfterDays": number;
+
+  "mbos.tasks.escalationHours": number;
+  "mbos.tasks.requireCompletionNote": boolean;
+  "mbos.approvals.escalationHours": number;
+  "mbos.visits.minimumDwellSeconds": number;
+  "mbos.sync.mediaWifiOnly": boolean;
+  "mbos.ai.retainAudioAfterTranscription": boolean;
 };
+
+/** The parts a customer health score is made of. Weights must total 100. */
+export type MbosHealthComponent =
+  | "orderRecency"
+  | "orderValueTrend"
+  | "paymentBehaviour"
+  | "visitEngagement"
+  | "complaints";
+
+/** Mirrors `mbos_expense_category` in the schema. */
+export type MbosExpenseCategory = "travel" | "food" | "lodging" | "other";
 
 export type QueueReasonKind =
   | "reminderOverdue"

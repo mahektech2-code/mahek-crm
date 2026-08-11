@@ -350,6 +350,22 @@ export async function recordReceipt(
  * cosmetic.
  */
 async function applyToLedger(customerId: string): Promise<void> {
+  // A bill that money recorded in the APP has touched is a bill whose payment
+  // position somebody decided, and the order sheet's settle-by-assumption must
+  // never write over it again. Marked here rather than at each call site
+  // because every route to confirmed money passes through this function, and a
+  // decision recorded in three places is a decision missed in one.
+  await db.execute(sql`
+    update bills set payment_decided_at = now()
+    where bills.payment_decided_at is null
+      and bills.id in (
+        select p.bill_id from payments p
+        join payment_receipts r on r.id = p.receipt_id
+        where r.customer_id = ${customerId}
+          and r.source <> 'sheet_import'
+          and p.bill_id is not null
+      )`);
+
   await recomputeBillPaid(customerId);
   await recomputeBillStatuses();
   await recomputeOutstanding(customerId);

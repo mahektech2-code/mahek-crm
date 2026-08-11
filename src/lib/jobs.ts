@@ -2,6 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { mbosHourly, mbosNightly } from "@/lib/mbos-jobs";
 import {
   complaints,
   jobRuns,
@@ -11,6 +12,7 @@ import {
   users,
 } from "@/db/schema";
 import { getConfig } from "./config/store";
+import { money } from "./format";
 import {
   recomputeAllBuyingCycles,
   recomputeAllFollowUpStates,
@@ -37,7 +39,7 @@ import {
 } from "./services/sheet-sync-service";
 import { syncPartySheet } from "./services/party-sync-service";
 import { syncTakenOrderSheet } from "./services/taken-order-sync-service";
-import { projectSheet } from "./services/sheet-projection-service";
+import { projectSheet, revertSheetSettledBills } from "./services/sheet-projection-service";
 import { projectParties } from "./services/party-projection-service";
 import { provisionBackOffice } from "./services/team-service";
 import {
@@ -80,7 +82,10 @@ export type JobName =
   | "taken-order-reparse"
   | "party-sync"
   | "project-sheet"
-  | "provision-team";
+  | "revert-sheet-paid"
+  | "provision-team"
+  | "mbos-nightly"
+  | "mbos-hourly";
 
 export type JobResult = { job: JobName; recordsAffected: number; detail: string };
 
@@ -119,6 +124,10 @@ async function run(
 export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
   const day = await today();
   const results: JobResult[] = [];
+
+  /* The field app's nightly tidy-up rides the same schedule as the CRM's.
+     One cron, one place to look when something did not run. */
+  results.push(await run("mbos-nightly", mbosNightly, triggeredById));
 
   results.push(
     await run("recompute-cycles", async () => {
@@ -220,6 +229,8 @@ export async function snapshotQueue(day: BusinessDate): Promise<number> {
 
 export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   const results: JobResult[] = [];
+
+  results.push(await run("mbos-hourly", mbosHourly, triggeredById));
 
   results.push(
     await run("sweep-unconfirmed", async () => {
@@ -347,6 +358,12 @@ export type JobOptions = {
   reassign?: boolean;
   /** Password for accounts the team provisioning creates. Never for existing ones. */
   password?: string;
+  /**
+   * Report what would change and write nothing. Offered by the jobs that
+   * delete — a count read before the fact is the only review a destructive
+   * run gets.
+   */
+  dryRun?: boolean;
 };
 
 export async function runJob(
@@ -361,6 +378,10 @@ export async function runJob(
       return runHourly(triggeredById);
     case "day-boundary":
       return runDayBoundary(triggeredById);
+    case "mbos-nightly":
+      return [await run("mbos-nightly", mbosNightly, triggeredById)];
+    case "mbos-hourly":
+      return [await run("mbos-hourly", mbosHourly, triggeredById)];
     case "sheet-append":
     case "sheet-reconcile":
     case "sheet-reparse":
@@ -374,6 +395,8 @@ export async function runJob(
       return [await runPartySync(triggeredById)];
     case "project-sheet":
       return [await runProjection(triggeredById, options)];
+    case "revert-sheet-paid":
+      return [await runRevertSheetPaid(triggeredById, options)];
     case "provision-team":
       return [await runTeamProvision(triggeredById, options)];
     case "hrms-sync":
@@ -601,7 +624,10 @@ async function runProjection(
         `customers ${orders.customers.created} new / ${orders.customers.updated} updated, ` +
         `orders ${orders.orders.created} new (${orders.orders.lines} lines), ` +
         `bills ${orders.bills.skipped ? "skipped" : orders.bills.created}` +
-        (orders.bills.clashed ? ` (${orders.bills.clashed} bill numbers already taken)` : "") + ", " +
+        (orders.bills.clashed ? ` (${orders.bills.clashed} bill numbers already taken)` : "") +
+        (orders.bills.leftUnpaid
+          ? ` (${orders.bills.leftUnpaid} left unpaid on the Payment Status tab's word)`
+          : "") + ", " +
         `master matched ${parties.matched}, phones ${parties.phonesFilled}, ` +
         `leads ${parties.leadsCreated}/${parties.leadsAvailable}` +
         (options.reassign ? ", reassigned to the given owner" : "") +
@@ -614,6 +640,41 @@ async function runProjection(
           orders.customers.created + orders.orders.created + parties.matched,
         detail,
       };
+    },
+    triggeredById,
+  );
+}
+
+/**
+ * Give back the outstanding that a default-settled projection wrote over.
+ *
+ * BY HAND, NEVER SCHEDULED. It deletes receipts, and a delete on a schedule is
+ * a delete nobody reads the output of. Run `--dry-run` first: it reports the
+ * count, the money and how many customers are affected while writing nothing,
+ * which is the only review this gets before rows go.
+ *
+ * It is also not a job that should ever need running twice. The importer no
+ * longer settles a bill the Payment Status tab calls unpaid, so this cleans up
+ * what the old behaviour left behind rather than holding a line against it.
+ */
+async function runRevertSheetPaid(
+  triggeredById?: string,
+  options: JobOptions = {},
+): Promise<JobResult> {
+  return run(
+    "revert-sheet-paid",
+    async () => {
+      const report = await revertSheetSettledBills({ dryRun: options.dryRun });
+      const restored = money(report.restoredPaise);
+      const detail = report.dryRun
+        ? `dry run — ${report.deleted} receipts would go, giving ${restored} of outstanding ` +
+          `back to ${report.customers} customers. ${report.kept} sheet receipts would be kept.`
+        : `${report.deleted} receipts deleted, ${restored} of outstanding restored to ` +
+          `${report.customers} customers. ${report.kept} sheet receipts kept.`;
+
+      // A dry run affects nothing, and saying otherwise would put a number in
+      // the job log for work that never happened.
+      return { recordsAffected: report.dryRun ? 0 : report.deleted, detail };
     },
     triggeredById,
   );

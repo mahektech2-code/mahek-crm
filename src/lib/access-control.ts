@@ -34,49 +34,67 @@ export type RequestScope = {
 export const resolveScope = cache(
   async function resolveScope(): Promise<RequestScope> {
     const user = await requireUser();
+    return scopeForUser(user);
+  },
+);
 
-    if (user.role === "telecaller") {
-      return {
-        user,
-        role: "telecaller",
-        scope: { kind: "own", userIds: [user.id] },
-      };
-    }
+/**
+ * The scope rules themselves, for a user who is already known.
+ *
+ * `resolveScope` gets that user from the session cookie; MBOS gets it from a
+ * bearer token, because a handset has no cookie jar. Both land here, so there
+ * is exactly ONE statement of what "mine" means — a second copy for the field
+ * app is how a salesman ends up seeing a book the CRM would not have shown
+ * them.
+ *
+ * `preference` is the manager's own narrowing, which only the cookie path can
+ * ask for. A caller that has no preference to offer gets the default.
+ */
+export async function scopeForUser(
+  user: User,
+  preference?: "mine" | "team",
+): Promise<RequestScope> {
+  if (user.role === "telecaller") {
+    return {
+      user,
+      role: "telecaller",
+      scope: { kind: "own", userIds: [user.id] },
+    };
+  }
 
-    if (user.role === "admin") {
-      return { user, role: "admin", scope: { kind: "all", userIds: null } };
-    }
+  if (user.role === "admin") {
+    return { user, role: "admin", scope: { kind: "all", userIds: null } };
+  }
 
-    // Accounts work the approval queue, which is every telecaller's orders
-    // and nobody's book. Without this branch they fell through to the manager
-    // path and were labelled managers — which then denied them the one
-    // capability that is theirs.
-    if (user.role === "accounts") {
-      return { user, role: "accounts", scope: { kind: "all", userIds: null } };
-    }
+  // Accounts work the approval queue, which is every telecaller's orders
+  // and nobody's book. Without this branch they fell through to the manager
+  // path and were labelled managers — which then denied them the one
+  // capability that is theirs.
+  if (user.role === "accounts") {
+    return { user, role: "accounts", scope: { kind: "all", userIds: null } };
+  }
 
-    // A manager may deliberately narrow to their own book.
-    const preference = await getScopePreference(user);
-    if (preference === "mine") {
-      return {
-        user,
-        role: "manager",
-        scope: { kind: "own", userIds: [user.id] },
-      };
-    }
-
-    const reports = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(or(eq(users.reportsToId, user.id), eq(users.id, user.id)));
-
+  // A manager may deliberately narrow to their own book.
+  const narrowing = preference ?? (await getScopePreference(user));
+  if (narrowing === "mine") {
     return {
       user,
       role: "manager",
-      scope: { kind: "team", userIds: reports.map((r) => r.id) },
+      scope: { kind: "own", userIds: [user.id] },
     };
-  },
-);
+  }
+
+  const reports = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(or(eq(users.reportsToId, user.id), eq(users.id, user.id)));
+
+  return {
+    user,
+    role: "manager",
+    scope: { kind: "team", userIds: reports.map((r) => r.id) },
+  };
+}
 
 /** The user ids a query may read, or null for unrestricted. */
 export function scopedUserIds(scope: DataScope): string[] | null {
