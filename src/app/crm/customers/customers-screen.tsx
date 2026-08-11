@@ -468,34 +468,31 @@ export function CustomersScreen({
                     </Badge>
                   </Td>
                   {/*
-                    Two lines, both LABELLED, because a customer answers to two
-                    people and a lead to one.
+                    Two lines, because a customer answers to two people and a
+                    lead to one. Flattening them into a single name would hide
+                    whichever one you did not pick.
 
-                    The top line used to be a bare name under a header reading
-                    "Owner / account managers", which made the reader work out
-                    which of the three it was — and the answer differed by row,
-                    since a lead answers to its owner and a customer to its
-                    sales account manager. The line underneath was already
-                    labelled "Back office:", so the column was half explaining
-                    itself and half not. Naming both costs one word and removes
-                    the guess.
+                    The top line is the NAME on its own, with no "Sales:" in
+                    front of it. Labelling it was tried and reverted: the
+                    column is narrow, seven extra characters pushed every name
+                    onto a second line, and a list whose rows are all twice as
+                    tall is harder to scan than one whose header you read once.
+                    The header says what the column is; the second line is
+                    labelled because it has to distinguish itself from the
+                    first.
                   */}
                   <Td>
                     <span className="block text-sm text-body">
-                      <span className="text-muted">
-                        {r.kind === "lead" ? "Lead owner: " : "Sales: "}
-                      </span>
                       {r.kind === "lead"
                         ? (r.ownerName ?? "Unassigned")
                         : (r.salesAmName ?? r.ownerName ?? "Unassigned")}
                     </span>
                     <span className="block text-xs text-muted">
-                      {/* A lead has no back office manager to name — nobody
-                          raises paperwork for an account that has not ordered
-                          — so the second line carries where it came from
-                          instead, which is what is actually useful there. */}
+                      {/* A lead has no back office manager — nobody raises
+                          paperwork for an account that has not ordered — so
+                          the second line carries where it came from instead. */}
                       {r.kind === "lead"
-                        ? `Source: ${r.leadSource ?? "not recorded"}`
+                        ? (r.leadSource ?? "Source not recorded")
                         : `Back office: ${r.backOfficeAmName ?? "unassigned"}`}
                     </span>
                   </Td>
