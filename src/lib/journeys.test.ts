@@ -29,12 +29,14 @@ import {
   monthlyTargets,
   orders,
   paymentReceipts,
+  payments,
   reminders,
   users,
   waMessages,
   waTemplates,
   attachments as attachmentsTable,
   sheetOrderRows,
+  sheetPaymentRows,
   sheetSyncRuns,
   syncConflicts,
   sheetTakenOrderRows,
@@ -127,7 +129,10 @@ import {
   prepareMessage,
 } from "@/lib/services/whatsapp-service";
 import { eodMetricsFor, eodPreflightFor } from "@/lib/services/eod-service";
-import { projectSheet } from "@/lib/services/sheet-projection-service";
+import {
+  projectSheet,
+  revertSheetSettledBills,
+} from "@/lib/services/sheet-projection-service";
 
 /* ------------------------------------------------------------------ harness */
 
@@ -4530,6 +4535,268 @@ describe("An imported customer reaches the calling queue", () => {
     const rows = await db.select().from(bills);
     assert.equal(rows.length, 1, "one bill, not two");
     assert.equal(rows[0].paidAmount, rows[0].amount, "and paid once, not twice");
+  });
+
+  /** One Payment Status row for an order, saying whatever it is told to say. */
+  async function stagePaymentRow(
+    orderNumber: string,
+    party: string,
+    paymentStatus: string | null,
+    paymentReceivedDate: string | null = null,
+  ) {
+    const [run] = await db
+      .insert(sheetSyncRuns)
+      .values({
+        id: id("syn"),
+        source: "payment_status",
+        spreadsheetId: "test-sheet",
+        tabTitle: "Payment Status",
+        mode: "reconcile",
+        status: "ok",
+      })
+      .returning();
+
+    await db.insert(sheetPaymentRows).values({
+      id: id("spr"),
+      syncId: run.id,
+      rowNumber: 2,
+      orderNumber,
+      raw: {},
+      rowHash: randomUUID(),
+      billingPartyName: party,
+      tallyBillNo: `MMI/26-27/${orderNumber}`,
+      billAmountPaise: 2360_00,
+      paymentStatus,
+      paymentReceivedDate,
+    });
+  }
+
+  test("the Payment Status tab's word beats the settle-by-default", async () => {
+    // The production incident: the Admin Console import passes bills:true and
+    // writes the real received/not-received, and every SCHEDULED projection —
+    // which passes no such flag — came behind it and settled the unpaid ones
+    // with a receipt for the full amount. Both key on SHEETPAY-<order>, and
+    // the bills the tab called received already had a receipt and were
+    // skipped, so the set it erased was exactly the set carrying real debt.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await stagePaymentRow("SO-1001", "Shree Paints", "Pending");
+
+    const report = await projectSheet({ assignToUserId: priya.id });
+    assert.equal(report.bills.created, 1, "the bill is still written");
+    assert.equal(report.bills.leftUnpaid, 1, "and the run says it held one back");
+
+    const [bill] = await db.select().from(bills);
+    assert.equal(bill.paidAmount, 0, "the sheet said the money has not arrived");
+    assert.equal(
+      (await db.select().from(paymentReceipts)).length,
+      0,
+      "and no receipt was invented to say otherwise",
+    );
+
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.name, "Shree Paints"));
+    assert.equal(customer.outstanding, 2360_00, "the debt reaches the customer");
+  });
+
+  test("a blank status is still settled, because silence is not evidence", async () => {
+    // "Not yet paid" and "nobody has updated this" wear the same blank. Reading
+    // it as debt is how an import invents nine crore of it.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await stagePaymentRow("SO-1001", "Shree Paints", "   ");
+
+    const report = await projectSheet({ assignToUserId: priya.id });
+    assert.equal(report.bills.leftUnpaid, 0);
+
+    const [bill] = await db.select().from(bills);
+    assert.equal(bill.paidAmount, bill.amount);
+  });
+
+  test("the revert gives back the outstanding a settled run wrote over", async () => {
+    // The damage, reproduced exactly: the tab says Pending, but the bill was
+    // settled before the importer learned to read it.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await projectSheet({ assignToUserId: priya.id });
+
+    const [damaged] = await db.select().from(bills);
+    assert.equal(damaged.paidAmount, damaged.amount, "settled, as prod was");
+
+    // The tab's verdict arrives — it was always there, never overwritten.
+    await stagePaymentRow("SO-1001", "Shree Paints", "Pending");
+
+    const dry = await revertSheetSettledBills({ dryRun: true });
+    assert.equal(dry.deleted, 1);
+    assert.equal(dry.restoredPaise, 2360_00);
+    assert.equal(dry.customers, 1);
+    assert.equal(
+      (await db.select().from(paymentReceipts)).length,
+      1,
+      "a dry run writes nothing",
+    );
+
+    const report = await revertSheetSettledBills();
+    assert.equal(report.deleted, 1);
+    assert.equal(report.restoredPaise, 2360_00);
+
+    const [restored] = await db.select().from(bills);
+    assert.equal(restored.paidAmount, 0, "the money is owed again");
+    assert.notEqual(restored.status, "paid");
+    assert.equal(
+      (await db.select().from(payments)).length,
+      0,
+      "the allocation line went with the receipt it belonged to",
+    );
+
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.name, "Shree Paints"));
+    assert.equal(customer.outstanding, 2360_00, "and the customer owes it");
+  });
+
+  test("a bill the receivables report unpaid is never settled again", async () => {
+    // THE 11 AUGUST INCIDENT, exactly. Applying Tally's receivables on the 9th
+    // marked 395 bills owed by DELETING their assumed receipts — which frees
+    // the SHEETPAY-<order> idempotency key. A free key reads to the importer as
+    // "never settled", so the next scheduled pass wrote a fresh full-amount
+    // receipt for 348 of them, Rs 1.18 crore, fourteen hours later.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await projectSheet({ assignToUserId: priya.id });
+
+    const [settled] = await db.select().from(bills);
+    assert.equal(settled.paidAmount, settled.amount, "imported settled, as always");
+
+    // Tally says the whole 2360.00 is still owed.
+    const { applyReceivables } = await import("@/lib/services/receivables-service");
+    const report = await applyReceivables(
+      [
+        `" "," ","Shree Paints"," "," "`,
+        `"Date","Ref. No.","Pending Amount","Due on","OverDue by days"`,
+        `"01 Jul 26","${settled.billNo}","2360","31 Jul 26"," "`,
+      ].join("\n"),
+    );
+    assert.equal(report.matched, 1, "the report found the bill");
+
+    const [owed] = await db.select().from(bills);
+    assert.equal(owed.paidAmount, 0, "and left it owing");
+    assert.ok(owed.paymentDecidedAt, "the decision is marked on the bill");
+    assert.equal(
+      (await db.select().from(paymentReceipts)).length,
+      0,
+      "the assumed receipt is gone, so the idempotency key is free again",
+    );
+
+    // The scheduled pass that used to undo all of it.
+    await projectSheet({ assignToUserId: priya.id });
+
+    const [after] = await db.select().from(bills);
+    assert.equal(after.paidAmount, 0, "the debt survives the next sync");
+    assert.equal(
+      (await db.select().from(paymentReceipts)).length,
+      0,
+      "and no receipt was invented on the free key",
+    );
+
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.name, "Shree Paints"));
+    assert.equal(customer.outstanding, 2360_00);
+  });
+
+  test("the decision survives however many times the sheet is read", async () => {
+    // The cron runs every thirty minutes. Once is not the test.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await projectSheet({ assignToUserId: priya.id });
+    const [bill] = await db.select().from(bills);
+
+    const { applyReceivables } = await import("@/lib/services/receivables-service");
+    await applyReceivables(
+      [
+        `" "," ","Shree Paints"," "," "`,
+        `"Date","Ref. No.","Pending Amount","Due on","OverDue by days"`,
+        `"01 Jul 26","${bill.billNo}","2360","31 Jul 26"," "`,
+      ].join("\n"),
+    );
+
+    for (let i = 0; i < 5; i++) await projectSheet({ assignToUserId: priya.id });
+
+    const [after] = await db.select().from(bills);
+    assert.equal(after.paidAmount, 0, "five passes, still owed");
+  });
+
+  test("a part payment from the report is not topped back up to full", async () => {
+    // leaveOwing REDUCES the assumed receipt rather than deleting it when some
+    // money did arrive. The key stays taken, but the lock has to hold anyway —
+    // a later pass must not decide the remainder arrived too.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await projectSheet({ assignToUserId: priya.id });
+    const [bill] = await db.select().from(bills);
+
+    const { applyReceivables } = await import("@/lib/services/receivables-service");
+    await applyReceivables(
+      [
+        `" "," ","Shree Paints"," "," "`,
+        `"Date","Ref. No.","Pending Amount","Due on","OverDue by days"`,
+        `"01 Jul 26","${bill.billNo}","1000","31 Jul 26"," "`,
+      ].join("\n"),
+    );
+
+    const [part] = await db.select().from(bills);
+    assert.equal(part.paidAmount, 1360_00, "2360 billed, 1000 still owed");
+
+    await projectSheet({ assignToUserId: priya.id });
+    const [after] = await db.select().from(bills);
+    assert.equal(after.paidAmount, 1360_00, "the remainder stays owed");
+  });
+
+  test("the revert keeps a receipt the tab vouches for", async () => {
+    // The narrow part. A bill the tab calls Received is money that arrived,
+    // and deleting its receipt would invent debt in the opposite direction.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await projectSheet({ assignToUserId: priya.id });
+    await stagePaymentRow("SO-1001", "Shree Paints", "Received", addDays(TODAY, -10));
+
+    const report = await revertSheetSettledBills();
+    assert.equal(report.deleted, 0);
+    assert.equal(report.kept, 1);
+
+    const [bill] = await db.select().from(bills);
+    assert.equal(bill.paidAmount, bill.amount, "still settled, and rightly");
+  });
+
+  test("the revert leaves a payment somebody recorded alone", async () => {
+    // Only `sheet_import` receipts are in scope. A telecaller's reported
+    // payment and an accounts confirmation are somebody's word, and no
+    // cleanup of an import's mistake may touch them.
+    await stageSheetRows("Shree Paints", "SO-1001", addDays(TODAY, -40));
+    await projectSheet({ assignToUserId: priya.id });
+    await stagePaymentRow("SO-1001", "Shree Paints", "Pending");
+
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.name, "Shree Paints"));
+    const humanReceipt = id("rcp");
+    await db.insert(paymentReceipts).values({
+      id: humanReceipt,
+      customerId: customer.id,
+      amount: 500_00,
+      receivedAt: addDays(TODAY, -2),
+      mode: "UPI",
+      status: "confirmed",
+      source: "manual",
+      reference: "UTR-12345",
+      confirmedAt: new Date(),
+      idempotencyKey: id("idem"),
+    });
+
+    await revertSheetSettledBills();
+
+    const remaining = await db.select().from(paymentReceipts);
+    assert.equal(remaining.length, 1, "the fabricated one went, the real one stayed");
+    assert.equal(remaining[0].id, humanReceipt);
   });
 
   test("the order lands, and the cycle is rebuilt from it", async () => {
