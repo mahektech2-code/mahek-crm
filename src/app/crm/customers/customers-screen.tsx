@@ -500,6 +500,15 @@ export function CustomersScreen({
                   */}
                   <Td className="whitespace-nowrap">
                     <span className="block text-sm text-body">
+                      {/* Named, like the line below it. A bare name under a
+                          header listing three roles makes the reader work out
+                          which one it is, and the answer changes row by row:
+                          a lead answers to its owner, a customer to its sales
+                          account manager. Now that the cell holds its line,
+                          the label costs width the column simply takes. */}
+                      <span className="text-muted">
+                        {r.kind === "lead" ? "Lead owner: " : "Sales: "}
+                      </span>
                       {r.kind === "lead"
                         ? (r.ownerName ?? "Unassigned")
                         : (r.salesAmName ?? r.ownerName ?? "Unassigned")}
@@ -509,7 +518,7 @@ export function CustomersScreen({
                           paperwork for an account that has not ordered — so
                           the second line carries where it came from instead. */}
                       {r.kind === "lead"
-                        ? (r.leadSource ?? "Source not recorded")
+                        ? `Source: ${r.leadSource ?? "not recorded"}`
                         : `Back office: ${r.backOfficeAmName ?? "unassigned"}`}
                     </span>
                   </Td>
