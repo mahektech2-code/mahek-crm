@@ -5031,6 +5031,10 @@ describe("An imported customer reaches the calling queue", () => {
       "the figures left out an account the list beside them was showing",
     );
 
+    // And the row says whose account it is, by the same rule — the owner is
+    // null here, so reading owner_id would have left the column blank.
+    assert.equal(row.assignedToName, manager.name);
+
   });
 });
 

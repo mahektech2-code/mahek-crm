@@ -800,17 +800,42 @@ export function CustomersScreen({
            * missing reason — nothing has been written yet, and the form comes
            * back with everything still in it rather than half saved.
            */
-          const amMoved =
-            (String(values.ownerId ?? "") !== (editing.ownerId ?? "")) ||
-            (String(values.backOfficeAmId ?? "") !== (editing.backOfficeAmId ?? ""));
+          const salesMoved =
+            String(values.ownerId ?? "") !== (editing.ownerId ?? "");
+          const backOfficeMoved =
+            String(values.backOfficeAmId ?? "") !== (editing.backOfficeAmId ?? "");
 
-          if (amMoved) {
+          if (salesMoved || backOfficeMoved) {
+            const backOfficeId = String(values.backOfficeAmId ?? "");
+            /*
+             * Only the seat that MOVED is sent. This used to send both
+             * whenever either changed, which stamps the decision mark — the
+             * thing that stops the sheet restating the old answer — on a seat
+             * nobody touched.
+             *
+             * This form asks for one reason, so the seat that moved carries
+             * it. Where both moved it is the same answer twice, which is what
+             * the person typed; the bulk dialog asks per seat because there
+             * the two are usually different decisions.
+             */
+            const reasonCode = String(values.amReasonCode ?? "");
             const moved = await run(
               updateAccountManagers({
                 customerIds: [editing.id],
-                salesAmId: String(values.ownerId ?? "") || null,
-                backOfficeAmId: String(values.backOfficeAmId ?? "") || null,
-                reasonCode: String(values.amReasonCode ?? ""),
+                ...(salesMoved
+                  ? {
+                      salesAmId: String(values.ownerId ?? "") || null,
+                      sales: { reasonCode },
+                    }
+                  : {}),
+                ...(backOfficeMoved
+                  ? {
+                      backOffice: backOfficeId
+                        ? ({ kind: "user", userId: backOfficeId } as const)
+                        : ({ kind: "none" } as const),
+                      backOfficeReason: { reasonCode },
+                    }
+                  : {}),
               }),
             );
             if (!moved.ok) return false;
