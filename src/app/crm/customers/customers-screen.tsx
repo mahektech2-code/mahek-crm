@@ -25,6 +25,8 @@ import {
   SelectionBar,
 } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
+import { AccountManagerDialog } from "@/components/crm/account-manager-dialog";
+import { updateAccountManagers } from "@/lib/actions/account-manager";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { Icon } from "@/components/shell/icons";
 import {
@@ -85,6 +87,9 @@ const STATUSES = [
 export function CustomersScreen({
   scopeLabel,
   isManager,
+  canReassign,
+  amReasons,
+  amSearchThreshold,
   team,
   rows,
   filters,
@@ -93,6 +98,15 @@ export function CustomersScreen({
 }: {
   scopeLabel: string;
   isManager: boolean;
+  /**
+   * Reassigning is accounts' and admin's, not a manager's — whose book an
+   * account is in decides whose targets it counts toward. Passed in rather
+   * than derived here, because the same check runs in the action and a screen
+   * that guessed would disagree with it.
+   */
+  canReassign: boolean;
+  amReasons: string[];
+  amSearchThreshold: number;
   team: Array<{ id: string; name: string }>;
   rows: Row[];
   filters: { query: string; status: string; owner: string; perPage: number };
@@ -138,6 +152,7 @@ export function CustomersScreen({
   const [addOpen, setAddOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Row | null>(null);
   const [bulkRemind, setBulkRemind] = React.useState(false);
+  const [changingAm, setChangingAm] = React.useState(false);
   const [deactivating, setDeactivating] = React.useState(false);
   const [reactivating, setReactivating] = React.useState(false);
 
@@ -671,6 +686,19 @@ export function CustomersScreen({
         >
           Export
         </Button>
+        <Button
+          variant="dark"
+          size="sm"
+          disabled={!canReassign}
+          title={
+            canReassign
+              ? undefined
+              : "Changing an account manager is an accounts or admin action"
+          }
+          onClick={() => setChangingAm(true)}
+        >
+          Update account manager
+        </Button>
         {/* Which way round depends on what is selected. Offering both at once
             would put "deactivate" next to "bring back" over one tick list. */}
         {selectedAllDeactivated ? (
@@ -747,6 +775,29 @@ export function CustomersScreen({
         onConfirm={async (reason) => {
           const result = await run(requestDeactivation([...selected], reason));
           if (result.ok) {
+            setSelected(new Set());
+            router.refresh();
+          }
+        }}
+      />
+
+      <AccountManagerDialog
+        // Keyed on the selection so it remounts with fresh state rather than
+        // resetting in an effect — the React Compiler rule every modal here
+        // already follows.
+        key={`am-${[...selected].join(",")}`}
+        open={changingAm}
+        count={selected.size}
+        people={team}
+        reasons={amReasons}
+        searchThreshold={amSearchThreshold}
+        onClose={() => setChangingAm(false)}
+        onSubmit={async (change) => {
+          const result = await run(
+            updateAccountManagers({ customerIds: [...selected], ...change }),
+          );
+          if (result.ok) {
+            setChangingAm(false);
             setSelected(new Set());
             router.refresh();
           }

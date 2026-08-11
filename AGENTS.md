@@ -236,16 +236,50 @@ in Asia/Kolkata and hides it completely. Two tests guard it: one forces the
 session to GMT and asserts the difference, and one greps `lib/` for bare casts,
 because the rule is invisible at runtime on a database that happens to agree.
 
-**The working day is Asia/Kolkata, and it does not start at midnight.**
-`today()` in `lib/recompute.ts` applies the configured day boundary (5am by
-default), so a call logged at 2am belongs to the shift that started yesterday.
-Day windows in SQL carry an explicit `+05:30` — without it Postgres reads them
-in the server's timezone and a 9am call falls outside "today". The sync
-`today()` in `lib/format.ts` is for client components only.
+**The working day is Asia/Kolkata, and where it starts is configuration.**
+`today()` in `lib/recompute.ts` applies `workingDay.dayBoundaryHour`, which is
+now 0 — the day changes when the date does, which is what everybody outside
+the building means by the word. It shipped as 5, and a dashboard opened at 2am
+showed the previous day's figures with nothing on the screen saying why.
+Raising it again is a real option for a team that logs calls after midnight;
+it is a decision somebody makes on the Settings screen, not a default.
+`0042_day_boundary_midnight` moved the stored value on deployments already
+carrying the old one, matching on `updated_by_id is null` so a value somebody
+had actually chosen was left alone. Day windows in SQL carry an explicit
+`+05:30` — without it Postgres reads them in the server's timezone and a 9am
+call falls outside "today". The sync `today()` in `lib/format.ts` is for
+client components only.
+
+**A span of days is one window, not a loop over days.** The dashboard reads
+today, yesterday, this week or this month, and every figure comes from
+`eodMetricsForRange` — the same twenty subqueries a single day uses, over a
+wider window, so a day and a one-day range cannot answer differently and a
+month costs what a day costs. `periodRange` and `previousRange` are pure and
+live in `lib/business-date.ts`. A span is measured against the equally long
+one immediately before it, never against a whole previous month: a
+month-to-date of twelve days beside a full month reads as a collapse every
+time. Yesterday means the previous WORKING day, and the screen prints the
+dates rather than implying them. What does NOT follow the span is the queue,
+the reminders and the "needs you today" list — those are work waiting now, and
+a month's worth of it is not a thing.
 
 **Scope, not roles, filters lists.** `getScope()` returns `mine` or `team`.
 Telecallers are pinned to `mine`; the cookie cannot widen it. Managers default
 to `team` because their own book is usually empty.
+
+**And there is ONE resolution of it, `scopeForUser`.** The My book / Team
+switch is drawn for anybody `isManager` lets through, which includes an admin
+— and the admin branch returned `all` before the preference was ever read, so
+the highlight moved and every list stayed team-wide. Two definitions: the
+cookie one relabelled the header while this one filtered the data. Accounts
+are deliberately outside the narrowing, because `getScope` answers "mine" for
+every non-manager and reading it for them would scope the approval queue to a
+clerk's own book, which is empty.
+
+**A team list says whose call each row is.** Not the owner: whose book a
+record sits in is `ASSIGNED_TO_SQL`, so naming the owner puts a call against
+somebody it was reassigned away from. Unassigned is said in words rather than
+left blank — a call nobody owns is the one a manager most needs to see.
 
 **Manager-only actions are checked server-side** in the action, not just
 disabled in the UI. Disabled buttons always carry a `title` saying why.
@@ -863,6 +897,70 @@ to the owner: all 557 customers showed a telecaller as their salesperson.
 and the linked account only where the sheet is silent, and
 `recomputeSalesPeople()` rebuilds it from what is already stored — the command
 to run when the reading changed rather than the row.
+
+**Changing an account manager is accounts' and admin's, and not a manager's.**
+Whose book an account is in decides who is credited for its orders and whose
+targets it counts toward, so a manager reassigning accounts is a manager moving
+numbers between their own people, including themselves — the same conflict
+`order.approve` exists to avoid, one level up. `customer.reassign` sits in
+`ACCOUNTS_ONLY` and is checked in the action, not by hiding the button.
+
+**An account has TWO managers and they move independently.** Sales is whose
+book it is; back office is dispatch, billing and paperwork. Either or both can
+be changed in one action, and each writes its own history row, because a
+salesperson resigning says nothing about who raises the invoices. In the
+dialog, a manager left untouched is OMITTED from the request rather than sent
+as its current value — sending it would stamp a decision mark on an account
+nobody decided anything about.
+
+**A reassignment is a decision, so the sheet keeps its hands off it.**
+`customers.amDecidedAt` is the third mark of its kind, after
+`orders.approvedAt` and `bills.paymentDecidedAt`, and it guards TWO things
+rather than one. `--reassign` no longer overwrites the ids on a decided
+account — but the half that would have been missed is
+`recomputeSalesPeople()`, which rewrites `salesPersonName` from the sheet every
+night. Holding the id while letting the NAME revert is the worst outcome
+available: the account moves for scope, the queue and collections, and every
+screen goes on showing the old person, because the lists read the sheet's name
+first. Nobody reports that as a bug — they report that reassignment does not
+work. So the mirrors move with the ids, and a decided account is skipped by
+both paths.
+
+**A lead moves by `owner_id` and a customer by `sales_am_id`.** That is what
+`ASSIGNED_TO_SQL` reads, so writing only `sales_am_id` leaves every lead
+exactly where it was while the screen reports it moved.
+
+**Why it moved is a column, not a sentence in a log.** `customer_am_changes`
+stores a reason code from `people.amChangeReasons` beside the from and the to,
+and the reason list is configuration because a manager should be able to add
+one without a deploy. The question people actually ask is "what moved when
+Suresh left, and why" — `audit_log` can only answer that by grep. Names are
+stored ON the row as well as the ids, so a history stays readable after the
+person leaves and their account goes.
+
+**Both sides are told, and the new manager especially.** Work has moved onto
+their queue without them asking; the first they would otherwise know is a list
+that grew overnight. The person who lost the accounts is told for the same
+reason in reverse — a book that shrinks silently reads as a bug in the queue.
+One notification per person per action, never one per account, and a
+reassignment that changes nothing notifies nobody.
+
+**Accounts have their own customer list, and it is not decoration.** An
+accounts user holds `apps: ["accounts"]` and `src/app/crm/layout.tsx` redirects
+them out of the CRM, so offering this action only on the CRM's list would have
+shipped a permission that nobody holding it could reach. `/accounts/customers`
+runs `listCustomersPage()` — the SAME query the CRM list runs, because two
+reads of "who are our customers" is how two screens disagree about one. The
+presentation is its own: the CRM list offers reminders and WhatsApp and links
+every row into `/crm/customers/[id]`, all of which are doors this app's users
+are redirected away from.
+
+**One person picker, not two.** A dropdown beats a search box while the list is
+short and loses the moment it is not, but building both means two components
+and two sets of bugs, and the day the eleventh salesperson is hired somebody
+has to notice and swap them. It is always the same searchable list;
+`people.pickerSearchThreshold` decides only whether the search field takes
+focus.
 
 **What it does NOT do is decide whose book a customer is in.** That stays
 `salesAmId`, because scope has to resolve to somebody who can sign in and see

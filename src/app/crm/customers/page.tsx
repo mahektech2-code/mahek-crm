@@ -1,4 +1,6 @@
 import { isManager, requireUser } from "@/lib/auth";
+import { can } from "@/lib/access-control";
+import { getConfig } from "@/lib/config/store";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { listCustomersPage, listTeam } from "@/lib/queries";
 import { customerStatusLabel } from "@/lib/format";
@@ -31,7 +33,7 @@ export default async function CustomersPage({
   const scope = await getScope(user);
 
   const perPage = Number(one("per") ?? 25);
-  const [page, team] = await Promise.all([
+  const [page, team, config] = await Promise.all([
     listCustomersPage({
       query: one("q"),
       status: one("status"),
@@ -40,12 +42,19 @@ export default async function CustomersPage({
       perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
     }),
     listTeam(),
+    getConfig(),
   ]);
 
   return (
     <CustomersScreen
       scopeLabel={scopeLabel(scope, user)}
       isManager={isManager(user)}
+      // Asked of the same function the action asks, so a visible button and a
+      // permitted action can never disagree. The action checks again anyway —
+      // a disabled control is not a permission.
+      canReassign={can(user.role, "customer.reassign")}
+      amReasons={config["people.amChangeReasons"]}
+      amSearchThreshold={config["people.pickerSearchThreshold"]}
       team={team.map((t) => ({ id: t.id, name: t.name }))}
       filters={{
         query: one("q") ?? "",

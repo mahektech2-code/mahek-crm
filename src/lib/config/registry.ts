@@ -30,6 +30,8 @@ export type SettingCategory =
   | "interactions"
   | "whatsapp"
   | "voice"
+  /** Who accounts answer to, and how the screens that change that behave. */
+  | "people"
   /* ---- MBOS, the field sales app. Same rule: no threshold is a constant. ---- */
   | "mbos-location"
   | "mbos-orders"
@@ -472,6 +474,34 @@ export const SETTINGS = [
     default: true,
   },
   {
+    key: "people.amChangeReasons",
+    type: "structured",
+    category: "people",
+    label: "Reasons an account manager changes",
+    description:
+      "Why an account moved to a different account manager, offered as a list so the answer can be counted rather than read. Somebody leaving is the common one and the reason the list exists - when a salesperson resigns, whoever picks up their accounts needs to know which moved and why. `other` always requires a note. Retiring a reason here does not touch the history: stored codes keep resolving, because a reason nobody can read any more is a row nobody can explain.",
+    default: [
+      "Salesperson left",
+      "Back office staff left",
+      "Territory reassigned",
+      "Workload rebalanced",
+      "Customer requested",
+      "Correcting a mistake",
+      "Other",
+    ],
+  },
+  {
+    key: "people.pickerSearchThreshold",
+    type: "integer",
+    category: "people",
+    label: "When a person picker becomes a search box",
+    description:
+      "How many people a picker will list plainly before it leads with a search box instead. A short list is faster to read than to type into; a long one is the opposite, and scrolling ninety names to find a colleague mid-task is how the wrong one gets picked. Both are the same control - this only decides whether the search field takes focus.",
+    default: 10,
+    min: 3,
+    max: 100,
+  },
+  {
     key: "payments.modes",
     type: "structured",
     category: "payments",
@@ -562,8 +592,8 @@ export const SETTINGS = [
     category: "working-day",
     label: "Day boundary hour",
     description:
-      "The hour at which 'today' flips. Set to 5 so a report finalised at 11 pm still belongs to that working day.",
-    default: 5,
+      "The hour at which 'today' flips, in the working-day timezone. 0 is midnight — the day changes when the date does, which is what everybody outside the building means by the word. Raise it only if calls are logged after midnight and should count towards the shift that started the previous morning.",
+    default: 0,
     min: 0,
     max: 23,
   },
@@ -1823,6 +1853,8 @@ export type Config = {
 
   "payments.reportedQuietDays": number;
   "payments.allowOnAccountRemainder": boolean;
+  "people.amChangeReasons": string[];
+  "people.pickerSearchThreshold": number;
   "payments.modes": string[];
   "payments.referenceRequiredModes": string[];
   "payments.confirmationAgeWarningHours": number;

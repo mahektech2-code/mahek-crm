@@ -5,6 +5,7 @@ import {
   bills,
   calls,
   complaints,
+  customerAmChanges,
   customers,
   helpArticles,
   notifications,
@@ -13,8 +14,8 @@ import {
 } from "@/db/schema";
 import { ASSIGNED_TO_SQL, resolveScope, scopedUserIds } from "./access-control";
 import { today as businessToday } from "./recompute";
-import { daysBetween, monthKey } from "./business-date";
-import { eodMetricsFor } from "./services/eod-service";
+import { daysBetween, monthKey, type DateRange } from "./business-date";
+import { eodMetricsFor, eodMetricsForRange } from "./services/eod-service";
 
 /* ---------------------------------------------------------------------------
  * Reads for the screens. Every one resolves scope, so a missed check cannot
@@ -604,12 +605,29 @@ export async function dayActivity(
   day?: string,
 ): Promise<DayActivity> {
   const target = day ?? (await businessToday());
+  return rangeActivity(userId, { from: target, to: target });
+}
 
+/**
+ * The same figures over a span of days — the dashboard's week and month.
+ *
+ * A null user is the whole team in scope, summed. It is one query per person
+ * either way, because the span is a window on the same query rather than a
+ * query per day: a month costs exactly what a day costs.
+ *
+ * The connect rate is computed from the SUMMED calls, never averaged from
+ * each person's or each day's rate. Averaging rates weights somebody who made
+ * four calls the same as somebody who made ninety.
+ */
+export async function rangeActivity(
+  userId: string | null,
+  range: DateRange,
+): Promise<DayActivity> {
   const metrics = userId
-    ? await eodMetricsFor(userId, target)
+    ? await eodMetricsForRange(userId, range)
     : (
         await Promise.all(
-          (await listTeam()).map((u) => eodMetricsFor(u.id, target)),
+          (await listTeam()).map((u) => eodMetricsForRange(u.id, range)),
         )
       ).reduce((acc, m) => {
         for (const k of Object.keys(acc) as Array<keyof typeof acc>)
@@ -634,15 +652,26 @@ export type TeamMemberDay = {
 
 export async function teamDay(day?: string): Promise<TeamMemberDay[]> {
   const target = day ?? (await businessToday());
+  return teamRange({ from: target, to: target });
+}
+
+/**
+ * The per-person table over a span.
+ *
+ * Overdue reminders are counted as at the END of the span and not summed over
+ * it: a reminder overdue on Monday and still overdue on Friday is one overdue
+ * reminder, and adding it up daily would report five.
+ */
+export async function teamRange(range: DateRange): Promise<TeamMemberDay[]> {
   const team = await listTeam();
 
   return Promise.all(
     team.map(async (user) => {
-      const m = await eodMetricsFor(user.id, target);
+      const m = await eodMetricsForRange(user.id, range);
       const [row] = await db.execute<{ overdue: number }>(sql`
         select count(*)::int as overdue from reminders r
          where r.assigned_user_id = ${user.id} and r.status = 'pending'
-           and r.due_date < ${target}::date
+           and r.due_date < ${range.to}::date
       `);
       return {
         user,
@@ -786,6 +815,38 @@ export async function globalSearch(q: string) {
       subtitle: [p.formulation, p.packing].filter(Boolean).join(" · "),
     })),
   };
+}
+
+/**
+ * Every time this account changed hands, newest first.
+ *
+ * Names are read from the ROW rather than joined to `users`, because the row
+ * stored them at the time. Somebody who has since left keeps their name here —
+ * a history that renders "unknown" for the person a change was made away from
+ * answers the wrong half of the question it exists for.
+ */
+export async function listAmChanges(customerId: string) {
+  const rows = await db
+    .select({
+      id: customerAmChanges.id,
+      role: customerAmChanges.role,
+      fromName: customerAmChanges.fromName,
+      toName: customerAmChanges.toName,
+      reasonCode: customerAmChanges.reasonCode,
+      note: customerAmChanges.note,
+      changedAt: customerAmChanges.changedAt,
+      changedBy: sql<string | null>`(
+        select name from users u where u.id = customer_am_changes.changed_by_id
+      )`,
+    })
+    .from(customerAmChanges)
+    .where(eq(customerAmChanges.customerId, customerId))
+    .orderBy(desc(customerAmChanges.changedAt));
+
+  return rows.map((r) => ({
+    ...r,
+    changedAt: r.changedAt as Date,
+  }));
 }
 
 export { daysBetween, lte, orders, calls };

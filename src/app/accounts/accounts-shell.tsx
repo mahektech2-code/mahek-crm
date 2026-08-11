@@ -121,6 +121,21 @@ export function AccountsShell({
       ],
     },
     {
+      label: "Accounts",
+      items: [
+        /*
+         * The customer list, and the reason it is here at all.
+         *
+         * Changing an account manager is accounts' and admin's, and an
+         * accounts user holds `apps: ["accounts"]` — the CRM layout redirects
+         * them straight back out. Offering the action only on the CRM's
+         * customer list would have shipped a permission nobody who holds it
+         * can reach.
+         */
+        { href: "/accounts/customers", label: "Customers", icon: "ledger" },
+      ],
+    },
+    {
       label: "Money",
       items: [
         { href: "/accounts/record", label: "Record a payment", icon: "plus" },

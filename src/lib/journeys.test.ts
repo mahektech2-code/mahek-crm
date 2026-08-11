@@ -37,7 +37,10 @@ import {
   attachments as attachmentsTable,
   sheetOrderRows,
   sheetPaymentRows,
+  sheetPartyRows,
   sheetSyncRuns,
+  customerAmChanges,
+  notifications,
   syncConflicts,
   sheetTakenOrderRows,
 } from "@/db/schema";
@@ -49,7 +52,7 @@ import {
   invalidateConfig,
   getConfig,
 } from "@/lib/config/store";
-import { NotPermittedError } from "@/lib/access-control";
+import { NotPermittedError, scopeForUser } from "@/lib/access-control";
 import { today } from "@/lib/recompute";
 import {
   recomputeBuyingCycle,
@@ -59,8 +62,10 @@ import {
   recomputeAllOutstanding,
   recomputeBillStatuses,
   recomputeAllBillPaid,
+  recomputeSalesPeople,
 } from "@/lib/recompute";
 import { addDays } from "@/lib/business-date";
+import { updateAccountManagers } from "@/lib/actions/account-manager";
 import { getQueue } from "@/lib/services/queue-service";
 import { saveInteraction } from "@/lib/services/interaction-service";
 import { seedCatalogue } from "@/db/seed-catalogue";
@@ -123,14 +128,18 @@ import {
   approveOrder,
   declineOrder,
 } from "@/lib/services/order-approval-service";
-import { customerTimeline } from "@/lib/queries";
+import { customerTimeline, rangeActivity } from "@/lib/queries";
 import {
   confirmSent,
   markCopied,
   prepareLegs,
   prepareMessage,
 } from "@/lib/services/whatsapp-service";
-import { eodMetricsFor, eodPreflightFor } from "@/lib/services/eod-service";
+import {
+  eodMetricsFor,
+  eodMetricsForRange,
+  eodPreflightFor,
+} from "@/lib/services/eod-service";
 import {
   projectSheet,
   revertSheetSettledBills,
@@ -148,7 +157,7 @@ let deepa: typeof users.$inferSelect;
 
 async function makeUser(
   name: string,
-  role: "telecaller" | "manager" | "accounts",
+  role: "telecaller" | "manager" | "accounts" | "admin",
   reportsToId?: string,
 ) {
   const [row] = await db
@@ -4980,5 +4989,371 @@ describe("An imported customer reaches the calling queue", () => {
       worklist.some((r) => r.customerId === customer.id),
       "an overdue customer with a sales AM was missing from the collections worklist",
     );
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * The My book / Team switch.
+ *
+ * It is drawn for anybody `isManager` lets through, and that includes an
+ * admin. The narrowing has to be read for both, or the highlight moves and
+ * every list stays team-wide — which is what the Call Log did.
+ * ------------------------------------------------------------------------- */
+
+describe("whose book a screen is showing", () => {
+  test("an admin choosing My book gets their own book, not the company", async () => {
+    const admin = await makeUser("Anita", "admin");
+
+    const narrowed = await scopeForUser(admin, "mine");
+    assert.equal(narrowed.scope.kind, "own");
+    assert.deepEqual(
+      narrowed.scope.userIds,
+      [admin.id],
+      "the Call Log kept showing every telecaller's calls with My book lit",
+    );
+    assert.equal(narrowed.role, "admin", "narrowing the view is not a demotion");
+
+    const wide = await scopeForUser(admin, "team");
+    assert.equal(wide.scope.kind, "all", "an admin's team is the whole company");
+  });
+
+  test("a manager choosing My book gets their own book", async () => {
+    const mine = await scopeForUser(manager, "mine");
+    assert.equal(mine.scope.kind, "own");
+    assert.deepEqual(mine.scope.userIds, [manager.id]);
+
+    const team = await scopeForUser(manager, "team");
+    assert.equal(team.scope.kind, "team");
+    assert.deepEqual(
+      [...(team.scope.userIds ?? [])].sort(),
+      [manager.id, priya.id, rakesh.id].sort(),
+      "the team is the reporting line plus the manager themselves",
+    );
+  });
+
+  test("a telecaller cannot widen, whatever the preference says", async () => {
+    const asked = await scopeForUser(priya, "team");
+    assert.equal(asked.scope.kind, "own");
+    assert.deepEqual(asked.scope.userIds, [priya.id]);
+  });
+
+  test("accounts are never narrowed — they are shown no switch", async () => {
+    // `getScope` answers "mine" for every non-manager, so reading a preference
+    // for accounts would scope the approval queue to a clerk's own book.
+    const scope = await scopeForUser(deepa);
+    assert.equal(scope.role, "accounts");
+    assert.equal(scope.scope.kind, "all");
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * The dashboard's spans, against the database.
+ *
+ * `periodRange` is pinned in the engine tests; what is pinned here is that a
+ * span of one day and that day on its own read the same figures, and that a
+ * longer span adds days up rather than reading only one of them.
+ * ------------------------------------------------------------------------- */
+
+describe("figures over a span of days", () => {
+  /** An outbound call at 10am IST on a given business date. */
+  async function callAt(day: string, outcome: "no_order" | "no_answer") {
+    const customer = await makeCustomer(priya.id);
+    await db.insert(calls).values({
+      id: id("cal"),
+      customerId: customer.id,
+      userId: priya.id,
+      interactionType: "outbound_call",
+      outcome,
+      startedAt: new Date(`${day}T10:00:00+05:30`),
+    });
+  }
+
+  test("a one-day range is the day itself", async () => {
+    await callAt(TODAY, "no_order");
+    await callAt(TODAY, "no_answer");
+
+    const day = await eodMetricsFor(priya.id, TODAY);
+    const range = await eodMetricsForRange(priya.id, { from: TODAY, to: TODAY });
+    assert.deepEqual(
+      range,
+      day,
+      "the dashboard's today and the EOD report must not be two answers",
+    );
+    assert.equal(day.callsAttempted, 2);
+  });
+
+  test("a span adds the days up, and stops at its edges", async () => {
+    const yesterday = addDays(TODAY, -1);
+    const wayBack = addDays(TODAY, -9);
+
+    await callAt(TODAY, "no_order");
+    await callAt(yesterday, "no_order");
+    await callAt(yesterday, "no_answer");
+    await callAt(wayBack, "no_order");
+
+    const twoDays = await eodMetricsForRange(priya.id, {
+      from: yesterday,
+      to: TODAY,
+    });
+    assert.equal(twoDays.callsAttempted, 3, "the call nine days ago is outside");
+    assert.equal(twoDays.callsMissed, 1);
+
+    const tenDays = await eodMetricsForRange(priya.id, {
+      from: wayBack,
+      to: TODAY,
+    });
+    assert.equal(tenDays.callsAttempted, 4, "a wider span reaches it");
+  });
+
+  test("the team figure over a span sums the people in scope", async () => {
+    await callAt(TODAY, "no_order");
+
+    const customer = await makeCustomer(rakesh.id);
+    await db.insert(calls).values({
+      id: id("cal"),
+      customerId: customer.id,
+      userId: rakesh.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      startedAt: new Date(`${TODAY}T11:00:00+05:30`),
+    });
+
+    setTestUser(manager);
+    const team = await rangeActivity(null, { from: TODAY, to: TODAY });
+    assert.equal(team.callsAttempted, 2, "both telecallers' calls, added up");
+
+    // And the rate comes off the summed calls, never averaged from each
+    // person's own rate.
+    assert.equal(team.connectRate, 100);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Changing who an account answers to.
+ *
+ * Two managers per account, moving independently, changed by accounts and
+ * admin and nobody else — and the whole thing is worthless unless it survives
+ * the next sheet sync, which is what most of these are about.
+ * ------------------------------------------------------------------------- */
+
+/** One Sales Party row, so `recomputeSalesPeople()` has a sheet to read. */
+async function stagePartyRow(partyName: string, salesPersonName: string) {
+  const [run] = await db
+    .insert(sheetSyncRuns)
+    .values({
+      id: id("syn"),
+      source: "sales_party",
+      spreadsheetId: "test-sheet",
+      tabTitle: "Sales Party",
+      mode: "reconcile",
+      status: "ok",
+    })
+    .returning();
+  await db.insert(sheetPartyRows).values({
+    id: id("spy"),
+    syncId: run.id,
+    rowNumber: 2,
+    partyName,
+    partyKey: partyName.trim().toLowerCase(),
+    raw: {},
+    rowHash: randomUUID(),
+    salesPersonName,
+  });
+}
+
+describe("updating an account manager", () => {
+  test("accounts may, and a manager may not", async () => {
+    // Deliberately the narrowest permission in the app. Whose book an account
+    // is in decides whose targets it counts toward, so a manager reassigning
+    // accounts is a manager moving numbers between their own people.
+    const customer = await makeCustomer(priya.id);
+
+    setTestUser(manager);
+    const refused = await updateAccountManagers({
+      customerIds: [customer.id],
+      salesAmId: rakesh.id,
+      reasonCode: "Salesperson left",
+    });
+    assert.equal(refused.ok, false, "a manager reassigned an account");
+
+    const [untouched] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(untouched.salesAmId, priya.id, "and it moved anyway");
+    assert.equal(untouched.amDecidedAt, null, "and left a decision mark");
+
+    setTestUser(deepa);
+    const allowed = await updateAccountManagers({
+      customerIds: [customer.id],
+      salesAmId: rakesh.id,
+      reasonCode: "Salesperson left",
+    });
+    assert.equal(allowed.ok, true, allowed.ok ? "" : allowed.error);
+    setTestUser(priya);
+  });
+
+  test("both managers move at once, and each is its own history row", async () => {
+    const customer = await makeCustomer(priya.id, { backOfficeAmId: null });
+
+    setTestUser(deepa);
+    const res = await updateAccountManagers({
+      customerIds: [customer.id],
+      salesAmId: rakesh.id,
+      backOfficeAmId: manager.id,
+      reasonCode: "Territory reassigned",
+      note: "Western line handed over",
+    });
+    assert.equal(res.ok, true, res.ok ? "" : res.error);
+    setTestUser(priya);
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.salesAmId, rakesh.id);
+    assert.equal(after.backOfficeAmId, manager.id);
+    // The mirrors move with the ids, or the screens keep showing the old name
+    // and the reassignment reads as a failure.
+    assert.equal(after.salesPersonName, "Rakesh");
+    assert.equal(after.backOfficeName, "Vikram");
+    assert.ok(after.amDecidedAt, "the decision is marked");
+
+    const history = await db
+      .select()
+      .from(customerAmChanges)
+      .where(eq(customerAmChanges.customerId, customer.id));
+    assert.equal(history.length, 2, "one row per manager, not one for both");
+    const sales = history.find((h) => h.role === "sales")!;
+    assert.equal(sales.fromUserId, priya.id);
+    assert.equal(sales.toUserId, rakesh.id);
+    assert.equal(sales.reasonCode, "Territory reassigned");
+    assert.equal(sales.note, "Western line handed over");
+    assert.equal(history.find((h) => h.role === "back_office")!.toUserId, manager.id);
+  });
+
+  test("the new manager is told, and the old one too", async () => {
+    const customer = await makeCustomer(priya.id);
+
+    setTestUser(deepa);
+    await updateAccountManagers({
+      customerIds: [customer.id],
+      salesAmId: rakesh.id,
+      reasonCode: "Salesperson left",
+    });
+    setTestUser(priya);
+
+    const toNew = await db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.userId, rakesh.id));
+    assert.ok(
+      toNew.some((n) => /assigned to you/i.test(n.title)),
+      "the person who gained the work was not told",
+    );
+    const toOld = await db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.userId, priya.id));
+    assert.ok(
+      toOld.some((n) => /moved from you/i.test(n.title)),
+      "a book that shrinks silently reads as a bug in the queue",
+    );
+  });
+
+  test("a lead moves by its owner, a customer by its sales AM", async () => {
+    // ASSIGNED_TO_SQL reads owner_id for a lead and sales_am_id for a customer.
+    // Writing only sales_am_id leaves every lead exactly where it was while
+    // the screen reports it moved.
+    const lead = await makeCustomer(priya.id, { kind: "lead", salesAmId: null });
+
+    setTestUser(deepa);
+    await updateAccountManagers({
+      customerIds: [lead.id],
+      salesAmId: rakesh.id,
+      reasonCode: "Salesperson left",
+    });
+    setTestUser(priya);
+
+    const [after] = await db.select().from(customers).where(eq(customers.id, lead.id));
+    assert.equal(after.ownerId, rakesh.id, "the lead did not actually move");
+  });
+
+  test("a reason is required, and Other has to say what it is", async () => {
+    const customer = await makeCustomer(priya.id);
+    setTestUser(deepa);
+
+    const unknown = await updateAccountManagers({
+      customerIds: [customer.id],
+      salesAmId: rakesh.id,
+      reasonCode: "Because I said so",
+    });
+    assert.equal(unknown.ok, false, "an unlabelled reason was stored");
+
+    const bare = await updateAccountManagers({
+      customerIds: [customer.id],
+      salesAmId: rakesh.id,
+      reasonCode: "Other",
+    });
+    assert.equal(bare.ok, false, "Other without a note tells nobody anything");
+
+    const withNote = await updateAccountManagers({
+      customerIds: [customer.id],
+      salesAmId: rakesh.id,
+      reasonCode: "Other",
+      note: "Covering maternity leave",
+    });
+    assert.equal(withNote.ok, true, withNote.ok ? "" : withNote.error);
+    setTestUser(priya);
+  });
+
+  test("selecting an account that is already there changes nothing", async () => {
+    // Selecting forty to move the six that are not already on the new manager
+    // must not tell them they gained forty.
+    const customer = await makeCustomer(priya.id);
+    setTestUser(deepa);
+    const res = await updateAccountManagers({
+      customerIds: [customer.id],
+      salesAmId: priya.id,
+      reasonCode: "Workload rebalanced",
+    });
+    setTestUser(priya);
+    assert.equal(res.ok, true);
+
+    assert.equal(
+      (await db.select().from(customerAmChanges).where(eq(customerAmChanges.customerId, customer.id)))
+        .length,
+      0,
+      "a no-op was written to the history",
+    );
+    const [after] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(after.amDecidedAt, null, "and it claimed a decision was made");
+  });
+
+  test("the nightly recompute does not put the old name back", async () => {
+    // The quiet half of the guard. Holding sales_am_id while letting
+    // recomputeSalesPeople rewrite sales_person_name gives the worst outcome
+    // available: the account moves for scope and every screen still shows the
+    // old name. Nobody reports that as a bug — they report that reassignment
+    // does not work.
+    const customer = await makeCustomer(priya.id, { name: "Shree Paints" });
+    await stagePartyRow("Shree Paints", "Suresh");
+
+    await recomputeSalesPeople();
+    const [fromSheet] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(fromSheet.salesPersonName, "Suresh", "the sheet is the author until somebody decides");
+
+    setTestUser(deepa);
+    await updateAccountManagers({
+      customerIds: [customer.id],
+      salesAmId: rakesh.id,
+      reasonCode: "Salesperson left",
+    });
+    setTestUser(priya);
+
+    await recomputeSalesPeople();
+    const [after] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(after.salesPersonName, "Rakesh", "the sheet overwrote a decision");
+    assert.equal(after.salesAmId, rakesh.id);
   });
 });

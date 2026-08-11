@@ -8,6 +8,7 @@ import {
   customerMessages,
   customerTimeline,
   getCustomer,
+  listAmChanges,
   today,
 } from "@/lib/queries";
 import { getFollowUpDetail } from "@/lib/services/payment-service";
@@ -75,9 +76,10 @@ export default async function CustomerRecordPage({
       .then((r) => r[0]),
   ]);
 
-  const [quickNoteRows, productRows] = await Promise.all([
+  const [quickNoteRows, productRows, amChanges] = await Promise.all([
     db.select().from(quickNotesTable).where(eq(quickNotesTable.active, true)),
     popularProducts(),
+    listAmChanges(id),
   ]);
 
   const target = targets.find((t) => t.customerId === id);
@@ -95,6 +97,7 @@ export default async function CustomerRecordPage({
 
   return (
     <RecordScreen
+      amChanges={amChanges}
       customer={{
         id: customer.id,
         name: customer.name,
