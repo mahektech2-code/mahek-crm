@@ -146,6 +146,35 @@ function StopIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+function PauseIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <rect x="7" y="5" width="4" height="14" rx="1.2" />
+      <rect x="13" y="5" width="4" height="14" rx="1.2" />
+    </svg>
+  );
+}
+
+function ResumeIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M8 5.5v13a1 1 0 0 0 1.54.84l10-6.5a1 1 0 0 0 0-1.68l-10-6.5A1 1 0 0 0 8 5.5Z" />
+    </svg>
+  );
+}
+
 const clock = (seconds: number) =>
   `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
@@ -173,11 +202,19 @@ const BAR_COUNT = 27;
 function LevelMeter({
   stream,
   live,
+  held = false,
   tone = "danger",
 }: {
   stream: MediaStream | null;
   /** True while the microphone is open; false animates on a loop instead. */
   live: boolean;
+  /**
+   * Held on a pause: STILL, not idling. The idle loop exists so a screen
+   * waiting on the model does not sit dead, and it is exactly the wrong thing
+   * here — bars travelling under the word "Held" is the screen saying it can
+   * still hear you while the recorder is taking nothing.
+   */
+  held?: boolean;
   tone?: "danger" | "brand";
 }) {
   const bars = React.useRef<Array<HTMLSpanElement | null>>([]);
@@ -235,8 +272,12 @@ function LevelMeter({
           }}
           className={cx(
             "block w-[3px] rounded-full",
-            tone === "danger" ? "bg-danger" : "bg-brand",
-            !live && "animate-dictate-bar",
+            held
+              ? "bg-line-strong"
+              : tone === "danger"
+                ? "bg-danger"
+                : "bg-brand",
+            !live && !held && "animate-dictate-bar",
           )}
           style={{
             height: `${18 + Math.round(Math.sin((i / BAR_COUNT) * Math.PI) * 26)}px`,
@@ -311,6 +352,19 @@ function DictationBody({
 }) {
   const [phase, setPhase] = React.useState<Phase>("recording");
   const [elapsed, setElapsed] = React.useState(0);
+  /*
+   * Held, not stopped. A call comes in, somebody walks up to the desk, the
+   * customer says wait — and the alternative to a pause button is starting
+   * again, which on a note somebody has already half spoken is worse than not
+   * offering dictation at all.
+   */
+  const [paused, setPaused] = React.useState(false);
+  /*
+   * Whether this browser can pause at all. Safari only learned in 14.1, and a
+   * button that fails when pressed is worse than one never drawn — the same
+   * rule the microphone itself follows.
+   */
+  const [canPause, setCanPause] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [english, setEnglish] = React.useState("");
   const [spoken, setSpoken] = React.useState("");
@@ -428,6 +482,10 @@ function DictationBody({
         audioBitsPerSecond: 96_000,
       });
       recorderRef.current = recorder;
+      setCanPause(
+        typeof recorder.pause === "function" &&
+          typeof recorder.resume === "function",
+      );
 
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunks.push(e.data);
@@ -456,19 +514,32 @@ function DictationBody({
     return () => {
       cancelled = true;
       /* Closing mid-recording must release the microphone, or the browser
-       * keeps showing the recording indicator over an app nobody is using. */
-      if (recorderRef.current?.state === "recording")
+       * keeps showing the recording indicator over an app nobody is using.
+       * `!== "inactive"` rather than `=== "recording"`: a recorder held on
+       * pause is neither, and closing the modal from a pause used to leave it
+       * unstopped. */
+      if (recorderRef.current && recorderRef.current.state !== "inactive")
         recorderRef.current.stop();
       streamRef.current?.getTracks().forEach((t) => t.stop());
       recorderRef.current = null;
       streamRef.current = null;
       setMicStream(null);
+      setPaused(false);
     };
   }, [take, send, capture]);
 
-  /* The timer, and the ceiling it enforces. */
+  /*
+   * The timer, and the ceiling it enforces.
+   *
+   * It does not run while paused, so `elapsed` counts RECORDED seconds and
+   * not wall-clock ones. That is the number the ceiling has to be measured in
+   * — a five-minute interruption must not eat somebody's recording limit —
+   * and it is also the number the server routes on, since Sarvam's 30-second
+   * refusal is about the length of the audio rather than how long the person
+   * had the modal open.
+   */
   React.useEffect(() => {
-    if (phase !== "recording") return;
+    if (phase !== "recording" || paused) return;
     const id = setInterval(() => {
       setElapsed((s) => {
         const next = s + 1;
@@ -480,10 +551,38 @@ function DictationBody({
       });
     }, 1000);
     return () => clearInterval(id);
-  }, [phase, maxSeconds]);
+  }, [phase, paused, maxSeconds]);
 
+  /*
+   * Pause captures NOTHING. `MediaRecorder.pause()` stops the container being
+   * fed, so the held seconds are absent from the blob rather than recorded as
+   * silence — what comes back is what was said before and after, joined.
+   *
+   * The track is disabled as well, which is belt and braces: the recorder is
+   * already taking nothing, and this stops the microphone yielding anything to
+   * take. It is also what makes the level meter honestly flat instead of
+   * showing the room while the screen says paused.
+   */
+  const pause = () => {
+    const recorder = recorderRef.current;
+    if (recorder?.state !== "recording") return;
+    recorder.pause();
+    streamRef.current?.getAudioTracks().forEach((t) => (t.enabled = false));
+    setPaused(true);
+  };
+
+  const resume = () => {
+    const recorder = recorderRef.current;
+    if (recorder?.state !== "paused") return;
+    streamRef.current?.getAudioTracks().forEach((t) => (t.enabled = true));
+    recorder.resume();
+    setPaused(false);
+  };
+
+  /* Stopping works from a pause too — the recording ends where it was held. */
   const stop = () => {
-    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+    const recorder = recorderRef.current;
+    if (recorder && recorder.state !== "inactive") recorder.stop();
   };
 
   const again = () => {
@@ -540,27 +639,43 @@ function DictationBody({
       <div className="py-4 text-center">
         <div className="relative mx-auto flex h-16 w-16 items-center justify-center">
           {/* A ring going out on a loop, so the modal is never still even
-              during a pause for breath. */}
-          <span className="animate-pulse-ring absolute inset-0 rounded-full bg-danger-soft" />
-          <span className="relative flex h-16 w-16 items-center justify-center rounded-full bg-danger-soft text-danger">
-            <MicIcon size={28} />
+              during a pause for breath. It stops while HELD, because a screen
+              that goes on pulsing is a screen that looks like it is still
+              listening. */}
+          {paused ? null : (
+            <span className="animate-pulse-ring absolute inset-0 rounded-full bg-danger-soft" />
+          )}
+          <span
+            className={cx(
+              "relative flex h-16 w-16 items-center justify-center rounded-full",
+              paused ? "bg-canvas text-muted" : "bg-danger-soft text-danger",
+            )}
+          >
+            {paused ? <PauseIcon size={26} /> : <MicIcon size={28} />}
           </span>
         </div>
         {/* Driven by the microphone itself — the only proof a telecaller has
             that the browser can hear them before they say the whole thing. */}
         <div className="mt-4">
-          <LevelMeter stream={micStream} live />
+          <LevelMeter stream={micStream} live={!paused} held={paused} />
         </div>
-        <p className="mt-1 text-2xl font-semibold tabular-nums text-ink">
+        <p
+          className={cx(
+            "mt-1 text-2xl font-semibold tabular-nums",
+            paused ? "text-muted" : "text-ink",
+          )}
+        >
           {clock(elapsed)}
         </p>
         <p className="mt-1 text-[13px] text-muted">
           {/* No language is named here. A list reads as the set of allowed
               answers, and somebody whose language is missing from it stops
               before they start — the opposite of what this sentence is for. */}
-          Listening. Speak in any language, or a mix of them.
+          {paused
+            ? "Held. Nothing is being recorded — press Resume and carry on where you left off."
+            : "Listening. Speak in any language, or a mix of them."}
         </p>
-        {remaining <= 20 ? (
+        {remaining <= 20 && !paused ? (
           <p className="mt-1 text-[13px] text-danger">
             Stops on its own in {remaining} second{remaining === 1 ? "" : "s"}.
           </p>
@@ -569,6 +684,27 @@ function DictationBody({
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
+          {canPause ? (
+            <Button
+              variant="secondary"
+              onClick={paused ? resume : pause}
+              title={
+                paused
+                  ? "Start recording again, onto the end of what you have already said"
+                  : "Hold the recording — nothing is captured until you resume"
+              }
+            >
+              {paused ? (
+                <>
+                  <ResumeIcon /> Resume
+                </>
+              ) : (
+                <>
+                  <PauseIcon /> Pause
+                </>
+              )}
+            </Button>
+          ) : null}
           <Button onClick={stop}>
             <StopIcon /> Stop and write it
           </Button>

@@ -481,7 +481,24 @@ export function CustomersScreen({
                     labelled because it has to distinguish itself from the
                     first.
                   */}
-                  <Td>
+                  {/*
+                    NOWRAP on both lines, and it is the whole fix.
+
+                    The labels are worth their width — a bare name under a
+                    header listing three roles makes the reader work out which
+                    one it is, and the answer changes row by row. What was
+                    wrong was never the labels; it was that the column had no
+                    floor, so "Sales: Prakash Vasudev Prasad" folded onto a
+                    second line and every row grew to twice the height.
+
+                    A table cell wraps by default and the column then shrinks
+                    to whatever is left over. This one holds its line instead
+                    and the table scrolls, which it is already set up to do —
+                    the Card around it carries `overflow-auto`. Scrolling a
+                    wide table sideways is a thing people do without thinking;
+                    reading a name broken across two lines is not.
+                  */}
+                  <Td className="whitespace-nowrap">
                     <span className="block text-sm text-body">
                       {r.kind === "lead"
                         ? (r.ownerName ?? "Unassigned")
