@@ -91,6 +91,7 @@ export function CustomersScreen({
   amReasons,
   amSearchThreshold,
   team,
+  backOfficePeople,
   rows,
   filters,
   pageInfo,
@@ -107,7 +108,9 @@ export function CustomersScreen({
   canReassign: boolean;
   amReasons: string[];
   amSearchThreshold: number;
-  team: Array<{ id: string; name: string }>;
+  team: Array<{ id: string; name: string; role?: string }>;
+  /** Accounts plus the current HRMS employees — the back office seat only. */
+  backOfficePeople: Array<{ id: string; name: string; role?: string }>;
   rows: Row[];
   filters: { query: string; status: string; owner: string; perPage: number };
   pageInfo: { page: number; pageCount: number; total: number; bookTotal: number };
@@ -869,15 +872,24 @@ export function CustomersScreen({
         // already follows.
         key={`am-${[...selected].join(",")}`}
         open={changingAm}
-        count={selected.size}
-        people={team}
+        accounts={visible
+          .filter((r) => selected.has(r.id))
+          .map((r) => ({
+            id: r.id,
+            name: r.name,
+            salesName: r.salesAmName,
+            backOfficeName: r.backOfficeAmName,
+          }))}
+        salesPeople={team}
+        backOfficePeople={backOfficePeople}
         reasons={amReasons}
         searchThreshold={amSearchThreshold}
         onClose={() => setChangingAm(false)}
         onSubmit={async (change) => {
-          const result = await run(
-            updateAccountManagers({ customerIds: [...selected], ...change }),
-          );
+          // The dialog decides which accounts go: its review step can untick
+          // any of them, so the selection is where the list STARTS, not what
+          // is sent.
+          const result = await run(updateAccountManagers(change));
           if (result.ok) {
             setChangingAm(false);
             setSelected(new Set());

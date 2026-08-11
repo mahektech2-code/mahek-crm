@@ -1,7 +1,11 @@
 import { requireUser } from "@/lib/auth";
 import { can } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
-import { listCustomersPage, listTeam } from "@/lib/queries";
+import {
+  listAssignableUsers,
+  listBackOfficeCandidates,
+  listCustomersPage,
+} from "@/lib/queries";
 import { AccountsCustomersScreen } from "./accounts-customers-screen";
 
 export const metadata = { title: "Customers — Accounts — MahekOne" };
@@ -30,15 +34,16 @@ export default async function Page({
   const user = await requireUser();
   const perPage = Number(one("per") ?? 25);
 
-  const [page, team, config] = await Promise.all([
+  const [page, team, config, backOfficePeople] = await Promise.all([
     listCustomersPage({
       query: one("q"),
       owner: one("owner"),
       page: Number(one("page") ?? 1) || 1,
       perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
     }),
-    listTeam(),
+    listAssignableUsers(),
     getConfig(),
+    listBackOfficeCandidates(),
   ]);
 
   return (
@@ -53,7 +58,8 @@ export default async function Page({
         salesAmName: r.salesAmName,
         backOfficeAmName: r.backOfficeAmName,
       }))}
-      team={team.map((t) => ({ id: t.id, name: t.name }))}
+      team={team.map((t) => ({ id: t.id, name: t.name, role: t.role }))}
+      backOfficePeople={backOfficePeople}
       // The same question the action asks, so the button and the permission
       // cannot disagree. The action checks again regardless — a disabled
       // control is not a permission.
