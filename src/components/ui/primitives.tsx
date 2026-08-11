@@ -326,11 +326,40 @@ export function Td({
 }: React.TdHTMLAttributes<HTMLTableCellElement> & {
   align?: "left" | "right";
 }) {
+  /*
+   * A table cell holds its line unless the caller says otherwise.
+   *
+   * The browser default is the opposite, and it is wrong for every table in
+   * this app. A cell wraps, so the column can be made narrow, so the browser
+   * makes it narrow — and a telephone number comes out as
+   *
+   *     +91
+   *     99606
+   *     85455
+   *
+   * three lines tall, in a row that is now four lines tall, in a list somebody
+   * is scanning. The value never needed the space; the column gave it away
+   * because wrapping said it could.
+   *
+   * Every screen with a table already puts it inside a horizontally scrolling
+   * container, so the width is there to be taken. Scrolling a wide table
+   * sideways is something people do without thinking; reading a phone number
+   * down three lines is not.
+   *
+   * Callers that genuinely want prose to flow say so — `whitespace-normal`, or
+   * `truncate` with a `title`, which several already do. `cx` is a plain join
+   * with no Tailwind conflict resolution, so two whitespace utilities on one
+   * element would be settled by stylesheet order rather than by intent. The
+   * default is therefore only applied when the caller has not spoken.
+   */
+  const callerControlsWrapping = /(^|\s)whitespace-/.test(className ?? "");
+
   return (
     <td
       {...rest}
       className={cx(
         "h-[var(--rowh)] px-3 text-sm text-body",
+        callerControlsWrapping ? null : "whitespace-nowrap",
         align === "right" ? "text-right" : "text-left",
         className,
       )}
