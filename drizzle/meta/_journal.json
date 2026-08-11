@@ -239,6 +239,13 @@
       "when": 1786395151695,
       "tag": "0034_sync_conflicts",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786450787187,
+      "tag": "0035_payment_decided",
+      "breakpoints": true
     }
   ]
 }

@@ -1045,6 +1045,26 @@ export const bills = pgTable(
     paidAmount: bigint("paid_amount", { mode: "number" }).notNull().default(0),
     status: billStatusEnum("status").notNull().default("unpaid"),
     disputed: boolean("disputed").notNull().default(false),
+    /**
+     * When somebody DECIDED what this bill's payment position is, as opposed to
+     * the order sheet assuming it.
+     *
+     * The order sheet says nothing about payment, so a bill imported from it is
+     * settled by assumption. That assumption must never overwrite a decision —
+     * Tally's receivables report saying the money is still owed, a payment
+     * recorded in Accounts, a receipt confirmed or rejected. This is the mark of
+     * one, exactly as `orders.approvedAt` is for approvals, and the projection
+     * never writes it and never settles a bill that carries it.
+     *
+     * It exists because the assumption DID overwrite a decision, twice over.
+     * `leaveOwing` unsettles a bill by deleting its assumed receipt, which frees
+     * the `SHEETPAY-<order number>` idempotency key — and a free key reads to
+     * the importer as "never settled", so the next scheduled pass wrote a fresh
+     * full-amount receipt. Applying the receivables report on 9 August marked
+     * 395 bills owed; 348 of them, Rs 1.18 crore, were quietly settled again
+     * fourteen hours later by a cron nobody was watching.
+     */
+    paymentDecidedAt: timestamp("payment_decided_at", { withTimezone: true }),
     externalRef: text("external_ref"),
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

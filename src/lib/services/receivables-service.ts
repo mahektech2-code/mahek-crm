@@ -65,12 +65,26 @@ export type ReceivablesReport = {
 async function leaveOwing(billId: string, amount: number, pending: number) {
   const settled = Math.max(0, amount - pending);
 
+  // The mark of a decision, written FIRST and whatever else happens below.
+  // Deleting the assumed receipt frees the `SHEETPAY-<order number>` key, and
+  // a free key reads to the importer as "never settled" — which is how the 9
+  // August run was undone by a cron fourteen hours later. This is what tells
+  // the importer to keep its hands off: from here the bill's paid position is
+  // somebody's decision, and only the app may change it.
+  await db
+    .update(bills)
+    .set({ paymentDecidedAt: new Date(), updatedAt: new Date() })
+    .where(eq(bills.id, billId));
+
   const rows = await db
     .select({ paymentId: payments.id, receiptId: payments.receiptId })
     .from(payments)
     .innerJoin(paymentReceipts, eq(paymentReceipts.id, payments.receiptId))
     .where(and(eq(payments.billId, billId), eq(paymentReceipts.source, "sheet_import")));
 
+  // Marked even where there was no assumed receipt to cut: the report naming a
+  // bill IS the decision, and a bill it names must never be settled by
+  // assumption later.
   if (!rows.length) return false;
 
   for (const r of rows) {
