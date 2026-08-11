@@ -26,6 +26,10 @@ const ACCOUNTS_ACTIONS = [
   "payment.apply_on_account",
   "creditnote.issue",
   "creditnote.refuse",
+  // Changing who an account answers to is an accounts decision, so it belongs
+  // in the log accounts read. Leaving it out would have meant the one screen
+  // reviewing accounts' own actions was silent about a whole category of them.
+  "customer.reassign",
 ] as const;
 
 export type AuditRow = {
@@ -51,6 +55,7 @@ const KIND: Record<string, AuditRow["kind"]> = {
   "payment.apply_on_account": "record",
   "creditnote.issue": "issue",
   "creditnote.refuse": "refuse",
+  "customer.reassign": "record",
 };
 
 export async function accountsAudit(limit = 500): Promise<AuditRow[]> {

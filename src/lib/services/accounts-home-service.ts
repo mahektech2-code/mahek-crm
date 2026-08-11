@@ -372,6 +372,20 @@ export function decisionLine(
       return `Refused a credit note — ${String(after?.reason ?? "no reason recorded")}`;
     case "payment.apply_on_account":
       return `Applied ${rupees} from on account to ${String(after?.billNo ?? "a bill")}`;
+    case "customer.reassign": {
+      // Which manager moved is the fact somebody is scanning this log for, so
+      // it is named rather than left to "customer updated".
+      const parts: string[] = [];
+      if (after && "salesPersonName" in after) {
+        parts.push(`sales to ${String(after.salesPersonName ?? "nobody")}`);
+      }
+      if (after && "backOfficeName" in after) {
+        parts.push(`back office to ${String(after.backOfficeName ?? "nobody")}`);
+      }
+      const reason = String(after?.reasonCode ?? "no reason recorded");
+      const note = after?.note ? `: ${String(after.note)}` : "";
+      return `Moved ${parts.join(" and ") || "the account manager"} — ${reason}${note}`;
+    }
     default:
       return action;
   }

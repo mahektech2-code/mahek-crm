@@ -62,26 +62,35 @@ export async function scopeForUser(
     };
   }
 
-  if (user.role === "admin") {
-    return { user, role: "admin", scope: { kind: "all", userIds: null } };
-  }
-
   // Accounts work the approval queue, which is every telecaller's orders
   // and nobody's book. Without this branch they fell through to the manager
   // path and were labelled managers — which then denied them the one
-  // capability that is theirs.
+  // capability that is theirs. They are also never offered the My book / Team
+  // switch, so the narrowing below must not reach them: `getScope` answers
+  // "mine" for every non-manager, and reading it here would scope the approval
+  // queue to an accounts clerk's own book, which is empty.
   if (user.role === "accounts") {
     return { user, role: "accounts", scope: { kind: "all", userIds: null } };
   }
 
-  // A manager may deliberately narrow to their own book.
+  // A manager OR AN ADMIN may deliberately narrow to their own book. The
+  // switch is drawn for both — `isManager` is true for an admin — and it used
+  // to move the highlight and change nothing, because the admin branch
+  // returned `all` before the preference was ever read. Two definitions of
+  // scope: the cookie one relabelled the header while this one kept every
+  // screen team-wide.
   const narrowing = preference ?? (await getScopePreference(user));
   if (narrowing === "mine") {
     return {
       user,
-      role: "manager",
+      role: user.role === "admin" ? "admin" : "manager",
       scope: { kind: "own", userIds: [user.id] },
     };
+  }
+
+  // An admin's team is the whole company, not a reporting line.
+  if (user.role === "admin") {
+    return { user, role: "admin", scope: { kind: "all", userIds: null } };
   }
 
   const reports = await db
@@ -150,6 +159,7 @@ export const CAPABILITIES = [
   "payment.confirm",
   "creditnote.issue",
   "sheet.import",
+  "customer.reassign",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -182,6 +192,21 @@ const ACCOUNTS_ONLY: ReadonlySet<Capability> = new Set<Capability>([
   // reason it is not a manager's by seniority. The telecaller answers only
   // whether the customer asked.
   "creditnote.issue",
+  /*
+   * Moving an account to a different account manager, and NOT a manager's by
+   * seniority either — deliberately the narrowest set in the file.
+   *
+   * Whose book an account is in decides who is credited for its orders and
+   * whose targets it counts toward, so a manager reassigning accounts is a
+   * manager moving numbers between their own people, including themselves.
+   * That is the same conflict `order.approve` exists to avoid, one level up:
+   * there the person chasing the target must not sign off the orders that hit
+   * it, here they must not choose which accounts feed it.
+   *
+   * It also moves work in bulk. One action can silently empty somebody's
+   * calling queue, which is not something to hold by default.
+   */
+  "customer.reassign",
 ]);
 
 /**

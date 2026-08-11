@@ -874,11 +874,27 @@ export async function recomputeSalesPeople(): Promise<number> {
       id: customers.id,
       name: customers.name,
       salesPersonName: customers.salesPersonName,
+      amDecidedAt: customers.amDecidedAt,
     })
     .from(customers);
 
   let changed = 0;
   for (const c of rows) {
+    /*
+     * An account somebody has reassigned in the app is off limits, name
+     * included.
+     *
+     * This is the quiet half of the guard and the half that would have been
+     * missed. Holding `sales_am_id` while letting this rewrite
+     * `sales_person_name` produces the worst outcome available: the account
+     * moves to the new manager for scope, the queue, collections and every
+     * scoped list — and the screens go on displaying the OLD name, because
+     * they read the sheet's name first and the linked account only where it
+     * is silent. Nobody reports that as a bug. They report that the
+     * reassignment did not work, and they are half right in a way that takes
+     * a day to unpick.
+     */
+    if (c.amDecidedAt) continue;
     const next = byKey.get(partyNameKey(c.name)) ?? null;
     if (next === c.salesPersonName) continue;
     await db

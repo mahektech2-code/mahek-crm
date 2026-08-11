@@ -288,6 +288,20 @@
       "when": 1786475595853,
       "tag": "0040_bill_payment_position",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1786475595855,
+      "tag": "0041_account_manager_changes",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1786475595856,
+      "tag": "0042_day_boundary_midnight",
+      "breakpoints": true
     }
   ]
 }

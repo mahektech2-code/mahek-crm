@@ -246,6 +246,7 @@ export async function projectCustomers(
           id: customers.id,
           externalCode: customers.externalCode,
           phone: customers.phone,
+          amDecidedAt: customers.amDecidedAt,
         })
         .from(customers)
         .where(inArray(customers.externalCode, codes))
@@ -279,6 +280,13 @@ export async function projectCustomers(
       // Ownership is the exception, and only when it is asked for: reassigning
       // a book is an operator's decision that the first import should not be
       // able to lock in forever.
+      //
+      // And `--reassign` yields in turn to a reassignment made in the app.
+      // `am_decided_at` is the mark of one, exactly as `orders.approved_at`
+      // marks an approval — this flag hands an entire book to one person, and
+      // running it must not quietly undo the individual accounts somebody
+      // moved to cover for a leaver.
+      const amIsDecided = Boolean(known.amDecidedAt);
       toUpdate.push({
         id: known.id,
         values: {
@@ -286,7 +294,7 @@ export async function projectCustomers(
           city: party.area ?? "",
           creditTermDays: party.creditDays ?? 30,
           creditDays: party.creditDays,
-          ...(options.reassign && options.assignToUserId
+          ...(options.reassign && options.assignToUserId && !amIsDecided
             ? { ownerId: options.assignToUserId, salesAmId: options.assignToUserId }
             : {}),
           updatedAt: new Date(),

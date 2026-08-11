@@ -63,6 +63,7 @@ const KIND_TONE: Record<
 
 export function RecordScreen({
   customer,
+  amChanges,
   daysSinceOrder,
   followUpStage,
   target,
@@ -131,6 +132,17 @@ export function RecordScreen({
   openPromise: { amount: number; promisedBy: string } | null;
   billStats: { total: number; overdue: number; oldestDueDate: string | null };
   timeline: Entry[];
+  /** Every change of account manager, newest first. Names as stored. */
+  amChanges: Array<{
+    id: string;
+    role: "sales" | "back_office";
+    fromName: string | null;
+    toName: string | null;
+    reasonCode: string;
+    note: string | null;
+    changedAt: Date;
+    changedBy: string | null;
+  }>;
   /** Every WhatsApp message prepared for this customer, newest first. */
   messages: MessageEntry[];
   /** Complaint categories, from configuration rather than a constant. */
@@ -458,6 +470,26 @@ export function RecordScreen({
                       dispatch or billing question has to go to and there is
                       nobody. */}
                   Back office {customer.backOfficeAmName ?? "unassigned"}
+                  {/* Who it was before, and why it moved. The question people
+                      ask after a resignation is not who owns this now — the
+                      line above answers that — it is what happened to it. */}
+                  {amChanges.length ? (
+                    <>
+                      <br />
+                      <span className="mt-1.5 block border-t border-divider pt-1.5">
+                        {amChanges.map((c) => (
+                          <span key={c.id} className="block text-[11px] text-muted">
+                            {shortDate(c.changedAt)} ·{" "}
+                            {c.role === "sales" ? "Sales" : "Back office"}{" "}
+                            {c.fromName ?? "unassigned"} → {c.toName ?? "unassigned"} ·{" "}
+                            {c.reasonCode}
+                            {c.note ? ` — ${c.note}` : ""}
+                            {c.changedBy ? ` (${c.changedBy})` : ""}
+                          </span>
+                        ))}
+                      </span>
+                    </>
+                  ) : null}
                 </>
               )}
             </div>

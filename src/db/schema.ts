@@ -181,6 +181,17 @@ export const billPaymentPositionEnum = pgEnum("bill_payment_position", [
 ]);
 
 /**
+ * The two account managers an account has.
+ *
+ * Sales is who sells to them and whose book the account is in; back office is
+ * who does the dispatch, the billing and the paperwork. They move
+ * independently — a salesperson resigning says nothing about who raises the
+ * invoices — which is why a change names one of these rather than moving
+ * "the owner".
+ */
+export const amRoleEnum = pgEnum("am_role", ["sales", "back_office"]);
+
+/**
  * Money the customer says arrived is not money the business has seen. A
  * receipt reported by a telecaller on a collections call sits at `reported`
  * until accounts find it in the bank; only `confirmed` moves the ledger.
@@ -628,6 +639,25 @@ export const customers = pgTable(
      * customer the sheet names somebody for.
      */
     backOfficeName: text("back_office_name"),
+    /**
+     * When somebody in the app last DECIDED who this account answers to.
+     *
+     * Both account manager columns are the sheet's to state, and both mirrors
+     * beside them are rebuilt from it — `recomputeSalesPeople()` rewrites
+     * `salesPersonName` on every nightly pass, and `--reassign` overwrites the
+     * ids outright. So an account manager changed in the app is a decision
+     * standing in front of a source that will keep restating the old answer,
+     * which is the shape of the two bugs that cost the most this month: an
+     * order's approved status reset to `dispatched`, and a bill re-settled
+     * fourteen hours after somebody marked it owed.
+     *
+     * This is the same mark as `orders.approvedAt` and `bills.paymentDecidedAt`
+     * and it earns its place the same way: the projection never writes it, and
+     * where it is set the sheet keeps its hands off both ids and both names.
+     * Null means nobody has decided and the sheet is simply right, which is
+     * true of every row that existed when this column arrived.
+     */
+    amDecidedAt: timestamp("am_decided_at", { withTimezone: true }),
     deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
     deactivatedById: text("deactivated_by_id").references(() => users.id),
     deactivationReason: text("deactivation_reason"),
@@ -2030,6 +2060,58 @@ export const sheetRowStatusEnum = pgEnum("sheet_row_status", [
  * the only property that matters — the alternative was losing one of them and
  * not saying which.
  */
+/**
+ * Every change of account manager, and why.
+ *
+ * `audit_log` records it too and would technically hold the answer, but it is
+ * one undifferentiated stream across the whole platform: finding "who has this
+ * account belonged to, and why did it move" means grepping JSON blobs by
+ * entity id. This is the question people will actually ask — when a
+ * salesperson leaves, somebody wants the list of accounts that moved and the
+ * reason against each — so it gets a table with the reason as a COLUMN, which
+ * is the difference between a log and a history you can group by.
+ *
+ * One row per customer per role per change. Both roles can be changed in a
+ * single action and that writes two rows, because they are two facts: the
+ * salesperson leaving says nothing about who does the paperwork.
+ *
+ * Nothing here is ever updated or deleted. A reassignment that turns out to be
+ * wrong is corrected by another reassignment, which is another row.
+ */
+export const customerAmChanges = pgTable(
+  "customer_am_changes",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /** `sales` or `back_office` — which of the two managers moved. */
+    role: amRoleEnum("role").notNull(),
+    /**
+     * Who it was, as an id AND as a name. The id is null where the sheet only
+     * ever named somebody without an account, and the name is what makes the
+     * history readable years later when the account is gone — a history of
+     * user ids nobody can resolve is not a history.
+     */
+    fromUserId: text("from_user_id").references(() => users.id),
+    fromName: text("from_name"),
+    toUserId: text("to_user_id").references(() => users.id),
+    toName: text("to_name"),
+    /** One of `people.amChangeReasons`, so the list is a manager's to change. */
+    reasonCode: text("reason_code").notNull(),
+    /** Free text beside the code. Required when the code is `other`. */
+    note: text("note"),
+    changedById: text("changed_by_id").references(() => users.id),
+    changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("customer_am_changes_customer_idx").on(t.customerId, t.changedAt),
+    // "Everything that moved when Suresh left" — the reason this is a table.
+    index("customer_am_changes_from_idx").on(t.fromUserId, t.changedAt),
+    index("customer_am_changes_reason_idx").on(t.reasonCode, t.changedAt),
+  ],
+);
+
 export const syncConflicts = pgTable(
   "sync_conflicts",
   {
