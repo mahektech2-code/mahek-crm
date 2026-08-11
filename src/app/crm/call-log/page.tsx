@@ -89,9 +89,14 @@ export default async function QueuePage() {
   return (
     <QueueScreen
       scopeLabel={scopeLabel(scope, user)}
+      // On a team list a row is somebody else's call, and a manager reading it
+      // has to know whose. On their own book every row is theirs, so naming a
+      // person on each one is a column of the same word repeated.
+      showAssignee={scope === "team"}
       rows={queue.entries.map((r) => ({
         customerId: r.customerId,
         name: r.name,
+        assignedToName: r.assignedToName,
         contactPerson: r.contactPerson,
         phone: r.phone,
         score: r.score,

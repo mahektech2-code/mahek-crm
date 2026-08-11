@@ -5,7 +5,12 @@ import {
   businessDate,
   calendarDate,
   calendarDaysBetween,
+  dayBoundaryWindow,
   daysBetween,
+  isDashboardPeriod,
+  periodRange,
+  previousRange,
+  rangeBoundaryWindow,
 } from "./business-date";
 
 /* ---------------------------------------------------------------------------
@@ -105,5 +110,111 @@ describe("spans between same-kind dates are unaffected by the boundary", () => {
     const first = calendarDate(new Date("2026-07-01T20:00:00Z"), IST); // 1:30am IST, 2 Jul
     const second = calendarDate(new Date("2026-07-21T20:00:00Z"), IST); // 1:30am IST, 22 Jul
     assert.equal(calendarDaysBetween(first, second), 20);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * The dashboard's four spans.
+ *
+ * Pure, so what "this week" means is pinned here rather than discovered on a
+ * Monday morning when the figures look wrong.
+ * ------------------------------------------------------------------------- */
+
+describe("the spans the dashboard reads over", () => {
+  // Wednesday 12 August 2026. Six-day week, Sunday off.
+  const WEDNESDAY = "2026-08-12";
+  const MONDAY = "2026-08-10";
+
+  test("today and yesterday are one day each", () => {
+    assert.deepEqual(periodRange(WEDNESDAY, "today", WORKING_DAY), {
+      from: WEDNESDAY,
+      to: WEDNESDAY,
+    });
+    assert.deepEqual(periodRange(WEDNESDAY, "yesterday", WORKING_DAY), {
+      from: "2026-08-11",
+      to: "2026-08-11",
+    });
+  });
+
+  test("yesterday on a Monday is Saturday, not the Sunday nobody worked", () => {
+    // A Sunday of zeroes would read as a collapse every Monday morning.
+    assert.deepEqual(periodRange(MONDAY, "yesterday", WORKING_DAY), {
+      from: "2026-08-08",
+      to: "2026-08-08",
+    });
+  });
+
+  test("the week runs from Monday to today, never past it", () => {
+    assert.deepEqual(periodRange(WEDNESDAY, "week", WORKING_DAY), {
+      from: MONDAY,
+      to: WEDNESDAY,
+    });
+    // On the Monday itself the week is that one day, not seven.
+    assert.deepEqual(periodRange(MONDAY, "week", WORKING_DAY), {
+      from: MONDAY,
+      to: MONDAY,
+    });
+  });
+
+  test("the month runs from the first to today", () => {
+    assert.deepEqual(periodRange(WEDNESDAY, "month", WORKING_DAY), {
+      from: "2026-08-01",
+      to: WEDNESDAY,
+    });
+  });
+
+  test("a span is measured against an equally long one immediately before", () => {
+    const week = periodRange(WEDNESDAY, "week", WORKING_DAY); // 3 days
+    assert.deepEqual(previousRange(week, WORKING_DAY), {
+      from: "2026-08-07",
+      to: "2026-08-09",
+    });
+
+    const month = periodRange(WEDNESDAY, "month", WORKING_DAY); // 12 days
+    assert.deepEqual(previousRange(month, WORKING_DAY), {
+      from: "2026-07-20",
+      to: "2026-07-31",
+    });
+  });
+
+  test("a one-day span compares against the previous WORKING day", () => {
+    assert.deepEqual(previousRange({ from: MONDAY, to: MONDAY }, WORKING_DAY), {
+      from: "2026-08-08",
+      to: "2026-08-08",
+    });
+  });
+
+  test("the window over a span opens and closes on the boundary", () => {
+    const week = periodRange(WEDNESDAY, "week", WORKING_DAY);
+    const w = rangeBoundaryWindow(week, WORKING_DAY);
+    assert.equal(w.start, "2026-08-10T05:00:00+05:30");
+    assert.equal(w.end, "2026-08-13T05:00:00+05:30");
+
+    // A range of one day and that day on its own are the same window — the
+    // day figures and the span figures cannot disagree.
+    const single = { from: WEDNESDAY, to: WEDNESDAY };
+    assert.deepEqual(
+      rangeBoundaryWindow(single, WORKING_DAY),
+      dayBoundaryWindow(WEDNESDAY, WORKING_DAY),
+    );
+  });
+
+  test("at midnight the boundary the window opens at moves with it", () => {
+    const midnight = { ...WORKING_DAY, dayBoundaryHour: 0 };
+    const w = rangeBoundaryWindow({ from: WEDNESDAY, to: WEDNESDAY }, midnight);
+    assert.equal(w.start, "2026-08-12T00:00:00+05:30");
+    assert.equal(w.end, "2026-08-13T00:00:00+05:30");
+
+    // 1am IST on the 12th: the previous day at a 5am boundary, the 12th at
+    // midnight. This is the whole of the change the setting makes.
+    const oneAm = new Date("2026-08-11T19:30:00Z");
+    assert.equal(businessDate(oneAm, WORKING_DAY), "2026-08-11");
+    assert.equal(businessDate(oneAm, midnight), "2026-08-12");
+  });
+
+  test("only the four known spans are accepted from a URL", () => {
+    assert.equal(isDashboardPeriod("month"), true);
+    assert.equal(isDashboardPeriod("fortnight"), false);
+    assert.equal(isDashboardPeriod(undefined), false);
   });
 });
