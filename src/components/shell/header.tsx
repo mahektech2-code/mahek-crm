@@ -110,8 +110,11 @@ export function Header({
             {(["mine", "team"] as const).map((s) => (
               <button
                 key={s}
-                onClick={() => {
-                  void setScope(s);
+                // Awaited, not fired and forgotten: the cookie is set by the
+                // action's response, so a refresh raced against it re-fetches
+                // the page with the scope the user has just left.
+                onClick={async () => {
+                  await setScope(s);
                   router.refresh();
                 }}
                 className={cx(

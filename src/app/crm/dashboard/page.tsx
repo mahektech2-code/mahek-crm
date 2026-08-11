@@ -3,14 +3,24 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { isManager, requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
-import { currentPeriod, dayActivity, teamDay, today } from "@/lib/queries";
+import { currentPeriod, dayActivity, rangeActivity, teamRange, today } from "@/lib/queries";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { getQueue } from "@/lib/services/queue-service";
 import { getFollowUpWorklist } from "@/lib/services/payment-service";
 import { listInactiveWatch, listTargets } from "@/lib/services/worklist-services";
 import { getConfig } from "@/lib/config/store";
-import { isWorkingDay, previousWorkingDay } from "@/lib/business-date";
-import { money, moneyShort, monthLabel, pct } from "@/lib/format";
+import {
+  addDays,
+  daysBetween,
+  isWorkingDay,
+  isDashboardPeriod,
+  DASHBOARD_PERIODS,
+  periodRange,
+  previousRange,
+  type DashboardPeriod,
+  type DateRange,
+} from "@/lib/business-date";
+import { money, moneyShort, monthLabel, pct, shortDate } from "@/lib/format";
 import {
   Card,
   CardHeader,
@@ -27,7 +37,11 @@ import { DayStages } from "./day-stages";
 
 export const metadata = { title: "Dashboard - MahekOne CRM" };
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string }>;
+}) {
   const user = await requireUser();
   const scope = await getScope(user);
   const manager = isManager(user);
@@ -36,19 +50,42 @@ export default async function DashboardPage() {
   const period = await currentPeriod();
   const config = await getConfig();
 
-  // One wave, not three. Each of these is a round trip to a database in another
-  // continent, so waiting on them in sequence shows up directly as page load.
-  const previousDay = previousWorkingDay(day, {
+  const workingDay = {
     timezone: config["workingDay.timezone"],
     dayBoundaryHour: config["workingDay.dayBoundaryHour"],
     workingDays: config["workingDay.workingDays"],
-  });
+  };
 
+  // Which span the activity figures are read over. Anything unrecognised in
+  // the URL reads as today rather than erroring — a mistyped query string
+  // must not be a broken dashboard.
+  const { period: periodParam } = await searchParams;
+  const span: DashboardPeriod = isDashboardPeriod(periodParam)
+    ? periodParam
+    : "today";
+  const range = periodRange(day, span, workingDay);
+  const comparison = previousRange(range, workingDay);
+  // Said the same way in every card, and never as a bare "yesterday" when the
+  // comparison is actually Saturday.
+  const deltaSuffix =
+    comparison.from === comparison.to
+      ? comparison.from === addDays(day, -1)
+        ? "yesterday"
+        : shortDate(comparison.from)
+      : `the previous ${daysBetween(comparison.from, comparison.to) + 1} days`;
+  // "booked today", "booked this week" — the figures are over the span, so
+  // the sentence under them has to say the span rather than always "today".
+  const spanWord = span === "today" ? "today" : PERIOD_LABELS[span].toLowerCase();
+
+  // One wave, not three. Each of these is a round trip to a database in another
+  // continent, so waiting on them in sequence shows up directly as page load.
   const [activity, yesterday, queue, followUps, inactive, targets, counts, team, over60, teamActivity] =
     await Promise.all([
-      dayActivity(teamView ? null : user.id, day),
-      // The last working day, so Monday compares against Saturday.
-      dayActivity(teamView ? null : user.id, previousDay),
+      rangeActivity(teamView ? null : user.id, range),
+      // What the span is measured against: the equally long one before it. For
+      // a single day that is the last WORKING day, so Monday compares against
+      // Saturday rather than against a Sunday of zeroes.
+      rangeActivity(teamView ? null : user.id, comparison),
       getQueue(),
       getFollowUpWorklist(),
       listInactiveWatch(),
@@ -57,11 +94,13 @@ export default async function DashboardPage() {
         reminders: config["dashboard.reminderOverdueFlagDays"],
         complaints: config["dashboard.complaintUnresolvedFlagDays"],
       }),
-      teamView ? teamDay(day) : Promise.resolve([]),
+      teamView ? teamRange(range) : Promise.resolve([]),
       teamView ? overSixtyDays() : Promise.resolve(0),
-      // The team's own day, so a telecaller's connect rate has something to sit
-      // beside. A rate with nothing to compare it to tells nobody anything.
-      teamView ? Promise.resolve(null) : dayActivity(null, day),
+      // The team's own figures over the SAME span, so a telecaller's connect
+      // rate has something to sit beside. A rate with nothing to compare it to
+      // tells nobody anything, and one compared against a different span is
+      // worse than nothing.
+      teamView ? Promise.resolve(null) : rangeActivity(null, range),
     ]);
 
   const { dueReminders, overdueReminders, openComplaints } = counts;
@@ -126,7 +165,7 @@ export default async function DashboardPage() {
         title={teamView ? "Team overview" : `${greeting}, ${user.name.split(" ")[0]}`}
         subtitle={`${scopeLabel(scope, user)} · ${
           teamView
-            ? "Yesterday's comparison and today's red flags"
+            ? `${PERIOD_LABELS[span]} against ${deltaSuffix}, and today's red flags`
             : "Everything below is live - the numbers open the records behind them"
         }`}
         actions={
@@ -148,10 +187,14 @@ export default async function DashboardPage() {
         complaints={openComplaints}
       />
 
+      <PeriodBar span={span} range={range} comparison={comparison} />
+
       {teamView ? (
         <TeamView
           activity={activity}
           yesterday={yesterday}
+          spanWord={spanWord}
+          deltaSuffix={deltaSuffix}
           remindersFlagged={counts.remindersFlagged}
           complaintsFlagged={counts.complaintsFlagged}
           overdueGrowth={counts.overdueGrowth}
@@ -167,6 +210,11 @@ export default async function DashboardPage() {
       ) : (
         <>
           <div className="mb-4 grid grid-cols-[repeat(auto-fit,minmax(216px,1fr))] gap-4">
+            {/* The queue is today's, whatever span the figures beside it are
+                read over — so its comparison is only drawn when the span is
+                today too. Today's worked count against the previous thirty
+                days would be a delta of two numbers that do not belong
+                together. */}
             <StatCard
               href="/crm/call-log"
               label="Calling progress"
@@ -175,11 +223,13 @@ export default async function DashboardPage() {
               foot={`${queue.entries.length} still to work`}
               progress={queue.progress.percent}
               delta={
-                <Delta
-                  today={queue.progress.worked}
-                  yesterday={yesterday.queueWorked}
-                  suffix="ahead of yesterday"
-                />
+                span === "today" ? (
+                  <Delta
+                    today={queue.progress.worked}
+                    yesterday={yesterday.queueWorked}
+                    suffix={`ahead of ${deltaSuffix}`}
+                  />
+                ) : undefined
               }
             />
             <StatCard
@@ -199,6 +249,7 @@ export default async function DashboardPage() {
                 <Delta
                   today={activity.callsConnected}
                   yesterday={yesterday.callsConnected}
+                  suffix={`vs ${deltaSuffix}`}
                 />
               }
             />
@@ -213,15 +264,19 @@ export default async function DashboardPage() {
               foot={
                 activity.ordersCaptured > activity.ordersCount
                   ? `${activity.ordersCaptured - activity.ordersCount} awaiting approval`
-                  : `${money(activity.ordersValue)} booked today`
+                  : `${money(activity.ordersValue)} booked ${spanWord}`
               }
               foot2={
                 activity.ordersCaptured
                   ? `${money(activity.ordersValue)} approved so far`
-                  : "No orders yet today"
+                  : span === "today" ? "No orders yet today" : `No orders ${spanWord}`
               }
               delta={
-                <Delta today={activity.ordersCaptured} yesterday={yesterday.ordersCaptured} />
+                <Delta
+                  today={activity.ordersCaptured}
+                  yesterday={yesterday.ordersCaptured}
+                  suffix={`vs ${deltaSuffix}`}
+                />
               }
             />
             <StatCard
@@ -360,6 +415,8 @@ export default async function DashboardPage() {
 function TeamView({
   activity,
   yesterday,
+  spanWord,
+  deltaSuffix,
   remindersFlagged,
   complaintsFlagged,
   overdueGrowth,
@@ -371,13 +428,17 @@ function TeamView({
 }: {
   activity: Awaited<ReturnType<typeof dayActivity>>;
   yesterday: Awaited<ReturnType<typeof dayActivity>>;
+  /** "today", "this week" — what the figures cover. */
+  spanWord: string;
+  /** "yesterday", "the previous 7 days" — what they are measured against. */
+  deltaSuffix: string;
   remindersFlagged: number;
   complaintsFlagged: number;
   overdueGrowth: number;
   flagDays: { reminders: number; complaints: number };
   outstanding: number;
   targetPct: number;
-  rows: Awaited<ReturnType<typeof teamDay>>;
+  rows: Awaited<ReturnType<typeof teamRange>>;
   over60: number;
 }) {
   const yesterdayMissed = yesterday.callsMissed;
@@ -391,8 +452,14 @@ function TeamView({
           Red flags
         </span>
         <span className="text-sm text-body">
+          {/* It read "missed calls yesterday, up from N" while the figure
+              beside it was today's and the direction was never checked — it
+              said "up from" on a day the number had halved. */}
           <strong className="font-semibold text-danger">{activity.callsMissed}</strong>{" "}
-          missed calls yesterday, up from {yesterdayMissed}
+          missed calls {spanWord}
+          {activity.callsMissed === yesterdayMissed
+            ? `, the same as ${deltaSuffix}`
+            : `, ${activity.callsMissed > yesterdayMissed ? "up" : "down"} from ${yesterdayMissed} ${deltaSuffix}`}
         </span>
         <Divider />
         <span className="text-sm text-body">
@@ -543,9 +610,86 @@ function TeamView({
   );
 }
 
+/* ------------------------------------------------------------ the period */
+
+const PERIOD_LABELS: Record<DashboardPeriod, string> = {
+  today: "Today",
+  yesterday: "Yesterday",
+  week: "This week",
+  month: "This month",
+};
+
+/** "12 Aug", or "10 Aug – 12 Aug" for a span. */
+function rangeLabel(range: DateRange): string {
+  return range.from === range.to
+    ? shortDate(range.from)
+    : `${shortDate(range.from)} – ${shortDate(range.to)}`;
+}
+
 /**
- * "+2 vs yesterday". Nothing is shown when the two days match, because a
- * delta of zero is noise, and "yesterday" means the last WORKING day.
+ * What the figures are being measured against, said in words.
+ *
+ * The dates are printed rather than implied. "Yesterday" on a Monday means
+ * Saturday, because Sunday is not a working day, and a manager reading a
+ * comparison has to be able to see which days it covered — a delta against an
+ * unnamed span is a number nobody can check.
+ */
+function comparisonLabel(range: DateRange, comparison: DateRange): string {
+  if (comparison.from === comparison.to) return `vs ${shortDate(comparison.from)}`;
+  const days = daysBetween(comparison.from, comparison.to) + 1;
+  return `vs the previous ${days} days`;
+}
+
+/**
+ * The span the activity figures cover.
+ *
+ * Links rather than buttons, because the page is a server component and the
+ * span is part of the address: a manager can bookmark this month's figures and
+ * send somebody the URL. It sits above the figures it governs and below the
+ * queue strip, which is always today — the queue is work waiting now, and a
+ * month's worth of it is not a thing.
+ */
+function PeriodBar({
+  span,
+  range,
+  comparison,
+}: {
+  span: DashboardPeriod;
+  range: DateRange;
+  comparison: DateRange;
+}) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2">
+      {DASHBOARD_PERIODS.map((p) => (
+        <Link
+          key={p}
+          href={p === "today" ? "/crm/dashboard" : `/crm/dashboard?period=${p}`}
+          scroll={false}
+          className={cx(
+            "inline-flex h-8 items-center rounded-[4px] border px-2.5 text-[13px] no-underline hover:no-underline",
+            span === p
+              ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+              : "border-line bg-surface text-body hover:bg-canvas",
+          )}
+        >
+          {PERIOD_LABELS[p]}
+        </Link>
+      ))}
+      <span className="text-[13px] text-muted">
+        {rangeLabel(range)} · {comparisonLabel(range, comparison)}
+      </span>
+      <span className="flex-1" />
+      <span className="text-[13px] text-muted">
+        The queue and the list below always show today&apos;s work
+      </span>
+    </div>
+  );
+}
+
+/**
+ * "+2 vs yesterday". Nothing is shown when the two spans match, because a
+ * delta of zero is noise, and the span it compares against is named on the
+ * period bar above rather than guessed at in every card.
  */
 function Delta({
   today,

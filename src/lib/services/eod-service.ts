@@ -24,28 +24,57 @@ import {
   type EodInput,
 } from "../engines/eod";
 import { today } from "../recompute";
-import { dayBoundaryWindow, monthKey, type BusinessDate } from "../business-date";
+import {
+  monthKey,
+  rangeBoundaryWindow,
+  type BusinessDate,
+  type DateRange,
+} from "../business-date";
 
 /* ---------------------------------------------------------------------------
  * E6 wiring. Every figure is derived — missed calls come from the no-answer
  * connection status, never from anything a user typed.
  * ------------------------------------------------------------------------- */
 
-async function windowFor(day: BusinessDate) {
+async function windowFor(range: DateRange) {
   const config = await getConfig();
-  return dayBoundaryWindow(day, {
+  return rangeBoundaryWindow(range, {
     timezone: config["workingDay.timezone"],
     dayBoundaryHour: config["workingDay.dayBoundaryHour"],
     workingDays: config["workingDay.workingDays"],
   });
 }
 
+/**
+ * One day's figures. The EOD report's own view, and the dashboard's "today".
+ *
+ * A day is a range of one, and it is computed by the range function rather
+ * than beside it: two copies of twenty subqueries is how the dashboard and
+ * the EOD report come to disagree about how many calls somebody made.
+ */
 export async function eodMetricsFor(
   userId: string,
   day: BusinessDate,
 ): Promise<Omit<EodInput, "userName" | "date">> {
-  const w = await windowFor(day);
-  const period = monthKey(day);
+  return eodMetricsForRange(userId, { from: day, to: day });
+}
+
+/**
+ * The same figures over a span of business days.
+ *
+ * Every count is over the span. The two MONTHLY figures are not, and cannot
+ * be: a target is set for a calendar month, so it is read for the month the
+ * span ends in whatever the span is. A week's progress against a month's
+ * target is the honest reading of that pair; a target prorated to the span
+ * would be a number nobody set.
+ */
+export async function eodMetricsForRange(
+  userId: string,
+  range: DateRange,
+): Promise<Omit<EodInput, "userName" | "date">> {
+  const w = await windowFor(range);
+  const day = range.to;
+  const period = monthKey(range.to);
   const [year, month] = period.split("-").map(Number);
 
   const [row] = await db.execute<Record<string, string>>(sql`
@@ -99,8 +128,10 @@ export async function eodMetricsFor(
         and a.attempted_at >= ${w.start}::timestamptz and a.attempted_at < ${w.end}::timestamptz)::int as promises_count,
       (select coalesce(sum(a.promised_amount),0) from follow_up_attempts a where a.user_id = ${userId}
         and a.attempted_at >= ${w.start}::timestamptz and a.attempted_at < ${w.end}::timestamptz) as promises_value,
+      -- paid_at is a DATE, not a timestamp, so it is compared against the
+      -- span's dates rather than its instants. Inclusive of both ends.
       (select coalesce(sum(p.amount),0) from payments p where p.recorded_by_id = ${userId}
-        and p.paid_at = ${day}::date) as payments_confirmed,
+        and p.paid_at >= ${range.from}::date and p.paid_at <= ${range.to}::date) as payments_confirmed,
       (select count(*) from reminders r where r.assigned_user_id = ${userId}
         and r.status = 'completed'
         and r.closed_at >= ${w.start}::timestamptz and r.closed_at < ${w.end}::timestamptz)::int as reminders_closed,
