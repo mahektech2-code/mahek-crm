@@ -40,6 +40,7 @@ import {
   sheetPartyRows,
   sheetSyncRuns,
   customerAmChanges,
+  employees,
   notifications,
   syncConflicts,
   sheetTakenOrderRows,
@@ -128,7 +129,13 @@ import {
   approveOrder,
   declineOrder,
 } from "@/lib/services/order-approval-service";
-import { customerTimeline, rangeActivity } from "@/lib/queries";
+import {
+  customerTimeline,
+  listAssignableUsers,
+  listBackOfficeCandidates,
+  listTeam,
+  rangeActivity,
+} from "@/lib/queries";
 import {
   confirmSent,
   markCopied,
@@ -5391,5 +5398,223 @@ describe("updating an account manager", () => {
     const [after] = await db.select().from(customers).where(eq(customers.id, customer.id));
     assert.equal(after.salesPersonName, "Rakesh", "the sheet overwrote a decision");
     assert.equal(after.salesAmId, rakesh.id);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Who may hold a seat, and why each one moved.
+ *
+ * Two seats that move for different reasons, and two lists of people, because
+ * only one of the seats decides whose calling queue an account lands in.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * A row on the HRMS employee master. The table is a MIRROR of a spreadsheet,
+ * so it demands the bookkeeping columns — a row number, the raw cells and the
+ * hash that makes an unchanged sheet cost no writes — none of which these
+ * tests care about beyond their being present.
+ */
+let employeeRow = 0;
+async function makeEmployee(name: string, status: "active" | "inactive") {
+  const [row] = await db
+    .insert(employees)
+    .values({
+      id: id("emp"),
+      employeeCode: `E-${++employeeRow}`,
+      name,
+      status,
+      rowNumber: employeeRow,
+      raw: {},
+      rowHash: `hash-${employeeRow}`,
+    })
+    .returning();
+  return row;
+}
+
+describe("choosing an account manager", () => {
+  test("the picker offers the staff list, not the reader's scope", async () => {
+    // It was built from `listTeam()`, which is scoped — so an admin reading
+    // My book was offered exactly one person, themselves, and a manager was
+    // offered their own reporting line. Whose account it BECOMES is a fact
+    // about the staff, not about the viewer.
+    setTestUser(priya); // a telecaller: the narrowest scope there is
+    const scoped = await listTeam();
+    const assignable = await listAssignableUsers();
+
+    assert.equal(scoped.length, 1, "a telecaller's scope is themselves");
+    assert.ok(
+      assignable.length > scoped.length,
+      "the assignable list was filtered by the reader's own scope",
+    );
+    assert.ok(
+      assignable.some((p) => p.id === manager.id) &&
+        assignable.some((p) => p.id === deepa.id),
+      "everybody who can hold a book is offered",
+    );
+  });
+
+  test("an inactive account is never offered a book", async () => {
+    const leaver = await makeUser("Gone Away", "telecaller", manager.id);
+    await db.update(users).set({ active: false }).where(eq(users.id, leaver.id));
+
+    const assignable = await listAssignableUsers();
+    assert.ok(
+      !assignable.some((p) => p.id === leaver.id),
+      "somebody who has left was offered accounts",
+    );
+  });
+
+  test("back office offers current employees; sales does not", async () => {
+    await makeEmployee("Sunita Kale", "active");
+    await makeEmployee("Long Gone", "inactive");
+
+    const backOffice = await listBackOfficeCandidates();
+    const sales = await listAssignableUsers();
+
+    assert.ok(
+      backOffice.some((p) => p.name === "Sunita Kale"),
+      "the person who actually does the paperwork could not be named",
+    );
+    assert.ok(
+      !backOffice.some((p) => p.name === "Long Gone"),
+      "a leaver is not a valid answer to who handles this account",
+    );
+    assert.ok(
+      !sales.some((p) => p.name === "Sunita Kale"),
+      "sales drives the queue, so it cannot be somebody with no login",
+    );
+  });
+
+  test("an employee can hold the back office seat, by name", async () => {
+    const staff = await makeEmployee("Ramesh Jadhav", "active");
+    const customer = await makeCustomer(priya.id);
+
+    setTestUser(deepa);
+    const res = await updateAccountManagers({
+      customerIds: [customer.id],
+      backOffice: { kind: "employee", employeeId: staff.id },
+      backOfficeReason: { reasonCode: "Workload rebalanced" },
+    });
+    assert.equal(res.ok, true, res.ok ? "" : res.error);
+    setTestUser(priya);
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.backOfficeName, "Ramesh Jadhav");
+    assert.equal(
+      after.backOfficeAmId,
+      null,
+      "an employee has no account, and none may be invented for them",
+    );
+
+    const [change] = await db
+      .select()
+      .from(customerAmChanges)
+      .where(eq(customerAmChanges.customerId, customer.id));
+    assert.equal(change.role, "back_office");
+    assert.equal(change.toName, "Ramesh Jadhav");
+    assert.equal(change.toUserId, null);
+  });
+
+  test("a leaver cannot be assigned by an old browser tab", async () => {
+    const staff = await makeEmployee("Left Last Month", "inactive");
+    const customer = await makeCustomer(priya.id);
+
+    setTestUser(deepa);
+    const res = await updateAccountManagers({
+      customerIds: [customer.id],
+      backOffice: { kind: "employee", employeeId: staff.id },
+      backOfficeReason: { reasonCode: "Workload rebalanced" },
+    });
+    setTestUser(priya);
+    assert.equal(res.ok, false, "a leaver was given the paperwork");
+  });
+
+  test("each seat carries its OWN reason", async () => {
+    // The whole point: both seats moving at once is the ordinary case, and
+    // "Salesperson left" stamped on the back office row said the dispatch
+    // clerk changed because a salesperson resigned.
+    const customer = await makeCustomer(priya.id, { backOfficeAmId: null });
+
+    setTestUser(deepa);
+    const res = await updateAccountManagers({
+      customerIds: [customer.id],
+      salesAmId: rakesh.id,
+      backOffice: { kind: "user", userId: manager.id },
+      sales: { reasonCode: "Salesperson left", note: "Priya resigned" },
+      backOfficeReason: { reasonCode: "Workload rebalanced" },
+    });
+    assert.equal(res.ok, true, res.ok ? "" : res.error);
+    setTestUser(priya);
+
+    const rows = await db
+      .select()
+      .from(customerAmChanges)
+      .where(eq(customerAmChanges.customerId, customer.id));
+    const sales = rows.find((r) => r.role === "sales")!;
+    const back = rows.find((r) => r.role === "back_office")!;
+
+    assert.equal(sales.reasonCode, "Salesperson left");
+    assert.equal(sales.note, "Priya resigned");
+    assert.equal(back.reasonCode, "Workload rebalanced");
+    assert.equal(back.note, null, "the sales note was copied onto both rows");
+  });
+
+  test("a seat that moves without a reason is refused", async () => {
+    const customer = await makeCustomer(priya.id);
+
+    setTestUser(deepa);
+    const noReason = await updateAccountManagers({
+      customerIds: [customer.id],
+      salesAmId: rakesh.id,
+    });
+    assert.equal(noReason.ok, false, "an account moved with no reason at all");
+
+    // And the reason belongs to the seat that moved: a sales reason does not
+    // stand in for a back office change.
+    const wrongSeat = await updateAccountManagers({
+      customerIds: [customer.id],
+      backOffice: { kind: "user", userId: manager.id },
+      sales: { reasonCode: "Salesperson left" },
+    });
+    assert.equal(wrongSeat.ok, false, "one seat's reason answered for the other");
+    setTestUser(priya);
+  });
+
+  test("moving between two employees is a change, not a no-op", async () => {
+    // Both are name-only, so the id is null on each side. Comparing ids alone
+    // would report "nothing to change" on a screen that had just been told
+    // somebody new does the paperwork.
+    const first = await makeEmployee("First Clerk", "active");
+    const second = await makeEmployee("Second Clerk", "active");
+    const customer = await makeCustomer(priya.id);
+
+    setTestUser(deepa);
+    await updateAccountManagers({
+      customerIds: [customer.id],
+      backOffice: { kind: "employee", employeeId: first.id },
+      backOfficeReason: { reasonCode: "Workload rebalanced" },
+    });
+    const res = await updateAccountManagers({
+      customerIds: [customer.id],
+      backOffice: { kind: "employee", employeeId: second.id },
+      backOfficeReason: { reasonCode: "Workload rebalanced" },
+    });
+    setTestUser(priya);
+    assert.equal(res.ok, true, res.ok ? "" : res.error);
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.backOfficeName, "Second Clerk");
+
+    const rows = await db
+      .select()
+      .from(customerAmChanges)
+      .where(eq(customerAmChanges.customerId, customer.id));
+    assert.equal(rows.length, 2, "the second move left no history");
   });
 });
