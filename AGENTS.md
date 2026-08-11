@@ -580,6 +580,25 @@ the bill number, and the note it produced would look exactly like an honest
 one. The original-language transcript is a click away, because the only way to
 know a translation went wrong is to read the sentence it came from.
 
+**A held recording captures nothing, and the screen has to look like it.**
+Pause is `MediaRecorder.pause()`, so the held seconds are ABSENT from the blob
+rather than recorded as silence — what comes back is what was said before and
+after, joined. The audio track is disabled alongside it, which takes the
+microphone out of the loop as well as the container. The timer stops, so
+`elapsed` counts recorded seconds and not wall-clock ones: that is the number
+the recording ceiling has to be measured in — a five-minute interruption must
+not eat somebody's limit — and it is the number the server routes on, since
+Sarvam's 30-second refusal is about the length of the audio and not how long
+the modal was open. The pulse ring stops, the level meter goes STILL rather
+than falling back to its idle loop, and the sentence says nothing is being
+recorded. A meter travelling under the word "Held" is the screen claiming it
+can still hear you. The button is not drawn at all where the browser cannot
+pause — Safari only learned in 14.1 — for the same reason the microphone is
+not drawn where it cannot record. Closing the modal from a pause has to
+release the microphone too: the cleanup tests `state !== "inactive"`, because
+a held recorder is neither recording nor inactive and `=== "recording"` left
+it running.
+
 **The audio is never stored.** It is read from the request, sent to the model
 and dropped: no `attachments` row, no blob key, no retention window and no id
 to fetch it back by. A recording of a customer conversation is a different
