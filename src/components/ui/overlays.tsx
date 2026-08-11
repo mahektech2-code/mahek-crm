@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { Button, cx } from "./primitives";
 import { DictateButton, joinDictation } from "./dictate";
 import { Modal, useEscape } from "./modal";
@@ -191,27 +192,99 @@ export type MenuItem = {
   title?: string;
 };
 
+/** Menu width, in px. Named because the placing maths needs the number. */
+const ROW_MENU_WIDTH = 224;
+/** Kept clear of the viewport edge, so the menu never touches the glass. */
+const VIEWPORT_MARGIN = 8;
+
+/**
+ * The row's ⋯ menu.
+ *
+ * IT IS RENDERED INTO `document.body`, NOT BESIDE THE BUTTON. Every table in
+ * this app sits inside a Card carrying `overflow-auto`, because a wide table
+ * scrolls sideways rather than wrapping a customer's name across two lines —
+ * and an `overflow` ancestor CLIPS an absolutely positioned descendant. The
+ * menu was cut off mid-word at the edge of the scroll box: "Request
+ * deactivation" rendered as "Request deactivatio", and on a table scrolled
+ * sideways the whole menu could be invisible.
+ *
+ * Positioning it out of the flow means placing it by hand, which is the price
+ * of escaping the clip. It is anchored to the button's own rectangle, aligned
+ * to its right edge, and it flips above the button when there is not enough
+ * room below — a menu that opens off the bottom of the screen is as unusable
+ * as one that is clipped.
+ *
+ * A `fixed` element does not travel with a scrolling ancestor, so the menu
+ * CLOSES on any scroll rather than being left behind pointing at nothing.
+ */
 export function RowMenu({ items }: { items: MenuItem[] }) {
-  const [open, setOpen] = React.useState(false);
-  const ref = React.useRef<HTMLSpanElement>(null);
+  const [at, setAt] = React.useState<{
+    top: number;
+    left: number;
+  } | null>(null);
+  const open = at !== null;
+  const buttonRef = React.useRef<HTMLButtonElement>(null);
+  const menuRef = React.useRef<HTMLSpanElement>(null);
+
+  /** Where the menu goes, from the button's rectangle at the moment of click. */
+  const place = () => {
+    const button = buttonRef.current;
+    if (!button) return;
+    const rect = button.getBoundingClientRect();
+    const height = items.length * 32 + 8;
+    const below = window.innerHeight - rect.bottom;
+    setAt({
+      // Above when below will not hold it, which is what the last few rows of
+      // any long table need.
+      top:
+        below < height + VIEWPORT_MARGIN
+          ? Math.max(VIEWPORT_MARGIN, rect.top - height - 4)
+          : rect.bottom + 4,
+      // Right-aligned with the button, then pulled back inside the window.
+      left: Math.max(
+        VIEWPORT_MARGIN,
+        Math.min(
+          rect.right - ROW_MENU_WIDTH,
+          window.innerWidth - ROW_MENU_WIDTH - VIEWPORT_MARGIN,
+        ),
+      ),
+    });
+  };
 
   React.useEffect(() => {
     if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      // Both halves: the button lives in the table, the menu lives in the
+      // body, and neither contains the other any more.
+      if (buttonRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setAt(null);
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    const close = () => setAt(null);
+    document.addEventListener("mousedown", onDown);
+    // Capture, because the scroll that matters is the Card's, not the window's,
+    // and a scroll event on an inner element does not bubble.
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
   }, [open]);
 
   return (
-    <span ref={ref} className="relative inline-block">
+    <span className="relative inline-block">
       <button
+        ref={buttonRef}
         title="More actions"
         aria-label="More actions"
+        aria-expanded={open}
         onClick={(e) => {
           e.stopPropagation();
-          setOpen((o) => !o);
+          if (open) setAt(null);
+          else place();
         }}
         className={cx(
           "flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] border text-muted",
@@ -222,32 +295,44 @@ export function RowMenu({ items }: { items: MenuItem[] }) {
       >
         ⋯
       </button>
-      {open ? (
-        <span className="animate-fade-in absolute top-8 right-0 z-50 flex w-56 flex-col overflow-hidden rounded-[6px] border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
-          {items.map((item, i) => (
-            <button
-              key={i}
-              title={item.title}
-              disabled={item.disabled}
-              onClick={(e) => {
-                e.stopPropagation();
-                setOpen(false);
-                item.onSelect();
-              }}
-              className={cx(
-                "px-3 py-1.5 text-left text-sm",
-                item.disabled
-                  ? "cursor-not-allowed text-line-strong"
-                  : item.destructive
-                    ? "cursor-pointer text-danger hover:bg-danger-soft"
-                    : "cursor-pointer text-body hover:bg-canvas",
-              )}
+      {at
+        ? createPortal(
+            <span
+              ref={menuRef}
+              role="menu"
+              style={{ top: at.top, left: at.left, width: ROW_MENU_WIDTH }}
+              className="animate-fade-in fixed z-50 flex flex-col overflow-hidden rounded-[6px] border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
             >
-              {item.label}
-            </button>
-          ))}
-        </span>
-      ) : null}
+              {items.map((item, i) => (
+                <button
+                  key={i}
+                  role="menuitem"
+                  title={item.title}
+                  disabled={item.disabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAt(null);
+                    item.onSelect();
+                  }}
+                  className={cx(
+                    // The label holds its line: these are short phrases, and a
+                    // wrapped one made the menu taller than the maths above
+                    // expected, which is how it flipped to the wrong side.
+                    "px-3 py-1.5 text-left text-sm whitespace-nowrap",
+                    item.disabled
+                      ? "cursor-not-allowed text-line-strong"
+                      : item.destructive
+                        ? "cursor-pointer text-danger hover:bg-danger-soft"
+                        : "cursor-pointer text-body hover:bg-canvas",
+                  )}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </span>,
+            document.body,
+          )
+        : null}
     </span>
   );
 }

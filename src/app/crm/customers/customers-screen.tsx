@@ -530,11 +530,17 @@ export function CustomersScreen({
                       tone={
                         r.status === "Slow payer"
                           ? "warn"
-                          : r.status === "Inactive"
-                            ? "muted"
-                            : r.status === "New"
-                              ? "brand"
-                              : "success"
+                          : // Deactivated fell through to `success` and came
+                            // out the same green as Active — the one status
+                            // that means "do not work this account" was the
+                            // hardest to tell from the one that means work it.
+                            r.status === "Deactivated"
+                            ? "danger"
+                            : r.status === "Inactive"
+                              ? "muted"
+                              : r.status === "New"
+                                ? "brand"
+                                : "success"
                       }
                     >
                       {r.status}
