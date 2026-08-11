@@ -1,5 +1,5 @@
 import "server-only";
-import { asc, eq, sql } from "drizzle-orm";
+import { asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, customers, users } from "@/db/schema";
 import type { AppId } from "@/lib/apps";
@@ -93,12 +93,19 @@ export async function listPeople(): Promise<Person[]> {
   }));
 }
 
-/** Everyone a telecaller could report to. Used by the edit form. */
+/**
+ * Everyone a telecaller could report to. Used by the edit form.
+ *
+ * Admins as well as managers: the question this asks is who manages people,
+ * and an admin outranks a manager rather than sitting outside the hierarchy.
+ * Reading `role = 'manager'` alone emptied the list the moment the only
+ * manager was promoted, and an empty picker is a form that cannot be saved.
+ */
 export async function listManagers(): Promise<{ id: string; name: string }[]> {
   const rows = await db
     .select({ id: users.id, name: users.name })
     .from(users)
-    .where(eq(users.role, "manager"))
+    .where(inArray(users.role, ["manager", "admin"]))
     .orderBy(asc(users.name));
   return rows;
 }

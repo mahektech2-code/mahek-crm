@@ -2009,7 +2009,7 @@ async function notifyManagers(actorId: string, title: string, body: string) {
     .where(
       actor?.reportsToId
         ? eq(users.id, actor.reportsToId)
-        : and(eq(users.role, "manager"), eq(users.active, true)),
+        : and(inArray(users.role, ["manager", "admin"]), eq(users.active, true)),
     );
 
   if (!targets.length) return;
