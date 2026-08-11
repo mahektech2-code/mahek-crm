@@ -4990,6 +4990,44 @@ describe("An imported customer reaches the calling queue", () => {
       "an overdue customer with a sales AM was missing from the collections worklist",
     );
   });
+
+  test("the collections figures count the same book the list shows", async () => {
+    // The strip above the worklist scoped by owner_id while the list under it
+    // scoped by the assignment rule, so a manager or an admin working their
+    // own accounts read an outstanding figure of zero over a list of accounts
+    // that plainly owed money.
+    const customer = await makeCustomer(manager.id, {
+      ownerId: null,
+      salesAmId: manager.id,
+    });
+    await db.insert(bills).values({
+      id: id("bil"),
+      customerId: customer.id,
+      billNo: `INV-${randomUUID().slice(0, 6)}`,
+      billDate: addDays(TODAY, -90),
+      dueDate: addDays(TODAY, -60),
+      amount: 40_000_00,
+      paidAmount: 0,
+    });
+    await recomputeOutstanding(customer.id);
+    await recomputeFollowUpState(customer.id);
+
+    setTestUser(manager);
+    const row = (await getFollowUpWorklist()).find(
+      (r) => r.customerId === customer.id,
+    );
+    assert.ok(row, "the account is on the list");
+
+    const metrics = await collectionsMetrics();
+    assert.ok(
+      metrics.outstanding >= 40_000_00,
+      "the figures left out an account the list beside them was showing",
+    );
+
+    // And the row says whose account it is, by the same rule — the owner is
+    // null here, so reading owner_id would have left the column blank.
+    assert.equal(row.assignedToName, manager.name);
+  });
 });
 
 /* ---------------------------------------------------------------------------
@@ -5172,7 +5210,7 @@ describe("updating an account manager", () => {
     const refused = await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      reasonCode: "Salesperson left",
+      sales: { reasonCode: "Salesperson left" },
     });
     assert.equal(refused.ok, false, "a manager reassigned an account");
 
@@ -5187,7 +5225,7 @@ describe("updating an account manager", () => {
     const allowed = await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      reasonCode: "Salesperson left",
+      sales: { reasonCode: "Salesperson left" },
     });
     assert.equal(allowed.ok, true, allowed.ok ? "" : allowed.error);
     setTestUser(priya);
@@ -5200,9 +5238,11 @@ describe("updating an account manager", () => {
     const res = await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      backOfficeAmId: manager.id,
-      reasonCode: "Territory reassigned",
-      note: "Western line handed over",
+      backOffice: { kind: "user", userId: manager.id },
+      // Two seats, two reasons — the point of the change. The back office did
+      // not move because a salesperson left.
+      sales: { reasonCode: "Territory reassigned", note: "Western line handed over" },
+      backOfficeReason: { reasonCode: "Workload rebalanced" },
     });
     assert.equal(res.ok, true, res.ok ? "" : res.error);
     setTestUser(priya);
@@ -5239,7 +5279,7 @@ describe("updating an account manager", () => {
     await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      reasonCode: "Salesperson left",
+      sales: { reasonCode: "Salesperson left" },
     });
     setTestUser(priya);
 
@@ -5271,7 +5311,7 @@ describe("updating an account manager", () => {
     await updateAccountManagers({
       customerIds: [lead.id],
       salesAmId: rakesh.id,
-      reasonCode: "Salesperson left",
+      sales: { reasonCode: "Salesperson left" },
     });
     setTestUser(priya);
 
@@ -5286,22 +5326,21 @@ describe("updating an account manager", () => {
     const unknown = await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      reasonCode: "Because I said so",
+      sales: { reasonCode: "Because I said so" },
     });
     assert.equal(unknown.ok, false, "an unlabelled reason was stored");
 
     const bare = await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      reasonCode: "Other",
+      sales: { reasonCode: "Other" },
     });
     assert.equal(bare.ok, false, "Other without a note tells nobody anything");
 
     const withNote = await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      reasonCode: "Other",
-      note: "Covering maternity leave",
+      sales: { reasonCode: "Other", note: "Covering maternity leave" },
     });
     assert.equal(withNote.ok, true, withNote.ok ? "" : withNote.error);
     setTestUser(priya);
@@ -5315,7 +5354,7 @@ describe("updating an account manager", () => {
     const res = await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: priya.id,
-      reasonCode: "Workload rebalanced",
+      sales: { reasonCode: "Workload rebalanced" },
     });
     setTestUser(priya);
     assert.equal(res.ok, true);
@@ -5347,7 +5386,7 @@ describe("updating an account manager", () => {
     await updateAccountManagers({
       customerIds: [customer.id],
       salesAmId: rakesh.id,
-      reasonCode: "Salesperson left",
+      sales: { reasonCode: "Salesperson left" },
     });
     setTestUser(priya);
 
