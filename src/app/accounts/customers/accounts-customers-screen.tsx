@@ -44,6 +44,7 @@ type Row = {
 export function AccountsCustomersScreen({
   rows,
   team,
+  backOfficePeople,
   canReassign,
   amReasons,
   amSearchThreshold,
@@ -51,7 +52,9 @@ export function AccountsCustomersScreen({
   pageInfo,
 }: {
   rows: Row[];
-  team: Array<{ id: string; name: string }>;
+  team: Array<{ id: string; name: string; role?: string }>;
+  /** Accounts plus the current HRMS employees — the back office seat only. */
+  backOfficePeople: Array<{ id: string; name: string; role?: string }>;
   canReassign: boolean;
   amReasons: string[];
   amSearchThreshold: number;
@@ -221,15 +224,24 @@ export function AccountsCustomersScreen({
         // effect, which is the React Compiler rule every dialog here follows.
         key={`am-${[...selected].join(",")}`}
         open={changingAm}
-        count={selected.size}
-        people={team}
+        accounts={rows
+          .filter((r) => selected.has(r.id))
+          .map((r) => ({
+            id: r.id,
+            name: r.name,
+            salesName: r.salesAmName,
+            backOfficeName: r.backOfficeAmName,
+          }))}
+        salesPeople={team}
+        backOfficePeople={backOfficePeople}
         reasons={amReasons}
         searchThreshold={amSearchThreshold}
         onClose={() => setChangingAm(false)}
         onSubmit={async (change) => {
-          const result = await run(
-            updateAccountManagers({ customerIds: [...selected], ...change }),
-          );
+          // The dialog decides which accounts go: its review step can untick
+          // any of them, so the selection is where the list STARTS, not what
+          // is sent.
+          const result = await run(updateAccountManagers(change));
           if (result.ok) {
             setChangingAm(false);
             setSelected(new Set());

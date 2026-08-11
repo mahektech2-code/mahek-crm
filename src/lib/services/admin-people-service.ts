@@ -1,5 +1,5 @@
 import "server-only";
-import { asc, eq, inArray, sql } from "drizzle-orm";
+import { asc, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, customers, users } from "@/db/schema";
 import type { AppId } from "@/lib/apps";

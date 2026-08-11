@@ -2,13 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
   auditLog,
   customerAmChanges,
   customers,
+  employees,
   notifications,
   users,
 } from "@/db/schema";
@@ -44,6 +45,21 @@ import { err, okVoid, fromThrown, type Result } from "@/lib/result";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
+/**
+ * A reason belongs to a SEAT, not to the dialog.
+ *
+ * It used to be one code and one note for whatever moved, which reads fine
+ * until both seats move at once — and both moving at once is the ordinary
+ * case, because that is what happens when somebody leaves. "Salesperson left"
+ * was then stamped on the back-office row too, and the history said the
+ * dispatch clerk changed because a salesperson resigned. Two changes, two
+ * reasons, two rows.
+ */
+const seatReason = z.object({
+  reasonCode: z.string().min(1),
+  note: z.string().trim().max(500).optional(),
+});
+
 const schema = z.object({
   customerIds: z.array(z.string().min(1)).min(1),
   /**
@@ -53,9 +69,28 @@ const schema = z.object({
    * with nobody in that seat.
    */
   salesAmId: z.string().min(1).nullable().optional(),
-  backOfficeAmId: z.string().min(1).nullable().optional(),
-  reasonCode: z.string().min(1),
-  note: z.string().trim().max(500).optional(),
+  /**
+   * The back office seat takes a PERSON, who may not have a login.
+   *
+   * `user` is an account; `employee` is somebody on the HRMS master, stored as
+   * a name in `customers.backOfficeName` exactly as the sheet has always
+   * stored them; `none` empties the seat. Sales has no such union on purpose —
+   * it decides whose calling queue the account lands in, and a name with no
+   * account cannot be given a queue.
+   *
+   * An employee arrives as an ID and the NAME is read from the database here.
+   * Taking the name off the request would let a caller write any string they
+   * liked into a column the screens display.
+   */
+  backOffice: z
+    .discriminatedUnion("kind", [
+      z.object({ kind: z.literal("user"), userId: z.string().min(1) }),
+      z.object({ kind: z.literal("employee"), employeeId: z.string().min(1) }),
+      z.object({ kind: z.literal("none") }),
+    ])
+    .optional(),
+  sales: seatReason.optional(),
+  backOfficeReason: seatReason.optional(),
 });
 
 export type UpdateAccountManagersInput = z.input<typeof schema>;
@@ -77,44 +112,116 @@ export async function updateAccountManagers(
     const config = await getConfig();
 
     const changingSales = input.salesAmId !== undefined;
-    const changingBackOffice = input.backOfficeAmId !== undefined;
+    const changingBackOffice = input.backOffice !== undefined;
     if (!changingSales && !changingBackOffice) {
       return err("Pick at least one account manager to change.", "validation");
     }
 
-    // The reason list is a manager's to edit, so it is validated against the
-    // stored list rather than an enum. An unknown code is refused instead of
-    // stored, or the history grows values nothing can label.
+    /*
+     * A seat that is moving must say why. Checked per seat rather than once,
+     * because the two are separate decisions with separate answers — and the
+     * screen asks them separately, so an action that accepted one reason for
+     * both would quietly let the interface and the record disagree.
+     *
+     * The reason list is a manager's to edit, so it is validated against the
+     * stored list rather than an enum. An unknown code is refused instead of
+     * stored, or the history grows values nothing can label.
+     */
     const reasons = config["people.amChangeReasons"] as string[];
-    if (!reasons.includes(input.reasonCode)) {
-      return err("That is not a reason we record.", "validation", [
-        { field: "reasonCode", message: "Pick one of the offered reasons." },
-      ]);
+    const checkReason = (
+      seat: { reasonCode: string; note?: string } | undefined,
+      label: string,
+      field: string,
+    ): string | null => {
+      if (!seat) return `Say why the ${label} account manager is changing.`;
+      if (!reasons.includes(seat.reasonCode)) {
+        return `That is not a reason we record for the ${label} account manager.`;
+      }
+      if (/^other$/i.test(seat.reasonCode) && !seat.note?.trim()) {
+        return `A note is required when the ${label} reason is Other.`;
+      }
+      void field;
+      return null;
+    };
+    if (changingSales) {
+      const problem = checkReason(input.sales, "sales", "sales.reasonCode");
+      if (problem) return err(problem, "validation");
     }
-    if (/^other$/i.test(input.reasonCode) && !input.note?.trim()) {
-      return err("Say what the reason is.", "validation", [
-        { field: "note", message: "A note is required when the reason is Other." },
-      ]);
+    if (changingBackOffice) {
+      const problem = checkReason(
+        input.backOfficeReason,
+        "back office",
+        "backOfficeReason.reasonCode",
+      );
+      if (problem) return err(problem, "validation");
     }
 
-    // Both targets must be real accounts. `sales_am_id` can only hold a `users`
-    // row — a name the sheet carries with no login cannot be given a book,
-    // which is the whole reason `salesPersonName` exists beside it.
-    const targetIds = [input.salesAmId, input.backOfficeAmId].filter(
+    /*
+     * The sales target must be a real account. `sales_am_id` can only hold a
+     * `users` row — a name the sheet carries with no login cannot be given a
+     * book, which is the whole reason `salesPersonName` exists beside it.
+     */
+    const nameById = new Map<string, string>();
+    const salesTargetId =
+      typeof input.salesAmId === "string" ? input.salesAmId : null;
+    const backOfficeUserId =
+      input.backOffice?.kind === "user" ? input.backOffice.userId : null;
+    const wantedUserIds = [salesTargetId, backOfficeUserId].filter(
       (v): v is string => typeof v === "string",
     );
-    const targets = targetIds.length
-      ? await db
-          .select({ id: users.id, name: users.name })
-          .from(users)
-          .where(inArray(users.id, targetIds))
-      : [];
-    const nameById = new Map(targets.map((u) => [u.id, u.name]));
-    for (const wanted of targetIds) {
-      if (!nameById.has(wanted)) {
-        return err("That person no longer has an account.", "validation");
+    if (wantedUserIds.length) {
+      const targets = await db
+        .select({ id: users.id, name: users.name })
+        .from(users)
+        .where(and(inArray(users.id, wantedUserIds), eq(users.active, true)));
+      for (const u of targets) nameById.set(u.id, u.name);
+      for (const wanted of wantedUserIds) {
+        if (!nameById.has(wanted)) {
+          // Active as well as present: an account that has been switched off
+          // between the picker rendering and the save landing is a leaver, and
+          // handing them a book is what this screen exists to undo.
+          return err("That person no longer has an active account.", "validation");
+        }
       }
     }
+
+    /*
+     * An employee on the back office seat is resolved to a name HERE, from a
+     * row that must still be current. The request carries an id and never the
+     * name, so a caller cannot write arbitrary text into a column the screens
+     * display, and a leaver cannot be assigned by an old browser tab.
+     */
+    let backOfficeEmployeeName: string | null = null;
+    if (input.backOffice?.kind === "employee") {
+      const [staff] = await db
+        .select({ name: employees.name })
+        .from(employees)
+        .where(
+          and(
+            eq(employees.id, input.backOffice.employeeId),
+            eq(employees.status, "active"),
+          ),
+        )
+        .limit(1);
+      if (!staff) {
+        return err(
+          "That employee is no longer on the current staff list.",
+          "validation",
+        );
+      }
+      backOfficeEmployeeName = staff.name;
+    }
+
+    /** What the back office seat becomes: an account, a name, or nobody. */
+    const backOfficeTarget: { userId: string | null; name: string | null } =
+      input.backOffice?.kind === "user"
+        ? {
+            userId: input.backOffice.userId,
+            name: nameById.get(input.backOffice.userId) ?? null,
+          }
+        : input.backOffice?.kind === "employee"
+          ? { userId: null, name: backOfficeEmployeeName }
+          : { userId: null, name: null };
 
     const rows = await db
       .select({
@@ -176,8 +283,8 @@ export async function updateAccountManagers(
               fromName: row.salesPersonName,
               toUserId: to,
               toName: to ? (nameById.get(to) ?? null) : null,
-              reasonCode: input.reasonCode,
-              note: input.note?.trim() || null,
+              reasonCode: input.sales!.reasonCode,
+              note: input.sales!.note?.trim() || null,
               changedById: ctx.user.id,
               changedAt: now,
             });
@@ -188,21 +295,30 @@ export async function updateAccountManagers(
 
         if (changingBackOffice) {
           const from = row.backOfficeAmId;
-          const to = input.backOfficeAmId ?? null;
-          if (from !== to) {
+          const to = backOfficeTarget.userId;
+          /*
+           * The seat can move without the ID moving: from an employee name to
+           * a different employee name is null → null on the id and a real
+           * change to the person. Comparing ids alone would report "nothing to
+           * change" and write nothing, on a screen that had just been told
+           * somebody new does the paperwork.
+           */
+          const fromName = row.backOfficeName;
+          const toName = backOfficeTarget.name;
+          if (from !== to || (fromName ?? null) !== (toName ?? null)) {
             changed = true;
             values.backOfficeAmId = to;
-            values.backOfficeName = to ? (nameById.get(to) ?? null) : null;
+            values.backOfficeName = toName;
             history.push({
               id: id("amc"),
               customerId: row.id,
               role: "back_office",
               fromUserId: from,
-              fromName: row.backOfficeName,
+              fromName,
               toUserId: to,
-              toName: to ? (nameById.get(to) ?? null) : null,
-              reasonCode: input.reasonCode,
-              note: input.note?.trim() || null,
+              toName,
+              reasonCode: input.backOfficeReason!.reasonCode,
+              note: input.backOfficeReason!.note?.trim() || null,
               changedById: ctx.user.id,
               changedAt: now,
             });
@@ -240,8 +356,9 @@ export async function updateAccountManagers(
           } as never,
           afterState: {
             ...values,
-            reasonCode: input.reasonCode,
-            note: input.note?.trim() || null,
+            // Both reasons, each against the seat it explains.
+            salesReason: changingSales ? input.sales : undefined,
+            backOfficeReason: changingBackOffice ? input.backOfficeReason : undefined,
           } as never,
         });
       }
@@ -263,12 +380,29 @@ export async function updateAccountManagers(
      */
     const notes: (typeof notifications.$inferInsert)[] = [];
     const plural = (n: number) => `${n} account${n === 1 ? "" : "s"}`;
+    /*
+     * Which reason to tell somebody about. A person can gain accounts through
+     * either seat, and the two now carry different reasons — so the message
+     * names whichever seat actually moved, and both where both did, rather
+     * than picking one and being wrong half the time.
+     */
+    const reasonSentence = [
+      changingSales ? `sales: ${input.sales!.reasonCode}` : null,
+      changingBackOffice
+        ? `back office: ${input.backOfficeReason!.reasonCode}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const noteSentence = [input.sales?.note?.trim(), input.backOfficeReason?.note?.trim()]
+      .filter(Boolean)
+      .join(" · ");
     for (const [userId, count] of gained) {
       notes.push({
         id: id("ntf"),
         userId,
         title: "Accounts assigned to you",
-        body: `${ctx.user.name} moved ${plural(count)} to you — ${input.reasonCode}${input.note?.trim() ? `: ${input.note.trim()}` : ""}`,
+        body: `${ctx.user.name} moved ${plural(count)} to you — ${reasonSentence}${noteSentence ? `: ${noteSentence}` : ""}`,
         kind: "info",
         href: "/crm/customers",
       });
@@ -279,7 +413,7 @@ export async function updateAccountManagers(
         id: id("ntf"),
         userId,
         title: "Accounts moved from you",
-        body: `${ctx.user.name} moved ${plural(count)} to somebody else — ${input.reasonCode}`,
+        body: `${ctx.user.name} moved ${plural(count)} to somebody else — ${reasonSentence}`,
         kind: "info",
         href: "/crm/customers",
       });

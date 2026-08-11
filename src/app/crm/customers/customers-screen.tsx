@@ -92,6 +92,7 @@ export function CustomersScreen({
   amReasons,
   amSearchThreshold,
   team,
+  backOfficePeople,
   rows,
   filters,
   pageInfo,
@@ -108,7 +109,9 @@ export function CustomersScreen({
   canReassign: boolean;
   amReasons: string[];
   amSearchThreshold: number;
-  team: Array<{ id: string; name: string }>;
+  team: Array<{ id: string; name: string; role?: string }>;
+  /** Accounts plus the current HRMS employees — the back office seat only. */
+  backOfficePeople: Array<{ id: string; name: string; role?: string }>;
   rows: Row[];
   filters: { query: string; status: string; owner: string; perPage: number };
   pageInfo: { page: number; pageCount: number; total: number; bookTotal: number };
@@ -813,17 +816,42 @@ export function CustomersScreen({
            * missing reason — nothing has been written yet, and the form comes
            * back with everything still in it rather than half saved.
            */
-          const amMoved =
-            (String(values.ownerId ?? "") !== (editing.ownerId ?? "")) ||
-            (String(values.backOfficeAmId ?? "") !== (editing.backOfficeAmId ?? ""));
+          const salesMoved =
+            String(values.ownerId ?? "") !== (editing.ownerId ?? "");
+          const backOfficeMoved =
+            String(values.backOfficeAmId ?? "") !== (editing.backOfficeAmId ?? "");
 
-          if (amMoved) {
+          if (salesMoved || backOfficeMoved) {
+            const backOfficeId = String(values.backOfficeAmId ?? "");
+            /*
+             * Only the seat that MOVED is sent. This used to send both
+             * whenever either changed, which stamps the decision mark — the
+             * thing that stops the sheet restating the old answer — on a seat
+             * nobody touched.
+             *
+             * This form asks for one reason, so the seat that moved carries
+             * it. Where both moved it is the same answer twice, which is what
+             * the person typed; the bulk dialog asks per seat because there
+             * the two are usually different decisions.
+             */
+            const reasonCode = String(values.amReasonCode ?? "");
             const moved = await run(
               updateAccountManagers({
                 customerIds: [editing.id],
-                salesAmId: String(values.ownerId ?? "") || null,
-                backOfficeAmId: String(values.backOfficeAmId ?? "") || null,
-                reasonCode: String(values.amReasonCode ?? ""),
+                ...(salesMoved
+                  ? {
+                      salesAmId: String(values.ownerId ?? "") || null,
+                      sales: { reasonCode },
+                    }
+                  : {}),
+                ...(backOfficeMoved
+                  ? {
+                      backOffice: backOfficeId
+                        ? ({ kind: "user", userId: backOfficeId } as const)
+                        : ({ kind: "none" } as const),
+                      backOfficeReason: { reasonCode },
+                    }
+                  : {}),
               }),
             );
             if (!moved.ok) return false;
@@ -885,15 +913,24 @@ export function CustomersScreen({
         // already follows.
         key={`am-${[...selected].join(",")}`}
         open={changingAm}
-        count={selected.size}
-        people={team}
+        accounts={visible
+          .filter((r) => selected.has(r.id))
+          .map((r) => ({
+            id: r.id,
+            name: r.name,
+            salesName: r.salesAmName,
+            backOfficeName: r.backOfficeAmName,
+          }))}
+        salesPeople={team}
+        backOfficePeople={backOfficePeople}
         reasons={amReasons}
         searchThreshold={amSearchThreshold}
         onClose={() => setChangingAm(false)}
         onSubmit={async (change) => {
-          const result = await run(
-            updateAccountManagers({ customerIds: [...selected], ...change }),
-          );
+          // The dialog decides which accounts go: its review step can untick
+          // any of them, so the selection is where the list STARTS, not what
+          // is sent.
+          const result = await run(updateAccountManagers(change));
           if (result.ok) {
             setChangingAm(false);
             setSelected(new Set());
