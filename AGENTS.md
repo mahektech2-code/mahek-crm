@@ -944,6 +944,37 @@ The window and the stage-2 threshold are two statements of the same fact, so
 `checkConsistency` refuses to let them drift: if the list offered a call on a
 day `isAttemptAllowed` still called stage 1, saving it would be rejected.
 
+**The list is ordered by WHY, then by what that reason is worth.** The tier
+weight decides the order of reasons and does not move: a promise beats an order
+due, which beats a stock check. Within a reason it was "who owes the most
+money", which is a collections answer given to a sales question — among twenty
+customers all due to order, the one who owes most is not the one to ring first,
+and a telecaller working top-down spent the morning in the wrong half of the
+book. `callValuePaise` asks the question the reason is about: a collections call
+is worth the debt, a sales call is worth the order. The order figure is the
+MEDIAN of the customer's own recent approved orders, never a figure derived from
+the catalogue — there are no prices in the product master and a confident wrong
+number would be worse than none.
+
+**A prediction is discounted by how sure we are of it.** `cycleConfidence` was
+computed, stored, banded and displayed, and nothing acted on it. Two customers
+averaging thirty days are not alike if one orders every 29, 30, 31 and the other
+after 15, 45, 22, 60 — so where the reason is a PREDICTION (order due, overdue,
+stock check) the order value is multiplied by it. A lakh at a coin toss is worth
+less than sixty thousand like clockwork. Reminders, prospects and check-ins are
+facts rather than predictions and carry their value whole. A NULL confidence
+discounts nothing: every cycle computed before the column existed carries one,
+and halving them would be a uniform penalty dressed up as a judgement — missing
+information must never demote anybody.
+
+**Confidence also moves the stock-check day.** The call lands at
+`queue.routineCallPercent` of the cycle, swung by `queue.routineConfidenceSwing`
+— a perfectly regular customer is called LATER, closer to the day they actually
+order, and an erratic one earlier, because the honest answer to a guess is a
+wider net. Fifty is neutral, so a swing of zero is exactly the old flat
+behaviour. It moves the day and never creates a call the cycle length says
+should not exist — a short cycle still gets no stock check.
+
 **Suppression is a return value, not a filter.** `buildQueue()` returns held-
 back customers alongside the queue, and the screen shows them. A telecaller
 must always be able to find out why somebody they expected is missing.

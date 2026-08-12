@@ -281,6 +281,10 @@ function candidate(over: Partial<QueueCandidate> = {}): QueueCandidate {
     lastOrderDate: null,
     cycleDays: 30,
     cycleIsDefault: false,
+    // A perfectly regular customer, so the confidence swing leaves the
+    // existing tests exactly where they were. The tests that care set it.
+    cycleConfidence: 50,
+    typicalOrderPaise: 0,
     lastContactDate: TODAY,
     createdDate: "2025-01-01",
     reminders: [],
@@ -810,6 +814,213 @@ describe("E2 queue builder", () => {
     assert.equal(at(1).suppressed.length, 0, "and nothing is held back either");
     assert.equal(at(2).entries[0].reasons[0].kind, "orderDue", "day 2: due");
     assert.equal(at(3).entries.length, 1, "day 3: overdue, still on the list");
+  });
+
+  /* ------------------------------------------ what the call is worth */
+
+  describe("ordering within a reason", () => {
+    const due = (over: Partial<QueueCandidate>) =>
+      candidate({
+        lastOrderDate: addDays(TODAY, -30),
+        cycleDays: 30,
+        cycleIsDefault: false,
+        lastContactDate: addDays(TODAY, -30),
+        ...over,
+      });
+
+    test("a sales call is ordered by the order, not by money owed", () => {
+      // Both are due to order today, so both carry the same reason and the
+      // same weight. It used to be settled by who owed the most, which is a
+      // collections answer given to a sales question — a telecaller working
+      // top-down spent the morning in the wrong half of the book.
+      const big = due({
+        customerId: "big",
+        typicalOrderPaise: 50_000_00,
+        outstanding: 0,
+      });
+      const owing = due({
+        customerId: "owing",
+        typicalOrderPaise: 4_000_00,
+        outstanding: 90_000_00,
+      });
+
+      const { entries } = buildQueue([owing, big], TODAY, C);
+      assert.deepEqual(
+        entries.map((e) => e.customerId),
+        ["big", "owing"],
+      );
+    });
+
+    test("a collections call is still ordered by the debt", () => {
+      // The reason decides which question is asked. Chasing money is worth
+      // the money.
+      const small = candidate({
+        customerId: "small-debt",
+        outstanding: 10_000_00,
+        typicalOrderPaise: 90_000_00,
+        paymentCallDue: { daysOverdue: 20, totalOverdue: 10_000_00 },
+      });
+      const large = candidate({
+        customerId: "large-debt",
+        outstanding: 80_000_00,
+        typicalOrderPaise: 1_000_00,
+        paymentCallDue: { daysOverdue: 20, totalOverdue: 80_000_00 },
+      });
+
+      const { entries } = buildQueue([small, large], TODAY, C);
+      assert.deepEqual(
+        entries.map((e) => e.customerId),
+        ["large-debt", "small-debt"],
+      );
+    });
+
+    test("a shaky cycle discounts what the call is worth", () => {
+      // One orders every 29, 30, 31 days; the other after 15, 45, 22, 60. The
+      // average is the same and only one of them is really due today. A lakh
+      // at a coin toss is worth less than sixty thousand like clockwork.
+      const erratic = due({
+        customerId: "erratic",
+        typicalOrderPaise: 100_000_00,
+        cycleConfidence: 40,
+      });
+      const reliable = due({
+        customerId: "reliable",
+        typicalOrderPaise: 60_000_00,
+        cycleConfidence: 95,
+      });
+
+      const { entries } = buildQueue([erratic, reliable], TODAY, C);
+      assert.deepEqual(
+        entries.map((e) => e.customerId),
+        ["reliable", "erratic"],
+      );
+      assert.equal(entries[0].callValue, 57_000_00);
+      assert.equal(entries[1].callValue, 40_000_00);
+    });
+
+    test("no confidence figure yet means no discount", () => {
+      // Every cycle computed before the confidence column existed carries
+      // null, and they rebuild on the next nightly. Halving them meanwhile
+      // would be a uniform penalty dressed up as a judgement — it would say
+      // "we are unsure about this customer" when the truth is "we have not
+      // looked yet".
+      const c = due({
+        typicalOrderPaise: 30_000_00,
+        cycleConfidence: null,
+      });
+      const { entries } = buildQueue([c], TODAY, C);
+      assert.equal(entries[0].callValue, 30_000_00);
+    });
+
+    test("a promise is a fact, so it is not discounted", () => {
+      // Confidence describes a PREDICTION about when they will order. A
+      // callback the customer asked for is not a prediction.
+      const c = candidate({
+        typicalOrderPaise: 20_000_00,
+        cycleConfidence: 10,
+        reminders: [{ id: "r1", dueDate: TODAY, note: "Call back" }],
+      });
+      const { entries } = buildQueue([c], TODAY, C);
+      assert.equal(entries[0].callValue, 20_000_00);
+    });
+
+    test("the reason still outranks the value", () => {
+      // A tiny promise beats a huge stock check. Value orders WITHIN a
+      // reason; it never crosses one.
+      const promise = candidate({
+        customerId: "promise",
+        typicalOrderPaise: 1_00,
+        reminders: [{ id: "r1", dueDate: TODAY, note: "Call back" }],
+      });
+      const huge = candidate({
+        customerId: "huge",
+        lastOrderDate: addDays(TODAY, -21),
+        cycleDays: 30,
+        cycleIsDefault: false,
+        typicalOrderPaise: 500_000_00,
+      });
+      const { entries } = buildQueue([huge, promise], TODAY, C);
+      assert.equal(entries[0].customerId, "promise");
+    });
+  });
+
+  /* ------------------------------ confidence moves the stock-check day */
+
+  describe("the stock check moves with how predictable the cycle is", () => {
+    const at = (sinceOrder: number, cycleConfidence: number) =>
+      buildQueue(
+        [
+          candidate({
+            lastOrderDate: addDays(TODAY, -sinceOrder),
+            lastContactDate: addDays(TODAY, -sinceOrder),
+            cycleDays: 30,
+            cycleIsDefault: false,
+            cycleConfidence,
+          }),
+        ],
+        TODAY,
+        C,
+      ).entries.length === 1;
+
+    test("a regular customer is called later, closer to the real date", () => {
+      // 70% + the full swing = 80% of 30 days = day 24, six days before the
+      // order is due rather than nine. The date is worth trusting, so the
+      // call is worth placing near it.
+      assert.equal(at(23, 100), false);
+      assert.equal(at(24, 100), true);
+    });
+
+    test("an erratic customer is called earlier, because the date is a guess", () => {
+      // 70% - the full swing = 60% of 30 = day 18. The honest answer to a
+      // guess is a wider net: the real order could come either side of it.
+      assert.equal(at(17, 0), false);
+      assert.equal(at(18, 0), true);
+    });
+
+    test("a middling customer is exactly where the flat percentage put them", () => {
+      // 50 is neutral, so nothing moved for anybody average.
+      assert.equal(at(20, 50), false);
+      assert.equal(at(21, 50), true);
+    });
+
+    test("turning the swing off restores one day for everybody", () => {
+      const flat = { ...C, "queue.routineConfidenceSwing": 0 };
+      const day = (cycleConfidence: number) =>
+        buildQueue(
+          [
+            candidate({
+              lastOrderDate: addDays(TODAY, -21),
+              lastContactDate: addDays(TODAY, -21),
+              cycleDays: 30,
+              cycleIsDefault: false,
+              cycleConfidence,
+            }),
+          ],
+          TODAY,
+          flat,
+        ).entries.length;
+      assert.equal(day(0), 1);
+      assert.equal(day(100), 1);
+    });
+
+    test("a short cycle still gets no stock check, however predictable", () => {
+      // The swing moves the day; it never creates a call that the cycle
+      // length says should not exist.
+      const r = buildQueue(
+        [
+          candidate({
+            lastOrderDate: addDays(TODAY, -6),
+            lastContactDate: addDays(TODAY, -6),
+            cycleDays: 8,
+            cycleIsDefault: false,
+            cycleConfidence: 100,
+          }),
+        ],
+        TODAY,
+        C,
+      );
+      assert.equal(r.entries.length, 0);
+    });
   });
 
   test("a customer who buys every fortnight gets no routine call", () => {
