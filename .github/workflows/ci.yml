@@ -53,6 +53,20 @@ jobs:
 
       - run: npm run lint
 
+      # The field app is React Native and lints itself, with its own config and
+      # its own rules — the root run ignores it precisely because linting an
+      # Expo app with `eslint-config-next` produced 23 errors that were about
+      # the wrong framework. Taking it out of that run must not mean nobody
+      # checks it, so it gets its own step here.
+      #
+      # `npm ci` in its own directory: it is a separate package with its own
+      # lockfile, not a workspace of the root one.
+      - name: Field app lint
+        run: |
+          cd mbos-app
+          npm ci
+          npm run lint
+
       - name: Engine tests
         run: npm run test
 

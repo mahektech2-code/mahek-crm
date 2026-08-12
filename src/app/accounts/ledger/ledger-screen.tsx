@@ -75,9 +75,12 @@ export function LedgerScreen({
 }) {
   const router = useRouter();
   const { push, run } = useToast();
-  /* Which receipt is being reversed, and why. */
+  /*
+   * Which receipt is being reversed. The reason is NOT held here — the confirm
+   * dialog owns it and hands it back on confirm, and a second copy in this
+   * component was mine, left over and never read.
+   */
   const [reversing, setReversing] = React.useState<LedgerEntry | null>(null);
-  const [reason, setReason] = React.useState("");
   const [page, setPage] = React.useState(1);
   const [perPage, setPerPage] = React.useState(25);
 
@@ -300,7 +303,6 @@ export function LedgerScreen({
                           <button
                             type="button"
                             onClick={() => {
-                              setReason("");
                               setReversing(e);
                             }}
                             className="cursor-pointer rounded-[4px] border border-line px-2 py-0.5 text-[11px] font-medium text-body hover:bg-canvas"
