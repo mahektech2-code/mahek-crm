@@ -491,6 +491,30 @@ async function main() {
 
   const plan = buildPlan(register, all, customerByName);
 
+  // Anything already written is dropped from the plan, so this is re-runnable
+  // and resumable. Each customer commits on its own, so a run that dies at
+  // customer 300 has really done 299 — and without this the next attempt would
+  // either throw on the unique idempotency key or, worse, write a second copy
+  // of every receipt it had already made and double the customer's payments.
+  const done = new Set(
+    (
+      await db
+        .select({ key: paymentReceipts.idempotencyKey })
+        .from(paymentReceipts)
+        .where(eq(paymentReceipts.source, "tally_receipts"))
+    ).map((r) => r.key),
+  );
+  if (done.size) {
+    let dropped = 0;
+    for (const [customerId, list] of plan.byCustomer) {
+      const left = list.filter((p) => !done.has(`TALLY-${p.fy}-${p.vch}`));
+      dropped += list.length - left.length;
+      if (left.length) plan.byCustomer.set(customerId, left);
+      else plan.byCustomer.delete(customerId);
+    }
+    console.log(`already written, skipping: ${dropped} receipts`);
+  }
+
   const rupees = (p: number) => "Rs " + (p / 100).toLocaleString("en-IN");
   let receipts = 0;
   let money = 0;
