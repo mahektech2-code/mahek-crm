@@ -13,7 +13,7 @@ import {
   orders,
   users,
 } from "@/db/schema";
-import { ASSIGNED_TO_SQL, resolveScope, scopedUserIds } from "./access-control";
+import { resolveScope, scopedUserIds, scopedToUsers} from "./access-control";
 import { today as businessToday } from "./recompute";
 import { daysBetween, monthKey, type DateRange } from "./business-date";
 import { eodMetricsFor, eodMetricsForRange } from "./services/eod-service";
@@ -190,7 +190,7 @@ export async function listCustomersPage(
   const ids = scopedUserIds(ctx.scope);
   const perPage = Math.min(Math.max(filters.perPage ?? 25, 1), 200);
 
-  const scoped = ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined;
+  const scoped = scopedToUsers(ids);
 
   const where: SQL[] = [];
   if (scoped) where.push(scoped);
@@ -326,7 +326,7 @@ export async function listCustomers(): Promise<CustomerRow[]> {
     })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
-    .where(ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined)
+    .where(scopedToUsers(ids))
     .orderBy(asc(customers.name));
 
   return rows.map((r) => ({
@@ -825,7 +825,7 @@ export async function globalSearch(q: string) {
               ? sql`${customers.phone} like ${"%" + digits + "%"}`
               : undefined,
           ),
-          ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined,
+          scopedToUsers(ids),
         ),
       )
       .limit(8),
@@ -842,7 +842,7 @@ export async function globalSearch(q: string) {
       .where(
         and(
           sql`${bills.billNo} ilike ${like}`,
-          ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined,
+          scopedToUsers(ids),
         ),
       )
       .limit(5),

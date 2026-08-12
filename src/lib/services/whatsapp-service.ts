@@ -13,12 +13,10 @@ import {
   waTemplates,
 } from "@/db/schema";
 import {
-  ASSIGNED_TO_SQL,
   assertCustomerInScope,
   requireCapability,
   resolveScope,
-  scopedUserIds,
-} from "../access-control";
+  scopedUserIds, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
 import { recomputeLastContact, today } from "../recompute";
 import { err, ok, okVoid, type Result } from "../result";
@@ -496,7 +494,7 @@ export async function listReplies() {
     .select({ reply: waReplies, customerName: customers.name })
     .from(waReplies)
     .innerJoin(customers, eq(customers.id, waReplies.customerId))
-    .where(and(eq(waReplies.actioned, false), ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined))
+    .where(and(eq(waReplies.actioned, false), scopedToUsers(ids)))
     .orderBy(desc(waReplies.receivedAt));
   return rows.map(({ reply, customerName }) => ({ ...reply, customerName }));
 }

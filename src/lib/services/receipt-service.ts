@@ -5,13 +5,11 @@ import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, bills, customers, paymentReceipts, payments } from "@/db/schema";
 import {
-  ASSIGNED_TO_SQL,
   assertCustomerInScope,
   can,
   requireCapability,
   resolveScope,
-  scopedUserIds,
-} from "../access-control";
+  scopedUserIds, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
 import { allocate, type AllocatableBill } from "../engines/allocation";
 import { effectiveDueDate } from "../engines/escalation";
@@ -834,7 +832,7 @@ export async function paymentSearch(query: string): Promise<PaymentSearchHit[]> 
     .from(customers)
     .where(
       and(
-        ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined,
+        scopedToUsers(ids),
         or(
           sql`${customers.name} ilike ${like}`,
           sql`${customers.contactPerson} ilike ${like}`,

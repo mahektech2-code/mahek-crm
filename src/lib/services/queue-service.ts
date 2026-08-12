@@ -11,7 +11,7 @@ import {
   reminders,
 } from "@/db/schema";
 import { getConfig } from "../config/store";
-import { ASSIGNED_TO_SQL, resolveScope, scopedUserIds } from "../access-control";
+import { ASSIGNED_TO_SQL, resolveScope, scopedUserIds, scopedToUsers} from "../access-control";
 import {
   buildQueue,
   type QueueCandidate,
@@ -86,7 +86,7 @@ async function queueInputs(ids: string[] | null, day: string) {
 
   // Whose book, by the single definition — a lead answers to its owner, a
   // customer to its sales account manager.
-  const ownerFilter = ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined;
+  const ownerFilter = scopedToUsers(ids);
 
   // Deactivated customers are never candidates.
   const rows = await db

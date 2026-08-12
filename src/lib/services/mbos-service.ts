@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
@@ -10,11 +10,9 @@ import {
   type User,
 } from "@/db/schema";
 import {
-  ASSIGNED_TO_SQL,
   scopeForUser,
   scopedUserIds,
-  type DataScope,
-} from "../access-control";
+  type DataScope, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
 import { verifyPassword } from "../password";
 import { bearerFrom, verifyToken, signingKeyPresent } from "../mbos/token";
@@ -355,7 +353,7 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
 /* ------------------------------------------------------------- the payloads */
 
 function scopeIn(ids: string[] | null) {
-  return ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined;
+  return scopedToUsers(ids);
 }
 
 /** The customer ids this principal may see. Every other query filters on it. */

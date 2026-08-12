@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import {
   bills,
@@ -9,7 +9,7 @@ import {
   paymentReceipts,
   sheetOrderRows,
 } from "@/db/schema";
-import { ASSIGNED_TO_SQL, resolveScope, scopedUserIds } from "../access-control";
+import { resolveScope, scopedUserIds, scopedToUsers} from "../access-control";
 import { billCreditDaysSql } from "../bill-terms";
 import { calendarDate } from "../business-date";
 import { boxesFor, litresFor } from "../catalogue";
@@ -148,7 +148,7 @@ export async function getBillDetail(billId: string): Promise<BillDetail | null> 
     .where(
       and(
         eq(bills.id, billId),
-        ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined,
+        scopedToUsers(ids),
       ),
     );
 

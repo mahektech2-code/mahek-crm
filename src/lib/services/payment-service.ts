@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -16,8 +16,7 @@ import {
   ASSIGNED_TO_SQL,
   resolveScope,
   scopedUserIds,
-  assertCustomerInScope,
-} from "../access-control";
+  assertCustomerInScope, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
 import { isAttemptAllowed, agingBucket, effectiveDueDate } from "../engines/escalation";
 import { billCreditDaysSql } from "../bill-terms";
@@ -137,7 +136,7 @@ export async function getFollowUpWorklist(filters?: {
         // owner_id alone dropped every customer whose sales account manager
         // had been set — off the collections list while still owing money,
         // which is the one list nobody may quietly fall off.
-        ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined,
+        scopedToUsers(ids),
         filters?.stage ? eq(followUpStates.stage, filters.stage) : undefined,
         filters?.slowPayersOnly ? eq(customers.slowPayer, true) : undefined,
       ),
@@ -228,7 +227,7 @@ export async function getPaymentFollowUpPlan(): Promise<PaymentFollowUpPlan> {
     })
     .from(followUpStates)
     .innerJoin(customers, eq(customers.id, followUpStates.customerId))
-    .where(ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined);
+    .where(scopedToUsers(ids));
 
   // Money somebody has reported and accounts have not yet decided on. Read
   // once for the whole plan rather than per customer.
@@ -519,7 +518,7 @@ export async function earliestBillDate(): Promise<string | null> {
     .select({ d: sql<string | null>`min(${bills.billDate})` })
     .from(bills)
     .innerJoin(customers, eq(customers.id, bills.customerId))
-    .where(ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined);
+    .where(scopedToUsers(ids));
   return row?.d ?? null;
 }
 
@@ -540,7 +539,7 @@ export async function listBills(filters?: BillFilters) {
     .innerJoin(customers, eq(customers.id, bills.customerId))
     .where(
       and(
-        ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined,
+        scopedToUsers(ids),
         filters?.customerId ? eq(bills.customerId, filters.customerId) : undefined,
         financialYearWhere(filters?.financialYear),
       ),
