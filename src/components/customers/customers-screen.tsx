@@ -17,6 +17,7 @@ import {
   Td,
   Th,
   Tr,
+  cx,
 } from "@/components/ui/primitives";
 import {
   ConfirmDialog,
@@ -1076,20 +1077,35 @@ const LEAD_SOURCES = [
  */
 const SHEET_NAME_VALUE = "__sheet__";
 
-/*
- * Still here, and gone.
+/**
+ * Still here, or gone.
  *
  * NOT "has a login" — that was the wrong thing to mark. Everybody gets a
  * sign-in eventually and none of it changes who the customer's salesperson
  * is. What a person standing at this field needs to know is whether the name
  * in the seat still works here, because somebody leaving is the usual reason
- * they are standing here at all.
+ * they are standing there at all.
  *
- * Characters rather than an icon: these are `<option>` labels, and an option
- * renders text and nothing else.
+ * It sits ON THE FIELD rather than inside the list. An `<option>` renders
+ * text and nothing else, so a marker in a list can only ever be a character
+ * at the size of the words beside it — which is how this began as an emoji.
+ * Out here it is an element, so it is six pixels of colour instead.
+ *
+ * Only the current holder carries one. Everybody the list offers is current
+ * staff, so a mark against each of them would say the same thing forty times.
  */
-const HERE = "🟢";
-const GONE = "🔴";
+function StaffDot({ gone }: { gone: boolean }) {
+  return (
+    <span
+      aria-hidden
+      title={gone ? "No longer on the staff list" : "On the staff list"}
+      className={cx(
+        "pointer-events-none absolute top-1/2 left-2.5 z-10 h-1.5 w-1.5 -translate-y-1/2 rounded-full",
+        gone ? "bg-danger" : "bg-success",
+      )}
+    />
+  );
+}
 
 /** Somebody on the list with this name, by either route. */
 function findByName(
@@ -1327,31 +1343,29 @@ function CustomerFormBody({
               : "Only accounts or an admin can move an account."
           }
         >
-          <Select
-            value={values.assignedId ?? ""}
-            onChange={set("assignedId")}
-            disabled={!canReassign}
-          >
-            {/* The sheet's answer, shown as the value it is rather than
-                explained in a sentence underneath. Offered only when it IS
-                the current answer — it is not something to pick, because
-                somebody with no login cannot be given a calling queue. */}
-            {/* Whoever is in the seat but no longer on the staff list — they
-                have left, which is the usual reason somebody is standing here
-                changing it. Marked, and kept selectable so the field can show
-                who it still says. */}
-            {values.assignedId === SHEET_NAME_VALUE ? (
-              <option value={SHEET_NAME_VALUE}>
-                {GONE} {initial?.salesAmName}
-              </option>
+          <span className="relative block">
+            {values.assignedId ? (
+              <StaffDot gone={values.assignedId === SHEET_NAME_VALUE} />
             ) : null}
-            <option value="">Unassigned</option>
-            {people.map((t) => (
-              <option key={t.id} value={t.id}>
-                {HERE} {t.name}
-              </option>
-            ))}
-          </Select>
+            <Select
+              value={values.assignedId ?? ""}
+              onChange={set("assignedId")}
+              disabled={!canReassign}
+              className={cx("w-full", values.assignedId ? "pl-6" : "")}
+            >
+              {/* Whoever is in the seat but no longer on the staff list. Kept
+                  selectable so the field can still show who it says. */}
+              {values.assignedId === SHEET_NAME_VALUE ? (
+                <option value={SHEET_NAME_VALUE}>{initial?.salesAmName}</option>
+              ) : null}
+              <option value="">Unassigned</option>
+              {people.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          </span>
           {values.assignedId === SHEET_NAME_VALUE ? (
             <span className="mt-1 block text-[12px] text-danger">
               No longer on the staff list. Pick who has taken the book over.
@@ -1366,23 +1380,29 @@ function CustomerFormBody({
               : "Only accounts or an admin can move an account."
           }
         >
-          <Select
-            value={values.backOfficeAmId ?? ""}
-            onChange={set("backOfficeAmId")}
-            disabled={!canReassign}
-          >
-            {values.backOfficeAmId === SHEET_NAME_VALUE ? (
-              <option value={SHEET_NAME_VALUE}>
-                {GONE} {initial?.backOfficeAmName}
-              </option>
+          <span className="relative block">
+            {values.backOfficeAmId ? (
+              <StaffDot gone={values.backOfficeAmId === SHEET_NAME_VALUE} />
             ) : null}
-            <option value="">Unassigned</option>
-            {people.map((t) => (
-              <option key={t.id} value={t.id}>
-                {HERE} {t.name}
-              </option>
-            ))}
-          </Select>
+            <Select
+              value={values.backOfficeAmId ?? ""}
+              onChange={set("backOfficeAmId")}
+              disabled={!canReassign}
+              className={cx("w-full", values.backOfficeAmId ? "pl-6" : "")}
+            >
+              {values.backOfficeAmId === SHEET_NAME_VALUE ? (
+                <option value={SHEET_NAME_VALUE}>
+                  {initial?.backOfficeAmName}
+                </option>
+              ) : null}
+              <option value="">Unassigned</option>
+              {people.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          </span>
           {values.backOfficeAmId === SHEET_NAME_VALUE ? (
             <span className="mt-1 block text-[12px] text-danger">
               No longer on the staff list. Pick who is doing the paperwork now.
