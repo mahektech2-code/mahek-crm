@@ -95,6 +95,90 @@ export const SETTINGS = [
     max: 90,
   },
   {
+    key: "queue.routineCallPercent",
+    type: "integer",
+    category: "queue",
+    label: "Routine call, as a percentage of the cycle",
+    description:
+      "The stock-check call, placed before the order is due. 70 means a 30-day customer is rung on day 21, three weeks after their last order and nine days before the next is expected. It replaces the old lead-days calculation, which worked backwards from the due date and produced a later call on every cycle length.",
+    default: 70,
+    min: 10,
+    max: 100,
+  },
+  {
+    key: "queue.routineMinCycleDays",
+    type: "integer",
+    category: "queue",
+    label: "Shortest cycle that earns a routine call",
+    description:
+      "Above this many days, a customer gets a stock-check call before their order is due. At or below it they do not: somebody buying every fortnight is in contact constantly through the orders themselves, and a call in between is noise on both sides of the phone.",
+    default: 15,
+    min: 0,
+    max: 120,
+  },
+  {
+    key: "queue.outcomeCooldownDays",
+    type: "structured",
+    category: "queue",
+    label: "How long each answer buys",
+    description:
+      "What the customer said, and how many days before they are asked again. Asking for an order and being told no has to buy quiet, or a customer past their call day returns to the top of the list every day until they order — which punishes the telecaller for working it. A missing outcome means no cooldown at all.",
+    default: {
+      no_order: 7,
+      not_interested: 30,
+      casual_talk: 3,
+    },
+  },
+  {
+    key: "queue.noAnswerRetryHours",
+    type: "integer",
+    category: "queue",
+    label: "Same-day retry, in hours",
+    description:
+      "A ring nobody answered is worth one more attempt the same day — people are driving, or in the shop, or at lunch. Counted from the attempt, not from the start of the day.",
+    default: 1,
+    min: 0,
+    max: 12,
+  },
+  {
+    key: "queue.noAnswerRetryDays",
+    type: "structured",
+    category: "queue",
+    label: "The retry ladder after the first day",
+    description:
+      "Working days to wait before each further attempt once the same-day retry has failed. [1, 3] means: try the next working day, then three working days after that. The ladder ends at the attempt limit, where the customer stops being retried and somebody has to decide what happens next.",
+    default: [1, 3],
+  },
+  {
+    key: "queue.noAnswerMaxAttempts",
+    type: "integer",
+    category: "queue",
+    label: "Attempts before a customer is unreachable",
+    description:
+      "After this many unanswered attempts in a row the customer is not retried again. They appear as unreachable, which is a decision for a person: a different number, a different time of day, a visit, or leaving them alone.",
+    default: 5,
+    min: 2,
+    max: 10,
+  },
+  {
+    key: "queue.includePaymentDue",
+    type: "boolean",
+    category: "queue",
+    label: "Show payment calls in the Call Log",
+    description:
+      "Customers the collections cadence says are due a payment call appear at the top of the calling list rather than only on the payment screen. The collections engine still decides WHEN — this only decides whether the call log shows what it decided, so a telecaller works one list instead of two.",
+    default: true,
+  },
+  {
+    key: "queue.showOrderStatus",
+    type: "boolean",
+    category: "queue",
+    label: "Show orders in progress",
+    description:
+      "An order already placed and still being processed, held or waiting for dispatch is NOT a reason to ask for another order — but it is worth seeing. On, the customer appears with the order's status and no order-chasing reason. Off, they are simply held back.",
+    default: true,
+  },
+  {
     key: "queue.leadPercent",
     type: "integer",
     category: "queue",
@@ -202,14 +286,23 @@ export const SETTINGS = [
     description:
       "Relative ranking of the reasons a customer can enter the queue. Highest weight wins. Inferred - confirm against the existing system during migration diffing.",
     default: {
+      /* P1 — money, and promises made to a customer. */
+      paymentOverdue: 110,
       reminderOverdue: 100,
       reminderDueToday: 90,
+      /* P2 — the order that should have happened by now. */
       orderOverdueFullCycle: 80,
       orderDue: 70,
-      orderDueSoon: 60,
+      /* P3 — routine work. */
+      routineCall: 60,
       prospect: 55,
       checkInOverdue: 50,
       checkInDue: 40,
+      /* P4 — chasing a ring nobody answered, and the state after it. */
+      unreachable: 35,
+      noAnswerRetry: 30,
+      /* Not a call for an order at all: an order already on its way. */
+      orderStatus: 10,
     },
   },
 
@@ -1823,6 +1916,14 @@ export type Config = {
   "queue.excludeInactiveWatch": boolean;
   "queue.maxSizePerUser": number;
   "queue.tierWeights": Record<QueueReasonKind, number>;
+  "queue.routineCallPercent": number;
+  "queue.routineMinCycleDays": number;
+  "queue.outcomeCooldownDays": Record<string, number>;
+  "queue.noAnswerRetryHours": number;
+  "queue.noAnswerRetryDays": number[];
+  "queue.noAnswerMaxAttempts": number;
+  "queue.includePaymentDue": boolean;
+  "queue.showOrderStatus": boolean;
 
   "buyingCycle.method": "median" | "mean";
   "buyingCycle.lookbackOrders": number;
@@ -1980,11 +2081,20 @@ export type MbosHealthComponent =
 export type MbosExpenseCategory = "travel" | "food" | "lodging" | "other";
 
 export type QueueReasonKind =
+  /** Money overdue and the collections engine says a call is due today. */
+  | "paymentOverdue"
   | "reminderOverdue"
   | "reminderDueToday"
   | "orderOverdueFullCycle"
   | "orderDue"
-  | "orderDueSoon"
+  /** The routine stock check, at a percentage of the customer's own cycle. */
+  | "routineCall"
   | "prospect"
   | "checkInOverdue"
-  | "checkInDue";
+  | "checkInDue"
+  /** An order already placed and still working its way through. */
+  | "orderStatus"
+  /** Rang, nobody answered, and the ladder says try again now. */
+  | "noAnswerRetry"
+  /** The ladder is exhausted; somebody has to decide what happens next. */
+  | "unreachable";

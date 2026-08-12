@@ -2869,14 +2869,17 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     assert.match(held.reason, /no order chased for/);
   });
 
-  test("a 22-day cycle is called on day 18, not day 17", async () => {
+  test("a 22-day cycle gets its stock check on day 15, not day 14", async () => {
+    // 70% of the customer's own cycle. It was day 18 — a lead of capped days
+    // worked backwards from the due date, which gave the longest cycles the
+    // shortest notice.
     const early = await makeCustomer(priya.id, {
-      lastOrderDate: addDays(TODAY, -17),
+      lastOrderDate: addDays(TODAY, -14),
       cycleDays: 22,
       cycleIsDefault: false,
     });
     const due = await makeCustomer(priya.id, {
-      lastOrderDate: addDays(TODAY, -18),
+      lastOrderDate: addDays(TODAY, -15),
       cycleDays: 22,
       cycleIsDefault: false,
     });

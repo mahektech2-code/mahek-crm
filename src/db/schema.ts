@@ -696,6 +696,16 @@ export const customers = pgTable(
     /** From E1. */
     cycleDays: integer("cycle_days").notNull().default(30),
     cycleIsDefault: boolean("cycle_is_default").notNull().default(true),
+    /**
+     * How predictable the cycle is, 0–100, or null where it is a default.
+     *
+     * DERIVED, like the cycle itself: `recomputeBuyingCycle` writes it and
+     * nothing else may. It never changes the predicted date — a wobbly cycle
+     * is still the best estimate there is — it says how much weight to put on
+     * that date, which is a different question and one a telecaller can act
+     * on.
+     */
+    cycleConfidence: integer("cycle_confidence"),
     lastOrderDate: date("last_order_date"),
     lastOrderValue: bigint("last_order_value", { mode: "number" }).notNull().default(0),
     lastContactDate: date("last_contact_date"),

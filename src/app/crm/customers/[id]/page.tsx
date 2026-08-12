@@ -17,7 +17,7 @@ import { popularProducts } from "@/lib/services/product-service";
 import { quickNotes as quickNotesTable } from "@/db/schema";
 import { listTargets } from "@/lib/services/worklist-services";
 import { customerStatusLabel, daysBetween } from "@/lib/format";
-import { calendarDate } from "@/lib/business-date";
+import { addDays, calendarDate } from "@/lib/business-date";
 import { RecordScreen } from "./record-screen";
 
 export async function generateMetadata({
@@ -117,6 +117,16 @@ export default async function CustomerRecordPage({
         lastOrderValue: customer.lastOrderValue,
         cycleDays: customer.cycleDays,
         cycleIsDefault: customer.cycleIsDefault,
+        cycleConfidence: customer.cycleConfidence,
+        /*
+         * Last order + the cycle. Computed here rather than stored: it is two
+         * columns and an addition, and a stored copy would be one more thing
+         * to keep in step every time either half moves.
+         */
+        expectedOrderDate:
+          customer.lastOrderDate && !customer.cycleIsDefault
+            ? addDays(customer.lastOrderDate, customer.cycleDays)
+            : null,
         avgOrderValue: customer.avgOrderValue,
         orders6m: Number(stats?.orders6m ?? 0),
         paysInDays: Number(stats?.paysInDays ?? 0),

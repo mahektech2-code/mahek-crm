@@ -51,22 +51,35 @@ type Row = {
 type Suppressed = { customerId: string; name: string; reason: string };
 
 type Filter =
-  "all" | "orders" | "complaints" | "reminders" | "checkins" | "leads";
+  | "all"
+  | "orders"
+  | "complaints"
+  | "reminders"
+  | "checkins"
+  | "leads"
+  | "payments"
+  | "retry";
 
 /** The engine's own reason kinds — nothing here invents a category. */
 const REASON_TONE: Record<string, "danger" | "warn" | "brand" | "neutral"> = {
+  paymentOverdue: "danger",
   reminderOverdue: "danger",
   reminderDueToday: "warn",
   orderOverdueFullCycle: "danger",
   orderDue: "brand",
-  orderDueSoon: "brand",
+  routineCall: "brand",
   checkInOverdue: "warn",
   checkInDue: "neutral",
+  unreachable: "warn",
+  noAnswerRetry: "neutral",
+  orderStatus: "neutral",
 };
 
 const REMINDER_KINDS = ["reminderOverdue", "reminderDueToday"];
-const ORDER_KINDS = ["orderOverdueFullCycle", "orderDue", "orderDueSoon"];
+const ORDER_KINDS = ["orderOverdueFullCycle", "orderDue", "routineCall"];
 const CHECKIN_KINDS = ["checkInOverdue", "checkInDue"];
+const PAYMENT_KINDS = ["paymentOverdue"];
+const RETRY_KINDS = ["noAnswerRetry", "unreachable"];
 
 export function QueueScreen({
   scopeLabel,
@@ -139,6 +152,10 @@ export function QueueScreen({
         return rows.filter((r) => r.hasComplaint);
       case "reminders":
         return rows.filter((r) => hasAny(r, REMINDER_KINDS));
+      case "payments":
+        return rows.filter((r) => hasAny(r, PAYMENT_KINDS));
+      case "retry":
+        return rows.filter((r) => hasAny(r, RETRY_KINDS));
       case "checkins":
         return rows.filter((r) => hasAny(r, CHECKIN_KINDS));
       case "leads":
@@ -282,9 +299,19 @@ export function QueueScreen({
           options={[
             { key: "all", label: "To work", count: rows.length },
             {
+              key: "payments",
+              label: "Payment due",
+              count: rows.filter((r) => hasAny(r, PAYMENT_KINDS)).length,
+            },
+            {
               key: "reminders",
               label: "Reminder due",
               count: rows.filter((r) => hasAny(r, REMINDER_KINDS)).length,
+            },
+            {
+              key: "retry",
+              label: "No answer",
+              count: rows.filter((r) => hasAny(r, RETRY_KINDS)).length,
             },
             {
               key: "orders",

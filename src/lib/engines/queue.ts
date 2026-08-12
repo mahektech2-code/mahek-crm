@@ -38,8 +38,31 @@ export type QueueCandidate = {
   doNotContact: boolean;
   /** Skipped by hand today, with the reason the telecaller gave. */
   skippedTodayReason: string | null;
-  /** Last call that ended in no order. Starts the re-ask cooldown. */
-  lastNoOrderDate: BusinessDate | null;
+  /**
+   * The last call that got an answer, and what the customer said. Any outcome
+   * with a configured cooldown buys quiet for that long — "no order" is the
+   * common one, but "not interested" should buy far more than a week.
+   */
+  lastAnsweredOutcome: string | null;
+  lastAnsweredDate: BusinessDate | null;
+
+  /**
+   * The unanswered run: how many attempts in a row have gone unanswered, and
+   * when the last one was — as an INSTANT, because the first retry is an hour
+   * later and a date cannot express that.
+   */
+  noAnswerCount: number;
+  lastNoAnswerAt: string | null;
+
+  /**
+   * An order already placed and still working its way through — under
+   * process, held, waiting for dispatch. The status as the order system
+   * states it, so the screen can show what is actually happening.
+   */
+  openOrderStatus: string | null;
+
+  /** The collections cadence says a payment call is due today. */
+  paymentCallDue: { totalOverdue: number; daysOverdue: number } | null;
 
   /**
    * Open on the Inactive Watch — past twice their own buying cycle with no
@@ -94,6 +117,14 @@ export type QueueConfig = Pick<
   | "queue.leadMinDays"
   | "queue.leadMaxDays"
   | "queue.noOrderCooldownDays"
+  | "queue.routineCallPercent"
+  | "queue.routineMinCycleDays"
+  | "queue.outcomeCooldownDays"
+  | "queue.noAnswerRetryHours"
+  | "queue.noAnswerRetryDays"
+  | "queue.noAnswerMaxAttempts"
+  | "queue.includePaymentDue"
+  | "queue.showOrderStatus"
   | "queue.excludeActiveInOrderSystem"
   | "queue.excludeCalledToday"
   | "queue.excludeInactiveWatch"
@@ -105,14 +136,43 @@ export function buildQueue(
   candidates: QueueCandidate[],
   today: BusinessDate,
   config: QueueConfig,
+  /**
+   * The instant, for the same-day retry alone. Everything else here works in
+   * business dates; an hour-later retry is the one rule that cannot.
+   */
+  nowMs: number = Date.parse(`${today}T23:59:59+05:30`),
 ): QueueResult {
   const weights = config["queue.tierWeights"];
   const entries: QueueEntry[] = [];
   const suppressed: SuppressedEntry[] = [];
 
   for (const c of candidates) {
-    const all = reasonsFor(c, today, config, weights);
+    const all = reasonsFor(c, today, config, weights, nowMs);
     if (!all.length) continue;
+
+    /*
+     * A customer nobody can reach is ONE thing, not a list of things.
+     *
+     * The ladder is spent, so asking for an order is not the work — deciding
+     * what happens to them is: a different number, a different time of day, a
+     * visit, or leaving them alone. Presenting them as an ordinary order call
+     * beside that would invite a sixth unanswered ring.
+     */
+    const unreachable = all.find((r) => r.kind === "unreachable");
+    if (unreachable) {
+      entries.push({
+        customerId: c.customerId,
+        name: c.name,
+        score: unreachable.weight,
+        reasons: [unreachable],
+        outstanding: c.outstanding,
+        targetGap: c.targetGap,
+        daysSinceContact: c.lastContactDate
+          ? daysBetween(c.lastContactDate, today)
+          : null,
+      });
+      continue;
+    }
 
     // A reminder is a promise the telecaller made. It overrides the quiet
     // window and the no-order cooldown, but not do-not-contact.
@@ -142,7 +202,7 @@ export function buildQueue(
     // Suppression is a return value, not a filter. The interface has a strip
     // that explains who is missing and why; silently dropping them would
     // remove a telecaller's ability to understand their own queue.
-    const held = suppressionReason(c, today, config, hasReminderReason);
+    const held = suppressionReason(c, today, config, hasReminderReason, nowMs);
     if (held) {
       suppressed.push({ customerId: c.customerId, name: c.name, reason: held });
       continue;
@@ -188,8 +248,51 @@ function reasonsFor(
   today: BusinessDate,
   config: QueueConfig,
   weights: Record<QueueReasonKind, number>,
+  nowMs: number,
 ): QueueReason[] {
   const reasons: QueueReason[] = [];
+
+  /* ---- payment overdue ---- */
+  //
+  // Decided by the collections engine, which owns the cadence: its quiet
+  // window, its message interval, its rest between calls. This does not
+  // re-derive any of that — it shows what that engine already concluded, at
+  // the top of the list, so a telecaller works one list rather than two.
+  if (config["queue.includePaymentDue"] && c.paymentCallDue) {
+    reasons.push({
+      kind: "paymentOverdue",
+      label: `Payment overdue ${c.paymentCallDue.daysOverdue} day${c.paymentCallDue.daysOverdue === 1 ? "" : "s"} - ${formatPaise(c.paymentCallDue.totalOverdue)}`,
+      weight: weights.paymentOverdue,
+    });
+  }
+
+  /* ---- an order already on its way ---- */
+  //
+  // NOT a reason to ask for another one. The customer's requirement is
+  // already captured; what is worth seeing is where it has got to.
+  if (config["queue.showOrderStatus"] && c.openOrderStatus) {
+    reasons.push({
+      kind: "orderStatus",
+      label: `Order in progress - ${c.openOrderStatus}`,
+      weight: weights.orderStatus,
+    });
+  }
+
+  /* ---- nobody answered ---- */
+  const retry = noAnswerState(c, today, config, nowMs);
+  if (retry === "exhausted") {
+    reasons.push({
+      kind: "unreachable",
+      label: `Unreachable - ${c.noAnswerCount} attempts, no answer. Decide what happens next.`,
+      weight: weights.unreachable,
+    });
+  } else if (retry === "due") {
+    reasons.push({
+      kind: "noAnswerRetry",
+      label: `No answer - attempt ${c.noAnswerCount + 1}`,
+      weight: weights.noAnswerRetry,
+    });
+  }
 
   /* ---- reminder due ---- */
   for (const r of c.reminders) {
@@ -224,7 +327,7 @@ function reasonsFor(
     const expected = addDays(c.lastOrderDate, c.cycleDays);
     const sinceOrder = daysBetween(c.lastOrderDate, today);
 
-    if (sinceOrder >= callDayFor(c.cycleDays, config)) {
+    if (sinceOrder >= routineDayFor(c.cycleDays, config)) {
       if (today > expected) {
         const overdueDays = daysBetween(expected, today);
         const cyclesMissed = Math.floor(overdueDays / Math.max(1, c.cycleDays));
@@ -248,11 +351,14 @@ function reasonsFor(
           weight: weights.orderDue,
         });
       } else {
+        // The routine stock check. A different call from "your order is due"
+        // and it says so: the telecaller is asking what they have left, not
+        // asking for the order.
         const inDays = daysBetween(today, expected);
         reasons.push({
-          kind: "orderDueSoon",
-          label: `Orders every ${c.cycleDays} days - next one due in ${inDays} day${inDays === 1 ? "" : "s"}`,
-          weight: weights.orderDueSoon,
+          kind: "routineCall",
+          label: `Stock check - orders every ${c.cycleDays} days, next due in ${inDays} day${inDays === 1 ? "" : "s"}`,
+          weight: weights.routineCall,
         });
       }
     }
@@ -341,22 +447,81 @@ function laterOf(a: BusinessDate | null, b: BusinessDate): BusinessDate {
  * is what lets the screen say "held back until day 15" instead of silently
  * omitting a customer who is late by their own reckoning.
  */
-function callDayFor(cycleDays: number, config: QueueConfig): number {
-  const lead = Math.min(
-    config["queue.leadMaxDays"],
-    Math.max(
-      config["queue.leadMinDays"],
-      Math.round((cycleDays * config["queue.leadPercent"]) / 100),
-    ),
+function routineDayFor(cycleDays: number, config: QueueConfig): number {
+  /*
+   * A customer who buys every fortnight or less gets NO routine call. They
+   * are in contact constantly through the orders themselves, and a call in
+   * between is noise on both sides of the phone. Their first reason is the
+   * due date itself.
+   */
+  if (cycleDays <= config["queue.routineMinCycleDays"]) return cycleDays;
+
+  /*
+   * Otherwise the stock check lands at a percentage of the customer's OWN
+   * cycle — 70% of 30 days is day 21, three weeks after the last order and
+   * nine days before the next is expected.
+   *
+   * Forwards from the last order, not backwards from the due date. The old
+   * calculation subtracted a lead capped at ten days, which on a 60-day
+   * customer meant day 50 rather than day 42: the longer the cycle, the later
+   * the warning, which is backwards. A long cycle is exactly where the
+   * estimate is loosest and the notice should be longest.
+   */
+  return Math.max(
+    1,
+    Math.round((cycleDays * config["queue.routineCallPercent"]) / 100),
   );
-  return Math.max(0, cycleDays - lead);
+}
+
+/**
+ * Where the customer sits on the no-answer ladder.
+ *
+ * `none` — nobody has failed to reach them, or somebody has since answered.
+ * `waiting` — an attempt is owed, but not yet.
+ * `due` — try again now.
+ * `exhausted` — the ladder has run out and a person has to decide.
+ *
+ * The first rung is measured in HOURS from the attempt itself, which is why
+ * this takes an instant: people are driving, or serving a customer, and an
+ * hour later is a genuinely different moment. Every rung after it is measured
+ * in days, because a second attempt in the same afternoon is pestering.
+ */
+export function noAnswerState(
+  c: Pick<QueueCandidate, "noAnswerCount" | "lastNoAnswerAt">,
+  today: BusinessDate,
+  config: QueueConfig,
+  nowMs: number,
+): "none" | "waiting" | "due" | "exhausted" {
+  if (!c.lastNoAnswerAt || c.noAnswerCount < 1) return "none";
+  if (c.noAnswerCount >= config["queue.noAnswerMaxAttempts"]) return "exhausted";
+
+  const lastMs = Date.parse(c.lastNoAnswerAt);
+  if (Number.isNaN(lastMs)) return "none";
+
+  if (c.noAnswerCount === 1) {
+    const gapMs = config["queue.noAnswerRetryHours"] * 3_600_000;
+    return nowMs - lastMs >= gapMs ? "due" : "waiting";
+  }
+
+  // Rung 2 onwards, in days: [1, 3] means the next working day, then three
+  // days after that. Past the end of the ladder the last rung repeats until
+  // the attempt limit stops it.
+  const ladder = config["queue.noAnswerRetryDays"];
+  const step = ladder[Math.min(c.noAnswerCount - 2, ladder.length - 1)] ?? 1;
+  const lastDay = c.lastNoAnswerAt.slice(0, 10);
+  return daysBetween(lastDay, today) >= step ? "due" : "waiting";
+}
+
+/** Rupees, for a label. The screen formats money everywhere else. */
+function formatPaise(paise: number): string {
+  return `₹${Math.round(paise / 100).toLocaleString("en-IN")}`;
 }
 
 /** The order-chasing reasons — the ones the quiet window holds back. */
 function isOrderChasing(kind: QueueReasonKind): boolean {
   return (
     kind === "orderDue" ||
-    kind === "orderDueSoon" ||
+    kind === "routineCall" ||
     kind === "orderOverdueFullCycle"
   );
 }
@@ -387,11 +552,26 @@ function quietWindow(
   return `Orders every ${c.cycleDays} days · ordered ${sinceOrder === 0 ? "today" : `${sinceOrder} day${sinceOrder === 1 ? "" : "s"} ago`} - no order chased for ${left} more day${left === 1 ? "" : "s"}`;
 }
 
+/** The stored outcome, as a sentence a telecaller reads. */
+function outcomeLabel(outcome: string): string {
+  switch (outcome) {
+    case "no_order":
+      return "No order";
+    case "not_interested":
+      return "Not interested";
+    case "casual_talk":
+      return "Spoke";
+    default:
+      return outcome.replace(/_/g, " ");
+  }
+}
+
 function suppressionReason(
   c: QueueCandidate,
   today: BusinessDate,
   config: QueueConfig,
   hasReminderReason: boolean,
+  nowMs: number,
 ): string | null {
   if (c.doNotContact) return "Marked do not contact";
 
@@ -415,16 +595,36 @@ function suppressionReason(
     return "On the inactive watch - worked from that list";
   }
 
-  // Asked for an order and told no. Without this a customer past their call
-  // day returns to the top of the list every single day until they order,
-  // which punishes the telecaller for working it.
-  if (c.lastNoOrderDate && !hasReminderReason) {
-    const cooldown = config["queue.noOrderCooldownDays"];
-    const elapsed = daysBetween(c.lastNoOrderDate, today);
-    if (elapsed < cooldown) {
-      const left = cooldown - elapsed;
-      return `No order ${elapsed === 0 ? "today" : `${elapsed} day${elapsed === 1 ? "" : "s"} ago`} - asking again in ${left} day${left === 1 ? "" : "s"}`;
+  /*
+   * WHAT THE CUSTOMER SAID, and how long it buys.
+   *
+   * Asked for an order and told no: without a cooldown a customer past their
+   * call day returns to the top of the list every single day until they
+   * order, which punishes the telecaller for working it. "Not interested"
+   * should buy far more than a week, and the map is what lets a manager say
+   * so without a deploy.
+   *
+   * An outcome with no entry buys nothing — silence in the configuration
+   * means no quiet, never an accidental month.
+   */
+  if (c.lastAnsweredOutcome && c.lastAnsweredDate && !hasReminderReason) {
+    const cooldown = config["queue.outcomeCooldownDays"][c.lastAnsweredOutcome];
+    if (cooldown && cooldown > 0) {
+      const elapsed = daysBetween(c.lastAnsweredDate, today);
+      if (elapsed < cooldown) {
+        const left = cooldown - elapsed;
+        return `${outcomeLabel(c.lastAnsweredOutcome)} ${elapsed === 0 ? "today" : `${elapsed} day${elapsed === 1 ? "" : "s"} ago`} - asking again in ${left} day${left === 1 ? "" : "s"}`;
+      }
     }
+  }
+
+  /*
+   * Waiting for the next rung of the no-answer ladder. Held rather than
+   * dropped, so somebody looking for a customer they rang this morning can
+   * see when the next attempt is owed instead of concluding they vanished.
+   */
+  if (noAnswerState(c, today, config, nowMs) === "waiting") {
+    return `No answer - attempt ${c.noAnswerCount} made, waiting before the next`;
   }
 
   // Only a CONFIRMED send suppresses. A copied-but-unconfirmed message means

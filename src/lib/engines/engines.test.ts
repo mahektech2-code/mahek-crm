@@ -13,7 +13,7 @@ import {
   daysBetween,
   addDays,
 } from "../business-date";
-import { buyingCycle } from "./buying-cycle";
+import { buyingCycle, cycleConfidence, confidenceBand } from "./buying-cycle";
 import { buildQueue, type QueueCandidate } from "./queue";
 import {
   agingBucket,
@@ -268,7 +268,12 @@ function candidate(over: Partial<QueueCandidate> = {}): QueueCandidate {
     calledToday: false,
     doNotContact: false,
     skippedTodayReason: null,
-    lastNoOrderDate: null,
+    lastAnsweredOutcome: null,
+    lastAnsweredDate: null,
+    noAnswerCount: 0,
+    lastNoAnswerAt: null,
+    openOrderStatus: null,
+    paymentCallDue: null,
     onInactiveWatch: false,
     outstanding: 0,
     targetGap: 0,
@@ -631,28 +636,29 @@ describe("E2 queue builder", () => {
 
   /* ------------------------------------------------------- the call day */
 
-  test("a 22-day cycle is called on day 18", () => {
-    const on17 = candidate({
-      lastOrderDate: addDays(TODAY, -17),
+  test("the routine call lands at 70% of the customer's own cycle", () => {
+    // 70% of 22 is 15.4, rounded to 15. The old rule worked backwards from
+    // the due date with a capped lead and produced day 18 — later, and later
+    // still the longer the cycle, which is the wrong way round.
+    const on14 = candidate({
+      lastOrderDate: addDays(TODAY, -14),
       cycleDays: 22,
     });
-    const on18 = candidate({
-      lastOrderDate: addDays(TODAY, -18),
+    const on15 = candidate({
+      lastOrderDate: addDays(TODAY, -15),
       cycleDays: 22,
     });
     assert.equal(
-      buildQueue([on17], TODAY, C).entries.length,
+      buildQueue([on14], TODAY, C).entries.length,
       0,
-      "day 17: too early",
+      "day 14: too early",
     );
-    assert.equal(
-      buildQueue([on18], TODAY, C).entries.length,
-      1,
-      "day 18: called",
-    );
+    const called = buildQueue([on15], TODAY, C);
+    assert.equal(called.entries.length, 1, "day 15: the stock check");
+    assert.equal(called.entries[0].reasons[0].kind, "routineCall");
   });
 
-  test("the lead scales with the cycle and is capped at both ends", () => {
+  test("the routine call scales with the cycle, with no cap", () => {
     const called = (cycleDays: number, sinceOrder: number) =>
       buildQueue(
         [candidate({ lastOrderDate: addDays(TODAY, -sinceOrder), cycleDays })],
@@ -660,15 +666,35 @@ describe("E2 queue builder", () => {
         C,
       ).entries.length === 1;
 
-    // 20% of 30 = 6 → day 24.
-    assert.equal(called(30, 23), false);
-    assert.equal(called(30, 24), true);
-    // 20% of 60 = 12, capped to 10 → day 50, not day 48.
-    assert.equal(called(60, 49), false);
-    assert.equal(called(60, 50), true);
-    // 20% of 18 = 3.6 → 4 → day 14, but the quiet window floors it at 15.
-    assert.equal(called(18, 14), false);
-    assert.equal(called(18, 15), true);
+    // 70% of 30 = 21.
+    assert.equal(called(30, 20), false);
+    assert.equal(called(30, 21), true);
+
+    // 70% of 60 = 42, and NOT day 50. The old cap made the notice shorter the
+    // longer the cycle — exactly where the estimate is loosest and the notice
+    // should be longest.
+    assert.equal(called(60, 41), false);
+    assert.equal(called(60, 42), true);
+
+    // 70% of 20 = 14, but nothing is chased inside the 15-day quiet window.
+    assert.equal(called(20, 14), false);
+    assert.equal(called(20, 15), true);
+  });
+
+  test("a customer who buys every fortnight gets no routine call", () => {
+    // They are in contact constantly through the orders themselves. Their
+    // first reason is the due date, not a stock check before it.
+    const short = (sinceOrder: number) =>
+      buildQueue(
+        [candidate({ lastOrderDate: addDays(TODAY, -sinceOrder), cycleDays: 15 })],
+        TODAY,
+        C,
+      );
+
+    assert.equal(short(11).entries.length, 0, "no early stock check");
+    const due = short(15);
+    assert.equal(due.entries.length, 1, "the order itself is due");
+    assert.equal(due.entries[0].reasons[0].kind, "orderDue");
   });
 
   test("a GUESSED cycle does not earn a call day", () => {
@@ -729,7 +755,8 @@ describe("E2 queue builder", () => {
     const c = candidate({
       lastOrderDate: addDays(TODAY, -40),
       cycleDays: 22,
-      lastNoOrderDate: addDays(TODAY, -1),
+      lastAnsweredOutcome: "no_order",
+      lastAnsweredDate: addDays(TODAY, -1),
     });
     const r = buildQueue([c], TODAY, C);
     assert.equal(r.entries.length, 0);
@@ -775,7 +802,8 @@ describe("E2 queue builder", () => {
     const c = candidate({
       lastOrderDate: addDays(TODAY, -40),
       cycleDays: 22,
-      lastNoOrderDate: addDays(TODAY, -C["queue.noOrderCooldownDays"]),
+      lastAnsweredOutcome: "no_order",
+      lastAnsweredDate: addDays(TODAY, -C["queue.outcomeCooldownDays"].no_order),
     });
     assert.equal(buildQueue([c], TODAY, C).entries.length, 1);
   });
@@ -784,7 +812,8 @@ describe("E2 queue builder", () => {
     const c = candidate({
       lastOrderDate: addDays(TODAY, -40),
       cycleDays: 22,
-      lastNoOrderDate: addDays(TODAY, -1),
+      lastAnsweredOutcome: "no_order",
+      lastAnsweredDate: addDays(TODAY, -1),
       reminders: [{ id: "r1", dueDate: TODAY, note: "They said call today" }],
     });
     assert.equal(buildQueue([c], TODAY, C).entries.length, 1);
@@ -1977,5 +2006,185 @@ describe("Tally's receivables report", () => {
     );
     assert.equal(rows.length, 0);
     assert.equal(problems.length, 1);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * The rules added for the client's Call Log specification.
+ * ------------------------------------------------------------------------- */
+
+describe("cycle confidence", () => {
+  test("a regular customer scores high, an erratic one low", () => {
+    // The same average, and only one of them is worth planning around.
+    const steady = cycleConfidence([29, 30, 31, 30, 29]);
+    const erratic = cycleConfidence([15, 45, 22, 60, 30]);
+    assert.ok(steady !== null && steady >= 90, `steady scored ${steady}`);
+    assert.ok(erratic !== null && erratic < 60, `erratic scored ${erratic}`);
+    assert.equal(confidenceBand(steady), "high");
+    assert.ok(["low", "very-low"].includes(confidenceBand(erratic)!));
+  });
+
+  test("it is RELATIVE, so the same wobble reads differently on two cycles", () => {
+    // Three days of drift on a 30-day cycle is tight; on a 5-day cycle it is
+    // chaos. An absolute spread would call them equally good.
+    const long = cycleConfidence([27, 30, 33])!;
+    const short = cycleConfidence([2, 5, 8])!;
+    assert.ok(long > short, `long ${long} should beat short ${short}`);
+  });
+
+  test("a guessed cycle has no confidence to report", () => {
+    const c = buyingCycle(["2026-01-01"], C);
+    assert.equal(c.isDefault, true);
+    assert.equal(c.confidence, null, "a guess must not be dressed as a measure");
+    assert.equal(confidenceBand(null), null);
+  });
+
+  test("a measured cycle carries one", () => {
+    const c = buyingCycle(
+      ["2026-01-01", "2026-01-31", "2026-03-02", "2026-04-01"],
+      C,
+    );
+    assert.equal(c.isDefault, false);
+    assert.ok(c.confidence !== null && c.confidence > 80);
+  });
+});
+
+describe("the no-answer ladder", () => {
+  const at = (iso: string) => Date.parse(iso);
+
+  test("the first retry is an hour later, not the next day", () => {
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      noAnswerCount: 1,
+      lastNoAnswerAt: `${TODAY}T04:30:00Z`, // 10:00 IST
+    });
+
+    // 10:30 IST — half an hour later, too soon.
+    const early = buildQueue([c], TODAY, C, at(`${TODAY}T05:00:00Z`));
+    assert.equal(early.entries.length, 0);
+    assert.match(early.suppressed[0].reason, /waiting before the next/);
+
+    // 11:30 IST — an hour has passed.
+    const due = buildQueue([c], TODAY, C, at(`${TODAY}T06:00:00Z`));
+    assert.equal(due.entries.length, 1);
+    assert.ok(due.entries[0].reasons.some((r) => r.kind === "noAnswerRetry"));
+  });
+
+  test("later rungs are counted in days", () => {
+    const two = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      noAnswerCount: 2,
+      lastNoAnswerAt: `${addDays(TODAY, -1)}T04:30:00Z`,
+    });
+    assert.equal(
+      buildQueue([two], TODAY, C, at(`${TODAY}T06:00:00Z`)).entries.length,
+      1,
+      "attempt 3 is owed the next day",
+    );
+
+    const three = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      noAnswerCount: 3,
+      lastNoAnswerAt: `${addDays(TODAY, -1)}T04:30:00Z`,
+    });
+    assert.equal(
+      buildQueue([three], TODAY, C, at(`${TODAY}T06:00:00Z`)).entries.length,
+      0,
+      "attempt 4 waits three days, not one",
+    );
+  });
+
+  test("the ladder ends, and a person decides", () => {
+    const spent = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      noAnswerCount: 5,
+      lastNoAnswerAt: `${addDays(TODAY, -9)}T04:30:00Z`,
+    });
+    const r = buildQueue([spent], TODAY, C, at(`${TODAY}T06:00:00Z`));
+    assert.equal(r.entries.length, 1);
+    assert.equal(r.entries[0].reasons[0].kind, "unreachable");
+  });
+
+  test("nobody answering does not move the purchase cycle", () => {
+    // The predicted date comes from order history and nothing else. A run of
+    // unanswered calls says something about the phone, not about the cycle.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -30),
+      cycleDays: 22,
+      noAnswerCount: 2,
+      lastNoAnswerAt: `${addDays(TODAY, -1)}T04:30:00Z`,
+    });
+    const r = buildQueue([c], TODAY, C, at(`${TODAY}T06:00:00Z`));
+    const order = r.entries[0].reasons.find((x) => x.kind !== "noAnswerRetry")!;
+    assert.match(order.label, /overdue by 8 days/);
+  });
+});
+
+describe("an order already placed", () => {
+  test("suppresses the order call and shows its status instead", () => {
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      openOrderStatus: "waiting for accounts to approve",
+      activeInOrderSystem: false,
+    });
+    const r = buildQueue([c], TODAY, C);
+    const kinds = r.entries[0].reasons.map((x) => x.kind);
+    assert.ok(kinds.includes("orderStatus"), "the status is shown");
+    // It ranks below everything else: it is not a call asking for an order.
+    assert.notEqual(r.entries[0].reasons[0].kind, "orderStatus");
+  });
+});
+
+describe("payment calls on the call log", () => {
+  test("money due outranks every order reason", () => {
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      paymentCallDue: { totalOverdue: 4_500_00, daysOverdue: 21 },
+    });
+    const r = buildQueue([c], TODAY, C);
+    assert.equal(r.entries[0].reasons[0].kind, "paymentOverdue");
+    assert.match(r.entries[0].reasons[0].label, /₹4,500/);
+    // And it is ONE row for the customer, not two.
+    assert.equal(r.entries.length, 1);
+  });
+});
+
+describe("what the customer said buys the right quiet", () => {
+  test("not interested buys a month, no order buys a week", () => {
+    const make = (outcome: string, daysAgo: number) =>
+      buildQueue(
+        [
+          candidate({
+            lastOrderDate: addDays(TODAY, -40),
+            cycleDays: 22,
+            lastAnsweredOutcome: outcome,
+            lastAnsweredDate: addDays(TODAY, -daysAgo),
+          }),
+        ],
+        TODAY,
+        C,
+      ).entries.length;
+
+    assert.equal(make("no_order", 6), 0, "still inside the week");
+    assert.equal(make("no_order", 7), 1, "the week is up");
+    assert.equal(make("not_interested", 20), 0, "still inside the month");
+    assert.equal(make("not_interested", 30), 1, "the month is up");
+  });
+
+  test("an outcome nobody configured buys nothing", () => {
+    // Silence in the configuration means no quiet, never an accidental month.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      lastAnsweredOutcome: "transport_follow_up",
+      lastAnsweredDate: TODAY,
+    });
+    assert.equal(buildQueue([c], TODAY, C).entries.length, 1);
   });
 });
