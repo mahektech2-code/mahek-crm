@@ -38,6 +38,7 @@ import {
   customers,
   paymentReceipts,
   payments,
+  sheetOrderRows,
 } from "../src/db/schema";
 import {
   recomputeBillPaid,
@@ -209,10 +210,63 @@ type Plan = {
   creditedToAccount: number;
 };
 
+/**
+ * The bills that never got to keep their Tally number.
+ *
+ * `bill_no` is unique across the table, so when the import met a Tally number
+ * another row already held it fell back to `ORD-<order number>` — a name Tally
+ * has never heard of. The register then pays `MMI/24-25/0041` against a bill
+ * this database calls `ORD-17019`, finds nothing, and drops the line.
+ *
+ * The staging row is what reconnects them: it carries the real Tally number
+ * beside the order number, and the bill carries that order number in
+ * `external_ref`. So the mapping is recorded evidence rather than a guess about
+ * which bill was probably meant.
+ *
+ * Restricted to `ORD-` bills deliberately. Where a bill already holds some
+ * other `MMI/` number, staging and the bill disagree about what to call the
+ * same order, and nothing here can say which is right — one such case would
+ * post Rs 63,892 onto a bill numbered four apart from the one Tally names.
+ * Those stay unresolved for a person to settle.
+ */
+async function buildOrdBridge(): Promise<Map<string, DbBill[]>> {
+  const rows = await db
+    .select({
+      ref: sheetOrderRows.tallyBillNo,
+      id: bills.id,
+      billNo: bills.billNo,
+      amount: bills.amount,
+      billDate: bills.billDate,
+      customerId: bills.customerId,
+      customerName: customers.name,
+    })
+    .from(sheetOrderRows)
+    .innerJoin(
+      bills,
+      sql`${bills.externalRef} = 'SHEETPAY-' || ${sheetOrderRows.orderNumber}`,
+    )
+    .innerJoin(customers, eq(customers.id, bills.customerId))
+    .where(sql`${bills.billNo} like 'ORD-%' and ${sheetOrderRows.tallyBillNo} is not null`);
+
+  const out = new Map<string, DbBill[]>();
+  for (const r of rows) {
+    const bill = { ...r, amount: Number(r.amount) } as DbBill;
+    const at = out.get(r.ref!);
+    if (at) {
+      if (!at.some((b) => b.id === bill.id)) at.push(bill);
+    } else out.set(r.ref!, [bill]);
+  }
+  // A Tally number standing for more than one fallback bill is not a mapping,
+  // it is a question. Drop it rather than spread money across a guess.
+  for (const [ref, list] of out) if (list.length > 1) out.delete(ref);
+  return out;
+}
+
 function buildPlan(
   register: RegisterReceipt[],
   all: DbBill[],
   customerByName: Map<string, { id: string; name: string }>,
+  ordBridge: Map<string, DbBill[]>,
 ): Plan {
   const resolve = buildResolver(all);
   const byCustomer = new Map<string, PlannedReceipt[]>();
@@ -283,6 +337,8 @@ function buildPlan(
         group = found;
         break;
       }
+      // Last: the bill that could not keep its Tally number.
+      group ??= ordBridge.get(a.bill) ?? null;
       if (!group) {
         dropped.push({ ref: a.bill, paise });
         continue;
@@ -536,7 +592,8 @@ async function main() {
     if (!customerByName.has(k)) customerByName.set(k, c);
   }
 
-  const plan = buildPlan(register, all, customerByName);
+  const ordBridge = await buildOrdBridge();
+  const plan = buildPlan(register, all, customerByName, ordBridge);
 
   // Anything already written is dropped from the plan, so this is re-runnable
   // and resumable. Each customer commits on its own, so a run that dies at
