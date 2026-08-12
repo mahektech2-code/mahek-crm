@@ -144,6 +144,7 @@ async function writeCycle(
     .set({
       cycleDays: cycle.days,
       cycleIsDefault: cycle.isDefault,
+      cycleConfidence: cycle.confidence,
       // The latest order PLACED, which may be newer than the latest approved.
       lastOrderDate: placedOn ?? dates.at(-1) ?? null,
       avgOrderValue: avg,

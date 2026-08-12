@@ -18,6 +18,7 @@ import {
   type QueueResult,
 } from "../engines/queue";
 import { today } from "../recompute";
+import { getPaymentFollowUpPlan } from "./payment-service";
 import {
   businessDate,
   dayBoundaryWindow,
@@ -117,10 +118,63 @@ async function queueInputs(ids: string[] | null, day: string) {
            and c.status in ('open','in_progress','awaiting_customer')
          order by c.created_at desc limit 1
       )`,
-      // The last call that ended in no order, for the re-ask cooldown. Note
-      // customers.id spelled out: Drizzle renders ${customers.id} as a bare
-      // "id", which inside this correlated subquery would bind to the INNER
-      // table and quietly match every row.
+      /*
+       * The last call that was ANSWERED, and what came of it. What it buys is
+       * configuration — "no order" a week, "not interested" a month — so the
+       * outcome travels rather than a single hardcoded flag.
+       *
+       * Note customers.id spelled out: Drizzle renders ${customers.id} as a
+       * bare "id", which inside a correlated subquery binds to the INNER
+       * table and quietly matches every row.
+       */
+      lastAnsweredOutcome: sql<string | null>`(
+        select c.outcome::text from ${calls} c
+         where c.customer_id = customers.id
+           and c.interaction_type = 'outbound_call'
+           and c.outcome is not null and c.outcome <> 'no_answer'
+         order by c.started_at desc limit 1
+      )`,
+      lastAnsweredDate: sql<string | null>`(
+        select (c.started_at at time zone 'Asia/Kolkata')::date::text from ${calls} c
+         where c.customer_id = customers.id
+           and c.interaction_type = 'outbound_call'
+           and c.outcome is not null and c.outcome <> 'no_answer'
+         order by c.started_at desc limit 1
+      )`,
+      /*
+       * The UNANSWERED RUN — attempts since the last time somebody answered.
+       * Counted rather than stored: a column would have to be reset by every
+       * path that reaches the customer, and one missed reset leaves somebody
+       * permanently unreachable.
+       */
+      noAnswerCount: sql<number>`(
+        select count(*)::int from ${calls} c
+         where c.customer_id = customers.id
+           and c.interaction_type = 'outbound_call'
+           and c.outcome = 'no_answer'
+           and c.started_at > coalesce((
+             select c2.started_at from ${calls} c2
+              where c2.customer_id = customers.id
+                and c2.outcome is not null and c2.outcome <> 'no_answer'
+              order by c2.started_at desc limit 1
+           ), '-infinity'::timestamptz)
+      )`,
+      /* The instant, not the date: the first retry is an hour later. */
+      lastNoAnswerAt: sql<string | null>`(
+        select to_char(c.started_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+          from ${calls} c
+         where c.customer_id = customers.id
+           and c.interaction_type = 'outbound_call'
+           and c.outcome = 'no_answer'
+         order by c.started_at desc limit 1
+      )`,
+      /* An order already placed and still working its way through. */
+      openOrderStatus: sql<string | null>`(
+        select o.status::text from ${orders} o
+         where o.customer_id = customers.id
+           and o.status in ('pending_approval','captured','confirmed')
+         order by o.ordered_at desc limit 1
+      )`,
       lastNoOrder: sql<string | null>`(
         select (c.started_at at time zone 'Asia/Kolkata')::date::text from ${calls} c
          where c.customer_id = customers.id and c.outcome = 'no_order'
@@ -208,7 +262,16 @@ async function queueInputs(ids: string[] | null, day: string) {
   const detail = new Map(rows.map((r) => [r.customer.id, r]));
 
   const candidates: QueueCandidate[] = rows.map(
-    ({ customer: c, calledToday, targetGap, lastNoOrder }) => ({
+    ({
+      customer: c,
+      calledToday,
+      targetGap,
+      lastAnsweredOutcome,
+      lastAnsweredDate,
+      noAnswerCount,
+      lastNoAnswerAt,
+      openOrderStatus,
+    }) => ({
       customerId: c.id,
       name: c.name,
       ownerId: c.ownerId,
@@ -237,7 +300,13 @@ async function queueInputs(ids: string[] | null, day: string) {
       skippedTodayReason: skipReason.get(c.id) ?? null,
       outstanding: c.outstanding,
       targetGap: Number(targetGap ?? 0),
-      lastNoOrderDate: lastNoOrder ?? null,
+      lastAnsweredOutcome: lastAnsweredOutcome ?? null,
+      lastAnsweredDate: lastAnsweredDate ?? null,
+      noAnswerCount: Number(noAnswerCount ?? 0),
+      lastNoAnswerAt: lastNoAnswerAt ?? null,
+      openOrderStatus: openOrderStatus ? orderStatusLabel(openOrderStatus) : null,
+      /* Filled in below, from the collections engine's own conclusion. */
+      paymentCallDue: null,
       onInactiveWatch: watched.has(c.id),
     }),
   );
@@ -251,13 +320,56 @@ export async function queueCandidatesFor(userId: string, day: string) {
   return candidates;
 }
 
+/**
+ * The stored status as a sentence. `pending_approval` is what the column
+ * says; "waiting for accounts to approve" is what a telecaller needs to know
+ * before ringing somebody about it.
+ */
+function orderStatusLabel(status: string): string {
+  switch (status) {
+    case "pending_approval":
+      return "waiting for accounts to approve";
+    case "captured":
+      return "taken, not yet dispatched";
+    case "confirmed":
+      return "confirmed, awaiting dispatch";
+    default:
+      return status.replace(/_/g, " ");
+  }
+}
+
 export async function getQueue(): Promise<QueueView> {
   const ctx = await resolveScope();
   const ids = scopedUserIds(ctx.scope);
   const day = await today();
   const { config, detail, candidates } = await queueInputs(ids, day);
 
-  const result = buildQueue(candidates, day, config);
+  /*
+   * The collections engine's own conclusion, folded in — NOT re-derived.
+   *
+   * It owns the cadence: a quiet window measured from the due date, a message
+   * every few days through it, calls opening on day 16 and the customer
+   * resting between them. Working any of that out again here would be a
+   * second copy of a rule that has already been got right once.
+   *
+   * What this does is show the answer on the calling list, so a telecaller
+   * works one list rather than two — the customers this engine says are due a
+   * payment call arrive at the top, with the money and the days on the row.
+   */
+  if (config["queue.includePaymentDue"]) {
+    const plan = await getPaymentFollowUpPlan();
+    const dueToday = new Map(
+      plan.calls.map((c) => [
+        c.customerId,
+        { totalOverdue: c.totalOverdue, daysOverdue: c.daysOverdue },
+      ]),
+    );
+    for (const c of candidates) {
+      c.paymentCallDue = dueToday.get(c.customerId) ?? null;
+    }
+  }
+
+  const result = buildQueue(candidates, day, config, Date.now());
 
   // "Worked" is how many of today's candidates have already been called —
   // derived from the calls table, not from a stored queue row.

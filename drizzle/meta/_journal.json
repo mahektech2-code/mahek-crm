@@ -316,6 +316,13 @@
       "when": 1786475595858,
       "tag": "0044_receipt_reversed",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1786475595859,
+      "tag": "0045_cycle_confidence",
+      "breakpoints": true
     }
   ]
 }

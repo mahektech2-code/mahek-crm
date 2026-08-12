@@ -39,6 +39,17 @@ import {
   today,
 } from "@/lib/format";
 
+/**
+ * The confidence bands, in words. The number alone is not something anybody
+ * reads mid-call; "High" is.
+ */
+function confidenceWord(confidence: number): string {
+  if (confidence >= 80) return "High";
+  if (confidence >= 60) return "Medium";
+  if (confidence >= 40) return "Low";
+  return "Very low";
+}
+
 type Entry = {
   id: string;
   kind: string;
@@ -102,6 +113,10 @@ export function RecordScreen({
     cycleDays: number;
     /** True while the cycle is the configured fallback, not their own history. */
     cycleIsDefault: boolean;
+    /** 0–100, or null where the cycle is a default. */
+    cycleConfidence?: number | null;
+    /** Last order + the cycle. Null for a customer who has never ordered. */
+    expectedOrderDate?: string | null;
     avgOrderValue: number;
     orders6m: number;
     paysInDays: number;
@@ -390,8 +405,25 @@ export function RecordScreen({
                   <span className="ml-1 text-[11px] font-normal text-muted">
                     (default - not enough order history)
                   </span>
+                ) : customer.cycleConfidence !== null &&
+                  customer.cycleConfidence !== undefined ? (
+                  /*
+                   * How much the date beside it is worth. 29, 30, 31, 30, 29
+                   * and 15, 45, 22, 60, 30 average to nearly the same number
+                   * and mean entirely different things; without this the
+                   * screen shows one figure for both.
+                   */
+                  <span className="ml-1 text-[11px] font-normal text-muted">
+                    ({confidenceWord(customer.cycleConfidence)} confidence ·{" "}
+                    {customer.cycleConfidence}%)
+                  </span>
                 ) : null}
               </Figure>
+              {customer.expectedOrderDate ? (
+                <Figure label="Expected order">
+                  {shortDate(customer.expectedOrderDate)}
+                </Figure>
+              ) : null}
               {followUpStage ? (
                 <Figure
                   label="Collections stage"
