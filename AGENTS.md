@@ -137,6 +137,19 @@ rather than drawing it and refusing it at the save. `setAccess` takes the whole
 desired picture and works out the difference itself, so what was reviewed is
 what is written.
 
+**Disabling a sign-in is not revoking access, and the screen says which it is.**
+Whether somebody can sign in and what they would find if they did are two
+questions, and the Access screen answers both in the same row — Enabled or
+Disabled beside the person, the apps beside that. A disabled account KEEPS its
+apps: somebody away for a month comes back to the book they left, and a
+leaver's grants are still the record of what they could reach. Conflating the
+two would silently destroy that record on a click meant to stop a login.
+`getCurrentUser` already refused an inactive account, so this was enforced
+before it was reachable; what disabling adds is deleting the sessions, because
+a row good for thirty days is a thing somebody has to reason about later and
+disabling should leave nothing to reason about. Manage access is refused on a
+disabled account rather than half-working, and says why.
+
 **There is ONE place an app is granted.** The user record's Access tab used to
 carry its own checkboxes, which made two ways to do it — and only one of them
 knew about modules, so revoking and re-granting from there quietly widened a

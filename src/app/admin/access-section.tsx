@@ -22,7 +22,11 @@ import { useToast } from "@/components/ui/toast";
 import { grantableApps, moduleGroupsForApp, modulesForApp } from "@/lib/modules";
 import type { AppId } from "@/lib/apps";
 import { candidatesForGrant, setAccess } from "@/lib/actions/access";
-import { endSessionsFor, sendPasswordResetFor } from "@/lib/actions/people";
+import {
+  endSessionsFor,
+  sendPasswordResetFor,
+  setUserActive,
+} from "@/lib/actions/people";
 import type { AccessRow, Candidate } from "@/lib/services/access-service";
 import { useAdmin } from "./store";
 
@@ -62,7 +66,7 @@ const VIEWS = [
   "Everyone with access",
   "Narrowed access",
   "No app at all",
-  "Deactivated",
+  "Disabled",
 ] as const;
 type View = (typeof VIEWS)[number];
 
@@ -89,6 +93,8 @@ export function AccessSection({
   const [view, setView] = React.useState<View>("Everyone with access");
   /** Managing somebody already on the list skips the picker. */
   const [managing, setManaging] = React.useState<AccessRow | null>(null);
+  /** Turning the sign-in itself off, or back on. */
+  const [switching, setSwitching] = React.useState<AccessRow | null>(null);
 
   const say = (r: { ok: boolean; message?: string; error?: string }) => {
     push(r.ok ? (r.message ?? "Saved.") : (r.error ?? "That did not work."));
@@ -96,7 +102,7 @@ export function AccessSection({
   };
 
   const inView = rows.filter((r) => {
-    if (view === "Deactivated") return !r.active;
+    if (view === "Disabled") return !r.active;
     if (!r.active) return false;
     if (view === "No app at all") return r.grants.length === 0;
     if (view === "Narrowed access") return r.grants.some((g) => !g.whole);
@@ -105,6 +111,7 @@ export function AccessSection({
 
   const withAccess = rows.filter((r) => r.active && r.grants.length > 0).length;
   const narrowed = rows.filter((r) => r.grants.some((g) => !g.whole)).length;
+  const disabled = rows.filter((r) => !r.active).length;
 
   return (
     <div>
@@ -117,6 +124,7 @@ export function AccessSection({
         <span className="flex-1" />
         <span className="text-[13px] whitespace-nowrap text-muted">
           {withAccess} with access · {narrowed} narrowed
+          {disabled ? ` · ${disabled} disabled` : ""}
         </span>
       </div>
 
@@ -132,12 +140,16 @@ export function AccessSection({
                 ? "Nobody has been narrowed yet"
                 : view === "No app at all"
                   ? "Everybody has at least one app"
-                  : "Nobody here"
+                  : view === "Disabled"
+                    ? "Every account can sign in"
+                    : "Nobody here"
             }
             body={
               view === "Narrowed access"
                 ? "Every grant is the whole app. Manage somebody's access to withhold a screen."
-                : "Nothing matches this view."
+                : view === "Disabled"
+                  ? "Disabling a sign-in keeps the apps it holds, so it is the way to stop somebody signing in without deciding anything about their access."
+                  : "Nothing matches this view."
             }
           />
         ) : (
@@ -146,6 +158,7 @@ export function AccessSection({
               <thead>
                 <tr>
                   <Th>Person</Th>
+                  <Th>Sign-in</Th>
                   <Th>Role</Th>
                   <Th>Employee</Th>
                   <Th>Apps</Th>
@@ -159,7 +172,9 @@ export function AccessSection({
                     <Td>
                       {r.grants.length === 0 ? (
                         <span className="text-muted">
-                          No app — they can sign in and the launcher says so.
+                          {r.active
+                            ? "No app — they can sign in and the launcher says so."
+                            : "No app."}
                         </span>
                       ) : (
                         <span className="flex flex-col gap-0.5">
@@ -183,13 +198,32 @@ export function AccessSection({
                     </Td>
                     <Td>
                       <span className="flex justify-end gap-1.5">
-                        <Button size="sm" variant="secondary" onClick={() => setManaging(r)}>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={!r.active}
+                          // A disabled control always says why.
+                          title={
+                            r.active
+                              ? undefined
+                              : "This account cannot sign in. Enable it before changing what it opens."
+                          }
+                          onClick={() => setManaging(r)}
+                        >
                           Manage access
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => setSwitching(r)}
+                        >
+                          {r.active ? "Disable" : "Enable"}
                         </Button>
                         <PersonMenu
                           row={r}
                           say={say}
                           onManage={() => setManaging(r)}
+                          onSwitch={() => setSwitching(r)}
                           onOpen={() => onOpenUser(r.userId)}
                         />
                       </span>
@@ -212,6 +246,69 @@ export function AccessSection({
           }}
         />
       ) : null}
+
+      {/*
+        Turning the sign-in off, and back on.
+
+        Disabling is not revoking: the apps are kept, so a month's leave is one
+        click each way and comes back to the book they left. Which is exactly
+        why it is worth saying on the dialog — "disabled" and "has no apps" look
+        identical from the outside and mean completely different things.
+      */}
+      <Modal
+        open={!!switching}
+        onClose={() => setSwitching(null)}
+        title={switching?.active ? "Disable this sign-in" : "Enable this sign-in"}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setSwitching(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant={switching?.active ? "danger" : "primary"}
+              onClick={() => {
+                if (!switching) return;
+                const { userId, active } = switching;
+                setSwitching(null);
+                void setUserActive(userId, !active).then(say);
+              }}
+            >
+              {switching?.active ? "Disable" : "Enable"}
+            </Button>
+          </>
+        }
+      >
+        {switching ? (
+          <div className="text-sm leading-[21px] text-body">
+            {switching.active ? (
+              <>
+                {switching.name} will not be able to sign in with their email or their work
+                number, and any session they have open stops working. Nothing is deleted —
+                their calls, orders and customers stay exactly where they are.
+                <p className="mt-2">
+                  {switching.grants.length
+                    ? `${
+                        switching.grants.length === 1
+                          ? "The one app they hold is kept"
+                          : `All ${switching.grants.length} apps they hold are kept`
+                      }, so enabling them again restores what they had. To take an app away instead, use Manage access.`
+                    : "They hold no app, so there is nothing to keep."}
+                </p>
+              </>
+            ) : (
+              <>
+                {switching.name} will be able to sign in again, with the password they
+                already have.
+                <p className="mt-2">
+                  {switching.grants.length
+                    ? `They open what they opened before — ${switching.grants.map((g) => g.appName).join(", ")}.`
+                    : "They hold no app, so they land on a launcher that says so. Give them one with Manage access."}
+                </p>
+              </>
+            )}
+          </div>
+        ) : null}
+      </Modal>
 
       {/* Managing somebody already on the list: straight to the apps. Keyed on
           the person, so the draft is initial state on a fresh mount rather than
@@ -242,7 +339,19 @@ function PersonCells({ row, onOpen }: { row: AccessRow; onOpen: () => void }) {
           {row.name}
         </button>
         <span className="block text-[13px] font-normal text-muted">{row.email}</span>
-        {!row.active ? <Badge tone="neutral">Deactivated</Badge> : null}
+      </Td>
+      <Td className="align-top">
+        {row.active ? (
+          <span className="inline-flex items-center gap-1.5 text-[13px] text-body">
+            <span className="h-1.5 w-1.5 rounded-full bg-success" />
+            Enabled
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 text-[13px] font-medium text-danger">
+            <span className="h-1.5 w-1.5 rounded-full bg-danger" />
+            Disabled
+          </span>
+        )}
       </Td>
       <Td className="align-top capitalize">{row.role}</Td>
       <Td className="align-top">
@@ -269,17 +378,29 @@ function PersonMenu({
   row,
   say,
   onManage,
+  onSwitch,
   onOpen,
 }: {
   row: AccessRow;
   say: (r: { ok: boolean; message?: string; error?: string }) => void;
   onManage: () => void;
+  onSwitch: () => void;
   onOpen: () => void;
 }) {
   return (
     <RowMenu
       items={[
-        { label: "Manage access", onSelect: onManage },
+        {
+          label: "Manage access",
+          disabled: !row.active,
+          title: row.active ? undefined : "This account cannot sign in",
+          onSelect: onManage,
+        },
+        {
+          label: row.active ? "Disable this sign-in" : "Enable this sign-in",
+          destructive: row.active,
+          onSelect: onSwitch,
+        },
         { label: "Open their record", onSelect: onOpen },
         {
           label: "Send a password reset link",
