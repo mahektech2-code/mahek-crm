@@ -86,6 +86,7 @@ export default async function CustomersPage({
         phone: c.phone,
         city: c.city,
         ownerId: c.ownerId,
+        salesAmId: c.salesAmId,
         ownerName: c.ownerName,
         kind: c.kind,
         leadSource: c.leadSource,

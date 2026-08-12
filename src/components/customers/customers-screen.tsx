@@ -48,6 +48,12 @@ type Row = {
   phone: string;
   city: string;
   ownerId: string | null;
+  /**
+   * Whose book it is, for a CUSTOMER. Not the same column as the owner, and
+   * on this book never the same person: the import made one account the owner
+   * of all 1075 records, while the sales AM is who actually holds each one.
+   */
+  salesAmId: string | null;
   ownerName: string | null;
   kind: "lead" | "customer";
   leadSource: string | null;
@@ -833,6 +839,7 @@ export function CustomersScreen({
         open={addOpen}
         title="Add lead"
         team={team}
+        backOfficePeople={backOfficePeople}
         kind="lead"
         canReassign={canReassign}
         amReasons={amReasons}
@@ -851,6 +858,7 @@ export function CustomersScreen({
         open={Boolean(editing)}
         title={`Edit ${editing?.name ?? ""}`}
         team={team}
+        backOfficePeople={backOfficePeople}
         kind={editing?.kind ?? "customer"}
         canReassign={canReassign}
         amReasons={amReasons}
@@ -874,8 +882,14 @@ export function CustomersScreen({
            * missing reason — nothing has been written yet, and the form comes
            * back with everything still in it rather than half saved.
            */
-          const salesMoved =
-            String(values.ownerId ?? "") !== (editing.ownerId ?? "");
+          // Against the ASSIGNED person the form opened with, not the owner:
+          // comparing the owner would report "moved" on every save of a
+          // customer whose sales AM is anybody but the importer.
+          const assignedBefore =
+            (editing.kind === "lead"
+              ? editing.ownerId
+              : (editing.salesAmId ?? editing.ownerId)) ?? "";
+          const salesMoved = String(values.assignedId ?? "") !== assignedBefore;
           const backOfficeMoved =
             String(values.backOfficeAmId ?? "") !== (editing.backOfficeAmId ?? "");
 
@@ -898,7 +912,7 @@ export function CustomersScreen({
                 customerIds: [editing.id],
                 ...(salesMoved
                   ? {
-                      salesAmId: String(values.ownerId ?? "") || null,
+                      salesAmId: String(values.assignedId ?? "") || null,
                       sales: { reasonCode },
                     }
                   : {}),
@@ -920,7 +934,7 @@ export function CustomersScreen({
           // business writing them.
           const rest = Object.fromEntries(
             Object.entries(values).filter(
-              ([k]) => !["ownerId", "backOfficeAmId", "amReasonCode"].includes(k),
+              ([k]) => !["assignedId", "backOfficeAmId", "amReasonCode"].includes(k),
             ),
           );
           const result = await run(updateCustomer(editing.id, rest));
@@ -1068,7 +1082,19 @@ function SheetSays({
 type CustomerFormProps = {
   open: boolean;
   title: string;
-  team: Array<{ id: string; name: string }>;
+  /**
+   * The SALES list: accounts only, because this seat decides whose calling
+   * queue the customer lands in and a name with no login cannot be given a
+   * queue. Unscoped — see `listAssignableUsers`.
+   */
+  team: Array<{ id: string; name: string; role?: string }>;
+  /**
+   * The BACK OFFICE list: those accounts plus the current HRMS employees.
+   * That seat drives no queue, and most of the people who actually do the
+   * dispatch and the paperwork have never signed in — offering only accounts
+   * meant the true answer usually could not be picked at all.
+   */
+  backOfficePeople: Array<{ id: string; name: string; role?: string }>;
   /** A new record is a lead. An existing one is whatever it already is. */
   kind: "lead" | "customer";
   /**
@@ -1094,6 +1120,7 @@ function CustomerFormBody({
   open,
   title,
   team,
+  backOfficePeople,
   kind,
   canReassign,
   amReasons,
@@ -1110,7 +1137,21 @@ function CustomerFormBody({
     contactPerson: initial?.contactPerson ?? "",
     phone: initial?.phone ?? "",
     city: initial?.city ?? "",
-    ownerId: initial?.ownerId ?? team[0]?.id ?? "",
+    /*
+     * The ASSIGNED person, which for a customer is the sales AM and only
+     * falls back to the owner where that is unset — `assignedUserId` in
+     * access-control, and `ASSIGNED_TO_SQL` in every scoped query.
+     *
+     * This field read `ownerId` alone, and on this book that is one account
+     * for all 1075 records: the modal showed the importer on every customer
+     * while the list beside it showed the real manager. They were reading two
+     * different columns and only one of them answers "whose book is this".
+     */
+    assignedId:
+      (kind === "lead"
+        ? initial?.ownerId
+        : (initial?.salesAmId ?? initial?.ownerId)) ??
+      "",
     gstin: initial?.gstin ?? "",
     creditTermDays: String(initial?.creditTermDays ?? 30),
     route: initial?.route ?? "",
@@ -1136,7 +1177,8 @@ function CustomerFormBody({
    * where somebody only fixed a spelling must not write a reassignment.
    */
   const amChanged =
-    (values.ownerId ?? "") !== (initial?.ownerId ?? "") ||
+    (values.assignedId ?? "") !==
+      (((kind === "lead" ? initial?.ownerId : (initial?.salesAmId ?? initial?.ownerId)) ?? "")) ||
     (values.backOfficeAmId ?? "") !== (initial?.backOfficeAmId ?? "");
 
   return (
@@ -1218,8 +1260,8 @@ function CustomerFormBody({
           }
         >
           <Select
-            value={values.ownerId ?? ""}
-            onChange={set("ownerId")}
+            value={values.assignedId ?? ""}
+            onChange={set("assignedId")}
             disabled={!canReassign}
           >
             <option value="">Unassigned</option>
@@ -1229,7 +1271,10 @@ function CustomerFormBody({
               </option>
             ))}
           </Select>
-          <SheetSays stated={initial?.salesAmName} account={accountName(values.ownerId)} />
+          <SheetSays
+            stated={initial?.salesAmName}
+            account={accountName(values.assignedId)}
+          />
         </Field>
         <Field
           label="Account manager · back office"
@@ -1245,9 +1290,10 @@ function CustomerFormBody({
             disabled={!canReassign}
           >
             <option value="">Unassigned</option>
-            {team.map((t) => (
+            {backOfficePeople.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
+                {t.role === "employee" ? " · no login" : ""}
               </option>
             ))}
           </Select>
