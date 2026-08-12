@@ -16,10 +16,13 @@ import {
   users,
 } from "@/db/schema";
 import {
+  ASSIGNED_TO_SQL,
   assertCustomerInScope,
   requireCapability,
   resolveScope,
-  scopedUserIds, scopedToUsers,} from "../access-control";
+  scopedToUsers,
+  scopedUserIds,
+} from "../access-control";
 import { getConfig } from "../config/store";
 import { classifyShortfall, resolveTarget } from "../engines/targets";
 import { watchAge } from "../engines/inactivity";
