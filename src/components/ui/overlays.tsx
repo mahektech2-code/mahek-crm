@@ -373,6 +373,52 @@ export function Tabs<T extends string>({
   );
 }
 
+/**
+ * One choice from a short, fixed set — the shape a screen uses when the
+ * options are alternatives rather than a list. Beside `FilterPills` it reads
+ * as a different KIND of question, which is the point: pills narrow by reason,
+ * a segmented control switches which set is being looked at.
+ */
+export function SegmentedControl<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  /** A word for the axis, so the options are not read as unrelated buttons. */
+  label?: string;
+  options: Array<{ key: T; label: string; count?: number }>;
+  value: T;
+  onChange: (key: T) => void;
+}) {
+  return (
+    <div className="flex h-8 flex-none items-center gap-1.5 rounded-[4px] border border-line bg-surface pr-1 pl-2">
+      {label ? (
+        <span className="text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
+          {label}
+        </span>
+      ) : null}
+      {options.map((o) => (
+        <button
+          key={o.key}
+          onClick={() => onChange(o.key)}
+          className={cx(
+            "h-6 cursor-pointer rounded-[3px] px-2 text-[13px] whitespace-nowrap",
+            value === o.key
+              ? "bg-brand-soft font-medium text-[#5223E0]"
+              : "text-muted hover:text-body",
+          )}
+        >
+          {o.label}
+          {o.count !== undefined ? (
+            <span className="ml-1.5 text-muted">{o.count}</span>
+          ) : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function FilterPills<T extends string>({
   options,
   value,

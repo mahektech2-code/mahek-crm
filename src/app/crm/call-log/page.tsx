@@ -1,5 +1,10 @@
+import { cookies } from "next/headers";
 import { requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
+import {
+  QUEUE_AUDIENCE_COOKIE,
+  parseQueueAudience,
+} from "@/lib/queue-audience";
 import { dayActivity, today } from "@/lib/queries";
 import { getConfig } from "@/lib/config/store";
 import { popularProducts } from "@/lib/services/product-service";
@@ -15,6 +20,11 @@ export const metadata = { title: "Call Log - MahekOne CRM" };
 export default async function QueuePage() {
   const user = await requireUser();
   const scope = await getScope(user);
+  // Which half of the book this person works is a standing fact about them, so
+  // it survives the reload; which reason they are chasing right now is not.
+  const audience = parseQueueAudience(
+    (await cookies()).get(QUEUE_AUDIENCE_COOKIE)?.value,
+  );
 
   const day = await today();
   const [queue, activity, config] = await Promise.all([
@@ -93,6 +103,7 @@ export default async function QueuePage() {
       // has to know whose. On their own book every row is theirs, so naming a
       // person on each one is a column of the same word repeated.
       showAssignee={scope === "team"}
+      audience={audience}
       rows={queue.entries.map((r) => ({
         customerId: r.customerId,
         name: r.name,

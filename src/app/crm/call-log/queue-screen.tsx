@@ -14,7 +14,12 @@ import {
   SlowPayerBadge,
   cx,
 } from "@/components/ui/primitives";
-import { ConfirmDialog, FilterPills, RowMenu } from "@/components/ui/overlays";
+import {
+  ConfirmDialog,
+  FilterPills,
+  RowMenu,
+  SegmentedControl,
+} from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import {
@@ -24,7 +29,12 @@ import {
   type QuickNoteOption,
   type ScriptOption,
 } from "@/components/crm/call-panel";
-import { rebuildQueue, skipQueueItem } from "@/lib/actions/crm";
+import {
+  rebuildQueue,
+  setQueueAudience,
+  skipQueueItem,
+} from "@/lib/actions/crm";
+import { audienceLabel, type QueueAudience } from "@/lib/queue-audience";
 import { money, phoneDisplay, shortDate } from "@/lib/format";
 
 type Reason = { kind: string; label: string; weight: number };
@@ -50,13 +60,17 @@ type Row = {
 
 type Suppressed = { customerId: string; name: string; reason: string };
 
+/**
+ * WHY a call is due. Who it is due for is the other axis, and it is a
+ * `QueueAudience` rather than a value in here — folding the two together is
+ * what made "Leads" read as an alternative to "Payment due".
+ */
 type Filter =
   | "all"
   | "orders"
   | "complaints"
   | "reminders"
   | "checkins"
-  | "leads"
   | "payments"
   | "retry";
 
@@ -84,6 +98,7 @@ const RETRY_KINDS = ["noAnswerRetry", "unreachable"];
 export function QueueScreen({
   scopeLabel,
   showAssignee,
+  audience: savedAudience,
   rows,
   suppressed,
   progress,
@@ -103,6 +118,8 @@ export function QueueScreen({
   scopeLabel: string;
   /** Team view: every row belongs to somebody, so every row says who. */
   showAssignee: boolean;
+  /** The half of the book this person last chose to work. */
+  audience: QueueAudience;
   rows: Row[];
   suppressed: Suppressed[];
   progress: { worked: number; total: number; percent: number };
@@ -133,6 +150,7 @@ export function QueueScreen({
   const { run } = useToast();
 
   const [filter, setFilter] = React.useState<Filter>("all");
+  const [audience, setAudience] = React.useState<QueueAudience>(savedAudience);
   const [selectedRaw, setSelected] = React.useState(0);
   const [openId, setOpenId] = React.useState<string | null>(null);
   const [heldOpen, setHeldOpen] = React.useState(false);
@@ -144,28 +162,37 @@ export function QueueScreen({
   const hasAny = (r: Row, kinds: string[]) =>
     r.reasons.some((x) => kinds.includes(x.kind));
 
-  const visibleRef = React.useMemo(() => {
+  // Who first, why second. Every count below is taken from this rather than
+  // from `rows`, because a pill reading "Payment due 12" over a list narrowed
+  // to leads is the screen stating a figure it is not showing.
+  const inAudience = React.useMemo(
+    () =>
+      audience === "all"
+        ? rows
+        : rows.filter((r) =>
+            audience === "leads" ? r.kind === "lead" : r.kind !== "lead",
+          ),
+    [rows, audience],
+  );
+
+  const visible = React.useMemo(() => {
     switch (filter) {
       case "orders":
-        return rows.filter((r) => hasAny(r, ORDER_KINDS));
+        return inAudience.filter((r) => hasAny(r, ORDER_KINDS));
       case "complaints":
-        return rows.filter((r) => r.hasComplaint);
+        return inAudience.filter((r) => r.hasComplaint);
       case "reminders":
-        return rows.filter((r) => hasAny(r, REMINDER_KINDS));
+        return inAudience.filter((r) => hasAny(r, REMINDER_KINDS));
       case "payments":
-        return rows.filter((r) => hasAny(r, PAYMENT_KINDS));
+        return inAudience.filter((r) => hasAny(r, PAYMENT_KINDS));
       case "retry":
-        return rows.filter((r) => hasAny(r, RETRY_KINDS));
+        return inAudience.filter((r) => hasAny(r, RETRY_KINDS));
       case "checkins":
-        return rows.filter((r) => hasAny(r, CHECKIN_KINDS));
-      case "leads":
-        return rows.filter((r) => r.kind === "lead");
+        return inAudience.filter((r) => hasAny(r, CHECKIN_KINDS));
       default:
-        return rows;
+        return inAudience;
     }
-  }, [rows, filter]);
-
-  const visible = visibleRef;
+  }, [inAudience, filter]);
   const selected = Math.min(selectedRaw, Math.max(0, visible.length - 1));
 
   // j / k / Enter — the whole queue can be worked without touching the mouse.
@@ -292,46 +319,68 @@ export function QueueScreen({
         ]}
       />
 
-      <div className="mb-3 flex items-center gap-2">
-        <FilterPills
-          value={filter}
-          onChange={setFilter}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <SegmentedControl
+          label="Calling"
+          value={audience}
+          onChange={(next) => {
+            // The rows are already here, so the narrowing is immediate and the
+            // cookie is only written for the next load — nothing waits on it.
+            setAudience(next);
+            setSelected(0);
+            void setQueueAudience(next).catch(() => {
+              /* a display preference that failed to stick is not worth a toast
+                 mid-call — the screen has already done what was asked */
+            });
+          }}
           options={[
-            { key: "all", label: "To work", count: rows.length },
-            {
-              key: "payments",
-              label: "Payment due",
-              count: rows.filter((r) => hasAny(r, PAYMENT_KINDS)).length,
-            },
-            {
-              key: "reminders",
-              label: "Reminder due",
-              count: rows.filter((r) => hasAny(r, REMINDER_KINDS)).length,
-            },
-            {
-              key: "retry",
-              label: "No answer",
-              count: rows.filter((r) => hasAny(r, RETRY_KINDS)).length,
-            },
-            {
-              key: "orders",
-              label: "Due to reorder",
-              count: rows.filter((r) => hasAny(r, ORDER_KINDS)).length,
-            },
-            {
-              key: "checkins",
-              label: "Check-in due",
-              count: rows.filter((r) => hasAny(r, CHECKIN_KINDS)).length,
-            },
+            { key: "all", label: "Everyone", count: rows.length },
             {
               key: "leads",
               label: "Leads",
               count: rows.filter((r) => r.kind === "lead").length,
             },
             {
+              key: "customers",
+              label: "Customers",
+              count: rows.filter((r) => r.kind !== "lead").length,
+            },
+          ]}
+        />
+        <FilterPills
+          value={filter}
+          onChange={setFilter}
+          options={[
+            { key: "all", label: "To work", count: inAudience.length },
+            {
+              key: "payments",
+              label: "Payment due",
+              count: inAudience.filter((r) => hasAny(r, PAYMENT_KINDS)).length,
+            },
+            {
+              key: "reminders",
+              label: "Reminder due",
+              count: inAudience.filter((r) => hasAny(r, REMINDER_KINDS)).length,
+            },
+            {
+              key: "retry",
+              label: "No answer",
+              count: inAudience.filter((r) => hasAny(r, RETRY_KINDS)).length,
+            },
+            {
+              key: "orders",
+              label: "Due to reorder",
+              count: inAudience.filter((r) => hasAny(r, ORDER_KINDS)).length,
+            },
+            {
+              key: "checkins",
+              label: "Check-in due",
+              count: inAudience.filter((r) => hasAny(r, CHECKIN_KINDS)).length,
+            },
+            {
               key: "complaints",
               label: "Has complaint",
-              count: rows.filter((r) => r.hasComplaint).length,
+              count: inAudience.filter((r) => r.hasComplaint).length,
             },
           ]}
         />
@@ -421,7 +470,11 @@ export function QueueScreen({
                       {reason.label}
                     </Badge>
                   ))}
-                  {r.kind === "lead" ? <Badge tone="brand">Lead</Badge> : null}
+                  {/* Under the Leads cut every row is one, so the badge is a
+                      column of the same word repeated. */}
+                  {r.kind === "lead" && audience !== "leads" ? (
+                    <Badge tone="brand">Lead</Badge>
+                  ) : null}
                   {r.slowPayer ? <SlowPayerBadge /> : null}
                 </div>
                 <div className="mt-0.5 flex items-center gap-2 text-[13px] text-muted">
@@ -516,7 +569,7 @@ export function QueueScreen({
               </div>
             </div>
           ))
-        ) : filter === "all" ? (
+        ) : filter === "all" && audience === "all" ? (
           <EmptyState
             icon={<Icon name="check" size={24} className="text-success" />}
             title="Queue cleared for today"
@@ -539,9 +592,36 @@ export function QueueScreen({
             }
           />
         ) : (
+          // Three emptinesses, and the screen says which: no leads at all
+          // today, no leads matching this reason, or nothing matching the
+          // reason across the whole book. A blank list under two selections
+          // otherwise reads as broken filtering rather than as an answer.
           <EmptyState
-            title="Nothing in the log matches that filter"
-            body="Clear it to see everyone still to work today."
+            title={
+              filter === "all"
+                ? `No ${audienceLabel(audience)} to work today`
+                : `Nothing in the log matches that filter`
+            }
+            body={
+              filter === "all"
+                ? `The rest of the book still has ${rows.length - inAudience.length} to work — switch to Everyone to see them.`
+                : audience === "all"
+                  ? "Clear it to see everyone still to work today."
+                  : `Nothing among the ${audienceLabel(audience)} matches it. Clear the filter, or switch to Everyone to look across the whole book.`
+            }
+            action={
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setFilter("all");
+                  setAudience("all");
+                  setSelected(0);
+                  void setQueueAudience("all").catch(() => {});
+                }}
+              >
+                Show everyone still to work
+              </Button>
+            }
           />
         )}
       </Card>

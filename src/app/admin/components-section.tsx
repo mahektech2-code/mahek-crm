@@ -30,6 +30,7 @@ import {
   DrawerHeader,
   FilterPills,
   Modal,
+  SegmentedControl,
   Tabs,
 } from "@/components/ui/overlays";
 import { Icon } from "@/components/shell/icons";
@@ -89,6 +90,7 @@ export function ComponentsScreen() {
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [tab, setTab] = React.useState("all");
   const [filter, setFilter] = React.useState("today");
+  const [segment, setSegment] = React.useState("all");
   const [checked, setChecked] = React.useState(true);
   const [radio, setRadio] = React.useState("yes");
   const [toggle, setToggle] = React.useState(true);
@@ -547,7 +549,20 @@ export function ComponentsScreen() {
               { key: "closed", label: "Closed", count: 7 },
             ]}
           />
-          <div className="px-5 py-3">
+          <div className="flex flex-wrap items-center gap-2 px-5 py-3">
+            {/* Two axes, deliberately drawn as two shapes: the control
+                switches which set is being looked at, the pills narrow it by
+                reason. One row of pills holding both reads as one choice. */}
+            <SegmentedControl
+              label="Calling"
+              value={segment}
+              onChange={setSegment}
+              options={[
+                { key: "all", label: "Everyone", count: 53 },
+                { key: "leads", label: "Leads", count: 48 },
+                { key: "customers", label: "Customers", count: 5 },
+              ]}
+            />
             <FilterPills
               value={filter}
               onChange={setFilter}

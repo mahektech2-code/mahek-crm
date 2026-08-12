@@ -27,6 +27,11 @@ import {
 } from "@/lib/access-control";
 import { SCOPE_COOKIE_NAME } from "@/lib/scope";
 import {
+  QUEUE_AUDIENCE_COOKIE,
+  parseQueueAudience,
+  type QueueAudience,
+} from "@/lib/queue-audience";
+import {
   getConfig,
   invalidateConfig,
   updateSetting,
@@ -114,6 +119,20 @@ export async function setScope(scope: "mine" | "team") {
   const jar = await cookies();
   jar.set(SCOPE_COOKIE_NAME, scope, { path: "/", maxAge: 60 * 60 * 24 * 365 });
   refreshAll();
+}
+
+/**
+ * Which half of the book the Call Log opens on. Unlike the scope switch this
+ * revalidates nothing: every row is already on the client, so the narrowing
+ * happens there and the cookie only has to be right for the NEXT load. A
+ * refresh here would refetch the whole queue to change nothing on the screen.
+ */
+export async function setQueueAudience(audience: QueueAudience) {
+  const jar = await cookies();
+  jar.set(QUEUE_AUDIENCE_COOKIE, parseQueueAudience(audience), {
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+  });
 }
 
 /* -------------------------------------------------------------- the call */
