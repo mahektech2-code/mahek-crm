@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   calls,
@@ -22,6 +22,7 @@ import { getPaymentFollowUpPlan } from "./payment-service";
 import {
   businessDate,
   dayBoundaryWindow,
+  type BusinessDate,
   monthKey,
   previousWorkingDay,
 } from "../business-date";
@@ -338,7 +339,145 @@ function orderStatusLabel(status: string): string {
   }
 }
 
+/**
+ * Read the day's list, building and storing it the first time it is asked for.
+ *
+ * WHAT IS FROZEN is the composition: who is on the list, why, and in what
+ * order. WHAT STAYS LIVE is whether each row still needs doing.
+ *
+ * That distinction is the whole design. A list frozen completely would go on
+ * asking a telecaller to chase an order the customer placed an hour ago, which
+ * is the one thing the specification is most emphatic about. A list not frozen
+ * at all is the moving target this replaces. So:
+ *
+ *   · a row whose customer has since been called, skipped, ordered, or been
+ *     marked do-not-contact is dropped from the callable list and appears in
+ *     the held-back strip with the reason, exactly as it would have done;
+ *
+ *   · a REMINDER falling due today is added the moment it does. A promise made
+ *     to a customer cannot wait for tomorrow's list, and it is the only thing
+ *     urgent enough to reopen a settled day.
+ */
+async function settleDayList(
+  userId: string,
+  day: BusinessDate,
+  live: QueueResult,
+  candidates: QueueCandidate[],
+  config: Awaited<ReturnType<typeof getConfig>>,
+): Promise<QueueResult> {
+  const stored = await db
+    .select()
+    .from(queueSnapshots)
+    .where(and(eq(queueSnapshots.day, day), eq(queueSnapshots.userId, userId)))
+    .orderBy(asc(queueSnapshots.rank));
+
+  if (!stored.length) {
+    // First read of the business day. Write what the engine just decided.
+    if (live.entries.length) {
+      await db
+        .insert(queueSnapshots)
+        .values(
+          live.entries.map((e, i) => ({
+            day,
+            userId,
+            customerId: e.customerId,
+            score: e.score,
+            reasons: e.reasons,
+            rank: i,
+          })),
+        )
+        // Two tabs opening at once is one list, not a crash.
+        .onConflictDoNothing();
+    }
+    return live;
+  }
+
+  /*
+   * The day is already settled. Rebuild its entries from the stored rows, in
+   * the stored order, and let today's live state decide what is still callable.
+   */
+  const liveById = new Map(live.entries.map((e) => [e.customerId, e]));
+  const heldById = new Map(live.suppressed.map((h) => [h.customerId, h]));
+  const byId = new Map(candidates.map((c) => [c.customerId, c]));
+
+  const entries: QueueResult["entries"] = [];
+  const suppressed = [...live.suppressed.filter((h) => !liveById.has(h.customerId))];
+
+  for (const row of stored) {
+    const candidate = byId.get(row.customerId);
+    // Out of the book entirely since the list was settled — reassigned, or
+    // deactivated. Not held back: it is not this person's to explain.
+    if (!candidate) continue;
+
+    const stillLive = liveById.get(row.customerId);
+    if (stillLive) {
+      // Keep the settled reason and rank; a customer does not get re-ranked
+      // mid-morning because their outstanding moved.
+      entries.push({
+        customerId: row.customerId,
+        name: candidate.name,
+        score: row.score,
+        reasons: (row.reasons.length
+          ? row.reasons
+          : stillLive.reasons) as QueueResult["entries"][number]["reasons"],
+        outstanding: candidate.outstanding,
+        targetGap: candidate.targetGap,
+        daysSinceContact: stillLive.daysSinceContact,
+      });
+      continue;
+    }
+
+    // No longer callable. Say why, rather than letting it vanish.
+    const held = heldById.get(row.customerId);
+    if (!suppressed.some((h) => h.customerId === row.customerId)) {
+      suppressed.push({
+        customerId: row.customerId,
+        name: candidate.name,
+        reason: held?.reason ?? "Dealt with since the list was settled",
+      });
+    }
+  }
+
+  /*
+   * A promise falling due today reopens the settled list — and only that.
+   * Anything else waits for tomorrow, which is the point of settling it.
+   */
+  const settledIds = new Set(stored.map((r) => r.customerId));
+  const promises = live.entries.filter(
+    (e) =>
+      !settledIds.has(e.customerId) &&
+      e.reasons.some(
+        (r) => r.kind === "reminderDueToday" || r.kind === "reminderOverdue",
+      ),
+  );
+  if (promises.length) {
+    entries.unshift(...promises);
+    await db
+      .insert(queueSnapshots)
+      .values(
+        promises.map((e, i) => ({
+          day,
+          userId,
+          customerId: e.customerId,
+          score: e.score,
+          reasons: e.reasons,
+          rank: -1 - i,
+        })),
+      )
+      .onConflictDoNothing();
+  }
+
+  const limit = config["queue.maxSizePerUser"];
+  return {
+    entries: limit > 0 ? entries.slice(0, limit) : entries,
+    suppressed,
+    totalQualified: entries.length,
+  };
+}
+
 export async function getQueue(): Promise<QueueView> {
+
+
   const ctx = await resolveScope();
   const ids = scopedUserIds(ctx.scope);
   const day = await today();
@@ -369,7 +508,23 @@ export async function getQueue(): Promise<QueueView> {
     }
   }
 
-  const result = buildQueue(candidates, day, config, Date.now());
+  /*
+   * THE DAY'S LIST, settled once.
+   *
+   * The list used to be worked out afresh on every load, which meant it could
+   * reshuffle under a telecaller mid-morning because a colleague logged a call
+   * or a bill fell due. It is built once per business day now and read from
+   * storage after that, so the day is something a person can plan and "twelve
+   * of forty worked" is a real figure rather than a fraction of a moving
+   * denominator.
+   *
+   * NO CRON REQUIRED. The first read of the day builds it. A scheduled job can
+   * warm it before anybody signs in — `npm run jobs -- build-queues` — but
+   * nothing depends on that job having run, which matters on a deployment
+   * where the scheduler is somebody else's to switch on.
+   */
+  const live = buildQueue(candidates, day, config, Date.now());
+  const result = await settleDayList(ctx.user.id, day, live, candidates, config);
 
   // "Worked" is how many of today's candidates have already been called —
   // derived from the calls table, not from a stored queue row.

@@ -68,6 +68,7 @@ export type JobName =
   | "recompute-followups"
   | "recompute-slow-payers"
   | "snapshot-queue"
+  | "build-queues"
   | "seed-targets"
   | "sweep-unconfirmed"
   | "escalate-complaint-sla"
@@ -199,30 +200,54 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
 /* -------------------------------------------------------- queue snapshot */
 
 /**
- * Records who is in each telecaller's queue as the day opens.
+ * Builds each telecaller's call list for the day.
  *
- * The queue is derived on every read and this does not change that — nothing
- * ever builds a queue FROM this table. It exists so the screen can answer
- * "how many of these were here yesterday too", which a derived list cannot
- * answer about its own past.
+ * This USED to be a record of who was in each queue, kept only so the screen
+ * could say how many rows carried over — nothing read a queue from it. Now it
+ * writes the list itself, and the Call Log reads it.
  *
- * Idempotent: re-running replaces the day's rows rather than doubling them,
- * so a hand-triggered run after a fix is safe.
+ * NOTHING DEPENDS ON THIS JOB RUNNING. The first person to open the Call Log
+ * on a given business day builds their own list on the spot. This is a warmer:
+ * run it before the shift and the screen is instant and identical for
+ * everybody; skip it and the only difference is who pays the half-second.
+ *
+ * That is deliberate on a deployment whose scheduler belongs to somebody else.
+ * A daily list that only exists if a cron fired is a daily list that silently
+ * does not exist the morning the cron does not fire.
+ *
+ * Idempotent, and it never overwrites a list already in use: a day already
+ * settled is left exactly as it is, so a hand-triggered re-run at noon cannot
+ * reshuffle a telecaller's afternoon.
  */
 export async function snapshotQueue(day: BusinessDate): Promise<number> {
   const config = await getConfig();
   const telecallers = await db.select().from(users).where(eq(users.active, true));
 
-  await db.delete(queueSnapshots).where(eq(queueSnapshots.day, day));
-
   let written = 0;
   for (const user of telecallers) {
+    const already = await db
+      .select({ customerId: queueSnapshots.customerId })
+      .from(queueSnapshots)
+      .where(and(eq(queueSnapshots.day, day), eq(queueSnapshots.userId, user.id)))
+      .limit(1);
+    if (already.length) continue;
+
     const candidates = await queueCandidatesFor(user.id, day);
     const { entries } = buildQueue(candidates, day, config);
     if (!entries.length) continue;
-    await db.insert(queueSnapshots).values(
-      entries.map((e) => ({ day, customerId: e.customerId, userId: user.id })),
-    );
+    await db
+      .insert(queueSnapshots)
+      .values(
+        entries.map((e, i) => ({
+          day,
+          userId: user.id,
+          customerId: e.customerId,
+          score: e.score,
+          reasons: e.reasons,
+          rank: i,
+        })),
+      )
+      .onConflictDoNothing();
     written += entries.length;
   }
   return written;
@@ -381,6 +406,31 @@ export async function runJob(
       return runHourly(triggeredById);
     case "day-boundary":
       return runDayBoundary(triggeredById);
+    case "build-queues":
+      /*
+       * Build every telecaller's list for today, before the shift.
+       *
+       * Optional by design: the first read of the day builds one anyway. This
+       * only decides who pays the half-second, which matters because a daily
+       * list that exists only if a cron fired is a daily list that silently
+       * does not exist the morning it does not.
+       */
+      return [
+        await run(
+          "build-queues",
+          async () => {
+            const day = await today();
+            const written = await snapshotQueue(day);
+            return {
+              recordsAffected: written,
+              detail: written
+                ? `Built ${written} rows for ${day}`
+                : `Nothing to build for ${day} — every list was already settled`,
+            };
+          },
+          triggeredById,
+        ),
+      ];
     case "mbos-nightly":
       return [await run("mbos-nightly", mbosNightly, triggeredById)];
     case "mbos-hourly":
