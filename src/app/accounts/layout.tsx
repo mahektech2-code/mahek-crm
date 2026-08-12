@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { listUserApps } from "@/lib/access";
+import { listUserApps, listUserModules } from "@/lib/access";
 import { APPS } from "@/lib/apps";
 import { AppSwitcher } from "@/components/shell/app-switcher";
 import { FeedbackButton } from "@/components/shell/feedback-button";
@@ -35,6 +35,10 @@ export default async function OrdersLayout({
   // open for somebody who was never given the app.
   if (!apps.includes("accounts")) redirect("/apps");
 
+  // Which screens of it, so the sidebar draws what they hold and nothing else.
+  const modules = await listUserModules(user.id, "accounts");
+  if (modules.length === 0) redirect("/apps");
+
   const [orderCount, paymentCount, creditCount, urgency, config] = await Promise.all([
     pendingOrderCount(),
     pendingReceiptCount(),
@@ -61,6 +65,7 @@ export default async function OrdersLayout({
           paymentsUrgent: urgency.oldestReceiptHours > staleHours,
           credits: creditCount,
         }}
+        allowed={modules.map((m) => m.href)}
         switcher={
           apps.length > 1 ? (
             <AppSwitcher apps={APPS.filter((a) => apps.includes(a.id))} current="accounts" />

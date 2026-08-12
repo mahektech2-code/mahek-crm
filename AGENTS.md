@@ -87,6 +87,45 @@ Where you land depends on what you can open:
 just used to hide launcher tiles — a bookmarked `/accounts` must not open for
 somebody who was never given it.
 
+**An app is not the smallest thing that can be granted.** `app_module_access`
+narrows a grant to particular screens, and a module is a destination in an
+app's navigation — that is the whole rule: if it has a place in the sidebar or
+the header it can be withheld, and if it does not, it is part of the screen its
+link belongs to. The registry is `lib/modules.ts`, pure and client-safe, so the
+review table on the access screen renders the same list `requireModule` enforces
+on the route. Withholding is enforced twice: the sidebar draws only what
+somebody holds, and each module folder has a layout that redirects a bookmark
+past it to the first module they do hold.
+
+**No module rows for an app means every module of it.** That is why adding this
+moved nothing: every grant that already existed carried on meaning exactly what
+it meant, on every screen, for everybody, and a grant narrows only once somebody
+unticks something. It is also what keeps `npm run app:grant` and the
+provisioning endpoint honest — neither knows modules exist, and an app granted
+from a terminal has to open whole rather than open empty. A grant with every
+module ticked stores no rows at all, so a fifteenth CRM screen reaches everybody
+holding the whole app and nobody who was deliberately narrowed.
+
+**Revoking an app takes its module rows with it.** Left behind, they would
+silently narrow the app the day somebody granted it back — four screens of
+fourteen, with nothing on any screen saying why.
+
+**Access is granted to a person, and the people are in HRMS.** The console's
+People section is one screen, Access, and its Enable access flow reads the
+employee master rather than the accounts table: pick somebody, pick an app,
+review the modules. Somebody with no MahekOne account gets one created in the
+same breath — no password is typed into the dialog, because that is a password
+somebody reads out over a phone; the account is created unusable and a
+single-use reset link is what makes it usable. **The employee must be ACTIVE in
+HRMS**, checked in the action and not only in the picker. A leaver is listed
+with the reason rather than hidden, because a person missing from a search box
+reads as a broken search box.
+
+**There is ONE place an app is granted.** The user record's Access tab used to
+carry its own checkboxes, which made two ways to do it — and only one of them
+knew about modules, so revoking and re-granting from there quietly widened a
+narrowed grant back to the whole app. That tab is read-only now.
+
 **Signing in writes a sign-in log, and that is NOT attendance.** One row per
 person per day in `attendance` — a table whose name is a misnomer kept until
 the real thing takes it. A sign-in says somebody opened MahekOne, from home,
@@ -121,6 +160,8 @@ src/
                            customer account, on account, sheet import, audit
                            (was `orders/`; /orders still redirects here)
     people/ reports/ admin/
+                           admin/access-section.tsx — the People section, which
+                           is now one screen: who opens what, and how far in
     crm/                   the CRM — header, sidebar, toasts
       dashboard/           telecaller day + manager team overview
       queue/               the calling queue, j/k/Enter driven
@@ -166,6 +207,11 @@ src/
                            + engines.test.ts, allocation.test.ts
     services/              engines wired to data — one file per module
     access-control.ts      scope resolution + capabilities (§8)
+    modules.ts             what a person can open INSIDE an app — PURE, and
+                           read by both the review table and the route guard
+    services/access-service.ts
+                           who opens what, and who there is to grant to
+    actions/access.ts      enabling access, narrowing it, taking it away
     recompute.ts           the rebuild path for every cached derived value
     business-date.ts       Asia/Kolkata, configurable day boundary
     catalogue.ts           name normalisation + cans/litres/boxes — PURE

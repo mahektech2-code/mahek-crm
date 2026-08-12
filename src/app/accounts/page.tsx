@@ -1,5 +1,6 @@
 import { checkCapability } from "@/lib/access-control";
 import { requireUser } from "@/lib/auth";
+import { requireModule } from "@/lib/access";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { accountsHome } from "@/lib/services/accounts-home-service";
 import { TodayScreen } from "./today-screen";
@@ -14,6 +15,10 @@ export default async function Page() {
     // the top says which of the two this person is doing.
     checkCapability("payment.confirm"),
   ]);
+
+  // Today is a module like any other, and it is the app's root — so it cannot
+  // have a folder layout of its own to guard it, and the guard runs here.
+  await requireModule(user.id, "accounts.today");
 
   // The clock is read here and passed down as a string. A client component may
   // not read it during render, and the zone is named once rather than left to

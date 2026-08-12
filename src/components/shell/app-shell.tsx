@@ -6,6 +6,7 @@ import { Sidebar } from "./sidebar";
 import { ToastProvider } from "@/components/ui/toast";
 import type { Notification, User } from "@/db/schema";
 import type { AppDefinition } from "@/lib/apps";
+import type { NavGroup } from "./nav";
 
 export function AppShell({
   user,
@@ -14,6 +15,7 @@ export function AppShell({
   notifications,
   badges,
   apps,
+  nav,
   children,
 }: {
   user: User;
@@ -22,6 +24,8 @@ export function AppShell({
   notifications: Notification[];
   badges: { reminders: number; complaints: number };
   apps: AppDefinition[];
+  /** The sidebar, already narrowed to what this person may open. */
+  nav: NavGroup[];
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = React.useState(false);
@@ -40,7 +44,7 @@ export function AppShell({
           onToggleSidebar={() => setCollapsed((c) => !c)}
         />
         <div className="flex min-h-0 flex-1">
-          <Sidebar collapsed={collapsed} user={user} badges={badges} />
+          <Sidebar collapsed={collapsed} user={user} badges={badges} groups={nav} />
           <main className="relative min-w-0 flex-1 overflow-y-auto">{children}</main>
         </div>
       </div>

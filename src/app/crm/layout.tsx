@@ -2,7 +2,8 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { redirect } from "next/navigation";
 import { isManager, requireUser } from "@/lib/auth";
-import { listUserApps } from "@/lib/access";
+import { listUserApps, listUserModules } from "@/lib/access";
+import { navForModules } from "@/components/shell/nav";
 import { APPS } from "@/lib/apps";
 import { getScope } from "@/lib/scope";
 import { listNotifications, today } from "@/lib/queries";
@@ -28,6 +29,12 @@ export default async function AppLayout({
   // /crm URL must not open for somebody who was never given the app.
   if (!apps.includes("crm")) redirect("/apps");
 
+  // And the sidebar is narrowed to the screens they hold. This is the courtesy
+  // half — each module's own layout runs `requireModule`, because a link that
+  // is not drawn is still a URL somebody can type.
+  const modules = await listUserModules(user.id, "crm");
+  if (modules.length === 0) redirect("/apps");
+
   return (
     <AppShell
       user={user}
@@ -36,6 +43,7 @@ export default async function AppLayout({
       notifications={notifications}
       badges={badges}
       apps={APPS.filter((a) => apps.includes(a.id))}
+      nav={navForModules(modules.map((m) => m.href))}
     >
       {children}
     </AppShell>

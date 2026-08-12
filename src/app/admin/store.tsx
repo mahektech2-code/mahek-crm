@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useToast } from "@/components/ui/toast";
 import { APPS } from "@/lib/apps";
-import { setUserApps, setUserRole } from "@/lib/actions/people";
+import { setUserRole } from "@/lib/actions/people";
 import type { Person } from "@/lib/services/admin-people-service";
 
 /**
@@ -50,6 +50,10 @@ import {
 export type Drawer =
   | { kind: EntityKind; id: string | null }
   | { kind: "createUser" }
+  /* Not an editor drawer — the Access screen's own dialog reads this, so the
+     console header's primary action can open it the way every other section's
+     primary action opens something. */
+  | { kind: "enableAccess" }
   | { kind: "editUser"; id: string }
   | { kind: "deactivate"; id: string }
   | { kind: "delegate"; id: string }
@@ -75,7 +79,6 @@ type Store = {
   notify: (message: string) => void;
 
   patchUser: (id: string, patch: Partial<AdminUser>) => void;
-  toggleAppAccess: (id: string, appId: string) => void;
   /**
    * The account's ONE role. There is no role per app: `users.role` is what
    * every capability check reads, and the per-app matrix this replaced wrote
@@ -168,41 +171,6 @@ export function AdminStore({
       notes,
       notify,
       patchUser,
-
-      /**
-       * Granting a second app changes that person's whole sign-in: they stop
-       * going straight into one app and land on the launcher instead. The
-       * console says so rather than leaving them to discover it tomorrow.
-       */
-      toggleAppAccess: (id, appId) => {
-        const user = users.find((u) => u.id === id);
-        if (!user) return;
-        const had = user.apps.includes(appId);
-        const apps = had ? user.apps.filter((a) => a !== appId) : [...user.apps, appId];
-        const app = registry.find((a) => a.id === appId);
-
-        // Shown immediately, then confirmed by the server. If the write is
-        // refused the row goes back to what it was — the old version only ever
-        // did the first half, which is why the console could claim to grant an
-        // app it had not granted.
-        const before = user.apps;
-        patchUser(id, { apps });
-
-        void setUserApps(id, apps).then((result) => {
-          if (!result.ok) {
-            patchUser(id, { apps: before });
-            notify(result.error);
-            return;
-          }
-          if (before.length === 1 && apps.length === 2) {
-            notify(`${user.name} now lands on the launcher instead of going straight into one app`);
-          } else if (before.length === 2 && apps.length === 1) {
-            notify(`${user.name} will now be taken straight into ${registry.find((a) => a.id === apps[0])?.name}`);
-          } else {
-            notify(had ? `Access revoked · ${app?.short}` : `Access granted · ${app?.short}`);
-          }
-        });
-      },
 
       setPlatformRole: (id, role) => {
         const user = users.find((u) => u.id === id);

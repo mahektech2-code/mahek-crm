@@ -56,12 +56,19 @@ const SHORTCUTS = [
 export function AccountsShell({
   user,
   counts,
+  allowed,
   switcher,
   feedback,
   children,
 }: {
   user: { name: string; role: string; initials: string };
   counts: NavCounts;
+  /**
+   * The routes this person may open, resolved in the layout. The sidebar draws
+   * only these; the route itself is guarded by each module's own layout, so a
+   * link that is not drawn is not the only thing standing in the way.
+   */
+  allowed: string[];
   /** The app switcher, rendered on the server — it needs the access list. */
   switcher: React.ReactNode;
   /** The Tell us button, which sits in the header of every app. */
@@ -90,7 +97,7 @@ export function AccountsShell({
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  const groups: Array<{ label: string; items: Item[] }> = [
+  const all: Array<{ label: string; items: Item[] }> = [
     {
       label: "Overview",
       items: [{ href: "/accounts", label: "Today", icon: "today", exact: true }],
@@ -152,6 +159,11 @@ export function AccountsShell({
       ],
     },
   ];
+
+  const permitted = new Set(allowed);
+  const groups = all
+    .map((g) => ({ ...g, items: g.items.filter((i) => permitted.has(i.href)) }))
+    .filter((g) => g.items.length > 0);
 
   return (
     <div className="flex h-screen min-w-[1000px] flex-col overflow-hidden bg-canvas">

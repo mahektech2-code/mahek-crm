@@ -25,6 +25,7 @@ import {
 import { sheetsConfigured } from "@/lib/sheets";
 import { secretStatuses } from "@/lib/secrets";
 import { listPeople } from "@/lib/services/admin-people-service";
+import { listAccess } from "@/lib/services/access-service";
 import { feedbackCounts, listFeedback } from "@/lib/services/feedback-service";
 import {
   attentionItems,
@@ -126,7 +127,11 @@ export default async function Page({
   ]);
 
   // Real accounts. The People section used to render a hardcoded array.
-  const people = await listPeople();
+  //
+  // `access` is the same accounts read a second way — who opens which app and
+  // how far into it, joined to the employee master so the screen can say
+  // whether HRMS still calls this person active.
+  const [people, access] = await Promise.all([listPeople(), listAccess()]);
 
   // What the team has sent in from the Feedback button. Read here like every
   // other section's data, so the console arrives rendered.
@@ -175,6 +180,7 @@ export default async function Page({
       isPlatformAdmin={isPlatformAdmin}
       initial={{ section, tab }}
       people={people}
+      access={access}
       me={{ name: user.name, initials: user.initials, role: user.role }}
       platform={{
         attention,

@@ -330,6 +330,13 @@
       "when": 1786475595860,
       "tag": "0046_daily_call_list",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1786475595861,
+      "tag": "0047_module_access",
+      "breakpoints": true
     }
   ]
 }

@@ -11,6 +11,8 @@
  * the next step and does not change a single component below.
  * ------------------------------------------------------------------------- */
 
+import type { Tone } from "@/components/ui/primitives";
+
 /* ------------------------------------------------------------- the registry */
 
 export type AppStatus = "Live" | "Coming soon" | "Maintenance" | "Retired";
@@ -115,14 +117,21 @@ export const PLATFORM_TABS: Record<string, PlatformTab[]> = {
     { slug: "usage", label: "Usage" },
     { slug: "configuration", label: "Configuration" },
     { slug: "jobs", label: "Job health" },
-  ],
-  people: [
-    { slug: "users", label: "Users" },
-    { slug: "access", label: "App access" },
-    { slug: "roles", label: "Roles & reporting" },
-    { slug: "security", label: "Sessions" },
+    /* Two questions about the platform rather than about access: who is signed
+       in right now, and which accounts have never been used. They lived under
+       People, which now answers one question only. */
+    { slug: "sessions", label: "Sessions" },
     { slug: "onboarding", label: "Never signed in" },
   ],
+  /*
+   * One screen, no tabs.
+   *
+   * It was five — a roster, a grid of app checkboxes, a roles table, a session
+   * list and a never-signed-in list — and the answer to "can Ramesh open the
+   * bill ledger" was spread across three of them. A tab bar over one question
+   * is a way of hiding most of the answer.
+   */
+  people: [{ slug: "access", label: "Access" }],
   apps: [
     { slug: "registry", label: "Registry" },
     { slug: "schema", label: "Schema inspector" },
@@ -155,7 +164,8 @@ export const PLATFORM_TABS: Record<string, PlatformTab[]> = {
 
 export const PLATFORM_SUBTITLES: Record<string, string> = {
   overview: "Platform health, external connections and what changed recently.",
-  people: "Accounts, which apps they open, and what they can do inside each one.",
+  people:
+    "Who can open which app, and how far into it. People come from the employee master, so access starts with somebody who actually works here.",
   apps: "The registry that drives the launcher and this console, and the settings each app declares.",
   audit: "Everything MahekOne has recorded happening. Read-only, and never editable.",
   data: "What has been imported from the sheets, and whether this database's schema is up to date.",
@@ -171,6 +181,18 @@ export const PLATFORM_SUBTITLES: Record<string, string> = {
 /* --------------------------------------------------------------- the people */
 
 export type UserStatus = "Active" | "Invited" | "Locked" | "Deactivated";
+
+/** The badge colour for a status. Here rather than on a screen, so two screens
+ *  cannot colour the same word differently. */
+export function statusTone(status: UserStatus): Tone {
+  return status === "Active"
+    ? "success"
+    : status === "Invited"
+      ? "brand"
+      : status === "Locked"
+        ? "danger"
+        : "neutral";
+}
 
 export type AdminUser = {
   id: string;

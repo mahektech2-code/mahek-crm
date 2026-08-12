@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { listUserApps } from "@/lib/access";
+import { listUserApps, listUserModules } from "@/lib/access";
 import { APPS, getApp } from "@/lib/apps";
 import { AppSwitcher } from "@/components/shell/app-switcher";
 import { Wordmark } from "@/components/shell/wordmark";
@@ -32,6 +32,11 @@ export default async function HrmsLayout({
   // here, so this is the check that matters most in the app.
   if (!apps.includes("hrms")) redirect("/apps");
 
+  // One module today, and it still gets filtered rather than assumed — the
+  // second one arrives beside it rather than rearranging this.
+  const modules = await listUserModules(user.id, "hrms");
+  if (modules.length === 0) redirect("/apps");
+
   const app = getApp("hrms")!;
 
   return (
@@ -46,7 +51,7 @@ export default async function HrmsLayout({
           ) : null}
           <Wordmark label={app.name} />
           <nav className="ml-4 flex items-center gap-1">
-            {MODULES.map((m) => (
+            {MODULES.filter((m) => modules.some((a) => a.href === m.href)).map((m) => (
               <Link
                 key={m.href}
                 href={m.href}

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { NAV } from "./nav";
+import { NAV, type NavGroup } from "./nav";
 import { Icon } from "./icons";
 import { cx } from "@/components/ui/primitives";
 import { signOut } from "@/lib/actions/auth";
@@ -12,10 +12,13 @@ export function Sidebar({
   collapsed,
   user,
   badges,
+  /** What this person may open. The layout resolved it; undefined means all. */
+  groups = NAV,
 }: {
   collapsed: boolean;
   user: User;
   badges: { reminders: number; complaints: number };
+  groups?: NavGroup[];
 }) {
   const pathname = usePathname();
 
@@ -27,7 +30,7 @@ export function Sidebar({
       )}
     >
       <nav className="flex-1 overflow-y-auto px-1.5 pt-2 pb-4">
-        {NAV.map((group) => (
+        {groups.map((group) => (
           <div key={group.label}>
             {!collapsed ? (
               <div className="px-2.5 pt-3.5 pb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">

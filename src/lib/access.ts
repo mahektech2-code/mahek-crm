@@ -4,6 +4,7 @@ import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
+  appModuleAccess,
   attendance,
   complaints,
   customers,
@@ -11,6 +12,12 @@ import {
   type User,
 } from "@/db/schema";
 import { APPS, type AppDefinition, type AppId } from "./apps";
+import {
+  getModule,
+  moduleAllowed,
+  modulesForApp,
+  type AppModule,
+} from "./modules";
 import { isManager } from "./auth";
 // The business day, not the calendar day — a 4am sign-in belongs to the shift
 // that started yesterday, and the boundary is configurable.
@@ -36,6 +43,58 @@ export const listUserApps = cache(async function listUserApps(
   // Keep the registry's order so the launcher grid is stable between users.
   return APPS.filter((a) => granted.has(a.id)).map((a) => a.id);
 });
+
+/**
+ * The modules of one app this person may open, in the app's own order.
+ *
+ * No module rows means every module — the rule is stated once, in
+ * `moduleAllowed`, and read here so a grant made from a terminal or from the
+ * provisioning endpoint, neither of which knows modules exist, opens the app
+ * whole rather than opening it empty.
+ *
+ * Cached per request: the layout asks for the sidebar, the guard asks again
+ * for the route, and both are one round trip to a database in another
+ * continent.
+ */
+export const listUserModules = cache(async function listUserModules(
+  userId: string,
+  app: AppId,
+): Promise<AppModule[]> {
+  const rows = await db
+    .select({ module: appModuleAccess.module })
+    .from(appModuleAccess)
+    .where(and(eq(appModuleAccess.userId, userId), eq(appModuleAccess.app, app)));
+
+  const granted = rows.map((r) => r.module);
+  return modulesForApp(app).filter((m) => moduleAllowed(m.key, granted, app));
+});
+
+/**
+ * The guard every app screen runs.
+ *
+ * It answers with a redirect rather than a message: somebody who was never
+ * given Monthly Targets has no use for a page explaining that, and a bookmark
+ * or a stale link is the ordinary way to arrive here. They land on the first
+ * module they DO hold — or on the launcher, which says plainly when they hold
+ * nothing.
+ *
+ * Checked on the server, on the route, not by hiding the sidebar link. A link
+ * that is not drawn is a statement to the browser, and the browser is not where
+ * authority lives.
+ */
+export async function requireModule(userId: string, key: string): Promise<void> {
+  const mod = getModule(key);
+  if (!mod) throw new Error(`Not a module: ${key}`);
+
+  const allowed = await listUserModules(userId, mod.app);
+  if (allowed.some((m) => m.key === key)) return;
+
+  // Imported lazily, the same way `requireUser` does it: next/navigation pulls
+  // in the client React runtime, which the integration tests cannot load
+  // outside a request.
+  const { redirect } = await import("next/navigation");
+  redirect(allowed[0]?.href ?? "/apps");
+}
 
 export async function canOpen(userId: string, app: AppId): Promise<boolean> {
   const rows = await db
