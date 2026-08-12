@@ -1,9 +1,11 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { BillDetailPanel } from "@/components/bills/bill-detail-panel";
 import { downloadCsv, toCsv } from "@/lib/csv";
 import { longDate, money } from "@/lib/format";
 import {
@@ -71,6 +73,12 @@ export function BillsScreen({
   const received = rows.reduce((a, r) => a + r.paid, 0);
   const open = rows.filter((r) => r.balance > 0);
   const openTotal = open.reduce((a, r) => a + r.balance, 0);
+  /*
+   * One bill open at a time. Six rows expanded is a ledger you cannot read,
+   * and the panel fetches its own items — opening every row would fetch every
+   * order behind a page of bills to show one.
+   */
+  const [openBillId, setOpenBillId] = React.useState<string | null>(null);
   const shown = rows.slice((page - 1) * perPage, page * perPage);
 
   return (
@@ -182,13 +190,47 @@ export function BillsScreen({
               }
             >
               {shown.map((r, i) => (
-                <Row
-                  key={r.id}
-                  striped={i % 2 === 1}
-                  onClick={() => router.push(`/accounts/ledger?customer=${r.customerId}`)}
-                >
-                  <Cell className="font-medium text-ink">{r.billNo}</Cell>
-                  <Cell truncate={230}>{r.customerName}</Cell>
+                <React.Fragment key={r.id}>
+                <Row striped={i % 2 === 1}>
+                  {/*
+                    The bill number OPENS the bill rather than navigating away.
+                    "How much and when" is on the row; "what was actually
+                    bought" is the next question anybody asks, and it used to
+                    have no answer on this side at all — the whole row went to
+                    the customer's statement instead, which answers a different
+                    question and, for a customer whose back office seat you
+                    hold and whose sales seat you do not, used to throw.
+                  */}
+                  <Cell className="font-medium text-ink">
+                    <button
+                      onClick={() => setOpenBillId(openBillId === r.id ? null : r.id)}
+                      aria-expanded={openBillId === r.id}
+                      className="inline-flex cursor-pointer items-center gap-1.5 text-left font-medium text-ink transition-colors hover:text-brand"
+                      title={openBillId === r.id ? "Hide the order" : "Show what was ordered"}
+                    >
+                      <span
+                        aria-hidden
+                        className={cx(
+                          "text-[10px] text-muted transition-transform",
+                          openBillId === r.id ? "rotate-90" : "",
+                        )}
+                      >
+                        ▶
+                      </span>
+                      {r.billNo}
+                    </button>
+                  </Cell>
+                  {/* The customer's name leads to their account, which is
+                      where the REST of their bills are, with the payments
+                      against them and a running balance. */}
+                  <Cell truncate={230}>
+                    <Link
+                      href={`/accounts/ledger?customer=${r.customerId}`}
+                      className="text-ink no-underline hover:text-brand hover:underline"
+                    >
+                      {r.customerName}
+                    </Link>
+                  </Cell>
                   {/* Read as a date, not as a database value — "2026-08-06"
                       is not how anybody says the sixth of August. */}
                   <Cell>{longDate(r.billDate)}</Cell>
@@ -226,6 +268,20 @@ export function BillsScreen({
                     </Pill>
                   </Cell>
                 </Row>
+                {openBillId === r.id ? (
+                  <tr>
+                    <td colSpan={8} className="p-0">
+                      {/* Keyed on the bill, so opening another row mounts a
+                          fresh panel rather than resetting one in an effect. */}
+                      <BillDetailPanel
+                        key={r.id}
+                        billId={r.id}
+                        customerHref={(id) => `/accounts/ledger?customer=${id}`}
+                      />
+                    </td>
+                  </tr>
+                ) : null}
+                </React.Fragment>
               ))}
 
               {/* The whole year, not this page — said in the row itself so

@@ -23,7 +23,7 @@ import {
 import { Modal, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { financialYearLabel } from "@/lib/financial-year";
-import { BillDetailPanel } from "./bill-detail";
+import { BillDetailPanel } from "@/components/bills/bill-detail-panel";
 import { recordPayment } from "@/lib/actions/crm";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import {
@@ -476,7 +476,11 @@ export function BillsScreen({
                     <td colSpan={COLUMNS.length + 3} className="p-0">
                       {/* Keyed on the bill, so opening another row mounts a
                           fresh panel rather than resetting one in an effect. */}
-                      <BillDetailPanel key={r.id} billId={r.id} />
+                      <BillDetailPanel
+                        key={r.id}
+                        billId={r.id}
+                        customerHref={(id) => `/crm/customers/${id}`}
+                      />
                     </td>
                   </tr>
                 ) : null}
