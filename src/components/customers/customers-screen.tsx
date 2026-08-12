@@ -1026,6 +1026,45 @@ const LEAD_SOURCES = [
   "Phone enquiry",
 ];
 
+/**
+ * What the SHEET says this seat is, where that is not the account below it.
+ *
+ * These are two different facts and the screens were each showing one of
+ * them. `sales_am_id` is an account — it decides whose calling queue the
+ * customer lands in, so it can only be somebody who signs in.
+ * `sales_person_name` is who actually sells to them, and most of those people
+ * have never had a login: on this book the ten real salespeople include
+ * "Back Office Calling", "Marathwada" and "South Zone", which are not people
+ * at all.
+ *
+ * The customer LIST reads the name first, so it showed "Sanjay Kumar
+ * Samantaray". This form read the account, so it showed whoever the import
+ * had pinned the book to. Both were telling the truth about different
+ * columns, and together they read as the form inventing a name.
+ *
+ * So the form states both, and only when they disagree — where the account
+ * and the sheet name are the same person there is nothing to reconcile and a
+ * second line would be noise.
+ */
+function SheetSays({
+  stated,
+  account,
+}: {
+  stated?: string | null;
+  account: string | null;
+}) {
+  const name = stated?.trim();
+  if (!name || name === account) return null;
+  return (
+    <span className="mt-1 block text-[12px] text-muted">
+      Sheet says <span className="text-body">{name}</span>
+      {account
+        ? " — not the account above, which is what drives the calling queue."
+        : " — nobody with a MahekOne login, so no queue is driven by it."}
+    </span>
+  );
+}
+
 type CustomerFormProps = {
   open: boolean;
   title: string;
@@ -1085,6 +1124,10 @@ function CustomerFormBody({
     (k: string) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
       setValues((v) => ({ ...v, [k]: e.target.value }));
+
+  /** The name behind a chosen id, or null where nothing is chosen. */
+  const accountName = (id: string | undefined) =>
+    (id && team.find((t) => t.id === id)?.name) || null;
 
   /*
    * Whether either account manager actually moved, compared against what the
@@ -1186,6 +1229,7 @@ function CustomerFormBody({
               </option>
             ))}
           </Select>
+          <SheetSays stated={initial?.salesAmName} account={accountName(values.ownerId)} />
         </Field>
         <Field
           label="Account manager · back office"
@@ -1207,6 +1251,10 @@ function CustomerFormBody({
               </option>
             ))}
           </Select>
+          <SheetSays
+            stated={initial?.backOfficeAmName}
+            account={accountName(values.backOfficeAmId)}
+          />
         </Field>
 
         {/*
