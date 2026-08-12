@@ -1986,18 +1986,55 @@ export const jobRuns = pgTable(
  * list as it stood. This table is that record and nothing more: it is never
  * read to build a queue, only to compare one against the day before.
  */
+/**
+ * THE DAY'S CALL LIST, settled once and read all day.
+ *
+ * It began as a record of who was in each queue when the day opened, so the
+ * screen could say how many rows had carried over. It is now the list itself:
+ * the first read of a business day builds it and writes it here, and every
+ * read after that works from these rows.
+ *
+ * What that buys is a day a telecaller can plan: the list does not reshuffle
+ * under them because a colleague logged a call, and "twelve of forty worked"
+ * is a real figure rather than a fraction of a moving denominator.
+ *
+ * What is FROZEN is the composition — who is on it, why, and in what order.
+ * What stays live is whether each row still needs doing: a customer who orders
+ * at eleven drops off at eleven, and a promise falling due today is added the
+ * moment it does. A frozen list that went on asking for an order somebody had
+ * already placed would be worse than no list at all.
+ *
+ * One row per user per customer: an account reaches its sales manager AND its
+ * back office manager, so the same customer legitimately appears on two lists.
+ */
 export const queueSnapshots = pgTable(
   "queue_snapshots",
   {
     day: date("day").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
     customerId: text("customer_id")
       .notNull()
       .references(() => customers.id, { onDelete: "cascade" }),
-    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+    /** The winning reason's weight, as it was when the day was settled. */
+    score: integer("score").notNull().default(0),
+    /** Every reason, in the order the screen shows them. */
+    reasons: jsonb("reasons")
+      .$type<Array<{ kind: string; label: string; weight: number }>>()
+      .notNull()
+      .default([]),
+    /** Position in the settled list, so the order survives a reload. */
+    rank: integer("rank").notNull().default(0),
+    /** When the list was built — the answer to "settled at what time". */
+    generatedAt: timestamp("generated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
-    primaryKey({ columns: [t.day, t.customerId] }),
+    primaryKey({ columns: [t.day, t.userId, t.customerId] }),
     index("queue_snapshots_day_idx").on(t.day),
+    index("queue_snapshots_user_day_idx").on(t.userId, t.day),
   ],
 );
 
