@@ -255,7 +255,7 @@ export function RecordScreen({
         subtitle={`${customer.contactPerson} · ${phoneDisplay(customer.phone)} · ${customer.city} · ${
           customer.kind === "lead"
             ? `Lead owner ${customer.ownerName ?? "unassigned"}`
-            : `Sales ${customer.salesAmName ?? "unassigned"} · Back office ${customer.backOfficeAmName ?? "unassigned"}`
+            : `Sales ${customer.salesAmName ?? "—"} · Back office ${customer.backOfficeAmName ?? "—"}`
         }`}
         actions={
           <>

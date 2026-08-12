@@ -935,14 +935,12 @@ export function CustomersScreen({
                   : {}),
                 ...(backOfficeMoved
                   ? {
-                      backOffice: !backOfficeId
-                        ? ({ kind: "none" } as const)
-                        : backOfficeId.startsWith("emp:")
-                          ? ({
-                              kind: "employee",
-                              employeeId: backOfficeId.slice(4),
-                            } as const)
-                          : ({ kind: "user", userId: backOfficeId } as const),
+                      backOffice: backOfficeId.startsWith("emp:")
+                        ? ({
+                            kind: "employee",
+                            employeeId: backOfficeId.slice(4),
+                          } as const)
+                        : ({ kind: "user", userId: backOfficeId } as const),
                       backOfficeReason: { reasonCode },
                     }
                   : {}),
@@ -1278,7 +1276,12 @@ function CustomerFormBody({
           </Button>
           <Button
             variant="primary"
-            disabled={busy}
+            disabled={busy || !canReassign ? busy : !values.backOfficeAmId}
+            title={
+              !values.backOfficeAmId && canReassign
+                ? "Pick who does the dispatch and the paperwork — every account needs somebody there"
+                : undefined
+            }
             onClick={async () => {
               setBusy(true);
               try {
@@ -1395,7 +1398,10 @@ function CustomerFormBody({
                   {initial?.backOfficeAmName}
                 </option>
               ) : null}
-              <option value="">Unassigned</option>
+              {/* NOT "Unassigned". An account may go without a salesperson,
+                  but somebody has to do its dispatch and its paperwork — so
+                  an empty seat here is a prompt rather than a choice. */}
+              <option value="">Nobody yet — pick somebody</option>
               {people.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
@@ -1406,6 +1412,11 @@ function CustomerFormBody({
           {values.backOfficeAmId === SHEET_NAME_VALUE ? (
             <span className="mt-1 block text-[12px] text-danger">
               No longer on the staff list. Pick who is doing the paperwork now.
+            </span>
+          ) : !values.backOfficeAmId ? (
+            <span className="mt-1 block text-[12px] text-danger">
+              Every account needs somebody here, even where no salesperson is
+              named.
             </span>
           ) : null}
         </Field>

@@ -103,9 +103,18 @@ const schema = z.object({
     .discriminatedUnion("kind", [
       z.object({ kind: z.literal("user"), userId: z.string().min(1) }),
       z.object({ kind: z.literal("employee"), employeeId: z.string().min(1) }),
-      z.object({ kind: z.literal("none") }),
     ])
     .optional(),
+    /*
+     * NO `none`. An account may go without a salesperson — plenty do, and 204
+     * records name nobody in that column — but somebody has to do its
+     * dispatch and its paperwork. Emptying this seat leaves an account with
+     * nobody responsible for it, which is the state 203 records are already
+     * in and the reason the rule is being written down.
+     *
+     * Omitting the key still means "leave this seat alone". What is refused
+     * is deliberately clearing it.
+     */
   sales: seatReason.optional(),
   backOfficeReason: seatReason.optional(),
 });

@@ -254,9 +254,25 @@ export async function listCustomersPage(
       // on every customer; `back_office_am_id` is only ever set by a real link
       // or a manager choosing somebody, so it is the better answer where it
       // exists, and the sheet's name is what stands in when it does not.
+      /*
+       * The account first, then the sheet's name — and where the seat is
+       * empty, THE SALESPERSON.
+       *
+       * Every account is supposed to have somebody doing its dispatch and its
+       * paperwork; 203 do not, and the word "unassigned" against a live
+       * customer is not an answer anybody can act on. Where nobody is named,
+       * whoever sells to them covers it — the same shape as a customer's
+       * sales seat falling back to its owner.
+       *
+       * A DISPLAY fallback only. The column stays empty, so the account still
+       * counts as one that needs somebody and the form still refuses to save
+       * without a real choice.
+       */
       backOfficeAmName: sql<string | null>`coalesce(
         (select name from users u where u.id = customers.back_office_am_id),
-        customers.back_office_name
+        nullif(customers.back_office_name, ''),
+        nullif(customers.sales_person_name, ''),
+        (select name from users u where u.id = ${ASSIGNED_TO_SQL})
       )`,
       openComplaints: sql<number>`(
         select count(*)::int from ${complaints}
@@ -314,9 +330,25 @@ export async function listCustomers(): Promise<CustomerRow[]> {
       // on every customer; `back_office_am_id` is only ever set by a real link
       // or a manager choosing somebody, so it is the better answer where it
       // exists, and the sheet's name is what stands in when it does not.
+      /*
+       * The account first, then the sheet's name — and where the seat is
+       * empty, THE SALESPERSON.
+       *
+       * Every account is supposed to have somebody doing its dispatch and its
+       * paperwork; 203 do not, and the word "unassigned" against a live
+       * customer is not an answer anybody can act on. Where nobody is named,
+       * whoever sells to them covers it — the same shape as a customer's
+       * sales seat falling back to its owner.
+       *
+       * A DISPLAY fallback only. The column stays empty, so the account still
+       * counts as one that needs somebody and the form still refuses to save
+       * without a real choice.
+       */
       backOfficeAmName: sql<string | null>`coalesce(
         (select name from users u where u.id = customers.back_office_am_id),
-        customers.back_office_name
+        nullif(customers.back_office_name, ''),
+        nullif(customers.sales_person_name, ''),
+        (select name from users u where u.id = ${ASSIGNED_TO_SQL})
       )`,
       openComplaints: sql<number>`(
         select count(*)::int from ${complaints}
@@ -356,9 +388,25 @@ export async function getCustomer(customerId: string) {
       // on every customer; `back_office_am_id` is only ever set by a real link
       // or a manager choosing somebody, so it is the better answer where it
       // exists, and the sheet's name is what stands in when it does not.
+      /*
+       * The account first, then the sheet's name — and where the seat is
+       * empty, THE SALESPERSON.
+       *
+       * Every account is supposed to have somebody doing its dispatch and its
+       * paperwork; 203 do not, and the word "unassigned" against a live
+       * customer is not an answer anybody can act on. Where nobody is named,
+       * whoever sells to them covers it — the same shape as a customer's
+       * sales seat falling back to its owner.
+       *
+       * A DISPLAY fallback only. The column stays empty, so the account still
+       * counts as one that needs somebody and the form still refuses to save
+       * without a real choice.
+       */
       backOfficeAmName: sql<string | null>`coalesce(
         (select name from users u where u.id = customers.back_office_am_id),
-        customers.back_office_name
+        nullif(customers.back_office_name, ''),
+        nullif(customers.sales_person_name, ''),
+        (select name from users u where u.id = ${ASSIGNED_TO_SQL})
       )`,
     })
     .from(customers)

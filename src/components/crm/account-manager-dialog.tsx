@@ -39,10 +39,14 @@ export type AmChange = {
   /** The accounts that will actually move — the review step may trim these. */
   customerIds: string[];
   salesAmId?: string | null;
+  /*
+   * No `none`. An account may go without a salesperson — plenty do — but
+   * somebody has to do its dispatch and its paperwork, so this seat can be
+   * moved and never emptied.
+   */
   backOffice?:
     | { kind: "user"; userId: string }
-    | { kind: "employee"; employeeId: string }
-    | { kind: "none" };
+    | { kind: "employee"; employeeId: string };
   sales?: { reasonCode: string; note?: string };
   backOfficeReason?: { reasonCode: string; note?: string };
 };
@@ -110,15 +114,19 @@ export function AccountManagerDialog({
   const formReady =
     (changingSales || changingBackOffice) &&
     seatReady(changingSales, salesReason, salesNote) &&
-    seatReady(changingBackOffice, boReason, boNote);
+    seatReady(changingBackOffice, boReason, boNote) &&
+    // Sales may be left unassigned; back office may not.
+    (!changingBackOffice || Boolean(backOffice));
 
   const why = !changingSales && !changingBackOffice
     ? "Pick which account manager to change"
-    : !seatReady(changingSales, salesReason, salesNote)
-      ? "Say what the sales reason is"
-      : !seatReady(changingBackOffice, boReason, boNote)
-        ? "Say what the back office reason is"
-        : undefined;
+    : changingBackOffice && !backOffice
+      ? "Pick who does the dispatch and the paperwork — this seat cannot be emptied"
+      : !seatReady(changingSales, salesReason, salesNote)
+        ? "Say what the sales reason is"
+        : !seatReady(changingBackOffice, boReason, boNote)
+          ? "Say what the back office reason is"
+          : undefined;
 
   const needsReview = accounts.length > REVIEW_ABOVE;
   const chosenCount = going.size;
@@ -127,14 +135,11 @@ export function AccountManagerDialog({
   const buildChange = (): AmChange => ({
     customerIds: accounts.filter((a) => going.has(a.id)).map((a) => a.id),
     ...(changingSales ? { salesAmId: sales } : {}),
-    ...(changingBackOffice
+    ...(changingBackOffice && backOffice
       ? {
-          backOffice:
-            backOffice === null
-              ? ({ kind: "none" } as const)
-              : backOffice.startsWith("emp:")
-                ? ({ kind: "employee", employeeId: backOffice.slice(4) } as const)
-                : ({ kind: "user", userId: backOffice } as const),
+          backOffice: backOffice.startsWith("emp:")
+            ? ({ kind: "employee", employeeId: backOffice.slice(4) } as const)
+            : ({ kind: "user", userId: backOffice } as const),
         }
       : {}),
     ...(changingSales
@@ -275,6 +280,9 @@ export function AccountManagerDialog({
               title="Account manager — Back office"
               hint="Dispatch, billing and paperwork. Anyone on the staff list, with or without a login."
               active={changingBackOffice}
+              // `null` used to mean unassign. It cannot be emptied any more,
+              // so switching the section on starts with nothing CHOSEN, and
+              // the save waits for a person.
               onToggle={(on) => setBackOffice(on ? null : undefined)}
             >
               <PersonPicker
@@ -283,7 +291,6 @@ export function AccountManagerDialog({
                 value={backOffice}
                 onChange={setBackOffice}
                 threshold={searchThreshold}
-                allowUnassigned
                 disabled={busy}
               />
               <SeatReason
