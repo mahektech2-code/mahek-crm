@@ -838,8 +838,7 @@ export function CustomersScreen({
       <CustomerForm
         open={addOpen}
         title="Add lead"
-        team={team}
-        backOfficePeople={backOfficePeople}
+        people={backOfficePeople}
         kind="lead"
         canReassign={canReassign}
         amReasons={amReasons}
@@ -857,8 +856,7 @@ export function CustomersScreen({
       <CustomerForm
         open={Boolean(editing)}
         title={`Edit ${editing?.name ?? ""}`}
-        team={team}
-        backOfficePeople={backOfficePeople}
+        people={backOfficePeople}
         kind={editing?.kind ?? "customer"}
         canReassign={canReassign}
         amReasons={amReasons}
@@ -885,10 +883,17 @@ export function CustomersScreen({
           // Against the ASSIGNED person the form opened with, not the owner:
           // comparing the owner would report "moved" on every save of a
           // customer whose sales AM is anybody but the importer.
-          const assignedBefore =
-            (editing.kind === "lead"
-              ? editing.ownerId
-              : (editing.salesAmId ?? editing.ownerId)) ?? "";
+          /*
+           * The SAME function the field opened with. If the two disagreed,
+           * opening a form and pressing Save would report a reassignment
+           * nobody made — and on this book that would clear the account
+           * holding the queue on every customer somebody edited.
+           */
+          const assignedBefore = openingSalesValue(
+            editing.kind,
+            editing,
+            backOfficePeople,
+          );
           const salesPicked = String(values.assignedId ?? "");
           const backOfficePicked = String(values.backOfficeAmId ?? "");
           /*
@@ -900,7 +905,7 @@ export function CustomersScreen({
             salesPicked !== SHEET_NAME_VALUE && salesPicked !== assignedBefore;
           const backOfficeMoved =
             backOfficePicked !== SHEET_NAME_VALUE &&
-            backOfficePicked !== (editing.backOfficeAmId ?? "");
+            backOfficePicked !== openingBackOfficeValue(editing, backOfficePeople);
 
           if (salesMoved || backOfficeMoved) {
             const backOfficeId = backOfficePicked;
@@ -1071,7 +1076,33 @@ const LEAD_SOURCES = [
  */
 const SHEET_NAME_VALUE = "__sheet__";
 
-/** What the sales seat shows on open: the sheet's name where that is the truth. */
+/** Somebody on the list with this name, by either route. */
+function findByName(
+  people: Array<{ id: string; name: string }>,
+  name: string | null | undefined,
+) {
+  const wanted = name?.trim().toLowerCase();
+  if (!wanted) return undefined;
+  return people.find((p) => p.name.trim().toLowerCase() === wanted);
+}
+
+/**
+ * What the sales seat shows on open.
+ *
+ * THE SHEET'S NAME IS USUALLY SOMEBODY WE KNOW. Four of the busiest
+ * salespeople here are current employees, so the name resolves to a real
+ * entry on the list and that entry is what the field selects — one row, the
+ * person's own name, nothing appended. Showing the sheet's answer as a
+ * separate "from the sheet" line put the same person on the list twice, which
+ * is a worse question than the one it answered.
+ *
+ * The sentinel is what is left for the answers that resolve to nobody:
+ * "Back Office Calling", "Marathwada" and "South Zone" are real entries on
+ * this book and are not people at all.
+ *
+ * Used for the field AND for the baseline the save compares against, so
+ * opening a form and saving it writes nothing.
+ */
 function openingSalesValue(
   kind: "lead" | "customer",
   initial: Partial<Row> | undefined,
@@ -1086,25 +1117,35 @@ function openingSalesValue(
   // the half that can actually be given a calling queue.
   const accountName = people.find((p) => p.id === account)?.name?.trim();
   if (accountName && accountName === stated) return account;
-  return SHEET_NAME_VALUE;
+  return findByName(people, stated)?.id ?? SHEET_NAME_VALUE;
+}
+
+/** The same rule for the back office seat. */
+function openingBackOfficeValue(
+  initial: Partial<Row> | undefined,
+  people: Array<{ id: string; name: string }>,
+): string {
+  if (initial?.backOfficeAmId) return initial.backOfficeAmId;
+  const stated = initial?.backOfficeAmName?.trim();
+  if (!stated) return "";
+  return findByName(people, stated)?.id ?? SHEET_NAME_VALUE;
 }
 
 type CustomerFormProps = {
   open: boolean;
   title: string;
   /**
-   * The SALES list: accounts only, because this seat decides whose calling
-   * queue the customer lands in and a name with no login cannot be given a
-   * queue. Unscoped — see `listAssignableUsers`.
+   * Everybody who can hold a seat: the accounts, plus the current HRMS
+   * employees marked as having no login.
+   *
+   * ONE list for both seats. It was two — accounts for sales, accounts and
+   * employees for back office — on the reasoning that sales drives the
+   * calling queue so it must be somebody who signs in. That reasoning is
+   * still true and is now said on the screen instead of enforced by omission,
+   * because four of the busiest salespeople on this book are employees with
+   * no login and the seat could not name them at all.
    */
-  team: Array<{ id: string; name: string; role?: string }>;
-  /**
-   * The BACK OFFICE list: those accounts plus the current HRMS employees.
-   * That seat drives no queue, and most of the people who actually do the
-   * dispatch and the paperwork have never signed in — offering only accounts
-   * meant the true answer usually could not be picked at all.
-   */
-  backOfficePeople: Array<{ id: string; name: string; role?: string }>;
+  people: Array<{ id: string; name: string; role?: string }>;
   /** A new record is a lead. An existing one is whatever it already is. */
   kind: "lead" | "customer";
   /**
@@ -1129,8 +1170,7 @@ function CustomerForm(props: CustomerFormProps) {
 function CustomerFormBody({
   open,
   title,
-  team,
-  backOfficePeople,
+  people,
   kind,
   canReassign,
   amReasons,
@@ -1157,7 +1197,9 @@ function CustomerFormBody({
      * while the list beside it showed the real manager. They were reading two
      * different columns and only one of them answers "whose book is this".
      */
-    assignedId: openingSalesValue(kind, initial, team),
+    // The SALES list, which is accounts and employees both — the same list
+    // the field offers, so what it opens showing is always something on it.
+    assignedId: openingSalesValue(kind, initial, people),
     gstin: initial?.gstin ?? "",
     creditTermDays: String(initial?.creditTermDays ?? 30),
     route: initial?.route ?? "",
@@ -1170,11 +1212,7 @@ function CustomerFormBody({
      * touching that column ever again. A display convenience must not quietly
      * freeze a column against the sheet.
      */
-    backOfficeAmId: initial?.backOfficeAmId
-      ? initial.backOfficeAmId
-      : initial?.backOfficeAmName?.trim()
-        ? SHEET_NAME_VALUE
-        : "",
+    backOfficeAmId: openingBackOfficeValue(initial, people),
     // Only sent when a manager actually changed — see below.
     amReasonCode: amReasons[0] ?? "",
   });
@@ -1192,9 +1230,9 @@ function CustomerFormBody({
    */
   const amChanged =
     (values.assignedId !== SHEET_NAME_VALUE &&
-      values.assignedId !== openingSalesValue(kind, initial, team)) ||
+      values.assignedId !== openingSalesValue(kind, initial, people)) ||
     (values.backOfficeAmId !== SHEET_NAME_VALUE &&
-      (values.backOfficeAmId ?? "") !== (initial?.backOfficeAmId ?? ""));
+      values.backOfficeAmId !== openingBackOfficeValue(initial, people));
 
   return (
     <Modal
@@ -1292,7 +1330,7 @@ function CustomerFormBody({
             {/* Accounts first, then the staff who have no login. Four of the
                 busiest salespeople on this book are the second kind, so a
                 list of accounts alone could not name who actually sells. */}
-            {backOfficePeople.map((t) => (
+            {people.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
                 {t.role === "employee" ? " · no login" : ""}
@@ -1327,7 +1365,7 @@ function CustomerFormBody({
               </option>
             ) : null}
             <option value="">Unassigned</option>
-            {backOfficePeople.map((t) => (
+            {people.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
                 {t.role === "employee" ? " · no login" : ""}
