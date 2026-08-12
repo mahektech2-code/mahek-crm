@@ -520,7 +520,20 @@ export async function listInactiveWatch(): Promise<WatchRow[]> {
     .select({
       item: inactiveWatchItems,
       customer: customers,
-      ownerName: sql<string | null>`(select name from users u where u.id = customers.owner_id)`,
+      /*
+       * Whose account it is, by the rule every scoped list already filters on
+       * — the sheet's salesperson first, then the linked account, and the
+       * owner only where a lead answers to one.
+       *
+       * Reading `owner_id` alone named one person on every row: the import
+       * writes it once for the whole book, so the column showed the importer
+       * a thousand times over while the list it sat beside named the real
+       * manager.
+       */
+      ownerName: sql<string | null>`coalesce(
+        nullif(customers.sales_person_name, ''),
+        (select name from users u where u.id = ${ASSIGNED_TO_SQL})
+      )`,
     })
     .from(inactiveWatchItems)
     .innerJoin(customers, eq(customers.id, inactiveWatchItems.customerId))
@@ -618,7 +631,20 @@ export async function listTargets(period?: string) {
   const rows = await db
     .select({
       customer: customers,
-      ownerName: sql<string | null>`(select name from users u where u.id = customers.owner_id)`,
+      /*
+       * Whose account it is, by the rule every scoped list already filters on
+       * — the sheet's salesperson first, then the linked account, and the
+       * owner only where a lead answers to one.
+       *
+       * Reading `owner_id` alone named one person on every row: the import
+       * writes it once for the whole book, so the column showed the importer
+       * a thousand times over while the list it sat beside named the real
+       * manager.
+       */
+      ownerName: sql<string | null>`coalesce(
+        nullif(customers.sales_person_name, ''),
+        (select name from users u where u.id = ${ASSIGNED_TO_SQL})
+      )`,
       target: monthlyTargets.targetAmount,
       isDefault: monthlyTargets.isDefault,
       achieved: sql<number>`coalesce((
