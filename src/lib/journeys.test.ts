@@ -69,6 +69,7 @@ import { addDays } from "@/lib/business-date";
 import { updateAccountManagers } from "@/lib/actions/account-manager";
 import { reverseReceiptAction } from "@/lib/actions/payments";
 import { getQueue } from "@/lib/services/queue-service";
+import { snapshotQueue } from "@/lib/jobs";
 import { saveInteraction } from "@/lib/services/interaction-service";
 import { seedCatalogue } from "@/db/seed-catalogue";
 import {
@@ -5835,5 +5836,122 @@ describe("reversing a payment that had counted", () => {
       .from(paymentReceipts)
       .where(eq(paymentReceipts.id, reportedId));
     assert.equal(row.status, "reported", "and its status was changed anyway");
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * The day's call list, settled once.
+ *
+ * What is frozen is the composition; what stays live is whether each row still
+ * needs doing. Both halves are load-bearing and both are pinned here.
+ * ------------------------------------------------------------------------- */
+
+describe("the call list is settled once a day", () => {
+  test("the second read returns the list the first one built", async () => {
+    await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      cycleIsDefault: false,
+    });
+
+    setTestUser(priya);
+    const first = await getQueue();
+    assert.ok(first.entries.length >= 1);
+
+    // A customer who becomes due mid-morning does NOT join today's list.
+    await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      cycleIsDefault: false,
+      name: "Arrived After The List Was Settled",
+    });
+
+    const second = await getQueue();
+    assert.deepEqual(
+      second.entries.map((e) => e.customerId),
+      first.entries.map((e) => e.customerId),
+      "the list reshuffled under the telecaller",
+    );
+  });
+
+  test("but a customer who orders drops off it at once", async () => {
+    // The specification is most emphatic about this: a frozen list must not go
+    // on asking for an order somebody has already placed.
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      cycleIsDefault: false,
+    });
+
+    setTestUser(priya);
+    const before = await getQueue();
+    assert.ok(before.entries.some((e) => e.customerId === customer.id));
+
+    await db
+      .update(customers)
+      .set({ lastOrderDate: TODAY })
+      .where(eq(customers.id, customer.id));
+
+    const after = await getQueue();
+    assert.equal(
+      after.entries.some((e) => e.customerId === customer.id),
+      false,
+      "still being chased for an order they have placed",
+    );
+    assert.ok(
+      after.suppressed.some((h) => h.customerId === customer.id),
+      "and it vanished silently rather than saying why",
+    );
+  });
+
+  test("a promise falling due today reopens the settled list", async () => {
+    setTestUser(priya);
+    await getQueue(); // settle the day, empty
+
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -3),
+      cycleDays: 30,
+      cycleIsDefault: false,
+    });
+    await db.insert(reminders).values({
+      id: id("rem"),
+      customerId: customer.id,
+      assignedUserId: priya.id,
+      createdByUserId: priya.id,
+      dueDate: TODAY,
+      note: "They asked for a call today",
+      status: "pending",
+    });
+
+    const after = await getQueue();
+    assert.ok(
+      after.entries.some((e) => e.customerId === customer.id),
+      "a promise made to a customer waited for tomorrow's list",
+    );
+  });
+
+  test("the job builds the same list, and never overwrites one in use", async () => {
+    await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      cycleIsDefault: false,
+    });
+
+    // Built before anybody signs in.
+    const written = await snapshotQueue(TODAY);
+    assert.ok(written >= 1, "the warmer built nothing");
+
+    setTestUser(priya);
+    const served = await getQueue();
+    assert.ok(served.entries.length >= 1);
+
+    // Re-running at noon must not reshuffle an afternoon.
+    const again = await snapshotQueue(TODAY);
+    assert.equal(again, 0, "a re-run rebuilt a list already in use");
+    const unchanged = await getQueue();
+    assert.deepEqual(
+      unchanged.entries.map((e) => e.customerId),
+      served.entries.map((e) => e.customerId),
+    );
   });
 });
