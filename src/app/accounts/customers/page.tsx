@@ -92,6 +92,9 @@ export default async function Page({
         phone: c.phone,
         city: c.city,
         ownerId: c.ownerId,
+        // Whose book it is, which is not the owner — the shared screen binds
+        // its sales field to this.
+        salesAmId: c.salesAmId,
         ownerName: c.ownerName,
         kind: c.kind,
         leadSource: c.leadSource,
