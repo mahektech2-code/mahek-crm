@@ -19,7 +19,14 @@ import {
   assertCustomerInScope,
   requireCapability,
   resolveScope,
-  scopedUserIds, scopedToUsers,} from "../access-control";
+  scopedUserIds,
+  scopedToUsers,
+  // Whose book a record is in — `owner_id` for a lead, `sales_am_id` falling
+  // back to the owner for a customer. Used twice below to name the person a
+  // row answers to; without it the file does not compile, which is how it
+  // reached main.
+  ASSIGNED_TO_SQL,
+} from "../access-control";
 import { getConfig } from "../config/store";
 import { classifyShortfall, resolveTarget } from "../engines/targets";
 import { watchAge } from "../engines/inactivity";
