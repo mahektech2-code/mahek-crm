@@ -270,7 +270,7 @@ export function TargetsScreen({
                 <Th align="right">Achieved</Th>
                 <Th align="right">Gap</Th>
                 <Th>Achievement</Th>
-                <Th>Owner</Th>
+                <Th>Account manager</Th>
                 <Th align="right" />
               </tr>
             </thead>

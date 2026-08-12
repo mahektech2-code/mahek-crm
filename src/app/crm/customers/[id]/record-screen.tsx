@@ -242,7 +242,21 @@ export function RecordScreen({
             {customer.slowPayer ? <SlowPayerBadge /> : null}
           </span>
         }
-        subtitle={`${customer.contactPerson} · ${phoneDisplay(customer.phone)} · ${customer.city} · Owner ${customer.ownerName ?? "unassigned"}`}
+        /*
+         * The two seats, not the owner.
+         *
+         * `owner_id` records who FOUND the account and is one person for the
+         * whole book here — the import wrote it — so "Owner Priya Sharma" was
+         * on every customer in the CRM while the list and the form beside it
+         * named the real manager. Whose book a customer is in is the sales AM;
+         * the owner is only the answer for a LEAD, which is what
+         * `ASSIGNED_TO_SQL` reads for one.
+         */
+        subtitle={`${customer.contactPerson} · ${phoneDisplay(customer.phone)} · ${customer.city} · ${
+          customer.kind === "lead"
+            ? `Lead owner ${customer.ownerName ?? "unassigned"}`
+            : `Sales ${customer.salesAmName ?? "unassigned"} · Back office ${customer.backOfficeAmName ?? "unassigned"}`
+        }`}
         actions={
           <>
             <Button
