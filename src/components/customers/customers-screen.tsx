@@ -1076,6 +1076,21 @@ const LEAD_SOURCES = [
  */
 const SHEET_NAME_VALUE = "__sheet__";
 
+/*
+ * Still here, and gone.
+ *
+ * NOT "has a login" — that was the wrong thing to mark. Everybody gets a
+ * sign-in eventually and none of it changes who the customer's salesperson
+ * is. What a person standing at this field needs to know is whether the name
+ * in the seat still works here, because somebody leaving is the usual reason
+ * they are standing here at all.
+ *
+ * Characters rather than an icon: these are `<option>` labels, and an option
+ * renders text and nothing else.
+ */
+const HERE = "🟢";
+const GONE = "🔴";
+
 /** Somebody on the list with this name, by either route. */
 function findByName(
   people: Array<{ id: string; name: string }>,
@@ -1321,28 +1336,25 @@ function CustomerFormBody({
                 explained in a sentence underneath. Offered only when it IS
                 the current answer — it is not something to pick, because
                 somebody with no login cannot be given a calling queue. */}
+            {/* Whoever is in the seat but no longer on the staff list — they
+                have left, which is the usual reason somebody is standing here
+                changing it. Marked, and kept selectable so the field can show
+                who it still says. */}
             {values.assignedId === SHEET_NAME_VALUE ? (
               <option value={SHEET_NAME_VALUE}>
-                {initial?.salesAmName} · from the sheet
+                {GONE} {initial?.salesAmName}
               </option>
             ) : null}
             <option value="">Unassigned</option>
-            {/* Accounts first, then the staff who have no login. Four of the
-                busiest salespeople on this book are the second kind, so a
-                list of accounts alone could not name who actually sells. */}
             {people.map((t) => (
               <option key={t.id} value={t.id}>
-                {t.name}
-                {t.role === "employee" ? " · no login" : ""}
+                {HERE} {t.name}
               </option>
             ))}
           </Select>
-          {values.assignedId === SHEET_NAME_VALUE ||
-          values.assignedId?.startsWith("emp:") ? (
-            <span className="mt-1 block text-[12px] text-muted">
-              No MahekOne login, so this account sits on nobody&apos;s calling
-              queue or collections list. Choose an account holder to put it on
-              one.
+          {values.assignedId === SHEET_NAME_VALUE ? (
+            <span className="mt-1 block text-[12px] text-danger">
+              No longer on the staff list. Pick who has taken the book over.
             </span>
           ) : null}
         </Field>
@@ -1361,21 +1373,19 @@ function CustomerFormBody({
           >
             {values.backOfficeAmId === SHEET_NAME_VALUE ? (
               <option value={SHEET_NAME_VALUE}>
-                {initial?.backOfficeAmName} · from the sheet
+                {GONE} {initial?.backOfficeAmName}
               </option>
             ) : null}
             <option value="">Unassigned</option>
             {people.map((t) => (
               <option key={t.id} value={t.id}>
-                {t.name}
-                {t.role === "employee" ? " · no login" : ""}
+                {HERE} {t.name}
               </option>
             ))}
           </Select>
           {values.backOfficeAmId === SHEET_NAME_VALUE ? (
-            <span className="mt-1 block text-[12px] text-muted">
-              The sheet&apos;s answer. Pick somebody here to record it in MahekOne
-              instead — the list includes staff without a login.
+            <span className="mt-1 block text-[12px] text-danger">
+              No longer on the staff list. Pick who is doing the paperwork now.
             </span>
           ) : null}
         </Field>
