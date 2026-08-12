@@ -337,6 +337,13 @@
       "when": 1786475595861,
       "tag": "0047_module_access",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1786475595862,
+      "tag": "0048_min_cycle_is_one_day",
+      "breakpoints": true
     }
   ]
 }

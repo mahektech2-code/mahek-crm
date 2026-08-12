@@ -218,6 +218,27 @@ describe("E1 buying cycle", () => {
     assert.equal(buyingCycle(dates, C).days, C["buyingCycle.minDays"]);
   });
 
+  test("a real two-day cycle survives as two days", () => {
+    // The floor was 7, described as a clamp against absurd figures. It was not:
+    // same-day orders are already excluded as one purchase split across bills,
+    // so every interval reaching the clamp is a real gap between real orders,
+    // and a customer buying every two days was recorded as buying every seven.
+    // The cycle is what decides when they are called, so that was an order
+    // chased five days late, every cycle, forever.
+    const dates = ["2026-08-01", "2026-08-03", "2026-08-05", "2026-08-07"];
+    const cycle = buyingCycle(dates, C);
+    assert.equal(cycle.days, 2);
+    assert.equal(cycle.isDefault, false);
+  });
+
+  test("the floor is 1, which is the only thing it is for", () => {
+    // A cycle of zero would mean "due immediately" for the rest of time. Same-
+    // day orders are dropped before the clamp, so reaching zero is not possible
+    // from real data — the floor is what guarantees it either way, and one day
+    // is as short as a real cycle can be.
+    assert.equal(C["buyingCycle.minDays"], 1);
+  });
+
   test("results clamp to the configured maximum", () => {
     const dates = ["2020-01-01", "2021-01-01", "2022-01-01", "2023-01-01"];
     assert.equal(buyingCycle(dates, C).days, C["buyingCycle.maxDays"]);
@@ -471,18 +492,100 @@ describe("E2 queue builder", () => {
     assert.equal(r.entries.length, 0, "not called");
   });
 
-  test("late by their own cycle but inside the quiet window is SUPPRESSED, not omitted", () => {
-    // Cycle 8, ordered 12 days ago: overdue by their reckoning, but under 15.
-    // Contacted yesterday, so no check-in is due to carry them onto the list.
+  test("a stock check inside the quiet window is SUPPRESSED, not omitted", () => {
+    // Cycle 16, ordered 12 days ago: 70% of 16 is 11, so the stock check has
+    // come due — and the window still has three days to run. Contacted
+    // yesterday, so no check-in is due to carry them onto the list.
+    //
+    // Sixteen days and not eight: on an eight-day cycle the window is now
+    // capped at eight, so a customer twelve days out is not inside it at all.
+    // They are overdue, and they are called.
     const c = candidate({
       lastOrderDate: addDays(TODAY, -12),
-      cycleDays: 8,
+      cycleDays: 16,
       lastContactDate: addDays(TODAY, -1),
     });
     const r = buildQueue([c], TODAY, C);
     assert.equal(r.entries.length, 0);
     assert.equal(r.suppressed.length, 1);
     assert.match(r.suppressed[0].reason, /no order chased for 3 more days/);
+  });
+
+  /* --------------------- the window never outlasts the customer's own cycle */
+
+  test("a short-cycle customer is chased ON their due date, like everybody else", () => {
+    // Eight-day cycle, ordered eight days ago. The flat fifteen-day window used
+    // to hold them another week — a whole cycle missed before anybody rang, on
+    // the customers who order most often. It is capped at their cycle now.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -8),
+      cycleDays: 8,
+      lastContactDate: addDays(TODAY, -8),
+    });
+    const r = buildQueue([c], TODAY, C);
+    assert.equal(r.suppressed.length, 0, "not held back");
+    assert.equal(r.entries.length, 1);
+    assert.equal(r.entries[0].reasons[0].kind, "orderDue");
+  });
+
+  test("and every day after it, rather than from day 15", () => {
+    const kinds = (sinceOrder: number) =>
+      buildQueue(
+        [
+          candidate({
+            lastOrderDate: addDays(TODAY, -sinceOrder),
+            cycleDays: 7,
+            lastContactDate: addDays(TODAY, -sinceOrder),
+          }),
+        ],
+        TODAY,
+        C,
+      );
+
+    assert.equal(kinds(6).entries.length, 0, "day 6: still quiet, order not due");
+    assert.equal(kinds(7).entries.length, 1, "day 7: due");
+    assert.equal(kinds(9).entries.length, 1, "day 9: overdue, not waiting for day 15");
+    assert.equal(kinds(12).entries.length, 1, "day 12: still on the list");
+  });
+
+  test("the stock check is the ONLY thing a short cycle loses", () => {
+    // The point of the whole change. Before the due date: nothing, because a
+    // customer buying every eight days knows what is on their shelf. On it and
+    // after it: chased exactly like a thirty-day customer.
+    const at = (sinceOrder: number) =>
+      buildQueue(
+        [
+          candidate({
+            lastOrderDate: addDays(TODAY, -sinceOrder),
+            cycleDays: 8,
+            lastContactDate: addDays(TODAY, -sinceOrder),
+          }),
+        ],
+        TODAY,
+        C,
+      );
+
+    // 70% of 8 is 6 — where a stock check would land if short cycles got one.
+    assert.equal(at(6).entries.length, 0, "no stock check before the due date");
+    assert.equal(at(7).entries.length, 0, "nor the day before");
+    assert.equal(at(8).entries[0].reasons[0].kind, "orderDue");
+  });
+
+  test("a longer cycle keeps the full window, unchanged", () => {
+    // The cap takes the LESSER of the two, so nothing moves for anybody whose
+    // cycle is longer than the window — which is every customer the window was
+    // written for.
+    const at = (cycleDays: number, sinceOrder: number) =>
+      buildQueue(
+        [candidate({ lastOrderDate: addDays(TODAY, -sinceOrder), cycleDays })],
+        TODAY,
+        C,
+      ).entries.length;
+
+    assert.equal(at(30, 20), 0, "30-day cycle: no stock check before day 21");
+    assert.equal(at(30, 21), 1, "30-day cycle: stock check on day 21");
+    assert.equal(at(20, 14), 0, "20-day cycle: still held by the 15-day window");
+    assert.equal(at(20, 15), 1, "20-day cycle: released on day 15");
   });
 
   /* --------------------------------- the weekly check-in on good customers */
@@ -504,11 +607,11 @@ describe("E2 queue builder", () => {
   });
 
   test("past their call day but inside the quiet window, they are held back with a reason", () => {
-    // Cycle 8, ordered 12 days ago: the order reason fires, the quiet window
+    // Cycle 16, ordered 12 days ago: the stock check fires, the quiet window
     // silences it, and the telecaller is told why rather than left wondering.
     const c = candidate({
       lastOrderDate: addDays(TODAY, -12),
-      cycleDays: 8,
+      cycleDays: 16,
       lastContactDate: addDays(TODAY, -12),
     });
     const { entries, suppressed } = buildQueue([c], TODAY, C);
@@ -518,9 +621,8 @@ describe("E2 queue builder", () => {
   });
 
   test("a fast-cycling customer comes back the moment they stop ordering", () => {
-    // The same 8-day buyer, 20 days since their last order: out of the quiet
-    // window, so the order reasons apply and they return for the reason that
-    // actually matters.
+    // The same 8-day buyer, 20 days since their last order: long past both the
+    // window and their own due date, so the order reasons apply.
     const c = candidate({
       lastOrderDate: addDays(TODAY, -20),
       cycleDays: 8,
@@ -578,11 +680,16 @@ describe("E2 queue builder", () => {
     // window strips nothing, so the customer is never suppressed BY it — they
     // simply have no reason to be called today. The guessed default cannot
     // reach a telecaller's eyes through this path.
-    // An 8-day cycle 12 days on: past the call day (5), inside the quiet
+    // A 16-day cycle 12 days on: past the stock-check day (11), inside the
     // window (15) — the one shape that produces the sentence.
+    //
+    // Not an 8-day cycle any more: the window is capped at the customer's own
+    // cycle, so an 8-day buyer 12 days out is overdue and called rather than
+    // held. A guessed cycle is exempt from that cap for the same reason it is
+    // exempt from everything else here — a default is not a due date.
     const guessed = candidate({
       lastOrderDate: addDays(TODAY, -12),
-      cycleDays: 8,
+      cycleDays: 16,
       cycleIsDefault: true,
       lastContactDate: addDays(TODAY, -1),
     });
@@ -595,7 +702,7 @@ describe("E2 queue builder", () => {
     const measured = candidate({ ...guessed, cycleIsDefault: false });
     assert.match(
       buildQueue([measured], TODAY, C).suppressed[0].reason,
-      /every 8 days/,
+      /every 16 days/,
     );
   });
 
@@ -676,14 +783,39 @@ describe("E2 queue builder", () => {
     assert.equal(called(60, 41), false);
     assert.equal(called(60, 42), true);
 
-    // 70% of 20 = 14, but nothing is chased inside the 15-day quiet window.
+    // 70% of 20 = 14, but nothing is chased inside the quiet window — which is
+    // still the full fifteen days here, because this cycle is longer than it.
     assert.equal(called(20, 14), false);
     assert.equal(called(20, 15), true);
   });
 
+  test("a two-day buyer is called on their two-day cycle", () => {
+    // No floor under short cycles, in the queue or underneath it. The rule is
+    // the one everybody else gets — quiet until the order is due, chased from
+    // the day it is — and on a two-day cycle that means day 2.
+    const at = (sinceOrder: number) =>
+      buildQueue(
+        [
+          candidate({
+            lastOrderDate: addDays(TODAY, -sinceOrder),
+            cycleDays: 2,
+            lastContactDate: addDays(TODAY, -sinceOrder),
+          }),
+        ],
+        TODAY,
+        C,
+      );
+
+    assert.equal(at(1).entries.length, 0, "day 1: they ordered yesterday");
+    assert.equal(at(1).suppressed.length, 0, "and nothing is held back either");
+    assert.equal(at(2).entries[0].reasons[0].kind, "orderDue", "day 2: due");
+    assert.equal(at(3).entries.length, 1, "day 3: overdue, still on the list");
+  });
+
   test("a customer who buys every fortnight gets no routine call", () => {
-    // They are in contact constantly through the orders themselves. Their
-    // first reason is the due date, not a stock check before it.
+    // The stock check asks what is left on the shelf, and somebody buying every
+    // fortnight knows. Their first reason is the due date, not a call before it
+    // — and the due date is not delayed, which is the rest of the rule.
     const short = (sinceOrder: number) =>
       buildQueue(
         [candidate({ lastOrderDate: addDays(TODAY, -sinceOrder), cycleDays: 15 })],
