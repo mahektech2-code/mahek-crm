@@ -322,20 +322,47 @@ export async function checkCapability(capability: Capability) {
  * sales account manager is how a customer becomes visible in a list and then
  * refuses to open.
  */
+/**
+ * The row-level half of `scopedToUsers`, and it has to ask the same question.
+ *
+ * It did not, and that took the Accounts app down. `scopedToUsers` was widened
+ * so both seats count — sales AND back office — because reading the sales seat
+ * alone gave the back office team an empty CRM. This check was left asking
+ * only about the sales seat, so the two disagreed in the worst possible
+ * direction: a customer appeared on the list, and opening them threw.
+ *
+ * From the Accounts bill list that is a click on a row and a "This page
+ * couldn't load" — a 500, because a throw in a server component is not a
+ * redirect. The list said the record was yours; the record said it was not.
+ *
+ * Both seats, therefore, in both places. If one of these two ever changes
+ * again, the other has to change with it.
+ */
 export async function assertCustomerInScope(
   customer: {
     kind: "lead" | "customer";
     ownerId: string | null;
     salesAmId: string | null;
+    /**
+     * Optional only because a handful of callers select a narrow shape. Where
+     * it is absent the check is the old, stricter one — which is the safe
+     * direction, and never the cause of a customer being wrongly readable.
+     */
+    backOfficeAmId?: string | null;
   } | null,
 ) {
   const { scope } = await resolveScope();
   const ids = scopedUserIds(scope);
   if (ids === null) return;
-  const assigned = customer && assignedUserId(customer);
-  if (!assigned || !ids.includes(assigned)) {
-    throw new NotPermittedError("customer.read");
-  }
+  if (!customer) throw new NotPermittedError("customer.read");
+
+  const assigned = assignedUserId(customer);
+  const backOffice = customer.backOfficeAmId ?? null;
+  const mine =
+    (assigned !== null && ids.includes(assigned)) ||
+    (backOffice !== null && ids.includes(backOffice));
+
+  if (!mine) throw new NotPermittedError("customer.read");
 }
 
 export async function userIdsInScope(): Promise<string[] | null> {
