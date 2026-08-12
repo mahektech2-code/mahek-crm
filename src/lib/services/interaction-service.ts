@@ -72,6 +72,30 @@ export const saveInteractionSchema = z.object({
   productQuantities: z.record(z.string(), z.coerce.number()).default({}),
 
   followUpDate: z.string().optional(),
+
+  /*
+   * NO ORDER HAS TO END WITH A DATE, or with somebody saying there isn't one.
+   *
+   * "No order today" is the most common answer on the phone and it used to
+   * end the call with nothing: the customer dropped into a flat cooldown and
+   * came back when a number said so, whatever they had actually said. A
+   * customer who says "call me after Diwali" and one who says nothing at all
+   * were treated identically, and the first is the one worth getting right —
+   * ringing them early is the call that annoys, and ringing them late is the
+   * order that goes somewhere else.
+   *
+   * So it is asked, and answering is mandatory. A date becomes a reminder,
+   * which already outranks every cooldown in the queue engine, so the call
+   * lands on the day the customer named. No date means the customer would not
+   * commit, and only then does the `no_order` cooldown decide.
+   *
+   * The two are separate fields rather than a nullable date because "they
+   * said the 20th" and "they would not say" are different answers, and a
+   * blank box cannot tell them apart from a telecaller who simply skipped it.
+   */
+  noOrderNextCallDate: z.string().optional(),
+  /** Explicitly: the customer committed to nothing. Lets the default apply. */
+  noOrderNoCommitment: z.boolean().default(false),
   paymentPromiseDate: z.string().optional(),
   complaintCategory: z
     .enum([
@@ -190,7 +214,33 @@ export async function saveInteraction(
     }
   }
 
-  // 3. Inbound payment promises must carry the date they committed to.
+  // 3. No order has to say when to call back, or that the customer would not
+  //    say. Enforced here and not only on the form: a mandatory field that is
+  //    only mandatory in the browser is not mandatory.
+  if (input.outcome === "no_order") {
+    if (!input.noOrderNextCallDate && !input.noOrderNoCommitment) {
+      return fieldError(
+        "noOrderNextCallDate",
+        "Say when to call back, or that they would not commit to a date.",
+      );
+    }
+    if (input.noOrderNextCallDate) {
+      if (input.noOrderNoCommitment) {
+        return fieldError(
+          "noOrderNextCallDate",
+          "Either they gave a date or they did not - not both.",
+        );
+      }
+      if (input.noOrderNextCallDate < day) {
+        return fieldError(
+          "noOrderNextCallDate",
+          "The next call cannot be in the past.",
+        );
+      }
+    }
+  }
+
+  // 4. Inbound payment promises must carry the date they committed to.
   if (input.interactionType === "inbound_call" && input.outcome === "payment_promised") {
     if (!input.paymentPromiseDate) {
       return fieldError("paymentPromiseDate", "Enter the date they committed to.");
@@ -393,6 +443,33 @@ export async function saveInteraction(
         callId: interactionId,
         dueDate: input.followUpDate!,
         note: input.notes?.trim() || "Follow up",
+        type: "call_back",
+        systemGenerated: true,
+        createdById: ctx.user.id,
+        updatedById: ctx.user.id,
+      });
+      produced.push("reminder");
+    }
+
+    /*
+     * The date the customer gave becomes a reminder, which is the whole point:
+     * the queue engine checks reminders BEFORE it consults any cooldown, so
+     * the call surfaces on the day they named rather than on day five. Where
+     * they committed to nothing, no reminder is written and the `no_order`
+     * cooldown is left to decide — which is what it is for.
+     */
+    if (input.outcome === "no_order" && input.noOrderNextCallDate) {
+      reminderId = id("rem");
+      await tx.insert(reminders).values({
+        id: reminderId,
+        customerId: customer.id,
+        createdByUserId: ctx.user.id,
+        assignedUserId: ctx.user.id,
+        callId: interactionId,
+        dueDate: input.noOrderNextCallDate,
+        // Says what the call is FOR. "Follow up" on its own tells whoever
+        // picks it up nothing about why they are ringing.
+        note: input.notes?.trim() || "No order last time - ask again",
         type: "call_back",
         systemGenerated: true,
         createdById: ctx.user.id,
