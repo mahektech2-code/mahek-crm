@@ -111,15 +111,31 @@ silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
 
 **Access is granted to a person, and the people are in HRMS.** The console's
-People section is one screen, Access, and its Enable access flow reads the
-employee master rather than the accounts table: pick somebody, pick an app,
-review the modules. Somebody with no MahekOne account gets one created in the
-same breath — no password is typed into the dialog, because that is a password
+People section is one screen, Access, and its dialog reads the employee master
+rather than the accounts table. Somebody with no MahekOne account gets one
+created in the same breath — no password is typed into the dialog, because that is a password
 somebody reads out over a phone; the account is created unusable and a
 single-use reset link is what makes it usable. **The employee must be ACTIVE in
 HRMS**, checked in the action and not only in the picker. A leaver is listed
 with the reason rather than hidden, because a person missing from a search box
 reads as a broken search box.
+
+**One dialog per person, and it holds every app at once.** Granting an app,
+narrowing one, widening one and taking one away are the same act — somebody
+deciding what this person's MahekOne looks like — so they are one page and one
+write. Doing them an app at a time meant opening the same dialog four times to
+set up one telecaller, with no screen ever showing the whole answer. The middle
+page IS the whole answer: every app with a checkbox, every module of a ticked
+app beneath it. The page after it is the review, which names in words what is
+granted, narrowed, widened and taken away before anything is written — revoking
+happens by unticking a box, which is a small gesture for a large consequence.
+
+**An app is granted if and only if at least one of its modules is ticked.**
+That removes the one invalid state the screen could otherwise express — an app
+held with nothing inside it, whose every route redirects somewhere else —
+rather than drawing it and refusing it at the save. `setAccess` takes the whole
+desired picture and works out the difference itself, so what was reviewed is
+what is written.
 
 **There is ONE place an app is granted.** The user record's Access tab used to
 carry its own checkboxes, which made two ways to do it — and only one of them
@@ -211,7 +227,7 @@ src/
                            read by both the review table and the route guard
     services/access-service.ts
                            who opens what, and who there is to grant to
-    actions/access.ts      enabling access, narrowing it, taking it away
+    actions/access.ts      setAccess — one person's whole access, in one write
     recompute.ts           the rebuild path for every cached derived value
     business-date.ts       Asia/Kolkata, configurable day boundary
     catalogue.ts           name normalisation + cans/litres/boxes — PURE

@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
@@ -15,7 +15,6 @@ import {
 import { APP_IDS, getApp, type AppId } from "@/lib/apps";
 import { getModule, moduleKeysForApp } from "@/lib/modules";
 import { hashPassword, isManager, requireUser } from "@/lib/auth";
-import { listUserApps } from "@/lib/access";
 import { initialsOf } from "@/lib/format";
 import { mailConfigured, sendMail } from "@/lib/mailer";
 import {
@@ -39,6 +38,13 @@ import { listCandidates, type Candidate } from "@/lib/services/access-service";
  * HRMS, so this reads that list and creates the account in the same breath —
  * a manager thinks "give the new telecaller the CRM", not "create an account,
  * then find them again on another tab".
+ *
+ * ONE write sets a person's whole access. Granting an app, narrowing one,
+ * widening one and taking one away are the same act — somebody deciding what
+ * this person's MahekOne looks like — and splitting them into three actions is
+ * what produced three screens that could each tell a different half of the
+ * story. The screen shows all of it on one page and saves all of it at once,
+ * so what was reviewed is what is written.
  * ------------------------------------------------------------------------- */
 
 const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -81,6 +87,38 @@ function refresh() {
   }
 }
 
+/** What the dialog sends: the complete desired state, app by app. */
+export type AccessGrantInput = {
+  app: string;
+  /** The modules left ticked. An app with none is an app not granted. */
+  modules: string[];
+};
+
+export type SetAccessInput = {
+  /** An existing account. One of these two is required. */
+  userId?: string | null;
+  /** An HRMS employee with no account yet — one is created for them. */
+  employeeId?: string | null;
+  /** The whole picture, not a change to it. Apps absent here are revoked. */
+  grants: AccessGrantInput[];
+  /** Only read when an account has to be created. */
+  account?: {
+    email: string;
+    phone?: string | null;
+    role: "telecaller" | "manager" | "accounts" | "admin";
+  };
+};
+
+export type SetAccessResult = {
+  userId: string;
+  created: boolean;
+  /** Said plainly rather than assumed — mail may not be configured. */
+  resetLinkSent: boolean;
+  granted: string[];
+  revoked: string[];
+  changed: string[];
+};
+
 /** Modules that are real, belong to this app, and are not repeated. */
 function cleanModules(app: AppId, keys: string[]): { ok: string[]; bad: string[] } {
   const seen = new Set<string>();
@@ -96,7 +134,29 @@ function cleanModules(app: AppId, keys: string[]): { ok: string[]; bad: string[]
 }
 
 /**
- * Write the module rows for one app.
+ * Normalise what the dialog sent into one desired state.
+ *
+ * An app with no modules ticked is an app that is NOT granted, rather than a
+ * grant onto nothing — that invalid state is removed here as well as being
+ * impossible to draw, because the screen is not where authority lives.
+ */
+function desiredState(
+  grants: AccessGrantInput[],
+): { state: Map<AppId, string[]>; error: string | null } {
+  const state = new Map<AppId, string[]>();
+  for (const g of grants) {
+    const app = g.app as AppId;
+    if (!APP_IDS.includes(app)) return { state, error: `Not an app: ${g.app}` };
+    const { ok: modules, bad } = cleanModules(app, g.modules);
+    if (bad.length) return { state, error: `Not a module of ${app}: ${bad.join(", ")}` };
+    if (!modules.length) continue;
+    state.set(app, [...(state.get(app) ?? []), ...modules]);
+  }
+  return { state, error: null };
+}
+
+/**
+ * Write one app's module rows.
  *
  * Every module ticked stores NO rows rather than a row each. That is what
  * makes "the whole app" a single fact instead of fourteen that can go stale:
@@ -115,8 +175,7 @@ async function writeModules(
     .delete(appModuleAccess)
     .where(and(eq(appModuleAccess.userId, userId), eq(appModuleAccess.app, app)));
 
-  const all = moduleKeysForApp(app);
-  if (modules.length >= all.length) return;
+  if (modules.length >= moduleKeysForApp(app).length) return;
 
   await tx.insert(appModuleAccess).values(
     modules.map((module) => ({
@@ -129,38 +188,15 @@ async function writeModules(
   );
 }
 
-export type EnableAccessInput = {
-  /** An existing account. One of these two is required. */
-  userId?: string | null;
-  /** An HRMS employee with no account yet — one is created for them. */
-  employeeId?: string | null;
-  app: string;
-  /** The modules ticked in the review table. At least one. */
-  modules: string[];
-  /** Only read when an account has to be created. */
-  account?: {
-    email: string;
-    phone?: string | null;
-    role: "telecaller" | "manager" | "accounts" | "admin";
-  };
-};
-
-export type EnableAccessResult = {
-  userId: string;
-  created: boolean;
-  /** Said plainly rather than assumed — mail may not be configured. */
-  resetLinkSent: boolean;
-};
-
 /**
- * Give somebody an app, narrowed to the modules that were left ticked.
+ * Set what one person can open, across every app, in one write.
  *
  * The employee must be ACTIVE in HRMS. That check is here and not only in the
  * picker, because the picker is a screen and this is the door.
  */
-export async function enableAccess(
-  input: EnableAccessInput,
-): Promise<Result<EnableAccessResult>> {
+export async function setAccess(
+  input: SetAccessInput,
+): Promise<Result<SetAccessResult>> {
   let me;
   try {
     me = await actor();
@@ -168,29 +204,25 @@ export async function enableAccess(
     return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
   }
 
-  const app = input.app as AppId;
-  if (!APP_IDS.includes(app)) return fail(`Not an app: ${input.app}`);
-
-  const { ok: modules, bad } = cleanModules(app, input.modules);
-  if (bad.length) return fail(`Not a module of ${app}: ${bad.join(", ")}`);
-  if (!modules.length) {
-    // An app with nothing ticked is an app whose every screen redirects
-    // somewhere else. Refused at the door rather than saved and then
-    // discovered by the person it was done to.
-    return fieldErr(
-      "modules",
-      "Leave at least one module ticked, or they open the app onto nothing.",
-    );
-  }
+  const { state: wanted, error } = desiredState(input.grants);
+  if (error) return fail(error);
 
   let userId = input.userId ?? null;
   let created = false;
   let resetLinkSent = false;
   let personName = "";
 
+  /* ------------------------------------------------------ a new account */
+
   if (!userId) {
     if (!input.employeeId) return fail("Nobody was chosen.");
     if (!input.account) return fail("A new account needs a sign-in email and a role.");
+    if (wanted.size === 0) {
+      // For somebody who already has an account, taking every app away is a
+      // real decision. Creating one that opens nothing is not — it is somebody
+      // who cannot start work, and who will ring about it tomorrow.
+      return fieldErr("grants", "Give them at least one app, or the account opens onto nothing.");
+    }
 
     const [employee] = await db
       .select({
@@ -250,8 +282,8 @@ export async function enableAccess(
      * is what makes it usable — the same single-use, thirty-minute machinery
      * `/login/forgot` uses, reached the other way round.
      */
-    const temporary = randomUUID() + randomUUID();
-    const passwordHash = await hashPassword(temporary);
+    const passwordHash = await hashPassword(randomUUID() + randomUUID());
+    const apps = [...wanted.keys()];
 
     await db.transaction(async (tx) => {
       await tx.insert(users).values({
@@ -264,13 +296,12 @@ export async function enableAccess(
         passwordHash,
         active: true,
       });
-      await tx.insert(appAccess).values({
-        id: newId("acc"),
-        userId: userId!,
-        app,
-        grantedById: me.id,
-      });
-      await writeModules(tx, userId!, app, modules, me.id);
+      await tx.insert(appAccess).values(
+        apps.map((app) => ({ id: newId("acc"), userId: userId!, app, grantedById: me.id })),
+      );
+      for (const [app, modules] of wanted) {
+        await writeModules(tx, userId!, app, modules, me.id);
+      }
     });
 
     resetLinkSent = await mailResetLink(userId, employee.name, email, me.name);
@@ -279,59 +310,144 @@ export async function enableAccess(
       me.id,
       "create-user",
       userId,
-      `${employee.name} · ${employee.code} · ${input.account.role} · ${app} (${modules.length}/${moduleKeysForApp(app).length} modules)`,
+      `${employee.name} · ${employee.code} · ${input.account.role} · ${apps
+        .map((a) => `${a} (${wanted.get(a)!.length}/${moduleKeysForApp(a).length})`)
+        .join(", ")}`,
     );
-  } else {
-    const [account] = await db
-      .select({ id: users.id, name: users.name, active: users.active })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-    if (!account) return fail("That account no longer exists.", "not_found");
-    if (!account.active) {
-      return fail(`${account.name}'s account is deactivated, so it opens nothing.`);
-    }
-    personName = account.name;
+    refresh();
 
-    // An employee row behind the account has to be active too, where there is
-    // one. Where there is not, the account itself is the only authority there
-    // is and it is enough — several real accounts predate the employee sheet.
-    const blocked = await hrmsBlock(userId);
-    if (blocked) return fail(blocked, "rule_violation");
-
-    await db.transaction(async (tx) => {
-      await tx
-        .insert(appAccess)
-        .values({ id: newId("acc"), userId: userId!, app, grantedById: me.id })
-        .onConflictDoNothing({ target: [appAccess.userId, appAccess.app] });
-      await writeModules(tx, userId!, app, modules, me.id);
-    });
-
-    await audit(
-      me.id,
-      "set-app-access",
-      userId,
-      `granted ${app} (${modules.length}/${moduleKeysForApp(app).length} modules)`,
+    return ok(
+      { userId, created, resetLinkSent, granted: apps, revoked: [], changed: [] },
+      resetLinkSent
+        ? `${personName} can now open ${describe(apps)}. A link to set their password has been emailed to them.`
+        : `${personName} can now open ${describe(apps)}. No mail is configured on this deployment, so the password link went to the server log instead of to them.`,
     );
   }
 
+  /* ------------------------------------------------- an existing account */
+
+  const [account] = await db
+    .select({ id: users.id, name: users.name, active: users.active })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!account) return fail("That account no longer exists.", "not_found");
+  personName = account.name;
+  if (!account.active && wanted.size) {
+    return fail(`${account.name}'s account is deactivated, so it opens nothing.`);
+  }
+
+  // An employee row behind the account has to be active too, where there is
+  // one. Where there is not, the account itself is the only authority there is
+  // and it is enough — several real accounts predate the employee sheet.
+  if (wanted.size) {
+    const blocked = await hrmsBlock(userId);
+    if (blocked) return fail(blocked, "rule_violation");
+  }
+
+  const heldRows = await db
+    .select({ app: appAccess.app })
+    .from(appAccess)
+    .where(eq(appAccess.userId, userId));
+  const held = heldRows.map((r) => r.app as AppId);
+
+  const storedRows = await db
+    .select({ app: appModuleAccess.app, module: appModuleAccess.module })
+    .from(appModuleAccess)
+    .where(eq(appModuleAccess.userId, userId));
+  const storedByApp = new Map<AppId, string[]>();
+  for (const r of storedRows) {
+    const app = r.app as AppId;
+    storedByApp.set(app, [...(storedByApp.get(app) ?? []), r.module]);
+  }
+  /** What they hold today, with "no rows" spelled out as every module. */
+  const before = new Map<AppId, string[]>(
+    held.map((a) => [a, storedByApp.get(a) ?? moduleKeysForApp(a)]),
+  );
+
+  const granted = [...wanted.keys()].filter((a) => !held.includes(a));
+  const revoked = held.filter((a) => !wanted.has(a));
+  const changed = [...wanted.keys()].filter((a) => {
+    if (!held.includes(a)) return false;
+    const was = new Set(before.get(a) ?? []);
+    const now = wanted.get(a)!;
+    return was.size !== now.length || now.some((m) => !was.has(m));
+  });
+
+  if (!granted.length && !revoked.length && !changed.length) {
+    return ok(
+      { userId, created: false, resetLinkSent: false, granted: [], revoked: [], changed: [] },
+      "No change.",
+    );
+  }
+
+  await db.transaction(async (tx) => {
+    if (revoked.length) {
+      await tx
+        .delete(appAccess)
+        .where(and(eq(appAccess.userId, userId!), inArray(appAccess.app, revoked)));
+      // The module rows go with the app. Left behind, they would silently
+      // narrow it the day somebody granted it back.
+      await tx
+        .delete(appModuleAccess)
+        .where(and(eq(appModuleAccess.userId, userId!), inArray(appModuleAccess.app, revoked)));
+    }
+    if (granted.length) {
+      await tx.insert(appAccess).values(
+        granted.map((app) => ({ id: newId("acc"), userId: userId!, app, grantedById: me.id })),
+      );
+    }
+    for (const app of [...granted, ...changed]) {
+      await writeModules(tx, userId!, app, wanted.get(app)!, me.id);
+    }
+  });
+
+  const detail = [
+    granted.length ? `granted ${granted.map(withCount(wanted)).join(", ")}` : "",
+    changed.length
+      ? `changed ${changed
+          .map((a) => `${a} ${before.get(a)!.length}/${moduleKeysForApp(a).length} → ${wanted.get(a)!.length}/${moduleKeysForApp(a).length}`)
+          .join(", ")}`
+      : "",
+    revoked.length ? `revoked ${revoked.join(", ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
+
+  await audit(me.id, "set-app-access", userId, detail);
   refresh();
 
-  const appName = getApp(app)?.name ?? app;
-  const total = moduleKeysForApp(app).length;
-  const scope =
-    modules.length >= total
-      ? `all ${total} modules`
-      : `${modules.length} of ${total} modules`;
+  const said = [
+    granted.length ? `now opens ${describe(granted)}` : "",
+    changed.length
+      ? changed
+          .map(
+            (a) =>
+              `${getApp(a)?.name ?? a} narrowed to ${wanted.get(a)!.length} of ${moduleKeysForApp(a).length} screens`,
+          )
+          .join(", ")
+      : "",
+    revoked.length ? `no longer opens ${describe(revoked)}` : "",
+  ].filter(Boolean);
 
   return ok(
-    { userId, created, resetLinkSent },
-    created
-      ? resetLinkSent
-        ? `${personName} can now open ${appName} — ${scope}. A link to set their password has been emailed to them.`
-        : `${personName} can now open ${appName} — ${scope}. No mail is configured on this deployment, so the password link went to the server log instead of to them.`
-      : `${personName} can now open ${appName} — ${scope}.`,
+    { userId, created: false, resetLinkSent: false, granted, revoked, changed },
+    `${personName} ${said.join(" · ")}.` +
+      (revoked.length && !wanted.size
+        ? " They can still sign in, and the launcher will say plainly that they have nothing."
+        : ""),
   );
+}
+
+function withCount(wanted: Map<AppId, string[]>) {
+  return (app: AppId) =>
+    `${app} (${wanted.get(app)!.length}/${moduleKeysForApp(app).length} modules)`;
+}
+
+function describe(apps: AppId[]): string {
+  const names = apps.map((a) => getApp(a)?.name ?? a);
+  if (names.length === 1) return names[0];
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
 /**
@@ -386,127 +502,6 @@ async function mailResetLink(
   return mailConfigured();
 }
 
-/**
- * Change which modules of an app somebody holds, leaving the grant itself
- * alone. This is the review table's Save.
- */
-export async function setAppModules(
-  userId: string,
-  appId: string,
-  modules: string[],
-): Promise<Result<{ modules: string[] }>> {
-  let me;
-  try {
-    me = await actor();
-  } catch (e) {
-    return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
-  }
-
-  const app = appId as AppId;
-  if (!APP_IDS.includes(app)) return fail(`Not an app: ${appId}`);
-
-  const { ok: wanted, bad } = cleanModules(app, modules);
-  if (bad.length) return fail(`Not a module of ${app}: ${bad.join(", ")}`);
-  if (!wanted.length) {
-    return fieldErr(
-      "modules",
-      "Leave at least one module ticked. To take the app away entirely, revoke it.",
-    );
-  }
-
-  const [account] = await db
-    .select({ name: users.name })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
-  if (!account) return fail("That account no longer exists.", "not_found");
-
-  const held = await listUserApps(userId);
-  if (!held.includes(app)) {
-    return fail(`${account.name} does not have ${getApp(app)?.name ?? app}.`);
-  }
-
-  const before = await db
-    .select({ module: appModuleAccess.module })
-    .from(appModuleAccess)
-    .where(and(eq(appModuleAccess.userId, userId), eq(appModuleAccess.app, app)));
-
-  const total = moduleKeysForApp(app).length;
-  const had = before.length === 0 ? moduleKeysForApp(app) : before.map((b) => b.module);
-  const added = wanted.filter((w) => !had.includes(w));
-  const removed = had.filter((h) => !wanted.includes(h));
-  if (!added.length && !removed.length) return ok({ modules: wanted }, "No change.");
-
-  await db.transaction(async (tx) => {
-    await writeModules(tx, userId, app, wanted, me.id);
-  });
-
-  await audit(
-    me.id,
-    "set-module-access",
-    userId,
-    `${app}: ${had.length}/${total} → ${wanted.length}/${total}` +
-      (added.length ? `; added ${added.join(", ")}` : "") +
-      (removed.length ? `; removed ${removed.join(", ")}` : ""),
-  );
-  refresh();
-
-  return ok(
-    { modules: wanted },
-    wanted.length >= total
-      ? `${account.name} now opens all of ${getApp(app)?.name ?? app}.`
-      : `${account.name} now opens ${wanted.length} of ${total} modules in ${getApp(app)?.name ?? app}.`,
-  );
-}
-
-/** Take an app away entirely. Its module rows go with it. */
-export async function revokeApp(
-  userId: string,
-  appId: string,
-): Promise<Result<null>> {
-  let me;
-  try {
-    me = await actor();
-  } catch (e) {
-    return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
-  }
-
-  const app = appId as AppId;
-  if (!APP_IDS.includes(app)) return fail(`Not an app: ${appId}`);
-
-  const [account] = await db
-    .select({ name: users.name })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
-  if (!account) return fail("That account no longer exists.", "not_found");
-
-  const held = await listUserApps(userId);
-  if (!held.includes(app)) return ok(null, "No change.");
-
-  await db.transaction(async (tx) => {
-    await tx
-      .delete(appAccess)
-      .where(and(eq(appAccess.userId, userId), eq(appAccess.app, app)));
-    // The module rows go too. Left behind, they would silently narrow the app
-    // the day somebody granted it back.
-    await tx
-      .delete(appModuleAccess)
-      .where(and(eq(appModuleAccess.userId, userId), eq(appModuleAccess.app, app)));
-  });
-
-  await audit(me.id, "set-app-access", userId, `revoked ${app}`);
-  refresh();
-
-  const left = held.filter((a) => a !== app);
-  return ok(
-    null,
-    left.length
-      ? `${account.name} no longer opens ${getApp(app)?.name ?? app}.`
-      : `${account.name} no longer opens anything. They can still sign in, and the launcher will say so.`,
-  );
-}
-
 /** The picker's list, re-read on demand so a fresh HRMS sync shows up. */
 export async function candidatesForGrant(): Promise<Result<Candidate[]>> {
   try {
@@ -515,19 +510,4 @@ export async function candidatesForGrant(): Promise<Result<Candidate[]>> {
     return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
   }
   return ok(await listCandidates());
-}
-
-/** Kept for the bulk paths: revoke several apps from one person at once. */
-export async function revokeApps(
-  userId: string,
-  appIds: string[],
-): Promise<Result<null>> {
-  const apps = appIds.filter((a): a is AppId => APP_IDS.includes(a as AppId));
-  if (!apps.length) return ok(null, "No change.");
-  let last: Result<null> = ok(null, "No change.");
-  for (const app of apps) {
-    last = await revokeApp(userId, app);
-    if (!last.ok) return last;
-  }
-  return last;
 }
