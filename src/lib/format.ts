@@ -108,20 +108,73 @@ export function periodLabel(period: string): string {
   return `${MONTHS_LONG[Number(m) - 1]} ${y}`;
 }
 
-/** Timestamp -> "12 Aug, 10:42 am" */
+/* ---------------------------------------------------------------------------
+ * Reading a stored instant back as a wall clock.
+ *
+ * `getHours()` and `getDate()` answer in the zone of whichever machine is
+ * asking, and these run on both sides: a page.tsx formats on the server, a
+ * screen formats in the browser. The server is Vercel and Vercel is UTC, so
+ * every timestamp rendered on the server came out FIVE AND A HALF HOURS
+ * EARLY — an order taken at 9am appeared as "3:30 am", which reads as a
+ * machine writing rows in the middle of the night rather than a person on a
+ * call.
+ *
+ * It hid for the same reason the `::date` version hid: on a laptop set to IST
+ * it is correct, so it is right in development and wrong only in production.
+ * The zone is named here, once, and the grep test in §11 keeps it named.
+ * ------------------------------------------------------------------------- */
+
+const IST_PARTS = new Intl.DateTimeFormat("en-GB", {
+  timeZone: APP_TIMEZONE,
+  day: "numeric",
+  month: "numeric",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+type WallClock = { day: number; month: number; year: number; hour: number; minute: number };
+
+function istParts(d: Date): WallClock | null {
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = Object.fromEntries(
+    IST_PARTS.formatToParts(d).map((p) => [p.type, p.value]),
+  );
+  return {
+    day: Number(parts.day),
+    month: Number(parts.month),
+    year: Number(parts.year),
+    // Midnight comes back as "24" in some runtimes under hour12: false.
+    hour: Number(parts.hour) % 24,
+    minute: Number(parts.minute),
+  };
+}
+
+/** Timestamp -> "12 Aug, 10:42 am", in the business's own zone. */
 export function stamp(at: Date | string | null | undefined): string {
   if (!at) return "-";
   const d = typeof at === "string" ? new Date(at) : at;
-  const day = `${d.getDate()} ${MONTHS[d.getMonth()]}`;
-  return `${day}, ${clock(d)}`;
+  const p = istParts(d);
+  if (!p) return "-";
+  return `${p.day} ${MONTHS[p.month - 1]}, ${clock(d)}`;
+}
+
+/** Timestamp -> "12 Aug 2026", no time. For a day that has no meaningful one. */
+export function stampDate(at: Date | string | null | undefined): string {
+  if (!at) return "-";
+  const d = typeof at === "string" ? new Date(at) : at;
+  const p = istParts(d);
+  if (!p) return "-";
+  return `${p.day} ${MONTHS[p.month - 1]} ${p.year}`;
 }
 
 export function clock(d: Date): string {
-  let h = d.getHours();
-  const m = String(d.getMinutes()).padStart(2, "0");
-  const suffix = h >= 12 ? "pm" : "am";
-  h = h % 12 || 12;
-  return `${h}:${m} ${suffix}`;
+  const p = istParts(d);
+  if (!p) return "-";
+  const suffix = p.hour >= 12 ? "pm" : "am";
+  const h = p.hour % 12 || 12;
+  return `${h}:${String(p.minute).padStart(2, "0")} ${suffix}`;
 }
 
 /** "4 days ago", "today", "in 3 days" */

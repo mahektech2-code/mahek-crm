@@ -1,3 +1,5 @@
+import { APP_TIMEZONE } from "./business-date";
+
 /** Quote everything — Indian business names contain commas often enough. */
 export function toCsv(
   headers: string[],
@@ -30,11 +32,27 @@ export function downloadCsv(name: string, csv: string, filters?: Array<string | 
 
   // Local time, not UTC — the person reading the name is in Asia/Kolkata.
   const now = new Date();
-  const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
-    now.getDate(),
-  ).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(
-    now.getMinutes(),
-  ).padStart(2, "0")}`;
+  // In the business's own zone, like everything else that turns an instant
+  // into something a person reads. An export taken at 9am in Mumbai was
+  // landing in the downloads folder named 03:30 on a UTC server, which is the
+  // one moment somebody actually reads a filename: when they are looking for
+  // the file they just made.
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: APP_TIMEZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    })
+      .formatToParts(now)
+      .map((p) => [p.type, p.value]),
+  );
+  const stamp = `${parts.year}-${parts.month}-${parts.day}-${String(
+    Number(parts.hour) % 24,
+  ).padStart(2, "0")}${parts.minute}`;
 
   const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);

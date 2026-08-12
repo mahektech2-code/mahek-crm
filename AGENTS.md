@@ -1012,6 +1012,27 @@ beside the one that guards `lib/` for the SQL spelling. A full ISO timestamp is
 left alone: an instant carries its own zone, and only truncating it to a day
 loses one.
 
+**And a stored instant is not a wall clock until a zone is named.** The third
+spelling of the same rule, and the one that reached a screen. `getHours()` and
+`getDate()` answer in the zone of whichever machine is asking — a `page.tsx`
+formats on the server, the server is Vercel and Vercel is UTC — so every
+timestamp rendered server-side came out five and a half hours early. An order
+taken at 9am read "3:30 am", which looks like a machine writing rows in the
+night rather than a person on a call, and it was reported as exactly that
+suspicion. Like both of its siblings it is correct on a laptop set to IST, so
+it was right in development and wrong only in production. `stamp`, `stampDate`
+and `clock` name `APP_TIMEZONE`, and a third grep test in §11 keeps every
+local-zone getter out of `src/`. `getUTC*` is exempt: it names a zone, and
+`longDate` uses it deliberately on a date-only value.
+
+**A time nobody chose is not shown as a time.** A CRM order is stamped 09:00 on
+the date it is FOR — the telecaller may state a past date, because an order
+often arrives before anybody logs it — so the clock part is filler the capture
+path writes and says nothing about the call. Printed beside a real name it read
+as "Poonam took this at nine in the morning", which nobody could have known.
+Order approvals shows the date alone; how long it has been waiting is its own
+column, measured from the real `created_at`.
+
 **A salesperson is a name, not an account.** The Sales Party tab's `Sales
 Person` is who sells to a customer, and most of those people have never signed
 in — several are not people at all ("Western Line Sale", "Company Own",
