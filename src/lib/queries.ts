@@ -156,8 +156,9 @@ export type CustomerListFilters = {
   query?: string;
   /** A label from customerStatusLabel, or absent for all of them. */
   status?: string;
-  /** An owner's name as shown in the filter, or absent for all. */
-  owner?: string;
+  /** A NAME, matched against what the column shows — see the two SQL consts. */
+  salesAm?: string;
+  backOfficeAm?: string;
   page?: number;
   perPage?: number;
 };
@@ -183,6 +184,86 @@ export type CustomerListPage = {
  * totals above the table were summed on the client from data it had all been
  * sent anyway.
  */
+/* ---------------------------------------------------------------------------
+ * Who an account answers to, as a NAME, in SQL.
+ *
+ * Defined once because three things have to agree about it: the column on the
+ * customers list, the filter above that list, and the set of names the filter
+ * offers. They did not. The filter tested `owner_id`'s name while the column
+ * showed `coalesce(sales_person_name, sales_am_id)` — different people on most
+ * rows, because the projection fills the sheet's name and `owner_id` is
+ * whoever the record was imported under. Picking a name filtered a column
+ * nobody could see, which reads exactly like a filter that does nothing.
+ *
+ * SALES is kind-aware, because the screen is: a lead answers to its owner and a
+ * customer to its sales account manager, falling back to the owner. The
+ * expression mirrors that fallback chain exactly, or the two disagree again on
+ * whichever rows the chain reaches for.
+ *
+ * BACK OFFICE reads the account first and the sheet's name second — the
+ * opposite order to sales, and deliberately so. `sales_am_id` is bulk-assigned
+ * by the import, so reading it first names the telecaller who owns the book on
+ * every customer; `back_office_am_id` is only ever set by a real link or by
+ * somebody choosing, so it is the better answer where it exists.
+ * ------------------------------------------------------------------------- */
+
+export const SALES_AM_NAME_SQL = sql<string | null>`case
+  when customers.kind = 'lead'
+    then (select name from users u where u.id = customers.owner_id)
+  else coalesce(
+    customers.sales_person_name,
+    (select name from users u where u.id = customers.sales_am_id),
+    (select name from users u where u.id = customers.owner_id)
+  )
+end`;
+
+export const BACK_OFFICE_AM_NAME_SQL = sql<string | null>`coalesce(
+  (select name from users u where u.id = customers.back_office_am_id),
+  customers.back_office_name
+)`;
+
+/**
+ * The names each filter can offer.
+ *
+ * Read from the SAME expressions the column renders, and not from `users`,
+ * because most of these people have no MahekOne account: the customer master
+ * names "Back Office Calling", "Marathwada" and "Company Own" as salespeople,
+ * and a dropdown built from the staff list cannot reach a single one of those
+ * rows. A filter that cannot offer a value the table is showing is a filter
+ * somebody tries once.
+ *
+ * Scoped like the list itself, so a telecaller is not shown the names of
+ * people whose accounts they cannot see.
+ */
+export async function listAmFilterOptions(): Promise<{
+  sales: string[];
+  backOffice: string[];
+}> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const scoped = scopedToUsers(ids);
+
+  const rows = await db
+    .select({
+      sales: SALES_AM_NAME_SQL,
+      backOffice: BACK_OFFICE_AM_NAME_SQL,
+    })
+    .from(customers)
+    .where(scoped);
+
+  const sales = new Set<string>();
+  const backOffice = new Set<string>();
+  for (const r of rows) {
+    if (r.sales?.trim()) sales.add(r.sales.trim());
+    if (r.backOffice?.trim()) backOffice.add(r.backOffice.trim());
+  }
+  const sort = (a: string, b: string) => a.localeCompare(b);
+  return {
+    sales: [...sales].sort(sort),
+    backOffice: [...backOffice].sort(sort),
+  };
+}
+
 export async function listCustomersPage(
   filters: CustomerListFilters = {},
 ): Promise<CustomerListPage> {
@@ -206,8 +287,13 @@ export async function listCustomersPage(
     )`);
   }
   if (filters.status) where.push(sql`${STATUS_LABEL_SQL} = ${filters.status}`);
-  if (filters.owner) {
-    where.push(sql`(select name from users u where u.id = customers.owner_id) = ${filters.owner}`);
+  // The same expressions the column renders, so a name picked here always
+  // matches the rows showing that name.
+  if (filters.salesAm) {
+    where.push(sql`${SALES_AM_NAME_SQL} = ${filters.salesAm}`);
+  }
+  if (filters.backOfficeAm) {
+    where.push(sql`${BACK_OFFICE_AM_NAME_SQL} = ${filters.backOfficeAm}`);
   }
 
   const clause = where.length ? and(...where) : undefined;
@@ -244,20 +330,14 @@ export async function listCustomersPage(
       // The customer master's Sales Person first, and the linked account only
       // where the sheet is silent. Reading the account first showed the
       // telecaller who owns the book as the salesperson on every customer.
-      salesAmName: sql<string | null>`coalesce(
-        customers.sales_person_name,
-        (select name from users u where u.id = customers.sales_am_id)
-      )`,
+      salesAmName: SALES_AM_NAME_SQL,
       // The ACCOUNT first here, and the sheet's name second — the opposite of
       // the sales side above, deliberately. `sales_am_id` is bulk-assigned by
       // the import, so reading it first names the telecaller who owns the book
       // on every customer; `back_office_am_id` is only ever set by a real link
       // or a manager choosing somebody, so it is the better answer where it
       // exists, and the sheet's name is what stands in when it does not.
-      backOfficeAmName: sql<string | null>`coalesce(
-        (select name from users u where u.id = customers.back_office_am_id),
-        customers.back_office_name
-      )`,
+      backOfficeAmName: BACK_OFFICE_AM_NAME_SQL,
       openComplaints: sql<number>`(
         select count(*)::int from ${complaints}
          where complaints.customer_id = customers.id
@@ -304,20 +384,14 @@ export async function listCustomers(): Promise<CustomerRow[]> {
       // The customer master's Sales Person first, and the linked account only
       // where the sheet is silent. Reading the account first showed the
       // telecaller who owns the book as the salesperson on every customer.
-      salesAmName: sql<string | null>`coalesce(
-        customers.sales_person_name,
-        (select name from users u where u.id = customers.sales_am_id)
-      )`,
+      salesAmName: SALES_AM_NAME_SQL,
       // The ACCOUNT first here, and the sheet's name second — the opposite of
       // the sales side above, deliberately. `sales_am_id` is bulk-assigned by
       // the import, so reading it first names the telecaller who owns the book
       // on every customer; `back_office_am_id` is only ever set by a real link
       // or a manager choosing somebody, so it is the better answer where it
       // exists, and the sheet's name is what stands in when it does not.
-      backOfficeAmName: sql<string | null>`coalesce(
-        (select name from users u where u.id = customers.back_office_am_id),
-        customers.back_office_name
-      )`,
+      backOfficeAmName: BACK_OFFICE_AM_NAME_SQL,
       openComplaints: sql<number>`(
         select count(*)::int from ${complaints}
          where complaints.customer_id = customers.id
@@ -346,20 +420,14 @@ export async function getCustomer(customerId: string) {
       // The customer master's Sales Person first, and the linked account only
       // where the sheet is silent. Reading the account first showed the
       // telecaller who owns the book as the salesperson on every customer.
-      salesAmName: sql<string | null>`coalesce(
-        customers.sales_person_name,
-        (select name from users u where u.id = customers.sales_am_id)
-      )`,
+      salesAmName: SALES_AM_NAME_SQL,
       // The ACCOUNT first here, and the sheet's name second — the opposite of
       // the sales side above, deliberately. `sales_am_id` is bulk-assigned by
       // the import, so reading it first names the telecaller who owns the book
       // on every customer; `back_office_am_id` is only ever set by a real link
       // or a manager choosing somebody, so it is the better answer where it
       // exists, and the sheet's name is what stands in when it does not.
-      backOfficeAmName: sql<string | null>`coalesce(
-        (select name from users u where u.id = customers.back_office_am_id),
-        customers.back_office_name
-      )`,
+      backOfficeAmName: BACK_OFFICE_AM_NAME_SQL,
     })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))

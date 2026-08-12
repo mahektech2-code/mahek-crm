@@ -83,6 +83,9 @@ type Row = {
  */
 const PER_PAGE = [25, 50, 100] as const;
 
+const ALL_SALES = "All sales managers";
+const ALL_BACK_OFFICE = "All back office";
+
 const STATUSES = [
   "All statuses",
   "Active",
@@ -99,6 +102,7 @@ export function CustomersScreen({
   canReassign,
   amReasons,
   amSearchThreshold,
+  amOptions,
   team,
   backOfficePeople,
   rows,
@@ -133,11 +137,19 @@ export function CustomersScreen({
   canReassign: boolean;
   amReasons: string[];
   amSearchThreshold: number;
+  /** The names each filter offers — the ones the column actually shows. */
+  amOptions: { sales: string[]; backOffice: string[] };
   team: Array<{ id: string; name: string; role?: string }>;
   /** Accounts plus the current HRMS employees — the back office seat only. */
   backOfficePeople: Array<{ id: string; name: string; role?: string }>;
   rows: Row[];
-  filters: { query: string; status: string; owner: string; perPage: number };
+  filters: {
+    query: string;
+    status: string;
+    salesAm: string;
+    backOfficeAm: string;
+    perPage: number;
+  };
   pageInfo: { page: number; pageCount: number; total: number; bookTotal: number };
   totals: { outstanding: number; slowPayers: number; withComplaints: number };
 }) {
@@ -166,7 +178,8 @@ export function CustomersScreen({
   // does the filtering now, so it has to be told — and a filtered list gains a
   // shareable link and a working back button for free.
   const status = filters.status || STATUSES[0];
-  const owner = filters.owner || "All owners";
+  const salesAm = filters.salesAm || ALL_SALES;
+  const backOfficeAm = filters.backOfficeAm || ALL_BACK_OFFICE;
   const perPage = filters.perPage;
   const { page, pageCount, total, bookTotal } = pageInfo;
   const query = filters.query;
@@ -218,15 +231,21 @@ export function CustomersScreen({
     status !== STATUSES[0]
       ? { label: `Status: ${status}`, clear: () => navigate({ status: undefined }) }
       : null,
-    owner !== "All owners"
-      ? { label: `Owner: ${owner}`, clear: () => navigate({ owner: undefined }) }
+    salesAm !== ALL_SALES
+      ? { label: `Sales: ${salesAm}`, clear: () => navigate({ sales: undefined }) }
+      : null,
+    backOfficeAm !== ALL_BACK_OFFICE
+      ? {
+          label: `Back office: ${backOfficeAm}`,
+          clear: () => navigate({ backoffice: undefined }),
+        }
       : null,
     query ? { label: `Search: ${query}`, clear: () => { setDraft(""); navigate({ q: undefined }); } } : null,
   ].filter(Boolean) as Array<{ label: string; clear: () => void }>;
 
   function clearAll() {
     setDraft("");
-    navigate({ q: undefined, status: undefined, owner: undefined });
+    navigate({ q: undefined, status: undefined, sales: undefined, backoffice: undefined });
   }
 
   function toggle(id: string) {
@@ -277,7 +296,10 @@ export function CustomersScreen({
       ),
       [
         status === STATUSES[0] ? null : status,
-        owner === "All owners" ? null : owner,
+        // The export names the filters it was taken under, so a file sent to
+        // somebody says what it is a list of.
+        salesAm === ALL_SALES ? null : `Sales: ${salesAm}`,
+        backOfficeAm === ALL_BACK_OFFICE ? null : `Back office: ${backOfficeAm}`,
         query || null,
       ],
     );
@@ -392,14 +414,42 @@ export function CustomersScreen({
             <option key={s}>{s}</option>
           ))}
         </Select>
+        {/*
+          Two filters, because an account has two managers and "owner" was
+          neither of them. The old one tested `owner_id`'s name while the
+          column showed the sales manager — different people on most rows, so
+          picking a name filtered a column nobody could see and the list came
+          back looking wrong or empty.
+
+          The options are the names the COLUMN shows, not the staff list. Most
+          of these people have no MahekOne account — the customer master names
+          "Back Office Calling", "Marathwada", "Company Own" — and a dropdown
+          built from `users` cannot reach a single one of those rows.
+        */}
         <Select
-          value={owner}
-          onChange={(e) => navigate({ owner: e.target.value === "All owners" ? undefined : e.target.value })}
+          value={salesAm}
+          onChange={(e) =>
+            navigate({ sales: e.target.value === ALL_SALES ? undefined : e.target.value })
+          }
           className="h-8"
         >
-          <option>All owners</option>
-          {team.map((t) => (
-            <option key={t.id}>{t.name}</option>
+          <option>{ALL_SALES}</option>
+          {amOptions.sales.map((n) => (
+            <option key={n}>{n}</option>
+          ))}
+        </Select>
+        <Select
+          value={backOfficeAm}
+          onChange={(e) =>
+            navigate({
+              backoffice: e.target.value === ALL_BACK_OFFICE ? undefined : e.target.value,
+            })
+          }
+          className="h-8"
+        >
+          <option>{ALL_BACK_OFFICE}</option>
+          {amOptions.backOffice.map((n) => (
+            <option key={n}>{n}</option>
           ))}
         </Select>
         {chips.length ? (
