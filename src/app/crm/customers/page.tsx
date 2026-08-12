@@ -3,6 +3,7 @@ import { can } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { getScope, scopeLabel } from "@/lib/scope";
 import {
+  listAmFilterOptions,
   listAssignableUsers,
   listBackOfficeCandidates,
   listCustomersPage,
@@ -37,11 +38,12 @@ export default async function CustomersPage({
   const scope = await getScope(user);
 
   const perPage = Number(one("per") ?? 25);
-  const [page, team, config, backOfficePeople] = await Promise.all([
+  const [page, team, config, backOfficePeople, amOptions] = await Promise.all([
     listCustomersPage({
       query: one("q"),
       status: one("status"),
-      owner: one("owner"),
+      salesAm: one("sales"),
+      backOfficeAm: one("backoffice"),
       page: Number(one("page") ?? 1) || 1,
       perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
     }),
@@ -51,6 +53,7 @@ export default async function CustomersPage({
     listAssignableUsers(),
     getConfig(),
     listBackOfficeCandidates(),
+    listAmFilterOptions(),
   ]);
 
   return (
@@ -64,12 +67,14 @@ export default async function CustomersPage({
       canReassign={can(user.role, "customer.reassign")}
       amReasons={config["people.amChangeReasons"]}
       amSearchThreshold={config["people.pickerSearchThreshold"]}
+      amOptions={amOptions}
       team={team.map((t) => ({ id: t.id, name: t.name, role: t.role }))}
       backOfficePeople={backOfficePeople}
       filters={{
         query: one("q") ?? "",
         status: one("status") ?? "",
-        owner: one("owner") ?? "",
+        salesAm: one("sales") ?? "",
+        backOfficeAm: one("backoffice") ?? "",
         perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
       }}
       pageInfo={{
