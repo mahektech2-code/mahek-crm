@@ -218,6 +218,27 @@ describe("E1 buying cycle", () => {
     assert.equal(buyingCycle(dates, C).days, C["buyingCycle.minDays"]);
   });
 
+  test("a real two-day cycle survives as two days", () => {
+    // The floor was 7, described as a clamp against absurd figures. It was not:
+    // same-day orders are already excluded as one purchase split across bills,
+    // so every interval reaching the clamp is a real gap between real orders,
+    // and a customer buying every two days was recorded as buying every seven.
+    // The cycle is what decides when they are called, so that was an order
+    // chased five days late, every cycle, forever.
+    const dates = ["2026-08-01", "2026-08-03", "2026-08-05", "2026-08-07"];
+    const cycle = buyingCycle(dates, C);
+    assert.equal(cycle.days, 2);
+    assert.equal(cycle.isDefault, false);
+  });
+
+  test("the floor is 1, which is the only thing it is for", () => {
+    // A cycle of zero would mean "due immediately" for the rest of time. Same-
+    // day orders are dropped before the clamp, so reaching zero is not possible
+    // from real data — the floor is what guarantees it either way, and one day
+    // is as short as a real cycle can be.
+    assert.equal(C["buyingCycle.minDays"], 1);
+  });
+
   test("results clamp to the configured maximum", () => {
     const dates = ["2020-01-01", "2021-01-01", "2022-01-01", "2023-01-01"];
     assert.equal(buyingCycle(dates, C).days, C["buyingCycle.maxDays"]);
@@ -766,6 +787,29 @@ describe("E2 queue builder", () => {
     // still the full fifteen days here, because this cycle is longer than it.
     assert.equal(called(20, 14), false);
     assert.equal(called(20, 15), true);
+  });
+
+  test("a two-day buyer is called on their two-day cycle", () => {
+    // No floor under short cycles, in the queue or underneath it. The rule is
+    // the one everybody else gets — quiet until the order is due, chased from
+    // the day it is — and on a two-day cycle that means day 2.
+    const at = (sinceOrder: number) =>
+      buildQueue(
+        [
+          candidate({
+            lastOrderDate: addDays(TODAY, -sinceOrder),
+            cycleDays: 2,
+            lastContactDate: addDays(TODAY, -sinceOrder),
+          }),
+        ],
+        TODAY,
+        C,
+      );
+
+    assert.equal(at(1).entries.length, 0, "day 1: they ordered yesterday");
+    assert.equal(at(1).suppressed.length, 0, "and nothing is held back either");
+    assert.equal(at(2).entries[0].reasons[0].kind, "orderDue", "day 2: due");
+    assert.equal(at(3).entries.length, 1, "day 3: overdue, still on the list");
   });
 
   test("a customer who buys every fortnight gets no routine call", () => {

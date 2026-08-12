@@ -352,8 +352,9 @@ export const SETTINGS = [
     type: "integer",
     category: "buying-cycle",
     label: "Minimum cycle",
-    description: "Clamp against absurdly short computed cycles.",
-    default: 7,
+    description:
+      "Floor under a computed cycle. It was 7, which was not a clamp against an absurd figure but a policy nobody had stated: a customer genuinely ordering every two days was recorded as ordering every seven, so their order was chased five days late and every screen reading the cycle was wrong about them. Two orders on the same day are already excluded as one purchase split across bills, so the shortest interval that can reach this is a real one. Raise it only to say “nobody is chased faster than this” — and say it here rather than in the queue, because it changes what the cycle MEANS.",
+    default: 1,
     min: 1,
     max: 365,
   },
