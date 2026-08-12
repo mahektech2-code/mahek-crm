@@ -86,6 +86,7 @@ const STATUSES = [
 ];
 
 export function CustomersScreen({
+  app,
   scopeLabel,
   isManager,
   canReassign,
@@ -98,6 +99,22 @@ export function CustomersScreen({
   pageInfo,
   totals,
 }: {
+  /**
+   * Which app is rendering this.
+   *
+   * ONE customer list, two apps. They were briefly two screens, and the thin
+   * one grew a different search box, a different set of columns and a
+   * different idea of what a customer row shows — which is the beginning of
+   * two answers to "who are our customers". They read the same query already;
+   * they now render the same component, and this prop names the handful of
+   * things that genuinely differ: where a row links to, and which actions the
+   * app can actually carry out.
+   *
+   * Accounts users hold `apps: ["accounts"]`, so every `/crm/...` link is a
+   * door they are redirected away from. That is what this switches — not
+   * decoration.
+   */
+  app: "crm" | "accounts";
   scopeLabel: string;
   isManager: boolean;
   /**
@@ -118,6 +135,21 @@ export function CustomersScreen({
   totals: { outstanding: number; slowPayers: number; withComplaints: number };
 }) {
   const router = useRouter();
+
+  /*
+   * Everything that differs between the two apps, named once.
+   *
+   * The rule is not "hide what accounts should not see" — it is that an
+   * accounts user is redirected out of `/crm/...` before the page renders, so
+   * a row action pointing there is a dead end rather than a restriction. Where
+   * Accounts has its own answer to the same question it is used: the customer
+   * account statement IS the accounts-side record of a customer.
+   */
+  const isCrm = app === "crm";
+  // The filter URLs need no base path — `navigate()` pushes a relative query
+  // string, so the address it builds is already whichever list is open.
+  const recordHref = (id: string) =>
+    isCrm ? `/crm/customers/${id}` : `/accounts/ledger?customer=${id}`;
   const { run, push } = useToast();
 
   const search = useSearchParams();
@@ -268,7 +300,7 @@ export function CustomersScreen({
             >
               Export
             </Button>
-            {isManager ? (
+            {isManager && isCrm ? (
               <Link
                 href="/crm/customers/import"
                 className="inline-flex h-9 items-center rounded-[4px] border border-line-strong bg-surface px-4 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
@@ -442,7 +474,7 @@ export function CustomersScreen({
                   </Td>
                   <Td className="font-medium text-ink">
                     <Link
-                      href={`/crm/customers/${r.id}`}
+                      href={recordHref(r.id)}
                       className="no-underline hover:underline"
                     >
                       {r.name}
@@ -572,23 +604,39 @@ export function CustomersScreen({
                       <RowMenu
                         items={[
                           {
-                            label: "Open record",
-                            onSelect: () =>
-                              router.push(`/crm/customers/${r.id}`),
+                            label: isCrm ? "Open record" : "Open account",
+                            onSelect: () => router.push(recordHref(r.id)),
                           },
                           {
                             label: "Edit details",
                             onSelect: () => setEditing(r),
                           },
+                          /*
+                            WhatsApp and the CRM bill list are CRM screens, and
+                            an accounts user is redirected out of them. An
+                            action that lands somewhere you cannot go is worse
+                            than one that is absent — the second says what the
+                            app does, the first says it is broken.
+                          */
+                          ...(isCrm
+                            ? [
+                                {
+                                  label: "Send WhatsApp",
+                                  onSelect: () =>
+                                    router.push(`/crm/whatsapp?customer=${r.id}`),
+                                },
+                              ]
+                            : []),
                           {
-                            label: "Send WhatsApp",
-                            onSelect: () =>
-                              router.push(`/crm/whatsapp?customer=${r.id}`),
-                          },
-                          {
+                            // Accounts has its own bill list, and it is the
+                            // one this app's users can open.
                             label: "See their bills",
                             onSelect: () =>
-                              router.push(`/crm/bills?customer=${r.id}`),
+                              router.push(
+                                isCrm
+                                  ? `/crm/bills?customer=${r.id}`
+                                  : `/accounts/bills?customer=${r.id}`,
+                              ),
                           },
                           /*
                            * A deactivated customer is offered the way back
@@ -723,19 +771,29 @@ export function CustomersScreen({
         count={selected.size}
         onClear={() => setSelected(new Set())}
       >
-        <Button variant="dark" size="sm" onClick={() => setBulkRemind(true)}>
-          Set reminder
-        </Button>
-        <Button
-          variant="dark"
-          size="sm"
-          onClick={() => {
-            const first = [...selected][0];
-            router.push(`/crm/whatsapp?customer=${first}`);
-          }}
-        >
-          Send WhatsApp
-        </Button>
+        {/*
+          Reminders and WhatsApp are the calling book's work and both live on
+          CRM screens, so they are offered where they can actually be done.
+          Everything else in this bar — export, the account manager change,
+          deactivation — is the same in both apps.
+        */}
+        {isCrm ? (
+          <>
+            <Button variant="dark" size="sm" onClick={() => setBulkRemind(true)}>
+              Set reminder
+            </Button>
+            <Button
+              variant="dark"
+              size="sm"
+              onClick={() => {
+                const first = [...selected][0];
+                router.push(`/crm/whatsapp?customer=${first}`);
+              }}
+            >
+              Send WhatsApp
+            </Button>
+          </>
+        ) : null}
         <Button
           variant="dark"
           size="sm"

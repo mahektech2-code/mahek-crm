@@ -8,7 +8,7 @@ import {
   listCustomersPage,
 } from "@/lib/queries";
 import { customerStatusLabel } from "@/lib/format";
-import { CustomersScreen } from "./customers-screen";
+import { CustomersScreen } from "@/components/customers/customers-screen";
 
 export const metadata = { title: "Customers - MahekOne CRM" };
 
@@ -55,6 +55,7 @@ export default async function CustomersPage({
 
   return (
     <CustomersScreen
+      app="crm"
       scopeLabel={scopeLabel(scope, user)}
       isManager={isManager(user)}
       // Asked of the same function the action asks, so a visible button and a

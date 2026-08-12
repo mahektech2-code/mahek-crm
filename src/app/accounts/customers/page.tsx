@@ -1,4 +1,6 @@
-import { requireUser } from "@/lib/auth";
+import { isManager, requireUser } from "@/lib/auth";
+import { getScope, scopeLabel } from "@/lib/scope";
+import { customerStatusLabel } from "@/lib/format";
 import { can } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import {
@@ -6,18 +8,27 @@ import {
   listBackOfficeCandidates,
   listCustomersPage,
 } from "@/lib/queries";
-import { AccountsCustomersScreen } from "./accounts-customers-screen";
+import { CustomersScreen } from "@/components/customers/customers-screen";
 
 export const metadata = { title: "Customers — Accounts — MahekOne" };
 
 /**
- * The same query the CRM's customer list runs.
+ * The customer book on the accounts side — the SAME screen the CRM renders.
  *
- * Deliberately `listCustomersPage()` and not a second read: a number on one
- * screen and the same number on another have to come from one function, or
- * they drift and whoever notices stops trusting both. Filters live in the
- * address for the same reason they do on the CRM list — a filtered book is
- * something people send each other.
+ * It was briefly its own, thinner component, and that showed within a day: a
+ * different search box, six columns instead of twelve, no status filter, no
+ * totals, no row menu and no way to open anything. Two screens answering "who
+ * are our customers" drift, and the thin one is always the one somebody is
+ * looking at when they conclude the data is wrong.
+ *
+ * One component, one query, and a prop naming the few things that genuinely
+ * differ — an accounts user holds `apps: ["accounts"]`, so `/crm/...` links
+ * are doors they are redirected away from.
+ *
+ * Why it exists here at all: changing an account manager is accounts' and
+ * admin's, and `src/app/crm/layout.tsx` redirects an accounts user out of the
+ * CRM before they reach a customer. Without this page the permission would
+ * belong to people who could not use it.
  */
 export default async function Page({
   searchParams,
@@ -32,11 +43,13 @@ export default async function Page({
   };
 
   const user = await requireUser();
+  const scope = await getScope(user);
   const perPage = Number(one("per") ?? 25);
 
   const [page, team, config, backOfficePeople] = await Promise.all([
     listCustomersPage({
       query: one("q"),
+      status: one("status"),
       owner: one("owner"),
       page: Number(one("page") ?? 1) || 1,
       perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
@@ -47,31 +60,58 @@ export default async function Page({
   ]);
 
   return (
-    <AccountsCustomersScreen
-      rows={page.rows.map((r) => ({
-        id: r.id,
-        name: r.name,
-        city: r.city,
-        status: r.status,
-        outstanding: r.outstanding,
-        ownerName: r.ownerName,
-        salesAmName: r.salesAmName,
-        backOfficeAmName: r.backOfficeAmName,
-      }))}
-      team={team.map((t) => ({ id: t.id, name: t.name, role: t.role }))}
-      backOfficePeople={backOfficePeople}
+    <CustomersScreen
+      app="accounts"
+      scopeLabel={scopeLabel(scope, user)}
+      isManager={isManager(user)}
       // The same question the action asks, so the button and the permission
       // cannot disagree. The action checks again regardless — a disabled
       // control is not a permission.
       canReassign={can(user.role, "customer.reassign")}
       amReasons={config["people.amChangeReasons"]}
       amSearchThreshold={config["people.pickerSearchThreshold"]}
+      team={team.map((t) => ({ id: t.id, name: t.name, role: t.role }))}
+      backOfficePeople={backOfficePeople}
       filters={{
         query: one("q") ?? "",
+        status: one("status") ?? "",
         owner: one("owner") ?? "",
         perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
       }}
-      pageInfo={{ page: Number(one("page") ?? 1) || 1, total: page.total }}
+      pageInfo={{
+        page: page.page,
+        pageCount: page.pageCount,
+        total: page.total,
+        bookTotal: page.bookTotal,
+      }}
+      totals={page.totals}
+      rows={page.rows.map((c) => ({
+        id: c.id,
+        name: c.name,
+        contactPerson: c.contactPerson,
+        phone: c.phone,
+        city: c.city,
+        ownerId: c.ownerId,
+        ownerName: c.ownerName,
+        kind: c.kind,
+        leadSource: c.leadSource,
+        salesAmName: c.salesAmName,
+        backOfficeAmId: c.backOfficeAmId,
+        backOfficeAmName: c.backOfficeAmName,
+        status: customerStatusLabel(c),
+        lastOrderDate: c.lastOrderDate,
+        lastContactAt: c.lastContactDate,
+        outstanding: c.outstanding,
+        slowPayer: c.slowPayer,
+        openComplaints: c.openComplaints,
+        gstin: c.gstin,
+        creditTermDays: c.creditTermDays,
+        cycleDays: c.cycleDays,
+        route: c.route,
+        deactivationRequested: c.deactivationRequested,
+        reactivationRequested: c.reactivationRequested,
+        reactivationReason: c.reactivationReason,
+      }))}
     />
   );
 }
