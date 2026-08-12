@@ -890,6 +890,36 @@ export type CustomerLedger = {
 };
 
 /**
+ * The one thing a statement leaves out.
+ *
+ * A reversed receipt normally belongs on a statement, and emphatically so: a
+ * cheque that cleared and bounced is a fact about the account, and the customer
+ * may well dispute the balance against this document. These are different. The
+ * 9,370 receipts this excludes were never payments — they were written by an
+ * earlier sheet import which assumed every bill was settled on the day it was
+ * raised, and `scripts/tally-receipts.ts` reversed them when Tally's registers
+ * said what had actually arrived. Nothing happened on those dates. Nobody's
+ * money moved and nobody made a decision.
+ *
+ * Printing them puts 967 red "reversed" rows on one customer's statement and
+ * some on 513 of them, each implying a payment that failed. That is not
+ * history, it is an artifact of a bug wearing history's clothes — and it is
+ * worse than a gap, because a reader has no way to tell it from the real
+ * reversals sitting beside it.
+ *
+ * They are HIDDEN rather than deleted. The rows are the only record of what the
+ * book used to claim and the only way to check or undo that migration, so they
+ * stay where the audit log and the revert script can still find them. The mark
+ * is `updated_by_id`, which only that script writes; the eighteen reversals a
+ * person made by hand carry somebody's user id instead and still print.
+ */
+const NOT_ON_STATEMENT = sql`not (
+  ${paymentReceipts.source} = 'sheet_import'
+  and ${paymentReceipts.status} = 'reversed'
+  and ${paymentReceipts.updatedById} = 'system:tally-records'
+)`;
+
+/**
  * A statement: what was billed, what came in, and what is left after each
  * line. Rejected receipts stay on it — a transfer that never landed is a fact
  * about the account, and dropping it leaves a telecaller wondering why the
@@ -922,7 +952,7 @@ export async function customerLedger(
       ), 0)::bigint`,
     })
     .from(paymentReceipts)
-    .where(eq(paymentReceipts.customerId, customerId))
+    .where(and(eq(paymentReceipts.customerId, customerId), NOT_ON_STATEMENT))
     .orderBy(asc(paymentReceipts.receivedAt));
 
   type Row = Omit<LedgerEntry, "balance"> & { sort: string };
