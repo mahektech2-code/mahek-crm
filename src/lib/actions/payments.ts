@@ -5,6 +5,7 @@ import {
   confirmReceipt,
   recordReceipt,
   rejectReceipt,
+  reverseReceipt,
   type RecordReceiptInput,
 } from "@/lib/services/receipt-service";
 import { fromThrown, type Result } from "@/lib/result";
@@ -55,6 +56,26 @@ export async function recordReceiptAction(
 export async function confirmReceiptAction(receiptId: string): Promise<Result> {
   try {
     const r = await confirmReceipt(receiptId);
+    if (r.ok) refresh();
+    return r.ok ? { ok: true, data: undefined, message: r.message } : r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Taking back money that had counted.
+ *
+ * Separate from rejection on purpose — see `reverseReceipt`. A rejected
+ * payment never arrived; a reversed one arrived and then failed, and the two
+ * read differently on a statement somebody may have to defend to a customer.
+ */
+export async function reverseReceiptAction(
+  receiptId: string,
+  reason: string,
+): Promise<Result> {
+  try {
+    const r = await reverseReceipt(receiptId, reason);
     if (r.ok) refresh();
     return r.ok ? { ok: true, data: undefined, message: r.message } : r;
   } catch (e) {

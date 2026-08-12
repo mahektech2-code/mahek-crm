@@ -628,6 +628,104 @@ export async function rejectReceipt(
   return ok({ receiptId }, `${rupees(Number(receipt.amount))} rejected`);
 }
 
+/**
+ * Taking back money that counted.
+ *
+ * A cheque clears and then bounces. The same transfer is entered twice. A
+ * receipt is applied to the wrong customer and both accounts are wrong until
+ * somebody says so. All of these are ordinary, and until now the only way to
+ * express any of them was `rejected` — which is a different fact and says so
+ * on the statement: "never arrived". A customer who paid, and whose payment
+ * later failed, must not be told on the one document they might dispute that
+ * their money was never seen.
+ *
+ * So it is its own status. Nothing else had to be taught about it: every money
+ * path in the app keys on `confirmed`, so a receipt that stops being confirmed
+ * stops counting everywhere at once — `paid_amount`, outstanding, the aging
+ * strip, the collections worklist, the slow-payer flag.
+ *
+ * WHAT IT DOES NOT DO IS DELETE. The row keeps its amount, its reference and
+ * its date, gains a reason, and stays on the customer's statement. A payment
+ * that arrived and was taken back is a fact about the account — dropping it
+ * leaves the next person wondering why the balance moved twice.
+ *
+ * ONLY A CONFIRMED RECEIPT CAN BE REVERSED. A reported one has not counted
+ * yet, so there is nothing to take back and `rejectReceipt` is the honest
+ * answer; being strict here is what keeps the two words meaning different
+ * things a year from now.
+ */
+export async function reverseReceipt(
+  receiptId: string,
+  reason: string,
+): Promise<Result<{ receiptId: string }>> {
+  // The same capability as confirming, and for the same reason: accounts hold
+  // the bank statement, and taking money back off an account is the same kind
+  // of decision as putting it on.
+  const ctx = await requireCapability("payment.confirm");
+
+  if (!reason.trim()) {
+    // Somebody has to ring the customer and say something, and "reversed" on
+    // its own gives them nothing to say. It also lands on the statement.
+    return err("Say why the payment is being reversed.", "validation", [
+      { field: "reason", message: "A reason is required." },
+    ]);
+  }
+
+  const [receipt] = await db
+    .select()
+    .from(paymentReceipts)
+    .where(eq(paymentReceipts.id, receiptId));
+  if (!receipt) return err("That receipt no longer exists.", "not_found");
+
+  if (receipt.status === "reversed") return ok({ receiptId }, "Already reversed");
+  if (receipt.status === "rejected") {
+    return err("That payment was already rejected — it never counted.", "validation");
+  }
+  if (receipt.status !== "confirmed") {
+    return err(
+      "Only a confirmed payment can be reversed. Reject it instead — it has not counted yet.",
+      "validation",
+    );
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(paymentReceipts)
+      .set({
+        status: "reversed",
+        // The same column rejection uses: one place a receipt says why it is
+        // not money, whichever way it stopped being money.
+        rejectReason: reason.trim(),
+        updatedById: ctx.user.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(paymentReceipts.id, receiptId));
+
+    await tx.insert(auditLog).values({
+      id: id("aud"),
+      actorId: ctx.user.id,
+      action: "payment.reverse",
+      entityType: "payment_receipt",
+      entityId: receiptId,
+      beforeState: { status: receipt.status } as never,
+      // The amount is written here rather than joined back later, exactly as
+      // rejection does: the log has to say what was taken back on its own.
+      afterState: {
+        status: "reversed",
+        reason: reason.trim(),
+        amount: Number(receipt.amount),
+      } as never,
+    });
+  });
+
+  // Giving the money back to the bills it settled is a rebuild, never a
+  // subtraction — which is what makes confirming, reversing and re-recording
+  // all land on the same answer.
+  await applyToLedger(receipt.customerId);
+
+  return ok({ receiptId }, `${rupees(Number(receipt.amount))} reversed`);
+}
+
 /** Bills a pending receipt names that no longer have room for its line. */
 async function staleLines(receiptId: string): Promise<string[]> {
   const rows = await db
@@ -777,6 +875,8 @@ export type LedgerEntry = {
   /** Paise taken off it. */
   credit: number;
   status: string | null;
+  /** Set on receipt lines only — what a reversal acts on. */
+  receiptId?: string;
   /** Running balance after this entry. Confirmed money only. */
   balance: number;
 };
@@ -853,6 +953,10 @@ export async function customerLedger(
     if (onAccount > 0) parts.push(`${rupees(onAccount)} on account`);
     if (r.status === "reported") parts.push("waiting for accounts");
     if (r.status === "rejected") parts.push(r.rejectReason ?? "rejected");
+    // Said in its own words. "Never arrived" would be wrong about a cheque
+    // that cleared and then bounced, and this is the document a customer
+    // disputes a balance against.
+    if (r.status === "reversed") parts.push(`reversed — ${r.rejectReason ?? "no reason recorded"}`);
     rows.push({
       at: r.receivedAt,
       sort: `${r.receivedAt}-1-${r.id}`,
@@ -867,6 +971,10 @@ export async function customerLedger(
       // the statement as a line worth nothing yet, which is what it is.
       credit: r.status === "confirmed" ? Number(r.amount) : 0,
       status: r.status,
+      // Carried so the statement can act on the line somebody is looking at.
+      // Reversing a payment starts with finding it, and this is where anybody
+      // looking for one already is.
+      receiptId: r.id,
     });
   }
 

@@ -763,6 +763,22 @@ let a customer take themselves off the list by saying they had paid, and the
 account would simply stop appearing. Reported money outranks a promise, because
 it is the better news; do-not-contact still outranks it.
 
+**Reversing is not rejecting, and the difference is what the statement says.**
+Rejecting means accounts looked for the money and never found it: it never
+counted, and the customer's statement reads "never arrived". Reversing means it
+counted and then failed — a cheque that cleared and bounced, the same transfer
+entered twice, a receipt applied to the wrong customer. Telling a customer who
+genuinely paid that their money was never seen is wrong on the one document
+they might dispute a balance against, so `reversed` is its own status.
+`reverseReceipt` takes the same capability as confirming, because taking money
+off an account is the same kind of decision as putting it on; it refuses a
+`reported` receipt outright, since nothing has counted yet and rejection is the
+honest answer. Nothing else had to be taught about it — every money path keys
+on `confirmed`, so a receipt that stops being confirmed stops counting
+everywhere at once. It is offered on the customer account statement, on the
+line itself, because reversing a payment begins with finding it and that is the
+screen somebody is already on.
+
 **Rejecting is not deleting.** The receipt keeps its row and its reason, gives
 the balance back to the bills it named, and returns the customer to the worklist
 with their stage floor intact. It lands on the timeline because somebody has to

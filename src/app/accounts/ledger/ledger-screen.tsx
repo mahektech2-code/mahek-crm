@@ -4,6 +4,8 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { ConfirmDialog } from "@/components/ui/overlays";
+import { reverseReceiptAction } from "@/lib/actions/payments";
 import { CustomerSearch } from "../customer-search";
 import { downloadCsv, toCsv } from "@/lib/csv";
 import { longDate, money, signedMoney } from "@/lib/format";
@@ -42,6 +44,7 @@ type LedgerEntry = {
   debit: number;
   credit: number;
   status: string | null;
+  receiptId?: string;
   balance: number;
 };
 
@@ -55,16 +58,26 @@ type Ledger = {
 };
 
 export function LedgerScreen({
+  canReverse,
   ledger,
   from,
   to,
 }: {
+  /**
+   * Whether this person may take back money that has counted. The same
+   * capability as confirming it — accounts hold the bank statement, and
+   * taking money off an account is the same kind of decision as putting it on.
+   */
+  canReverse: boolean;
   ledger: Ledger | null;
   from: string;
   to: string;
 }) {
   const router = useRouter();
-  const { push } = useToast();
+  const { push, run } = useToast();
+  /* Which receipt is being reversed, and why. */
+  const [reversing, setReversing] = React.useState<LedgerEntry | null>(null);
+  const [reason, setReason] = React.useState("");
   const [page, setPage] = React.useState(1);
   const [perPage, setPerPage] = React.useState(25);
 
@@ -247,7 +260,11 @@ export function LedgerScreen({
               ) : null}
 
               {shown.map((e, i) => {
-                const dead = e.status === "rejected";
+                // Both stop counting; they are not the same event and the
+                // statement must not call them the same thing.
+                const rejected = e.status === "rejected";
+                const reversed = e.status === "reversed";
+                const dead = rejected || reversed;
                 return (
                   <Row key={`${e.at}-${e.ref}-${i}`} striped={i % 2 === 1}>
                     <Cell className={dead ? "text-muted line-through" : undefined}>
@@ -269,7 +286,28 @@ export function LedgerScreen({
                         {e.status === "reported" ? (
                           <Pill tone="warn">with accounts</Pill>
                         ) : null}
-                        {dead ? <Pill tone="danger">never arrived</Pill> : null}
+                        {rejected ? <Pill tone="danger">never arrived</Pill> : null}
+                        {reversed ? <Pill tone="danger">reversed</Pill> : null}
+                        {/*
+                          Offered on the line itself, because reversing a
+                          payment begins with finding it and this is the screen
+                          somebody is already on when they do. Only on money
+                          that actually counted: a reported receipt has not
+                          counted yet and is rejected instead, which is a
+                          different word for a different fact.
+                        */}
+                        {canReverse && e.kind === "receipt" && e.status === "confirmed" && e.receiptId ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setReason("");
+                              setReversing(e);
+                            }}
+                            className="cursor-pointer rounded-[4px] border border-line px-2 py-0.5 text-[11px] font-medium text-body hover:bg-canvas"
+                          >
+                            Reverse
+                          </button>
+                        ) : null}
                       </span>
                     </td>
                     <Cell align="right" className={dead ? "line-through" : undefined}>
@@ -316,6 +354,32 @@ export function LedgerScreen({
           </div>
         ) : null}
       </div>
+
+      {/*
+        A reason is required and it goes on the statement, because somebody has
+        to ring the customer and say something — and because the next person to
+        open this account needs to know why the balance moved twice.
+      */}
+      <ConfirmDialog
+        // Keyed so it opens with an empty box each time rather than resetting
+        // in an effect.
+        key={reversing?.receiptId ?? "none"}
+        open={Boolean(reversing)}
+        title={`Reverse ${reversing ? money(reversing.credit) : ""}?`}
+        body="The receipt keeps its row on this statement and the money goes back onto the bills it settled. Use this when a payment counted and then failed — a bounced cheque, a duplicate entry, money applied to the wrong customer. If accounts simply never found it, reject it instead."
+        confirmLabel="Reverse payment"
+        destructive
+        needsReason
+        onClose={() => setReversing(null)}
+        onConfirm={async (why) => {
+          if (!reversing?.receiptId) return;
+          const result = await run(reverseReceiptAction(reversing.receiptId, why));
+          if (result.ok) {
+            setReversing(null);
+            router.refresh();
+          }
+        }}
+      />
     </div>
   );
 }
