@@ -67,6 +67,7 @@ import {
 } from "@/lib/recompute";
 import { addDays } from "@/lib/business-date";
 import { updateAccountManagers } from "@/lib/actions/account-manager";
+import { reverseReceiptAction } from "@/lib/actions/payments";
 import { getQueue } from "@/lib/services/queue-service";
 import { saveInteraction } from "@/lib/services/interaction-service";
 import { seedCatalogue } from "@/db/seed-catalogue";
@@ -5620,5 +5621,111 @@ describe("choosing an account manager", () => {
       .from(customerAmChanges)
       .where(eq(customerAmChanges.customerId, customer.id));
     assert.equal(rows.length, 2, "the second move left no history");
+  });
+});
+
+describe("reversing a payment that had counted", () => {
+  /** One bill, open, with a due date already past. */
+  async function makeBill(customerId: string, over: { amount: number }) {
+    const [row] = await db
+      .insert(bills)
+      .values({
+        id: id("bil"),
+        customerId,
+        billNo: `MMI/${randomUUID().slice(0, 6)}`,
+        billDate: addDays(TODAY, -40),
+        dueDate: addDays(TODAY, -10),
+        amount: over.amount,
+        paidAmount: 0,
+      })
+      .returning();
+    await recomputeBillStatuses();
+    await recomputeOutstanding(customerId);
+    return row;
+  }
+
+  test("the money goes back on the bill, and the receipt keeps its row", async () => {
+    // A cheque clears and then bounces. Until now the only word for it was
+    // "rejected", which says on the statement that the money never arrived —
+    // wrong about a payment the customer genuinely made.
+    const customer = await makeCustomer(priya.id);
+    const bill = await makeBill(customer.id, { amount: 10_000_00 });
+
+    setTestUser(deepa);
+    const receipt = await recordReceipt({
+      customerId: customer.id,
+      amount: 10_000_00,
+      receivedAt: TODAY,
+      mode: "Cheque",
+      reference: "CHQ-88231",
+      allocation: "auto",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(receipt.ok, true, receipt.ok ? "" : receipt.error);
+
+    const [settled] = await db.select().from(bills).where(eq(bills.id, bill.id));
+    assert.equal(settled.paidAmount, 10_000_00, "the bill was not settled to begin with");
+
+    const reversed = await reverseReceiptAction(
+      receipt.ok ? receipt.data.receiptId : "",
+      "Cheque bounced",
+    );
+    assert.equal(reversed.ok, true, reversed.ok ? "" : reversed.error);
+    setTestUser(priya);
+
+    // The money comes back to the bill it settled — a rebuild, not a
+    // subtraction, which is why it lands on the same answer every time.
+    const [owing] = await db.select().from(bills).where(eq(bills.id, bill.id));
+    assert.equal(owing.paidAmount, 0, "the money did not come back");
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.outstanding, 10_000_00, "outstanding did not follow");
+
+    // The receipt is kept, not deleted. A payment that arrived and was taken
+    // back is a fact about the account.
+    const [row] = await db
+      .select()
+      .from(paymentReceipts)
+      .where(eq(paymentReceipts.id, receipt.ok ? receipt.data.receiptId : ""));
+    assert.ok(row, "the receipt was deleted");
+    assert.equal(row.status, "reversed", "and it is not the same as rejected");
+    assert.equal(row.rejectReason, "Cheque bounced");
+    assert.equal(row.amount, 10_000_00, "it keeps what it was worth");
+  });
+
+  test("a reason is required, and only confirmed money can be reversed", async () => {
+    const customer = await makeCustomer(priya.id);
+    await makeBill(customer.id, { amount: 5_000_00 });
+
+    // A telecaller's claim has not counted yet, so there is nothing to take
+    // back — rejecting it is the honest answer, and being strict here is what
+    // keeps the two words meaning different things.
+    const reported = await recordReceipt({
+      customerId: customer.id,
+      amount: 5_000_00,
+      receivedAt: TODAY,
+      mode: "Cash",
+      allocation: "auto",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(reported.ok, true, reported.ok ? "" : reported.error);
+    const reportedId = reported.ok ? reported.data.receiptId : "";
+
+    setTestUser(deepa);
+    const noReason = await reverseReceiptAction(reportedId, "   ");
+    assert.equal(noReason.ok, false, "a reversal with no reason was accepted");
+
+    const notCounted = await reverseReceiptAction(reportedId, "Bounced");
+    assert.equal(notCounted.ok, false, "a reported payment was reversed");
+    setTestUser(priya);
+
+    const [row] = await db
+      .select()
+      .from(paymentReceipts)
+      .where(eq(paymentReceipts.id, reportedId));
+    assert.equal(row.status, "reported", "and its status was changed anyway");
   });
 });

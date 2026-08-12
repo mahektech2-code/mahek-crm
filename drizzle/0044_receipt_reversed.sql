@@ -1,0 +1,23 @@
+-- Money that arrived and then did not.
+--
+-- `rejected` already exists and already gives the balance back, so the
+-- MECHANISM for undoing a confirmed receipt has been there all along — what is
+-- missing is a word for it, and a word matters here because the customer
+-- statement is read by people ringing customers.
+--
+--   rejected   accounts looked for the money and never found it. It never
+--              counted, and the statement says "never arrived".
+--   reversed   it counted. The cheque cleared and then bounced, or the same
+--              transfer was entered twice, or it was applied to the wrong
+--              customer and somebody has to take it back off them.
+--
+-- Calling the second one "never arrived" would be a lie on the one document
+-- that has to be right when a customer disputes their balance.
+--
+-- NOTHING HERE USES THE NEW VALUE. Postgres refuses to let a value added to an
+-- enum be used in the transaction that added it (55P04), and drizzle-kit
+-- applies every pending migration in ONE transaction — which is how
+-- `0039_orders_source_mbos` had to be written around the same rule. There is
+-- no backfill to do: no existing receipt is a reversal, because until now
+-- there was no way to make one.
+ALTER TYPE "receipt_status" ADD VALUE IF NOT EXISTS 'reversed';

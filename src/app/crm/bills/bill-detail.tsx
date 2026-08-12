@@ -276,6 +276,10 @@ const RECEIPT_LABEL: Record<BillDetail["receipts"][number]["status"], string> = 
   reported: "Reported",
   confirmed: "Confirmed",
   rejected: "Rejected",
+  // Money that counted and was taken back — a bounced cheque, a duplicate, a
+  // receipt applied to the wrong customer. Not the same as rejected, which
+  // means it was never found in the first place.
+  reversed: "Reversed",
 };
 
 const days = (n: number) => `${n} day${n === 1 ? "" : "s"}`;

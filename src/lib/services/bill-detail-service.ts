@@ -110,7 +110,7 @@ export type BillDetail = {
     amount: number;
     mode: string;
     reference: string | null;
-    status: "reported" | "confirmed" | "rejected";
+    status: "reported" | "confirmed" | "rejected" | "reversed";
   }>;
 };
 

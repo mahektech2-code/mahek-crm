@@ -204,6 +204,18 @@ export const receiptStatusEnum = pgEnum("receipt_status", [
   "reported",
   "confirmed",
   "rejected",
+  /**
+   * Money that counted and then did not — a cheque that cleared and bounced,
+   * the same transfer entered twice, money applied to the wrong customer.
+   *
+   * Deliberately not `rejected`. That one means accounts looked and never
+   * found it, so it never counted and the statement says "never arrived";
+   * saying that about a payment the customer genuinely made and that genuinely
+   * failed later is wrong on the one document that has to hold up when a
+   * balance is disputed. Every money path keys on `confirmed`, so a reversal
+   * stops counting without anything else being taught about it.
+   */
+  "reversed",
 ]);
 
 /** Three stored values only. "Due" and "overdue" are derived on read. */
