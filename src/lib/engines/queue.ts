@@ -449,10 +449,18 @@ function laterOf(a: BusinessDate | null, b: BusinessDate): BusinessDate {
  */
 function routineDayFor(cycleDays: number, config: QueueConfig): number {
   /*
-   * A customer who buys every fortnight or less gets NO routine call. They
-   * are in contact constantly through the orders themselves, and a call in
-   * between is noise on both sides of the phone. Their first reason is the
-   * due date itself.
+   * A customer who buys every fortnight or less gets NO stock-check call, and
+   * this is the ONLY thing a short cycle costs them. Their order is chased on
+   * their own due date exactly like everybody else's — the quiet window is
+   * capped at their cycle so that it cannot run past it.
+   *
+   * What they lose is the call BEFORE the order is due, which asks what they
+   * have left on the shelf. Somebody buying every week already knows, and is in
+   * contact constantly through the orders themselves, so it is noise on both
+   * sides of the phone.
+   *
+   * Returning the cycle itself is what withholds it: the first day an order
+   * reason can fire becomes the due date, never earlier.
    */
   if (cycleDays <= config["queue.routineMinCycleDays"]) return cycleDays;
 
@@ -471,6 +479,17 @@ function routineDayFor(cycleDays: number, config: QueueConfig): number {
     1,
     Math.round((cycleDays * config["queue.routineCallPercent"]) / 100),
   );
+}
+
+/**
+ * How long after an order this customer is left alone.
+ *
+ * The configured window, or their own cycle where that is shorter and measured.
+ */
+function quietDaysFor(c: QueueCandidate, config: QueueConfig): number {
+  const quiet = config["queue.quietDaysAfterOrder"];
+  if (c.cycleIsDefault) return quiet;
+  return Math.min(quiet, c.cycleDays);
 }
 
 /**
@@ -529,10 +548,28 @@ function isOrderChasing(kind: QueueReasonKind): boolean {
 /**
  * Why order chasing is held back today, or null if it is not.
  *
- * A customer reordering faster than this window is serving themselves and a
- * call asking for an order adds nothing. They can still be LATE by their own
- * cycle while inside it, which is why this returns a sentence: the screen
- * shows it rather than dropping them without explanation.
+ * A customer who ordered days ago is serving themselves and a call asking for
+ * another order adds nothing. They can still be LATE by their own cycle while
+ * inside the window, which is why this returns a sentence: the screen shows it
+ * rather than dropping them without explanation.
+ *
+ * THE WINDOW NEVER OUTLASTS THE CUSTOMER'S OWN DUE DATE.
+ *
+ * It is a flat fifteen days, and cycles are not — so on anybody who reorders
+ * faster than that it used to run past the day their order was actually due.
+ * A seven-day buyer was held until day 15: a whole cycle missed, and the call
+ * that finally came was eight days late. The people ordering most often were
+ * the ones chased last, which is backwards, and the orders it lost were real.
+ *
+ * Capping it at the cycle makes every customer the same rule — quiet until
+ * their order is due, chased from the day it is. What a short cycle still does
+ * NOT get is the stock check, and that is now the only difference: see
+ * `routineDayFor`. A call before the order is due asks what they have left on
+ * the shelf, and somebody buying every week already knows.
+ *
+ * Only a MEASURED cycle caps it. A guessed one is not a due date, and shrinking
+ * a real window on the strength of a number nobody measured would chase people
+ * on the strength of a default.
  */
 function quietWindow(
   c: QueueCandidate,
@@ -541,7 +578,7 @@ function quietWindow(
   hasReminderReason: boolean,
 ): string | null {
   if (!c.lastOrderDate || hasReminderReason) return null;
-  const quiet = config["queue.quietDaysAfterOrder"];
+  const quiet = quietDaysFor(c, config);
   const sinceOrder = daysBetween(c.lastOrderDate, today);
   if (sinceOrder >= quiet) return null;
   const left = quiet - sinceOrder;

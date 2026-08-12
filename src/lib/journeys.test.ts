@@ -2852,12 +2852,39 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     );
   });
 
-  test("late by their own cycle but inside the quiet window is held back visibly", async () => {
+  test("a short-cycle customer past their due date is CALLED, not held to day 15", async () => {
+    // The flat fifteen-day window used to run past the due date of anybody who
+    // reorders faster than that. An eight-day buyer twelve days out was four
+    // days late and silent for three more — the customers ordering most often
+    // chased last, and real orders lost. The window is capped at their cycle.
     const customer = await makeCustomer(priya.id, {
       lastOrderDate: addDays(TODAY, -12),
-      // Contacted yesterday, so no check-in is due to carry them onto the list.
+      // Contacted yesterday, so no check-in could carry them onto the list —
+      // the order reason is doing this on its own.
       lastContactDate: addDays(TODAY, -1),
       cycleDays: 8,
+      cycleIsDefault: false,
+    });
+    const q = await getQueue();
+    assert.equal(
+      q.suppressed.some((x) => x.customerId === customer.id),
+      false,
+      "not held back",
+    );
+    const entry = q.entries.find((e) => e.customerId === customer.id);
+    assert.ok(entry, "four days past an eight-day cycle is exactly who to ring");
+    assert.ok(entry.reasons.some((r) => r.kind.startsWith("order")));
+  });
+
+  test("a stock check inside the quiet window is held back visibly", async () => {
+    // Sixteen days, twelve out: 70% of 16 is 11, so the stock check has come
+    // due and the window still has three days to run. The one shape that
+    // produces the held-back sentence now that the window cannot outlast a
+    // customer's own due date.
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -12),
+      lastContactDate: addDays(TODAY, -1),
+      cycleDays: 16,
       cycleIsDefault: false,
     });
     const q = await getQueue();

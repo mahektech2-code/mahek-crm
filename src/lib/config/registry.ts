@@ -89,7 +89,7 @@ export const SETTINGS = [
     category: "queue",
     label: "Quiet days after an order",
     description:
-      "Never chase an order inside this many days of the last one. A customer reordering faster than this is serving themselves, and a call adds nothing. Reminders still fire \u2014 a callback the customer asked for is not chasing.",
+      "Never chase an order inside this many days of the last one. Somebody who ordered days ago is serving themselves and a call asking for another adds nothing. CAPPED AT THE CUSTOMER\u2019S OWN CYCLE where that is shorter and measured \u2014 a flat window longer than somebody\u2019s cycle held the people who order most often off the list until after their order was due, which is backwards and lost real orders. Reminders still fire: a callback the customer asked for is not chasing.",
     default: 15,
     min: 0,
     max: 90,
@@ -111,7 +111,7 @@ export const SETTINGS = [
     category: "queue",
     label: "Shortest cycle that earns a routine call",
     description:
-      "Above this many days, a customer gets a stock-check call before their order is due. At or below it they do not: somebody buying every fortnight is in contact constantly through the orders themselves, and a call in between is noise on both sides of the phone.",
+      "Above this many days, a customer gets a stock-check call before their order is due. At or below it they do not, and that is the ONLY thing a short cycle costs them \u2014 their order is still chased on their own due date like everybody else\u2019s. The call they lose asks what they have left on the shelf, and somebody buying every week already knows.",
     default: 15,
     min: 0,
     max: 120,
