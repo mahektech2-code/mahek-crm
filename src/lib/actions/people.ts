@@ -157,6 +157,12 @@ export async function setUserRole(
 /**
  * Deactivation is a status, never a deletion — the same rule customers follow.
  * A leaver's calls, orders and audit trail outlive their login.
+ *
+ * Their APPS outlive it too. Disabling is about whether the person can sign in,
+ * not about what they would find if they did — somebody disabled for a month's
+ * leave comes back to the book they left, and a leaver's grants are still the
+ * record of what they could reach. Taking the apps away is a separate decision,
+ * made on the Access screen, and conflating the two would silently destroy it.
  */
 export async function setUserActive(
   userId: string,
@@ -180,10 +186,35 @@ export async function setUserActive(
     return fail("You cannot deactivate your own account.");
   }
 
-  await db.update(users).set({ active, updatedAt: new Date() }).where(eq(users.id, userId));
+  const ended = await db.transaction(async (tx) => {
+    await tx.update(users).set({ active, updatedAt: new Date() }).where(eq(users.id, userId));
+    if (active) return 0;
+    /*
+     * Sessions go with the account.
+     *
+     * `getCurrentUser` already refuses an inactive account, so a live tab stops
+     * working on its next request either way — this is not what makes disabling
+     * safe. It is that a session row is good for thirty days, and a leaver's
+     * sitting in the table for a month is a thing somebody has to reason about
+     * later. Disabling should leave nothing to reason about.
+     */
+    const gone = await tx
+      .delete(sessions)
+      .where(eq(sessions.userId, userId))
+      .returning({ id: sessions.id });
+    return gone.length;
+  });
+
   await audit(actor.id, active ? "reactivate-user" : "deactivate-user", userId, before.name);
   refresh();
-  return ok(null, `${before.name} ${active ? "reactivated" : "deactivated"}.`);
+  return ok(
+    null,
+    active
+      ? `${before.name} can sign in again, and opens what they opened before.`
+      : `${before.name} can no longer sign in.` +
+        (ended ? ` ${ended} open session${ended === 1 ? "" : "s"} ended.` : "") +
+        " Their apps are kept, so enabling them again restores what they had.",
+  );
 }
 
 /** Name, work number and sign-in address. Never the password. */
