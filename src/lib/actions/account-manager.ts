@@ -70,6 +70,23 @@ const schema = z.object({
    */
   salesAmId: z.string().min(1).nullable().optional(),
   /**
+   * The sales seat, where the person who sells has no login.
+   *
+   * Four of the biggest salespeople on this book are exactly that: Prakash
+   * Vasudev Prasad (301 accounts), Rahul Richhariya (147), Bharat Singh (73)
+   * and Sanjay Kumar Samantaray (25) are all current employees and none of
+   * them has ever signed in. Refusing to record them meant the true answer
+   * could not be written down at all, and the sheet's name stayed the only
+   * place it existed.
+   *
+   * WHAT IT COSTS, and why the screen says so: `sales_am_id` is what
+   * `ASSIGNED_TO_SQL` reads, so a customer whose sales seat holds a NAME is
+   * on nobody's calling queue and nobody's collections list. That is the
+   * honest state of an account whose salesperson cannot sign in — better said
+   * out loud than hidden behind a login that belongs to somebody else.
+   */
+  salesEmployeeId: z.string().min(1).optional(),
+  /**
    * The back office seat takes a PERSON, who may not have a login.
    *
    * `user` is an account; `employee` is somebody on the HRMS master, stored as
@@ -111,7 +128,14 @@ export async function updateAccountManagers(
     const ctx = await requireCapability("customer.reassign");
     const config = await getConfig();
 
-    const changingSales = input.salesAmId !== undefined;
+    const changingSales =
+      input.salesAmId !== undefined || input.salesEmployeeId !== undefined;
+    if (input.salesAmId && input.salesEmployeeId) {
+      return err(
+        "A sales manager is one person: an account or an employee, not both.",
+        "validation",
+      );
+    }
     const changingBackOffice = input.backOffice !== undefined;
     if (!changingSales && !changingBackOffice) {
       return err("Pick at least one account manager to change.", "validation");
@@ -191,6 +215,24 @@ export async function updateAccountManagers(
      * name, so a caller cannot write arbitrary text into a column the screens
      * display, and a leaver cannot be assigned by an old browser tab.
      */
+    let salesEmployeeName: string | null = null;
+    if (input.salesEmployeeId) {
+      const [staff] = await db
+        .select({ name: employees.name })
+        .from(employees)
+        .where(
+          and(eq(employees.id, input.salesEmployeeId), eq(employees.status, "active")),
+        )
+        .limit(1);
+      if (!staff) {
+        return err(
+          "That employee is no longer on the current staff list.",
+          "validation",
+        );
+      }
+      salesEmployeeName = staff.name;
+    }
+
     let backOfficeEmployeeName: string | null = null;
     if (input.backOffice?.kind === "employee") {
       const [staff] = await db
@@ -264,8 +306,20 @@ export async function updateAccountManagers(
 
         if (changingSales) {
           const from = salesIdOf(row);
-          const to = input.salesAmId ?? null;
-          if (from !== to) {
+          // An employee holds the seat by NAME and takes no id with them.
+          const to = salesEmployeeName ? null : (input.salesAmId ?? null);
+          const toName = salesEmployeeName ?? (to ? (nameById.get(to) ?? null) : null);
+          /*
+           * The ID decides while there is one. Names only decide where both
+           * sides are name-only — employee to employee is null → null on the
+           * id and a real change to the person.
+           *
+           * Comparing names unconditionally made re-picking the account that
+           * was already there read as a move, because the stored mirror can
+           * be null while the account has a name. A no-op must write no
+           * history and notify nobody.
+           */
+          if (from !== to || (to === null && (row.salesPersonName ?? null) !== toName)) {
             changed = true;
             // A lead answers to its owner; a customer to its sales AM. Both
             // are written on a customer so the fallback in `ASSIGNED_TO_SQL`
@@ -274,7 +328,7 @@ export async function updateAccountManagers(
             else values.salesAmId = to;
             // The mirror moves with the id, or the screens keep showing the
             // sheet's name and the reassignment looks like it failed.
-            values.salesPersonName = to ? (nameById.get(to) ?? null) : null;
+            values.salesPersonName = toName;
             history.push({
               id: id("amc"),
               customerId: row.id,
@@ -282,7 +336,7 @@ export async function updateAccountManagers(
               fromUserId: from,
               fromName: row.salesPersonName,
               toUserId: to,
-              toName: to ? (nameById.get(to) ?? null) : null,
+              toName,
               reasonCode: input.sales!.reasonCode,
               note: input.sales!.note?.trim() || null,
               changedById: ctx.user.id,
@@ -305,7 +359,7 @@ export async function updateAccountManagers(
            */
           const fromName = row.backOfficeName;
           const toName = backOfficeTarget.name;
-          if (from !== to || (fromName ?? null) !== (toName ?? null)) {
+          if (from !== to || (to === null && (fromName ?? null) !== (toName ?? null))) {
             changed = true;
             values.backOfficeAmId = to;
             values.backOfficeName = toName;
