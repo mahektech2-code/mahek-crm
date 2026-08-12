@@ -100,6 +100,7 @@ export const SOURCE_WORDS: Record<string, string> = {
   bills_screen: "Entered against a bill",
   accounts: "Entered by accounts",
   sheet_import: "From the payment sheet",
+  tally_receipts: "From Tally's receipt register",
 };
 
 export const QUEUE_COPY: Record<
