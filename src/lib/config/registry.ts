@@ -106,6 +106,28 @@ export const SETTINGS = [
     max: 100,
   },
   {
+    key: "queue.routineConfidenceSwing",
+    type: "integer",
+    category: "queue",
+    label: "How far confidence moves the stock-check call",
+    description:
+      "Percentage points, either way. The stock check lands at the routine percentage of the cycle, moved later for a customer whose cycle is predictable and earlier for one whose is not — a swing of 10 puts a perfectly regular customer at 80% of their cycle and an erratic one at 60%. A date computed from 29, 30, 31 days is worth calling on; one computed from 15, 45, 22, 60 is a guess, and a guess is worth a wider net. Zero keeps the flat percentage for everybody.",
+    default: 10,
+    min: 0,
+    max: 40,
+  },
+  {
+    key: "queue.orderValueLookbackDays",
+    type: "integer",
+    category: "queue",
+    label: "Order history read for what a call is worth",
+    description:
+      "Days of order history behind the typical order value that ranks the call list. A year covers a seasonal book without letting a customer’s size three years ago decide today’s order of calling.",
+    default: 365,
+    min: 30,
+    max: 1825,
+  },
+  {
     key: "queue.routineMinCycleDays",
     type: "integer",
     category: "queue",
@@ -1926,6 +1948,8 @@ export type Config = {
   "queue.maxSizePerUser": number;
   "queue.tierWeights": Record<QueueReasonKind, number>;
   "queue.routineCallPercent": number;
+  "queue.routineConfidenceSwing": number;
+  "queue.orderValueLookbackDays": number;
   "queue.routineMinCycleDays": number;
   "queue.outcomeCooldownDays": Record<string, number>;
   "queue.noAnswerRetryHours": number;

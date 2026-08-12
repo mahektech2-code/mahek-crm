@@ -16,7 +16,9 @@ import {
   buildQueue,
   type QueueCandidate,
   type QueueResult,
+  callValuePaise,
 } from "../engines/queue";
+import { orderCountsSql } from "../order-status";
 import { today } from "../recompute";
 import { getPaymentFollowUpPlan } from "./payment-service";
 import {
@@ -113,6 +115,28 @@ async function queueInputs(ids: string[] | null, day: string) {
         nullif(customers.sales_person_name, ''),
         (select name from users u where u.id = ${ASSIGNED_TO_SQL})
       )`,
+      /*
+       * What this customer's order is usually worth, in paise.
+       *
+       * The MEDIAN, not the average: one drum bought for a job that never
+       * repeated should not decide where a shop sits on the calling list for
+       * a year, and an average is exactly how it would.
+       *
+       * Approved orders only — `orderCountsSql` is the single definition of
+       * "did the business sell anything", and a declined order was never a
+       * sale. Null where there is no history at all, which is a prospect, and
+       * they are ranked by the reason rather than by a figure we do not have.
+       *
+       * `customers.id` spelled out for the reason the comment above says: a
+       * bare `id` inside a correlated subquery binds to the inner table.
+       */
+      typicalOrderPaise: sql<number>`coalesce((
+        select percentile_cont(0.5) within group (order by o.total_amount)
+          from ${orders} o
+         where o.customer_id = customers.id
+           and ${orderCountsSql("o")}
+           and o.ordered_at >= now() - make_interval(days => ${config["queue.orderValueLookbackDays"]})
+      ), 0)::bigint`,
       openComplaint: sql<string | null>`(
         select c.description from complaints c
          where c.customer_id = customers.id
@@ -272,6 +296,7 @@ async function queueInputs(ids: string[] | null, day: string) {
       noAnswerCount,
       lastNoAnswerAt,
       openOrderStatus,
+      typicalOrderPaise,
     }) => ({
       customerId: c.id,
       name: c.name,
@@ -279,6 +304,8 @@ async function queueInputs(ids: string[] | null, day: string) {
       lastOrderDate: c.lastOrderDate,
       cycleDays: c.cycleDays,
       cycleIsDefault: c.cycleIsDefault,
+      cycleConfidence: c.cycleConfidence,
+      typicalOrderPaise: Number(typicalOrderPaise ?? 0),
       lastContactDate: c.lastContactDate,
       // In the business's own zone, never UTC. `toISOString()` on a
       // timestamptz is the same bug as a bare `::date` in SQL wearing different
@@ -421,6 +448,16 @@ async function settleDayList(
           ? row.reasons
           : stillLive.reasons) as QueueResult["entries"][number]["reasons"],
         outstanding: candidate.outstanding,
+        // Recomputed from the settled reason against today's figures. The
+        // RANK is frozen — a customer is not re-ranked mid-morning because
+        // their outstanding moved — so this only ever describes the row; it
+        // does not move it.
+        callValue: callValuePaise(
+          (row.reasons[0]?.kind ?? stillLive.reasons[0].kind) as Parameters<
+            typeof callValuePaise
+          >[0],
+          candidate,
+        ),
         targetGap: candidate.targetGap,
         daysSinceContact: stillLive.daysSinceContact,
       });

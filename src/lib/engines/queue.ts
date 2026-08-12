@@ -23,6 +23,26 @@ export type QueueCandidate = {
   /** From E1. */
   cycleDays: number;
   cycleIsDefault: boolean;
+  /**
+   * How PREDICTABLE that cycle is, 0-100, and null where it was guessed.
+   *
+   * Two customers can both average thirty days and be nothing alike: one
+   * orders every 29, 30, 31 days, the other after 15, then 45, then 22, then
+   * 60. The average is identical and only one of them has a date worth
+   * calling on. It was computed, stored and displayed, and nothing acted on
+   * it.
+   */
+  cycleConfidence: number | null;
+  /**
+   * What this customer's order is usually worth, in paise — the median of
+   * their recent approved orders, so one freak order does not decide where
+   * they sit on the list for a year.
+   *
+   * Their OWN history, never a figure derived from the catalogue: the product
+   * master carries no prices, `canValueOrders()` answers no, and a confident
+   * wrong number would be worse here than no number at all.
+   */
+  typicalOrderPaise: number;
 
   lastContactDate: BusinessDate | null;
   /** Falls back to record creation when a customer has never been contacted. */
@@ -89,6 +109,13 @@ export type QueueEntry = {
   /** Every reason the customer qualified, highest weight first. */
   reasons: QueueReason[];
   outstanding: number;
+  /**
+   * What this call is worth, in paise — the debt on a collections call, the
+   * order on a sales one, discounted by cycle confidence where the reason is
+   * a prediction. It orders the list within a reason, and the screen can show
+   * it, so a telecaller can see why one row sits above another.
+   */
+  callValue: number;
   targetGap: number;
   daysSinceContact: number | null;
 };
@@ -118,6 +145,7 @@ export type QueueConfig = Pick<
   | "queue.leadMaxDays"
   | "queue.noOrderCooldownDays"
   | "queue.routineCallPercent"
+  | "queue.routineConfidenceSwing"
   | "queue.routineMinCycleDays"
   | "queue.outcomeCooldownDays"
   | "queue.noAnswerRetryHours"
@@ -166,6 +194,7 @@ export function buildQueue(
         score: unreachable.weight,
         reasons: [unreachable],
         outstanding: c.outstanding,
+        callValue: callValuePaise(unreachable.kind, c),
         targetGap: c.targetGap,
         daysSinceContact: c.lastContactDate
           ? daysBetween(c.lastContactDate, today)
@@ -215,6 +244,9 @@ export function buildQueue(
       score: reasons[0].weight,
       reasons,
       outstanding: c.outstanding,
+      // The leading reason decides which question "what is this worth" is
+      // asking, so it is read after the sort, never before it.
+      callValue: callValuePaise(reasons[0].kind, c),
       targetGap: c.targetGap,
       daysSinceContact: c.lastContactDate
         ? daysBetween(c.lastContactDate, today)
@@ -232,9 +264,23 @@ export function buildQueue(
   };
 }
 
-/** Tie-breakers, in the specified order. */
+/**
+ * Why first, then what it is worth.
+ *
+ * The tier weight decides the order of REASONS and it is untouched: a promise
+ * still beats an order due, which still beats a stock check. What changed is
+ * the order within a reason. It was "who owes the most money", which is a
+ * collections answer given to a sales question — among twenty customers all
+ * due to order, the one who owes most is not the one to ring first, and a
+ * telecaller working top-down spent the morning in the wrong half of the book.
+ *
+ * `callValue` asks the question the reason is actually about. Outstanding
+ * stays below it as a further tie-break, where it costs nothing and settles
+ * two customers whose orders are worth the same.
+ */
 function compareEntries(a: QueueEntry, b: QueueEntry): number {
   if (b.score !== a.score) return b.score - a.score;
+  if (b.callValue !== a.callValue) return b.callValue - a.callValue;
   if (b.outstanding !== a.outstanding) return b.outstanding - a.outstanding;
   if (b.targetGap !== a.targetGap) return b.targetGap - a.targetGap;
   const aContact = a.daysSinceContact ?? Number.MAX_SAFE_INTEGER;
@@ -327,7 +373,7 @@ function reasonsFor(
     const expected = addDays(c.lastOrderDate, c.cycleDays);
     const sinceOrder = daysBetween(c.lastOrderDate, today);
 
-    if (sinceOrder >= routineDayFor(c.cycleDays, config)) {
+    if (sinceOrder >= routineDayFor(c.cycleDays, c.cycleConfidence, config)) {
       if (today > expected) {
         const overdueDays = daysBetween(expected, today);
         const cyclesMissed = Math.floor(overdueDays / Math.max(1, c.cycleDays));
@@ -447,7 +493,11 @@ function laterOf(a: BusinessDate | null, b: BusinessDate): BusinessDate {
  * is what lets the screen say "held back until day 15" instead of silently
  * omitting a customer who is late by their own reckoning.
  */
-function routineDayFor(cycleDays: number, config: QueueConfig): number {
+function routineDayFor(
+  cycleDays: number,
+  confidence: number | null,
+  config: QueueConfig,
+): number {
   /*
    * A customer who buys every fortnight or less gets NO stock-check call, and
    * this is the ONLY thing a short cycle costs them. Their order is chased on
@@ -475,10 +525,89 @@ function routineDayFor(cycleDays: number, config: QueueConfig): number {
    * the warning, which is backwards. A long cycle is exactly where the
    * estimate is loosest and the notice should be longest.
    */
-  return Math.max(
-    1,
-    Math.round((cycleDays * config["queue.routineCallPercent"]) / 100),
+  /*
+   * ...and it moves with how predictable that cycle is.
+   *
+   * A date computed from 29, 30, 31 days is worth calling ON. A date computed
+   * from 15, 45, 22, 60 is a guess dressed up as a date, and the honest
+   * response to a guess is a wider net — ring earlier, because the real
+   * order could come at any point either side of it.
+   *
+   * So a perfectly regular customer is called LATER, closer to the day they
+   * actually order, which is the call least likely to be wasted; an erratic
+   * one is called earlier. Fifty is neutral and leaves the flat percentage
+   * exactly where it was, so a swing of zero restores the old behaviour for
+   * everybody.
+   */
+  const swing = config["queue.routineConfidenceSwing"];
+  const adjust = ((confidence ?? 50) - 50) / 50;
+  const percent = clampPercent(
+    config["queue.routineCallPercent"] + adjust * swing,
   );
+
+  return Math.max(1, Math.round((cycleDays * percent) / 100));
+}
+
+/** The registry's own bounds on the routine percentage, honoured after a swing. */
+function clampPercent(percent: number): number {
+  return Math.min(100, Math.max(10, percent));
+}
+
+/* ---------------------------------------------------------------------------
+ * What a call is worth.
+ *
+ * The list is ordered by WHY the call is being made — that is the tier
+ * weight, and it does not move. This decides the order WITHIN a reason, and it
+ * used to be "who owes the most money", which is a collections answer given to
+ * a sales question: among twenty customers all due to order, the one who owes
+ * most is not the one worth ringing first.
+ *
+ * Two different questions, and the reason says which one to ask:
+ *
+ *   A COLLECTIONS call is worth the debt. That figure is certain — the
+ *   money is owed — so it is used as it stands.
+ *
+ *   A SALES call is worth the order, and for the reasons that are a
+ *   PREDICTION it is discounted by how sure we are the prediction is right.
+ *   A customer worth a lakh whose cycle is a coin toss is not a better call
+ *   than one worth sixty thousand who orders like clockwork, and multiplying
+ *   the two is the whole of that judgement.
+ *
+ * Reminders, prospects and check-ins are facts rather than predictions — a
+ * promise was made, a week went by — so they carry the order value whole.
+ * ------------------------------------------------------------------------- */
+
+/** Reasons that are a guess about when the customer will order. */
+function isPrediction(kind: QueueReasonKind): boolean {
+  return (
+    kind === "orderDue" ||
+    kind === "routineCall" ||
+    kind === "orderOverdueFullCycle"
+  );
+}
+
+export function callValuePaise(
+  topReason: QueueReasonKind,
+  c: Pick<QueueCandidate, "outstanding" | "typicalOrderPaise" | "cycleConfidence">,
+): number {
+  if (topReason === "paymentOverdue") return c.outstanding;
+  if (!isPrediction(topReason)) return c.typicalOrderPaise;
+  /*
+   * No confidence figure means NO DISCOUNT, not a middling one.
+   *
+   * A prediction takes a measured cycle and a measured cycle computes a
+   * confidence, so in a database whose caches are current this is never null.
+   * It is null on every cycle computed before the column existed — 297 of
+   * them here — and those rebuild on the next nightly.
+   *
+   * Until they do, discounting them all by half would be a uniform penalty
+   * dressed up as a judgement: it says "we are unsure about this customer"
+   * when what is true is "we have not looked yet". Missing information never
+   * demotes anybody; the discount starts applying to a customer the moment
+   * there is something real to apply.
+   */
+  const sure = c.cycleConfidence ?? 100;
+  return Math.round((c.typicalOrderPaise * sure) / 100);
 }
 
 /**
