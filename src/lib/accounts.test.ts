@@ -1140,3 +1140,49 @@ describe("Sheet import", () => {
     assert.equal(state.owners.length, 0, "the owner list is not a staff directory");
   });
 });
+
+/* ---------------------------------------------------------------------------
+ * The list and the record have to agree about who may see a customer.
+ *
+ * When they disagreed, the Accounts bill list showed a customer and opening
+ * them threw — a 500, because a throw in a server component is not a redirect.
+ * ------------------------------------------------------------------------- */
+
+describe("Seeing a customer you hold only the back office seat on", () => {
+  test("the statement opens rather than throwing", async () => {
+    // Seema does the dispatch and the paperwork for this account and sells to
+    // nobody on it. `scopedToUsers` puts it on her list; the row check used to
+    // say it was not hers, so the list offered a row that could not be opened.
+    const seema = await makeUser("Seema", "telecaller");
+    const customer = await makeCustomer({
+      ownerId: priya.id,
+      salesAmId: priya.id,
+      backOfficeAmId: seema.id,
+    });
+    await makeBill(customer.id, 10_000_00);
+
+    setTestUser(seema);
+    const ledger = await customerLedger(customer.id);
+    assert.ok(ledger, "the customer's own statement refused to open for them");
+    assert.equal(ledger.customerId, customer.id);
+    setTestUser(deepa);
+  });
+
+  test("and somebody holding neither seat still cannot", async () => {
+    // The widening is both seats, not no check at all.
+    const stranger = await makeUser("Stranger", "telecaller");
+    const customer = await makeCustomer({
+      ownerId: priya.id,
+      salesAmId: priya.id,
+      backOfficeAmId: null,
+    });
+
+    setTestUser(stranger);
+    await assert.rejects(
+      () => customerLedger(customer.id),
+      (e: Error) => e instanceof NotPermittedError,
+      "an account on neither of somebody's seats was readable",
+    );
+    setTestUser(deepa);
+  });
+});
