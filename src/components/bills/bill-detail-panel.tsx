@@ -16,7 +16,20 @@ import { money, shortDate } from "@/lib/format";
  * ------------------------------------------------------------------------- */
 
 /** Remounts per bill, so a newly opened row starts from its own fetch. */
-export function BillDetailPanel({ billId }: { billId: string }) {
+export function BillDetailPanel({
+  billId,
+  customerHref,
+}: {
+  billId: string;
+  /**
+   * Where the customer's name leads, given as a function because the two apps
+   * answer "show me this customer" with different screens — the CRM record in
+   * the CRM, the account statement in Accounts, which is also where the rest
+   * of that customer's bills are. Hardcoding the CRM route sent an accounts
+   * user to a page their app redirects them out of.
+   */
+  customerHref: (customerId: string) => string;
+}) {
   const [detail, setDetail] = React.useState<BillDetail | null>(null);
   const [state, setState] = React.useState<"loading" | "ready" | "failed">("loading");
 
@@ -53,10 +66,16 @@ export function BillDetailPanel({ billId }: { billId: string }) {
     );
   }
 
-  return <Detail detail={detail} />;
+  return <Detail detail={detail} customerHref={customerHref} />;
 }
 
-function Detail({ detail }: { detail: BillDetail }) {
+function Detail({
+  detail,
+  customerHref,
+}: {
+  detail: BillDetail;
+  customerHref: (customerId: string) => string;
+}) {
   const o = detail.order;
   const t = detail.totals;
 
@@ -98,7 +117,7 @@ function Detail({ detail }: { detail: BillDetail }) {
         </SectionLabel>
         <span className="text-[13px] text-muted">
           <Link
-            href={`/crm/customers/${detail.customerId}`}
+            href={customerHref(detail.customerId)}
             className="no-underline hover:underline"
           >
             {detail.customerName}
