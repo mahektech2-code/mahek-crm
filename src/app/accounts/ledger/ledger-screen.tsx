@@ -90,7 +90,7 @@ export function LedgerScreen({
         <div className="max-w-[1400px]">
           <ScreenHeader
             title="Customer account"
-            subtitle="Everything billed and everything received, in order, with what was left after each line."
+            subtitle="Everything billed and everything received, most recent first, with what was left after each line."
           />
           <CustomerSearch
             title="Whose account?"
@@ -112,14 +112,34 @@ export function LedgerScreen({
     router.push(`/accounts/ledger?${params}`);
   };
 
-  const shown = ledger.entries.slice((page - 1) * perPage, page * perPage);
+  /*
+   * NEWEST FIRST on screen, oldest first underneath.
+   *
+   * The running balance is cumulative — the server walks the entries in date
+   * order adding debits and subtracting credits — so it can only be COMPUTED
+   * oldest first. Reversing that computation would produce a column of
+   * numbers that count down from nothing to the wrong answer.
+   *
+   * What is reversed is the reading order, and only that. Each row keeps the
+   * balance it was given, which means the top row now shows the balance as it
+   * stands today rather than as it stood on the first bill of the year — the
+   * number somebody opening an account is actually looking for. Anybody
+   * following the arithmetic down the column is reading it backwards, which
+   * is what "most recent first" asks for.
+   *
+   * Copied before reversing: `reverse()` mutates, and `ledger.entries` is also
+   * what the export and the totals read.
+   */
+  const ordered = [...ledger.entries].reverse();
+  const shown = ordered.slice((page - 1) * perPage, page * perPage);
+  const lastPage = Math.max(1, Math.ceil(ordered.length / perPage));
 
   return (
     <div className="px-6 pt-6 pb-12">
       <div className="max-w-[1400px]">
         <ScreenHeader
           title={ledger.customerName}
-          subtitle="Everything billed and everything received, in order. The running balance counts confirmed money only, so it agrees with what the customer owes."
+          subtitle="Everything billed and everything received, most recent first. The running balance is what was left after each line, so the top one is what the customer owes today - confirmed money only."
           actions={
             <>
               <button
@@ -142,7 +162,9 @@ export function LedgerScreen({
                         "Credit (₹)",
                         "Balance (₹)",
                       ],
-                      ledger.entries.map((e) => [
+                      // Same order as the screen, so the file matches what
+                      // was on it when somebody pressed Export.
+                      ordered.map((e) => [
                         e.at,
                         e.kind === "bill" ? "Bill" : "Payment",
                         e.ref,
@@ -251,17 +273,6 @@ export function LedgerScreen({
                 </>
               }
             >
-              {from && page === 1 ? (
-                <tr className="border-b border-divider bg-surface">
-                  <td colSpan={5} className="px-4 py-2.5 text-sm text-muted">
-                    Opening balance
-                  </td>
-                  <td className="px-4 py-2.5 text-right text-sm tabular-nums text-muted">
-                    {money(ledger.openingBalance)}
-                  </td>
-                </tr>
-              ) : null}
-
               {shown.map((e, i) => {
                 // Both stop counting; they are not the same event and the
                 // statement must not call them the same thing.
@@ -329,6 +340,22 @@ export function LedgerScreen({
                   </Row>
                 );
               })}
+
+              {/*
+                The opening balance is what was owed BEFORE this range, so it
+                belongs under the oldest entry — which, read newest first, is
+                the bottom of the last page rather than the top of the first.
+              */}
+              {from && page === lastPage ? (
+                <tr className="border-t border-divider bg-surface">
+                  <td colSpan={5} className="px-4 py-2.5 text-sm text-muted">
+                    Opening balance
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-sm tabular-nums text-muted">
+                    {money(ledger.openingBalance)}
+                  </td>
+                </tr>
+              ) : null}
             </Table>
 
             <Pager
