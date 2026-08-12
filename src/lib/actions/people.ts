@@ -4,7 +4,14 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { db } from "@/db";
-import { appAccess, auditLog, passwordResets, sessions, users } from "@/db/schema";
+import {
+  appAccess,
+  appModuleAccess,
+  auditLog,
+  passwordResets,
+  sessions,
+  users,
+} from "@/db/schema";
 import { requireUser, isManager, hashPassword } from "@/lib/auth";
 import { APP_IDS, type AppId } from "@/lib/apps";
 import { initialsOf } from "@/lib/format";
@@ -94,6 +101,14 @@ export async function setUserApps(
       await tx
         .delete(appAccess)
         .where(and(eq(appAccess.userId, userId), inArray(appAccess.app, remove)));
+      // The module rows go with the app. Left behind, they would silently
+      // narrow it the day somebody granted it back — a grant that opened four
+      // screens of fourteen with nothing on any screen saying why.
+      await tx
+        .delete(appModuleAccess)
+        .where(
+          and(eq(appModuleAccess.userId, userId), inArray(appModuleAccess.app, remove)),
+        );
     }
     if (add.length) {
       await tx.insert(appAccess).values(

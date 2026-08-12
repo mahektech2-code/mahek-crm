@@ -60,6 +60,9 @@ const SAMPLE: Record<string, string> = {
 export function AdminDrawer() {
   const { drawer, closeDrawer } = useAdmin();
   if (!drawer) return null;
+  // The Access screen renders its own modal from this same state. Falling
+  // through to DrawerBody would open an empty editor beside it.
+  if (drawer.kind === "enableAccess") return null;
   // Remount per record rather than resetting state in an effect.
   return <DrawerBody key={drawerKey(drawer)} drawer={drawer} onClose={closeDrawer} />;
 }

@@ -494,6 +494,43 @@ export const appAccess = pgTable(
 );
 
 /**
+ * Which screens inside an app somebody may open.
+ *
+ * `app_access` grants the CRM; this narrows it to the parts of the CRM they
+ * work in. The module keys are `lib/modules.ts` — this table holds no labels,
+ * because a label on a grant row is a second place for a screen's name to live
+ * and they drift the first time one is renamed.
+ *
+ * NO ROWS FOR AN APP MEANS EVERY MODULE OF IT. That is not a shortcut, it is
+ * the reason adding this moved nothing: every grant that existed before kept
+ * meaning precisely what it meant, and a grant narrows only once somebody has
+ * unticked something on the access screen. It also keeps `npm run app:grant`
+ * and the provisioning path honest — neither knows about modules, and an app
+ * granted from a terminal opens whole rather than opening empty.
+ *
+ * `app` is stored beside the key rather than parsed back out of it, so
+ * revoking an app can delete its module rows in one statement.
+ */
+export const appModuleAccess = pgTable(
+  "app_module_access",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    app: appIdEnum("app").notNull(),
+    /** A key from `lib/modules.ts`, e.g. `crm.reminders`. */
+    module: text("module").notNull(),
+    grantedById: text("granted_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("app_module_access_user_module_key").on(t.userId, t.module),
+    index("app_module_access_user_app_idx").on(t.userId, t.app),
+  ],
+);
+
+/**
  * One row per person per day they opened MahekOne.
  *
  * The name is a misnomer kept for now, and the misnomer had consequences: two
@@ -3907,6 +3944,10 @@ export const appAccessRelations = relations(appAccess, ({ one }) => ({
   user: one(users, { fields: [appAccess.userId], references: [users.id] }),
 }));
 
+export const appModuleAccessRelations = relations(appModuleAccess, ({ one }) => ({
+  user: one(users, { fields: [appModuleAccess.userId], references: [users.id] }),
+}));
+
 export const attendanceRelations = relations(attendance, ({ one }) => ({
   user: one(users, { fields: [attendance.userId], references: [users.id] }),
 }));
@@ -4049,6 +4090,7 @@ export const inactiveWatchItemsRelations = relations(inactiveWatchItems, ({ one 
 
 export type User = typeof users.$inferSelect;
 export type AppAccess = typeof appAccess.$inferSelect;
+export type AppModuleAccess = typeof appModuleAccess.$inferSelect;
 export type Attendance = typeof attendance.$inferSelect;
 export type Customer = typeof customers.$inferSelect;
 export type Call = typeof calls.$inferSelect;

@@ -6,6 +6,22 @@ export type NavItem = {
   managerOnly?: boolean;
 };
 
+/**
+ * Filtering the sidebar to what somebody may open.
+ *
+ * The module registry decides, and `lib/access.ts` enforces the same list on
+ * the route — the sidebar is the courtesy, the route guard is the rule. A link
+ * that is not drawn is a statement to the browser, and the browser is not
+ * where authority lives.
+ */
+export function navForModules(allowed: readonly string[]): NavGroup[] {
+  const set = new Set(allowed);
+  return NAV.map((g) => ({
+    ...g,
+    items: g.items.filter((i) => set.has(i.href)),
+  })).filter((g) => g.items.length > 0);
+}
+
 export type NavGroup = { label: string; items: NavItem[] };
 
 /**

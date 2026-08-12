@@ -48,7 +48,8 @@ import { SheetSection } from "./sheet-section";
 import { VoiceSection, VOICE_SUBTITLE, type VoiceData } from "./voice-section";
 import { ComponentsScreen } from "./components-section";
 import type { Person } from "@/lib/services/admin-people-service";
-import { PeopleSection } from "./people-section";
+import type { AccessRow } from "@/lib/services/access-service";
+import { AccessSection } from "./access-section";
 import { FeedbackSection, type FeedbackData } from "./feedback-section";
 import { UserDetail } from "./user-detail";
 import { AdminDrawer } from "./drawers";
@@ -119,6 +120,7 @@ export function AdminConsole({
   sheet,
   voice,
   people,
+  access,
   feedback,
   platform,
   me,
@@ -131,6 +133,8 @@ export function AdminConsole({
   sheet: SheetData;
   voice: VoiceData;
   people: Person[];
+  /** Who opens what, and how far into it. The People section IS this. */
+  access: AccessRow[];
   feedback: FeedbackData;
   platform: PlatformData;
   /** The account actually signed in. The console shows who you ARE. */
@@ -148,6 +152,7 @@ export function AdminConsole({
           catalogue={catalogue}
           sheet={sheet}
           voice={voice}
+          access={access}
           feedback={feedback}
           platform={platform}
           me={me}
@@ -197,6 +202,7 @@ function ConsoleShell({
   catalogue,
   sheet,
   voice,
+  access,
   feedback,
   platform,
   me,
@@ -208,6 +214,7 @@ function ConsoleShell({
   catalogue: CatalogueData;
   sheet: SheetData;
   voice: VoiceData;
+  access: AccessRow[];
   feedback: FeedbackData;
   platform: PlatformData;
   me: { name: string; initials: string; role: string };
@@ -597,6 +604,7 @@ function ConsoleShell({
                   isPlatformAdmin={isPlatformAdmin}
                   collections={crm.collections}
                   catalogue={catalogue}
+                  access={access}
                   sheet={sheet}
                   voice={voice}
                   feedback={feedback}
@@ -744,6 +752,7 @@ function SectionBody({
   isPlatformAdmin,
   collections,
   catalogue,
+  access,
   sheet,
   voice,
   feedback,
@@ -766,6 +775,7 @@ function SectionBody({
   isPlatformAdmin: boolean;
   collections: Record<string, Collection>;
   catalogue: CatalogueData;
+  access: AccessRow[];
   sheet: SheetData;
   voice: VoiceData;
   feedback: FeedbackData;
@@ -859,14 +869,15 @@ function SectionBody({
     if (tabIndex === 2) return <IntegrationsTab data={platform} />;
     if (tabIndex === 3) return <UsageTab data={platform} />;
     if (tabIndex === 4) return <DriftTab data={platform} navigate={navigate} />;
+    if (tabIndex === 6) return <SessionsTab data={platform} />;
+    if (tabIndex === 7) return <OnboardingTab data={platform} />;
     return <JobsTab data={platform} />;
   }
+  // One screen, dedicated to access. Sessions and the never-signed-in list
+  // moved to Overview, where the rest of the platform's own answers already
+  // live — this section answers who can open what, and nothing else.
   if (section === "people") {
-    // Sessions and never-signed-in are platform questions with real answers;
-    // the rest of People is its own screen and already reads the database.
-    if (tabIndex === 3) return <SessionsTab data={platform} />;
-    if (tabIndex === 4) return <OnboardingTab data={platform} />;
-    return <PeopleSection tab={tabIndex} onOpenUser={onOpenUser} />;
+    return <AccessSection rows={access} onOpenUser={onOpenUser} />;
   }
   if (section === "apps") {
     if (tabIndex === 0) return <RegistryTab data={platform} />;
@@ -930,8 +941,8 @@ function PrimaryAction({ section }: { section: string }) {
   const { openDrawer } = useAdmin();
   if (section === "people") {
     return (
-      <Button variant="primary" onClick={() => openDrawer({ kind: "createUser" })}>
-        Create user
+      <Button variant="primary" onClick={() => openDrawer({ kind: "enableAccess" })}>
+        Enable access
       </Button>
     );
   }

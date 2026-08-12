@@ -2,12 +2,12 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Card, CardHeader, Checkbox, cx } from "@/components/ui/primitives";
+import { Badge, Button, Card, CardHeader, cx } from "@/components/ui/primitives";
 import { Tabs } from "@/components/ui/overlays";
 import { stamp } from "@/lib/format";
 import { endSessionsFor, sendPasswordResetFor, setUserActive } from "@/lib/actions/people";
-import type { AdminUser } from "./data";
-import { statusTone } from "./people-section";
+import { statusTone, type AdminUser } from "./data";
+
 import { useAdmin } from "./store";
 import type { PlatformData } from "./platform-real";
 
@@ -38,7 +38,7 @@ export function UserDetail({
   onBack: () => void;
 }) {
   const router = useRouter();
-  const { registry, notify, toggleAppAccess } = useAdmin();
+  const { registry, notify } = useAdmin();
   const [tab, setTab] = React.useState<DetailTab>("Profile");
   const [busy, setBusy] = React.useState(false);
 
@@ -158,22 +158,30 @@ export function UserDetail({
         <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
           <CardHeader
             title="Apps"
-            hint="Checked in each app's layout, not only here — a bookmarked route must not open for somebody who was never given the app."
+            hint="Read here, changed on the Access screen. This tab used to carry its own checkboxes, which made two ways to grant an app — and only one of them knew about modules, so revoking and re-granting from here quietly widened a narrowed grant back to the whole app."
           />
-          {registry.map((a, i) => (
-            <div key={a.id} className={cx("px-5 py-3", i ? "border-t border-canvas" : "")}>
-              <Checkbox
-                checked={user.apps.includes(a.id)}
-                onChange={() => toggleAppAccess(user.id, a.id)}
-                label={
-                  <span>
-                    <span className="text-sm font-medium text-ink">{a.name}</span>
-                    <span className="block text-[13px] text-muted">{a.desc}</span>
-                  </span>
-                }
-              />
-            </div>
-          ))}
+          {registry.map((a, i) => {
+            const has = user.apps.includes(a.id);
+            return (
+              <div
+                key={a.id}
+                className={cx(
+                  "flex items-center gap-3 px-5 py-3",
+                  i ? "border-t border-canvas" : "",
+                )}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium text-ink">{a.name}</span>
+                  <span className="block text-[13px] text-muted">{a.desc}</span>
+                </span>
+                {has ? (
+                  <Badge tone="success">Granted</Badge>
+                ) : (
+                  <span className="text-[13px] text-muted">—</span>
+                )}
+              </div>
+            );
+          })}
           <div className="bg-canvas px-5 py-2.5 text-[13px] text-muted">
             {user.apps.length === 0
               ? "No app. MahekOne opens on a launcher that says so plainly rather than a blank screen."
