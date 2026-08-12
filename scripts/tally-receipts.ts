@@ -132,6 +132,36 @@ function buildResolver(all: DbBill[]) {
 }
 
 /**
+ * A bill number as somebody typed it, and the ways they typed it wrong.
+ *
+ * Four references in three years are mechanically malformed rather than
+ * unknown: `MMI25-26/3424` lost the slash after the prefix, `MMI/25/26/1499`
+ * has the financial year joined by a slash instead of a hyphen, and
+ * `MM/24-25/1619` is a prefix a letter short. Each names a real bill worth
+ * exactly what the register pays against it, and each was silently dropped —
+ * Rs 1.23 lakh of real money left off four customers' accounts by three
+ * keystrokes.
+ *
+ * These are REPAIRS, not searches. Every variant is a fixed rewrite of what
+ * was typed, so a reference naming a bill that genuinely does not exist stays
+ * unresolved rather than being talked into the nearest match. `M/` is never
+ * produced from `MMI/` or the reverse: they are two different billing books,
+ * and a repair that crossed them would pay one book's bill with the other's
+ * money.
+ */
+function* spellings(ref: string): Generator<string> {
+  yield ref;
+  // `MMI25-26/3424` — the slash after the prefix never typed.
+  const missingSlash = ref.replace(/^(M{1,3}I?)(\d{2}-\d{2}\/)/i, "$1/$2");
+  if (missingSlash !== ref) yield missingSlash;
+  // `MMI/25/26/1499` — the year joined the way the rest of the number is.
+  const yearSlash = ref.replace(/^(M{1,3}I?\/)(\d{2})\/(\d{2})\//i, "$1$2-$3/");
+  if (yearSlash !== ref) yield yearSlash;
+  // `MM/24-25/1619` — one letter short of the prefix it means.
+  if (/^MM\//i.test(ref)) yield ref.replace(/^MM\//i, "MMI/");
+}
+
+/**
  * Spread one Tally allocation across the rows that number covers, oldest bill
  * first, capped by what each row has LEFT to take.
  *
@@ -231,11 +261,28 @@ function buildPlan(
         onAccount += paise;
         continue;
       }
-      if (!isBillRef(a.bill)) {
+      // Tested against the REPAIRED spellings, not only what was typed.
+      // `MMI25-26/3424` does not look like a bill number until the missing
+      // slash is put back, so checking the shape first threw the two worst
+      // typos away before anything had a chance to fix them.
+      if (!a.bill || ![...spellings(a.bill)].some((s) => isBillRef(s))) {
         dropped.push({ ref: a.bill ?? "(blank)", paise });
         continue;
       }
-      const group = resolve(a.bill);
+      // A repaired spelling has to name a bill belonging to the party Tally
+      // wrote on the receipt. The reference itself is trusted where it resolves
+      // as typed — 412 lines spell the customer differently to how we hold it,
+      // so demanding a name match everywhere would reject good data. But a
+      // reference somebody typed wrong has already proved it can be wrong, and
+      // the name is the only second opinion available on which bill was meant.
+      let group: DbBill[] | null = null;
+      for (const spelling of spellings(a.bill)) {
+        const found = resolve(spelling);
+        if (!found) continue;
+        if (spelling !== a.bill && norm(found[0].customerName) !== norm(r.party)) continue;
+        group = found;
+        break;
+      }
       if (!group) {
         dropped.push({ ref: a.bill, paise });
         continue;
