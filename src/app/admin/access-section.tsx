@@ -171,9 +171,9 @@ export function AccessSection({
                               <span className="text-muted">
                                 {g.whole
                                   ? g.totalCount === 1
-                                    ? "its one module"
-                                    : `all ${g.totalCount} modules`
-                                  : `${g.grantedCount} of ${g.totalCount}`}
+                                    ? "its one screen"
+                                    : `all ${g.totalCount} screens`
+                                  : `${g.grantedCount} of ${g.totalCount} screens`}
                               </span>
                               {g.whole ? null : <Badge tone="warn">Narrowed</Badge>}
                             </span>
@@ -389,7 +389,7 @@ function AccessDialog({
     <Modal
       open
       onClose={onClose}
-      width={880}
+      width={1000}
       title={
         step === "who"
           ? "Enable access — who"
@@ -511,10 +511,9 @@ function WhoStep({ onPick }: { onPick: (c: Candidate) => void }) {
           Refresh
         </Button>
       </div>
-      <p className="mt-2 text-[13px] leading-[19px] text-muted">
+      <p className="mt-1.5 text-[13px] leading-[19px] text-muted">
         Everybody HRMS knows about, and every account that exists. Only somebody active in
-        HRMS can be given access — a leaver is listed with the reason rather than hidden,
-        because a person missing from a search box reads as a broken search box.
+        HRMS can be given access — a leaver is listed with the reason rather than hidden.
       </p>
 
       {loadError ? (
@@ -524,7 +523,7 @@ function WhoStep({ onPick }: { onPick: (c: Candidate) => void }) {
       ) : matches.length === 0 ? (
         <p className="mt-4 text-sm text-muted">Nobody matches “{query}”.</p>
       ) : (
-        <div className="mt-3 max-h-[46vh] overflow-auto rounded-[4px] border border-line">
+        <div className="mt-2 max-h-[52vh] overflow-auto rounded-[4px] border border-line">
           {matches.map((c) => (
             <button
               key={c.employeeId ?? c.userId}
@@ -532,29 +531,41 @@ function WhoStep({ onPick }: { onPick: (c: Candidate) => void }) {
               title={c.blocked ?? undefined}
               onClick={() => onPick(c)}
               className={cx(
-                "flex w-full items-center gap-3 border-0 border-b border-divider bg-transparent px-3 py-2.5 text-left last:border-b-0",
+                "flex w-full items-baseline gap-2.5 border-0 border-b border-divider bg-transparent px-2.5 py-1.5 text-left last:border-b-0",
                 c.blocked ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-canvas",
               )}
             >
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-ink">{c.name}</span>
-                <span className="block text-[13px] text-muted">
-                  {[c.employeeCode, c.position ?? c.department, c.email ?? c.phone]
-                    .filter(Boolean)
-                    .join(" · ") || "No contact details on file"}
-                </span>
+              {/* One line per person: the name, then everything that tells
+                  two people of the same name apart, in the space left over. */}
+              <span className="w-[13rem] flex-none truncate text-[13px] font-medium text-ink">
+                {c.name}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[13px] text-muted">
+                {[c.employeeCode, c.position ?? c.department, c.email ?? c.phone]
+                  .filter(Boolean)
+                  .join(" · ") || "No contact details on file"}
               </span>
               {c.blocked ? (
-                <span className="text-[13px] text-muted">{c.blocked}</span>
+                <span className="flex-none text-[11px] whitespace-nowrap text-muted">
+                  {c.blocked}
+                </span>
               ) : (
                 <>
-                  {c.userId ? null : <Badge tone="brand">No account yet</Badge>}
-                  {c.employeeStatus === null ? <Badge tone="neutral">Not in HRMS</Badge> : null}
-                  {c.apps.length ? (
-                    <span className="text-[13px] text-muted">
-                      {c.apps.length} app{c.apps.length === 1 ? "" : "s"}
+                  {c.userId ? null : (
+                    <span className="flex-none rounded-[3px] bg-brand-soft px-1.5 text-[11px] font-medium text-[#5223E0]">
+                      no account
+                    </span>
+                  )}
+                  {c.employeeStatus === null ? (
+                    <span className="flex-none text-[11px] whitespace-nowrap text-muted">
+                      not in HRMS
                     </span>
                   ) : null}
+                  <span className="w-[3.5rem] flex-none text-right text-[11px] whitespace-nowrap text-muted">
+                    {c.apps.length
+                      ? `${c.apps.length} app${c.apps.length === 1 ? "" : "s"}`
+                      : ""}
+                  </span>
                 </>
               )}
             </button>
@@ -575,6 +586,13 @@ function WhoStep({ onPick }: { onPick: (c: Candidate) => void }) {
  * invalid state this screen could otherwise express — an app held with nothing
  * inside it, whose every route redirects somewhere else — instead of drawing it
  * and then refusing it at the save.
+ *
+ * It is DENSE on purpose. Somebody setting up a telecaller is answering forty
+ * small yes-or-no questions, and the answer to each is one word — so the space
+ * belongs to the words, not around them. Every module in an app is meant to be
+ * readable without scrolling past the app it belongs to; the sentence
+ * explaining what unticking does is said once at the top rather than repeated
+ * inside all seven blocks.
  */
 function AccessStep({
   needsAccount,
@@ -608,25 +626,30 @@ function AccessStep({
     onDraft(next);
   };
 
-  const granted = Object.keys(draft).length;
+  const apps = Object.keys(draft).length;
+  const screens = Object.values(draft).reduce((n, m) => n + m.length, 0);
 
   return (
-    <div>
+    <div className="-mx-1">
       {needsAccount ? (
-        <div className="mb-4 rounded-[4px] border border-line bg-canvas p-3.5">
-          <div className="text-sm font-medium text-ink">{name} has no MahekOne account yet</div>
-          <p className="mt-0.5 text-[13px] leading-[19px] text-muted">
-            One is created when you grant access. No password is typed here — they get a
-            link to choose their own, which works once and expires in thirty minutes.
-          </p>
-          <div className="mt-3 grid grid-cols-3 gap-3">
+        <div className="mb-3 rounded-[4px] border border-line bg-canvas px-3 py-2.5">
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <span className="text-[13px] font-medium text-ink">
+              {name} has no MahekOne account yet
+            </span>
+            <span className="text-[13px] text-muted">
+              One is created when you grant access. No password is typed here — they get a
+              link to choose their own, good once, for thirty minutes.
+            </span>
+          </div>
+          <div className="mt-2 grid grid-cols-[1.4fr_1fr_1fr] gap-2">
             <Field label="Sign-in email" error={fieldError.email}>
               <Input value={email} onChange={(e) => onEmail(e.target.value)} />
             </Field>
-            <Field label="Work number" error={fieldError.phone} hint="Optional. Also a sign-in.">
+            <Field label="Work number" error={fieldError.phone}>
               <Input value={phone} onChange={(e) => onPhone(e.target.value)} />
             </Field>
-            <Field label="Role" hint="What they can DO, app by app aside.">
+            <Field label="Role">
               <Select value={role} onChange={(e) => onRole(e.target.value as typeof role)}>
                 {ROLES.map((r) => (
                   <option key={r.id} value={r.id}>
@@ -639,21 +662,24 @@ function AccessStep({
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm text-body">
-          Tick an app to grant it, and untick the screens inside it they should not open.
+      {/* Said once, above all of them, rather than seven times inside them. */}
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-1 pb-2">
+        <span className="text-[13px] text-body">
+          Tick an app to grant it; untick a screen to withhold it. A withheld screen is not
+          drawn in their navigation.
         </span>
         <span className="flex-1" />
         <span className="text-[13px] whitespace-nowrap text-muted">
-          {granted} app{granted === 1 ? "" : "s"}
+          {apps} app{apps === 1 ? "" : "s"} · {screens} screen{screens === 1 ? "" : "s"}
         </span>
       </div>
+
       {fieldError.grants ? (
-        <p className="mt-2 text-[13px] text-danger">{fieldError.grants}</p>
+        <p className="px-1 pb-2 text-[13px] text-danger">{fieldError.grants}</p>
       ) : null}
 
-      <div className="mt-3 flex flex-col gap-2.5">
-        {APPS.map((app) => (
+      <div className="overflow-hidden rounded-[4px] border border-line">
+        {APPS.map((app, i) => (
           <AppBlock
             key={app.id}
             app={app.id}
@@ -661,6 +687,7 @@ function AccessStep({
             description={app.description}
             built={app.built}
             ticked={draft[app.id] ?? []}
+            first={i === 0}
             onChange={(modules) => setApp(app.id, modules)}
           />
         ))}
@@ -669,12 +696,21 @@ function AccessStep({
   );
 }
 
+/**
+ * One app: a single line, and its screens underneath when it is granted.
+ *
+ * The screens sit in a grid with the sidebar group named down the left, which
+ * is the shape the app itself has — somebody who has used the CRM is looking
+ * for "Collections" and then for the row within it, not reading forty labels in
+ * sequence.
+ */
 function AppBlock({
   app,
   name,
   description,
   built,
   ticked,
+  first,
   onChange,
 }: {
   app: AppId;
@@ -682,6 +718,7 @@ function AppBlock({
   description: string;
   built: boolean;
   ticked: string[];
+  first: boolean;
   onChange: (modules: string[]) => void;
 }) {
   const all = ALL_OF(app);
@@ -690,64 +727,70 @@ function AppBlock({
   const whole = ticked.length >= all.length;
 
   return (
-    <div
-      className={cx(
-        "overflow-hidden rounded-[4px] border",
-        on ? "border-brand-softer" : "border-line",
-      )}
-    >
-      <div className={cx("flex items-center gap-3 px-3.5 py-2.5", on ? "bg-brand-soft" : "")}>
+    <div className={cx(first ? "" : "border-t border-line")}>
+      <div
+        className={cx(
+          "flex items-center gap-2 px-2.5 py-1.5",
+          on ? "bg-brand-soft" : "hover:bg-canvas",
+        )}
+      >
         <Checkbox
           checked={on}
           aria-label={name}
+          // The description rides on the title. On one line per app the whole
+          // registry is visible at once, which is what makes this page a
+          // decision rather than a scroll.
+          title={description}
           onChange={() => onChange(on ? [] : all)}
-          label={
-            <span className="min-w-0">
-              <span className="block text-sm font-medium text-ink">{name}</span>
-              <span className="block text-[13px] text-muted">{description}</span>
-            </span>
-          }
+          label={<span className="text-[13px] font-medium text-ink">{name}</span>}
         />
+        {built ? null : (
+          <span className="text-[11px] whitespace-nowrap text-muted">not built yet</span>
+        )}
         <span className="flex-1" />
-        {built ? null : <Badge tone="neutral">Not built yet</Badge>}
-        <span className="text-[13px] whitespace-nowrap text-muted">
-          {!on
-            ? `${all.length} module${all.length === 1 ? "" : "s"}`
-            : whole
-              ? all.length === 1
-                ? "its one module"
-                : `all ${all.length} modules`
-              : `${ticked.length} of ${all.length}`}
-        </span>
-        {on && !whole ? <Badge tone="warn">Narrowed</Badge> : null}
+        {on && !whole ? (
+          <span className="rounded-[3px] bg-warn-soft px-1.5 text-[11px] font-medium text-warn-ink">
+            {ticked.length}/{all.length}
+          </span>
+        ) : (
+          <span className="text-[11px] whitespace-nowrap text-muted">
+            {!on
+              ? `${all.length} screen${all.length === 1 ? "" : "s"}`
+              : all.length === 1
+                ? "granted"
+                : `all ${all.length}`}
+          </span>
+        )}
+        {on && !whole ? (
+          <button
+            onClick={() => onChange(all)}
+            className="cursor-pointer border-0 bg-transparent p-0 text-[11px] font-medium text-[#5223E0] underline-offset-2 hover:underline"
+          >
+            all
+          </button>
+        ) : (
+          // Kept in the layout so the rows do not jump as boxes are ticked.
+          <span className="w-[18px]" />
+        )}
       </div>
 
-      {/* The modules appear once the app is ticked. Drawing forty checkboxes
-          nobody can act on would bury the seven decisions that matter. */}
-      {on ? (
-        <div className="border-t border-divider bg-surface px-3.5 py-2.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[13px] leading-[19px] text-muted">
-              Untick a screen to withhold it. It is not drawn in their navigation, and a
-              bookmarked link into it sends them to the first screen they do hold.
-            </span>
-            <span className="flex-1" />
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={whole}
-              title={whole ? "Every screen is already ticked" : undefined}
-              onClick={() => onChange(all)}
-            >
-              Tick all
-            </Button>
-          </div>
+      {/* The screens appear once the app is ticked. Drawing forty checkboxes
+          nobody can act on would bury the seven decisions that matter.
+
+          An app with ONE screen draws none of them: its checkbox already is
+          that screen, and a row repeating the app's own name under itself is
+          furniture rather than a decision. */}
+      {on && all.length > 1 ? (
+        <div className="border-t border-divider bg-surface px-2.5 py-1">
           {groups.map((g) => (
-            <div key={g.group} className="mt-2.5">
-              <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+            <div
+              key={g.group}
+              className="flex items-start gap-2 border-b border-divider py-1 last:border-b-0"
+            >
+              <span className="w-[132px] flex-none pt-[3px] text-[10px] leading-[14px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
                 {g.group}
-              </div>
-              <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1.5">
+              </span>
+              <span className="grid min-w-0 flex-1 grid-cols-3 gap-x-3">
                 {g.modules.map((m) => (
                   <Checkbox
                     key={m.key}
@@ -764,10 +807,11 @@ function AppBlock({
                           : [...ticked, m.key],
                       )
                     }
-                    label={<span className="text-sm text-body">{m.label}</span>}
+                    className="min-w-0 py-[1px]"
+                    label={<span className="truncate text-[13px] text-body">{m.label}</span>}
                   />
                 ))}
-              </div>
+              </span>
             </div>
           ))}
         </div>
@@ -775,6 +819,7 @@ function AppBlock({
     </div>
   );
 }
+
 
 /* -------------------------------------------------------------- step three */
 
@@ -843,9 +888,9 @@ function ReviewStep({
     const total = ALL_OF(id).length;
     return n >= total
       ? total === 1
-        ? "its one module"
-        : `all ${total} modules`
-      : `${n} of ${total} modules`;
+        ? "its one screen"
+        : `all ${total} screens`
+      : `${n} of ${total} screens`;
   };
 
   const rows: Array<{
@@ -861,8 +906,8 @@ function ReviewStep({
             key: "account",
             tone: "success" as const,
             tag: "Create",
-            what: "A new MahekOne account",
-            detail: `${name} signs in with ${email} as a ${role}. A link to choose a password is emailed to them; no password is set here.`,
+            what: name,
+            detail: `signs in with ${email} as a ${role} — a link to choose a password is emailed to them.`,
           },
         ]
       : []),
@@ -870,30 +915,30 @@ function ReviewStep({
       key: `g:${a}`,
       tone: "success" as const,
       tag: "Grant",
-      what: `${appName(a)} — granted`,
+      what: appName(a),
       detail: scope(a),
     })),
     ...changes.widened.map((a) => ({
       key: `w:${a}`,
       tone: "success" as const,
       tag: "Widen",
-      what: `${appName(a)} — widened`,
-      detail: scope(a),
+      what: appName(a),
+      detail: `widened to ${scope(a)}.`,
     })),
     ...changes.narrowed.map((a) => ({
       key: `n:${a}`,
       tone: "warn" as const,
       tag: "Narrow",
-      what: `${appName(a)} — narrowed`,
-      detail: `${scope(a)}. The rest disappear from their navigation.`,
+      what: appName(a),
+      detail: `${scope(a)} — the rest disappear from their navigation.`,
     })),
     ...changes.revoked.map((a) => ({
       key: `r:${a}`,
       tone: "danger" as const,
       tag: "Revoke",
-      what: `${appName(a)} — taken away`,
+      what: appName(a),
       detail:
-        "They stop opening it, and a bookmarked link sends them back to the launcher. Which modules they had is forgotten with the grant.",
+        "they stop opening it, a bookmarked link sends them to the launcher, and which screens they had is forgotten with the grant.",
     })),
   ];
 
@@ -909,14 +954,25 @@ function ReviewStep({
             <div
               key={r.key}
               className={cx(
-                "flex items-start gap-3 px-3.5 py-3",
+                "flex items-baseline gap-2.5 px-2.5 py-2",
                 i ? "border-t border-divider" : "",
               )}
             >
-              <Badge tone={r.tone}>{r.tag}</Badge>
+              <span
+                className={cx(
+                  "w-[54px] flex-none rounded-[3px] px-1.5 py-0.5 text-center text-[11px] font-medium",
+                  r.tone === "danger"
+                    ? "bg-danger-soft text-danger"
+                    : r.tone === "warn"
+                      ? "bg-warn-soft text-warn-ink"
+                      : "bg-success-soft text-success",
+                )}
+              >
+                {r.tag}
+              </span>
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-ink">{r.what}</span>
-                <span className="block text-[13px] leading-[19px] text-muted">{r.detail}</span>
+                <span className="text-[13px] font-medium text-ink">{r.what}</span>{" "}
+                <span className="text-[13px] leading-[19px] text-muted">{r.detail}</span>
               </span>
             </div>
           ))}
@@ -924,13 +980,13 @@ function ReviewStep({
       )}
 
       {changes.unchanged.length ? (
-        <p className="mt-3 text-[13px] text-muted">
+        <p className="mt-2 text-[13px] text-muted">
           Unchanged: {changes.unchanged.map(appName).join(", ")}.
         </p>
       ) : null}
 
       {changes.any && Object.keys(draft).length === 0 ? (
-        <p className="mt-3 text-[13px] leading-[19px] text-warn-ink">
+        <p className="mt-2 text-[13px] leading-[19px] text-warn-ink">
           This leaves {name} with no app at all. They can still sign in, onto a launcher that
           says so plainly rather than a blank screen.
         </p>

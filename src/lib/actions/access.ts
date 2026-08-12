@@ -419,7 +419,14 @@ export async function setAccess(
 
   const said = [
     granted.length ? `now opens ${describe(granted)}` : "",
-    changed.length ? `${changed.map((a) => `${getApp(a)?.name ?? a} narrowed to ${wanted.get(a)!.length} of ${moduleKeysForApp(a).length}`).join(", ")}` : "",
+    changed.length
+      ? changed
+          .map(
+            (a) =>
+              `${getApp(a)?.name ?? a} narrowed to ${wanted.get(a)!.length} of ${moduleKeysForApp(a).length} screens`,
+          )
+          .join(", ")
+      : "",
     revoked.length ? `no longer opens ${describe(revoked)}` : "",
   ].filter(Boolean);
 
