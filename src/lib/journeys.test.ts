@@ -5523,6 +5523,57 @@ describe("choosing an account manager", () => {
     assert.equal(change.toUserId, null);
   });
 
+  test("the sales seat can hold an employee, by name, with no queue", async () => {
+    // Four of the busiest salespeople on this book are employees with no
+    // login. Refusing to record them meant the true answer could not be
+    // written down at all.
+    const staff = await makeEmployee("Prakash Vasudev Prasad", "active");
+    const customer = await makeCustomer(priya.id);
+
+    setTestUser(deepa);
+    const res = await updateAccountManagers({
+      customerIds: [customer.id],
+      salesEmployeeId: staff.id,
+      sales: { reasonCode: "Territory reassigned" },
+    });
+    assert.equal(res.ok, true, res.ok ? "" : res.error);
+    setTestUser(priya);
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.salesPersonName, "Prakash Vasudev Prasad");
+    assert.equal(
+      after.salesAmId,
+      null,
+      "an employee has no account, and none may be invented for them",
+    );
+
+    // And the consequence the screen warns about is real: nobody holds it.
+    const [change] = await db
+      .select()
+      .from(customerAmChanges)
+      .where(eq(customerAmChanges.customerId, customer.id));
+    assert.equal(change.role, "sales");
+    assert.equal(change.toName, "Prakash Vasudev Prasad");
+    assert.equal(change.toUserId, null);
+  });
+
+  test("a sales seat cannot be an account and an employee at once", async () => {
+    const staff = await makeEmployee("Two At Once", "active");
+    const customer = await makeCustomer(priya.id);
+    setTestUser(deepa);
+    const res = await updateAccountManagers({
+      customerIds: [customer.id],
+      salesAmId: rakesh.id,
+      salesEmployeeId: staff.id,
+      sales: { reasonCode: "Workload rebalanced" },
+    });
+    setTestUser(priya);
+    assert.equal(res.ok, false, "two people were accepted for one seat");
+  });
+
   test("a leaver cannot be assigned by an old browser tab", async () => {
     const staff = await makeEmployee("Left Last Month", "inactive");
     const customer = await makeCustomer(priya.id);

@@ -889,12 +889,21 @@ export function CustomersScreen({
             (editing.kind === "lead"
               ? editing.ownerId
               : (editing.salesAmId ?? editing.ownerId)) ?? "";
-          const salesMoved = String(values.assignedId ?? "") !== assignedBefore;
+          const salesPicked = String(values.assignedId ?? "");
+          const backOfficePicked = String(values.backOfficeAmId ?? "");
+          /*
+           * The sheet sentinel is not a value, it is "nothing was touched".
+           * Treating it as a move would send a string no column can hold, and
+           * would stamp the decision mark on an account nobody decided about.
+           */
+          const salesMoved =
+            salesPicked !== SHEET_NAME_VALUE && salesPicked !== assignedBefore;
           const backOfficeMoved =
-            String(values.backOfficeAmId ?? "") !== (editing.backOfficeAmId ?? "");
+            backOfficePicked !== SHEET_NAME_VALUE &&
+            backOfficePicked !== (editing.backOfficeAmId ?? "");
 
           if (salesMoved || backOfficeMoved) {
-            const backOfficeId = String(values.backOfficeAmId ?? "");
+            const backOfficeId = backOfficePicked;
             /*
              * Only the seat that MOVED is sent. This used to send both
              * whenever either changed, which stamps the decision mark — the
@@ -911,16 +920,23 @@ export function CustomersScreen({
               updateAccountManagers({
                 customerIds: [editing.id],
                 ...(salesMoved
-                  ? {
-                      salesAmId: String(values.assignedId ?? "") || null,
-                      sales: { reasonCode },
-                    }
+                  ? salesPicked.startsWith("emp:")
+                    ? {
+                        salesEmployeeId: salesPicked.slice(4),
+                        sales: { reasonCode },
+                      }
+                    : { salesAmId: salesPicked || null, sales: { reasonCode } }
                   : {}),
                 ...(backOfficeMoved
                   ? {
-                      backOffice: backOfficeId
-                        ? ({ kind: "user", userId: backOfficeId } as const)
-                        : ({ kind: "none" } as const),
+                      backOffice: !backOfficeId
+                        ? ({ kind: "none" } as const)
+                        : backOfficeId.startsWith("emp:")
+                          ? ({
+                              kind: "employee",
+                              employeeId: backOfficeId.slice(4),
+                            } as const)
+                          : ({ kind: "user", userId: backOfficeId } as const),
                       backOfficeReason: { reasonCode },
                     }
                   : {}),
@@ -1041,42 +1057,36 @@ const LEAD_SOURCES = [
 ];
 
 /**
- * What the SHEET says this seat is, where that is not the account below it.
+ * The value the sales and back office fields carry when the person in that
+ * seat has no MahekOne account.
  *
- * These are two different facts and the screens were each showing one of
- * them. `sales_am_id` is an account — it decides whose calling queue the
- * customer lands in, so it can only be somebody who signs in.
- * `sales_person_name` is who actually sells to them, and most of those people
- * have never had a login: on this book the ten real salespeople include
- * "Back Office Calling", "Marathwada" and "South Zone", which are not people
- * at all.
+ * Most of them do not. Four of the busiest salespeople on this book — Prakash
+ * Vasudev Prasad, Rahul Richhariya, Bharat Singh and Sanjay Kumar Samantaray
+ * — are current employees who have never signed in, and three more entries
+ * are not people at all ("Back Office Calling", "Marathwada", "South Zone").
  *
- * The customer LIST reads the name first, so it showed "Sanjay Kumar
- * Samantaray". This form read the account, so it showed whoever the import
- * had pinned the book to. Both were telling the truth about different
- * columns, and together they read as the form inventing a name.
- *
- * So the form states both, and only when they disagree — where the account
- * and the sheet name are the same person there is nothing to reconcile and a
- * second line would be noise.
+ * A `<select>` can only hold ids, so the sheet's answer needs one to be shown
+ * as the value it is. It is never sent: it means "nothing was touched", and
+ * the save path drops it rather than writing a string no column can hold.
  */
-function SheetSays({
-  stated,
-  account,
-}: {
-  stated?: string | null;
-  account: string | null;
-}) {
-  const name = stated?.trim();
-  if (!name || name === account) return null;
-  return (
-    <span className="mt-1 block text-[12px] text-muted">
-      Sheet says <span className="text-body">{name}</span>
-      {account
-        ? " — not the account above, which is what drives the calling queue."
-        : " — nobody with a MahekOne login, so no queue is driven by it."}
-    </span>
-  );
+const SHEET_NAME_VALUE = "__sheet__";
+
+/** What the sales seat shows on open: the sheet's name where that is the truth. */
+function openingSalesValue(
+  kind: "lead" | "customer",
+  initial: Partial<Row> | undefined,
+  people: Array<{ id: string; name: string }>,
+): string {
+  const account =
+    (kind === "lead" ? initial?.ownerId : (initial?.salesAmId ?? initial?.ownerId)) ??
+    "";
+  const stated = initial?.salesAmName?.trim();
+  if (!stated) return account;
+  // The same person by two routes is one person: keep the account, which is
+  // the half that can actually be given a calling queue.
+  const accountName = people.find((p) => p.id === account)?.name?.trim();
+  if (accountName && accountName === stated) return account;
+  return SHEET_NAME_VALUE;
 }
 
 type CustomerFormProps = {
@@ -1147,16 +1157,24 @@ function CustomerFormBody({
      * while the list beside it showed the real manager. They were reading two
      * different columns and only one of them answers "whose book is this".
      */
-    assignedId:
-      (kind === "lead"
-        ? initial?.ownerId
-        : (initial?.salesAmId ?? initial?.ownerId)) ??
-      "",
+    assignedId: openingSalesValue(kind, initial, team),
     gstin: initial?.gstin ?? "",
     creditTermDays: String(initial?.creditTermDays ?? 30),
     route: initial?.route ?? "",
     leadSource: initial?.leadSource ?? "",
-    backOfficeAmId: initial?.backOfficeAmId ?? "",
+    /*
+     * The same shape as the sales seat. NOT auto-matched to an employee of
+     * the same name, tempting as that is: the field would then differ from
+     * what is stored, an ordinary save would read as a change, and writing it
+     * stamps `amDecidedAt` — which is what stops the nightly sheet sync
+     * touching that column ever again. A display convenience must not quietly
+     * freeze a column against the sheet.
+     */
+    backOfficeAmId: initial?.backOfficeAmId
+      ? initial.backOfficeAmId
+      : initial?.backOfficeAmName?.trim()
+        ? SHEET_NAME_VALUE
+        : "",
     // Only sent when a manager actually changed — see below.
     amReasonCode: amReasons[0] ?? "",
   });
@@ -1166,10 +1184,6 @@ function CustomerFormBody({
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
       setValues((v) => ({ ...v, [k]: e.target.value }));
 
-  /** The name behind a chosen id, or null where nothing is chosen. */
-  const accountName = (id: string | undefined) =>
-    (id && team.find((t) => t.id === id)?.name) || null;
-
   /*
    * Whether either account manager actually moved, compared against what the
    * record held when the form opened. This is what decides whether a reason is
@@ -1177,9 +1191,10 @@ function CustomerFormBody({
    * where somebody only fixed a spelling must not write a reassignment.
    */
   const amChanged =
-    (values.assignedId ?? "") !==
-      (((kind === "lead" ? initial?.ownerId : (initial?.salesAmId ?? initial?.ownerId)) ?? "")) ||
-    (values.backOfficeAmId ?? "") !== (initial?.backOfficeAmId ?? "");
+    (values.assignedId !== SHEET_NAME_VALUE &&
+      values.assignedId !== openingSalesValue(kind, initial, team)) ||
+    (values.backOfficeAmId !== SHEET_NAME_VALUE &&
+      (values.backOfficeAmId ?? "") !== (initial?.backOfficeAmId ?? ""));
 
   return (
     <Modal
@@ -1264,17 +1279,34 @@ function CustomerFormBody({
             onChange={set("assignedId")}
             disabled={!canReassign}
           >
+            {/* The sheet's answer, shown as the value it is rather than
+                explained in a sentence underneath. Offered only when it IS
+                the current answer — it is not something to pick, because
+                somebody with no login cannot be given a calling queue. */}
+            {values.assignedId === SHEET_NAME_VALUE ? (
+              <option value={SHEET_NAME_VALUE}>
+                {initial?.salesAmName} · from the sheet
+              </option>
+            ) : null}
             <option value="">Unassigned</option>
-            {team.map((t) => (
+            {/* Accounts first, then the staff who have no login. Four of the
+                busiest salespeople on this book are the second kind, so a
+                list of accounts alone could not name who actually sells. */}
+            {backOfficePeople.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
+                {t.role === "employee" ? " · no login" : ""}
               </option>
             ))}
           </Select>
-          <SheetSays
-            stated={initial?.salesAmName}
-            account={accountName(values.assignedId)}
-          />
+          {values.assignedId === SHEET_NAME_VALUE ||
+          values.assignedId?.startsWith("emp:") ? (
+            <span className="mt-1 block text-[12px] text-muted">
+              No MahekOne login, so this account sits on nobody&apos;s calling
+              queue or collections list. Choose an account holder to put it on
+              one.
+            </span>
+          ) : null}
         </Field>
         <Field
           label="Account manager · back office"
@@ -1289,6 +1321,11 @@ function CustomerFormBody({
             onChange={set("backOfficeAmId")}
             disabled={!canReassign}
           >
+            {values.backOfficeAmId === SHEET_NAME_VALUE ? (
+              <option value={SHEET_NAME_VALUE}>
+                {initial?.backOfficeAmName} · from the sheet
+              </option>
+            ) : null}
             <option value="">Unassigned</option>
             {backOfficePeople.map((t) => (
               <option key={t.id} value={t.id}>
@@ -1297,10 +1334,12 @@ function CustomerFormBody({
               </option>
             ))}
           </Select>
-          <SheetSays
-            stated={initial?.backOfficeAmName}
-            account={accountName(values.backOfficeAmId)}
-          />
+          {values.backOfficeAmId === SHEET_NAME_VALUE ? (
+            <span className="mt-1 block text-[12px] text-muted">
+              The sheet&apos;s answer. Pick somebody here to record it in MahekOne
+              instead — the list includes staff without a login.
+            </span>
+          ) : null}
         </Field>
 
         {/*
