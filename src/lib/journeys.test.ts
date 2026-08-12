@@ -5436,6 +5436,60 @@ async function makeEmployee(name: string, status: "active" | "inactive") {
   return row;
 }
 
+describe("the back office seat is a book too", () => {
+  test("an account reaches whoever sells to it AND whoever does its paperwork", async () => {
+    /*
+     * Seema Roy signed in to "queue cleared for today" on a day she had 195
+     * accounts to work: back office on all of them, sales on none, and every
+     * scoped list read the sales seat alone.
+     *
+     * The back office team are telecallers who also do the dispatch and the
+     * paperwork, so both seats are a book.
+     */
+    const customer = await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -60),
+      cycleDays: 30,
+      backOfficeAmId: rakesh.id,
+    });
+
+    setTestUser(priya);
+    const forSales = await listCustomersPage({});
+    assert.ok(
+      forSales.rows.some((r) => r.id === customer.id),
+      "the salesperson lost their own account",
+    );
+
+    setTestUser(rakesh);
+    const forBackOffice = await listCustomersPage({});
+    assert.ok(
+      forBackOffice.rows.some((r) => r.id === customer.id),
+      "the back office manager could not see an account they handle",
+    );
+
+    // And it is on their calling queue, which is the screen that was empty.
+    const queue = await getQueue();
+    assert.ok(
+      queue.entries.some((e) => e.customerId === customer.id) ||
+        queue.suppressed.some((h) => h.customerId === customer.id),
+      "the account reached neither the queue nor the held-back strip",
+    );
+    setTestUser(priya);
+  });
+
+  test("it does not reach somebody who holds neither seat", async () => {
+    const customer = await makeCustomer(priya.id, { backOfficeAmId: rakesh.id });
+
+    const third = await makeUser("Third Person", "telecaller", manager.id);
+    setTestUser(third);
+    const page = await listCustomersPage({});
+    assert.ok(
+      !page.rows.some((r) => r.id === customer.id),
+      "widening the rule leaked an account to a third person",
+    );
+    setTestUser(priya);
+  });
+});
+
 describe("choosing an account manager", () => {
   test("the picker offers the staff list, not the reader's scope", async () => {
     // It was built from `listTeam()`, which is scoped — so an admin reading

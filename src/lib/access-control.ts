@@ -1,7 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import { randomUUID } from "node:crypto";
-import { eq, inArray, or, sql } from "drizzle-orm";
+import { eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, users, type User } from "@/db/schema";
 import { requireUser } from "./auth";
@@ -127,15 +127,41 @@ export function assignedUserId(c: {
 }
 
 /**
- * The same rule as SQL, for scoped list queries. Written out rather than built
- * from Drizzle column refs because these run inside correlated subqueries,
- * where a bare "owner_id" binds to the wrong table.
+ * The same rule as SQL, for the VALUE — who holds the book, singular. Written
+ * out rather than built from Drizzle column refs because these run inside
+ * correlated subqueries, where a bare "owner_id" binds to the wrong table.
  */
 export const ASSIGNED_TO_SQL = sql`
   case when customers.kind = 'lead'
        then customers.owner_id
        else coalesce(customers.sales_am_id, customers.owner_id)
   end`;
+
+/** The other seat, spelled out for the same reason. */
+export const BACK_OFFICE_SQL = sql`customers.back_office_am_id`;
+
+/**
+ * WHOSE LIST A CUSTOMER APPEARS ON, which is not the same question as who
+ * holds the book — and is the one every scoped query actually asks.
+ *
+ * Both seats count. The back office team calls their accounts too: they are
+ * telecallers who also do the dispatch and the paperwork, so an account
+ * reaches whoever sells to it AND whoever handles it. Reading the sales seat
+ * alone gave Seema Roy an empty CRM — back office on 195 accounts, sales on
+ * none, so her calling queue said "queue cleared" on a day she had 195
+ * accounts to work.
+ *
+ * It follows that one account can be on two people's lists, and that is
+ * intended rather than a leak: they are the two people responsible for it.
+ *
+ * `ASSIGNED_TO_SQL` stays what it was and is still the answer to "whose book
+ * is this" — the column a reassignment writes and the queue dates work from.
+ * This is only about who may SEE it.
+ */
+export function scopedToUsers(ids: string[] | null): SQL | undefined {
+  if (!ids) return undefined;
+  return or(inArray(ASSIGNED_TO_SQL, ids), inArray(BACK_OFFICE_SQL, ids));
+}
 
 /* -------------------------------------------------------------- permissions */
 

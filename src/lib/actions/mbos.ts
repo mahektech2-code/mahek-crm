@@ -26,7 +26,7 @@ import {
   type OrderLine,
 } from "@/db/schema";
 import { writeTimelineEvent, type TimelineWriter } from "../timeline";
-import { ASSIGNED_TO_SQL } from "../access-control";
+import { scopedToUsers} from "../access-control";
 import { getConfig } from "../config/store";
 import { financialYearOf } from "../financial-year";
 import { today, recomputeOutstanding, recomputeLastContact } from "../recompute";
@@ -680,7 +680,7 @@ async function scopedCustomer(
           // The ONE definition of whose book a customer is in. Written out
           // here would be a second one, and the two would disagree the first
           // time either changed.
-          inArray(ASSIGNED_TO_SQL, ids),
+          scopedToUsers(ids),
         ),
       );
     if (Number(assigned?.n ?? 0) === 0) {

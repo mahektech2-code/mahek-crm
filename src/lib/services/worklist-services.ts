@@ -16,12 +16,10 @@ import {
   users,
 } from "@/db/schema";
 import {
-  ASSIGNED_TO_SQL,
   assertCustomerInScope,
   requireCapability,
   resolveScope,
-  scopedUserIds,
-} from "../access-control";
+  scopedUserIds, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
 import { classifyShortfall, resolveTarget } from "../engines/targets";
 import { watchAge } from "../engines/inactivity";
@@ -292,7 +290,7 @@ export async function listComplaints(status?: string) {
     .innerJoin(users, eq(users.id, complaints.loggedByUserId))
     .where(
       and(
-        ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined,
+        scopedToUsers(ids),
         status ? eq(complaints.status, status as never) : undefined,
       ),
     )
@@ -524,7 +522,7 @@ export async function listInactiveWatch(): Promise<WatchRow[]> {
     })
     .from(inactiveWatchItems)
     .innerJoin(customers, eq(customers.id, inactiveWatchItems.customerId))
-    .where(ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined);
+    .where(scopedToUsers(ids));
 
   return rows
     .map(({ item, customer, ownerName }) => {
@@ -649,7 +647,7 @@ export async function listTargets(period?: string) {
         // A customer who has gone quiet still carries a target — that is the
         // gap the month has to explain. Only deactivation removes them.
         ne(customers.status, "deactivated"),
-        ids ? inArray(ASSIGNED_TO_SQL, ids) : undefined,
+        scopedToUsers(ids),
       ),
     )
     .orderBy(asc(customers.name));
