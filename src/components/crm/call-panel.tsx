@@ -382,6 +382,9 @@ function CallPanelForm({
     {},
   );
   const [followUpDate, setFollowUpDate] = React.useState("");
+  /* No order: the date the customer gave, or an explicit "they would not say". */
+  const [noOrderNextCallDate, setNoOrderNextCallDate] = React.useState("");
+  const [noOrderNoCommitment, setNoOrderNoCommitment] = React.useState(false);
   const [payDate, setPayDate] = React.useState("");
   const [category, setCategory] = React.useState(
     complaintCategories[0]?.value ?? "other",
@@ -566,6 +569,7 @@ function CallPanelForm({
 
   const needsProducts = isOrderReceived || outcome === "order_taken";
   const needsFollowUp = outcome === "follow_up";
+  const needsNextCall = outcome === "no_order";
   const needsPayDate =
     type === "inbound_call" && outcome === "payment_promised";
   const showPayDate = outcome === "payment_promised";
@@ -854,6 +858,11 @@ function CallPanelForm({
           quickNoteIds: picked,
           productQuantities,
           followUpDate: needsFollowUp ? followUpDate : undefined,
+          noOrderNextCallDate:
+            needsNextCall && !noOrderNoCommitment && noOrderNextCallDate
+              ? noOrderNextCallDate
+              : undefined,
+          noOrderNoCommitment: needsNextCall ? noOrderNoCommitment : false,
           paymentPromiseDate: showPayDate ? payDate || undefined : undefined,
           complaintCategory: needsCategory ? category : undefined,
           complaintDescription: needsCategory
@@ -1661,6 +1670,69 @@ function CallPanelForm({
                             min={today()}
                             onChange={(e) => setFollowUpDate(e.target.value)}
                           />
+                        </Field>
+                      ) : null}
+
+                      {needsNextCall ? (
+                        <Field
+                          label="When do we call back"
+                          hint="Ask before ringing off. A date they give becomes a reminder and beats the usual wait, so the call lands on the day they named."
+                          error={errors.noOrderNextCallDate ?? null}
+                        >
+                          <div className="mb-1.5 flex flex-wrap gap-1.5">
+                            {FOLLOW_UP_PRESETS.map((preset) => {
+                              const date = addDays(today(), preset.days);
+                              return (
+                                <button
+                                  key={preset.label}
+                                  type="button"
+                                  onClick={() => {
+                                    setNoOrderNextCallDate(date);
+                                    setNoOrderNoCommitment(false);
+                                  }}
+                                  className={cx(
+                                    "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+                                    !noOrderNoCommitment && noOrderNextCallDate === date
+                                      ? "border-brand bg-brand-soft font-medium text-brand-hover"
+                                      : "border-line bg-surface text-body hover:bg-canvas",
+                                  )}
+                                >
+                                  {preset.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <Input
+                            type="date"
+                            value={noOrderNoCommitment ? "" : noOrderNextCallDate}
+                            min={today()}
+                            disabled={noOrderNoCommitment}
+                            onChange={(e) => setNoOrderNextCallDate(e.target.value)}
+                          />
+                          {/*
+                            The escape hatch, and it has to be deliberate. Plenty
+                            of customers will not name a day, and the telecaller
+                            must be able to say so — but by saying it, not by
+                            leaving the box empty, which is indistinguishable
+                            from having forgotten to ask.
+                          */}
+                          <label className="mt-2 flex cursor-pointer items-start gap-2 text-[13px] text-body">
+                            <input
+                              type="checkbox"
+                              checked={noOrderNoCommitment}
+                              onChange={(e) => {
+                                setNoOrderNoCommitment(e.target.checked);
+                                if (e.target.checked) setNoOrderNextCallDate("");
+                              }}
+                              className="mt-0.5 h-4 w-4 cursor-pointer"
+                            />
+                            <span>
+                              They would not commit to a date
+                              <span className="block text-[11px] text-muted">
+                                We will ask again after the usual wait.
+                              </span>
+                            </span>
+                          </label>
                         </Field>
                       ) : null}
 

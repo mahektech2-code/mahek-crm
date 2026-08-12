@@ -157,6 +157,9 @@ export type SaveInteractionActionInput = {
   quickNoteIds?: string[];
   productQuantities?: Record<string, number>;
   followUpDate?: string;
+  /** No order: the day they named, or that they named none. See the service. */
+  noOrderNextCallDate?: string;
+  noOrderNoCommitment?: boolean;
   paymentPromiseDate?: string;
   complaintCategory?: string;
   complaintDescription?: string;
@@ -192,6 +195,8 @@ export async function saveInteractionAction(
       quickNoteIds: raw.quickNoteIds ?? [],
       productQuantities: raw.productQuantities ?? {},
       followUpDate: raw.followUpDate,
+      noOrderNextCallDate: raw.noOrderNextCallDate,
+      noOrderNoCommitment: raw.noOrderNoCommitment ?? false,
       paymentPromiseDate: raw.paymentPromiseDate,
       complaintCategory: raw.complaintCategory as never,
       complaintDescription: raw.complaintDescription,

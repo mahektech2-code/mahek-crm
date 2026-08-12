@@ -124,7 +124,15 @@ export const SETTINGS = [
     description:
       "What the customer said, and how many days before they are asked again. Asking for an order and being told no has to buy quiet, or a customer past their call day returns to the top of the list every day until they order — which punishes the telecaller for working it. A missing outcome means no cooldown at all.",
     default: {
-      no_order: 7,
+      /*
+       * Five, and it is a FLOOR rather than the usual answer. A no-order call
+       * now has to end with the telecaller saying when to ring back, so most
+       * of these carry a date the customer gave and this never applies to
+       * them — a reminder outranks every cooldown. What is left is the case
+       * where the customer would not commit to anything, and five days is how
+       * long that silence buys.
+       */
+      no_order: 5,
       not_interested: 30,
       casual_talk: 3,
     },

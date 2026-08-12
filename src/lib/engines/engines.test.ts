@@ -760,7 +760,8 @@ describe("E2 queue builder", () => {
     });
     const r = buildQueue([c], TODAY, C);
     assert.equal(r.entries.length, 0);
-    assert.match(r.suppressed[0].reason, /asking again in 6 days/);
+    // Five days, less the one already elapsed.
+    assert.match(r.suppressed[0].reason, /asking again in 4 days/);
   });
 
   test("a customer on the inactive watch is worked from that list, not the queue", () => {
@@ -2171,8 +2172,8 @@ describe("what the customer said buys the right quiet", () => {
         C,
       ).entries.length;
 
-    assert.equal(make("no_order", 6), 0, "still inside the week");
-    assert.equal(make("no_order", 7), 1, "the week is up");
+    assert.equal(make("no_order", 4), 0, "still inside the wait");
+    assert.equal(make("no_order", 5), 1, "the wait is up");
     assert.equal(make("not_interested", 20), 0, "still inside the month");
     assert.equal(make("not_interested", 30), 1, "the month is up");
   });

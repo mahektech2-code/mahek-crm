@@ -1622,6 +1622,8 @@ describe("Journey 8 - the interaction log", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      // No date was recorded on these calls, which is now said explicitly.
+      noOrderNoCommitment: true,
       notes: `${chips[0].label} ${chips[1].label}`,
       quickNoteIds: [chips[0].id, chips[1].id],
       idempotencyKey: randomUUID(),
@@ -1657,6 +1659,8 @@ describe("Journey 8 - the interaction log", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      // No date was recorded on these calls, which is now said explicitly.
+      noOrderNoCommitment: true,
       quickNoteIds: [foreign.id],
       idempotencyKey: randomUUID(),
     });
@@ -1782,6 +1786,8 @@ describe("Journey 9 - the Information tab", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      // No date was recorded on these calls, which is now said explicitly.
+      noOrderNoCommitment: true,
       idempotencyKey: randomUUID(),
     });
     await saveInteraction({
@@ -2054,6 +2060,8 @@ describe("Journey 9 - the Information tab", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      // No date was recorded on these calls, which is now said explicitly.
+      noOrderNoCommitment: true,
       quickNoteIds: [retired.id],
       notes: "Comparing competitor rates",
       idempotencyKey: randomUUID(),
@@ -2909,6 +2917,8 @@ describe("Who the Call Log puts in front of a telecaller", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      // No date was recorded on these calls, which is now said explicitly.
+      noOrderNoCommitment: true,
       notes: "Still has stock",
       sourceModule: "call_queue",
       idempotencyKey: "j-no-order-1",
@@ -3171,6 +3181,8 @@ describe("Cross-cutting rules", () => {
       interactionType: "outbound_call" as const,
       outcome: "no_order" as const,
       notes: "Asked us to call back next week",
+      // The note says they asked for next week, so the date is recorded.
+      noOrderNextCallDate: addDays(TODAY, 7),
       sourceModule: "call_queue" as const,
       idempotencyKey: key,
     };
@@ -3207,6 +3219,8 @@ describe("Cross-cutting rules", () => {
       customerId: customer.id,
       interactionType: "outbound_call",
       outcome: "no_order",
+      // No date was recorded on these calls, which is now said explicitly.
+      noOrderNoCommitment: true,
       notes: "Will confirm quantities tomorrow",
       idempotencyKey: randomUUID(),
     });
@@ -5953,5 +5967,98 @@ describe("the call list is settled once a day", () => {
       unchanged.entries.map((e) => e.customerId),
       served.entries.map((e) => e.customerId),
     );
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * "No order today" has to end with a date, or with somebody saying there
+ * isn't one. It is the most common answer on the phone and it used to end the
+ * call with nothing.
+ * ------------------------------------------------------------------------- */
+
+describe("No order, and when we ring back", () => {
+  test("saving it without an answer is refused", async () => {
+    const customer = await makeCustomer(priya.id);
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, false, "a no-order call saved without saying when to call back");
+    // Refused in the SERVICE, not only on the form — a mandatory field that is
+    // only mandatory in the browser is not mandatory.
+    assert.match(r.ok ? "" : r.error, /call back|commit/i);
+  });
+
+  test("a date they gave becomes a reminder, and beats the cooldown", async () => {
+    const customer = await makeCustomer(priya.id);
+    const when = addDays(TODAY, 12);
+
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNextCallDate: when,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    const [rem] = await db
+      .select()
+      .from(reminders)
+      .where(eq(reminders.customerId, customer.id));
+    assert.ok(rem, "the date they gave produced no reminder");
+    assert.equal(rem.dueDate, when, "and it is not the day they named");
+    assert.equal(rem.type, "call_back");
+  });
+
+  test("no commitment writes no reminder, and the wait decides", async () => {
+    const customer = await makeCustomer(priya.id);
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNoCommitment: true,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    assert.equal(
+      (await db.select().from(reminders).where(eq(reminders.customerId, customer.id))).length,
+      0,
+      "a customer who committed to nothing was given a reminder anyway",
+    );
+  });
+
+  test("a date in the past is refused, and so is answering both ways", async () => {
+    const customer = await makeCustomer(priya.id);
+
+    const past = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNextCallDate: addDays(TODAY, -1),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(past.ok, false, "the next call was scheduled in the past");
+
+    const both = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNextCallDate: addDays(TODAY, 3),
+      noOrderNoCommitment: true,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(both.ok, false, "they both gave a date and gave none");
+  });
+
+  test("the default wait is five days", async () => {
+    // A floor rather than the usual answer: most no-order calls now carry a
+    // date, and a reminder outranks every cooldown. This is what is left when
+    // the customer would not say.
+    const config = await getConfig();
+    assert.equal(config["queue.outcomeCooldownDays"].no_order, 5);
   });
 });
