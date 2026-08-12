@@ -2218,6 +2218,57 @@ describe("The business day is Asia/Kolkata, whatever the database thinks", () =>
 
     assert.deepEqual(offenders, [], "use `calendarDate()` — see APP_TIMEZONE");
   });
+  test("no screen reads a stored instant as a wall clock without saying which zone", async () => {
+    // The third spelling of the same rule, and the one that reached a screen.
+    //
+    // `getHours()` and `getDate()` answer in the zone of whichever machine is
+    // asking. A page.tsx formats on the server, the server is Vercel and
+    // Vercel is UTC — so every timestamp rendered server-side came out five
+    // and a half hours early. An order taken at 9am read "3:30 am", which
+    // looks like a machine writing rows in the night rather than a person on
+    // a call, and somebody quite reasonably asked whether the app had
+    // invented the row.
+    //
+    // Like both of its siblings it is correct on a laptop set to IST, so it
+    // was right in development and wrong only in production.
+    const { readFileSync, readdirSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (
+          (full.endsWith(".ts") || full.endsWith(".tsx")) &&
+          !full.includes(".test.")
+        ) {
+          files.push(full);
+        }
+      }
+    };
+    walk("src");
+
+    // The local-zone getters. `getUTC*` is exempt: it names a zone, and
+    // `longDate` uses it deliberately on a date-only value parsed as UTC.
+    const LOCAL_GETTER =
+      /\.get(Hours|Minutes|Date|Month|FullYear|Day)\s*\(\s*\)/;
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      for (const [i, line] of readFileSync(file, "utf8").split("\n").entries()) {
+        const code = line.trim();
+        if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*")) continue;
+        if (LOCAL_GETTER.test(line)) offenders.push(`${file}:${i + 1}`);
+      }
+    }
+
+    assert.deepEqual(
+      offenders,
+      [],
+      "read it through `stamp`, `clock` or `Intl` with APP_TIMEZONE",
+    );
+  });
 });
 
 /* ------------------------------------------------------- order approval */

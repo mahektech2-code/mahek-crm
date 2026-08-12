@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/primitives";
 import { Modal, RowMenu, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { setTarget, setTargetsBulk } from "@/lib/actions/crm";
 import { money, moneyShort, pct, periodLabel } from "@/lib/format";
 
@@ -373,11 +374,29 @@ export function TargetsScreen({
 }
 
 function recentPeriods(): string[] {
+  // Which month it is, in the business's zone rather than the browser's. On
+  // the first of a month a device set to a zone behind IST is still on the
+  // last one, and would offer a period list starting a month back.
+  const now = Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: APP_TIMEZONE,
+      year: "numeric",
+      month: "2-digit",
+    })
+      .formatToParts(new Date())
+      .map((p) => [p.type, p.value]),
+  );
+
   const out: string[] = [];
-  const d = new Date();
+  let year = Number(now.year);
+  let month = Number(now.month);
   for (let i = 0; i < 6; i++) {
-    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-    d.setMonth(d.getMonth() - 1);
+    out.push(`${year}-${String(month).padStart(2, "0")}`);
+    month -= 1;
+    if (month === 0) {
+      month = 12;
+      year -= 1;
+    }
   }
   return out;
 }
