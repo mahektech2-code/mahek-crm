@@ -97,8 +97,6 @@ services:
     # Reaching it still requires the deploy private key. Publishing on
     # 0.0.0.0 would be the mistake — that would put Postgres back on the
     # internet, which is exactly what leaving Neon was meant to end.
-    ports:
-      - "127.0.0.1:5432:5432"
     volumes:
       # A named volume on the droplet's SSD. Rebuilding or rolling back the app
       # container does not touch it.

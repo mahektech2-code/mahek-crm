@@ -21,7 +21,7 @@ apt-get update -qq
 # whole script on a fresh box. Nothing here needs 17: backup.sh and restore.sh
 # both run pg_dump and psql INSIDE the postgres container, which is 17 by
 # definition. This is only for the occasional hand-run query.
-apt-get install -y -qq ca-certificates curl gnupg ufw unattended-upgrades postgresql-client jq
+apt-get install -y -qq ca-certificates curl gnupg ufw unattended-upgrades postgresql-client-17 jq
 
 # ---------------------------------------------------------------------- swap
 #

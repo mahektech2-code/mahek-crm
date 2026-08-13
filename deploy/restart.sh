@@ -21,7 +21,7 @@ set -euo pipefail
 # `up -d` with no service named reconciles EVERY service against the compose
 # file. It is a no-op for anything already correct, so an ordinary deploy where
 # only the app image changed costs nothing extra.
-docker compose up -d --remove-orphans
+docker compose up -d app
 
 # Waiting is part of bringing it up, not a separate concern. `up -d` returns as
 # soon as the containers are created, which is well before Postgres will accept
