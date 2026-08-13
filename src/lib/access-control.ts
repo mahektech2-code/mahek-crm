@@ -122,8 +122,12 @@ export function assignedUserId(c: {
   kind: "lead" | "customer";
   ownerId: string | null;
   salesAmId: string | null;
+  amDecidedAt?: Date | string | null;
 }): string | null {
-  return c.kind === "lead" ? c.ownerId : (c.salesAmId ?? c.ownerId);
+  if (c.kind === "lead") return c.ownerId;
+  // A DECIDED account is what it says it is, empty included.
+  if (c.amDecidedAt) return c.salesAmId;
+  return c.salesAmId ?? c.ownerId;
 }
 
 /**
@@ -131,9 +135,28 @@ export function assignedUserId(c: {
  * out rather than built from Drizzle column refs because these run inside
  * correlated subqueries, where a bare "owner_id" binds to the wrong table.
  */
+/*
+ * The fallback to the owner is for a field NOBODY HAS SET, not for one
+ * somebody has deliberately emptied.
+ *
+ * `owner_id` is whoever imported the account — one person holds it on 1,078
+ * rows here — so a salesperson leaving, recorded honestly as "this account now
+ * has no salesperson", handed the account to them instead. It arrived in their
+ * personal calling list, on a customer they had never sold to, and the screen
+ * still showed the departed salesperson's name because that is a different
+ * column. It took a report of "why is this in my book" to find.
+ *
+ * `am_decided_at` is the mark that a person chose, and after it the sales seat
+ * is read exactly as it stands: null means unassigned, and an unassigned
+ * account belongs on a manager's list of accounts nobody is working — which
+ * is what the team view already labels in words — rather than in the book of
+ * whoever happened to run the import.
+ */
 export const ASSIGNED_TO_SQL = sql`
   case when customers.kind = 'lead'
        then customers.owner_id
+       when customers.am_decided_at is not null
+       then customers.sales_am_id
        else coalesce(customers.sales_am_id, customers.owner_id)
   end`;
 

@@ -1103,6 +1103,36 @@ first. Nobody reports that as a bug — they report that reassignment does not
 work. So the mirrors move with the ids, and a decided account is skipped by
 both paths.
 
+**A reassignment must survive the next sync, and there were three ways it did
+not.** `recomputeSalesPeople` honoured `amDecidedAt` and the party PROJECTION
+did not — so a reassignment wrote its history, notified both people, and was
+undone half an hour later by the scheduled pass. In production somebody made
+the same change four times in four minutes before giving up, and the account
+they were trying to move sat in the wrong person's Call Log for a day. The
+projection now skips all four manager columns on a decided account and records
+the disagreement in `sync_conflicts`, which is what the order projection
+already did for `orders.status`. Everything that is NOT a manager — the phone
+number, the credit term, the area — still comes from the sheet, because the
+sheet is simply right about those.
+
+**`updateCustomer` is not a door to it either.** It wrote `owner_id` for
+anybody who could edit a customer and `back_office_am_id` for any manager, both
+without the `customer.reassign` capability that is deliberately accounts' and
+admin's, without a reason, without history, without notifying anybody, and —
+worst — without `amDecidedAt`, so the sheet restated the old answer on the next
+pass. The screen had already stopped sending those fields; the action refuses
+them now, because a server action is a URL and the unaudited door always wins
+in the end.
+
+**And an emptied seat means nobody, not the importer.** The fallback from
+`sales_am_id` to `owner_id` is for a field NOBODY HAS SET — it stops a record
+mid-migration being orphaned out of every list. It is not for one somebody has
+deliberately emptied: `owner_id` is whoever ran the import, one person on more
+than a thousand rows, so "this account's salesperson has left" handed the
+account to them, on a customer they had never sold to, with the departed
+salesperson's name still on the screen because that is a different column.
+After `am_decided_at` the sales seat is read exactly as it stands.
+
 **A lead moves by `owner_id` and a customer by `sales_am_id`.** That is what
 `ASSIGNED_TO_SQL` reads, so writing only `sales_am_id` leaves every lead
 exactly where it was while the screen reports it moved.

@@ -67,6 +67,9 @@ import {
 } from "@/lib/recompute";
 import { addDays } from "@/lib/business-date";
 import { updateAccountManagers } from "@/lib/actions/account-manager";
+import { projectParties } from "@/lib/services/party-projection-service";
+import { assignedUserId } from "@/lib/access-control";
+import { partyNameKey } from "@/lib/sheet-parse";
 import { reverseReceiptAction } from "@/lib/actions/payments";
 import { getQueue } from "@/lib/services/queue-service";
 import { snapshotQueue } from "@/lib/jobs";
@@ -3100,25 +3103,50 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     const { updateCustomer } = await import("@/lib/actions/crm");
 
     // Priya is a telecaller. The form disables the field; the action refuses it.
-    await updateCustomer(customer.id, { backOfficeAmId: rakesh.id });
-    const [afterTelecaller] = await db
-      .select()
-      .from(customers)
-      .where(eq(customers.id, customer.id));
-    assert.equal(
-      afterTelecaller.backOfficeAmId,
-      null,
-      "a disabled input is not a permission check",
-    );
+    const refusedForTelecaller = await updateCustomer(customer.id, {
+      backOfficeAmId: rakesh.id,
+    });
+    assert.equal(refusedForTelecaller.ok, false, "a disabled input is not a permission check");
 
+    /*
+     * AND IT IS REFUSED FOR A MANAGER TOO, which is the part that changed.
+     *
+     * This used to let a manager write `back_office_am_id` straight through
+     * the customer form. That is a reassignment by another name, and it took
+     * none of the things a reassignment takes: no `customer.reassign`
+     * capability — deliberately accounts' and admin's — no reason, no history,
+     * nobody notified, and no `am_decided_at`, so the next sheet sync put the
+     * old answer back and the change silently came undone.
+     *
+     * One door: `updateAccountManagers`.
+     */
     setTestUser(manager);
-    await updateCustomer(customer.id, { backOfficeAmId: rakesh.id });
+    const refusedForManager = await updateCustomer(customer.id, {
+      backOfficeAmId: rakesh.id,
+    });
+    assert.equal(refusedForManager.ok, false, "the second door is still open");
     setTestUser(priya);
     const [afterManager] = await db
       .select()
       .from(customers)
       .where(eq(customers.id, customer.id));
-    assert.equal(afterManager.backOfficeAmId, rakesh.id);
+    assert.equal(afterManager.backOfficeAmId, null, "and it wrote anyway");
+
+    // The one path that does move it records everything about the move.
+    setTestUser(deepa);
+    const moved = await updateAccountManagers({
+      customerIds: [customer.id],
+      backOffice: { kind: "user", userId: rakesh.id },
+      backOfficeReason: { reasonCode: "Salesperson left" },
+    });
+    assert.equal(moved.ok, true);
+    const [afterAccounts] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(afterAccounts.backOfficeAmId, rakesh.id);
+    assert.ok(afterAccounts.amDecidedAt, "and marked it so the sheet leaves it alone");
+    setTestUser(priya);
   });
 
   test("a lead becomes a customer the moment it orders", async () => {
@@ -5279,6 +5307,36 @@ describe("figures over a span of days", () => {
  * the next sheet sync, which is what most of these are about.
  * ------------------------------------------------------------------------- */
 
+/** The same, with a phone number the projection is expected to fill in. */
+async function stagePartyRowWithPhone(
+  partyName: string,
+  salesPersonName: string,
+  mobileNo: string,
+) {
+  const [run] = await db
+    .insert(sheetSyncRuns)
+    .values({
+      id: id("syn"),
+      source: "sales_party",
+      spreadsheetId: "test-sheet",
+      tabTitle: "Sales Party",
+      mode: "reconcile",
+      status: "ok",
+    })
+    .returning();
+  await db.insert(sheetPartyRows).values({
+    id: id("spy"),
+    syncId: run.id,
+    rowNumber: 2,
+    partyName,
+    partyKey: partyNameKey(partyName),
+    raw: {},
+    rowHash: randomUUID(),
+    salesPersonName,
+    mobileNo,
+  });
+}
+
 /** One Sales Party row, so `recomputeSalesPeople()` has a sheet to read. */
 async function stagePartyRow(partyName: string, salesPersonName: string) {
   const [run] = await db
@@ -5297,12 +5355,173 @@ async function stagePartyRow(partyName: string, salesPersonName: string) {
     syncId: run.id,
     rowNumber: 2,
     partyName,
-    partyKey: partyName.trim().toLowerCase(),
+    partyKey: partyNameKey(partyName),
     raw: {},
     rowHash: randomUUID(),
     salesPersonName,
   });
 }
+
+describe("a reassignment survives the sheet", () => {
+  test("the party projection leaves a decided account alone, and says the sheet disagrees", async () => {
+    /*
+     * The reported bug, end to end.
+     *
+     * `recomputeSalesPeople` has honoured `am_decided_at` since it was added.
+     * The party PROJECTION never did — so a reassignment wrote its history,
+     * notified both people, and was undone by the next sync half an hour
+     * later. In production somebody made the same change four times in four
+     * minutes before giving up.
+     */
+    const customer = await makeCustomer(priya.id, { name: "DECIDED PAINTS" });
+    await stagePartyRow("DECIDED PAINTS", priya.name);
+
+    setTestUser(deepa);
+    const moved = await updateAccountManagers({
+      customerIds: [customer.id],
+      salesAmId: rakesh.id,
+      sales: { reasonCode: "Salesperson left" },
+    });
+    assert.equal(moved.ok, true);
+
+    await projectParties();
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.salesAmId, rakesh.id, "the sheet took the account back");
+    assert.equal(
+      after.salesPersonName,
+      rakesh.name,
+      "the id held and the NAME reverted — the worst of the two outcomes, because every screen reads the name first",
+    );
+
+    const conflicts = await db
+      .select()
+      .from(syncConflicts)
+      .where(eq(syncConflicts.entityId, customer.id));
+    assert.equal(conflicts.length, 1, "a kept decision is written down, not just kept");
+    assert.equal(conflicts[0].field, "sales_person");
+    assert.equal(conflicts[0].sheetValue, priya.name);
+    assert.equal(conflicts[0].appValue, rakesh.name);
+  });
+
+  test("an undecided account is still the sheet's to state", async () => {
+    // The guard must not freeze every account the moment it exists. Nobody
+    // has decided anything here, so the sheet wins exactly as before.
+    const customer = await makeCustomer(priya.id, { name: "OPEN PAINTS" });
+    await stagePartyRow("OPEN PAINTS", rakesh.name);
+
+    await projectParties();
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.salesPersonName, rakesh.name);
+    assert.equal(after.salesAmId, rakesh.id, "and it links where the name matches an account");
+  });
+
+  test("the sheet still wins on everything that is not a manager", async () => {
+    // A decision is about who holds the account. It is not a reason to stop
+    // taking the customer's phone number from the master.
+    const customer = await makeCustomer(priya.id, { name: "PHONE PAINTS", phone: "" });
+    await stagePartyRowWithPhone("PHONE PAINTS", priya.name, "9820011111");
+
+    setTestUser(deepa);
+    await updateAccountManagers({
+      customerIds: [customer.id],
+      salesAmId: rakesh.id,
+      sales: { reasonCode: "Salesperson left" },
+    });
+    await projectParties();
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.phone, "9820011111", "the sheet stopped filling in a phone number");
+    assert.equal(after.salesAmId, rakesh.id, "and the decision still held");
+  });
+});
+
+describe("emptying the sales seat means nobody, not the importer", () => {
+  test("a decided-empty account leaves the owner's book", async () => {
+    /*
+     * `owner_id` is whoever ran the import — one person holds it on more than
+     * a thousand rows in production. The fallback to it is for a field NOBODY
+     * HAS SET, and a salesperson leaving is not that: recorded honestly as
+     * "this account has no salesperson", it handed the account to the
+     * importer, who had never sold to them and whose screen still showed the
+     * departed salesperson's name.
+     */
+    const customer = await makeCustomer(priya.id, { name: "ORPHAN PAINTS" });
+
+    setTestUser(deepa);
+    const emptied = await updateAccountManagers({
+      customerIds: [customer.id],
+      salesAmId: null,
+      sales: { reasonCode: "Salesperson left" },
+    });
+    assert.equal(emptied.ok, true);
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(after.salesAmId, null);
+    assert.ok(after.amDecidedAt, "the decision is marked");
+
+    // The owner is untouched — it records who found the account — but it is
+    // no longer what the account answers to.
+    assert.equal(after.ownerId, priya.id);
+    assert.equal(
+      assignedUserId({
+        kind: "customer",
+        ownerId: after.ownerId,
+        salesAmId: after.salesAmId,
+        amDecidedAt: after.amDecidedAt,
+      }),
+      null,
+      "an emptied seat resolved back to the owner",
+    );
+
+    // And the queue agrees, which is the half that was actually reported.
+    setTestUser(priya);
+    const q = await getQueue();
+    assert.equal(
+      q.entries.some((e) => e.customerId === customer.id) ||
+        q.suppressed.some((x) => x.customerId === customer.id),
+      false,
+      "it stayed in the importer's calling list",
+    );
+  });
+
+  test("an account nobody has decided on still falls back to the owner", async () => {
+    // The fallback is what keeps a record mid-migration from being orphaned
+    // out of every list. Removing it entirely would empty books.
+    const customer = await makeCustomer(priya.id, { name: "UNSET PAINTS" });
+    await db
+      .update(customers)
+      .set({ salesAmId: null })
+      .where(eq(customers.id, customer.id));
+
+    const [row] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(
+      assignedUserId({
+        kind: "customer",
+        ownerId: row.ownerId,
+        salesAmId: row.salesAmId,
+        amDecidedAt: row.amDecidedAt,
+      }),
+      priya.id,
+    );
+  });
+});
 
 describe("updating an account manager", () => {
   test("accounts may, and a manager may not", async () => {

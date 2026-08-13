@@ -13,7 +13,7 @@ import {
   notifications,
   users,
 } from "@/db/schema";
-import { requireCapability } from "@/lib/access-control";
+import { assignedUserId, requireCapability } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { err, okVoid, fromThrown, type Result } from "@/lib/result";
 
@@ -272,6 +272,7 @@ export async function updateAccountManagers(
         kind: customers.kind,
         ownerId: customers.ownerId,
         salesAmId: customers.salesAmId,
+        amDecidedAt: customers.amDecidedAt,
         salesPersonName: customers.salesPersonName,
         backOfficeAmId: customers.backOfficeAmId,
         backOfficeName: customers.backOfficeName,
@@ -288,8 +289,17 @@ export async function updateAccountManagers(
      * matching one. Writing only `sales_am_id` leaves every lead exactly where
      * it was while the screen reports it moved.
      */
+    // Through `assignedUserId`, not a third copy of the rule beside the SQL one
+    // and the engine one. A previously-decided account reads its sales seat
+    // exactly as it stands, so re-opening the dialog on an account somebody
+    // has already emptied shows "nobody" rather than the importer's name.
     const salesIdOf = (r: (typeof rows)[number]) =>
-      r.kind === "lead" ? r.ownerId : (r.salesAmId ?? r.ownerId);
+      assignedUserId({
+        kind: r.kind === "lead" ? "lead" : "customer",
+        ownerId: r.ownerId,
+        salesAmId: r.salesAmId,
+        amDecidedAt: r.amDecidedAt,
+      });
 
     const now = new Date();
     const history: (typeof customerAmChanges.$inferInsert)[] = [];
