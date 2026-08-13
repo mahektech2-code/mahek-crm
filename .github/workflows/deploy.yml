@@ -81,10 +81,19 @@ jobs:
           tags: |
             ${{ steps.tag.outputs.image }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          # Layer cache in the registry, so an unchanged package-lock does not
-          # reinstall node_modules on every push.
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+          # GITHUB'S CACHE, NOT THE REGISTRY'S.
+          #
+          # This was `type=registry,mode=max`, which stores every layer of
+          # every build as a `buildcache` tag. It reached 480 MB against the
+          # free tier's 500 MB total, and then the next push failed with
+          # `denied: quota exceeded` — a deploy broken not by the code but by
+          # the cache that existed to make deploys faster.
+          #
+          # The registry's 500 MB is for IMAGES, and a handful of ~130 MB
+          # images is what it comfortably holds. GitHub gives 10 GB of Actions
+          # cache free, it is scoped to this repository, and it evicts itself.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy:
     needs: build
