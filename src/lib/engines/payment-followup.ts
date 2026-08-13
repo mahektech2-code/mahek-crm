@@ -45,8 +45,30 @@ export type FollowUpSubject = {
   /**
    * Money reported against this account and not yet decided on by accounts.
    * Paise, and the day it was reported.
+   *
+   * `held` says accounts have looked at it and parked it deliberately, which
+   * is a different fact from nobody having looked yet — see `reportedQuiet`,
+   * where it is the difference between quiet that expires and quiet that does
+   * not. The reason travels with it because the sentence is read by a
+   * telecaller who has to answer a customer asking why nobody rang.
    */
-  reportedPayment: { amount: number; on: BusinessDate } | null;
+  reportedPayment: {
+    amount: number;
+    on: BusinessDate;
+    held: boolean;
+    holdReason: string | null;
+    /**
+     * The latest date written on an undecided cheque, where there is one.
+     *
+     * A post-dated cheque is a customer who has already paid as far as they
+     * are concerned, and who cannot be expected to do anything more until the
+     * date arrives. The ordinary reported quiet is a few days and a cheque can
+     * be dated a month out, so without this the customer is chased for money
+     * that is sitting in our own drawer — which is the most annoying call it
+     * is possible to make.
+     */
+    postDatedTo: BusinessDate | null;
+  } | null;
 };
 
 export type FollowUpConfig = Pick<
@@ -258,8 +280,46 @@ export function reportedQuiet(
 ): string | null {
   if (!s.reportedPayment) return null;
   const age = daysBetween(s.reportedPayment.on, today);
-  if (age > config["payments.reportedQuietDays"]) return null;
   const amount = `₹${Math.round(s.reportedPayment.amount / 100).toLocaleString("en-IN")}`;
+
+  /*
+   * A HOLD DOES NOT EXPIRE, and that is the whole difference between the two.
+   *
+   * The expiry above exists because a bare report is nobody's decision — left
+   * unexpiring, a customer could take themselves off this list for good by
+   * saying they had paid, and the account would simply stop appearing. A hold
+   * is somebody in accounts saying "I am looking for this money in the bank
+   * statement, leave them alone until I have"; chasing through that is worse
+   * than any call not made, and it is a named person's judgement rather than
+   * an unanswered claim.
+   *
+   * What replaces the expiry is visibility. The hold ages in plain sight on
+   * accounts' own list, past `payments.holdStaleDays` it is flagged there, and
+   * the customer is only ever released by somebody deciding.
+   */
+  if (s.reportedPayment.held) {
+    return `${amount} on hold with accounts${
+      s.reportedPayment.holdReason ? ` - ${s.reportedPayment.holdReason}` : ""
+    } - not chased until they decide`;
+  }
+
+  /*
+   * A CHEQUE DATED IN THE FUTURE buys quiet until its date, plus the ordinary
+   * window on top for the money to clear.
+   *
+   * The reported window is a few days and a cheque can be dated a month out.
+   * Measured from when it was written down, the quiet lapses long before the
+   * cheque can even be banked, and the customer is chased for money that is
+   * sitting in our own drawer — the most annoying call it is possible to make,
+   * and one where the customer is entirely right.
+   */
+  const postDated = s.reportedPayment.postDatedTo;
+  if (postDated && postDated > today) {
+    return `${amount} cheque dated ${postDated} - not chased until it can be banked`;
+  }
+
+  const from = postDated && postDated > s.reportedPayment.on ? postDated : s.reportedPayment.on;
+  if (daysBetween(from, today) > config["payments.reportedQuietDays"]) return null;
   return age === 0
     ? `${amount} reported paid today - waiting for accounts to confirm it`
     : `${amount} reported paid ${age} ${age === 1 ? "day" : "days"} ago - waiting for accounts to confirm it`;

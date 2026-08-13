@@ -21,6 +21,7 @@ export default async function Page() {
       today={day}
       modes={config["payments.modes"]}
       referenceRequiredModes={config["payments.referenceRequiredModes"]}
+      datedModes={config["payments.datedModes"]}
       allowOnAccount={config["payments.allowOnAccountRemainder"]}
     />
   );

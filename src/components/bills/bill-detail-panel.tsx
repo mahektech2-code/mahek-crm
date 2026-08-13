@@ -293,6 +293,10 @@ const SOURCE_NOTE: Record<BillDetail["lineSource"], string> = {
 
 const RECEIPT_LABEL: Record<BillDetail["receipts"][number]["status"], string> = {
   reported: "Reported",
+  // Accounts have seen it and are looking for it in the bank statement. It
+  // counts no more than a report does, and the customer is off collections
+  // until somebody decides.
+  held: "On hold",
   confirmed: "Confirmed",
   rejected: "Rejected",
   // Money that counted and was taken back — a bounced cheque, a duplicate, a

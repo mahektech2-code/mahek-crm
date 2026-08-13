@@ -21,6 +21,7 @@ import { getConfig } from "../config/store";
 import { isAttemptAllowed, agingBucket, effectiveDueDate } from "../engines/escalation";
 import { billCreditDaysSql } from "../bill-terms";
 import {
+  nextCallOn,
   planPaymentFollowUps,
   type FollowUpDue,
   type FollowUpHeldBack,
@@ -120,12 +121,20 @@ export async function getFollowUpWorklist(filters?: {
       // it is with accounts rather than with them.
       reportedAmount: sql<number | null>`(
         select sum(r.amount) from payment_receipts r
-         where r.customer_id = customers.id and r.status = 'reported'
+         where r.customer_id = customers.id and r.status in ('reported','held')
+      )`,
+      // Whether any of that undecided money has been PARKED by accounts. A
+      // hold is a decision somebody made and does not expire; a bare report is
+      // an unanswered claim whose quiet lapses. The row should not say the
+      // same thing about both.
+      paymentOnHold: sql<boolean>`exists (
+        select 1 from payment_receipts r
+         where r.customer_id = customers.id and r.status = 'held'
       )`,
       reportedOn: sql<string | null>`(
         select max((r.created_at at time zone 'Asia/Kolkata')::date)
           from payment_receipts r
-         where r.customer_id = customers.id and r.status = 'reported'
+         where r.customer_id = customers.id and r.status in ('reported','held')
       )`,
     })
     .from(followUpStates)
@@ -169,7 +178,9 @@ export async function getFollowUpWorklist(filters?: {
     nextAction: state.held
       ? "Held - dispute open"
       : promise.reportedAmount
-        ? "Reported paid - with accounts"
+        ? promise.paymentOnHold
+          ? "On hold with accounts - being checked"
+          : "Reported paid - with accounts"
         : promise.promisedDate && promise.promisedDate < day
         ? "Promise broken - call today"
         : (NEXT_ACTION[state.stage]?.[state.nextChannel] ?? "Follow up"),
@@ -255,7 +266,15 @@ export async function getPaymentFollowUpPlan(): Promise<PaymentFollowUpPlan> {
       promisedDate: last.promisedDate,
       reportedPayment: (() => {
         const r = reported.get(customer.id);
-        return r ? { amount: r.amount, on: r.reportedOn } : null;
+        return r
+          ? {
+              amount: r.amount,
+              on: r.reportedOn,
+              held: r.held,
+              holdReason: r.holdReason,
+              postDatedTo: r.postDatedTo,
+            }
+          : null;
       })(),
     })),
     day,
@@ -263,6 +282,78 @@ export async function getPaymentFollowUpPlan(): Promise<PaymentFollowUpPlan> {
   );
 
   return plan;
+}
+
+/**
+ * When collections next wants this one account called.
+ *
+ * The queue carries a verdict about TODAY — `paymentCallDue` — and a verdict
+ * about today cannot be rolled forward. Asked "when do I speak to them next",
+ * a customer with an overdue bill would answer "tomorrow" on every day of the
+ * year, because the flag never turns itself off. This is the same rule the
+ * worklist runs, `nextCallOn`, asked for a date instead of a yes.
+ *
+ * Null when there is no overdue debt on this customer at all.
+ */
+export async function paymentCadenceFor(customerId: string): Promise<{
+  nextCallOn: string;
+  totalOverdue: number;
+  daysOverdue: number;
+} | null> {
+  const config = await getConfig();
+  const day = await today();
+
+  const [row] = await db
+    .select({
+      state: followUpStates,
+      lastCallOn: sql<string | null>`(
+        select max((a.attempted_at at time zone 'Asia/Kolkata')::date)
+          from follow_up_attempts a
+         where a.customer_id = ${followUpStates.customerId} and a.channel = 'call'
+      )`,
+      promisedDate: sql<string | null>`(
+        select a.promised_date from follow_up_attempts a
+         where a.customer_id = ${followUpStates.customerId}
+           and a.promised_date is not null
+         order by a.attempted_at desc limit 1
+      )`,
+    })
+    .from(followUpStates)
+    .where(eq(followUpStates.customerId, customerId));
+
+  if (!row || row.state.totalOverdue <= 0) return null;
+
+  // A disputed account has no cadence — somebody is handling it, and inventing
+  // a date for it would put a chasing call on a telecaller's screen for a bill
+  // that is under argument.
+  if (row.state.held) return null;
+
+  const anchorDueDate =
+    row.state.oldestOverdueBillDate ?? addDays(day, -row.state.daysOverdue);
+
+  let on = nextCallOn({ anchorDueDate, lastCallOn: row.lastCallOn }, config);
+
+  /*
+   * The two things that push the date out, in the same order the worklist
+   * applies them. Reading the interval alone would answer "chase them in three
+   * days" to a telecaller who has just been promised the money on the 20th —
+   * which is the one call that must not be made.
+   */
+  const reported = (await reportedQuietByCustomer()).get(customerId);
+  if (reported) {
+    const until = addDays(reported.reportedOn, config["payments.reportedQuietDays"]);
+    if (until > on) on = until;
+  }
+  if (row.promisedDate && row.promisedDate >= day) {
+    const until = addDays(row.promisedDate, 1);
+    if (until > on) on = until;
+  }
+
+  return {
+    nextCallOn: on,
+    totalOverdue: row.state.totalOverdue,
+    daysOverdue: row.state.daysOverdue,
+  };
 }
 
 export async function getFollowUpDetail(customerId: string) {
@@ -449,6 +540,8 @@ export const paymentSchema = z.object({
   paidAt: z.string().min(1),
   mode: z.string().default("Bank transfer"),
   reference: z.string().optional(),
+  /** The date on the cheque, where the mode carries one — see payments.datedModes. */
+  instrumentDate: z.string().optional(),
   idempotencyKey: z.string().min(8),
 });
 
@@ -484,6 +577,7 @@ export async function recordPayment(
     receivedAt: input.paidAt,
     mode: input.mode,
     reference: input.reference,
+    instrumentDate: input.instrumentDate,
     allocation: "custom",
     custom: { [bill.id]: input.amount },
     source: "bills_screen",

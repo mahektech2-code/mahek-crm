@@ -60,7 +60,19 @@ export function QueueScreen({
   const [page, setPage] = React.useState(1);
   const [perPage, setPerPage] = React.useState(25);
 
-  const stale = rows.filter((r) => r.waitingHours > staleHours);
+  /*
+   * A HELD payment is not a neglected one, and the two must not be counted
+   * together.
+   *
+   * "Waiting more than 24 hours" on a reported payment means the customer's
+   * quiet is about to lapse and they will be chased for money nobody has
+   * looked for. On a hold it means somebody is part-way through a bank
+   * statement, the customer is quiet indefinitely by design, and none of that
+   * sentence is true. Holds have their own ageing — `payments.holdStaleDays` —
+   * which arrives on the row as `needsAttention`.
+   */
+  const stale = rows.filter((r) => !r.held && r.waitingHours > staleHours);
+  const staleHolds = rows.filter((r) => r.held && r.needsAttention);
   const shown = rows.slice((page - 1) * perPage, page * perPage);
   const open = rows.find((r) => r.id === openId) ?? null;
 
@@ -118,6 +130,22 @@ export function QueueScreen({
             A customer is left alone for {plural(quietDays, "day")} on the strength of a
             reported payment — after that they are chased again, whether or not this was
             ever decided.
+          </Banner>
+        ) : null}
+
+        {/*
+          A separate sentence, because a hold fails the opposite way. Nothing
+          lapses and nobody gets chased — the customer simply stays silent for
+          as long as the hold sits there, which is why an old one is expensive
+          and why this is the only thing that surfaces it.
+        */}
+        {kind === "payments" && staleHolds.length ? (
+          <Banner
+            tone="warn"
+            title={`${plural(staleHolds.length, "payment")} ${staleHolds.length === 1 ? "has" : "have"} been on hold a long time`}
+          >
+            A hold does not expire. Those customers are getting no calls and no reminder
+            messages, and will not until somebody approves or rejects the payment.
           </Banner>
         ) : null}
 

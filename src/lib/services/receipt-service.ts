@@ -12,8 +12,16 @@ import {
   scopedUserIds, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
 import { allocate, type AllocatableBill } from "../engines/allocation";
+import {
+  blocksSilentDuplicate,
+  matchReceipts,
+  type MatchCandidate,
+  type MatchEntry,
+  type ReceiptMatch,
+} from "../engines/receipt-match";
 import { effectiveDueDate } from "../engines/escalation";
 import { billCreditDaysSql } from "../bill-terms";
+import { daysBetween } from "../business-date";
 import {
   recomputeBillPaid,
   recomputeBillStatuses,
@@ -22,7 +30,7 @@ import {
   today,
 } from "../recompute";
 import { bindAttachments } from "./attachment-service";
-import { err, ok, type Result } from "../result";
+import { err, ok, okVoid, type Result } from "../result";
 import { CRM_EVENT, writeTimelineEvents } from "../timeline";
 import { money } from "../format";
 
@@ -56,7 +64,12 @@ export type OpenBill = {
   paid: number;
   balance: number;
   daysOverdue: number;
-  /** Paise sitting on reported-but-unconfirmed receipts against this bill. */
+  /**
+   * Paise claimed against this bill by receipts nobody has confirmed — reported
+   * AND held. A hold is still somebody claiming this money settles this bill;
+   * leaving it out would show a bill as unclaimed while a person in accounts is
+   * actively looking for the very payment against it.
+   */
   reported: number;
   orderId: string | null;
 };
@@ -84,7 +97,7 @@ export async function openBillsFor(customerId: string): Promise<OpenBill[]> {
       reported: sql<number>`coalesce((
         select sum(p.amount) from payments p
           join payment_receipts r on r.id = p.receipt_id
-         where p.bill_id = bills.id and r.status = 'reported'
+         where p.bill_id = bills.id and r.status in ('reported','held')
       ), 0)::bigint`,
     })
     .from(bills)
@@ -129,6 +142,8 @@ export const receiptSchema = z.object({
   receivedAt: z.string().min(1),
   mode: z.string().min(1),
   reference: z.string().trim().optional(),
+  /** The date on the cheque. Past or future are both ordinary. */
+  instrumentDate: z.string().trim().optional(),
   note: z.string().trim().optional(),
   allocation: z.enum(["auto", "settle", "custom"]).default("auto"),
   selectedBillIds: z.array(z.string()).default([]),
@@ -145,7 +160,7 @@ export type RecordReceiptInput = z.input<typeof receiptSchema>;
 
 export type RecordReceiptResult = {
   receiptId: string;
-  status: "reported" | "confirmed";
+  status: "reported" | "held" | "confirmed";
   allocated: number;
   onAccount: number;
   billsTouched: number;
@@ -186,6 +201,34 @@ export async function recordReceipt(
     ]);
   }
 
+  /*
+   * A cheque without its date is a cheque nobody can act on.
+   *
+   * Asked of EVERYBODY, unlike the reference. The reasoning that exempts a
+   * telecaller from supplying a UTR does not carry across: a customer who says
+   * they have paid by cheque is holding the cheque, and "what date is on it" is
+   * a question that can be asked on the same call. Without it, accounts cannot
+   * tell a cheque due to be banked this morning from one dated next month, and
+   * the customer cannot be spared a chase they do not deserve.
+   */
+  const dated = config["payments.datedModes"].includes(input.mode);
+  if (dated && !input.instrumentDate) {
+    return err(`A ${input.mode.toLowerCase()} needs the date written on it.`, "validation", [
+      {
+        field: "instrumentDate",
+        message: "Enter the date on the instrument — it may be past or future.",
+      },
+    ]);
+  }
+  // Deliberately no bound in either direction. A post-dated cheque is the
+  // ordinary case, and a stale-dated one is exactly the kind that goes quiet
+  // in a drawer until somebody notices.
+  if (!dated && input.instrumentDate) {
+    return err(`A ${input.mode.toLowerCase()} does not carry a date of its own.`, "validation", [
+      { field: "instrumentDate", message: "Leave this blank for this mode." },
+    ]);
+  }
+
   // Re-running a save that already succeeded returns the same receipt rather
   // than a second one. The form retries; the money arrived once.
   const [dupe] = await db
@@ -196,7 +239,14 @@ export async function recordReceipt(
     return ok(
       {
         receiptId: dupe.id,
-        status: dupe.status === "confirmed" ? "confirmed" : "reported",
+        // The status it actually has. Flattening a held receipt to "reported"
+        // here would tell a retried save the wrong thing about its own money.
+        status:
+          dupe.status === "confirmed"
+            ? "confirmed"
+            : dupe.status === "held"
+              ? "held"
+              : "reported",
         allocated: 0,
         onAccount: 0,
         billsTouched: 0,
@@ -206,14 +256,35 @@ export async function recordReceipt(
   }
 
   const open = await openBillsFor(input.customerId);
+  /*
+   * A BILL OFFERS ITS WHOLE UNCONFIRMED BALANCE, and money somebody has merely
+   * reported against it does not reduce that.
+   *
+   * It used to. `paid + reported` was subtracted so that two people writing
+   * down one transfer could not over-credit an account — a real failure, and
+   * the reasoning was sound when it was the only guard there was. What it also
+   * did was make a bill with a reported payment against it look settled: zero
+   * available, nothing to allocate to, and accounts unable to record the money
+   * they were holding the statement for. The customer still owed it — nothing
+   * unconfirmed ever touched `paid_amount` — so the ledger and the entry
+   * screen disagreed about the same bill, and the screen was the one people
+   * were working from.
+   *
+   * The duplicate is now caught where it actually happens: `matchesForEntry`
+   * asks "is this the same money somebody already wrote down?" at the moment
+   * of entry, and an exact or reference match has to be answered before a
+   * second receipt can be saved. That is a better place for it in every way —
+   * it asks a person a question they can answer, instead of silently making a
+   * bill unavailable and leaving them to work out why.
+   *
+   * What is claimed is still carried on the row, and every screen shows it.
+   */
   const allocatable: AllocatableBill[] = open.map((b) => ({
     id: b.id,
     billNo: b.billNo,
     billDate: b.billDate,
     amount: b.amount,
-    // Money already claimed against a bill is not offered to a second receipt.
-    // Two people recording the same transfer is the ordinary failure here.
-    paid: b.paid + b.reported,
+    paid: b.paid,
   }));
 
   const result = allocate(allocatable, {
@@ -273,6 +344,7 @@ export async function recordReceipt(
       receivedAt: input.receivedAt,
       mode: input.mode,
       reference: input.reference || null,
+      instrumentDate: input.instrumentDate || null,
       note: input.note || null,
       status,
       source: input.source,
@@ -420,15 +492,51 @@ export type PendingReceipt = {
   reportedBy: string | null;
   reportedAt: string;
   waitingHours: number;
+
+  /* ------------------------------------------------- a dated instrument */
+  /** The date written on the cheque. Null on modes that carry no date. */
+  instrumentDate: string | null;
+  /**
+   * The cheque is dated today or earlier, so it can be banked — which means
+   * somebody should be looking for it on the statement now. A post-dated one
+   * is not asking for anything yet, and must not be flagged as though it were.
+   */
+  bankableNow: boolean;
+  /** Days since it became bankable. Negative while still post-dated. */
+  bankableDays: number | null;
   /** What it would settle, if confirmed. */
   lines: Array<{ billId: string | null; billNo: string | null; amount: number }>;
   /** The customer's whole open balance, for context. */
   outstanding: number;
+
+  /* ------------------------------------------------------------ the hold */
+  status: "reported" | "held";
+  heldByName: string | null;
+  holdReason: string | null;
+  /** Whole days since it was parked. Null on anything not held. */
+  heldDays: number | null;
+  /**
+   * Past `payments.holdStaleDays`. A hold never expires, so this flag is the
+   * whole of what stops one being forgotten — and the customer behind it has
+   * been getting no calls and no messages for every one of those days.
+   */
+  holdStale: boolean;
 };
 
-/** Everything waiting on accounts, longest wait first. */
+/**
+ * Everything waiting on accounts, longest wait first.
+ *
+ * HELD RECEIPTS ARE ON THIS LIST, not filtered off it. A hold is work in
+ * progress rather than work finished: somebody is part-way through finding the
+ * money in a bank statement, and the customer is silent on collections until
+ * they finish. Hiding held rows would make the list look shorter and the
+ * customer disappear from both screens at once, which is the exact failure the
+ * held-back strips in the CRM exist to prevent.
+ */
 export async function pendingReceipts(): Promise<PendingReceipt[]> {
   await requireCapability("payment.record");
+  const config = await getConfig();
+  const day = await today();
 
   const rows = await db
     .select({
@@ -438,12 +546,20 @@ export async function pendingReceipts(): Promise<PendingReceipt[]> {
       reportedBy: sql<string | null>`(
         select u.name from users u where u.id = payment_receipts.reported_by_id
       )`,
+      heldByName: sql<string | null>`(
+        select u.name from users u where u.id = payment_receipts.held_by_id
+      )`,
       waitingHours: sql<number>`
         round(extract(epoch from (now() - payment_receipts.created_at)) / 3600)::int`,
+      // Whole days on hold, in the business's own zone. A bare subtraction
+      // against `now()` answers in the server's, and Neon runs in GMT.
+      heldDays: sql<number | null>`case when payment_receipts.held_at is null then null else
+        ((now() at time zone 'Asia/Kolkata')::date
+         - (payment_receipts.held_at at time zone 'Asia/Kolkata')::date) end`,
     })
     .from(paymentReceipts)
     .innerJoin(customers, eq(customers.id, paymentReceipts.customerId))
-    .where(eq(paymentReceipts.status, "reported"))
+    .where(inArray(paymentReceipts.status, ["reported", "held"]))
     .orderBy(asc(paymentReceipts.createdAt));
 
   if (!rows.length) return [];
@@ -486,30 +602,180 @@ export async function pendingReceipts(): Promise<PendingReceipt[]> {
     waitingHours: Number(rest.waitingHours ?? 0),
     lines: byReceipt.get(r.id) ?? [],
     outstanding: Number(rest.outstanding ?? 0),
+    instrumentDate: r.instrumentDate,
+    bankableNow: Boolean(r.instrumentDate && r.instrumentDate <= day),
+    bankableDays: r.instrumentDate ? daysBetween(r.instrumentDate, day) : null,
+    status: r.status === "held" ? "held" : "reported",
+    heldByName: rest.heldByName ?? null,
+    holdReason: r.holdReason,
+    heldDays: rest.heldDays === null ? null : Number(rest.heldDays),
+    holdStale:
+      rest.heldDays !== null &&
+      Number(rest.heldDays) >= config["payments.holdStaleDays"],
   }));
 }
 
 export async function pendingReceiptCount(): Promise<number> {
+  // Held rows are counted too. The badge says how much money accounts have
+  // still to decide on, and a hold is undecided — leaving it out would let a
+  // queue of holds read as an empty desk.
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(paymentReceipts)
-    .where(eq(paymentReceipts.status, "reported"));
+    .where(inArray(paymentReceipts.status, ["reported", "held"]));
   return Number(row?.n ?? 0);
 }
 
-/* ------------------------------------------------------- confirm and reject */
+/* ------------------------------------------------------------------- hold */
 
-export async function confirmReceipt(
+/**
+ * Park a payment while accounts look for it in the bank statement.
+ *
+ * The customer comes OFF collections entirely — no calls, no reminder messages
+ * — and stays off until somebody decides. That is the point: we are part-way
+ * through establishing whether their money arrived, and chasing them through
+ * it is worse than any call not made.
+ *
+ * The quiet does not expire, which is deliberately unlike a bare report. A
+ * report is an unanswered claim and its quiet has to lapse, or a customer
+ * could silence their own account for good by saying they had paid. A hold is
+ * a named person's judgement, and the thing that keeps it honest is that it
+ * ages in plain sight on accounts' own list rather than lapsing behind their
+ * back.
+ */
+export async function holdReceipt(
   receiptId: string,
-): Promise<Result<{ receiptId: string; cleared: boolean }>> {
+  reason: string,
+): Promise<Result<{ receiptId: string }>> {
   const ctx = await requireCapability("payment.confirm");
+
+  if (!reason.trim()) {
+    /*
+     * Required, for the same reason declining an order is.
+     *
+     * A hold takes the customer off the collections list, so the telecaller
+     * who was chasing them stops hearing about them — and when the customer
+     * rings to ask why nobody has been in touch, "the system says they are on
+     * hold" is not an answer anybody can give down a phone.
+     */
+    return err("Say what is being checked.", "validation", [
+      { field: "reason", message: "A reason is required." },
+    ]);
+  }
 
   const [receipt] = await db
     .select()
     .from(paymentReceipts)
     .where(eq(paymentReceipts.id, receiptId));
   if (!receipt) return err("That receipt no longer exists.", "not_found");
+
+  if (receipt.status === "held") return ok({ receiptId }, "Already on hold");
   if (receipt.status !== "reported") {
+    return err(
+      receipt.status === "confirmed"
+        ? "That payment has already been confirmed. Reverse it if it turned out not to be money."
+        : "That payment has already been decided. It cannot be put on hold now.",
+      "conflict",
+    );
+  }
+
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx
+      .update(paymentReceipts)
+      .set({
+        status: "held",
+        heldById: ctx.user.id,
+        heldAt: now,
+        holdReason: reason.trim(),
+        updatedById: ctx.user.id,
+        updatedAt: now,
+      })
+      .where(eq(paymentReceipts.id, receiptId));
+
+    // §1.1 — the telecaller's own screens read this stream, and this is the
+    // event that explains a customer going quiet on their worklist.
+    await writeTimelineEvents(tx, [
+      {
+        customerId: receipt.customerId,
+        eventType: CRM_EVENT.payment,
+        // The shared stream knows two apps. Accounts writes as `crm` because
+        // that is the book this event belongs to — the telecaller's customer
+        // timeline is where it has to be readable.
+        sourceApp: "crm",
+        sourceRecordId: receiptId,
+        occurredAt: now,
+        actorUserId: ctx.user.id,
+        summary: `${money(Number(receipt.amount))} put on hold by accounts — ${reason.trim()}`,
+      },
+    ]);
+
+    await tx.insert(auditLog).values({
+      id: id("aud"),
+      actorId: ctx.user.id,
+      action: "payment.hold",
+      entityType: "payment_receipt",
+      entityId: receiptId,
+      beforeState: { status: receipt.status } as never,
+      afterState: {
+        status: "held",
+        reason: reason.trim(),
+        amount: Number(receipt.amount),
+      } as never,
+    });
+  });
+
+  // Nothing about the money changed — a hold counts no more than a report did
+  // — but the collections state has to be rebuilt, because the customer is now
+  // held off the worklist and their row on it should go at once.
+  await recomputeFollowUpState(receipt.customerId);
+
+  return ok(
+    { receiptId },
+    `${rupees(Number(receipt.amount))} on hold — ${await customerName(receipt.customerId)} will not be chased until you decide`,
+  );
+}
+
+async function customerName(customerId: string): Promise<string> {
+  const [row] = await db
+    .select({ name: customers.name })
+    .from(customers)
+    .where(eq(customers.id, customerId));
+  return row?.name ?? "the customer";
+}
+
+/* ------------------------------------------------------- confirm and reject */
+
+/**
+ * How the money should be split when it is confirmed.
+ *
+ * Omitted means keep the allocation the receipt already carries, which is what
+ * confirming has always meant. Supplied means accounts looked at it and
+ * decided differently — the same three instructions the record form offers,
+ * run through the same pure engine, so the preview in the drawer and the write
+ * on the server cannot disagree about where the money went.
+ */
+export type ConfirmAllocation = {
+  mode: "auto" | "settle" | "custom";
+  selectedBillIds?: string[];
+  custom?: Record<string, number>;
+};
+
+export async function confirmReceipt(
+  receiptId: string,
+  allocation?: ConfirmAllocation,
+): Promise<Result<{ receiptId: string; cleared: boolean }>> {
+  const ctx = await requireCapability("payment.confirm");
+  const config = await getConfig();
+
+  const [receipt] = await db
+    .select()
+    .from(paymentReceipts)
+    .where(eq(paymentReceipts.id, receiptId));
+  if (!receipt) return err("That receipt no longer exists.", "not_found");
+  // A held receipt is confirmable: holding is a pause in the middle of this
+  // decision, not a different decision.
+  if (receipt.status !== "reported" && receipt.status !== "held") {
     return err(
       receipt.status === "confirmed"
         ? "Somebody has already confirmed this one."
@@ -518,16 +784,30 @@ export async function confirmReceipt(
     );
   }
 
-  // The allocation was worked out when the money was reported, and the bills it
-  // named may have been settled by something else since. Re-checking here would
-  // silently move the money; refusing sends it back to a person, which is the
-  // right answer for anything with financial consequences.
-  const stale = await staleLines(receiptId);
-  if (stale.length) {
-    return err(
-      `${stale.join(", ")} ${stale.length === 1 ? "has" : "have"} been settled since this was reported. Reject it and record the payment again against what is actually open.`,
-      "conflict",
-    );
+  /*
+   * Where accounts have RE-POINTED the money, the lines are rewritten before
+   * anything is confirmed.
+   *
+   * This is also the way out of a dead end. The allocation was worked out when
+   * the money was reported, and a bill it named may have been settled by
+   * something else since; that used to refuse the confirmation outright and
+   * leave rejecting-and-re-recording as the only path — which loses the
+   * telecaller's claim, the date it was made and the reference, to fix a
+   * problem that is only about which bill. Re-pointing it is the honest fix,
+   * and it is still a person deciding rather than the code moving money on its
+   * own.
+   */
+  if (allocation) {
+    const redone = await reallocate(receipt, allocation, config);
+    if (!redone.ok) return redone;
+  } else {
+    const stale = await staleLines(receiptId);
+    if (stale.length) {
+      return err(
+        `${stale.join(", ")} ${stale.length === 1 ? "has" : "have"} been settled since this was reported. Change what it settles, or reject it and record the payment again.`,
+        "conflict",
+      );
+    }
   }
 
   await db.transaction(async (tx) => {
@@ -547,8 +827,17 @@ export async function confirmReceipt(
       action: "payment.confirm",
       entityType: "payment_receipt",
       entityId: receiptId,
-      beforeState: { status: "reported" } as never,
-      afterState: { status: "confirmed", amount: receipt.amount } as never,
+      // The status it actually came from. `reported` was hardcoded here, which
+      // would now record a hold of nine days as though nobody had touched it.
+      beforeState: {
+        status: receipt.status,
+        holdReason: receipt.holdReason,
+      } as never,
+      afterState: {
+        status: "confirmed",
+        amount: receipt.amount,
+        reallocated: Boolean(allocation),
+      } as never,
     });
   });
 
@@ -724,6 +1013,94 @@ export async function reverseReceipt(
   return ok({ receiptId }, `${rupees(Number(receipt.amount))} reversed`);
 }
 
+/**
+ * Rewrite where a not-yet-confirmed receipt's money goes.
+ *
+ * Runs the SAME pure engine the record form runs, against what is open right
+ * now, so the preview accounts read in the drawer is the arithmetic that gets
+ * written. Only the lines of this receipt are replaced — the receipt's amount,
+ * date, reference and who reported it are untouched, because none of those are
+ * accounts' to change from a review screen.
+ *
+ * `paid + reported` is what a bill offers, minus THIS receipt's own claim on
+ * it: without that subtraction a receipt re-pointed at the bill it already
+ * names would find its own money in the way and refuse to fit.
+ */
+async function reallocate(
+  receipt: { id: string; customerId: string; amount: number; receivedAt: string; mode: string; reference: string | null },
+  allocation: ConfirmAllocation,
+  config: Awaited<ReturnType<typeof getConfig>>,
+): Promise<Result<void>> {
+  const ctx = await requireCapability("payment.confirm");
+  const open = await openBillsFor(receipt.customerId);
+
+  const ownLines = await db
+    .select({ billId: payments.billId, amount: payments.amount })
+    .from(payments)
+    .where(eq(payments.receiptId, receipt.id));
+  const own = new Map<string, number>();
+  for (const l of ownLines) {
+    if (l.billId) own.set(l.billId, (own.get(l.billId) ?? 0) + Number(l.amount));
+  }
+
+  // The whole unconfirmed balance, exactly as `recordReceipt` offers it — the
+  // claim other undecided receipts have on a bill is shown, never subtracted.
+  const allocatable: AllocatableBill[] = open.map((b) => ({
+    id: b.id,
+    billNo: b.billNo,
+    billDate: b.billDate,
+    amount: b.amount,
+    paid: b.paid,
+  }));
+
+  const result = allocate(allocatable, {
+    mode: allocation.mode,
+    amount: Number(receipt.amount),
+    selectedBillIds: allocation.selectedBillIds ?? [],
+    custom: allocation.custom ?? {},
+    allowOnAccount: config["payments.allowOnAccountRemainder"],
+  });
+  if (result.errors.length) {
+    return err(result.errors[0], "validation", [
+      { field: "allocation", message: result.errors.join(" ") },
+    ]);
+  }
+
+  await db.transaction(async (tx) => {
+    await tx.delete(payments).where(eq(payments.receiptId, receipt.id));
+    for (const line of result.lines) {
+      await tx.insert(payments).values({
+        id: id("pay"),
+        receiptId: receipt.id,
+        billId: line.billId,
+        customerId: receipt.customerId,
+        amount: line.amount,
+        paidAt: receipt.receivedAt,
+        mode: receipt.mode,
+        reference: receipt.reference,
+        // Keyed on the receipt and the bill, so re-pointing twice cannot leave
+        // two lines claiming the same money against the same bill.
+        externalRef: `${receipt.id}:realloc:${line.billId ?? "on-account"}`,
+        recordedById: ctx.user.id,
+        createdById: ctx.user.id,
+        updatedById: ctx.user.id,
+      });
+    }
+
+    await tx.insert(auditLog).values({
+      id: id("aud"),
+      actorId: ctx.user.id,
+      action: "payment.reallocate",
+      entityType: "payment_receipt",
+      entityId: receipt.id,
+      beforeState: { lines: ownLines } as never,
+      afterState: { mode: allocation.mode, lines: result.lines } as never,
+    });
+  });
+
+  return okVoid();
+}
+
 /** Bills a pending receipt names that no longer have room for its line. */
 async function staleLines(receiptId: string): Promise<string[]> {
   const rows = await db
@@ -747,13 +1124,28 @@ export type ReportedQuiet = {
   customerId: string;
   amount: number;
   reportedOn: string;
+  /** True where ANY of this customer's undecided money is on hold. */
+  held: boolean;
+  /** The reason on the oldest hold, for the sentence the telecaller reads. */
+  holdReason: string | null;
+  /** The latest date on an undecided cheque, where any of them carries one. */
+  postDatedTo: string | null;
 };
 
 /**
  * Customers with money reported against them and not yet decided on. The
  * collections cadence reads this to leave them alone — chasing somebody who
- * paid this morning is the fastest way to lose them — and the quiet expires,
- * so an unconfirmed claim cannot silence an account indefinitely.
+ * paid this morning is the fastest way to lose them.
+ *
+ * Two kinds of quiet come out of one query, and which it is matters. A bare
+ * report is an unanswered claim, and its quiet EXPIRES so that nobody can
+ * silence their own account by making one. A hold is somebody in accounts
+ * deciding to look for the money, and its quiet does not expire — see
+ * `reportedQuiet` in the follow-up engine, which is the one place that
+ * difference is applied.
+ *
+ * A customer with both is treated as held. The strongest reason to leave
+ * somebody alone is the one that should win, and a hold is a person saying so.
  */
 export async function reportedQuietByCustomer(): Promise<Map<string, ReportedQuiet>> {
   const rows = await db
@@ -761,9 +1153,20 @@ export async function reportedQuietByCustomer(): Promise<Map<string, ReportedQui
       customerId: paymentReceipts.customerId,
       amount: sql<number>`sum(payment_receipts.amount)::bigint`,
       reportedOn: sql<string>`max((payment_receipts.created_at at time zone 'Asia/Kolkata')::date)`,
+      held: sql<boolean>`bool_or(payment_receipts.status = 'held')`,
+      // The oldest hold's reason: the one that has been keeping them quiet
+      // longest is the one worth naming.
+      holdReason: sql<string | null>`(
+        array_agg(payment_receipts.hold_reason order by payment_receipts.held_at asc nulls last)
+        filter (where payment_receipts.status = 'held')
+      )[1]`,
+      // The LATEST of them. Two cheques dated a fortnight apart mean the
+      // customer is not finished paying until the second one can be banked,
+      // and taking the earlier would put them back on the list in between.
+      postDatedTo: sql<string | null>`max(payment_receipts.instrument_date)`,
     })
     .from(paymentReceipts)
-    .where(eq(paymentReceipts.status, "reported"))
+    .where(inArray(paymentReceipts.status, ["reported", "held"]))
     .groupBy(paymentReceipts.customerId);
 
   return new Map(
@@ -773,9 +1176,176 @@ export async function reportedQuietByCustomer(): Promise<Map<string, ReportedQui
         customerId: r.customerId,
         amount: Number(r.amount ?? 0),
         reportedOn: r.reportedOn,
+        held: Boolean(r.held),
+        holdReason: r.holdReason ?? null,
+        postDatedTo: r.postDatedTo ?? null,
       },
     ]),
   );
+}
+
+/* ------------------------------------------- money we already know about */
+
+/**
+ * Undecided receipts on this customer, for the matcher.
+ *
+ * Only `reported` and `held`. Confirmed money is already in the ledger and
+ * offering it as a match would invite somebody to confirm it twice; rejected
+ * and reversed money is a decision already taken, and re-opening it from a
+ * data-entry screen is not what that screen is for.
+ */
+export async function matchCandidatesFor(
+  customerId: string,
+): Promise<MatchCandidate[]> {
+  const rows = await db
+    .select({
+      receipt: paymentReceipts,
+      reportedByName: sql<string | null>`(
+        select u.name from users u where u.id = payment_receipts.reported_by_id
+      )`,
+      reportedOn: sql<string>`(payment_receipts.created_at at time zone 'Asia/Kolkata')::date`,
+    })
+    .from(paymentReceipts)
+    .where(
+      and(
+        eq(paymentReceipts.customerId, customerId),
+        inArray(paymentReceipts.status, ["reported", "held"]),
+      ),
+    )
+    .orderBy(asc(paymentReceipts.createdAt));
+
+  return rows.map(({ receipt: r, ...rest }) => ({
+    receiptId: r.id,
+    amount: Number(r.amount),
+    receivedAt: r.receivedAt,
+    mode: r.mode,
+    reference: r.reference,
+    status: r.status === "held" ? ("held" as const) : ("reported" as const),
+    reportedByName: rest.reportedByName ?? null,
+    reportedOn: rest.reportedOn,
+    note: r.holdReason ?? r.note,
+  }));
+}
+
+export type ReceiptMatchView = ReceiptMatch & {
+  /** Whether recording a NEW receipt alongside this should take a deliberate act. */
+  blocking: boolean;
+};
+
+/**
+ * What accounts should be shown before they record a payment from the bank
+ * statement: money somebody has already written down that looks like this
+ * money.
+ *
+ * The telecaller hears about a payment on the phone days before the transfer
+ * appears on a statement. Both records are honest and both describe one
+ * payment; entered separately, the customer is credited twice and somebody
+ * untangles it months later against a customer who is certain they paid once.
+ */
+export async function matchesForEntry(
+  customerId: string,
+  entry: MatchEntry,
+): Promise<ReceiptMatchView[]> {
+  await requireCapability("payment.record");
+  const config = await getConfig();
+
+  const matches = matchReceipts(await matchCandidatesFor(customerId), entry, {
+    matchWindowDays: config["payments.matchWindowDays"],
+    matchTolerancePercent: config["payments.matchTolerancePercent"],
+  });
+
+  return matches.map((m) => ({ ...m, blocking: blocksSilentDuplicate(m) }));
+}
+
+/**
+ * The bank entry IS the money somebody already reported.
+ *
+ * Confirms the receipt that already exists rather than writing a second one —
+ * which is the entire point, because two rows for one payment is the failure
+ * this is here to prevent. What accounts know that the telecaller did not is
+ * written onto it on the way past: the reference off the statement, the day it
+ * actually landed, and where the money should go.
+ *
+ * The typed confirmation is checked HERE and not only in the dialog. Merging
+ * two records of money is not a thing to do on a stray click, and a check that
+ * lives only in the interface is not a check.
+ */
+export async function confirmAsMatch(input: {
+  receiptId: string;
+  /** Paise, as the accounts user typed it back. Must equal the receipt. */
+  confirmAmount: number;
+  /** From the bank statement, where the reported receipt had none. */
+  reference?: string;
+  receivedAt?: string;
+  mode?: string;
+  allocation?: ConfirmAllocation;
+}): Promise<Result<{ receiptId: string; cleared: boolean }>> {
+  const ctx = await requireCapability("payment.confirm");
+
+  const [receipt] = await db
+    .select()
+    .from(paymentReceipts)
+    .where(eq(paymentReceipts.id, input.receiptId));
+  if (!receipt) return err("That receipt no longer exists.", "not_found");
+  if (receipt.status !== "reported" && receipt.status !== "held") {
+    return err(
+      receipt.status === "confirmed"
+        ? "Somebody has already confirmed that one — this money is in the ledger."
+        : "That receipt has already been decided.",
+      "conflict",
+    );
+  }
+
+  if (input.confirmAmount !== Number(receipt.amount)) {
+    return err(
+      `That is not the amount on the payment being confirmed. Type ${rupees(Number(receipt.amount))} to confirm it.`,
+      "validation",
+      [{ field: "confirmAmount", message: "The amount does not match." }],
+    );
+  }
+
+  /*
+   * What accounts saw is written over what was taken down a phone.
+   *
+   * Only where they actually supplied it: a blank reference on the form must
+   * not wipe one the telecaller managed to get. The AMOUNT is deliberately not
+   * touched — a different amount is a different payment, and this path exists
+   * only for the case where the two are the same money.
+   */
+  const patch: Record<string, unknown> = { updatedById: ctx.user.id, updatedAt: new Date() };
+  if (input.reference?.trim()) patch.reference = input.reference.trim();
+  if (input.receivedAt) patch.receivedAt = input.receivedAt;
+  if (input.mode) patch.mode = input.mode;
+
+  if (Object.keys(patch).length > 2) {
+    await db
+      .update(paymentReceipts)
+      .set(patch)
+      .where(eq(paymentReceipts.id, input.receiptId));
+  }
+
+  await db.insert(auditLog).values({
+    id: id("aud"),
+    actorId: ctx.user.id,
+    action: "payment.matchedToBankEntry",
+    entityType: "payment_receipt",
+    entityId: input.receiptId,
+    beforeState: {
+      status: receipt.status,
+      reference: receipt.reference,
+      receivedAt: receipt.receivedAt,
+    } as never,
+    // The second receipt that WAS NOT written is the fact worth recording:
+    // without this line, the account shows one payment and nothing says a
+    // person decided it was one payment rather than two.
+    afterState: {
+      reference: patch.reference ?? receipt.reference,
+      receivedAt: patch.receivedAt ?? receipt.receivedAt,
+      duplicateAvoided: true,
+    } as never,
+  });
+
+  return confirmReceipt(input.receiptId, input.allocation);
 }
 
 /* ------------------------------------------------------------------ search */

@@ -50,6 +50,16 @@ export type QueueRow = {
    * can never describe different rows.
    */
   needsAttention?: boolean;
+  /**
+   * Payments only: somebody in accounts has deliberately parked this one.
+   *
+   * It changes what "waiting" means. A reported payment nobody has touched for
+   * two days is neglected and the customer's quiet is about to lapse; a hold
+   * two days old is somebody mid-way through a bank statement, and the
+   * customer stays quiet until they finish. Counting the two together produces
+   * a banner that is wrong about both.
+   */
+  held?: boolean;
 };
 
 /** What the drawer shows once a row is opened. Loaded per row, never in bulk. */
@@ -76,6 +86,38 @@ export type PaymentDetail = {
   outstanding: number;
   lines: Array<{ billId: string | null; billNo: string | null; amount: number }>;
   onAccount: number;
+
+  /** The date written on the cheque, where the mode carries one. */
+  instrumentDate: string | null;
+  bankableNow: boolean;
+  bankableDays: number | null;
+
+  /* ------------------------------------------------------------- the hold */
+  status: "reported" | "held";
+  heldByName: string | null;
+  holdReason: string | null;
+  heldDays: number | null;
+  holdStale: boolean;
+
+  /**
+   * Every bill still open on this account, so the drawer can offer accounts
+   * somewhere else to put the money.
+   *
+   * Sent with the detail rather than fetched on demand: the whole reason the
+   * drawer opens is to decide where this money goes, and a second round trip
+   * before that decision can be made is a second round trip on every review.
+   * `claimed` is what other undecided receipts have already asked of the bill,
+   * which is the figure that stops the same transfer being applied twice.
+   */
+  openBills: Array<{
+    id: string;
+    billNo: string;
+    billDate: string;
+    dueDate: string;
+    balance: number;
+    claimed: number;
+    daysOverdue: number;
+  }>;
 };
 
 export type CreditDetail = {

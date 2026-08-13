@@ -74,7 +74,14 @@ import { updateAccountManagers } from "@/lib/actions/account-manager";
 import { projectParties } from "@/lib/services/party-projection-service";
 import { assignedUserId } from "@/lib/access-control";
 import { partyNameKey } from "@/lib/sheet-parse";
-import { reverseReceiptAction } from "@/lib/actions/payments";
+import {
+  confirmAsMatchAction,
+  confirmReceiptAction,
+  holdReceiptAction,
+  matchesForEntryAction,
+  rejectReceiptAction,
+  reverseReceiptAction,
+} from "@/lib/actions/payments";
 import { getQueue } from "@/lib/services/queue-service";
 import { snapshotQueue } from "@/lib/jobs";
 import { saveInteraction } from "@/lib/services/interaction-service";
@@ -95,6 +102,7 @@ import {
 } from "@/lib/services/product-service";
 import {
   confirmReceipt,
+  openBillsFor,
   pendingReceipts,
   recordReceipt,
   rejectReceipt,
@@ -6117,6 +6125,10 @@ describe("reversing a payment that had counted", () => {
       receivedAt: TODAY,
       mode: "Cheque",
       reference: "CHQ-88231",
+      // A cheque carries its own date now — the day it can be banked, which is
+      // not the day it was handed over. Dated today: it cleared, and then it
+      // bounced, which is what this test is about.
+      instrumentDate: TODAY,
       allocation: "auto",
       idempotencyKey: randomUUID(),
     });
@@ -6186,6 +6198,688 @@ describe("reversing a payment that had counted", () => {
       .from(paymentReceipts)
       .where(eq(paymentReceipts.id, reportedId));
     assert.equal(row.status, "reported", "and its status was changed anyway");
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Money accounts are in the middle of finding.
+ *
+ * A hold is the pause between "somebody says this arrived" and "we found it".
+ * What makes it worth its own status is the customer: they come off the
+ * collections list entirely and stay off, because chasing somebody while we
+ * are part-way through establishing that they paid is worse than any call not
+ * made.
+ * ------------------------------------------------------------------------- */
+
+describe("putting a payment on hold", () => {
+  async function overdueBill(customerId: string, amount: number) {
+    const [row] = await db
+      .insert(bills)
+      .values({
+        id: id("bil"),
+        customerId,
+        billNo: `MMI/${randomUUID().slice(0, 6)}`,
+        billDate: addDays(TODAY, -60),
+        dueDate: addDays(TODAY, -40),
+        amount,
+        paidAmount: 0,
+      })
+      .returning();
+    await recomputeBillStatuses();
+    await recomputeOutstanding(customerId);
+    await recomputeFollowUpState(customerId);
+    return row;
+  }
+
+  /** A telecaller's claim: reported, counting nothing. */
+  async function reported(customerId: string, amount: number) {
+    const r = await recordReceipt({
+      customerId,
+      amount,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      allocation: "auto",
+      source: "collections_call",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    return r.ok ? r.data.receiptId : "";
+  }
+
+  test("holding takes the customer off collections, and the reason travels with them", async () => {
+    const customer = await makeCustomer(priya.id);
+    await overdueBill(customer.id, 20_000_00);
+    const receiptId = await reported(customer.id, 20_000_00);
+
+    setTestUser(deepa);
+    const held = await holdReceiptAction(receiptId, "Looking for it in the August statement");
+    assert.equal(held.ok, true, held.ok ? "" : held.error);
+    setTestUser(priya);
+
+    const plan = await getPaymentFollowUpPlan();
+    assert.equal(
+      plan.calls.some((c) => c.customerId === customer.id),
+      false,
+      "a customer whose money is being looked for was put on the calling list",
+    );
+    assert.equal(
+      plan.messages.some((c) => c.customerId === customer.id),
+      false,
+      "and they were sent a reminder message anyway",
+    );
+
+    // Held back with the reason said plainly — never silently dropped, which
+    // is the rule every held-back strip in this app is built on.
+    const heldBack = plan.heldBack.find((h) => h.customerId === customer.id);
+    assert.ok(heldBack, "the customer vanished instead of being held back with a reason");
+    assert.match(heldBack.reason, /on hold/i);
+    assert.match(heldBack.reason, /August statement/);
+  });
+
+  test("the quiet does NOT expire, which is the whole difference from a report", async () => {
+    const customer = await makeCustomer(priya.id);
+    await overdueBill(customer.id, 20_000_00);
+    const receiptId = await reported(customer.id, 20_000_00);
+
+    setTestUser(deepa);
+    await holdReceiptAction(receiptId, "Checking the bank");
+    // Backdated well past the window a bare report would have lapsed in. A
+    // report is an unanswered claim and has to lapse, or a customer could
+    // silence their own account for good; a hold is a named person's decision.
+    await db
+      .update(paymentReceipts)
+      .set({ createdAt: new Date(Date.parse(`${addDays(TODAY, -60)}T09:00:00+05:30`)) })
+      .where(eq(paymentReceipts.id, receiptId));
+    setTestUser(priya);
+
+    const plan = await getPaymentFollowUpPlan();
+    assert.equal(
+      plan.calls.some((c) => c.customerId === customer.id),
+      false,
+      "a sixty-day-old hold lapsed and the customer was chased",
+    );
+  });
+
+  test("rejecting a hold puts them straight back on the list", async () => {
+    const customer = await makeCustomer(priya.id);
+    await overdueBill(customer.id, 20_000_00);
+    const receiptId = await reported(customer.id, 20_000_00);
+
+    setTestUser(deepa);
+    await holdReceiptAction(receiptId, "Checking the bank");
+    const rejected = await rejectReceiptAction(receiptId, "Never arrived — nothing in August");
+    assert.equal(rejected.ok, true, rejected.ok ? "" : rejected.error);
+    setTestUser(priya);
+
+    const plan = await getPaymentFollowUpPlan();
+    assert.equal(
+      plan.calls.some((c) => c.customerId === customer.id),
+      true,
+      "money that turned out not to exist left the customer off the list",
+    );
+  });
+
+  test("a hold needs a reason, and cannot be put on money already decided", async () => {
+    const customer = await makeCustomer(priya.id);
+    await overdueBill(customer.id, 5_000_00);
+    const receiptId = await reported(customer.id, 5_000_00);
+
+    setTestUser(deepa);
+    const noReason = await holdReceiptAction(receiptId, "   ");
+    assert.equal(noReason.ok, false, "a hold with nothing to say was accepted");
+
+    const confirmed = await confirmReceiptAction(receiptId);
+    assert.equal(confirmed.ok, true, confirmed.ok ? "" : confirmed.error);
+
+    const tooLate = await holdReceiptAction(receiptId, "Second thoughts");
+    assert.equal(tooLate.ok, false, "confirmed money was put on hold");
+    setTestUser(priya);
+  });
+
+  test("a held payment can still be confirmed, and it counts from that moment", async () => {
+    const customer = await makeCustomer(priya.id);
+    const bill = await overdueBill(customer.id, 20_000_00);
+    const receiptId = await reported(customer.id, 20_000_00);
+
+    setTestUser(deepa);
+    await holdReceiptAction(receiptId, "Checking the bank");
+
+    const [duringHold] = await db.select().from(bills).where(eq(bills.id, bill.id));
+    assert.equal(duringHold.paidAmount, 0, "a hold moved money, which it must never do");
+
+    const confirmed = await confirmReceiptAction(receiptId);
+    assert.equal(confirmed.ok, true, confirmed.ok ? "" : confirmed.error);
+    setTestUser(priya);
+
+    const [settled] = await db.select().from(bills).where(eq(bills.id, bill.id));
+    assert.equal(settled.paidAmount, 20_000_00, "confirming a held payment settled nothing");
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Where the money goes, decided at the point of confirming.
+ * ------------------------------------------------------------------------- */
+
+describe("re-pointing a payment on the way to confirming it", () => {
+  test("accounts can settle a different bill, and only that bill moves", async () => {
+    const customer = await makeCustomer(priya.id);
+    const older = await (async () => {
+      const [row] = await db
+        .insert(bills)
+        .values({
+          id: id("bil"),
+          customerId: customer.id,
+          billNo: "MMI/OLD-1",
+          billDate: addDays(TODAY, -80),
+          dueDate: addDays(TODAY, -50),
+          amount: 10_000_00,
+          paidAmount: 0,
+        })
+        .returning();
+      return row;
+    })();
+    const [newer] = await db
+      .insert(bills)
+      .values({
+        id: id("bil"),
+        customerId: customer.id,
+        billNo: "MMI/NEW-1",
+        billDate: addDays(TODAY, -10),
+        dueDate: addDays(TODAY, 20),
+        amount: 10_000_00,
+        paidAmount: 0,
+      })
+      .returning();
+    await recomputeOutstanding(customer.id);
+
+    // Reported oldest-first, so it names the older bill.
+    const receiptId = await (async () => {
+      const r = await recordReceipt({
+        customerId: customer.id,
+        amount: 10_000_00,
+        receivedAt: TODAY,
+        mode: "Bank transfer",
+        allocation: "auto",
+        source: "collections_call",
+        idempotencyKey: randomUUID(),
+      });
+      assert.equal(r.ok, true, r.ok ? "" : r.error);
+      return r.ok ? r.data.receiptId : "";
+    })();
+
+    // The customer said it was for the new bill. Re-pointing is a person
+    // deciding, which is why it is offered rather than worked out.
+    setTestUser(deepa);
+    const confirmed = await confirmReceiptAction(receiptId, {
+      mode: "settle",
+      selectedBillIds: [newer.id],
+    });
+    assert.equal(confirmed.ok, true, confirmed.ok ? "" : confirmed.error);
+    setTestUser(priya);
+
+    const [oldRow] = await db.select().from(bills).where(eq(bills.id, older.id));
+    const [newRow] = await db.select().from(bills).where(eq(bills.id, newer.id));
+    assert.equal(oldRow.paidAmount, 0, "the bill it was reported against was settled anyway");
+    assert.equal(newRow.paidAmount, 10_000_00, "the bill accounts chose was not settled");
+
+    // Exactly one set of lines: re-pointing replaces, it does not add.
+    const lines = await db
+      .select()
+      .from(payments)
+      .where(eq(payments.receiptId, receiptId));
+    assert.equal(lines.length, 1, "the old allocation line was left behind");
+    assert.equal(lines[0].billId, newer.id);
+  });
+
+  test("re-pointing it at the bill it already names is not blocked by its own money", async () => {
+    // A bill offers `balance - what other undecided receipts claim of it`. Its
+    // OWN claim has to come out of that, or a receipt confirmed against the
+    // bill it was reported against would find its own money in the way.
+    const customer = await makeCustomer(priya.id);
+    const [bill] = await db
+      .insert(bills)
+      .values({
+        id: id("bil"),
+        customerId: customer.id,
+        billNo: "MMI/SAME-1",
+        billDate: addDays(TODAY, -30),
+        dueDate: addDays(TODAY, -5),
+        amount: 8_000_00,
+        paidAmount: 0,
+      })
+      .returning();
+    await recomputeOutstanding(customer.id);
+
+    const r = await recordReceipt({
+      customerId: customer.id,
+      amount: 8_000_00,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      allocation: "auto",
+      source: "collections_call",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    setTestUser(deepa);
+    const confirmed = await confirmReceiptAction(r.ok ? r.data.receiptId : "", {
+      mode: "settle",
+      selectedBillIds: [bill.id],
+    });
+    assert.equal(confirmed.ok, true, confirmed.ok ? "" : confirmed.error);
+    setTestUser(priya);
+
+    const [row] = await db.select().from(bills).where(eq(bills.id, bill.id));
+    assert.equal(row.paidAmount, 8_000_00);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * A cheque has two dates, and they answer different questions.
+ * ------------------------------------------------------------------------- */
+
+describe("the date written on the cheque", () => {
+  async function overdue(customerId: string, amount: number) {
+    const [row] = await db
+      .insert(bills)
+      .values({
+        id: id("bil"),
+        customerId,
+        billNo: `MMI/${randomUUID().slice(0, 6)}`,
+        billDate: addDays(TODAY, -60),
+        dueDate: addDays(TODAY, -40),
+        amount,
+        paidAmount: 0,
+      })
+      .returning();
+    await recomputeBillStatuses();
+    await recomputeOutstanding(customerId);
+    await recomputeFollowUpState(customerId);
+    return row;
+  }
+
+  test("a cheque without its date is refused, and a dateless mode may not carry one", async () => {
+    const customer = await makeCustomer(priya.id);
+    await overdue(customer.id, 10_000_00);
+
+    const noDate = await recordReceipt({
+      customerId: customer.id,
+      amount: 10_000_00,
+      receivedAt: TODAY,
+      mode: "Cheque",
+      allocation: "auto",
+      source: "collections_call",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(noDate.ok, false, "a cheque was recorded with no date on it");
+
+    // Asked of everybody, not only of whoever asserts the money arrived. A
+    // customer who says they have paid by cheque is holding the cheque.
+    const wrongMode = await recordReceipt({
+      customerId: customer.id,
+      amount: 10_000_00,
+      receivedAt: TODAY,
+      mode: "Cash",
+      instrumentDate: addDays(TODAY, 10),
+      allocation: "auto",
+      source: "collections_call",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(wrongMode.ok, false, "cash was given a date of its own");
+  });
+
+  test("a post-dated cheque keeps the customer off collections until it can be banked", async () => {
+    const customer = await makeCustomer(priya.id);
+    await overdue(customer.id, 10_000_00);
+
+    const r = await recordReceipt({
+      customerId: customer.id,
+      amount: 10_000_00,
+      receivedAt: TODAY,
+      mode: "Cheque",
+      reference: "CHQ-4471",
+      instrumentDate: addDays(TODAY, 25),
+      allocation: "auto",
+      source: "collections_call",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    // Backdated well past the window a bare report would have lapsed in: the
+    // cheque still cannot be banked, so the customer still must not be chased.
+    await db
+      .update(paymentReceipts)
+      .set({ createdAt: new Date(Date.parse(`${addDays(TODAY, -20)}T09:00:00+05:30`)) })
+      .where(eq(paymentReceipts.id, r.ok ? r.data.receiptId : ""));
+
+    const plan = await getPaymentFollowUpPlan();
+    assert.equal(
+      plan.calls.some((c) => c.customerId === customer.id),
+      false,
+      "chased for money sitting in our own drawer",
+    );
+    const heldBack = plan.heldBack.find((h) => h.customerId === customer.id);
+    assert.ok(heldBack);
+    assert.match(heldBack.reason, /cheque dated/i);
+  });
+
+  test("a cheque due to be banked is flagged for accounts; a post-dated one is not", async () => {
+    const customer = await makeCustomer(priya.id);
+    await overdue(customer.id, 20_000_00);
+
+    const due = await recordReceipt({
+      customerId: customer.id,
+      amount: 10_000_00,
+      receivedAt: addDays(TODAY, -5),
+      mode: "Cheque",
+      reference: "CHQ-1",
+      instrumentDate: addDays(TODAY, -2),
+      allocation: "auto",
+      source: "collections_call",
+      idempotencyKey: randomUUID(),
+    });
+    const later = await recordReceipt({
+      customerId: customer.id,
+      amount: 5_000_00,
+      receivedAt: TODAY,
+      mode: "Cheque",
+      reference: "CHQ-2",
+      instrumentDate: addDays(TODAY, 15),
+      allocation: "auto",
+      source: "collections_call",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(due.ok && later.ok, true);
+
+    setTestUser(deepa);
+    const pending = await pendingReceipts();
+    setTestUser(priya);
+
+    const bankable = pending.find((p) => p.reference === "CHQ-1");
+    const postDated = pending.find((p) => p.reference === "CHQ-2");
+    assert.ok(bankable && postDated);
+
+    assert.equal(bankable.bankableNow, true, "a cheque dated two days ago is bankable");
+    assert.equal(bankable.bankableDays, 2);
+    assert.equal(
+      postDated.bankableNow,
+      false,
+      "a post-dated cheque was flagged as something to go and find",
+    );
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * A reported payment does not make a bill look settled.
+ * ------------------------------------------------------------------------- */
+
+describe("a bill with money reported against it", () => {
+  test("keeps its whole balance, and accounts can still record against it", async () => {
+    /*
+     * The bill offered `balance - reported` once, so a bill fully claimed by a
+     * telecaller's unconfirmed report had nothing left to allocate — and
+     * accounts holding the bank statement could not record the very money they
+     * were looking at. The customer still owed it, because nothing unconfirmed
+     * ever touches `paid_amount`, so the ledger and the entry screen disagreed
+     * about the same bill.
+     */
+    const customer = await makeCustomer(priya.id);
+    const [bill] = await db
+      .insert(bills)
+      .values({
+        id: id("bil"),
+        customerId: customer.id,
+        billNo: "MMI/REP-1",
+        billDate: addDays(TODAY, -40),
+        dueDate: addDays(TODAY, -10),
+        amount: 30_000_00,
+        paidAmount: 0,
+      })
+      .returning();
+    await recomputeOutstanding(customer.id);
+
+    const reported = await recordReceipt({
+      customerId: customer.id,
+      amount: 30_000_00,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      allocation: "auto",
+      source: "collections_call",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(reported.ok, true, reported.ok ? "" : reported.error);
+
+    // Nothing unconfirmed touches the ledger.
+    const [stillOwed] = await db.select().from(bills).where(eq(bills.id, bill.id));
+    assert.equal(stillOwed.paidAmount, 0, "a reported payment settled a bill");
+
+    // And the bill still offers its whole balance, with the claim shown beside
+    // it rather than subtracted from it.
+    setTestUser(deepa);
+    const open = await openBillsFor(customer.id);
+    const row = open.find((b) => b.id === bill.id);
+    assert.ok(row, "the bill vanished from what is open");
+    assert.equal(row.balance, 30_000_00, "the balance was reduced by an unconfirmed claim");
+    assert.equal(row.reported, 30_000_00, "and the claim was not shown at all");
+
+    // Accounts, holding the statement, record it as a SEPARATE payment. The
+    // duplicate matcher is what asks whether it is the same money; nothing
+    // here silently refuses the entry.
+    const byAccounts = await recordReceipt({
+      customerId: customer.id,
+      amount: 30_000_00,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      reference: "UTR-990011",
+      allocation: "settle",
+      selectedBillIds: [bill.id],
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(
+      byAccounts.ok,
+      true,
+      byAccounts.ok ? "" : `accounts could not record against the bill: ${byAccounts.error}`,
+    );
+
+    const [settled] = await db.select().from(bills).where(eq(bills.id, bill.id));
+    assert.equal(settled.paidAmount, 30_000_00, "confirmed money did not settle the bill");
+  });
+
+  test("a HELD claim shows on the bill too, and still does not settle it", async () => {
+    // A hold is still somebody claiming this money settles this bill. Counting
+    // only `reported` would show the bill as unclaimed while a person in
+    // accounts is actively looking for the very payment against it.
+    const customer = await makeCustomer(priya.id);
+    const [bill] = await db
+      .insert(bills)
+      .values({
+        id: id("bil"),
+        customerId: customer.id,
+        billNo: "MMI/HELD-1",
+        billDate: addDays(TODAY, -40),
+        dueDate: addDays(TODAY, -10),
+        amount: 12_000_00,
+        paidAmount: 0,
+      })
+      .returning();
+    await recomputeOutstanding(customer.id);
+
+    const r = await recordReceipt({
+      customerId: customer.id,
+      amount: 12_000_00,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      allocation: "auto",
+      source: "collections_call",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    setTestUser(deepa);
+    await holdReceiptAction(r.ok ? r.data.receiptId : "", "Looking for it");
+    const open = await openBillsFor(customer.id);
+    setTestUser(priya);
+
+    const row = open.find((b) => b.id === bill.id);
+    assert.ok(row, "the bill disappeared while its money was on hold");
+    assert.equal(row.balance, 12_000_00, "a hold moved the balance");
+    assert.equal(row.reported, 12_000_00, "the held claim was not shown against the bill");
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * One payment, written down twice.
+ * ------------------------------------------------------------------------- */
+
+describe("the same money, entered from the bank statement", () => {
+  async function claim(customerId: string, over: { amount: number; reference?: string }) {
+    const r = await recordReceipt({
+      customerId,
+      amount: over.amount,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      reference: over.reference,
+      allocation: "auto",
+      source: "collections_call",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    return r.ok ? r.data.receiptId : "";
+  }
+
+  test("an exact amount is offered, and it is the telecaller's claim that comes back", async () => {
+    const customer = await makeCustomer(priya.id);
+    const receiptId = await claim(customer.id, { amount: 50_000_00 });
+
+    setTestUser(deepa);
+    const found = await matchesForEntryAction(customer.id, {
+      amount: 50_000_00,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      reference: "UTR-778899",
+    });
+    setTestUser(priya);
+
+    assert.equal(found.ok, true);
+    if (!found.ok) return;
+    assert.equal(found.data.length, 1, "the payment already recorded was not offered");
+    assert.equal(found.data[0].candidate.receiptId, receiptId);
+    assert.equal(found.data[0].blocking, true, "an exact match must not be walked past");
+  });
+
+  test("confirming a match writes NO second receipt, and takes accounts' reference", async () => {
+    const customer = await makeCustomer(priya.id);
+    const [bill] = await db
+      .insert(bills)
+      .values({
+        id: id("bil"),
+        customerId: customer.id,
+        billNo: "MMI/DUP-1",
+        billDate: addDays(TODAY, -30),
+        dueDate: addDays(TODAY, -5),
+        amount: 50_000_00,
+        paidAmount: 0,
+      })
+      .returning();
+    await recomputeOutstanding(customer.id);
+
+    // The telecaller had no UTR — they were repeating what the customer said.
+    const receiptId = await claim(customer.id, { amount: 50_000_00 });
+
+    setTestUser(deepa);
+    const merged = await confirmAsMatchAction({
+      receiptId,
+      confirmAmount: 50_000_00,
+      reference: "UTR-778899",
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+    });
+    assert.equal(merged.ok, true, merged.ok ? "" : merged.error);
+    setTestUser(priya);
+
+    const all = await db
+      .select()
+      .from(paymentReceipts)
+      .where(eq(paymentReceipts.customerId, customer.id));
+    assert.equal(all.length, 1, "a second receipt was written for one payment");
+    assert.equal(all[0].status, "confirmed");
+    assert.equal(
+      all[0].reference,
+      "UTR-778899",
+      "the reference off the bank statement was not written onto it",
+    );
+
+    const [settled] = await db.select().from(bills).where(eq(bills.id, bill.id));
+    assert.equal(settled.paidAmount, 50_000_00, "the bill was not settled once");
+  });
+
+  test("the typed amount is checked on the SERVER, not only in the dialog", async () => {
+    const customer = await makeCustomer(priya.id);
+    const receiptId = await claim(customer.id, { amount: 50_000_00 });
+
+    setTestUser(deepa);
+    const wrong = await confirmAsMatchAction({
+      receiptId,
+      confirmAmount: 5_000_00,
+      reference: "UTR-778899",
+    });
+    assert.equal(wrong.ok, false, "a merge went through on the wrong amount");
+    setTestUser(priya);
+
+    const [row] = await db
+      .select()
+      .from(paymentReceipts)
+      .where(eq(paymentReceipts.id, receiptId));
+    assert.equal(row.status, "reported", "and it was confirmed anyway");
+  });
+
+  test("a hold is offered as a match, and confirming it ends the hold", async () => {
+    const customer = await makeCustomer(priya.id);
+    const receiptId = await claim(customer.id, { amount: 50_000_00 });
+
+    setTestUser(deepa);
+    await holdReceiptAction(receiptId, "Looking for it");
+
+    const found = await matchesForEntryAction(customer.id, {
+      amount: 50_000_00,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      reference: null,
+    });
+    assert.equal(found.ok, true);
+    if (!found.ok) return;
+    assert.equal(found.data[0]?.candidate.status, "held", "the hold was not offered");
+
+    const merged = await confirmAsMatchAction({ receiptId, confirmAmount: 50_000_00 });
+    assert.equal(merged.ok, true, merged.ok ? "" : merged.error);
+    setTestUser(priya);
+
+    const [row] = await db
+      .select()
+      .from(paymentReceipts)
+      .where(eq(paymentReceipts.id, receiptId));
+    assert.equal(row.status, "confirmed");
+  });
+
+  test("confirmed money is never offered as a match", async () => {
+    // Offering it would invite somebody to confirm one payment twice, which is
+    // the exact failure this whole path exists to prevent.
+    const customer = await makeCustomer(priya.id);
+    const receiptId = await claim(customer.id, { amount: 50_000_00 });
+
+    setTestUser(deepa);
+    await confirmReceiptAction(receiptId);
+    const found = await matchesForEntryAction(customer.id, {
+      amount: 50_000_00,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      reference: null,
+    });
+    setTestUser(priya);
+
+    assert.equal(found.ok, true);
+    if (!found.ok) return;
+    assert.equal(found.data.length, 0, "money already in the ledger was offered again");
   });
 });
 
@@ -6396,5 +7090,97 @@ describe("No order, and when we ring back", () => {
     // the customer would not say.
     const config = await getConfig();
     assert.equal(config["queue.outcomeCooldownDays"].no_order, 5);
+  });
+});
+
+describe("What the telecaller was told would happen next", () => {
+  test("the sentence is returned AND written onto the call", async () => {
+    const customer = await makeCustomer(priya.id);
+    const when = addDays(TODAY, 12);
+
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNextCallDate: when,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    if (!r.ok) return;
+
+    const step = r.data.nextStep;
+    assert.ok(step, "nothing was worked out at all");
+
+    /*
+     * The headline is the EARLIEST day this customer comes back — on a brand
+     * new record that is the prospect cadence, which lands before the callback
+     * the customer asked for. Both are true and both have to be said: the day
+     * the name reappears, and the promise sitting behind it.
+     */
+    assert.ok(step.date && step.date <= when, "the date is not the earliest one");
+    assert.match(
+      step.detail,
+      /promised them a callback/i,
+      "the callback the telecaller just committed to was never mentioned",
+    );
+
+    const [row] = await db
+      .select()
+      .from(calls)
+      .where(eq(calls.id, r.data.interactionId));
+
+    assert.equal(row.nextStepKind, step.kind, "nothing was stored on the call");
+    assert.equal(row.nextStepDate, step.date);
+    assert.equal(row.nextStepHeadline, step.headline, "the words shown were not kept");
+    assert.equal(row.nextStepDetail, step.detail);
+    // Stored so the question "what did we tell them" survives the customer
+    // ordering tomorrow and every rule around them changing afterwards.
+    assert.ok(row.nextStepReason, "the reason behind the date was not kept");
+  });
+
+  test("a double-click gets the SAME sentence back, not a fresh reading", async () => {
+    const customer = await makeCustomer(priya.id);
+    const key = randomUUID();
+    const input = {
+      customerId: customer.id,
+      interactionType: "outbound_call" as const,
+      outcome: "no_order" as const,
+      noOrderNextCallDate: addDays(TODAY, 9),
+      idempotencyKey: key,
+    };
+
+    const first = await saveInteraction(input);
+    const second = await saveInteraction(input);
+    assert.equal(first.ok && second.ok, true);
+    if (!first.ok || !second.ok) return;
+
+    assert.equal(second.data.duplicate, true);
+    assert.equal(
+      second.data.nextStep?.headline,
+      first.data.nextStep?.headline,
+      "the second click showed a different answer to the first",
+    );
+    assert.equal(second.data.nextStep?.date, first.data.nextStep?.date);
+  });
+
+  test("a customer marked do not contact is told so, with no date invented", async () => {
+    const customer = await makeCustomer(priya.id);
+    await db
+      .update(customers)
+      .set({ doNotContact: true })
+      .where(eq(customers.id, customer.id));
+
+    const r = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNoCommitment: true,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    if (!r.ok) return;
+
+    assert.equal(r.data.nextStep?.kind, "none");
+    assert.equal(r.data.nextStep?.date, null, "a date was invented for a customer nothing will ring");
   });
 });

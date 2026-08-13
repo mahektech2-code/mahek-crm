@@ -19,8 +19,9 @@ import {
   callValuePaise,
 } from "../engines/queue";
 import { orderCountsSql } from "../order-status";
+import { nextStep, type NextStep } from "../engines/next-step";
 import { today } from "../recompute";
-import { getPaymentFollowUpPlan } from "./payment-service";
+import { getPaymentFollowUpPlan, paymentCadenceFor } from "./payment-service";
 import {
   businessDate,
   dayBoundaryWindow,
@@ -80,7 +81,12 @@ export type QueueView = Omit<QueueResult, "entries"> & {
  * disagree about who was on the list — a snapshot built by a second, slightly
  * different query would be worse than no snapshot at all.
  */
-async function queueInputs(ids: string[] | null, day: string) {
+async function queueInputs(
+  ids: string[] | null,
+  day: string,
+  /** One customer only, for the forward "what happens next" question. */
+  onlyCustomerId?: string,
+) {
   const config = await getConfig();
   const window = dayBoundaryWindow(day, {
     timezone: config["workingDay.timezone"],
@@ -228,7 +234,18 @@ async function queueInputs(ids: string[] | null, day: string) {
     // Not `status = 'active'`: going quiet marks a customer inactive, and the
     // one thing you must still be able to do with them is call. Only a
     // deactivated customer leaves the queue.
-    .where(and(ne(customers.status, "deactivated"), ownerFilter));
+    .where(
+      and(
+        ne(customers.status, "deactivated"),
+        // Naming one customer replaces the scope filter rather than narrowing
+        // it. A manager logging a call on somebody else's account is entitled
+        // to be told what happens next with it — the caller has already been
+        // scope-checked — and an owner filter here would answer "no such
+        // customer" instead. `ids` still governs which REMINDERS count, which
+        // is right: a callback belongs to whoever promised it.
+        onlyCustomerId ? eq(customers.id, onlyCustomerId) : ownerFilter,
+      ),
+    );
 
   // Who is open on the Inactive Watch. One query rather than a lookup per
   // candidate — and only OPEN rows: a customer somebody has already decided
@@ -340,6 +357,46 @@ async function queueInputs(ids: string[] | null, day: string) {
   );
 
   return { config, rows, detail, candidates };
+}
+
+/**
+ * What happens next with one customer, and why.
+ *
+ * The forward question, answered from live data every time it is asked. The
+ * copy stored on a call row is what somebody was TOLD; this is what is true
+ * now, and the two are meant to be able to differ.
+ *
+ * Null when there is nothing to answer about — a deactivated customer, or one
+ * that has gone since the call was logged.
+ */
+export async function nextStepForCustomer(
+  customerId: string,
+): Promise<NextStep | null> {
+  const ctx = await resolveScope();
+  const day = await today();
+  const { config, candidates } = await queueInputs([ctx.user.id], day, customerId);
+
+  const candidate = candidates[0];
+  if (!candidate) return null;
+
+  // The collections engine's own conclusion, folded in exactly as the queue
+  // folds it in — the verdict for today, and the date behind it so the search
+  // can roll forward.
+  let paymentNextCallOn: string | null = null;
+  if (config["queue.includePaymentDue"]) {
+    const cadence = await paymentCadenceFor(customerId);
+    if (cadence) {
+      paymentNextCallOn = cadence.nextCallOn;
+      if (cadence.nextCallOn <= day) {
+        candidate.paymentCallDue = {
+          totalOverdue: cadence.totalOverdue,
+          daysOverdue: cadence.daysOverdue,
+        };
+      }
+    }
+  }
+
+  return nextStep({ candidate, paymentNextCallOn }, day, config, Date.now());
 }
 
 /** The snapshot job's view: one telecaller's list, ranked as they would see it. */

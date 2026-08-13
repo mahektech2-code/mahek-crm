@@ -212,9 +212,20 @@ export function QueueScreen({
   }
 
   function advance() {
-    // After a save the worked row drops out on the next load, so stepping
-    // forward means the same index, not the next one.
-    if (hasNext) goTo(openIndex + 1);
+    /*
+     * After a save the worked row drops out, so stepping forward means the
+     * same index rather than the next one — the next customer has slid up into
+     * the place the worked one left.
+     *
+     * WHICH of the two applies is decided by looking, not assumed. The save
+     * revalidates immediately but the advance now happens when the telecaller
+     * dismisses the "what happens next" dialog, which may be several seconds
+     * later — so by then the row is usually already gone and `openIndex` is
+     * -1. Reading `openIndex + 1` in that state gave 0, `hasNext` was false,
+     * and the drawer simply shut on a queue with fifty rows left in it.
+     */
+    const next = openIndex >= 0 ? openIndex + 1 : selected;
+    if (visible[next]) goTo(next);
     else setOpenId(null);
   }
 

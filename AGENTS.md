@@ -224,6 +224,10 @@ src/
                            feedback-button.tsx — the Tell us dialog, in the
                            header of every app
     crm/call-panel.tsx     the call drawer, used by four screens
+    crm/next-step-dialog.tsx
+                           saved, and what happens next with this customer
+    crm/payment-mode-fields.tsx
+                           how the money came, asked once for three screens
   db/                      schema, client, seed
     catalogue-seed.ts      the product master, GENERATED from the document
   lib/
@@ -232,8 +236,11 @@ src/
                            store.ts (cached reads, audited writes)
     engines/               the derived-state engines — PURE, no I/O:
                            buying-cycle, queue, escalation, inactivity,
-                           targets, eod, payment-followup, allocation
-                           + engines.test.ts, allocation.test.ts
+                           targets, eod, payment-followup, allocation,
+                           next-step — when this customer comes back, and why,
+                           receipt-match — is this money we already know about
+                           + engines.test.ts, allocation.test.ts,
+                           next-step.test.ts
     services/              engines wired to data — one file per module
     access-control.ts      scope resolution + capabilities (§8)
     modules.ts             what a person can open INSIDE an app — PURE, and
@@ -436,6 +443,60 @@ mean the contact has already happened.
 **Asking for an order and being told no buys quiet.** Without the cooldown, a
 customer past their call day returns to the top of the list every single day
 until they order, which punishes the telecaller for working it.
+
+**Saving a call says what happens next, and it is not a second copy of the
+rules.** `lib/engines/next-step.ts` asks `buildQueue` the question it already
+answers — is this customer on the list — once for today and once for each day
+after, and reports the first day the answer is yes. Re-deriving the cycle, the
+quiet window, the cooldowns and the no-answer ladder would produce a copy that
+drifts within a release, and the sentence a telecaller reads out on a phone
+call would be the copy that was wrong. Pure, like every other engine, and
+`nextStepForCustomer` is the one place it is wired to data.
+
+**A prediction and a promise are drawn differently, because one of them is a
+commitment.** `booked` is a callback the customer asked for; `scheduled` is a
+date the rules produce and which moves the moment they order, pay or ask for a
+callback, and the screen says so underneath. `decide` and `none` carry NO date
+at all — a customer nobody can reach and one marked do-not-contact will not be
+brought back by anything, and putting a date on either would be an invention
+the telecaller has no way to check.
+
+**The headline is the EARLIEST day they come back, and the promise is named
+beside it.** On a prospect or an overdue account the cadence often lands before
+the callback somebody committed to, so answering with the promise alone would
+be wrong about when the name reappears — and answering with the cadence alone
+would be a confirmation screen that never mentioned the promise the telecaller
+had just made. Both are true and both are said.
+
+**A verdict about today cannot be rolled forward.** `paymentCallDue` on a queue
+candidate means collections wants a call NOW; carried into the search unchanged
+it fires on every future day, so every customer with a debt would be told
+"chase them tomorrow" for the rest of the year. `paymentCadenceFor` asks the
+collections engine for a DATE instead — `nextCallOn`, pushed out by a live
+promise and by reported money exactly as the worklist pushes it — and `held`
+accounts get no date at all, because somebody is arguing about that bill.
+`calledToday` and a same-day skip are cleared for future days for the same
+reason.
+
+**What the telecaller was TOLD is stored on the call, and it is not a cache.**
+Six columns on `calls`, written once, after every recompute the save triggers —
+read a moment earlier and they would describe the world before the call that
+just happened. `lib/recompute.ts` does not touch them and must not learn to: a
+cache answers "when is the next call" and is rebuilt when the answer changes,
+while these answer "what did we tell the person who logged this call, on the
+day they logged it", and a rebuild does not correct that question, it destroys
+it. It is the same kind of mark as `orders.approvedAt` and
+`bills.paymentDecidedAt`. The current next step is derived on read, from live
+data, and the two are MEANT to be able to differ — that difference is the
+record of what changed since. A duplicate save returns the stored sentence
+rather than a fresh reading, so a double-click cannot show a second answer.
+
+**Working it out never fails the save.** The call is in the ledger before any
+of this runs; the sentence is a courtesy on top of a completed write, so a
+failure leaves the columns null and the screen says plainly that it could not
+work it out. Calls logged before this existed have no sentence and nothing
+reconstructs one — a reconstruction would be today's answer wearing an old
+call's date.
 
 **A payment term belongs to the customer, and the bill inherits it.** The term
 is no longer agreed call by call — an order takes the customer's standing term,
@@ -875,6 +936,130 @@ with their stage floor intact. It lands on the timeline because somebody has to
 ring back and say something. A rejected receipt stays on the customer's
 statement too — a transfer that never arrived is a fact about the account, and
 dropping it leaves the next person wondering why the balance never moved.
+
+**Holding is a pause, and it is a fourth status rather than a shade of
+`reported`.** `reported` means nobody has looked at the claim yet, and the quiet
+it buys the customer EXPIRES — otherwise anybody could take themselves off the
+collections list for good by saying they had paid. `held` is a named person in
+accounts saying "I am looking for this in the bank statement, leave them alone
+until I have", and its quiet does NOT expire: chasing somebody while we are
+part-way through establishing that they paid is worse than any call not made.
+What replaces the expiry is visibility — the hold ages in plain sight on
+accounts' own list, `payments.holdStaleDays` flags it there, and only a person
+ends it. It touches no money, because every money path keys on `confirmed`, so
+nothing else had to be taught about it.
+
+**A hold silences BOTH channels, and the customer is told why through the
+telecaller.** No calls and no reminder messages, which falls out of
+`blockingReason` gating both. The reason is required by the action, not just by
+the form: a telecaller whose customer has gone quiet has to be able to answer
+when that customer rings and asks why nobody has been in touch. Rejecting a
+hold puts them straight back on the worklist; confirming takes them off it for
+the right reason.
+
+**A held payment is not a neglected one, and no screen counts them together.**
+"Waiting more than 24 hours" on a reported payment means the customer's quiet
+is about to lapse and they will be chased for money nobody has looked for; on a
+hold none of that sentence is true. They get separate banners, separate
+ageing — `payments.holdStaleDays` — and the statement gives a hold its own pill
+rather than "with accounts", because somebody has looked at this one. The
+running balance counts confirmed money only, so a hold moves nothing.
+
+**Re-pointing is offered even where NOTHING is open.** That is not a dead end,
+it is the most stuck case: the bill the money was reported against has been
+settled by something else, so confirming as it stands is refused and there is
+no other bill to name. Re-allocating with no open bills puts the whole amount
+on account, which is the honest answer — the money arrived and there is nothing
+left for it to pay. Hiding the control exactly there would make the only way
+out invisible.
+
+**Confirming can re-point the money, and that is also the way out of a dead
+end.** `confirmReceipt` takes an optional allocation and runs the SAME pure
+`allocate` the record form runs, so the preview in the review drawer is the
+arithmetic that gets written. Before this, a bill named at report time that had
+since been settled refused the confirmation outright and left
+reject-and-re-record as the only path — which throws away the claim, its date
+and its reference to fix something that was only ever about which bill.
+
+**A reported payment does not make a bill look settled.** A bill offers its
+whole unconfirmed balance; money somebody has merely reported against it is
+SHOWN on the row and never subtracted from it. Subtracting was the old guard
+against two people writing down one transfer, and it made a fully-claimed bill
+read as zero available — so accounts holding the bank statement could not record
+the very money they were looking at, while the ledger still said the customer
+owed it. The duplicate is now caught where it happens: `matchesForEntry` asks a
+person a question they can answer, instead of silently making a bill
+unavailable and leaving them to work out why.
+
+**One payment written down twice is the ordinary failure, and it is caught at
+the point of entry.** A telecaller records what a customer said days before the
+transfer reaches a statement. `lib/engines/receipt-match.ts` is pure and offers
+candidates strongest-first: a normalised reference beats an equal amount —
+because a UTR names one transfer and where the amounts then disagree that is
+exactly what somebody needs to see — and a near amount is a question rather than
+an answer. Two receipts with no reference match on nothing, or every
+unreferenced receipt would match every other. Only `reported` and `held` are
+ever candidates: offering confirmed money invites confirming one payment twice.
+
+**Recognising it CONFIRMS the existing receipt rather than writing a second.**
+That is the whole point — one payment, one row, the customer credited once —
+and accounts' reference and date are written onto it on the way past. The
+amount is not: a different amount is a different payment. The typed
+confirmation is checked in `confirmAsMatch` as well as in the dialog, because
+merging two records of money is not a thing to do on a stray click and a check
+that lives only in an interface is not a check. A genuine second payment of the
+same amount is still recordable — made deliberate, never refused, or people
+learn to work around the screen.
+
+**A cheque has two dates and they answer different questions.** `received_at`
+is when we got it; `instrument_date` is what is written on it, and a cheque
+handed over on the 3rd dated the 20th cannot be banked until the 20th however
+firmly it is in our hands. Which modes carry one is `payments.datedModes`,
+because the mode list is itself configuration and hardcoding "Cheque" would put
+the two out of step the day somebody adds a demand draft. Past and future are
+both ordinary and neither is bounded.
+
+**The date is asked of everybody, unlike the reference.** The reasoning that
+spares a telecaller a UTR does not carry across: a customer who says they have
+paid by cheque is holding the cheque, and "what date is on it" is a question
+that can be asked on the same call. Without it accounts cannot tell a cheque due
+to be banked this morning from one dated next month.
+
+**A post-dated cheque buys quiet until it can be banked.** The reported window
+is a few days and a cheque can be dated a month out, so measured from when it
+was written down the quiet lapses long before the money is even reachable — and
+the customer is chased for a cheque sitting in our own drawer, which is the most
+annoying call it is possible to make and one where they are entirely right. Once
+the date passes, the ordinary window runs from THERE rather than from the day
+somebody wrote it down. Accounts see the mirror of it: a cheque dated today or
+earlier is flagged as something to go and find, and a post-dated one is
+deliberately calm, because marking what is not yet asking for anything is how
+people learn to ignore the marking.
+
+**One component asks how the money came, because it was three.** The
+collections worklist, the bills ledger and the call panel each carried their
+own copy of Mode and Reference, each with the mode list written out as a
+literal — so `Credit note` reached the accounts app and none of them, and the
+cheque date would have had to be got right three times.
+`components/crm/payment-mode-fields.tsx` is the one answer, and it reads
+`payments.modes`. A list of modes typed into a screen is the same mistake as a
+product list typed into a screen.
+
+**A validation message goes under the field it names.** These dialogs pinned
+whatever the server said to the amount box, so "a cheque needs the date written
+on it" appeared under Amount received — pointing at the one field that was
+correct. The field errors carry their `field` through and are rendered against
+it; a message under the wrong field is worse than no message, because it sends
+somebody to fix what is not broken.
+
+**`Adjustment` and `Credit note` are payment modes, and neither is money
+arriving.** One settles a bill against something already on the account, the
+other against goods returned or a claim allowed. Both close a bill exactly the
+way a transfer does, and leaving them off the list is how they get recorded as
+cash nobody can find in the statement afterwards. `0051` appends `Credit note`
+to deployments carrying the old default, matching on `updated_by_id is null`
+AND the stored value still being the previous default — a team that curated its
+own list, including one that deliberately removed a mode, is left alone.
 
 **A receipt is one arrival of money; `payments` rows are where it went.** Which
 bills a transfer settles is a second question with a second answer, so a

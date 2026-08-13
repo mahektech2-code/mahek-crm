@@ -630,8 +630,9 @@ export const SETTINGS = [
     type: "structured",
     category: "payments",
     label: "Payment modes",
-    description: "How money is received. The first is the default on the form.",
-    default: ["Bank transfer", "UPI", "Cheque", "Cash", "Adjustment"],
+    description:
+      "How money is received. The first is the default on the form. Two of them are not money arriving at all: an adjustment settles a bill against something already on the account, and a credit note settles it against goods returned or a claim allowed. Both close a bill the same way a transfer does, and leaving them off the list is how they get recorded as cash that nobody can find in the bank.",
+    default: ["Bank transfer", "UPI", "Cheque", "Cash", "Adjustment", "Credit note"],
   },
   {
     key: "payments.referenceRequiredModes",
@@ -652,6 +653,48 @@ export const SETTINGS = [
     default: 24,
     min: 1,
     max: 720,
+  },
+  {
+    key: "payments.datedModes",
+    type: "structured",
+    category: "payments",
+    label: "Modes that carry a date of their own",
+    description:
+      "Modes where the instrument has a date written on it, separate from the day we received it. A cheque handed over on the 3rd and dated the 20th cannot reach the bank until the 20th, and those are two different facts - collapsing them into one loses whichever answer somebody needed. The date may be in the past or the future: one dated last week should have been banked already, and one dated next month is a customer who must not be chased until then.",
+    default: ["Cheque"],
+  },
+  {
+    key: "payments.holdStaleDays",
+    type: "integer",
+    category: "payments",
+    label: "When a held payment starts to look forgotten",
+    description:
+      "Days after which a payment accounts have put on hold is flagged on their own list. A hold does NOT expire - it was somebody's decision and only somebody undoes it - so this is the whole of what stops one being forgotten. The customer behind it is getting no calls and no messages the entire time, which is exactly what makes an old hold expensive.",
+    default: 7,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "payments.matchWindowDays",
+    type: "integer",
+    category: "payments",
+    label: "How far back to look for the same money",
+    description:
+      "When accounts record a payment from the bank statement, how many days back to search the customer's own reported and held receipts for the same money. A telecaller writes down what the customer said days before the transfer shows up on a statement, so too short a window offers no match and the payment gets recorded twice.",
+    default: 45,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "payments.matchTolerancePercent",
+    type: "integer",
+    category: "payments",
+    label: "How far off an amount can be and still be the same money",
+    description:
+      "A customer says fifty thousand and fifty thousand and forty rupees of bank charges arrive. Anything inside this percentage is offered as a possible match rather than hidden - it is offered, never applied, and the amount that counts is always the one accounts entered from the statement. Zero means only an exact amount is ever suggested.",
+    default: 2,
+    min: 0,
+    max: 25,
   },
 
   /* --------------------------------------------------------------- targets */
@@ -1809,6 +1852,19 @@ export function checkConsistency(config: Config): string[] {
         `These modes require a reference but are not offered on the form: ${orphans.join(", ")}. Add them to the payment modes, or drop them from the list.`,
       );
     }
+
+    // Same rule for a mode that carries a date of its own. A dated mode nobody
+    // can pick is a field that can never be shown and a post-dated cheque that
+    // can never be recorded, while the settings screen reads as though both
+    // work.
+    const datedOrphans = (config["payments.datedModes"] ?? []).filter(
+      (m) => !modes.includes(m),
+    );
+    if (datedOrphans.length) {
+      problems.push(
+        `These modes carry a date of their own but are not offered on the form: ${datedOrphans.join(", ")}. Add them to the payment modes, or drop them from the list.`,
+      );
+    }
   }
 
   // The quiet a reported payment buys must expire while the customer is still
@@ -1992,6 +2048,10 @@ export type Config = {
   "payments.modes": string[];
   "payments.referenceRequiredModes": string[];
   "payments.confirmationAgeWarningHours": number;
+  "payments.datedModes": string[];
+  "payments.holdStaleDays": number;
+  "payments.matchWindowDays": number;
+  "payments.matchTolerancePercent": number;
 
   "targets.defaultMethod": "trailing-average" | "last-month" | "fixed";
   "targets.trailingMonths": number;

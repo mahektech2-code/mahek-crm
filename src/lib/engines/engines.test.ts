@@ -2067,7 +2067,7 @@ describe("E7 payment follow-up cadence", () => {
       [
         subject({
           anchorDueDate: addDays(TODAY, -40),
-          reportedPayment: { amount: 250_000, on: TODAY },
+          reportedPayment: { amount: 250_000, on: TODAY, held: false, holdReason: null, postDatedTo: null },
         }),
       ],
       TODAY,
@@ -2088,6 +2088,9 @@ describe("E7 payment follow-up cadence", () => {
           reportedPayment: {
             amount: 250_000,
             on: addDays(TODAY, -C["payments.reportedQuietDays"]),
+            held: false,
+            holdReason: null,
+            postDatedTo: null,
           },
         }),
       ],
@@ -2103,6 +2106,9 @@ describe("E7 payment follow-up cadence", () => {
           reportedPayment: {
             amount: 250_000,
             on: addDays(TODAY, -C["payments.reportedQuietDays"] - 1),
+            held: false,
+            holdReason: null,
+            postDatedTo: null,
           },
         }),
       ],
@@ -2112,13 +2118,107 @@ describe("E7 payment follow-up cadence", () => {
     assert.equal(expired.calls.length, 1, "a day later they are chased again");
   });
 
+  test("a post-dated cheque buys quiet until it can be banked, not three days", () => {
+    // The reported window is a few days and a cheque can be dated a month out.
+    // Measured from when it was written down, the quiet lapses long before the
+    // cheque can even be reached, and the customer is chased for money sitting
+    // in our own drawer — a call where they are entirely right.
+    const plan = planPaymentFollowUps(
+      [
+        subject({
+          anchorDueDate: addDays(TODAY, -40),
+          reportedPayment: {
+            amount: 250_000,
+            // Written down three weeks ago: long past the reported window.
+            on: addDays(TODAY, -21),
+            held: false,
+            holdReason: null,
+            postDatedTo: addDays(TODAY, 10),
+          },
+        }),
+      ],
+      TODAY,
+      C,
+    );
+
+    assert.equal(plan.calls.length, 0, "a customer with a post-dated cheque was chased");
+    assert.equal(plan.messages.length, 0, "and sent a reminder message");
+    assert.match(plan.heldBack[0].reason, /cheque dated/i);
+  });
+
+  test("once the cheque date passes, the ordinary window runs from THERE", () => {
+    // The cheque can be banked now, so the few days the money needs to clear
+    // start from its date — not from the day somebody wrote it down, which may
+    // be a month earlier and would put the customer straight back on the list.
+    const justBankable = planPaymentFollowUps(
+      [
+        subject({
+          anchorDueDate: addDays(TODAY, -40),
+          reportedPayment: {
+            amount: 250_000,
+            on: addDays(TODAY, -30),
+            held: false,
+            holdReason: null,
+            postDatedTo: TODAY,
+          },
+        }),
+      ],
+      TODAY,
+      C,
+    );
+    assert.equal(justBankable.calls.length, 0, "chased on the very day it became bankable");
+
+    const longPast = planPaymentFollowUps(
+      [
+        subject({
+          anchorDueDate: addDays(TODAY, -40),
+          reportedPayment: {
+            amount: 250_000,
+            on: addDays(TODAY, -30),
+            held: false,
+            holdReason: null,
+            postDatedTo: addDays(TODAY, -C["payments.reportedQuietDays"] - 1),
+          },
+        }),
+      ],
+      TODAY,
+      C,
+    );
+    assert.equal(
+      longPast.calls.length,
+      1,
+      "a cheque that should have cleared days ago left the customer off the list for ever",
+    );
+  });
+
+  test("a hold outlasts a cheque date, because a person put it there", () => {
+    const plan = planPaymentFollowUps(
+      [
+        subject({
+          anchorDueDate: addDays(TODAY, -40),
+          reportedPayment: {
+            amount: 250_000,
+            on: addDays(TODAY, -60),
+            held: true,
+            holdReason: "Cheque sent for clearing",
+            postDatedTo: addDays(TODAY, -30),
+          },
+        }),
+      ],
+      TODAY,
+      C,
+    );
+    assert.equal(plan.calls.length, 0);
+    assert.match(plan.heldBack[0].reason, /on hold/i);
+  });
+
   test("reported money outranks a promise, because it is the better news", () => {
     const plan = planPaymentFollowUps(
       [
         subject({
           anchorDueDate: addDays(TODAY, -40),
           promisedDate: TODAY,
-          reportedPayment: { amount: 100_000, on: TODAY },
+          reportedPayment: { amount: 100_000, on: TODAY, held: false, holdReason: null, postDatedTo: null },
         }),
       ],
       TODAY,
@@ -2133,7 +2233,7 @@ describe("E7 payment follow-up cadence", () => {
         subject({
           anchorDueDate: addDays(TODAY, -40),
           doNotContact: true,
-          reportedPayment: { amount: 100_000, on: TODAY },
+          reportedPayment: { amount: 100_000, on: TODAY, held: false, holdReason: null, postDatedTo: null },
         }),
       ],
       TODAY,

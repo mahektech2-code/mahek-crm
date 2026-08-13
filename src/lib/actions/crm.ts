@@ -32,6 +32,7 @@ import {
   updateSettings,
 } from "@/lib/config/store";
 import { saveInteraction } from "@/lib/services/interaction-service";
+import type { NextStep } from "@/lib/engines/next-step";
 import {
   recordFollowUpAttempt,
   recordPayment as recordPaymentService,
@@ -184,7 +185,13 @@ export type SaveInteractionActionInput = {
  */
 export async function saveInteractionAction(
   raw: SaveInteractionActionInput,
-): Promise<Result<{ produced: string[]; complaintUpdated: boolean }>> {
+): Promise<
+  Result<{
+    produced: string[];
+    complaintUpdated: boolean;
+    nextStep: NextStep | null;
+  }>
+> {
   try {
     const result = await saveInteraction({
       customerId: raw.customerId,
@@ -221,6 +228,7 @@ export async function saveInteractionAction(
       {
         produced: result.data.produced,
         complaintUpdated: result.data.complaintUpdated,
+        nextStep: result.data.nextStep,
       },
       attachmentNote(attached)
         ? `Call saved — ${attachmentNote(attached)}`
@@ -390,6 +398,8 @@ export async function recordPayment(input: {
   amount: string;
   mode: string;
   reference?: string;
+  /** The date written on the cheque. Required by the service for dated modes. */
+  instrumentDate?: string;
   receivedOn: string;
 }): Promise<Result> {
   try {
@@ -405,6 +415,7 @@ export async function recordPayment(input: {
       paidAt: input.receivedOn,
       mode: input.mode,
       reference: input.reference,
+      instrumentDate: input.instrumentDate,
       idempotencyKey: randomUUID(),
     });
     refreshAll();

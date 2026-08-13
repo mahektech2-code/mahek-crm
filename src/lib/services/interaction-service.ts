@@ -28,6 +28,8 @@ import {
   today,
 } from "../recompute";
 import { isAttemptAllowed } from "../engines/escalation";
+import type { NextStep, NextStepKind } from "../engines/next-step";
+import { nextStepForCustomer } from "./queue-service";
 import { addDays, onOrAfterWorkingDay } from "../business-date";
 import { err, ok, type Result } from "../result";
 import { CRM_EVENT, callTimelineSummary, writeTimelineEvents } from "../timeline";
@@ -155,10 +157,45 @@ export type SaveInteractionResult = {
   complaintId: string | null;
   /** True when an existing open complaint was updated instead of a new one. */
   complaintUpdated: boolean;
+  /**
+   * What happens next with this customer, as the telecaller is about to be
+   * told. Null only where the customer has gone — deactivated between the save
+   * and the read — because a screen with nothing to say is better than one
+   * inventing something.
+   */
+  nextStep: NextStep | null;
 };
 
 function fieldError(field: string, message: string): Result<never> {
   return err(message, "validation", [{ field, message }]);
+}
+
+/**
+ * The six stored columns back into the shape the screen renders.
+ *
+ * Null where nothing was stored — calls logged before this existed, and the
+ * handful whose computation failed. A missing sentence is shown as a missing
+ * sentence; nothing here reconstructs one, because a reconstruction would be
+ * today's answer wearing the date of an old call.
+ */
+function storedNextStep(row: {
+  nextStepKind: NextStepKind | null;
+  nextStepDate: string | null;
+  nextStepReason: string | null;
+  nextStepHeadline: string | null;
+  nextStepDetail: string | null;
+  nextStepHeldToday: string | null;
+}): NextStep | null {
+  if (!row.nextStepKind || !row.nextStepHeadline) return null;
+  return {
+    kind: row.nextStepKind,
+    date: row.nextStepDate,
+    daysAway: null,
+    reasonKind: (row.nextStepReason as NextStep["reasonKind"]) ?? null,
+    headline: row.nextStepHeadline,
+    detail: row.nextStepDetail ?? "",
+    heldToday: row.nextStepHeldToday,
+  };
 }
 
 export async function saveInteraction(
@@ -357,6 +394,12 @@ export async function saveInteraction(
       orderId: calls.orderId,
       reminderId: calls.reminderId,
       complaintId: calls.complaintId,
+      nextStepKind: calls.nextStepKind,
+      nextStepDate: calls.nextStepDate,
+      nextStepReason: calls.nextStepReason,
+      nextStepHeadline: calls.nextStepHeadline,
+      nextStepDetail: calls.nextStepDetail,
+      nextStepHeldToday: calls.nextStepHeldToday,
     })
     .from(calls)
     .where(eq(calls.idempotencyKey, input.idempotencyKey));
@@ -370,6 +413,10 @@ export async function saveInteraction(
         reminderId: existing.reminderId,
         complaintId: existing.complaintId,
         complaintUpdated: false,
+        // The STORED one, not a fresh reading. A double-click has to show the
+        // same screen as the first click — this is precisely what keeping the
+        // sentence on the row buys.
+        nextStep: storedNextStep(existing),
       },
       "Already logged",
     );
@@ -802,6 +849,36 @@ export async function saveInteraction(
 
   if (orderId) await recomputeOutstanding(customer.id);
 
+  /* ------------------------------------------------ what happens next
+   *
+   * AFTER every recompute above, never before. The call that was just logged
+   * is what moves the cycle, the last-contact date, the follow-up stage and
+   * the cooldown — read a moment earlier and this would describe the world as
+   * it stood before the call, which is the one answer that is certainly wrong.
+   *
+   * Failing to work it out must not fail the save. The call is in the ledger;
+   * the sentence is a courtesy on top of it.
+   */
+  let step: NextStep | null = null;
+  try {
+    step = await nextStepForCustomer(customer.id);
+    if (step) {
+      await db
+        .update(calls)
+        .set({
+          nextStepKind: step.kind,
+          nextStepDate: step.date,
+          nextStepReason: step.reasonKind,
+          nextStepHeadline: step.headline,
+          nextStepDetail: step.detail,
+          nextStepHeldToday: step.heldToday,
+        })
+        .where(eq(calls.id, interactionId));
+    }
+  } catch {
+    step = null;
+  }
+
   return ok(
     {
       interactionId,
@@ -811,6 +888,7 @@ export async function saveInteraction(
       reminderId,
       complaintId,
       complaintUpdated,
+      nextStep: step,
     },
     complaintUpdated ? "Added to the open complaint" : "Interaction saved",
     warnings,

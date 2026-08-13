@@ -64,6 +64,9 @@ export default async function PaymentsPage() {
 
   return (
     <PaymentsScreen
+      modes={config["payments.modes"]}
+      datedModes={config["payments.datedModes"]}
+      today={day}
       scopeLabel={scopeLabel(scope, user)}
       // On a team list a row is somebody else's account, and whoever is
       // reading it has to know whose. On their own book every row is theirs,
