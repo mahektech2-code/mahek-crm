@@ -1,0 +1,125 @@
+# The whole of MahekOne on one droplet: Caddy, the app, and Postgres.
+#
+# NOT the compose file in the repository root. That one is a bare Postgres for
+# local development and is what `npm run db:setup` expects — two files because
+# they answer different questions, and collapsing them would mean a developer
+# running `docker compose up` in the project root started a production stack
+# against an unset .env.
+#
+# This one is copied to /opt/mahekone/docker-compose.yml on the droplet.
+#
+# ONLY CADDY IS REACHABLE FROM THE INTERNET. The app and the database publish
+# no ports at all — they talk over the private compose network, which is the
+# thing that makes this cheap: every query the app makes is a loopback on the
+# same machine, so the 36 MB the sheet projection reads costs nothing and takes
+# no round trip to another continent.
+#
+# It also means Postgres is not addressable from outside the box. On Neon it
+# was reachable by anybody on the internet holding a password.
+
+name: mahekone
+
+services:
+  # ------------------------------------------------------------------ caddy
+  # TLS with no certificate to remember. Caddy obtains and renews from Let's
+  # Encrypt automatically, which removes the single most commonly forgotten
+  # piece of running your own server.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    depends_on:
+      - app
+    networks: [mahek]
+
+  # -------------------------------------------------------------------- app
+  app:
+    image: ${IMAGE:?set IMAGE in .env}
+    restart: unless-stopped
+    environment:
+      # localhost in every sense that matters — same machine, private network.
+      DATABASE_URL: postgres://mahek:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/mahekone
+      NODE_ENV: production
+      # A small box: cap the heap so a runaway render cannot take the database
+      # down with it. Node's default ceiling assumes it owns the machine.
+      NODE_OPTIONS: --max-old-space-size=320
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [mahek]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  # --------------------------------------------------------------- postgres
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mahek
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: mahekone
+      # The working day is Asia/Kolkata and several rules depend on the session
+      # zone NOT being a surprise. Neon ran in GMT, which is exactly how a 1am
+      # IST call landed on the previous day; local Postgres runs in whatever it
+      # is told, so it is told.
+      TZ: Asia/Kolkata
+      PGTZ: Asia/Kolkata
+    volumes:
+      # A named volume on the droplet's SSD. Rebuilding or rolling back the app
+      # container does not touch it.
+      - pgdata:/var/lib/postgresql/data
+    # TUNED FOR 1 GiB, and these numbers are not defaults being restated.
+    # Postgres ships assuming a far bigger machine; left alone it would reserve
+    # more than this box has and the OOM killer would arrive during the nightly
+    # recompute. The whole database is ~420 MB, so effective_cache_size is the
+    # honest guess at what the OS will hold, not a reservation.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - effective_cache_size=512MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - max_connections=30
+      - -c
+      - random_page_cost=1.1          # NVMe, not a spinning disk
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - wal_compression=on
+      - -c
+      - log_min_duration_statement=2000  # anything over 2s, so slow queries surface
+    networks: [mahek]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mahek -d mahekone"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+
+networks:
+  mahek:
+    driver: bridge

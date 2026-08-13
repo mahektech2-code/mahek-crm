@@ -6,7 +6,8 @@ const connectionString = process.env.DATABASE_URL;
 
 if (!connectionString) {
   throw new Error(
-    "DATABASE_URL is not set. Run `vercel env pull` to fetch it from the linked project.",
+    "DATABASE_URL is not set. Copy .env.example to .env.local for development; " +
+      "in production it is set in /opt/mahekone/.env on the server.",
   );
 }
 
@@ -21,9 +22,22 @@ const globalForDb = globalThis as unknown as {
 const sql =
   globalForDb.__mahekSql ??
   postgres(connectionString, {
-    // A distant database means each query holds a connection for ~300 ms, so a
-    // small pool serialises work that was written to run in parallel.
-    max: 20,
+    /*
+     * TWENTY WAS A NUMBER ABOUT DISTANCE. With the database in another
+     * continent every query held a connection for ~300 ms, so a small pool
+     * serialised work that was written to run in parallel and the answer was
+     * to open more.
+     *
+     * On the same machine a query holds its connection for well under a
+     * millisecond, so the pool empties as fast as it fills and twenty
+     * connections buy nothing — they only cost, at roughly 10 MB of Postgres
+     * memory each on a box that has 1 GiB for everything. Ten is ample for
+     * eight people, and it leaves headroom under `max_connections=30` for a
+     * `psql` session and the nightly job.
+     *
+     * Tunable rather than fixed, because the right answer moves with the box.
+     */
+    max: Number(process.env.DATABASE_POOL_MAX ?? 10),
     prepare: false,
   });
 

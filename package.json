@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "npm run db:deploy && npm run catalogue:deploy && next build",
+    "build": "next build",
+    "//deploy": "Migrations and the catalogue import used to run inside `build`, which worked while the build ran next to the database. It now runs on a GitHub runner with no route to Postgres, so they moved here and the deploy workflow calls this over an SSH tunnel.",
+    "deploy:db": "npm run db:deploy && npm run catalogue:deploy",
     "start": "next start",
     "lint": "eslint",
     "db:push": "drizzle-kit push",

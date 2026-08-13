@@ -73,6 +73,12 @@ jobs:
       - name: Apply migrations
         run: npm run db:migrate
 
+      # `npm run build` used to run this itself, back when the build had a
+      # database beside it. It is a deploy step now — see deploy.yml — so CI
+      # has to say it out loud or the journeys run against an empty catalogue.
+      - name: Import the catalogue
+        run: npm run catalogue:deploy
+
       - run: npm run build
 
       - name: Create mahekone_test
@@ -80,6 +86,31 @@ jobs:
 
       - name: Journey tests
         run: npm run test:integration
+
+  # THE IMAGE IS BUILT ON EVERY PR, and pushed nowhere.
+  #
+  # Production is a container now, and a Dockerfile that only ever runs during
+  # a deploy is a Dockerfile you find out about while deploying. The two things
+  # this catches are the ones that actually break: a `COPY` whose source moved,
+  # and a standalone trace that lands `server.js` somewhere other than where
+  # the runtime stage expects it — neither of which `next build` on its own
+  # would notice.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: mahekone:ci
+      # Building proves it compiles. This proves the runtime stage can find
+      # what it needs to start at all.
+      - name: It has a server to run
+        run: docker run --rm --entrypoint sh mahekone:ci -c 'test -f server.js && test -d .next/static && test -d public'
 
   # The link crawler needs something no other check does: a *running* app on a
   # *seeded* database. That is why it is a second job rather than more steps on

@@ -1,0 +1,152 @@
+# Push to main, and about three minutes later it is live.
+#
+# The build runs HERE, on GitHub's runners, and never on the droplet: `next
+# build` runs tsc over the whole codebase and wants more memory than a 1 GiB
+# box has spare. The droplet only pulls a finished image.
+#
+# Migrations are the interesting part. Postgres publishes no port and the
+# firewall allows 22, 80 and 443 — so there is no route from here to the
+# database, by design. Rather than open one, the migration step forwards a
+# local port down the SSH connection: the database stays unreachable from the
+# internet and drizzle-kit still runs with the exact toolchain the repo pins.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  # Deploying the current main by hand — after a rollback, or when a deploy
+  # failed on something transient.
+  workflow_dispatch:
+
+concurrency:
+  # Two deploys overlapping means two `docker compose up` runs and possibly two
+  # migrations racing. The later push wins; the earlier one is cancelled.
+  group: deploy-production
+  cancel-in-progress: true
+
+env:
+  REGISTRY: registry.digitalocean.com
+  IMAGE_NAME: mahekone/app
+  APP_DIR: /opt/mahekone
+
+jobs:
+  # The same checks that guard a PR. A green build is not evidence the rules
+  # still hold, and this deploys straight to the app the accounts team uses.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx eslint src
+      - run: npm test
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.tag.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag from the commit
+        id: tag
+        # The sha, not `latest`. Rolling back means naming the tag you want,
+        # and `latest` cannot be named.
+        run: echo "image=${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      # A registry-scoped credential, not the account API token. The account
+      # token would work — DigitalOcean accepts it as both username and
+      # password — but it opens every resource on the account, and rotating it
+      # for any unrelated reason would silently break deploys.
+      - name: Sign in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.digitalocean.com
+          username: ${{ secrets.DOCR_USERNAME }}
+          password: ${{ secrets.DOCR_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.tag.outputs.image }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          # Layer cache in the registry, so an unchanged package-lock does not
+          # reinstall node_modules on every push.
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - name: Set up the SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          # Pinned, not trust-on-first-use: TOFU in CI means the first
+          # connection accepts whatever answers, which is the one thing a host
+          # key is for.
+          echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      # ----------------------------------------------------------- migrations
+      #
+      # Before the new image serves anything. Every migration in this repo is
+      # additive — new columns, new tables, backfills that match on
+      # `updated_by_id is null` — so the running OLD code tolerates the new
+      # schema for the seconds between this step and the swap below. A
+      # destructive migration would need the reverse order and a release that
+      # stops writing to the column first.
+      - name: Migrate, through the tunnel
+        env:
+          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          ssh -f -N -L 5433:127.0.0.1:5432 \
+            -o ExitOnForwardFailure=yes \
+            deploy@${{ secrets.DROPLET_HOST }}
+          export DATABASE_URL="postgres://mahek:${PGPASSWORD}@127.0.0.1:5433/mahekone"
+          npm run deploy:db
+
+      # ---------------------------------------------------------------- swap
+      - name: Pull and restart
+        run: |
+          ssh deploy@${{ secrets.DROPLET_HOST }} bash -euo pipefail <<'EOF'
+            cd ${{ env.APP_DIR }}
+            # The tag goes in .env so a reboot brings back the image that was
+            # actually deployed, rather than whatever `latest` points at today.
+            sed -i 's|^IMAGE=.*|IMAGE=${{ needs.build.outputs.image }}|' .env
+            docker compose pull app
+            docker compose up -d app
+            docker image prune -f --filter 'until=168h'
+          EOF
+
+      # An exit code from `docker compose up` says the container started, not
+      # that the app works. This asks the running app.
+      - name: Check it is actually serving
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ secrets.DOMAIN }}/login" || true)
+            if [ "$code" = "200" ]; then echo "serving after $((i * 10))s"; exit 0; fi
+            sleep 10
+          done
+          echo "Never returned 200 — check: ssh deploy@host 'cd /opt/mahekone && docker compose logs --tail=100 app'"
+          exit 1

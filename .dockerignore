@@ -1,0 +1,32 @@
+# Everything the image does not need, which is most of the repository.
+#
+# .env matters most here: it holds the database password and the Google service
+# account key, and a stray copy baked into an image layer is readable by
+# anybody who can pull the image.
+
+.git
+.github
+node_modules
+.next
+npm-debug.log*
+
+# No exceptions, not even the .example files. The build needs none of them, and
+# an allow-list here is how a real .env eventually slips through on a filename
+# nobody predicted.
+.env
+.env.*
+
+# The runtime never runs these, and shipping them puts test fixtures and
+# migration tooling in a production image.
+**/*.test.ts
+drizzle.config.ts
+scripts/
+docs/
+deploy/
+DEPLOY.md
+AGENTS.md
+CLAUDE.md
+README.md
+Dockerfile
+docker-compose.yml
+Caddyfile
