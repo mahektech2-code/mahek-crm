@@ -38,6 +38,7 @@ import {
   customers,
   paymentReceipts,
   payments,
+  sheetOrderRows,
 } from "../src/db/schema";
 import {
   recomputeBillPaid,
@@ -132,6 +133,36 @@ function buildResolver(all: DbBill[]) {
 }
 
 /**
+ * A bill number as somebody typed it, and the ways they typed it wrong.
+ *
+ * Four references in three years are mechanically malformed rather than
+ * unknown: `MMI25-26/3424` lost the slash after the prefix, `MMI/25/26/1499`
+ * has the financial year joined by a slash instead of a hyphen, and
+ * `MM/24-25/1619` is a prefix a letter short. Each names a real bill worth
+ * exactly what the register pays against it, and each was silently dropped —
+ * Rs 1.23 lakh of real money left off four customers' accounts by three
+ * keystrokes.
+ *
+ * These are REPAIRS, not searches. Every variant is a fixed rewrite of what
+ * was typed, so a reference naming a bill that genuinely does not exist stays
+ * unresolved rather than being talked into the nearest match. `M/` is never
+ * produced from `MMI/` or the reverse: they are two different billing books,
+ * and a repair that crossed them would pay one book's bill with the other's
+ * money.
+ */
+function* spellings(ref: string): Generator<string> {
+  yield ref;
+  // `MMI25-26/3424` — the slash after the prefix never typed.
+  const missingSlash = ref.replace(/^(M{1,3}I?)(\d{2}-\d{2}\/)/i, "$1/$2");
+  if (missingSlash !== ref) yield missingSlash;
+  // `MMI/25/26/1499` — the year joined the way the rest of the number is.
+  const yearSlash = ref.replace(/^(M{1,3}I?\/)(\d{2})\/(\d{2})\//i, "$1$2-$3/");
+  if (yearSlash !== ref) yield yearSlash;
+  // `MM/24-25/1619` — one letter short of the prefix it means.
+  if (/^MM\//i.test(ref)) yield ref.replace(/^MM\//i, "MMI/");
+}
+
+/**
  * Spread one Tally allocation across the rows that number covers, oldest bill
  * first, capped by what each row has LEFT to take.
  *
@@ -179,10 +210,63 @@ type Plan = {
   creditedToAccount: number;
 };
 
+/**
+ * The bills that never got to keep their Tally number.
+ *
+ * `bill_no` is unique across the table, so when the import met a Tally number
+ * another row already held it fell back to `ORD-<order number>` — a name Tally
+ * has never heard of. The register then pays `MMI/24-25/0041` against a bill
+ * this database calls `ORD-17019`, finds nothing, and drops the line.
+ *
+ * The staging row is what reconnects them: it carries the real Tally number
+ * beside the order number, and the bill carries that order number in
+ * `external_ref`. So the mapping is recorded evidence rather than a guess about
+ * which bill was probably meant.
+ *
+ * Restricted to `ORD-` bills deliberately. Where a bill already holds some
+ * other `MMI/` number, staging and the bill disagree about what to call the
+ * same order, and nothing here can say which is right — one such case would
+ * post Rs 63,892 onto a bill numbered four apart from the one Tally names.
+ * Those stay unresolved for a person to settle.
+ */
+async function buildOrdBridge(): Promise<Map<string, DbBill[]>> {
+  const rows = await db
+    .select({
+      ref: sheetOrderRows.tallyBillNo,
+      id: bills.id,
+      billNo: bills.billNo,
+      amount: bills.amount,
+      billDate: bills.billDate,
+      customerId: bills.customerId,
+      customerName: customers.name,
+    })
+    .from(sheetOrderRows)
+    .innerJoin(
+      bills,
+      sql`${bills.externalRef} = 'SHEETPAY-' || ${sheetOrderRows.orderNumber}`,
+    )
+    .innerJoin(customers, eq(customers.id, bills.customerId))
+    .where(sql`${bills.billNo} like 'ORD-%' and ${sheetOrderRows.tallyBillNo} is not null`);
+
+  const out = new Map<string, DbBill[]>();
+  for (const r of rows) {
+    const bill = { ...r, amount: Number(r.amount) } as DbBill;
+    const at = out.get(r.ref!);
+    if (at) {
+      if (!at.some((b) => b.id === bill.id)) at.push(bill);
+    } else out.set(r.ref!, [bill]);
+  }
+  // A Tally number standing for more than one fallback bill is not a mapping,
+  // it is a question. Drop it rather than spread money across a guess.
+  for (const [ref, list] of out) if (list.length > 1) out.delete(ref);
+  return out;
+}
+
 function buildPlan(
   register: RegisterReceipt[],
   all: DbBill[],
   customerByName: Map<string, { id: string; name: string }>,
+  ordBridge: Map<string, DbBill[]>,
 ): Plan {
   const resolve = buildResolver(all);
   const byCustomer = new Map<string, PlannedReceipt[]>();
@@ -231,11 +315,30 @@ function buildPlan(
         onAccount += paise;
         continue;
       }
-      if (!isBillRef(a.bill)) {
+      // Tested against the REPAIRED spellings, not only what was typed.
+      // `MMI25-26/3424` does not look like a bill number until the missing
+      // slash is put back, so checking the shape first threw the two worst
+      // typos away before anything had a chance to fix them.
+      if (!a.bill || ![...spellings(a.bill)].some((s) => isBillRef(s))) {
         dropped.push({ ref: a.bill ?? "(blank)", paise });
         continue;
       }
-      const group = resolve(a.bill);
+      // A repaired spelling has to name a bill belonging to the party Tally
+      // wrote on the receipt. The reference itself is trusted where it resolves
+      // as typed — 412 lines spell the customer differently to how we hold it,
+      // so demanding a name match everywhere would reject good data. But a
+      // reference somebody typed wrong has already proved it can be wrong, and
+      // the name is the only second opinion available on which bill was meant.
+      let group: DbBill[] | null = null;
+      for (const spelling of spellings(a.bill)) {
+        const found = resolve(spelling);
+        if (!found) continue;
+        if (spelling !== a.bill && norm(found[0].customerName) !== norm(r.party)) continue;
+        group = found;
+        break;
+      }
+      // Last: the bill that could not keep its Tally number.
+      group ??= ordBridge.get(a.bill) ?? null;
       if (!group) {
         dropped.push({ ref: a.bill, paise });
         continue;
@@ -489,7 +592,8 @@ async function main() {
     if (!customerByName.has(k)) customerByName.set(k, c);
   }
 
-  const plan = buildPlan(register, all, customerByName);
+  const ordBridge = await buildOrdBridge();
+  const plan = buildPlan(register, all, customerByName, ordBridge);
 
   // Anything already written is dropped from the plan, so this is re-runnable
   // and resumable. Each customer commits on its own, so a run that dies at

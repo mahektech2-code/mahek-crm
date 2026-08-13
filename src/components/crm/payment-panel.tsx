@@ -8,7 +8,6 @@ import {
   Field,
   Input,
   MoneyInput,
-  Select,
   SlowPayerBadge,
   cx,
 } from "@/components/ui/primitives";
@@ -22,6 +21,7 @@ import {
   recordPayment,
 } from "@/lib/actions/crm";
 import { ageLabel, money, shortDate, stamp, today as todayISO } from "@/lib/format";
+import { PaymentModeFields } from "@/components/crm/payment-mode-fields";
 import type { FollowUpPanelData } from "@/lib/services/payment-followup-service";
 import type { ReminderPreview } from "@/lib/services/whatsapp-service";
 import type { PayOutcomeDefinition } from "@/lib/services/payment-followup-service";
@@ -47,6 +47,12 @@ export type PanelTarget = {
 type Tab = "account" | "log" | "msg";
 
 export function PaymentPanel(props: {
+  /** `payments.modes` — the list is configuration, never a literal on a screen. */
+  modes: string[];
+  /** `payments.datedModes` — modes whose instrument carries a date of its own. */
+  datedModes: string[];
+  /** The business date, read on the server: the clock is not read during render. */
+  today: string;
   target: PanelTarget | null;
   outcomes: PayOutcomeDefinition[];
   onClose: () => void;
@@ -64,6 +70,9 @@ export function PaymentPanel(props: {
 }
 
 function PanelBody({
+  modes,
+  datedModes,
+  today: businessDay,
   target,
   outcomes,
   onClose,
@@ -72,6 +81,12 @@ function PanelBody({
   onSaved,
   onRefresh,
 }: {
+  /** `payments.modes` — the list is configuration, never a literal on a screen. */
+  modes: string[];
+  /** `payments.datedModes` — modes whose instrument carries a date of its own. */
+  datedModes: string[];
+  /** The business date, read on the server: the clock is not read during render. */
+  today: string;
   target: PanelTarget;
   outcomes: PayOutcomeDefinition[];
   onClose: () => void;
@@ -473,6 +488,9 @@ function PanelBody({
       {bill ? (
         <RecordPaymentForm
           key={bill.id}
+          modes={modes}
+          datedModes={datedModes}
+          today={businessDay}
           bill={bill}
           customerName={panel?.name ?? ""}
           onClose={() => setPayingBill(null)}
@@ -492,11 +510,17 @@ function PanelBody({
 /** A payment against one named bill. Oldest-first allocation is the "Already
  *  paid" outcome on the log tab; this is for "they paid bill MM/4210". */
 function RecordPaymentForm({
+  modes,
+  datedModes,
+  today: businessDay,
   bill,
   customerName,
   onClose,
   onDone,
 }: {
+  modes: string[];
+  datedModes: string[];
+  today: string;
   bill: FollowUpPanelData["bills"][number];
   customerName: string;
   onClose: () => void;
@@ -506,9 +530,21 @@ function RecordPaymentForm({
   const [amount, setAmount] = React.useState(String(Math.round(bill.balance / 100)));
   const [mode, setMode] = React.useState("Bank transfer");
   const [reference, setReference] = React.useState("");
+  /** The date written on the cheque — see `payments.datedModes`. */
+  const [instrumentDate, setInstrumentDate] = React.useState("");
   const [receivedOn, setReceivedOn] = React.useState(todayISO());
   const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  /*
+   * The message AND the field it belongs to.
+   *
+   * It used to be a bare string pinned to the amount box, so "a cheque needs
+   * the date written on it" appeared under "Amount received" — pointing at the
+   * one field that was correct. A validation message under the wrong field is
+   * worse than no message: it sends somebody to fix what is not broken.
+   */
+  const [error, setError] = React.useState<{ field: string | null; message: string } | null>(
+    null,
+  );
 
   useEscape(onClose);
 
@@ -596,7 +632,11 @@ function RecordPaymentForm({
           <div className="grid grid-cols-2 gap-3">
             <Field
               label="Amount received"
-              error={error}
+              error={
+                error && error.field !== "instrumentDate" && error.field !== "reference"
+                  ? error.message
+                  : undefined
+              }
               hint={error ? undefined : `Up to ${money(bill.balance)} on this bill`}
             >
               <MoneyInput
@@ -615,24 +655,19 @@ function RecordPaymentForm({
                 onChange={(e) => setReceivedOn(e.target.value)}
               />
             </Field>
-            <Field label="Mode">
-              <Select
-                className="w-full"
-                value={mode}
-                onChange={(e) => setMode(e.target.value)}
-              >
-                {["Bank transfer", "Cheque", "Cash", "UPI"].map((m) => (
-                  <option key={m}>{m}</option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Reference" hint="UTR, cheque number - optional">
-              <Input
-                value={reference}
-                onChange={(e) => setReference(e.target.value)}
-                placeholder="UTR or cheque number"
-              />
-            </Field>
+            <PaymentModeFields
+              modes={modes}
+              datedModes={datedModes}
+              today={businessDay}
+              mode={mode}
+              onMode={setMode}
+              reference={reference}
+              onReference={setReference}
+              instrumentDate={instrumentDate}
+              onInstrumentDate={setInstrumentDate}
+              error={error?.field === "instrumentDate" ? error.message : undefined}
+              referenceError={error?.field === "reference" ? error.message : undefined}
+            />
           </div>
 
           {leftOpen < 0 ? (
@@ -663,11 +698,16 @@ function RecordPaymentForm({
                     amount,
                     mode,
                     reference: reference || undefined,
+                    instrumentDate: instrumentDate || undefined,
                     receivedOn,
                   }),
                 );
                 if (result.ok) await onDone();
-                else setError(result.fieldErrors?.[0]?.message ?? result.error);
+                else
+                  setError({
+                    field: result.fieldErrors?.[0]?.field ?? null,
+                    message: result.fieldErrors?.[0]?.message ?? result.error,
+                  });
               } finally {
                 setBusy(false);
               }

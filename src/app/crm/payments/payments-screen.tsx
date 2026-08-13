@@ -45,6 +45,7 @@ import type {
   CollectionsMetrics,
 } from "@/lib/services/payment-service";
 import type { PayOutcomeDefinition } from "@/lib/services/payment-followup-service";
+import { PaymentModeFields } from "@/components/crm/payment-mode-fields";
 
 type Row = WorklistRow & {
   openBills: Array<{ id: string; billNo: string; balance: number; dueDate: string }>;
@@ -76,6 +77,9 @@ type Tab =
   | "promised";
 
 export function PaymentsScreen({
+  modes,
+  datedModes,
+  today: businessDay,
   scopeLabel,
   showAssignee,
   isManager,
@@ -87,6 +91,12 @@ export function PaymentsScreen({
   metrics,
   batchCount,
 }: {
+  /** `payments.modes` — the list is configuration, never a literal on a screen. */
+  modes: string[];
+  /** `payments.datedModes` — modes whose instrument carries a date of its own. */
+  datedModes: string[];
+  /** The business date, read on the server: the clock is not read during render. */
+  today: string;
   scopeLabel: string;
   /** Team view: every row belongs to somebody, so every row says who. */
   showAssignee: boolean;
@@ -571,6 +581,9 @@ export function PaymentsScreen({
       </Card>
 
       <PaymentPanel
+        modes={modes}
+        datedModes={datedModes}
+        today={businessDay}
         target={
           openAt === null || !visible[openAt]
             ? null
@@ -624,11 +637,21 @@ export function PaymentsScreen({
       />
 
       <PaymentModal
+        modes={modes}
+        datedModes={datedModes}
+        today={businessDay}
         row={paying}
         onClose={() => setPaying(null)}
-        onSubmit={async (billId, amount, mode, reference, receivedOn) => {
+        onSubmit={async (billId, amount, mode, reference, receivedOn, instrumentDate) => {
           const result = await run(
-            recordPayment({ billId, amount, mode, reference, receivedOn }),
+            recordPayment({
+              billId,
+              amount,
+              mode,
+              reference,
+              instrumentDate: instrumentDate || undefined,
+              receivedOn,
+            }),
           );
           if (result.ok) {
             setPaying(null);
@@ -724,6 +747,9 @@ function PromiseModalBody({ row, onClose, onSubmit }: PromiseProps) {
 }
 
 type PaymentProps = {
+  modes: string[];
+  datedModes: string[];
+  today: string;
   row: Row | null;
   onClose: () => void;
   onSubmit: (
@@ -732,6 +758,8 @@ type PaymentProps = {
     mode: string,
     reference: string,
     receivedOn: string,
+    /** The date on the cheque, where the mode carries one. */
+    instrumentDate: string,
   ) => Promise<void>;
 };
 
@@ -740,13 +768,15 @@ function PaymentModal(props: PaymentProps) {
   return <PaymentModalBody key={props.row.customerId} {...props} />;
 }
 
-function PaymentModalBody({ row, onClose, onSubmit }: PaymentProps) {
+function PaymentModalBody({ row, onClose, onSubmit, modes, datedModes, today: businessDay }: PaymentProps) {
   const [billId, setBillId] = React.useState(row?.openBills[0]?.id ?? "");
   const [amount, setAmount] = React.useState(
     String(Math.round((row?.openBills[0]?.balance ?? 0) / 100)),
   );
   const [mode, setMode] = React.useState("Bank transfer");
   const [reference, setReference] = React.useState("");
+  /** The date written on the cheque — see `payments.datedModes`. */
+  const [instrumentDate, setInstrumentDate] = React.useState("");
   const [receivedOn, setReceivedOn] = React.useState(today());
   const [busy, setBusy] = React.useState(false);
 
@@ -768,7 +798,7 @@ function PaymentModalBody({ row, onClose, onSubmit }: PaymentProps) {
             onClick={async () => {
               setBusy(true);
               try {
-                await onSubmit(billId, amount, mode, reference, receivedOn);
+                await onSubmit(billId, amount, mode, reference, receivedOn, instrumentDate);
               } finally {
                 setBusy(false);
               }
@@ -810,20 +840,17 @@ function PaymentModalBody({ row, onClose, onSubmit }: PaymentProps) {
             onChange={(e) => setReceivedOn(e.target.value)}
           />
         </Field>
-        <Field label="Mode">
-          <Select value={mode} onChange={(e) => setMode(e.target.value)}>
-            {["Bank transfer", "Cheque", "Cash", "UPI"].map((m) => (
-              <option key={m}>{m}</option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Reference">
-          <Input
-            value={reference}
-            onChange={(e) => setReference(e.target.value)}
-            placeholder="UTR or cheque number"
-          />
-        </Field>
+        <PaymentModeFields
+          modes={modes}
+          datedModes={datedModes}
+          today={businessDay}
+          mode={mode}
+          onMode={setMode}
+          reference={reference}
+          onReference={setReference}
+          instrumentDate={instrumentDate}
+          onInstrumentDate={setInstrumentDate}
+        />
       </div>
     </Modal>
   );

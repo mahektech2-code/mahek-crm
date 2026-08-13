@@ -300,6 +300,17 @@ export function LedgerScreen({
                         {e.status === "reported" ? (
                           <Pill tone="warn">with accounts</Pill>
                         ) : null}
+                        {/*
+                          A hold counts no more than a report does, so it must
+                          not sit on a statement looking like money that
+                          arrived. Its own word rather than "with accounts":
+                          somebody has looked at this one and is checking it,
+                          which is a different thing to say to a customer
+                          asking why their balance has not moved.
+                        */}
+                        {e.status === "held" ? (
+                          <Pill tone="warn">on hold, being checked</Pill>
+                        ) : null}
                         {rejected ? <Pill tone="danger">never arrived</Pill> : null}
                         {reversed ? <Pill tone="danger">reversed</Pill> : null}
                         {/*

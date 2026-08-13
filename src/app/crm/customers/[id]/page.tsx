@@ -4,6 +4,10 @@ import { db } from "@/db";
 import { orders, payments } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import {
+  assertCustomerInScope,
+  NotPermittedError,
+} from "@/lib/access-control";
+import {
   currentPeriod,
   customerMessages,
   customerTimeline,
@@ -40,6 +44,23 @@ export default async function CustomerRecordPage({
 
   const customer = await getCustomer(id);
   if (!customer) notFound();
+
+  /*
+   * A record this person may not read is ABSENT to them, never a crash.
+   *
+   * The check is made here rather than left to fire from inside one of the
+   * parallel queries below, where a refusal is an uncaught throw in a server
+   * component — which renders as "This page couldn't load. A server error
+   * occurred." Every link into this page, from the queue, the reminders, the
+   * bills and global search, produced that instead of a 404, so a permission
+   * boundary working exactly as designed read as a broken application.
+   */
+  try {
+    await assertCustomerInScope(customer);
+  } catch (e) {
+    if (e instanceof NotPermittedError) notFound();
+    throw e;
+  }
 
   const day = await today();
   const period = await currentPeriod();

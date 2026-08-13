@@ -15,7 +15,9 @@ import { ConfirmDialog, useEscape } from "@/components/ui/overlays";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
+import { NextStepDialog } from "@/components/crm/next-step-dialog";
 import { saveInteractionAction } from "@/lib/actions/crm";
+import type { NextStep } from "@/lib/engines/next-step";
 import {
   OUTCOMES_BY_TYPE,
   OUTCOME_LABEL as CATALOGUE_OUTCOME_LABEL,
@@ -322,6 +324,29 @@ type CallPanelProps = {
 type FormProps = CallPanelProps & {
   tab: "log" | "information" | "script";
   setTab: (t: "log" | "information" | "script") => void;
+  onLogged: (call: LoggedCall) => void;
+};
+
+/**
+ * A call that has just been saved, held by the OUTER component.
+ *
+ * Everything here is captured at the moment of saving rather than read off
+ * props afterwards, because by then the props have moved: saving revalidates
+ * the page, the customer drops off the queue they were just worked from, and
+ * `target` is gone before the answer has been read.
+ */
+type LoggedCall = {
+  label: string;
+  customerName: string;
+  step: NextStep | null;
+  /** Whether "Save & next" was the button. */
+  wantsNext: boolean;
+  /**
+   * Whether this screen can move on at all — NOT whether a next row exists.
+   * That is read at dismissal by the screen itself, because the queue has
+   * already changed by then: the row just worked has dropped off it.
+   */
+  canAdvance: boolean;
 };
 
 /**
@@ -336,14 +361,55 @@ export function CallPanel(props: CallPanelProps) {
   const [tab, setTab] = React.useState<"log" | "information" | "script">(
     "information",
   );
-  if (!props.target) return null;
+
+  /*
+   * "Saved — and here is what happens next" is held HERE, above the keyed
+   * form, and deliberately outside the `target` guard.
+   *
+   * Saving a call revalidates the page, which is right — the queue has to lose
+   * the customer who was just worked. But that also takes `target` away, and
+   * with it the form, so a dialog rendered inside the form was unmounted in
+   * the same frame it opened: the drawer simply shut and the answer was never
+   * seen. Everything the dialog needs is captured at the moment of saving, so
+   * it outlives the row it came from.
+   */
+  const router = useRouter();
+  const [logged, setLogged] = React.useState<LoggedCall | null>(null);
+  const [nextStepOpen, setNextStepOpen] = React.useState(false);
+
+  function dismiss(advance: boolean) {
+    setNextStepOpen(false);
+    router.refresh();
+    if (advance) props.onSaved?.(true);
+  }
+
   return (
-    <CallPanelForm
-      key={props.target.customerId}
-      {...props}
-      tab={tab}
-      setTab={setTab}
-    />
+    <>
+      {props.target ? (
+        <CallPanelForm
+          key={props.target.customerId}
+          {...props}
+          tab={tab}
+          setTab={setTab}
+          onLogged={(call) => {
+            setLogged(call);
+            setNextStepOpen(true);
+          }}
+        />
+      ) : null}
+
+      {logged ? (
+        <NextStepDialog
+          open={nextStepOpen}
+          savedLabel={logged.label}
+          step={logged.step}
+          customerName={logged.customerName}
+          defaultNext={logged.wantsNext}
+          onNext={logged.canAdvance ? () => dismiss(true) : null}
+          onStay={() => dismiss(false)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -369,9 +435,12 @@ function CallPanelForm({
   queueComplete,
   tab,
   setTab,
+  onLogged,
 }: FormProps) {
   useEscape(onClose);
-  const router = useRouter();
+  // No router here: the refresh belongs to the dialog's dismissal, one level
+  // up, because doing it on save unmounts this component before the answer has
+  // been read.
   const { run, push } = useToast();
 
   const [type, setType] = React.useState<InteractionType | null>(null);
@@ -879,13 +948,25 @@ function CallPanelForm({
 
       if (result.ok) {
         setErrors({});
-        setSaved(
-          isOrderReceived
-            ? "Order logged"
-            : `${OUTCOME_LABEL[outcome!] ?? "Interaction"} logged`,
-        );
-        router.refresh();
-        if (advance) onSaved?.(true);
+        const label = isOrderReceived
+          ? "Order logged"
+          : `${OUTCOME_LABEL[outcome!] ?? "Interaction"} logged`;
+        setSaved(label);
+        /*
+         * Handed UP rather than shown here, and the advance goes with it.
+         *
+         * Moving straight on was what made the next step invisible in the
+         * first place: the queue jumped to a new customer and the question
+         * "so when do I ring the last one again" had nowhere to be asked.
+         * Pressing Enter still answers it in one keystroke.
+         */
+        onLogged({
+          label,
+          customerName: target.name,
+          step: result.data.nextStep,
+          wantsNext: advance,
+          canAdvance: Boolean(onSaved),
+        });
       } else if (result.fieldErrors?.length) {
         // The server names the field, so the message lands next to it.
         setErrors(

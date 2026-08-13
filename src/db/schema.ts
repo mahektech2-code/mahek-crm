@@ -107,6 +107,22 @@ export const interactionOutcomeEnum = pgEnum("interaction_outcome", [
   "casual_talk",
 ]);
 
+/**
+ * What kind of thing the next step is, kept apart from WHEN it is.
+ *
+ * `booked` is a date the customer is expecting and we owe them; `scheduled` is
+ * a date the rules produce and may move; `decide` means nothing will bring
+ * them back on its own; `none` means nothing is coming at all. Rendering a
+ * prediction and a promise identically is how an estimate gets read down a
+ * phone as a commitment.
+ */
+export const nextStepKindEnum = pgEnum("next_step_kind", [
+  "booked",
+  "scheduled",
+  "decide",
+  "none",
+]);
+
 /** Required attribution: reporting must tell routine calling from collections. */
 export const sourceModuleEnum = pgEnum("source_module", [
   "call_queue",
@@ -202,6 +218,23 @@ export const amRoleEnum = pgEnum("am_role", ["sales", "back_office"]);
  */
 export const receiptStatusEnum = pgEnum("receipt_status", [
   "reported",
+  /**
+   * Accounts have SEEN the claim and deliberately parked it while they look
+   * for the money in the bank statement.
+   *
+   * Not a shade of `reported`. That one means nobody has looked yet, and the
+   * quiet it buys the customer EXPIRES — otherwise anybody could take
+   * themselves off the collections list by saying they had paid, and the
+   * account would simply stop appearing. A hold is somebody in accounts
+   * deciding, with their name and their reason on the row, and the quiet it
+   * buys does not expire: chasing a customer for money we are in the middle of
+   * finding is worse than a call not made. What replaces the expiry is
+   * visibility — a hold ages in plain sight on the list it sits on.
+   *
+   * It touches no money. Every money path keys on `confirmed`, so nothing else
+   * had to be taught about this one either.
+   */
+  "held",
   "confirmed",
   "rejected",
   /**
@@ -899,6 +932,34 @@ export const calls = pgTable(
     reminderId: text("reminder_id"),
     complaintId: text("complaint_id"),
 
+    /* --------------------------------------------- what happens next
+     *
+     * WHAT THE TELECALLER WAS TOLD when they saved this call, in the words
+     * they read on the screen.
+     *
+     * This is NOT a cache of the customer's current next step, and it must
+     * never be recomputed. A cache answers "when is the next call" and is
+     * rebuilt whenever the answer changes; this answers "what did we tell the
+     * person who logged this call, on the day they logged it", and the moment
+     * it is rebuilt that question has no answer left anywhere. It is the same
+     * kind of row as `approvedAt` or `paymentDecidedAt` — a mark that somebody
+     * was told something — and `lib/recompute.ts` deliberately does not touch
+     * it.
+     *
+     * Written once, on save. The current next step is derived on read by
+     * `nextStep` in `lib/engines/next-step.ts`, from live data, and the two are
+     * allowed to differ: that difference is the record of what changed since.
+     */
+    nextStepKind: nextStepKindEnum("next_step_kind"),
+    /** Null on `decide` and `none`, where there genuinely is no date. */
+    nextStepDate: date("next_step_date"),
+    /** The queue reason that was going to bring them back. */
+    nextStepReason: text("next_step_reason"),
+    nextStepHeadline: text("next_step_headline"),
+    nextStepDetail: text("next_step_detail"),
+    /** Why they were not on the list that same day, where something held them. */
+    nextStepHeldToday: text("next_step_held_today"),
+
     /** Guards against a double-click duplicating a call and the EOD count. */
     idempotencyKey: text("idempotency_key"),
 
@@ -1345,6 +1406,27 @@ export const paymentReceipts = pgTable(
     mode: text("mode").notNull().default("Bank transfer"),
     /** UTR, cheque number, or whatever names this money in the bank. */
     reference: text("reference"),
+
+    /**
+     * The date written ON the instrument, where the instrument carries one.
+     *
+     * A cheque is the case this exists for, and it is a different fact from
+     * `received_at`: a customer hands over a cheque on the 3rd dated the 20th,
+     * and the money cannot reach the bank until the 20th however firmly it is
+     * in our hands. Two dates, two questions — when did we get it, and when
+     * can it be banked — and collapsing them into one loses whichever answer
+     * somebody needed.
+     *
+     * It may be in the past or the future. A cheque dated last week is one
+     * somebody should have banked already, which is exactly the kind of thing
+     * that goes quiet in a drawer; a cheque dated next month is a customer who
+     * should not be chased until then.
+     *
+     * Which modes carry one is `payments.datedModes`, because the mode list
+     * itself is configuration and hardcoding "Cheque" here would put the two
+     * out of step the day somebody adds "Demand draft".
+     */
+    instrumentDate: date("instrument_date"),
     /**
      * The receipt number a salesman reads back to the shop: `MRCP/26-27/0007`.
      * Allocated server-side from a series on first sync. It is OURS — the
@@ -1360,6 +1442,23 @@ export const paymentReceipts = pgTable(
     confirmedById: text("confirmed_by_id").references(() => users.id),
     confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
     rejectReason: text("reject_reason"),
+
+    /* ------------------------------------------------------------ the hold
+     *
+     * Who parked it, when, and why. The reason is REQUIRED by the action that
+     * writes it: a hold takes the customer off collections entirely, and a
+     * telecaller who has just been told "the system says you are on hold"
+     * needs something to say when the customer rings and asks why nobody has
+     * been in touch. "Held" on its own gives them nothing.
+     *
+     * These stay on the row after the hold is resolved. A payment that was
+     * held for nine days and then rejected is a story somebody will have to
+     * account for, and clearing the columns on decision would erase it.
+     */
+    heldById: text("held_by_id").references(() => users.id),
+    heldAt: timestamp("held_at", { withTimezone: true }),
+    holdReason: text("hold_reason"),
+
     idempotencyKey: text("idempotency_key").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

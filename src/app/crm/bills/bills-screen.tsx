@@ -32,6 +32,7 @@ import {
   shortDate,
   today,
 } from "@/lib/format";
+import { PaymentModeFields } from "@/components/crm/payment-mode-fields";
 
 type Row = {
   id: string;
@@ -86,6 +87,9 @@ const COLUMNS: Array<{ key: SortKey; label: string; align?: "right" }> = [
 ];
 
 export function BillsScreen({
+  modes,
+  datedModes,
+  today: businessDay,
   scopeLabel,
   isManager,
   rows,
@@ -94,6 +98,12 @@ export function BillsScreen({
   financialYear,
   financialYears,
 }: {
+  /** `payments.modes` — the list is configuration, never a literal on a screen. */
+  modes: string[];
+  /** `payments.datedModes` — modes whose instrument carries a date of its own. */
+  datedModes: string[];
+  /** The business date, read on the server: the clock is not read during render. */
+  today: string;
   scopeLabel: string;
   isManager: boolean;
   rows: Row[];
@@ -534,12 +544,22 @@ export function BillsScreen({
       ) : null}
 
       <BillPaymentModal
+        modes={modes}
+        datedModes={datedModes}
+        today={businessDay}
         bill={paying}
         onClose={() => setPaying(null)}
-        onSubmit={async (amount, mode, reference, receivedOn) => {
+        onSubmit={async (amount, mode, reference, receivedOn, instrumentDate) => {
           if (!paying) return;
           const result = await run(
-            recordPayment({ billId: paying.id, amount, mode, reference, receivedOn }),
+            recordPayment({
+              billId: paying.id,
+              amount,
+              mode,
+              reference,
+              instrumentDate: instrumentDate || undefined,
+              receivedOn,
+            }),
           );
           if (result.ok) {
             setPaying(null);
@@ -552,6 +572,9 @@ export function BillsScreen({
 }
 
 type BillPaymentProps = {
+  modes: string[];
+  datedModes: string[];
+  today: string;
   bill: Row | null;
   onClose: () => void;
   onSubmit: (
@@ -559,6 +582,8 @@ type BillPaymentProps = {
     mode: string,
     reference: string,
     receivedOn: string,
+    /** The date on the cheque, where the mode carries one. */
+    instrumentDate: string,
   ) => Promise<void>;
 };
 
@@ -568,12 +593,14 @@ function BillPaymentModal(props: BillPaymentProps) {
   return <BillPaymentModalBody key={props.bill.id} {...props} />;
 }
 
-function BillPaymentModalBody({ bill, onClose, onSubmit }: BillPaymentProps) {
+function BillPaymentModalBody({ bill, onClose, onSubmit, modes, datedModes, today: businessDay }: BillPaymentProps) {
   const [amount, setAmount] = React.useState(
     String(Math.round((bill?.balance ?? 0) / 100)),
   );
   const [mode, setMode] = React.useState("Bank transfer");
   const [reference, setReference] = React.useState("");
+  /** The date written on the cheque — see `payments.datedModes`. */
+  const [instrumentDate, setInstrumentDate] = React.useState("");
   const [receivedOn, setReceivedOn] = React.useState(today());
   const [busy, setBusy] = React.useState(false);
 
@@ -593,7 +620,7 @@ function BillPaymentModalBody({ bill, onClose, onSubmit }: BillPaymentProps) {
             onClick={async () => {
               setBusy(true);
               try {
-                await onSubmit(amount, mode, reference, receivedOn);
+                await onSubmit(amount, mode, reference, receivedOn, instrumentDate);
               } finally {
                 setBusy(false);
               }
@@ -622,20 +649,17 @@ function BillPaymentModalBody({ bill, onClose, onSubmit }: BillPaymentProps) {
             onChange={(e) => setReceivedOn(e.target.value)}
           />
         </Field>
-        <Field label="Mode">
-          <Select value={mode} onChange={(e) => setMode(e.target.value)}>
-            {["Bank transfer", "Cheque", "Cash", "UPI"].map((m) => (
-              <option key={m}>{m}</option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Reference">
-          <Input
-            value={reference}
-            onChange={(e) => setReference(e.target.value)}
-            placeholder="UTR or cheque number"
-          />
-        </Field>
+        <PaymentModeFields
+          modes={modes}
+          datedModes={datedModes}
+          today={businessDay}
+          mode={mode}
+          onMode={setMode}
+          reference={reference}
+          onReference={setReference}
+          instrumentDate={instrumentDate}
+          onInstrumentDate={setInstrumentDate}
+        />
       </div>
     </Modal>
   );

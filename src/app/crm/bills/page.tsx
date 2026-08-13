@@ -7,6 +7,7 @@ import {
   listBills,
 } from "@/lib/services/payment-service";
 import { today } from "@/lib/queries";
+import { getConfig } from "@/lib/config/store";
 import { financialYearOf, financialYearsBetween } from "@/lib/financial-year";
 import { BillsScreen } from "./bills-screen";
 
@@ -25,7 +26,11 @@ export default async function BillsPage({
   // person actually works in — Mahek's own bill numbers carry it — so the
   // current one is the default and the rest are a select away, rather than
   // every bill ever raised arriving at the browser to be paged there.
-  const [day, earliest] = await Promise.all([today(), earliestBillDate()]);
+  const [day, earliest, config] = await Promise.all([
+    today(),
+    earliestBillDate(),
+    getConfig(),
+  ]);
   const years = financialYearsBetween(earliest, day);
   const financialYear = fy && years.includes(fy) ? fy : financialYearOf(day);
 
@@ -38,6 +43,9 @@ export default async function BillsPage({
 
   return (
     <BillsScreen
+      modes={config["payments.modes"]}
+      datedModes={config["payments.datedModes"]}
+      today={day}
       scopeLabel={scopeLabel(scope, user)}
       isManager={isManager(user)}
       rows={rows}

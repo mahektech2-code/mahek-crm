@@ -8,7 +8,12 @@ import type { useToast } from "@/components/ui/toast";
 import { longDate, money, stamp } from "@/lib/format";
 import { describeQuantity } from "@/lib/catalogue";
 import { approveOrderAction, declineOrderAction } from "@/lib/actions/orders";
-import { confirmReceiptAction, rejectReceiptAction } from "@/lib/actions/payments";
+import {
+  confirmReceiptAction,
+  holdReceiptAction,
+  rejectReceiptAction,
+} from "@/lib/actions/payments";
+import { allocate, type AllocatableBill } from "@/lib/engines/allocation";
 import {
   issueCreditNoteAction,
   refuseCreditNoteAction,
@@ -71,6 +76,18 @@ export function ReviewDrawer({
   const [busy, setBusy] = React.useState(false);
   const [conflict, setConflict] = React.useState<string | null>(null);
 
+  /*
+   * Where the money goes, when accounts change it.
+   *
+   * Null means "leave it as reported", which is what confirming has always
+   * meant and what the great majority of these are. It becomes an object only
+   * once somebody touches the allocation, so an untouched review sends nothing
+   * and the receipt keeps the lines it came with.
+   */
+  const [alloc, setAlloc] = React.useState<AllocationChoice | null>(null);
+  /** Which of the two negative paths the reason box is collecting for. */
+  const [reasonFor, setReasonFor] = React.useState<"reject" | "hold">("reject");
+
   React.useEffect(() => {
     const controller = new AbortController();
     fetch(`/api/accounts/queue-detail?kind=${kind}&id=${row.id}`, {
@@ -100,6 +117,8 @@ export function ReviewDrawer({
         ? `Confirm ${money(row.amount)} received`
         : `Issue ${amountPaise > 0 ? money(amountPaise) : "a credit note"}`;
 
+  const holding = kind === "payments" && reasonFor === "hold";
+
   const positiveBlocked =
     !canDecide
       ? "Only the accounts team can decide this"
@@ -116,7 +135,7 @@ export function ReviewDrawer({
       kind === "orders"
         ? await run(approveOrderAction(row.id))
         : kind === "payments"
-          ? await run(confirmReceiptAction(row.id))
+          ? await run(confirmReceiptAction(row.id, alloc ?? undefined))
           : await run(
               issueCreditNoteAction({
                 complaintId: row.id,
@@ -138,11 +157,22 @@ export function ReviewDrawer({
       kind === "orders"
         ? await run(declineOrderAction(row.id, reason))
         : kind === "payments"
-          ? await run(rejectReceiptAction(row.id, reason))
+          ? // Hold and reject collect the same thing — a sentence somebody
+            // downstream repeats — so they share the box and differ only in
+            // which action spends it.
+            reasonFor === "hold"
+            ? await run(holdReceiptAction(row.id, reason))
+            : await run(rejectReceiptAction(row.id, reason))
           : await run(refuseCreditNoteAction(row.id, reason));
     setBusy(false);
     if (result.ok) onDecided();
     else setConflict(result.error);
+  }
+
+  function openReason(what: "reject" | "hold") {
+    setReasonFor(what);
+    setReason("");
+    setReasoning(true);
   }
 
   return (
@@ -166,7 +196,14 @@ export function ReviewDrawer({
         ) : detail.kind === "orders" ? (
           <OrderBody detail={detail} lines={lines} />
         ) : detail.kind === "payments" ? (
-          <PaymentBody detail={detail} amount={row.amount} customerName={row.customerName} />
+          <PaymentBody
+            detail={detail}
+            amount={row.amount}
+            customerName={row.customerName}
+            alloc={alloc}
+            onAlloc={setAlloc}
+            canDecide={canDecide}
+          />
         ) : (
           <CreditBody
             detail={detail}
@@ -181,7 +218,7 @@ export function ReviewDrawer({
         {reasoning ? (
           <div className="mt-5 border-t border-divider pt-4">
             <div className="mb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-              {copy.reasonLabel}
+              {holding ? "What are you checking" : copy.reasonLabel}
             </div>
             <VoiceTextarea
               autoFocus
@@ -189,9 +226,17 @@ export function ReviewDrawer({
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               onDictate={setReason}
-              placeholder={copy.reasonPlaceholder}
+              placeholder={
+                holding
+                  ? "Looking for it in the August statement — nothing on the 12th yet."
+                  : copy.reasonPlaceholder
+              }
             />
-            <p className="mt-1.5 text-[13px] text-pretty text-muted">{copy.reasonHint}</p>
+            <p className="mt-1.5 text-[13px] text-pretty text-muted">
+              {holding
+                ? `${row.customerName} comes off the collections list from now until you decide — no calls and no reminder messages. The telecaller sees this sentence and nothing else, so say what you are waiting for.`
+                : copy.reasonHint}
+            </p>
           </div>
         ) : null}
       </div>
@@ -204,16 +249,21 @@ export function ReviewDrawer({
             </Button>
             <span className="flex-1" />
             <Button
-              variant="danger"
+              // Holding is not a refusal — it is a pause, and drawing it in the
+              // same red as "this money never arrived" would make the safe
+              // option look like the drastic one.
+              variant={holding ? "secondary" : "danger"}
               disabled={busy || !reason.trim()}
               title={
                 reason.trim()
                   ? undefined
-                  : "Write a reason first — somebody has to repeat it to the customer"
+                  : holding
+                    ? "Say what you are checking — the telecaller reads this"
+                    : "Write a reason first — somebody has to repeat it to the customer"
               }
               onClick={decideNegative}
             >
-              {copy.reasonButton}
+              {holding ? "Put it on hold" : copy.reasonButton}
             </Button>
           </>
         ) : (
@@ -222,10 +272,29 @@ export function ReviewDrawer({
               variant="secondary"
               disabled={!canDecide || busy}
               title={canDecide ? undefined : "Only the accounts team can decide this"}
-              onClick={() => setReasoning(true)}
+              onClick={() => openReason("reject")}
             >
               {copy.negative}
             </Button>
+
+            {/* Only where there is still something to hold. A receipt already
+                on hold is here to be decided, and a second Hold on it would be
+                a button that does nothing. */}
+            {kind === "payments" && detail?.kind === "payments" && detail.status !== "held" ? (
+              <Button
+                variant="secondary"
+                disabled={!canDecide || busy}
+                title={
+                  canDecide
+                    ? "Stop chasing them while you look for the money — no calls and no messages until you decide"
+                    : "Only the accounts team can decide this"
+                }
+                onClick={() => openReason("hold")}
+              >
+                Hold
+              </Button>
+            ) : null}
+
             <span className="flex-1" />
             <Button
               variant="primary"
@@ -241,6 +310,8 @@ export function ReviewDrawer({
     </Drawer>
   );
 }
+
+const days = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
 
 /* ------------------------------------------------------------------- order */
 
@@ -341,10 +412,16 @@ function PaymentBody({
   detail,
   amount,
   customerName,
+  alloc,
+  onAlloc,
+  canDecide,
 }: {
   detail: PaymentDetail;
   amount: number;
   customerName: string;
+  alloc: AllocationChoice | null;
+  onAlloc: (a: AllocationChoice | null) => void;
+  canDecide: boolean;
 }) {
   const bills = detail.lines.filter((l) => l.billId);
 
@@ -359,6 +436,76 @@ function PaymentBody({
         {` · received ${longDate(detail.receivedAt)}`}
       </div>
 
+      {/*
+        A cheque that can be banked, first: the money is reachable right now
+        and somebody has to go and get it. A post-dated one says so instead and
+        is deliberately calm — it is not asking for anything yet, and marking
+        it urgently is how people learn to ignore the marking.
+      */}
+      {detail.instrumentDate ? (
+        <div
+          className={cx(
+            "mt-4 rounded-[4px] border px-3 py-2.5 text-[13px] text-pretty",
+            detail.bankableNow
+              ? "border-danger-soft bg-danger-soft text-danger"
+              : "border-line bg-canvas text-body",
+          )}
+        >
+          {detail.bankableNow ? (
+            <>
+              <span className="font-medium">
+                {detail.mode} dated{" "}
+                {detail.bankableDays === 0
+                  ? "today"
+                  : `${longDate(detail.instrumentDate)} — ${days(detail.bankableDays ?? 0)} ago`}
+                .
+              </span>{" "}
+              It can be banked. Look for it on the statement and confirm it, or put it on
+              hold saying what you are waiting for.
+            </>
+          ) : (
+            <>
+              <span className="font-medium text-ink">
+                {detail.mode} dated {longDate(detail.instrumentDate)}.
+              </span>{" "}
+              Post-dated — nothing to look for yet, and {customerName} is not being chased
+              for it until then.
+            </>
+          )}
+        </div>
+      ) : null}
+
+      {/* The hold, first and unmissable. Everything below is context for a
+          decision; this is a decision somebody has already part-made, and the
+          customer has been getting no calls and no messages ever since. */}
+      {detail.status === "held" ? (
+        <div
+          className={cx(
+            "mt-4 rounded-[4px] border px-3 py-2.5",
+            detail.holdStale
+              ? "border-danger-soft bg-danger-soft"
+              : "border-warn-line bg-warn-soft",
+          )}
+        >
+          <div
+            className={cx(
+              "text-sm font-medium",
+              detail.holdStale ? "text-danger" : "text-warn-ink",
+            )}
+          >
+            On hold {detail.heldDays === 0 ? "since today" : `for ${days(detail.heldDays ?? 0)}`}
+            {detail.heldByName ? ` · ${detail.heldByName}` : ""}
+          </div>
+          {detail.holdReason ? (
+            <div className="mt-1 text-[13px] text-pretty text-body">{detail.holdReason}</div>
+          ) : null}
+          <div className="mt-1.5 text-[13px] text-pretty text-muted">
+            {customerName} has had no calls and no reminder messages the whole time. A hold
+            does not expire — it ends when you approve or reject this.
+          </div>
+        </div>
+      ) : null}
+
       <SectionLabel className="mt-5">Where it came from</SectionLabel>
       <div className="mt-2 text-sm text-ink">
         {SOURCE_WORDS[detail.source] ?? detail.source}
@@ -370,8 +517,38 @@ function PaymentBody({
         </div>
       ) : null}
 
-      <SectionLabel className="mt-5">What confirming it would settle</SectionLabel>
-      {bills.length ? (
+      <div className="mt-5 flex items-baseline justify-between gap-3">
+        <SectionLabel>What confirming it would settle</SectionLabel>
+        {/*
+          Offered even where NOTHING is open.
+
+          That case is not a dead end, it is the most stuck one: the bill this
+          money was reported against has been settled by something else, so
+          confirming as it stands is refused and there is no other bill to
+          point at. Re-allocating with no open bills puts the whole amount on
+          account, which is the honest answer — the money arrived and there is
+          nothing left for it to pay. Hiding the control exactly there would
+          leave the only way out invisible.
+        */}
+        {canDecide ? (
+          <button
+            type="button"
+            onClick={() => onAlloc(alloc ? null : { mode: "auto" })}
+            className="cursor-pointer border-none bg-transparent p-0 text-[13px] text-brand hover:underline"
+          >
+            {alloc ? "Leave it as reported" : "Put it somewhere else"}
+          </button>
+        ) : null}
+      </div>
+
+      {alloc ? (
+        <AllocationEditor
+          amount={amount}
+          openBills={detail.openBills}
+          choice={alloc}
+          onChoice={onAlloc}
+        />
+      ) : bills.length ? (
         <div className="mt-2 overflow-hidden rounded-[4px] border border-line">
           {bills.map((l) => (
             <div
@@ -389,7 +566,7 @@ function PaymentBody({
         </div>
       )}
 
-      {detail.onAccount > 0 ? (
+      {!alloc && detail.onAccount > 0 ? (
         <div className="mt-2 rounded-[4px] border border-warn-line bg-warn-soft px-3 py-2 text-[13px] text-pretty text-warn-ink">
           {money(detail.onAccount)} would sit on account — received, not yet against a
           bill, and offered against the next one.
@@ -399,6 +576,174 @@ function PaymentBody({
       <div className="mt-2 text-[13px] text-muted">
         {customerName} owes {money(detail.outstanding)} in total.
       </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------- where the money goes */
+
+export type AllocationChoice = {
+  mode: "auto" | "settle" | "custom";
+  selectedBillIds?: string[];
+  custom?: Record<string, number>;
+};
+
+/**
+ * The three instructions, and a live preview run through the SAME pure engine
+ * the server runs.
+ *
+ * Accounts are deciding where money goes, so a preview that disagreed with the
+ * save would be worse than no preview at all — which is why `allocate` is pure
+ * and why this imports it rather than reimplementing the arithmetic for a
+ * screen.
+ *
+ * `claimed` comes off each bill's balance before anything is offered. Money
+ * another undecided receipt has already asked of a bill is not available to
+ * this one, and two people writing down one transfer is the ordinary way an
+ * account ends up over-credited.
+ */
+function AllocationEditor({
+  amount,
+  openBills,
+  choice,
+  onChoice,
+}: {
+  amount: number;
+  openBills: PaymentDetail["openBills"];
+  choice: AllocationChoice;
+  onChoice: (a: AllocationChoice) => void;
+}) {
+  const allocatable: AllocatableBill[] = openBills.map((b) => ({
+    id: b.id,
+    billNo: b.billNo,
+    billDate: b.billDate,
+    amount: b.balance + b.claimed,
+    paid: b.claimed,
+  }));
+
+  const preview = allocate(allocatable, {
+    mode: choice.mode,
+    amount,
+    selectedBillIds: choice.selectedBillIds ?? [],
+    custom: choice.custom ?? {},
+    // The preview is allowed to show a remainder on account. Whether it is
+    // ACCEPTED is the server's answer, from configuration — showing it here is
+    // what makes a refusal understandable when it comes.
+    allowOnAccount: true,
+  });
+
+  const selected = new Set(choice.selectedBillIds ?? []);
+
+  return (
+    <div className="mt-2">
+      <div className="flex gap-1.5">
+        {(
+          [
+            ["auto", "Oldest first"],
+            ["settle", "Settle these"],
+            ["custom", "Split it myself"],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onChoice({ ...choice, mode: key })}
+            className={cx(
+              "h-8 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+              choice.mode === key
+                ? "border-brand bg-brand-soft font-medium text-brand"
+                : "border-line bg-surface text-body hover:border-line-strong",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {!openBills.length ? (
+        <div className="mt-2 rounded-[4px] border border-line px-3 py-2.5 text-[13px] text-pretty text-muted">
+          Nothing is open on this account — every bill has been settled by something else
+          since this was reported. The whole amount goes on account, and is offered against
+          their next bill.
+        </div>
+      ) : null}
+
+      <div className="mt-2 overflow-hidden rounded-[4px] border border-line empty:hidden">
+        {openBills.map((b) => {
+          const line = preview.lines.find((l) => l.billId === b.id);
+          return (
+            <div
+              key={b.id}
+              className="flex items-center gap-2.5 border-b border-canvas px-3 py-2.5 text-sm last:border-0"
+            >
+              {choice.mode === "settle" ? (
+                <input
+                  type="checkbox"
+                  checked={selected.has(b.id)}
+                  onChange={(e) => {
+                    const next = new Set(selected);
+                    if (e.target.checked) next.add(b.id);
+                    else next.delete(b.id);
+                    onChoice({ ...choice, selectedBillIds: [...next] });
+                  }}
+                  aria-label={`Settle ${b.billNo}`}
+                  className="size-4 flex-none cursor-pointer"
+                />
+              ) : null}
+
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-ink">{b.billNo}</span>
+                <span className="mt-px block text-[11px] text-muted">
+                  {money(b.balance)} open
+                  {b.daysOverdue > 0 ? ` · ${days(b.daysOverdue)} overdue` : ""}
+                  {/* Named rather than silently subtracted: a bill that looks
+                      smaller than the ledger says is a bill somebody queries. */}
+                  {b.claimed > 0 ? ` · ${money(b.claimed)} already claimed` : ""}
+                </span>
+              </span>
+
+              {choice.mode === "custom" ? (
+                <span className="flex h-8 w-28 flex-none items-center rounded-[4px] border border-line px-2">
+                  <span className="mr-1 text-[13px] text-muted">₹</span>
+                  <input
+                    inputMode="numeric"
+                    value={
+                      choice.custom?.[b.id] ? String(Math.round(choice.custom[b.id] / 100)) : ""
+                    }
+                    onChange={(e) => {
+                      const rupeesTyped = Number(e.target.value.replace(/[^0-9]/g, "") || 0);
+                      onChoice({
+                        ...choice,
+                        custom: { ...(choice.custom ?? {}), [b.id]: rupeesTyped * 100 },
+                      });
+                    }}
+                    placeholder="0"
+                    aria-label={`Amount against ${b.billNo}`}
+                    className="w-full border-none bg-transparent text-right text-sm tabular-nums outline-none"
+                  />
+                </span>
+              ) : (
+                <span className="flex-none text-sm font-medium tabular-nums text-ink">
+                  {line ? money(line.amount) : "—"}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {preview.onAccount > 0 ? (
+        <div className="mt-2 rounded-[4px] border border-warn-line bg-warn-soft px-3 py-2 text-[13px] text-pretty text-warn-ink">
+          {money(preview.onAccount)} would sit on account — received, not against a bill,
+          and offered against their next one.
+        </div>
+      ) : null}
+
+      {preview.errors.length ? (
+        <div className="mt-2 rounded-[4px] border border-danger-soft bg-danger-soft px-3 py-2 text-[13px] text-pretty text-danger">
+          {preview.errors[0]}
+        </div>
+      ) : null}
     </div>
   );
 }
