@@ -1,0 +1,52 @@
+# The only thing on this box the internet can reach.
+#
+# Caddy obtains and renews the certificate itself, so TLS is not a thing
+# anybody has to remember in fourteen months' time. That matters more here than
+# it does on a managed platform: on Vercel the certificate was somebody else's
+# problem, and an expired one on a self-hosted box is a Monday morning where
+# nobody can sign in.
+
+{
+	# Where Let's Encrypt writes when something is wrong with a renewal.
+	email {$ACME_EMAIL:admin@mahek.in}
+	# The staging endpoint has far kinder rate limits. Uncomment while testing
+	# the cutover against a throwaway subdomain, then comment it out again —
+	# certificates it issues are NOT trusted by browsers.
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# The app publishes no port to the host; this is the only route to it.
+	reverse_proxy app:3000 {
+		# Server Actions and dictation uploads are POSTs that take a while.
+		# Two minutes of Opus audio is a slow request, not a hung one.
+		transport http {
+			read_timeout 300s
+			write_timeout 300s
+		}
+	}
+
+	# Next fingerprints these filenames, so they can be cached hard.
+	@immutable path /_next/static/*
+	header @immutable Cache-Control "public, max-age=31536000, immutable"
+
+	header {
+		# Neither of these was set on Vercel either, but a browser landing on
+		# an accounts app should not be guessing about content types or
+		# advertising where it came from.
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+		# 25 GiB of disk and no log rotation is a full disk in a few months,
+		# which on this box takes Postgres down with it.
+	}
+}
