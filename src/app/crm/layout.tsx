@@ -1,12 +1,10 @@
-import { sql } from "drizzle-orm";
-import { db } from "@/db";
 import { redirect } from "next/navigation";
 import { isManager, requireUser } from "@/lib/auth";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { navForModules } from "@/components/shell/nav";
 import { APPS } from "@/lib/apps";
 import { getScope } from "@/lib/scope";
-import { listNotifications, today } from "@/lib/queries";
+import { crmBadgeCounts, listNotifications } from "@/lib/queries";
 import { AppShell } from "@/components/shell/app-shell";
 
 export default async function AppLayout({
@@ -22,7 +20,7 @@ export default async function AppLayout({
     listUserApps(user.id),
     getScope(user),
     listNotifications(user.id),
-    sidebarBadges(user),
+    sidebarBadges(),
   ]);
 
   // Access is checked here, not just hidden on the launcher — a bookmarked
@@ -50,25 +48,12 @@ export default async function AppLayout({
   );
 }
 
-/** Both sidebar counts in a single query. */
-async function sidebarBadges(user: Awaited<ReturnType<typeof requireUser>>) {
-  const scope = await getScope(user);
-  const teamWide = scope === "team" && isManager(user);
-  const day = await today();
-
-  const [row] = await db.execute<{ reminders: number; complaints: number }>(sql`
-    select
-      (select count(*) from reminders r
-        where r.status = 'pending' and r.due_date <= ${day}::date
-          and (${teamWide} or r.assigned_user_id = ${user.id}))::int as reminders,
-      (select count(*) from complaints c
-        join customers cu on cu.id = c.customer_id
-        where c.status in ('open','in_progress','awaiting_customer')
-          and (${teamWide} or cu.owner_id = ${user.id}))::int as complaints
-  `);
-
-  return {
-    reminders: row?.reminders ?? 0,
-    complaints: row?.complaints ?? 0,
-  };
+/**
+ * Both sidebar counts, from the one definition in `lib/queries.ts` — the same
+ * function the launcher tile and the dashboard read, so the number beside
+ * Reminders in the sidebar and the number on the CRM tile cannot disagree.
+ */
+async function sidebarBadges() {
+  const { dueReminders, openComplaints } = await crmBadgeCounts();
+  return { reminders: dueReminders, complaints: openComplaints };
 }

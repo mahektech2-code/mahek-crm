@@ -51,7 +51,7 @@ ssh root@<droplet-ip>
 
 ```bash
 scp deploy/docker-compose.yml Caddyfile \
-    deploy/restart.sh deploy/backup.sh deploy/restore.sh \
+    deploy/restart.sh deploy/backup.sh deploy/restore.sh deploy/sheet-sync.sh \
     deploy@<droplet-ip>:/opt/mahekone/
 scp .env.production.example deploy@<droplet-ip>:/opt/mahekone/.env
 ssh deploy@<droplet-ip> 'chmod 600 /opt/mahekone/.env'
@@ -192,6 +192,23 @@ Install the schedule once:
 ```bash
 ssh deploy@<droplet-ip> 'bash /opt/mahekone/backup.sh --install-cron'
 ```
+
+## What the droplet runs on a schedule
+
+The host clock is **UTC**, so the crontab is written in UTC.
+
+| UTC | IST | What |
+|---|---|---|
+| `:07`, `:37` hourly | — | `sheet-sync.sh cycle` — append, taken, payments, parties, then project |
+| `20:13` | 01:43 | `sheet-sync.sh nightly` — reconcile, project, then the recomputes |
+| `20:45` | 02:15 | `backup.sh` — dump to R2, after the nightly has settled |
+
+The sync used to live in GitHub Actions. `schedule:` there is best-effort: on a
+private repo under a free account it delivered five or six of forty-eight
+promised runs a day, in gaps of three to four hours, with every run green — so
+the workbook and the CRM drifted hours apart and nothing ever reported a
+problem. The workflows are still there for `workflow_dispatch`, which is how
+you run a sync by hand from a browser without SSH.
 
 ### The restore drill — do this before cutover
 

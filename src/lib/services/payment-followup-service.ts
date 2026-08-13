@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -636,16 +636,25 @@ export type BatchCandidates = {
  * batch and the Message today tab always name the same people.
  */
 export async function stageOneBatch(): Promise<BatchCandidates> {
+  // `getPaymentFollowUpPlan` is request-memoised, so the payment screen asking
+  // for the plan and then asking for this batch costs one scan rather than two.
   const plan = await getPaymentFollowUpPlan();
-  const due = new Set(plan.messages.map((m) => m.customerId));
-  if (!due.size) return { templateId: null, templateName: null, customerIds: [] };
+  const dueIds = plan.messages.map((m) => m.customerId);
+  if (!dueIds.length) return { templateId: null, templateName: null, customerIds: [] };
 
+  // Both predicates belong in Postgres. This read every follow-up state row in
+  // the database — unscoped, every stage — and then kept the handful that were
+  // stage 1 and due, in JavaScript.
   const rows = await db
-    .select({ customerId: followUpStates.customerId, stage: followUpStates.stage })
-    .from(followUpStates);
-  const customerIds = rows
-    .filter((r) => r.stage === 1 && due.has(r.customerId))
-    .map((r) => r.customerId);
+    .select({ customerId: followUpStates.customerId })
+    .from(followUpStates)
+    .where(
+      and(
+        eq(followUpStates.stage, 1),
+        inArray(followUpStates.customerId, dueIds),
+      ),
+    );
+  const customerIds = rows.map((r) => r.customerId);
 
   const [template] = await db
     .select()

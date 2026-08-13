@@ -90,6 +90,7 @@ export function RecordScreen({
   singleSelectOutcomes,
   maxComplaintImages,
   searchEnabled,
+  searchMinChars,
   userName,
   products,
 }: {
@@ -170,6 +171,7 @@ export function RecordScreen({
   maxComplaintImages: number;
   /** products.searchOnOrderForms — checked here as well as in the API. */
   searchEnabled: boolean;
+  searchMinChars: number;
   /** The signed-in telecaller, for script placeholders. */
   userName: string;
   products: ProductOption[];
@@ -551,6 +553,7 @@ export function RecordScreen({
           singleSelectOutcomes={singleSelectOutcomes}
           maxComplaintImages={maxComplaintImages}
           searchEnabled={searchEnabled}
+          searchMinChars={searchMinChars}
           userName={userName}
           products={products}
           onClose={() => setCalling(false)}

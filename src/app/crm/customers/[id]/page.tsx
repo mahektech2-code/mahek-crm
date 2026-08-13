@@ -223,6 +223,7 @@ export default async function CustomerRecordPage({
       singleSelectOutcomes={config["interactions.singleSelectOutcomes"]}
       maxComplaintImages={config["attachments.maxPerComplaint"]}
       searchEnabled={config["products.searchOnOrderForms"]}
+      searchMinChars={config["products.searchMinChars"]}
       userName={user.name}
       products={productRows.map((p) => ({
         id: p.productId,

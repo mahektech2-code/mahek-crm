@@ -96,6 +96,7 @@ export function QueueScreen({
   singleSelectOutcomes,
   maxComplaintImages,
   searchEnabled,
+  searchMinChars,
   userName,
   products,
   scripts,
@@ -116,6 +117,7 @@ export function QueueScreen({
   maxComplaintImages: number;
   /** products.searchOnOrderForms — checked here as well as in the API. */
   searchEnabled: boolean;
+  searchMinChars: number;
   /** The signed-in telecaller, for script placeholders. */
   userName: string;
   products: ProductOption[];
@@ -564,6 +566,7 @@ export function QueueScreen({
         singleSelectOutcomes={singleSelectOutcomes}
         maxComplaintImages={maxComplaintImages}
         searchEnabled={searchEnabled}
+        searchMinChars={searchMinChars}
         userName={userName}
         products={products}
         scripts={scripts}

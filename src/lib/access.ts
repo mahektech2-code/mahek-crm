@@ -1,14 +1,11 @@
 import "server-only";
 import { cache } from "react";
-import { and, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
   appModuleAccess,
   attendance,
-  complaints,
-  customers,
-  reminders,
   type User,
 } from "@/db/schema";
 import { APPS, type AppDefinition, type AppId } from "./apps";
@@ -18,11 +15,11 @@ import {
   modulesForApp,
   type AppModule,
 } from "./modules";
-import { isManager } from "./auth";
 // The business day, not the calendar day — a 4am sign-in belongs to the shift
 // that started yesterday, and the boundary is configurable.
 import { today } from "./recompute";
 import { pendingOrderCount } from "./services/order-approval-service";
+import { crmBadgeCounts } from "./queries";
 import { pendingReceiptCount } from "./services/receipt-service";
 import { pendingCreditNoteCount } from "./services/credit-note-service";
 import { activeEmployeeCount } from "./services/employee-service";
@@ -118,8 +115,6 @@ export type LauncherApp = AppDefinition & {
  */
 export async function launcherApps(user: User): Promise<LauncherApp[]> {
   const ids = await listUserApps(user.id);
-  const day = await today();
-  const teamWide = isManager(user);
 
   const out: LauncherApp[] = [];
 
@@ -186,30 +181,13 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
 
     // The queue is computed on request, so the launcher counts the durable
     // things waiting rather than rebuilding a whole queue for a tile.
-    const [dueReminders, openComplaints] = await Promise.all([
-      db
-        .select({ n: sql<number>`count(*)::int` })
-        .from(reminders)
-        .where(
-          and(
-            eq(reminders.status, "pending"),
-            lte(reminders.dueDate, day),
-            teamWide ? undefined : eq(reminders.assignedUserId, user.id),
-          ),
-        )
-        .then((r) => r[0]?.n ?? 0),
-      db
-        .select({ n: sql<number>`count(*)::int` })
-        .from(complaints)
-        .innerJoin(customers, eq(customers.id, complaints.customerId))
-        .where(
-          and(
-            inArray(complaints.status, ["open", "in_progress", "awaiting_customer"]),
-            teamWide ? undefined : eq(customers.ownerId, user.id),
-          ),
-        )
-        .then((r) => r[0]?.n ?? 0),
-    ]);
+    //
+    // From `crmBadgeCounts`, which is also what the CRM's own sidebar reads.
+    // These were two separate pairs of queries, and they disagreed: this one
+    // widened to the team for any manager, while the sidebar honoured the
+    // My book / Team switch. A manager on My book therefore saw one number on
+    // the tile and a smaller one inside the app it opened.
+    const { dueReminders, openComplaints } = await crmBadgeCounts();
 
     // The badge counts the same thing the sentence describes.
     const [count, status] = dueReminders

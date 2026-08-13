@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { and, asc, desc, eq, inArray, lte, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -14,6 +15,8 @@ import {
   users,
 } from "@/db/schema";
 import { resolveScope, scopedUserIds, scopedToUsers} from "./access-control";
+import { isManager, requireUser } from "./auth";
+import { getScope } from "./scope";
 import { today as businessToday } from "./recompute";
 import { daysBetween, monthKey, type DateRange } from "./business-date";
 import { eodMetricsFor, eodMetricsForRange } from "./services/eod-service";
@@ -29,7 +32,61 @@ export async function currentPeriod(): Promise<string> {
   return monthKey(await businessToday());
 }
 
-export async function listTeam() {
+/**
+ * Reminders due today and complaints still open — the pair behind the sidebar
+ * badges, the CRM launcher tile and the top of the dashboard.
+ *
+ * It was written out three times, and the three had already drifted. The
+ * sidebar honoured the My book / Team switch (`scope === "team" && isManager`)
+ * and the launcher did not (`isManager` alone) — so a manager who had chosen
+ * My book read their own reminders in the sidebar and the whole team's on the
+ * tile it sits beside, with nothing on either saying which was which. That is
+ * the drift the one-function rule exists to stop, and it is why this is a
+ * function rather than three careful copies.
+ *
+ * The switch wins, because it is a thing somebody set on purpose.
+ *
+ * Request-memoised: the launcher and the CRM layout both ask, and on `/apps`
+ * inside one render that would otherwise be the same pair of counts twice.
+ */
+export const crmBadgeCounts = cache(async function crmBadgeCounts(): Promise<{
+  dueReminders: number;
+  openComplaints: number;
+}> {
+  const user = await requireUser();
+  const scope = await getScope(user);
+  const teamWide = scope === "team" && isManager(user);
+  const day = await businessToday();
+
+  const [row] = await db.execute<{ reminders: number; complaints: number }>(sql`
+    select
+      (select count(*) from reminders r
+        where r.status = 'pending' and r.due_date <= ${day}::date
+          and (${teamWide} or r.assigned_user_id = ${user.id}))::int as reminders,
+      (select count(*) from complaints c
+        join customers cu on cu.id = c.customer_id
+        where c.status in ('open','in_progress','awaiting_customer')
+          and (${teamWide} or cu.owner_id = ${user.id}))::int as complaints
+  `);
+
+  return {
+    dueReminders: row?.reminders ?? 0,
+    openComplaints: row?.complaints ?? 0,
+  };
+});
+
+/**
+ * Memoised for the REQUEST, the way `resolveScope` and `getCurrentUser`
+ * already are — not cached across requests, which for a scoped read would be
+ * a way to serve one person another's book.
+ *
+ * A manager's dashboard asked for it three times in one render — twice through
+ * `rangeActivity` (the period and the one before it) and once through
+ * `teamRange` — and each answer then fanned out into one twenty-subquery EOD
+ * query PER PERSON. The duplication was never in the loop; it was in the list
+ * the loop is built from.
+ */
+export const listTeam = cache(async function listTeam() {
   const ctx = await resolveScope();
   const ids = scopedUserIds(ctx.scope);
   return db
@@ -39,7 +96,7 @@ export async function listTeam() {
       and(eq(users.active, true), ids ? inArray(users.id, ids) : undefined),
     )
     .orderBy(asc(users.name));
-}
+});
 
 /**
  * Everybody who can HOLD a book, which is not the same question as whose book
@@ -243,25 +300,37 @@ export async function listAmFilterOptions(): Promise<{
   const ids = scopedUserIds(ctx.scope);
   const scoped = scopedToUsers(ids);
 
-  const rows = await db
-    .select({
-      sales: SALES_AM_NAME_SQL,
-      backOffice: BACK_OFFICE_AM_NAME_SQL,
-    })
-    .from(customers)
-    .where(scoped);
-
-  const sales = new Set<string>();
-  const backOffice = new Set<string>();
-  for (const r of rows) {
-    if (r.sales?.trim()) sales.add(r.sales.trim());
-    if (r.backOffice?.trim()) backOffice.add(r.backOffice.trim());
-  }
-  const sort = (a: string, b: string) => a.localeCompare(b);
-  return {
-    sales: [...sales].sort(sort),
-    backOffice: [...backOffice].sort(sort),
+  /*
+   * Deduplicated in Postgres, which is where a distinct list comes from.
+   *
+   * This used to read a row per CUSTOMER — the whole book, each row carrying
+   * two correlated subqueries against `users` — and reduce it to about fifteen
+   * names with a JavaScript Set. The answer was always tiny; it was the
+   * question that was the size of the book.
+   *
+   * The trim goes into the expression rather than being applied afterwards,
+   * or " Vikram" and "Vikram" arrive as two distinct rows and dedupe back to
+   * one only after crossing the wire.
+   */
+  const distinctNames = async (expr: SQL<string | null>) => {
+    const trimmed = sql<string>`nullif(btrim(${expr}), '')`;
+    const rows = await db
+      .selectDistinct({ name: trimmed })
+      .from(customers)
+      .where(and(scoped, sql`${trimmed} is not null`));
+    return rows
+      .map((r) => r.name)
+      // Sorted here rather than in SQL deliberately: `localeCompare` is what
+      // ordered this list before, and Postgres's collation is not the same
+      // comparison. Fifteen strings.
+      .sort((a, b) => a.localeCompare(b));
   };
+
+  const [sales, backOffice] = await Promise.all([
+    distinctNames(SALES_AM_NAME_SQL),
+    distinctNames(BACK_OFFICE_AM_NAME_SQL),
+  ]);
+  return { sales, backOffice };
 }
 
 export async function listCustomersPage(
@@ -412,7 +481,15 @@ export async function listCustomers(): Promise<CustomerRow[]> {
   }));
 }
 
-export async function getCustomer(customerId: string) {
+/**
+ * Request-memoised: the customer record page asks for it twice, once in
+ * `generateMetadata` to title the tab and once in the page itself, and Next
+ * runs those in the same request. Nothing WRITES through here, so there is no
+ * save that could read its own stale answer back.
+ */
+export const getCustomer = cache(async function getCustomer(
+  customerId: string,
+) {
   const rows = await db
     .select({
       customer: customers,
@@ -440,7 +517,7 @@ export async function getCustomer(customerId: string) {
     salesAmName: rows[0].salesAmName,
     backOfficeAmName: rows[0].backOfficeAmName,
   };
-}
+});
 
 /* -------------------------------------------------------------- timeline */
 
@@ -460,9 +537,23 @@ export type TimelineEntry = {
   meta?: string;
 };
 
-/** The unified customer timeline, in one round trip. */
+/**
+ * The unified customer timeline, in one round trip.
+ *
+ * `limit` is for callers that want the most recent few — the call panel shows
+ * three, and was reading a four-year customer's entire history to do it, every
+ * time somebody opened it.
+ *
+ * The customer RECORD deliberately passes none. Its tabs count what is in each
+ * kind — "Calls 47", "Orders 12" — so a capped read there would not shorten a
+ * list, it would print a wrong number beside the word Calls, and nothing on the
+ * screen would say it had been cut. Bounded per customer either way: every
+ * branch below is `where … customer_id = …`, so this is one account's history
+ * and never the table.
+ */
 export async function customerTimeline(
   customerId: string,
+  limit?: number,
 ): Promise<TimelineEntry[]> {
   const rows = await db.execute<{
     id: string;
@@ -534,6 +625,7 @@ export async function customerTimeline(
            concat('₹', to_char(round(b.amount / 100.0), 'FM9G99G99G999'))
       from bills b where b.customer_id = ${customerId}
     order by at desc
+    ${limit ? sql`limit ${limit}` : sql``}
   `);
 
   return rows.map((r) => ({

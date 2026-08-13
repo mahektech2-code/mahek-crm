@@ -217,6 +217,19 @@ export async function searchProducts(
   const q = query.trim();
   if (!q) return [];
 
+  /*
+   * A single character is not a search. `%a%` matches most of two hundred
+   * SKUs, and it does so through the most expensive statement in the app —
+   * four `similarity()` calls, a leading-wildcard match on eight columns and a
+   * lateral join over the aliases — to produce a list too long to read mid-call.
+   *
+   * Checked HERE and not only where the box is drawn, for the same reason the
+   * search switch above it is: an endpoint is reachable without the interface
+   * that fronts it.
+   */
+  const config = await getConfig();
+  if (q.length < config["products.searchMinChars"]) return [];
+
   const like = `%${q}%`;
 
   const rows = await db.execute<{

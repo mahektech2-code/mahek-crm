@@ -22,16 +22,29 @@ export default async function PaymentsPage() {
   const user = await requireUser();
   const scope = await getScope(user);
 
-  const [rows, bills, aging, config, day, plan, metrics, batch] = await Promise.all([
+  // Open bills only. This screen reads the ledger for one reason — to hand
+  // each row the bills a payment could be booked against — and then discarded
+  // every settled one below, in JavaScript, after fetching the whole book.
+  // On a book that is mostly paid that is most of ten thousand rows crossing
+  // the wire to be dropped. Not cut by financial year: an open bill from two
+  // years ago is the oldest debt on the account and the first thing anybody
+  // chases.
+  const [rows, bills, config, day, plan, metrics, batch] = await Promise.all([
     getFollowUpWorklist(),
-    listBills(),
-    agingSummary(),
+    listBills({ openOnly: true }),
     getConfig(),
     today(),
     getPaymentFollowUpPlan(),
     collectionsMetrics(),
     stageOneBatch(),
   ]);
+
+  // Summed from the rows already read rather than read a second time. The
+  // figure is unchanged: `agingSummary` skips settled bills anyway, and a bill
+  // cannot go below zero — `allocate` caps every line at the bill's own
+  // balance — so there are no negative balances that leaving them out could
+  // have netted off.
+  const aging = agingSummary(bills);
 
   // Working days, from configuration — a collections push measured in calendar
   // days counts Sundays nobody is going to call on.
