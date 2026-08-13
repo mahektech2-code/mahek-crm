@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, bills, customers, paymentReceipts, payments } from "@/db/schema";
@@ -146,6 +146,11 @@ export const receiptSchema = z.object({
   instrumentDate: z.string().trim().optional(),
   note: z.string().trim().optional(),
   allocation: z.enum(["auto", "settle", "custom"]).default("auto"),
+  /**
+   * Which end of the book an automatic spread starts from. Meaningless for the
+   * other two modes, which have already been told which bills.
+   */
+  order: z.enum(["oldest", "newest"]).default("oldest"),
   selectedBillIds: z.array(z.string()).default([]),
   /** Paise against each bill id, for a custom split. */
   custom: z.record(z.string(), z.number().int().nonnegative()).default({}),
@@ -289,6 +294,7 @@ export async function recordReceipt(
 
   const result = allocate(allocatable, {
     mode: input.allocation,
+    order: input.order,
     amount: input.amount,
     selectedBillIds: input.selectedBillIds,
     custom: input.custom,
@@ -757,6 +763,8 @@ async function customerName(customerId: string): Promise<string> {
  */
 export type ConfirmAllocation = {
   mode: "auto" | "settle" | "custom";
+  /** `auto` only — which end of the book to spread from. Defaults to oldest. */
+  order?: "oldest" | "newest";
   selectedBillIds?: string[];
   custom?: Record<string, number>;
 };
@@ -1055,6 +1063,7 @@ async function reallocate(
 
   const result = allocate(allocatable, {
     mode: allocation.mode,
+    order: allocation.order,
     amount: Number(receipt.amount),
     selectedBillIds: allocation.selectedBillIds ?? [],
     custom: allocation.custom ?? {},
@@ -1443,6 +1452,14 @@ export type LedgerEntry = {
   /** Paise taken off it. */
   credit: number;
   status: string | null;
+  /**
+   * Bill lines only. Paise claimed against this bill by receipts nobody has
+   * confirmed — reported AND held. It is NOT taken off the balance, because
+   * nothing unconfirmed has arrived; it is said on the row so that somebody
+   * reading the statement knows why the bill is still standing after the
+   * customer told them it was paid.
+   */
+  claimed?: number;
   /** Set on receipt lines only — what a reversal acts on. */
   receiptId?: string;
   /** Running balance after this entry. Confirmed money only. */
@@ -1528,6 +1545,32 @@ export async function customerLedger(
   type Row = Omit<LedgerEntry, "balance"> & { sort: string };
   const rows: Row[] = [];
 
+  /*
+   * What is CLAIMED against each bill and not yet confirmed, so the bill line
+   * can say it. A telecaller writes down that the customer paid bill 0804; the
+   * bill goes on standing at its full amount, correctly, and to anybody reading
+   * the statement afterwards it looks as though the claim was never made. This
+   * is the mark that says otherwise — beside the bill, not subtracted from it.
+   */
+  const claimedByBill = new Map<string, number>();
+  for (const row of await db
+    .select({
+      billId: payments.billId,
+      claimed: sql<number>`coalesce(sum(payments.amount), 0)::bigint`,
+    })
+    .from(payments)
+    .innerJoin(paymentReceipts, eq(paymentReceipts.id, payments.receiptId))
+    .where(
+      and(
+        eq(payments.customerId, customerId),
+        isNotNull(payments.billId),
+        inArray(paymentReceipts.status, ["reported", "held"]),
+      ),
+    )
+    .groupBy(payments.billId)) {
+    if (row.billId) claimedByBill.set(row.billId, Number(row.claimed));
+  }
+
   for (const b of billRows) {
     rows.push({
       at: b.billDate,
@@ -1538,6 +1581,7 @@ export async function customerLedger(
       debit: Number(b.amount),
       credit: 0,
       status: b.status,
+      claimed: claimedByBill.get(b.id) ?? 0,
     });
   }
 
@@ -1550,6 +1594,10 @@ export async function customerLedger(
     if (r.reference) parts.push(r.reference);
     if (onAccount > 0) parts.push(`${rupees(onAccount)} on account`);
     if (r.status === "reported") parts.push("waiting for accounts");
+    // Its own words: somebody in accounts HAS looked at this one and is
+    // checking it, which is a different thing to tell a customer asking why
+    // their balance has not moved.
+    if (r.status === "held") parts.push("on hold with accounts, being checked");
     if (r.status === "rejected") parts.push(r.rejectReason ?? "rejected");
     // Said in its own words. "Never arrived" would be wrong about a cheque
     // that cleared and then bounced, and this is the document a customer
@@ -1600,7 +1648,12 @@ export async function customerLedger(
   const billed = shown.reduce((s, e) => s + e.debit, 0);
   const received = shown.reduce((s, e) => s + e.credit, 0);
 
-  const awaitingRows = receiptRows.filter((r) => r.receipt.status === "reported");
+  // Undecided money is reported AND held. A hold counts no more than a report
+  // does, so leaving it out of "awaiting" understates what the customer has
+  // claimed and nobody has settled.
+  const awaitingRows = receiptRows.filter(
+    (r) => r.receipt.status === "reported" || r.receipt.status === "held",
+  );
   const onAccountTotal = receiptRows
     .filter((r) => r.receipt.status === "confirmed")
     .reduce((s, r) => s + (Number(r.receipt.amount) - Number(r.allocated)), 0);

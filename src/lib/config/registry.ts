@@ -640,8 +640,8 @@ export const SETTINGS = [
     category: "payments",
     label: "Modes needing a reference",
     description:
-      "Modes that cannot be CONFIRMED without a UTR, cheque number or equivalent. Accounts match a receipt against the bank statement by this string. It is asked of whoever asserts the money arrived, never of a telecaller repeating what a customer said - they rarely have the reference, and refusing the save would lose the claim rather than improve it.",
-    default: ["Bank transfer", "UPI", "Cheque"],
+      "Modes that cannot be CONFIRMED without a UTR, cheque number or equivalent. Empty by default, so a reference is asked for and never demanded: accounts confirm money they are already looking at in the bank statement, so the entry is the cross-check and the string is a convenience for finding it again. Refusing the save turned a receipt somebody could see into one nobody could record. Naming a mode here brings the old rule back for it, and it is asked of whoever asserts the money arrived - never of a telecaller repeating what a customer said.",
+    default: [],
   },
   {
     key: "payments.confirmationAgeWarningHours",
