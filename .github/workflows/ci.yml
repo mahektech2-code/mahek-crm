@@ -112,6 +112,115 @@ jobs:
       - name: It has a server to run
         run: docker run --rm --entrypoint sh mahekone:ci -c 'test -f server.js && test -d .next/static && test -d public'
 
+  # THE DEPLOYMENT, RUN SOMEWHERE THAT IS NOT PRODUCTION.
+  #
+  # Five bugs shipped in a row because this path had never executed anywhere
+  # else — each failed on its first ever run, on the droplet. Three of them are
+  # in scope here and all three would have gone red in this job:
+  #
+  #   - the image built without DATABASE_URL, so `next build` died collecting
+  #     page data for a route that imports src/db (the `image` job caught that
+  #     one already, on its first run)
+  #   - postgres published no port, so the migration tunnel forwarded to a
+  #     closed one and drizzle-kit reported a bare exit 1 that read exactly
+  #     like a broken migration
+  #   - Caddy was never started, because the deploy asked for `app` and Caddy
+  #     depends on the app rather than being depended on by it
+  #
+  # The staging directory is deliberately the same SHAPE as /opt/mahekone —
+  # compose file, Caddyfile, .env and restart.sh sitting flat together — so
+  # this exercises the layout the droplet actually has rather than a
+  # convenient approximation of it.
+  stack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the image this stack will run
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: mahekone:ci
+
+      - name: Lay it out the way the droplet is
+        run: |
+          mkdir -p /tmp/stack
+          cp deploy/docker-compose.yml Caddyfile deploy/restart.sh /tmp/stack/
+          cat > /tmp/stack/.env <<'ENV'
+          IMAGE=mahekone:ci
+          POSTGRES_PASSWORD=ci-not-a-secret
+          DATABASE_POOL_MAX=5
+          ENV
+          # `:80` as the site address is what keeps Caddy from asking Let's
+          # Encrypt for a certificate — there is no domain here and an ACME
+          # challenge would fail, slowly, and then rate-limit us for trying.
+          # Everything else about Caddy is exercised: the reverse proxy, the
+          # headers, the compose wiring.
+          echo 'DOMAIN=:80' >> /tmp/stack/.env
+
+      - name: Bring it up, with the script the droplet uses
+        working-directory: /tmp/stack
+        run: bash restart.sh
+
+      # The step that would have caught the closed port. It runs migrations the
+      # way deploy.yml does — against a published 127.0.0.1:5432 — rather than
+      # reaching inside the container, which would prove nothing about how the
+      # deploy actually connects.
+      - name: Migrate the way the deploy does
+        env:
+          DATABASE_URL: postgres://mahek:ci-not-a-secret@127.0.0.1:5432/mahekone
+        run: npm run deploy:db
+
+      # And the step that would have caught Caddy never starting. Through the
+      # proxy on :80, not directly to the app on :3000 — an app that answers on
+      # 3000 while nothing serves 80 is exactly the state that shipped.
+      - name: Reach the app THROUGH Caddy
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost/login || true)
+            if [ "$code" = "200" ]; then echo "served through Caddy after $((i * 2))s"; exit 0; fi
+            sleep 2
+          done
+          echo "never served through Caddy"
+          cd /tmp/stack && docker compose ps && docker compose logs --tail=40
+          exit 1
+
+      - name: Logs, if any of that failed
+        if: failure()
+        working-directory: /tmp/stack
+        run: docker compose ps && docker compose logs --tail=60
+
+  # `bootstrap.sh` runs once, on a machine that does not exist yet, and cannot
+  # be re-run to find out whether it works. `postgresql-client-17` is not in
+  # Ubuntu 24.04's repositories — it ships 16 — so `set -e` aborted the whole
+  # script before it reached Docker, on a fresh box, with no useful message.
+  #
+  # The script itself cannot run in a container (it wants systemd and a real
+  # firewall), so this checks the one thing that actually broke: whether apt
+  # can resolve every package it names. The list is READ OUT OF the script, so
+  # adding a package to bootstrap.sh brings it under this check automatically.
+  bootstrap-packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Can Ubuntu 24.04 resolve what bootstrap.sh installs?
+        run: |
+          PKGS=$(grep -oP 'apt-get install -y -qq \K.*' deploy/bootstrap.sh | head -1)
+          echo "packages: $PKGS"
+          docker run --rm ubuntu:24.04 sh -c "
+            apt-get update -qq >/dev/null 2>&1
+            apt-get install -s $PKGS >/dev/null
+          "
+          echo "all resolvable on ubuntu:24.04"
+
   # The link crawler needs something no other check does: a *running* app on a
   # *seeded* database. That is why it is a second job rather than more steps on
   # the first — it costs a duplicate install and build, and buys a signal that
