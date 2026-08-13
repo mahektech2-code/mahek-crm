@@ -140,25 +140,34 @@ against a bill and confirm the ledger moves.
 
 Evening IST, after the telecallers have stopped. About twenty minutes.
 
+**There is no DNS switch in this cutover, and that makes it much safer than it
+would otherwise be.** MahekOne never had a custom domain — it lived on
+`*.vercel.app`. `one.mahekindia.com` is a NEW name pointing at the droplet from
+the day it was created, so nothing has to be moved and nothing has to
+propagate. The two systems can serve side by side, and going live is a sentence
+you say to the team rather than a record you edit.
+
 1. **Freeze writes.** Tell the team to stop, and pause the Apps Script trigger
    on the workbook (`Extensions → Apps Script → Triggers`) so no sync writes to
    Neon while you are copying.
 2. **Final dump** from Neon and restore it, exactly as in step 6. Anything
    written today is in this one.
-3. **Move DNS** to the reserved IP. Lower the TTL to 300 seconds a day ahead so
-   this is minutes rather than hours.
-4. **Repoint the syncs.** `SYNC_URL` in the Apps Script properties, and the
-   secret the nightly GitHub workflow uses. *This is the step that gets
-   forgotten* — a sync still pointed at Vercel writes orders into the abandoned
-   Neon database, and nobody notices for days because both systems look fine.
-5. **Unpause the trigger.** Watch one sync cycle land.
-6. Sign in on the real domain and check the certificate is valid.
+3. **Repoint the syncs.** `SYNC_URL` in the Apps Script properties, and the
+   secret the nightly GitHub workflow uses — note the droplet has its own,
+   newly generated `CRON_SECRET`, so both the URL *and* the secret change.
+   *This is the step that gets forgotten* — a sync still pointed at Vercel
+   writes orders into the abandoned Neon database, and nobody notices for days
+   because both systems look fine.
+4. **Unpause the trigger.** Watch one sync cycle land.
+5. Sign in at `https://one.mahekindia.com`, check the certificate, and tell the
+   team the new address.
 
 ### If it goes wrong
 
-Point DNS back at Vercel. It is still deployed, Neon is still there, and the
-only thing lost is whatever was written on the droplet in between — which is
-why you cut over in the evening.
+Tell everyone to use the Vercel URL again. It is still deployed, Neon is still
+there, and there is no DNS to wait on — the fallback is immediate. The only
+thing lost is whatever was written on the droplet in between, which is why you
+cut over in the evening.
 
 ### After a week
 

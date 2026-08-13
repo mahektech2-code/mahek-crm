@@ -16,7 +16,12 @@ SWAP_SIZE=2G
 echo "==> System packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq ca-certificates curl gnupg ufw unattended-upgrades postgresql-client-17 jq
+# `postgresql-client`, unversioned. Ubuntu 24.04 ships 16 and there is no
+# `postgresql-client-17` in its repositories, so pinning the version aborts the
+# whole script on a fresh box. Nothing here needs 17: backup.sh and restore.sh
+# both run pg_dump and psql INSIDE the postgres container, which is 17 by
+# definition. This is only for the occasional hand-run query.
+apt-get install -y -qq ca-certificates curl gnupg ufw unattended-upgrades postgresql-client jq
 
 # ---------------------------------------------------------------------- swap
 #
