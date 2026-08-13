@@ -5,7 +5,6 @@ import { cookies } from "next/headers";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { isManager } from "../auth";
 import { db } from "@/db";
 import {
   auditLog,
@@ -604,6 +603,30 @@ export async function updateCustomer(
     if (!existing) return err("That customer no longer exists.", "not_found");
     await assertCustomerInScope(existing);
 
+    /*
+     * MOVING AN ACCOUNT IS NOT AN ORDINARY EDIT, AND THIS IS NOT THE DOOR.
+     *
+     * This action used to write `owner_id` for anybody who could edit a
+     * customer at all, and `back_office_am_id` for any manager. Both are
+     * account managers — `owner_id` IS the assignment on a lead — so that was
+     * a second way to reassign, and the wrong one in every respect: no
+     * `customer.reassign` capability, which is deliberately accounts' and
+     * admin's; no reason code; no history row; nobody notified; and, worst,
+     * no `am_decided_at`, so the next sheet sync restated the old answer and
+     * the move silently came undone.
+     *
+     * The screen has routed managers through `updateAccountManagers` for a
+     * while and strips these keys before calling this — but a server action is
+     * a URL, and the unaudited door always wins in the end. So it is refused
+     * here rather than merely unused.
+     */
+    if (parsed.data.ownerId !== undefined || parsed.data.backOfficeAmId !== undefined) {
+      return err(
+        "Account managers are changed from Reassign, not from the customer form - that is the one path that records who decided and why.",
+        "not_permitted",
+      );
+    }
+
     await db
       .update(customers)
       .set({
@@ -613,7 +636,7 @@ export async function updateCustomer(
           : {}),
         ...(parsed.data.phone ? { phone: parsed.data.phone } : {}),
         ...(parsed.data.city ? { city: parsed.data.city } : {}),
-        ...(parsed.data.ownerId ? { ownerId: parsed.data.ownerId } : {}),
+        // NOT ownerId, and not backOfficeAmId — see the guard above.
         ...(parsed.data.gstin !== undefined
           ? { gstin: parsed.data.gstin || null }
           : {}),
@@ -626,11 +649,7 @@ export async function updateCustomer(
         ...(parsed.data.leadSource !== undefined
           ? { leadSource: parsed.data.leadSource || null }
           : {}),
-        // Who handles dispatch and billing is a manager's call, checked here
-        // and not merely disabled in the form.
-        ...(parsed.data.backOfficeAmId !== undefined && isManager(ctx.user)
-          ? { backOfficeAmId: parsed.data.backOfficeAmId || null }
-          : {}),
+
         ...(parsed.data.route !== undefined
           ? { route: parsed.data.route || null }
           : {}),

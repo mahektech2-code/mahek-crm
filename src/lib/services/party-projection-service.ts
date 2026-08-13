@@ -2,7 +2,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { randomUUID } from "node:crypto";
-import { customers, sheetPartyRows, users } from "@/db/schema";
+import { customers, sheetPartyRows, syncConflicts, users } from "@/db/schema";
 import { partyNameKey } from "@/lib/sheet-parse";
 
 /* ---------------------------------------------------------------------------
@@ -41,6 +41,8 @@ export type PartyProjectionReport = {
   /** Named on a row but holding no MahekOne account. */
   unlinkedPeople: string[];
   deactivated: number;
+  /** Accounts whose managers the sheet still disagrees with, and lost. */
+  amDecisionsKept: number;
   leadsAvailable: number;
   leadsCreated: number;
 };
@@ -83,7 +85,20 @@ export async function projectParties(
       phone: customers.phone,
       whatsappPhone: customers.whatsappPhone,
       salesAmId: customers.salesAmId,
+      salesPersonName: customers.salesPersonName,
       backOfficeAmId: customers.backOfficeAmId,
+      backOfficeName: customers.backOfficeName,
+      /*
+       * The mark that somebody reassigned this account inside the app.
+       *
+       * `recomputeSalesPeople` has honoured it since it was added and this
+       * projection never did, which made a reassignment look like it worked
+       * and undid it within the half hour: the history was written, both
+       * people were notified, and the next sync put the sheet's names back.
+       * Somebody tried the same change four times in four minutes before
+       * giving up.
+       */
+      amDecidedAt: customers.amDecidedAt,
       gstin: customers.gstin,
       kind: customers.kind,
       status: customers.status,
@@ -97,6 +112,22 @@ export async function projectParties(
   const team = await db.select({ id: users.id, name: users.name }).from(users);
   const userByName = new Map(team.map((u) => [normal(u.name)!, u.id]));
 
+  /*
+   * Where a kept decision and the sheet disagree, so it can be reconciled.
+   *
+   * Silence would trade one invisible loss for another: the sheet still says
+   * something different and somebody has to go and correct it. Same shape as
+   * the order projection's status conflicts — an unresolved row is
+   * re-detected every pass and `onConflictDoNothing` keeps the ORIGINAL
+   * detection time, which is the useful one.
+   */
+  const amConflicts: Array<{
+    customerId: string;
+    field: string;
+    sheetValue: string | null;
+    appValue: string | null;
+  }> = [];
+
   const report: PartyProjectionReport = {
     matched: 0,
     unmatchedParties: 0,
@@ -107,6 +138,7 @@ export async function projectParties(
     backOfficeLinked: 0,
     unlinkedPeople: [],
     deactivated: 0,
+    amDecisionsKept: 0,
     leadsAvailable: 0,
     leadsCreated: 0,
   };
@@ -159,20 +191,65 @@ export async function projectParties(
 
     if (options.dryRun) continue;
 
+    /*
+     * WHO HOLDS THE ACCOUNT IS THE SHEET'S TO STATE, UNTIL SOMEBODY DECIDES.
+     *
+     * The sheet is simply right about a phone number or a credit term and
+     * should overwrite them for ever. It is not right about who manages an
+     * account the moment a person has said otherwise in the app — that is the
+     * same rule `orders.status` follows, and for the same reason: a
+     * reassignment is somebody taking responsibility, and a scheduled pass
+     * must not quietly undo it.
+     *
+     * All four columns move together. Holding the ids while letting the NAMES
+     * revert is the worst outcome available — the account moves for scope, the
+     * queue and collections while every screen goes on showing the old person,
+     * because the screens read the sheet's name first. Nobody reports that as
+     * a bug; they report that reassignment does not work.
+     */
+    const amDecided = Boolean(customer.amDecidedAt);
+    if (amDecided) {
+      const before = amConflicts.length;
+      // The NAME is what a person reads on both sides, so it is what the
+      // conflict states — an id would send whoever reconciles it back to the
+      // database to find out who it means.
+      if ((party.salesPersonName ?? null) !== (customer.salesPersonName ?? null)) {
+        amConflicts.push({
+          customerId: customer.id,
+          field: "sales_person",
+          sheetValue: party.salesPersonName ?? null,
+          appValue: customer.salesPersonName ?? null,
+        });
+      }
+      if ((party.backOfficeName ?? null) !== (customer.backOfficeName ?? null)) {
+        amConflicts.push({
+          customerId: customer.id,
+          field: "back_office_person",
+          sheetValue: party.backOfficeName ?? null,
+          appValue: customer.backOfficeName ?? null,
+        });
+      }
+      if (amConflicts.length > before) report.amDecisionsKept++;
+    }
+
     updates.push({ id: customer.id, values: {
         ...(fillPhone ? { phone: party.mobileNo! } : {}),
         ...(fillWhatsapp ? { whatsappPhone: party.whatsappNo! } : {}),
-        ...(salesId ? { salesAmId: salesId } : {}),
+        ...(!amDecided && salesId ? { salesAmId: salesId } : {}),
         // The NAME lands whether or not it matched an account, because the
         // name is what the screens say. Linking is a separate question and it
         // fails for most of these rows by design — see the header.
-        ...(party.salesPersonName ? { salesPersonName: party.salesPersonName } : {}),
-        ...(backId ? { backOfficeAmId: backId } : {}),
+        ...(!amDecided && party.salesPersonName
+          ? { salesPersonName: party.salesPersonName }
+          : {}),
+        ...(!amDecided && backId ? { backOfficeAmId: backId } : {}),
         // And the same for the back office, for the same reason. This line was
         // missing, so a back office name that matched no account was read,
         // counted as unlinked, and then thrown away — leaving every screen
         // saying "Unassigned" against a customer the sheet names somebody for.
-        ...(party.backOfficeName ? { backOfficeName: party.backOfficeName } : {}),
+        ...(!amDecided && party.backOfficeName
+          ? { backOfficeName: party.backOfficeName }
+          : {}),
         ...(party.gstNumber && !customer.gstin ? { gstin: party.gstNumber } : {}),
         ...(party.creditDays !== null
           ? { creditTermDays: party.creditDays, creditDays: party.creditDays }
@@ -244,6 +321,22 @@ export async function projectParties(
       });
       report.leadsCreated++;
     }
+  }
+
+  if (!options.dryRun && amConflicts.length) {
+    await db
+      .insert(syncConflicts)
+      .values(
+        amConflicts.map((c) => ({
+          id: `cfl_${randomUUID().slice(0, 12)}`,
+          entityType: "customers",
+          entityId: c.customerId,
+          field: c.field,
+          sheetValue: c.sheetValue,
+          appValue: c.appValue,
+        })),
+      )
+      .onConflictDoNothing();
   }
 
   return report;

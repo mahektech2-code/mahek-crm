@@ -18,7 +18,7 @@ import {
   reminders,
 } from "@/db/schema";
 import { OUTCOMES_BY_TYPE, type InteractionTypeKey, type OutcomeKey } from "@/db/catalogue";
-import { resolveScope, assertCustomerInScope } from "../access-control";
+import { assignedUserId, resolveScope, assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
 import {
   recomputeBuyingCycle,
@@ -700,7 +700,15 @@ export async function saveInteraction(
       // billing is a decision, not something to guess at on first order.
       if (customer.kind === "lead") {
         set.kind = "customer";
-        set.salesAmId = customer.salesAmId ?? customer.ownerId;
+        // Through the one definition of whose book a record is in. A lead
+        // answers to its owner, and a reassignment moves a lead by writing
+        // that column — so this carries the CURRENT holder across rather than
+        // re-deriving a fallback that could disagree with it.
+        set.salesAmId = assignedUserId({
+          kind: "lead",
+          ownerId: customer.ownerId,
+          salesAmId: customer.salesAmId,
+        });
         set.customerSince = orderedOn;
         converted = true;
       }

@@ -17,7 +17,7 @@ import {
   reminders,
   waTemplates,
 } from "@/db/schema";
-import { resolveScope, assertCustomerInScope } from "../access-control";
+import { assignedUserId, resolveScope, assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
 import { bindAttachments } from "./attachment-service";
 import { isAttemptAllowed } from "../engines/escalation";
@@ -736,9 +736,23 @@ export async function getFollowUpPanel(
     .where(eq(followUpStates.customerId, customerId));
   if (!state) return null;
 
-  const [ownerRow] = await db.execute<{ name: string }>(
-    sql`select name from users where id = ${customer.salesAmId ?? customer.ownerId}`,
-  );
+  /*
+   * Whose account this is, by the one definition — so the collections panel
+   * names the person the calling queue puts it in front of. A decided-empty
+   * account resolves to nobody here too, and the screen says "Unassigned"
+   * rather than the name of whoever imported the row.
+   */
+  const assignedTo = assignedUserId({
+    kind: customer.kind === "lead" ? "lead" : "customer",
+    ownerId: customer.ownerId,
+    salesAmId: customer.salesAmId,
+    amDecidedAt: customer.amDecidedAt,
+  });
+  const [ownerRow] = assignedTo
+    ? await db.execute<{ name: string }>(
+        sql`select name from users where id = ${assignedTo}`,
+      )
+    : [];
 
   const detail = await getFollowUpDetail(customerId);
   const openBills = (detail?.bills ?? []).filter((b) => b.balance > 0);
