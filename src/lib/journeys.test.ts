@@ -53,7 +53,11 @@ import {
   invalidateConfig,
   getConfig,
 } from "@/lib/config/store";
-import { NotPermittedError, scopeForUser } from "@/lib/access-control";
+import {
+  assertCustomerInScope,
+  NotPermittedError,
+  scopeForUser,
+} from "@/lib/access-control";
 import { today } from "@/lib/recompute";
 import {
   recomputeBuyingCycle,
@@ -1208,6 +1212,41 @@ describe("Journey 6 - a telecaller sees their own book and nothing else", () => 
     assert.ok(
       asManager.some((r) => r.customerId === theirs.id),
       "a manager sees the whole team's book",
+    );
+  });
+
+  test("the owner may open a record whose sales seat has moved on", async () => {
+    // The shape that produced a 500 in production: the account was worked by
+    // Priya, who owns it and holds its callback, while the sheet's salesperson
+    // and the back office are two other people. Reading only the sales seat
+    // refused her the record her own reminder was about.
+    const moved = await makeCustomer(priya.id, {
+      salesAmId: rakesh.id,
+      backOfficeAmId: manager.id,
+    });
+
+    setTestUser(priya);
+    await assert.doesNotReject(
+      () => assertCustomerInScope(moved),
+      "the owner still works the account, so the owner may still read it",
+    );
+
+    // The lists are deliberately untouched by that: a record belongs on ONE
+    // person's list, and that is still the sales seat.
+    const onPriyasList = await listCustomersPage({ page: 1 });
+    assert.equal(
+      onPriyasList.rows.some((r) => r.id === moved.id),
+      false,
+      "widening who may READ a record must not widen whose list it appears on",
+    );
+
+    // And somebody with no seat at all is still refused.
+    const stranger = await makeUser("Stranger", "telecaller", manager.id);
+    setTestUser(stranger);
+    await assert.rejects(
+      () => assertCustomerInScope(moved),
+      NotPermittedError,
+      "a third party with no seat on the account may not read it",
     );
   });
 

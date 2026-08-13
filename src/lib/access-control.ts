@@ -360,6 +360,15 @@ export async function checkCapability(capability: Capability) {
  *
  * Both seats, therefore, in both places. If one of these two ever changes
  * again, the other has to change with it.
+ *
+ * It happened again, from the Reminders list, and the third seat is the owner.
+ * The same sentence applies and the same screenshot came back: the list said
+ * the record was yours, the record said it was not. The lesson the second time
+ * is that "the same question" was the wrong goal — a LIST asks which single
+ * person a record belongs to, and a READ asks whether this person has any
+ * business with it at all. Those are different questions and the read is the
+ * wider of the two, so this no longer tries to mirror `assignedUserId` and
+ * instead names every seat it accepts.
  */
 export async function assertCustomerInScope(
   customer: {
@@ -379,11 +388,38 @@ export async function assertCustomerInScope(
   if (ids === null) return;
   if (!customer) throw new NotPermittedError("customer.read");
 
+  /*
+   * Three seats, not one, because WHOSE LIST a record appears in is a narrower
+   * question than WHO MAY WORK IT — and only the first is `assignedUserId`.
+   *
+   * "Work it" rather than "read it": this guard sits in front of logging a
+   * call, recording a payment, sending a WhatsApp and attaching a file as well
+   * as opening the record. Letting the owner through has to be right for all
+   * of them, and it is — the owner is the person making those calls. A seat
+   * that could read the callback and not log its outcome would be worse than
+   * the refusal it replaced.
+   *
+   * That function answers `salesAmId ?? ownerId`, so the moment a sales AM is
+   * set the owner is DROPPED. For a list that is right: a record belongs on
+   * one person's list, not two. For a read it was the same disagreement this
+   * function was widened for once already, one seat further along — the owner
+   * still works the account, still logs its calls, and still gets the reminders
+   * those calls produce. Reminders are assigned to whoever promised the call
+   * back, and that list scopes by `assigned_user_id`; the record scoped by the
+   * sales seat alone. So a telecaller was handed a callback and got a 500 for
+   * opening the customer it was about.
+   *
+   * The lists are untouched by this — nothing here feeds `ASSIGNED_TO_SQL`.
+   * What changes is only that a record you own, or do the back office for, can
+   * be READ by you after the sales seat moves to somebody else.
+   */
   const assigned = assignedUserId(customer);
   const backOffice = customer.backOfficeAmId ?? null;
+  const owner = customer.ownerId;
   const mine =
     (assigned !== null && ids.includes(assigned)) ||
-    (backOffice !== null && ids.includes(backOffice));
+    (backOffice !== null && ids.includes(backOffice)) ||
+    (owner !== null && ids.includes(owner));
 
   if (!mine) throw new NotPermittedError("customer.read");
 }
