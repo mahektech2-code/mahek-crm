@@ -78,6 +78,27 @@ services:
       # is told, so it is told.
       TZ: Asia/Kolkata
       PGTZ: Asia/Kolkata
+    # 127.0.0.1 IS THE WHOLE OF THIS LINE'S MEANING.
+    #
+    # Bound to the droplet's loopback and nowhere else: not 0.0.0.0, not the
+    # public interface, not the private network. Nothing off this machine can
+    # reach it, which is the same guarantee publishing no port at all gave —
+    # and the firewall does not even come into it, because loopback traffic
+    # never touches a filter.
+    #
+    # It has to be published at all because of migrations. `deploy.yml` opens
+    # `ssh -L 5433:127.0.0.1:5432` and runs drizzle-kit through it, and an SSH
+    # tunnel lands on the HOST's loopback — where, with no `ports:` here, there
+    # was nothing listening. The tunnel came up, ExitOnForwardFailure was
+    # satisfied because the forward itself succeeded, and every connection then
+    # died with ECONNRESET against a closed port. The database was fine
+    # throughout; there was simply no route to it.
+    #
+    # Reaching it still requires the deploy private key. Publishing on
+    # 0.0.0.0 would be the mistake — that would put Postgres back on the
+    # internet, which is exactly what leaving Neon was meant to end.
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       # A named volume on the droplet's SSD. Rebuilding or rolling back the app
       # container does not touch it.
