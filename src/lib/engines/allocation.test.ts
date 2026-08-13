@@ -88,6 +88,50 @@ describe("E8 auto — oldest bill first", () => {
   });
 });
 
+/*
+ * The other end of the book, for the customer paying against the invoice in
+ * front of them. Spreading that money from the oldest end settles a bill from
+ * May and leaves the one they were talking about standing.
+ */
+describe("E8 auto — newest bill first", () => {
+  test("a payment covering two bills clears the newest completely", () => {
+    const r = allocate(BOOK, { mode: "auto", order: "newest", amount: 30_000_00 });
+    assert.deepEqual(r.errors, []);
+    assert.deepEqual(r.lines, [
+      { billId: "b3", billNo: "INV-103", amount: 15_000_00 },
+      { billId: "b2", billNo: "INV-102", amount: 15_000_00 },
+    ]);
+    assert.equal(r.onAccount, 0);
+  });
+
+  test("a part payment stops inside the newest bill", () => {
+    const r = allocate(BOOK, { mode: "auto", order: "newest", amount: 4_000_00 });
+    assert.deepEqual(r.lines, [{ billId: "b3", billNo: "INV-103", amount: 4_000_00 }]);
+  });
+
+  test("saying nothing about the order still means oldest first", () => {
+    const said = allocate(BOOK, { mode: "auto", order: "oldest", amount: 12_000_00 });
+    const silent = allocate(BOOK, { mode: "auto", amount: 12_000_00 });
+    assert.deepEqual(silent.lines, said.lines);
+    assert.equal(silent.lines[0].billNo, "INV-101");
+  });
+
+  test("the direction does not mutate the book it was given", () => {
+    const before = BOOK.map((b) => b.id);
+    allocate(BOOK, { mode: "auto", order: "newest", amount: 50_000_00 });
+    assert.deepEqual(
+      BOOK.map((b) => b.id),
+      before,
+    );
+  });
+
+  test("more money than the whole book leaves the rest on account, either way", () => {
+    const r = allocate(BOOK, { mode: "auto", order: "newest", amount: 60_000_00 });
+    assert.equal(r.allocated, 50_000_00);
+    assert.equal(r.onAccount, 10_000_00);
+  });
+});
+
 describe("E8 settle — these bills are cleared", () => {
   test("ticking two bills allocates both in full", () => {
     const r = allocate(BOOK, {

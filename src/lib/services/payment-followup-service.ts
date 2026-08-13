@@ -332,10 +332,13 @@ export async function logPaymentFollowUp(
         billNo: b.billNo,
         billDate: b.billDate,
         amount: b.amount,
-        // Money somebody else has already reported against this bill is not
-        // offered again — two people writing down one transfer is the ordinary
-        // way an account ends up over-credited.
-        paid: b.paid + b.reported,
+        // A bill offers its whole unconfirmed balance, here as everywhere.
+        // Subtracting what somebody has merely reported made a claimed bill
+        // look settled, so the next payment against it skipped past onto the
+        // following bill or onto account — money filed against the wrong bill
+        // to work around a balance that was never real. Nothing unconfirmed
+        // touches `paid_amount`; the customer still owes this.
+        paid: b.paid,
       })),
       {
         mode: "auto",

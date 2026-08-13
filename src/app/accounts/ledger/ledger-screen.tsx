@@ -44,6 +44,8 @@ type LedgerEntry = {
   debit: number;
   credit: number;
   status: string | null;
+  /** Bill lines: paise claimed against it and not yet confirmed. Never subtracted. */
+  claimed?: number;
   receiptId?: string;
   balance: number;
 };
@@ -297,6 +299,17 @@ export function LedgerScreen({
                         <span className={dead ? "text-muted line-through" : "text-muted"}>
                           {e.detail}
                         </span>
+                        {/*
+                          On the BILL line, not the payment: money somebody has
+                          claimed against this bill and nobody has found yet.
+                          The bill still stands at its full amount — nothing
+                          unconfirmed moves a balance — so without this mark a
+                          customer who says they paid bill 0804 leaves no trace
+                          on the row they are talking about.
+                        */}
+                        {e.kind === "bill" && (e.claimed ?? 0) > 0 ? (
+                          <Pill tone="warn">{money(e.claimed!)} claimed, on hold</Pill>
+                        ) : null}
                         {e.status === "reported" ? (
                           <Pill tone="warn">with accounts</Pill>
                         ) : null}

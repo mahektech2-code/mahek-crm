@@ -991,6 +991,20 @@ owed it. The duplicate is now caught where it happens: `matchesForEntry` asks a
 person a question they can answer, instead of silently making a bill
 unavailable and leaving them to work out why.
 
+**And the rule holds on the screen, not only in the service.** The entry form
+kept subtracting `paid + reported` from what it offered for months after
+`recordReceipt` stopped — so the preview and the save disagreed about the same
+bill, and the preview was the half people were working from. A bill somebody
+had claimed read ₹0 available, ticking it answered "no longer open", and the
+only way to record money accounts could see in the statement was to reject the
+claim first. What the row shows instead is a pill: the amount claimed, said as
+a hold. The same mark is on the bill line of the customer statement, because a
+bill still standing at its full amount after the customer said they paid it is
+exactly the row somebody needs an explanation on. The telecaller's collections
+path had the same subtraction, where it pushed the next payment past a claimed
+bill onto the following one or onto account — money filed against the wrong
+bill to work around a balance that was never real.
+
 **One payment written down twice is the ordinary failure, and it is caught at
 the point of entry.** A telecaller records what a customer said days before the
 transfer reaches a statement. `lib/engines/receipt-match.ts` is pure and offers
@@ -1010,6 +1024,17 @@ merging two records of money is not a thing to do on a stray click and a check
 that lives only in an interface is not a check. A genuine second payment of the
 same amount is still recordable — made deliberate, never refused, or people
 learn to work around the screen.
+
+**The match is a SUGGESTION, and it never stands in the way.** It used to: a
+near-certain candidate blocked the save until somebody ticked "this is a
+different payment". But the screen is guessing from an amount and a date, and
+two customers paying ₹50,000 in the same week is an ordinary Tuesday — a gate
+in front of the ordinary case is a gate people learn to click through. It
+appears as the amount is typed, it is answered with "Yes, this is the one" or
+"No — this is a different payment", and either answer takes it off the screen.
+Editing the entry asks again, because a changed entry is a changed question.
+Nothing is weakened by this: yes still opens the merge dialog, still needs the
+amount typed back, and `confirmAsMatch` still checks it on the server.
 
 **A cheque has two dates and they answer different questions.** `received_at`
 is when we got it; `instrument_date` is what is written on it, and a cheque
@@ -1072,18 +1097,34 @@ refusing it is how a receipt gets recorded for the wrong amount to make the
 screen accept it.
 
 **Allocation is pure, and the screen runs the same function the server does.**
-`lib/engines/allocation.ts` takes bills, an amount and one of three
-instructions — oldest first, settle these, split it myself — and returns lines.
-Accounts are deciding where the money goes, so a preview that disagreed with
-the save would be worse than no preview. Money already REPORTED against a bill
-is subtracted before allocating, because two people writing down one transfer
-is the ordinary way an account ends up over-credited.
+`lib/engines/allocation.ts` takes bills, an amount and one of four
+instructions — oldest first, newest first, settle these, split it myself — and
+returns lines. Accounts are deciding where the money goes, so a preview that
+disagreed with the save would be worse than no preview. What a bill offers is
+its whole unconfirmed balance: money merely reported against it is shown beside
+it and never subtracted, and the duplicate is caught at the point of entry
+instead.
 
-**A reference is asked of whoever asserts the money arrived.** Accounts match a
-receipt against the bank statement by that string, so one confirmed without it
-is money nobody can find again. It is not asked of a telecaller repeating what
-a customer said: they rarely have the UTR, and refusing the save would lose the
-claim rather than improve it.
+**Only the automatic spread has a direction.** Oldest first is the default and
+the ordinary answer — the oldest debt is the one aging, and clearing it is what
+takes a customer off the collections list. Newest first is for the customer
+paying against the invoice in front of them, where spreading from the oldest
+end settles a bill from March and leaves the one they were talking about
+standing. Ticking bills or typing amounts has already said which bills, so
+`order` means nothing there and is ignored rather than offered.
+
+**A reference is asked for, and no longer demanded.** Accounts match a receipt
+against the bank statement by that string, so one recorded without it is money
+somebody has to go looking for — worth asking, and never worth refusing a save
+over. `payments.referenceRequiredModes` is EMPTY by default now. The rule it
+enforced was aimed at whoever asserts the money arrived, which is exactly the
+person sitting with the statement open, having already found the payment they
+were entering: the entry is itself the cross-check the field was standing in
+for, and the red line under the box stopped them recording money they could
+see. It was never asked of a telecaller repeating what a customer said — they
+rarely have the UTR, and refusing that save would lose the claim rather than
+improve it. Naming a mode in the setting brings the rule back for it, and
+`0052` moves deployments that never curated the list.
 
 **Confirming is checked server-side, and a stale allocation is refused rather
 than moved.** If a bill a pending receipt names has been settled by something

@@ -118,11 +118,24 @@ export async function accountsHome(): Promise<AccountsHome> {
         where status = 'pending_approval'
           and extract(epoch from (now() - ordered_at)) / 3600 > ${staleHours}) as orders_stale,
 
-      (select count(*)::int from payment_receipts where status = 'reported') as pay_count,
+      -- UNDECIDED money is reported AND held, and this card has to count both
+      -- or it disagrees with the queue it links to. A hold is money accounts
+      -- have looked at and parked: no more in the ledger than a bare report,
+      -- still a decision owed, and still on the Payments to confirm list.
+      -- Counting only reported made the card read "Nothing waiting" over a
+      -- queue with rows in it, and understated "awaiting confirmation" by
+      -- every held rupee.
+      --
+      -- The STALE count below deliberately stays on reported alone: waiting
+      -- more than a day means a reported payment is about to lapse and the
+      -- customer will be chased for money nobody looked for. A hold does not
+      -- lapse, and has its own ageing on the queue itself.
+      (select count(*)::int from payment_receipts
+        where status in ('reported','held')) as pay_count,
       (select coalesce(sum(amount), 0)::bigint from payment_receipts
-        where status = 'reported') as pay_value,
+        where status in ('reported','held')) as pay_value,
       (select coalesce(max(extract(epoch from (now() - created_at)) / 3600), 0)::int
-         from payment_receipts where status = 'reported') as pay_oldest,
+         from payment_receipts where status in ('reported','held')) as pay_oldest,
       (select count(*)::int from payment_receipts
         where status = 'reported'
           and extract(epoch from (now() - created_at)) / 3600 > ${staleHours}) as pay_stale,

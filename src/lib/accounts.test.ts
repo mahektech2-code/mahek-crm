@@ -31,7 +31,7 @@ import {
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { NotPermittedError } from "@/lib/access-control";
-import { invalidateConfig, seedConfig } from "@/lib/config/store";
+import { invalidateConfig, seedConfig, updateSetting } from "@/lib/config/store";
 import { addDays } from "@/lib/business-date";
 import { today, recomputeOutstanding } from "@/lib/recompute";
 
@@ -428,7 +428,34 @@ describe("Payments to confirm", () => {
     assert.equal((await pendingReceipts()).length, 0);
   });
 
-  test("accounts cannot confirm a bank transfer with no reference", async () => {
+  /*
+   * A reference is ASKED FOR and not demanded. Accounts confirm money they are
+   * already looking at in the statement, so the entry is itself the
+   * cross-check; refusing the save turned a receipt somebody could see into one
+   * nobody could record. Both halves are pinned here — that it saves by
+   * default, and that naming a mode brings the old rule back for it.
+   */
+  test("accounts can confirm a bank transfer with no reference", async () => {
+    const customer = await makeCustomer();
+    await makeBill(customer.id, 10_000_00);
+
+    const recorded = await recordReceipt({
+      customerId: customer.id,
+      amount: 6_000_00,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      allocation: "auto",
+      source: "accounts",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(recorded.ok, true, recorded.ok ? "" : recorded.error);
+    assert.equal(recorded.ok && recorded.data.status, "confirmed");
+  });
+
+  test("a mode named in the settings still demands one", async () => {
+    await updateSetting("payments.referenceRequiredModes", ["Bank transfer"], deepa.id);
+    invalidateConfig();
+
     const customer = await makeCustomer();
     await makeBill(customer.id, 10_000_00);
 
@@ -972,6 +999,51 @@ describe("Bills, search and the statement", () => {
     assert.equal(open[0].balance, 10_000_00, "the bill has not moved");
     assert.equal(open[0].reported, 4_000_00, "but ₹4,000 is already claimed");
     assert.equal(open[0].id, bill.id);
+  });
+
+  /*
+   * THE BILL A TELECALLER HAS CLAIMED IS STILL RECORDABLE AGAINST.
+   *
+   * This is the whole point of not subtracting. A customer says they have paid
+   * bill X; the telecaller writes it down; days later the transfer appears on
+   * the statement and accounts go to record it against bill X — which is
+   * exactly the bill the claim had made unavailable. There was no way through
+   * it but to reject the claim first.
+   */
+  test("a fully claimed bill can still be settled by accounts", async () => {
+    const customer = await makeCustomer();
+    const bill = await makeBill(customer.id, 10_000_00);
+
+    setTestUser(priya);
+    await recordReceipt({
+      customerId: customer.id,
+      amount: 10_000_00,
+      receivedAt: TODAY,
+      mode: "Cash",
+      allocation: "auto",
+      source: "collections_call",
+      idempotencyKey: randomUUID(),
+    });
+
+    setTestUser(deepa);
+    const open = await openBillsFor(customer.id);
+    assert.equal(open[0].balance, 10_000_00, "the whole balance is still offered");
+    assert.equal(open[0].reported, 10_000_00, "and what is claimed is said beside it");
+
+    const recorded = await recordReceipt({
+      customerId: customer.id,
+      amount: 10_000_00,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      reference: "UTR7781",
+      allocation: "settle",
+      selectedBillIds: [bill.id],
+      source: "accounts",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(recorded.ok, true, recorded.ok ? "" : recorded.error);
+    assert.equal(recorded.ok && recorded.data.onAccount, 0, "it lands on the bill, not on account");
+    assert.equal(recorded.ok && recorded.data.billsTouched, 1);
   });
 
   test("the statement balance counts confirmed money only", async () => {

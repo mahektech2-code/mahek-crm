@@ -21,7 +21,7 @@ export async function queueUrgency(): Promise<QueueUrgency> {
       (select coalesce(max(extract(epoch from (now() - ordered_at)) / 3600), 0)::int
          from orders where status = 'pending_approval') as orders,
       (select coalesce(max(extract(epoch from (now() - created_at)) / 3600), 0)::int
-         from payment_receipts where status = 'reported') as receipts
+         from payment_receipts where status in ('reported','held')) as receipts
   `);
   return {
     oldestOrderHours: Number(row?.orders ?? 0),

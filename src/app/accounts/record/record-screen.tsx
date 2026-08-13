@@ -17,6 +17,7 @@ import {
   allocate,
   type AllocatableBill,
   type AllocationMode,
+  type AllocationOrder,
 } from "@/lib/engines/allocation";
 import { CustomerSearch, type Hit } from "../customer-search";
 import { Banner, Pill, ScreenHeader } from "../parts";
@@ -136,6 +137,14 @@ function PaymentForm({
   const [instrumentDate, setInstrumentDate] = React.useState("");
   const [note, setNote] = React.useState("");
   const [allocation, setAllocation] = React.useState<AllocationMode>("auto");
+  /**
+   * Which end of the book an automatic spread starts from. Oldest is the
+   * ordinary answer; newest is for the customer paying against the invoice in
+   * front of them, where clearing a bill from March would settle the wrong one.
+   * It only means anything under `auto` — the other two modes have already been
+   * told which bills.
+   */
+  const [order, setOrder] = React.useState<AllocationOrder>("oldest");
   const [selected, setSelected] = React.useState<string[]>([]);
   const [custom, setCustom] = React.useState<Record<string, string>>({});
   const [busy, setBusy] = React.useState(false);
@@ -156,8 +165,18 @@ function PaymentForm({
   /** Typed back before a merge. See `confirmAsMatch` — it is checked there too. */
   const [typed, setTyped] = React.useState("");
   const [mergeError, setMergeError] = React.useState<string | null>(null);
-  /** "I have looked, and this is a different payment." */
-  const [separate, setSeparate] = React.useState(false);
+  /**
+   * "No — I have looked, and this is a different payment."
+   *
+   * It hides the suggestion and nothing more. This used to be a checkbox that
+   * BLOCKED the save until it was ticked, which made a question the screen was
+   * only guessing at into a gate somebody had to get past on the ordinary day
+   * where two payments happen to be the same round figure. The safeguard that
+   * matters is on the other side of the answer: saying yes still opens the
+   * merge dialog and still needs the amount typed back, and `confirmAsMatch`
+   * checks it again on the server.
+   */
+  const [dismissed, setDismissed] = React.useState(false);
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -200,9 +219,9 @@ function PaymentForm({
       }).then((r) => {
         if (!live) return;
         setMatches(r.ok ? r.data : []);
-        // A changed entry is a changed question, so an acknowledgement made
-        // about the old one no longer applies.
-        setSeparate(false);
+        // A changed entry is a changed question, so a suggestion dismissed
+        // about the old one no longer applies and is asked again.
+        setDismissed(false);
       });
     }, 350);
     return () => {
@@ -211,23 +230,49 @@ function PaymentForm({
     };
   }, [customer.customerId, amount, receivedAt, mode, reference]);
 
-  // Only the near-certain ones stand in the way. A close match is a question,
-  // and making somebody dismiss a question before they can do their job is how
-  // a warning becomes something people click through without reading.
-  const blockingMatch = matches.find((m) => m.blocking) ?? null;
+  /*
+   * NOTHING HERE STANDS IN THE WAY. What the screen has is a suspicion drawn
+   * from an amount and a date, and it is right often enough to be worth
+   * showing and wrong often enough that it must not be a gate: two customers
+   * paying ₹50,000 in the same week is an ordinary Tuesday. It is offered, it
+   * is answered yes or no, and either answer takes it off the screen.
+   *
+   * The near-certain ones lead, because they are the ones somebody should read
+   * before deciding.
+   */
+  const suggestions = dismissed
+    ? []
+    : [...matches].sort((a, b) => Number(b.blocking) - Number(a.blocking));
 
   const allocatable: AllocatableBill[] = (bills ?? []).map((b) => ({
     id: b.id,
     billNo: b.billNo,
     billDate: b.billDate,
     amount: b.amount,
-    // Money already claimed against a bill is not offered to a second receipt.
-    // Two people writing down one transfer is the ordinary failure here.
-    paid: b.paid + b.reported,
+    /*
+     * A BILL OFFERS ITS WHOLE UNCONFIRMED BALANCE. `paid + reported` was
+     * subtracted here so that two people writing down one transfer could not
+     * over-credit an account — the server stopped doing that and this screen
+     * did not, so the preview and the save disagreed about the same bill.
+     *
+     * What the subtraction actually did was make a bill somebody had reported
+     * against look settled: ₹0 available, "no longer open" when it was ticked,
+     * and accounts unable to record the very money they were holding the bank
+     * statement for. The customer still owed it — nothing unconfirmed ever
+     * touches `paid_amount` — so the ledger said one thing and the entry screen
+     * said another, and the screen was the one people were working from.
+     *
+     * The duplicate is caught where it happens instead: `matchesForEntry` asks
+     * "is this the same money somebody already wrote down?" at the moment of
+     * entry, and a near-certain match has to be answered before this can save.
+     * What is claimed is still shown on the row, beside the balance.
+     */
+    paid: b.paid,
   }));
 
   const preview = allocate(allocatable, {
     mode: allocation,
+    order,
     amount,
     selectedBillIds: selected,
     custom: Object.fromEntries(
@@ -249,7 +294,7 @@ function PaymentForm({
   const postDated = Boolean(instrumentDate && instrumentDate > today);
   const settleTotal = (bills ?? [])
     .filter((b) => selected.includes(b.id))
-    .reduce((s, b) => s + Math.max(0, b.balance - b.reported), 0);
+    .reduce((s, b) => s + b.balance, 0);
 
   const blocked =
     amount <= 0
@@ -260,11 +305,6 @@ function PaymentForm({
           ? "A reference is required"
           : instrumentDateMissing
             ? `Enter the date on the ${mode.toLowerCase()}`
-            : blockingMatch && !separate
-            ? // Not refused — made deliberate. A genuine second payment of the
-              // same amount is ordinary, and blocking it outright would teach
-              // people to work around this screen.
-              "Say whether this is the same money as the payment already recorded"
             : busy
               ? "Saving…"
               : undefined;
@@ -319,7 +359,6 @@ function PaymentForm({
           ) : (
             bills.map((b, i) => {
               const line = preview.lines.find((l) => l.billId === b.id);
-              const free = Math.max(0, b.balance - b.reported);
               const ticked = selected.includes(b.id);
               return (
                 <div
@@ -345,10 +384,24 @@ function PaymentForm({
                   ) : null}
 
                   <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-medium text-ink">{b.billNo}</span>
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium text-ink">{b.billNo}</span>
+                      {/*
+                        Said as a claim on hold rather than by shrinking the
+                        balance. Somebody has told us this bill is paid and
+                        nobody has found the money — that is a thing to know
+                        while entering, not a reason to make the bill
+                        unavailable to the person holding the bank statement.
+                      */}
+                      {b.reported > 0 ? (
+                        <Pill tone="warn">{money(b.reported)} claimed, on hold</Pill>
+                      ) : null}
+                    </span>
                     <span className="mt-px block text-[13px] text-muted">
                       {longDate(b.billDate)}
-                      {b.reported > 0 ? ` · ${money(b.reported)} already reported` : ""}
+                      {b.reported > 0
+                        ? " · reported by somebody, not yet found in the bank"
+                        : ""}
                     </span>
                   </span>
 
@@ -358,7 +411,7 @@ function PaymentForm({
                   </span>
 
                   <span className="w-[110px] flex-none text-right text-sm font-medium tabular-nums text-ink">
-                    {money(free)}
+                    {money(b.balance)}
                   </span>
 
                   {allocation === "custom" ? (
@@ -502,7 +555,93 @@ function PaymentForm({
               </div>
             ) : null}
 
-            <div className="mt-3">
+            {/*
+              WHERE THE MONEY GOES, in the same box as the money itself.
+              This was a second panel below, which put a divider between the
+              amount somebody had just typed and the bills it was landing on —
+              two boxes for one act. The note sits under it because it is the
+              last thing anybody writes and the first thing they leave blank.
+            */}
+            <div className="mt-4 border-t border-divider pt-3.5">
+              <div className="mb-2 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                Against which bills
+              </div>
+
+              {(
+                [
+                  ["auto", "oldest", "Oldest bill first"],
+                  // For the customer paying against the invoice in front of
+                  // them. Spreading that money from the oldest end settles a
+                  // bill from March and leaves the one they were talking about
+                  // standing, which is the argument nobody wants to have.
+                  ["auto", "newest", "Newest bill first"],
+                  ["settle", null, "Settle particular bills"],
+                  ["custom", null, "Split it myself"],
+                ] as const
+              ).map(([key, dir, label]) => {
+                const active = allocation === key && (dir === null || order === dir);
+                return (
+                  <button
+                    key={`${key}-${dir ?? ""}`}
+                    onClick={() => {
+                      setAllocation(key);
+                      if (dir) setOrder(dir);
+                    }}
+                    className={cx(
+                      "mb-1.5 flex w-full cursor-pointer items-center gap-2 rounded-[4px] border px-3 py-2.25 text-left text-sm",
+                      active
+                        ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                        : "border-line bg-surface text-body hover:bg-canvas",
+                    )}
+                  >
+                    <span
+                      className={cx(
+                        "h-3.5 w-3.5 flex-none rounded-full border",
+                        active
+                          ? "border-brand bg-brand shadow-[inset_0_0_0_3px_#FFFFFF]"
+                          : "border-line-strong bg-surface",
+                      )}
+                    />
+                    {label}
+                  </button>
+                );
+              })}
+
+              {allocation === "settle" && selected.length && settleTotal !== amount ? (
+                <button
+                  onClick={() => setAmountText(String(Math.round(settleTotal / 100)))}
+                  className="mt-1 cursor-pointer border-none bg-transparent p-0 text-[13px] font-medium text-brand hover:underline"
+                >
+                  Use {money(settleTotal)} — what those bills come to
+                </button>
+              ) : null}
+
+              <dl className="mt-3 border-t border-divider pt-3">
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-sm text-muted">Against bills</dt>
+                  <dd className="text-sm font-medium tabular-nums text-ink">
+                    {money(preview.allocated)}
+                  </dd>
+                </div>
+                <div className="mt-1.5 flex items-center justify-between gap-3">
+                  <dt className="text-sm text-muted">On account</dt>
+                  <dd
+                    className={cx(
+                      "text-sm tabular-nums",
+                      preview.onAccount ? "font-medium text-warn-ink" : "text-muted",
+                    )}
+                  >
+                    {money(preview.onAccount)}
+                  </dd>
+                </div>
+              </dl>
+
+              {preview.errors.length ? (
+                <Banner tone="danger">{preview.errors[0]}</Banner>
+              ) : null}
+            </div>
+
+            <div className="mt-4 border-t border-divider pt-3.5">
               <Label>Note</Label>
               <span className="relative block">
                 <textarea
@@ -524,74 +663,6 @@ function PaymentForm({
           </section>
 
           <section className="rounded-[6px] border border-line bg-surface px-5 py-4">
-            <div className="mb-3 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-              Against which bills
-            </div>
-
-            {(
-              [
-                ["auto", "Oldest bill first"],
-                ["settle", "Settle particular bills"],
-                ["custom", "Split it myself"],
-              ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setAllocation(key)}
-                className={cx(
-                  "mb-1.5 flex w-full cursor-pointer items-center gap-2 rounded-[4px] border px-3 py-2.25 text-left text-sm",
-                  allocation === key
-                    ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
-                    : "border-line bg-surface text-body hover:bg-canvas",
-                )}
-              >
-                <span
-                  className={cx(
-                    "h-3.5 w-3.5 flex-none rounded-full border",
-                    allocation === key
-                      ? "border-brand bg-brand shadow-[inset_0_0_0_3px_#FFFFFF]"
-                      : "border-line-strong bg-surface",
-                  )}
-                />
-                {label}
-              </button>
-            ))}
-
-            {allocation === "settle" && selected.length && settleTotal !== amount ? (
-              <button
-                onClick={() => setAmountText(String(Math.round(settleTotal / 100)))}
-                className="mt-1 cursor-pointer border-none bg-transparent p-0 text-[13px] font-medium text-brand hover:underline"
-              >
-                Use {money(settleTotal)} — what those bills come to
-              </button>
-            ) : null}
-
-            <dl className="mt-3 border-t border-divider pt-3">
-              <div className="flex items-center justify-between gap-3">
-                <dt className="text-sm text-muted">Against bills</dt>
-                <dd className="text-sm font-medium tabular-nums text-ink">
-                  {money(preview.allocated)}
-                </dd>
-              </div>
-              <div className="mt-1.5 flex items-center justify-between gap-3">
-                <dt className="text-sm text-muted">On account</dt>
-                <dd
-                  className={cx(
-                    "text-sm tabular-nums",
-                    preview.onAccount ? "font-medium text-warn-ink" : "text-muted",
-                  )}
-                >
-                  {money(preview.onAccount)}
-                </dd>
-              </div>
-            </dl>
-
-            {preview.errors.length ? (
-              <Banner tone="danger">{preview.errors[0]}</Banner>
-            ) : null}
-          </section>
-
-          <section className="rounded-[6px] border border-line bg-surface px-5 py-4">
             <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
               {confirmsOnSave ? "This moves the ledger" : "This waits for accounts"}
             </div>
@@ -601,11 +672,10 @@ function PaymentForm({
                 : "Recorded as reported. Nothing moves until accounts find the money, and the customer is not chased for it while they look."}
             </p>
 
-            {matches.length ? (
+            {suggestions.length ? (
               <MatchPanel
-                matches={matches}
-                separate={separate}
-                onSeparate={setSeparate}
+                matches={suggestions}
+                onDismiss={() => setDismissed(true)}
                 onMerge={(m) => {
                   setMerging(m);
                   setTyped("");
@@ -628,6 +698,7 @@ function PaymentForm({
                     instrumentDate: instrumentDate || undefined,
                     note: note.trim() || undefined,
                     allocation,
+                    order,
                     selectedBillIds: selected,
                     custom: Object.fromEntries(
                       Object.entries(custom)
@@ -690,6 +761,7 @@ function PaymentForm({
                 // be asking the same question twice.
                 allocation: {
                   mode: allocation,
+                  order,
                   selectedBillIds: selected,
                   custom: Object.fromEntries(
                     Object.entries(custom)
@@ -721,20 +793,23 @@ function PaymentForm({
 /**
  * What somebody has already recorded that looks like this money.
  *
- * Shown as a question rather than a warning. The great majority of these are
- * genuine — a telecaller wrote down what the customer told them, and this is
- * that payment arriving on the statement — so the primary action is "yes, same
- * money", not "dismiss".
+ * A SUGGESTION, and nothing stronger. It appears on its own as the amount is
+ * typed, it is answered with one of two buttons, and either answer takes it off
+ * the screen — there is nothing here to get past, because the screen is
+ * guessing and the person is not.
+ *
+ * The great majority of these are genuine — a telecaller wrote down what the
+ * customer told them, and this is that payment arriving on the statement — so
+ * "yes, this is the one" leads, and it opens the merge dialog rather than
+ * doing anything on its own.
  */
 function MatchPanel({
   matches,
-  separate,
-  onSeparate,
+  onDismiss,
   onMerge,
 }: {
   matches: ReceiptMatchView[];
-  separate: boolean;
-  onSeparate: (v: boolean) => void;
+  onDismiss: () => void;
   onMerge: (m: ReceiptMatchView) => void;
 }) {
   const blocking = matches.some((m) => m.blocking);
@@ -753,7 +828,7 @@ function MatchPanel({
         )}
       >
         {matches.length === 1
-          ? "This may already be recorded"
+          ? "Is this the payment you are entering?"
           : `${matches.length} payments already recorded look like this one`}
       </div>
 
@@ -786,25 +861,27 @@ function MatchPanel({
               onClick={() => onMerge(m)}
               className="mt-2 h-8 cursor-pointer rounded-[4px] border border-brand bg-brand px-3 text-[13px] font-medium text-white hover:bg-brand-hover"
             >
-              This is the same money
+              Yes, this is the one
             </button>
           </div>
         ))}
       </div>
 
-      {blocking ? (
-        <label className="mt-2.5 flex cursor-pointer items-start gap-2 text-[13px] text-pretty text-body">
-          <input
-            type="checkbox"
-            checked={separate}
-            onChange={(e) => onSeparate(e.target.checked)}
-            className="mt-0.5 size-4 flex-none cursor-pointer"
-          />
-          <span>
-            I have looked — this is a different payment, and the customer has paid twice.
-          </span>
-        </label>
-      ) : null}
+      {/*
+        No is a single click and it simply goes away. Nothing is recorded about
+        the dismissal and nothing is blocked by it — the suggestion was the
+        screen's guess, and this is somebody who has read it saying they are
+        looking at a different payment. Editing the entry asks again.
+      */}
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="mt-2.5 cursor-pointer border-none bg-transparent p-0 text-[13px] font-medium text-muted hover:text-body hover:underline"
+      >
+        {matches.length === 1
+          ? "No — this is a different payment"
+          : "No — none of these is this payment"}
+      </button>
     </div>
   );
 }

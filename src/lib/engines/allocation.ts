@@ -32,8 +32,21 @@ export type AllocatableBill = {
 
 export type AllocationMode = "auto" | "settle" | "custom";
 
+/**
+ * Which end of the book an automatic spread starts from.
+ *
+ * Oldest first is the default and the ordinary answer — the oldest debt is the
+ * one aging, and clearing it is what takes a customer off the collections list.
+ * Newest first is for the customer who pays against the invoice in front of
+ * them: applying that money to a bill from March would settle the wrong one and
+ * leave the one they were talking about standing.
+ */
+export type AllocationOrder = "oldest" | "newest";
+
 export type AllocationRequest = {
   mode: AllocationMode;
+  /** `auto` only. Defaults to oldest. */
+  order?: AllocationOrder;
   /** Paise. The whole receipt. */
   amount: number;
   /** `settle`: the bills being cleared. Ignored by the other two. */
@@ -92,7 +105,11 @@ export function allocate(
 
   if (request.mode === "auto") {
     let left = amount;
-    for (const b of open) {
+    // `open` is oldest first; newest first is the same list read backwards.
+    // Only the automatic spread has a direction — a person ticking bills or
+    // typing amounts has already said which bills, in which case the order the
+    // money is laid down in changes nothing.
+    for (const b of request.order === "newest" ? [...open].reverse() : open) {
       if (left <= 0) break;
       const take = Math.min(left, billBalance(b));
       lines.push({ billId: b.id, billNo: b.billNo, amount: take });
