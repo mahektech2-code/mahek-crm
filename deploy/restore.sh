@@ -64,6 +64,30 @@ read -rp 'Type the word "replace" to go ahead: ' answer
 echo "==> Stopping the app"
 docker compose stop app
 
+# THE DATABASE IS EMPTIED FIRST, and this is not belt-and-braces.
+#
+# `pg_dump --clean` only drops what is IN the dump. Anything created after the
+# dump was taken — a table a bad migration added, a table somebody made by hand
+# — is not mentioned, so nothing drops it and it survives the restore. The
+# restore then reports success and you are left with the dump's data plus
+# debris, which is not the state you asked for.
+#
+# Found by drilling it: a marker table created after the backup was still there
+# afterwards. The restore had "worked" and the database was not what the dump
+# said it was.
+#
+# Dropping both schemas makes a restore mean what everybody assumes it means:
+# the database is exactly the dump, and nothing else. The dump recreates
+# `drizzle` itself; `public` has to be put back by hand because Postgres will
+# not restore into a database with no public schema.
+echo "==> Emptying the database, so the restore is exactly the dump"
+docker compose exec -T postgres psql -U mahek -d mahekone -v ON_ERROR_STOP=1 -q <<'SQL'
+drop schema if exists drizzle cascade;
+drop schema if exists public cascade;
+create schema public;
+grant all on schema public to mahek;
+SQL
+
 echo "==> Restoring"
 gunzip -c "$DUMP" | docker compose exec -T postgres psql -U mahek -d mahekone -v ON_ERROR_STOP=1
 
