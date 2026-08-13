@@ -34,6 +34,11 @@ yarn-error.log*
 .env*
 # ...but the template must be committed — `npm run db:setup` copies it.
 !.env.example
+# The production example is DOCUMENTATION and belongs in the repository: it is
+# the list of names the deployment must set, and a test asserts it matches what
+# the code reads. It carries no values. Without this line `.env*` swallowed it,
+# so it lived on one laptop and CI could not see the file it was checking.
+!.env.production.example
 
 # vercel
 .vercel

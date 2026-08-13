@@ -50,7 +50,8 @@ ssh root@<droplet-ip>
 ## 2. Put the files on it
 
 ```bash
-scp deploy/docker-compose.yml Caddyfile deploy/backup.sh deploy/restore.sh \
+scp deploy/docker-compose.yml Caddyfile \
+    deploy/restart.sh deploy/backup.sh deploy/restore.sh \
     deploy@<droplet-ip>:/opt/mahekone/
 scp .env.production.example deploy@<droplet-ip>:/opt/mahekone/.env
 ssh deploy@<droplet-ip> 'chmod 600 /opt/mahekone/.env'
