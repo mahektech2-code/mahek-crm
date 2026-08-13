@@ -33,7 +33,14 @@ if [ "${1:-}" = "--install-cron" ]; then
   # 01:15 IST — after the nightly job has finished rebuilding the caches, so
   # the dump holds a settled database rather than one mid-recompute.
   line="15 1 * * * /usr/bin/env bash ${APP_DIR}/backup.sh >> ${APP_DIR}/backups/backup.log 2>&1"
-  ( crontab -l 2>/dev/null | grep -v 'backup.sh' ; echo "$line" ) | crontab -
+  # Both `|| true`s are load-bearing under `set -o pipefail`, and both fire on
+  # a FRESH box — which is the only box this is ever run on. `crontab -l` fails
+  # when there is no crontab yet, and `grep -v` exits 1 when it is handed no
+  # lines at all. Either one aborts the script before it installs anything, and
+  # the failure looks like a permissions problem rather than what it is.
+  existing=$(crontab -l 2>/dev/null || true)
+  printf '%s\n' "$(printf '%s\n' "$existing" | grep -v 'backup.sh' || true)" "$line" \
+    | grep -v '^$' | crontab -
   echo "Installed: ${line}"
   exit 0
 fi
