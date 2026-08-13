@@ -135,7 +135,19 @@ jobs:
             # actually deployed, rather than whatever `latest` points at today.
             sed -i 's|^IMAGE=.*|IMAGE=${{ needs.build.outputs.image }}|' .env
             docker compose pull app
-            docker compose up -d app
+            # THE WHOLE STACK, not just `app`.
+            #
+            # `up -d app` starts the app and its dependencies — postgres, via
+            # depends_on — and Caddy depends on the app rather than the other
+            # way round, so it was never in that graph. The result was an app
+            # container running perfectly, healthy, and completely unreachable:
+            # nothing was listening on 443. The deploy reported success at
+            # every step and the site did not exist.
+            #
+            # Bare `up -d` reconciles every service against the compose file
+            # and is a no-op for anything already correct, so this costs
+            # nothing on a deploy where only the app changed.
+            docker compose up -d
             docker image prune -f --filter 'until=168h'
           EOF
 
