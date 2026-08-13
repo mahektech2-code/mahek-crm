@@ -31,6 +31,24 @@ COPY . .
 # to Postgres at all. Both now happen at deploy time over an SSH tunnel — see
 # .github/workflows/deploy.yml — so the image is a pure function of the source.
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# A DATABASE_URL THAT GOES NOWHERE, because the build needs the variable to
+# exist and must never have a real one.
+#
+# `src/db/index.ts` throws at IMPORT time when DATABASE_URL is unset — which is
+# right, and which is exactly why the build fails here and nowhere else. Next
+# imports every route to collect page data, so `/api/accounts/queue-detail`
+# loads the db module, the module throws, and the build stops. On a developer's
+# laptop and in CI this never happens, because both have a database sitting
+# there; the Docker build is the only place the variable is genuinely absent.
+#
+# Nothing connects. Every route in this app is dynamic (`ƒ` in the build
+# output), so no page fetches data at build time — the module is imported and
+# its pool is constructed lazily, never dialled. The host is spelled to be
+# unresolvable rather than plausible: if this value ever DOES reach a
+# connection attempt, it must fail loudly instead of quietly finding something.
+ENV DATABASE_URL=postgres://build:build@build-time-no-database.invalid:5432/build
+
 RUN npx next build
 
 # ------------------------------------------------------------------- runtime
