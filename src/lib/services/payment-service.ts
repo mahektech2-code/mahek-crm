@@ -1,5 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
+import { cache } from "react";
 import { and, asc, desc, eq, gte, isNotNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
@@ -208,7 +209,8 @@ export type PaymentFollowUpPlan = {
  * Every column of the outer table is written out in full inside the
  * subqueries — see AGENTS.md.
  */
-export async function getPaymentFollowUpPlan(): Promise<PaymentFollowUpPlan> {
+export const getPaymentFollowUpPlan = cache(
+  async function getPaymentFollowUpPlan(): Promise<PaymentFollowUpPlan> {
   const ctx = await resolveScope();
   const ids = scopedUserIds(ctx.scope);
   const config = await getConfig();
@@ -282,7 +284,7 @@ export async function getPaymentFollowUpPlan(): Promise<PaymentFollowUpPlan> {
   );
 
   return plan;
-}
+});
 
 /**
  * When collections next wants this one account called.
@@ -595,6 +597,21 @@ export type BillFilters = {
   status?: string;
   /** "26-27". Absent means every year, which the export uses. */
   financialYear?: string;
+  /**
+   * Only bills with something still open on them.
+   *
+   * For a LEDGER this would be wrong — a settled bill is most of what the year
+   * consists of and the table exists to show it. For collections it is the
+   * whole question: the payment screen reads every bill in the book and then
+   * throws away every settled one in JavaScript to find the few a customer
+   * still owes on.
+   *
+   * Deliberately NOT the financial-year filter the ledger uses. An open bill
+   * from a previous year is the oldest debt on the account and therefore the
+   * first thing collections chases — cutting the payment screen by year would
+   * hide exactly the rows it exists to show.
+   */
+  openOnly?: boolean;
 };
 
 /** 1 April to 31 March, as SQL. The end is exclusive — see financial-year.ts. */
@@ -636,6 +653,9 @@ export async function listBills(filters?: BillFilters) {
         scopedToUsers(ids),
         filters?.customerId ? eq(bills.customerId, filters.customerId) : undefined,
         financialYearWhere(filters?.financialYear),
+        filters?.openOnly
+          ? sql`${bills.amount} > ${bills.paidAmount}`
+          : undefined,
       ),
     )
     .orderBy(desc(bills.billDate));
@@ -667,14 +687,26 @@ export async function listBills(filters?: BillFilters) {
   });
 }
 
-export async function agingSummary(filters?: BillFilters) {
-  const config = await getConfig();
-  const rows = await listBills(filters);
+export type BillRow = Awaited<ReturnType<typeof listBills>>[number];
+
+/**
+ * The aging strip, over bills the caller has ALREADY read.
+ *
+ * It used to call `listBills(filters)` itself, which meant every screen
+ * showing a ledger and a strip above it ran the identical full-ledger query
+ * twice in one request — and the two could not even be told apart in a slow
+ * query log, being the same SQL with the same parameters.
+ *
+ * Pure, and no longer async: `listBills` has already banded every row, so this
+ * needs neither configuration nor the business date to sum what it is given.
+ * A summary derived from a different read than the table underneath it is how
+ * a strip and a ledger come to disagree about one year.
+ */
+export function agingSummary(rows: BillRow[]) {
   const buckets = new Map<string, number>();
   for (const r of rows) {
     if (r.balance <= 0) continue;
-    const key = agingBucket(r.overdueDays, config);
-    buckets.set(key, (buckets.get(key) ?? 0) + r.balance);
+    buckets.set(r.bucket, (buckets.get(r.bucket) ?? 0) + r.balance);
   }
   return {
     total: rows.reduce((a, r) => a + r.balance, 0),
@@ -727,22 +759,32 @@ export async function collectionsMetrics(): Promise<CollectionsMetrics> {
   // month's own length.
   const monthEnd = `${day.slice(0, 8)}${String(daysInMonth(day)).padStart(2, "0")}`;
 
-  // Whose book, by the single definition — the same one the worklist below
-  // these figures is filtered by. Reading owner_id here made the strip and the
-  // list two answers to one question: every customer whose sales account
-  // manager had been set counted for nobody, so a manager or an admin looking
-  // at their own book saw an outstanding figure of zero above a list of
-  // accounts that plainly owed money.
-  const assignedTo = sql<string | null>`${ASSIGNED_TO_SQL}`;
-  const inScope = (assigned: string | null) =>
-    !ids || (assigned !== null && ids.includes(assigned));
+  /*
+   * Whose book, by the single definition in access-control — `scopedToUsers`,
+   * which is what the worklist DIRECTLY BENEATH these figures is filtered by.
+   *
+   * Two things were wrong with doing it in JavaScript here. The predicate
+   * never reached Postgres, so every bill, every payment, every follow-up
+   * state and every promise in the company crossed the wire on each load to
+   * have most of them dropped one row later. And the copy had drifted: it
+   * tested the sales account manager alone, while `scopedToUsers` is the sales
+   * manager OR the back office one. A customer whose back-office manager was
+   * the reader counted in the list and not in the total above it, which is a
+   * strip and a table disagreeing about one book — the exact failure the move
+   * off `owner_id` was meant to end, surviving in the half nobody re-read.
+   */
+  const scoped = scopedToUsers(ids);
 
   /* ---- bills: the open balance, and what falls due this month ---- */
 
+  // Still row-by-row, because the due date is `effectiveDueDate` and that is
+  // an ENGINE — the term chain resolves order, then customer, then the
+  // configured default, and a second copy of it written in SQL would be a
+  // second answer to when a bill is due. What changed is that these are now
+  // only the reader's bills.
   const billRows = await db
     .select({
       customerId: bills.customerId,
-      assignedTo,
       billDate: bills.billDate,
       dueDate: bills.dueDate,
       creditDays: billCreditDaysSql,
@@ -753,9 +795,10 @@ export async function collectionsMetrics(): Promise<CollectionsMetrics> {
       id: bills.id,
     })
     .from(bills)
-    .innerJoin(customers, eq(customers.id, bills.customerId));
+    .innerJoin(customers, eq(customers.id, bills.customerId))
+    .where(scoped);
 
-  const mine = billRows.filter((b) => inScope(b.assignedTo));
+  const mine = billRows;
 
   let outstanding = 0;
   let dueThisMonth = 0;
@@ -790,14 +833,14 @@ export async function collectionsMetrics(): Promise<CollectionsMetrics> {
   const paymentRows = await db
     .select({
       customerId: payments.customerId,
-      assignedTo,
       amount: payments.amount,
       paidAt: payments.paidAt,
     })
     .from(payments)
-    .innerJoin(customers, eq(customers.id, payments.customerId));
+    .innerJoin(customers, eq(customers.id, payments.customerId))
+    .where(scoped);
 
-  const minePayments = paymentRows.filter((p) => inScope(p.assignedTo));
+  const minePayments = paymentRows;
   const collectedThisMonth = minePayments
     .filter((p) => p.paidAt >= monthStart && p.paidAt <= day)
     .reduce((sum, p) => sum + p.amount, 0);
@@ -805,36 +848,60 @@ export async function collectionsMetrics(): Promise<CollectionsMetrics> {
     .filter((p) => p.paidAt > weekAgo)
     .reduce((sum, p) => sum + p.amount, 0);
 
+  // Indexed by customer for the kept-promise check below, which used to scan
+  // every payment in the book once per promise.
+  const paymentsByCustomer = new Map<string, typeof minePayments>();
+  for (const p of minePayments) {
+    const list = paymentsByCustomer.get(p.customerId);
+    if (list) list.push(p);
+    else paymentsByCustomer.set(p.customerId, [p]);
+  }
+
   /* ---- the urgent stage ---- */
 
-  const stateRows = await db
-    .select({ state: followUpStates, assignedTo })
+  // Summed in Postgres. Only stage 3 was ever wanted, and this read every
+  // follow-up state in the company to count a handful of them.
+  const [urgentRow] = await db
+    .select({
+      total: sql<string>`coalesce(sum(${followUpStates.totalOverdue}), 0)`,
+      customers: sql<string>`count(*)`,
+    })
     .from(followUpStates)
-    .innerJoin(customers, eq(customers.id, followUpStates.customerId));
-  const urgentRows = stateRows.filter((r) => inScope(r.assignedTo) && r.state.stage === 3);
+    .innerJoin(customers, eq(customers.id, followUpStates.customerId))
+    .where(and(scoped, eq(followUpStates.stage, 3)));
 
   /* ---- promises: what is open, and what was kept ---- */
+
+  // Everything asked of promises below looks at one of three windows: open
+  // (dated today or later), judged in the last 30 days, and judged in the 30
+  // before that. Their union starts 60 days back and runs forward without
+  // limit, so that is what is fetched — rather than every promise ever made.
+  const promiseFloor = addDays(day, -60);
 
   const promiseRows = await db
     .select({
       customerId: followUpAttempts.customerId,
-      assignedTo,
       amount: followUpAttempts.promisedAmount,
       date: followUpAttempts.promisedDate,
       at: followUpAttempts.attemptedAt,
     })
     .from(followUpAttempts)
     .innerJoin(customers, eq(customers.id, followUpAttempts.customerId))
-    .where(and(isNotNull(followUpAttempts.promisedDate), isNotNull(followUpAttempts.promisedAmount)));
+    .where(
+      and(
+        scoped,
+        isNotNull(followUpAttempts.promisedDate),
+        isNotNull(followUpAttempts.promisedAmount),
+        gte(followUpAttempts.promisedDate, promiseFloor),
+      ),
+    );
 
-  const promises = promiseRows
-    .filter((p) => inScope(p.assignedTo))
-    .map((p) => ({
-      customerId: p.customerId,
-      amount: Number(p.amount),
-      date: p.date!,
-      madeOn: calendarDate(p.at),
-    }));
+  const promises = promiseRows.map((p) => ({
+    customerId: p.customerId,
+    amount: Number(p.amount),
+    date: p.date!,
+    madeOn: calendarDate(p.at),
+  }));
 
   const open = promises.filter((p) => p.date >= day);
 
@@ -845,10 +912,11 @@ export async function collectionsMetrics(): Promise<CollectionsMetrics> {
     const judged = promises.filter((p) => p.date >= from && p.date < to);
     if (!judged.length) return { percent: null, judged: 0 };
     const kept = judged.filter((p) => {
-      const paid = minePayments
-        .filter(
-          (q) => q.customerId === p.customerId && q.paidAt >= p.madeOn && q.paidAt <= p.date,
-        )
+      // That customer's payments, not the whole book's. This was a scan of
+      // every payment in scope for every promise being judged — the two lists
+      // multiplied, twice over, for two thirty-day windows.
+      const paid = (paymentsByCustomer.get(p.customerId) ?? [])
+        .filter((q) => q.paidAt >= p.madeOn && q.paidAt <= p.date)
         .reduce((sum, q) => sum + q.amount, 0);
       return paid >= p.amount;
     }).length;
@@ -862,8 +930,8 @@ export async function collectionsMetrics(): Promise<CollectionsMetrics> {
     outstanding,
     outstandingCustomers: owing.size,
     outstandingChange: raisedThisWeek - collectedThisWeek,
-    urgent: urgentRows.reduce((sum, r) => sum + r.state.totalOverdue, 0),
-    urgentCustomers: urgentRows.length,
+    urgent: Number(urgentRow?.total ?? 0),
+    urgentCustomers: Number(urgentRow?.customers ?? 0),
     urgentThresholdDays: config["escalation.stage3Days"],
     promisedOpen: open.reduce((sum, p) => sum + p.amount, 0),
     promisedCount: open.length,

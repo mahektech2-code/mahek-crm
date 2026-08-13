@@ -34,12 +34,13 @@ export default async function BillsPage({
   const years = financialYearsBetween(earliest, day);
   const financialYear = fy && years.includes(fy) ? fy : financialYearOf(day);
 
-  const [rows, aging, customer] = await Promise.all([
+  const [rows, customer] = await Promise.all([
     listBills({ financialYear }),
-    // The same filter, so the aging strip describes the table beneath it.
-    agingSummary({ financialYear }),
     customerId ? getCustomer(customerId) : null,
   ]);
+  // Summed from the rows above rather than read again, so the strip cannot
+  // describe a different year to the table beneath it.
+  const aging = agingSummary(rows);
 
   return (
     <BillsScreen

@@ -924,6 +924,17 @@ export const SETTINGS = [
       "Off, a telecaller can only pick from the frequent list - which is a deliberate constraint for a new team, and a wall for an experienced one.",
     default: true,
   },
+  {
+    key: "products.searchMinChars",
+    type: "integer",
+    category: "products",
+    label: "Characters before the catalogue is searched",
+    description:
+      "One letter matches most of the catalogue, so the answer is a list nobody can read produced by the most expensive query in the app - trigram similarity plus a leading-wildcard match on eight columns. Two characters is where the answer starts being an answer. Raise it on a much larger catalogue; one means search from the first keystroke.",
+    default: 2,
+    min: 1,
+    max: 5,
+  },
 
   /* ---------------------------------------------------------- interactions */
   {
@@ -2088,6 +2099,7 @@ export type Config = {
   "products.starterListCount": number;
   "products.priceSource": "unset" | "manual" | "product" | "pricelist";
   "products.searchOnOrderForms": boolean;
+  "products.searchMinChars": number;
   "interactions.singleSelectOutcomes": string[];
 
   "whatsapp.mode": "manual" | "automatic";

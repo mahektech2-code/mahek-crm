@@ -32,7 +32,18 @@
 name: Sheet sync
 
 on:
-  schedule:
+# THE SCHEDULE MOVED TO THE DROPLET. See deploy/sheet-sync.sh.
+#
+# `schedule:` here is best-effort, and on a private repo under a free account
+# it is the lowest priority tier there is — a tick that cannot be served is
+# DROPPED, never queued. `7,37 * * * *` promised forty-eight runs a day and
+# delivered five or six: measured gaps of three to four hours, every run green.
+# Nothing failed. The CRM was just quietly hours behind the workbook.
+#
+# The droplet's cron is a real cron on a machine that is always on, and it can
+# call the app it is hosting. This workflow stays for `workflow_dispatch` — a
+# sync somebody wants to run by hand, from a browser, without SSH.
+  # schedule:
     # THIS IS THE SAFETY NET, NOT THE SCHEDULE. `schedule:` is best-effort, and
     # on a private repo belonging to a free account it is the lowest priority
     # tier there is — GitHub does not queue a tick it cannot serve, it drops it.
@@ -46,7 +57,7 @@ on:
     #
     # :07 and :37 rather than :00 and :30 because the top of the hour is when
     # every other cron on GitHub fires too, and that is when ticks get dropped.
-    - cron: "7,37 * * * *"
+    # - cron: "7,37 * * * *"   # moved to the droplet
   workflow_dispatch:
 
 concurrency:

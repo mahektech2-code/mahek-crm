@@ -4,7 +4,14 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { isManager, requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
-import { currentPeriod, dayActivity, rangeActivity, teamRange, today } from "@/lib/queries";
+import {
+  crmBadgeCounts,
+  currentPeriod,
+  dayActivity,
+  rangeActivity,
+  teamRange,
+  today,
+} from "@/lib/queries";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { getQueue } from "@/lib/services/queue-service";
 import { getFollowUpWorklist } from "@/lib/services/payment-service";
@@ -80,7 +87,7 @@ export default async function DashboardPage({
 
   // One wave, not three. Each of these is a round trip to a database in another
   // continent, so waiting on them in sequence shows up directly as page load.
-  const [activity, yesterday, queue, followUps, inactive, targets, counts, team, over60, teamActivity] =
+  const [activity, yesterday, queue, followUps, inactive, targets, counts, badgeCounts, team, over60, teamActivity] =
     await Promise.all([
       rangeActivity(teamView ? null : user.id, range),
       // What the span is measured against: the equally long one before it. For
@@ -95,6 +102,9 @@ export default async function DashboardPage({
         reminders: config["dashboard.reminderOverdueFlagDays"],
         complaints: config["dashboard.complaintUnresolvedFlagDays"],
       }),
+      // The pair the sidebar and the launcher also read. Memoised for the
+      // request by the CRM layout above this page, so it is not a round trip.
+      crmBadgeCounts(),
       teamView ? teamRange(range) : Promise.resolve([]),
       teamView ? overSixtyDays() : Promise.resolve(0),
       // The team's own figures over the SAME span, so a telecaller's connect
@@ -104,7 +114,8 @@ export default async function DashboardPage({
       teamView ? Promise.resolve(null) : rangeActivity(null, range),
     ]);
 
-  const { dueReminders, overdueReminders, openComplaints } = counts;
+  const { overdueReminders } = counts;
+  const { dueReminders, openComplaints } = badgeCounts;
 
   const targetTotal = targets.reduce((a, t) => a + t.target, 0);
   const achieved = targets.reduce((a, t) => a + t.achieved, 0);
@@ -871,25 +882,22 @@ async function dashboardCounts(
   day: string,
   flagDays: { reminders: number; complaints: number },
 ) {
+  // Reminders due today and open complaints are NOT here. They are the pair
+  // `crmBadgeCounts` owns — the same two numbers the sidebar and the launcher
+  // tile show — and a third spelling of them in this query is how the top of
+  // the dashboard came to be able to disagree with the sidebar beside it.
+  // Reading them from there costs nothing: the CRM layout wraps this page in
+  // the same request and has already asked, so the memoised answer is waiting.
   const [row] = await db.execute<{
-    due: number;
     overdue: number;
-    complaints: number;
     reminders_flagged: number;
     complaints_flagged: number;
     overdue_growth: string;
   }>(sql`
     select
       (select count(*) from reminders r
-        where r.status = 'pending' and r.due_date <= ${day}::date
-          and (${userId}::text is null or r.assigned_user_id = ${userId}))::int as due,
-      (select count(*) from reminders r
         where r.status = 'pending' and r.due_date < ${day}::date
           and (${userId}::text is null or r.assigned_user_id = ${userId}))::int as overdue,
-      (select count(*) from complaints c
-        join customers cu on cu.id = c.customer_id
-        where c.status in ('open','in_progress','awaiting_customer')
-          and (${userId}::text is null or cu.owner_id = ${userId}))::int as complaints,
       (select count(*) from reminders r
         where r.status = 'pending'
           and r.due_date < (${day}::date - ${flagDays.reminders}::int)
@@ -909,9 +917,7 @@ async function dashboardCounts(
           and (${userId}::text is null or cu.owner_id = ${userId})) as overdue_growth
   `);
   return {
-    dueReminders: row?.due ?? 0,
     overdueReminders: row?.overdue ?? 0,
-    openComplaints: row?.complaints ?? 0,
     remindersFlagged: row?.reminders_flagged ?? 0,
     complaintsFlagged: row?.complaints_flagged ?? 0,
     overdueGrowth: Number(row?.overdue_growth ?? 0),

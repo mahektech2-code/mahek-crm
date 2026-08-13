@@ -301,6 +301,8 @@ type CallPanelProps = {
    * because a search box that finds nothing reads as a broken catalogue.
    */
   searchEnabled?: boolean;
+  /** `products.searchMinChars` — below this, nothing is asked of the server. */
+  searchMinChars?: number;
   /** The signed-in telecaller, so a script can say their name rather than {your name}. */
   userName?: string;
   /** §3.2 — outcomes whose quick notes are one choice, from configuration. */
@@ -421,6 +423,7 @@ function CallPanelForm({
   scripts = [],
   frequentProductIds = [],
   searchEnabled = true,
+  searchMinChars = 2,
   userName,
   singleSelectOutcomes = [],
   maxComplaintImages = 6,
@@ -512,6 +515,10 @@ function CallPanelForm({
   React.useEffect(() => {
     const q = productQuery.trim();
     if (!q || !target || !searchEnabled) return;
+    // One character matches most of the catalogue, so it is a round trip whose
+    // answer is unreadable. The local filter over what is already loaded still
+    // runs, so the first keystroke is not dead — it just does not ask Postgres.
+    if (q.length < searchMinChars) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       fetch(
@@ -553,7 +560,7 @@ function CallPanelForm({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [productQuery, target, searchEnabled]);
+  }, [productQuery, target, searchEnabled, searchMinChars]);
 
   /**
    * The bill a payment script is about.
@@ -741,10 +748,23 @@ function CallPanelForm({
     );
   }, [products, productQuery, remote, known]);
 
+  // Typed something, but not yet enough to ask the catalogue. A fourth thing
+  // an empty list can mean, and it must not borrow either of the other two
+  // sentences: "Looking…" would be a lie, and "no product matches that" would
+  // tell a telecaller mid-call that we do not stock something on the strength
+  // of one letter.
+  const belowMinChars =
+    searchEnabled &&
+    productQuery.trim() !== "" &&
+    productQuery.trim().length < searchMinChars;
+
   // A search that is still in flight, so an empty list can say "looking"
   // rather than "there is no such product".
   const searching =
-    searchEnabled && productQuery.trim() !== "" && remote?.q !== productQuery.trim();
+    searchEnabled &&
+    productQuery.trim() !== "" &&
+    !belowMinChars &&
+    remote?.q !== productQuery.trim();
 
   // Long lists are capped until asked for — the design shows a handful and
   // keeps the rest one click away.
@@ -2079,9 +2099,11 @@ function CallPanelForm({
                               ) : null}
                               {matches.length === 0 ? (
                                 <div className="px-2.5 py-5 text-center text-sm text-muted">
-                                  {searching
-                                    ? "Looking…"
-                                    : "No product matches that. Try the formulation, like “M5x4” or “epoxy”, or the pack size."}
+                                  {belowMinChars
+                                    ? "Keep typing to search the catalogue."
+                                    : searching
+                                      ? "Looking…"
+                                      : "No product matches that. Try the formulation, like “M5x4” or “epoxy”, or the pack size."}
                                 </div>
                               ) : null}
                             </div>

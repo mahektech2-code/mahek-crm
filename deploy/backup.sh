@@ -30,9 +30,15 @@ KEEP_REMOTE_DAYS=30
 cd "$APP_DIR"
 
 if [ "${1:-}" = "--install-cron" ]; then
-  # 01:15 IST — after the nightly job has finished rebuilding the caches, so
-  # the dump holds a settled database rather than one mid-recompute.
-  line="15 1 * * * /usr/bin/env bash ${APP_DIR}/backup.sh >> ${APP_DIR}/backups/backup.log 2>&1"
+  # 20:45 UTC = 02:15 IST. The host runs UTC, so the cron entry does too.
+  #
+  # It says AFTER the nightly and now genuinely is. It shipped at 01:15 IST
+  # with a comment claiming the same thing, while the nightly ran at 01:43 —
+  # so every dump was taken half an hour BEFORE the recompute it claimed to
+  # follow, and held a database mid-way between yesterday's caches and
+  # today's. Harmless for recovery, wrong in the one way a comment can be:
+  # confidently.
+  line="45 20 * * * /usr/bin/env bash ${APP_DIR}/backup.sh >> ${APP_DIR}/backups/backup.log 2>&1"
   # Both `|| true`s are load-bearing under `set -o pipefail`, and both fire on
   # a FRESH box — which is the only box this is ever run on. `crontab -l` fails
   # when there is no crontab yet, and `grep -v` exits 1 when it is handed no

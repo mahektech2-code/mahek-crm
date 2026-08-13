@@ -127,6 +127,7 @@ export default async function QueuePage() {
       singleSelectOutcomes={config["interactions.singleSelectOutcomes"]}
       maxComplaintImages={config["attachments.maxPerComplaint"]}
       searchEnabled={config["products.searchOnOrderForms"]}
+      searchMinChars={config["products.searchMinChars"]}
       userName={user.name}
       products={productOptions}
       scripts={scriptRows.map((a) => ({
