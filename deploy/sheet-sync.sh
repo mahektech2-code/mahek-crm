@@ -34,8 +34,32 @@ set -a
 . "${APP_DIR}/.env"
 set +a
 
+# EVERY VARIABLE THIS NEEDS, CHECKED OUT LOUD.
+#
+# `.env` is sourced by a shell, and a shell stops at the first line it cannot
+# parse — leaving everything BELOW that line unset while everything above it is
+# fine. That happened: `MAIL_FROM=MahekOne <noreply@…>` was written unquoted,
+# `<` is redirection, and the parse died there. DOMAIN and CRON_SECRET sat
+# above it and were set, so the sync ran and looked healthy.
+# SYNC_OWNER_EMAIL sat below it and was not, so `project` was skipped by a
+# `[ -n "$OWNER" ]` guard that said nothing.
+#
+# For six hours the read modes landed rows in the staging tables and NOTHING
+# PUBLISHED THEM. The log was full of `"ok":true`. The CRM simply never saw a
+# new order, and no part of this reported a problem.
+#
+# So the guard is gone and this is here instead. A missing variable now stops
+# the run with the name of the variable in it.
+for v in DOMAIN CRON_SECRET SYNC_OWNER_EMAIL; do
+  if [ -z "$(eval "echo \${$v:-}")" ]; then
+    echo "[$(date -Is)] ${v} is not set — check ${APP_DIR}/.env parses in a shell:" >&2
+    echo "  bash -c 'set -a; . ${APP_DIR}/.env' " >&2
+    exit 1
+  fi
+done
+
 URL="https://${DOMAIN}/api/sheets/sync"
-OWNER="${SYNC_OWNER_EMAIL:-}"
+OWNER="${SYNC_OWNER_EMAIL}"
 
 sync() {
   local mode="$1"
@@ -62,7 +86,7 @@ case "${1:-cycle}" in
     # `project` publishes what has landed, so projecting first would ship the
     # previous cycle's data as though it were fresh.
     for m in append taken payments parties; do sync "$m"; done
-    [ -n "$OWNER" ] && sync "project&owner=${OWNER}"
+    sync "project&owner=${OWNER}"
     ;;
   nightly)
     # `reconcile` is the only pass that sees an edit to an old row or a
@@ -70,7 +94,7 @@ case "${1:-cycle}" in
     # and it has to run after the projection has published what reconcile
     # found.
     sync reconcile
-    [ -n "$OWNER" ] && sync "project&owner=${OWNER}"
+    sync "project&owner=${OWNER}"
     sync nightly
     ;;
   *)
