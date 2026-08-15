@@ -13,7 +13,13 @@ managers. Dispatch, inventory and accounts join later on the same schema.
 ## Stack
 
 - **Next.js 16** (App Router, React 19, Server Components + Server Actions)
-- **Postgres** on Neon, provisioned through the Vercel Marketplace
+- **Postgres** in a container beside the app on a DigitalOcean droplet, not
+  addressable from the internet — see DEPLOY.md. It was Neon behind Vercel
+  until August 2026, which is why several comments still explain themselves in
+  terms of a database running in GMT: that was true and the rule it produced
+  (never cast a stored timestamp without naming the zone) outlives the move,
+  because a local Postgres set to Asia/Kolkata hides the bug rather than fixing
+  it.
 - **Drizzle ORM** — schema in `src/db/schema.ts`
 - **Tailwind v4** — design tokens in `src/app/globals.css` under `@theme`
 - **Auth** — email + password, admin-created, scrypt hashes, DB-backed sessions
