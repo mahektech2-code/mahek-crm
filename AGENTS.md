@@ -191,8 +191,9 @@ src/
     apps/                  the launcher, 1–9 opens an app
     field/                 placeholder shell for an app not built yet
     accounts/              the Accounts app — today, order approvals, payments
-                           to confirm, credit notes, record a payment, bills,
-                           customer account, on account, sheet import, audit
+                           to confirm, credit notes, record a payment,
+                           outstanding, bills, customer account, on account,
+                           sheet import, audit
                            (was `orders/`; /orders still redirects here)
     people/ reports/ admin/
                            admin/access-section.tsx — the People section, which
@@ -201,7 +202,7 @@ src/
       dashboard/           telecaller day + manager team overview
       queue/               the calling queue, j/k/Enter driven
       reminders/  history/
-      payments/  bills/  inactive/
+      payments/  outstanding/  bills/  inactive/
       customers/  customers/[id]  customers/import
                            the record carries the full message history
       complaints/  targets/  eod/  whatsapp/
@@ -1630,6 +1631,33 @@ default, the server filters to it, and the table pages within it. Paging is
 over what is filtered IN, so the totals row, the aging strip and the export all
 describe the whole year while only the table is cut into pages — a page that
 changed the totals under it would show a different figure on every click.
+
+**"Who owes us" is a different question to "what did we bill", and it has its
+own screen.** The ledger is a list of bills; Outstanding is a list of CUSTOMERS,
+one row each, with what they owe and the bills behind it opening on the same
+row. Both questions are always asked together — how much, then against what —
+and answering the second on another screen is what makes somebody give up half
+way through a chase. It is deliberately NOT cut by financial year: the oldest
+debt on an account is usually last year's, and that is the first row anybody
+works. `lib/engines/outstanding.ts` is the grouping, pure like every other
+engine, and `listOutstandingByCustomer` reads `listBills` rather than a query of
+its own — a screen totalling outstanding from a different read than the ledger
+is how two screens come to disagree about one customer.
+
+**It is one screen rendered in two apps, not two screens.** Accounts and the
+CRM read the same function through the same scope, so the two can never quote a
+customer two different balances; what differs is what surrounds the table —
+Accounts links into the customer account, the CRM links into the customer
+record and the WhatsApp reminder, which is where a chase actually happens.
+
+**And a bill nobody has spoken for is shown, counted and never added up.** An
+`unstated` bill is not debt, so it stays out of the outstanding figure exactly
+as `recomputeOutstanding` keeps it out — but it is listed, given its own
+column, its own metric and a sentence saying what it is. Hiding it would make a
+bill that is open on the ledger and absent here read as a screen that lost it;
+adding it would put the whole imported order book on a collections list. Its
+balance is drawn as "not stated" rather than as a figure, because rendering an
+unknown beside real balances is the original mistake in different clothes.
 
 **In raw SQL, qualify every column of the outer table.** Drizzle renders
 `${customers.id}` as a bare `"id"`. Inside a correlated subquery that binds to

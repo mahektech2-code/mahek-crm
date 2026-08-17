@@ -146,6 +146,7 @@ export function AccountsShell({
       label: "Money",
       items: [
         { href: "/accounts/record", label: "Record a payment", icon: "plus" },
+        { href: "/accounts/outstanding", label: "Outstanding", icon: "wallet" },
         { href: "/accounts/bills", label: "Bills", icon: "bill" },
         { href: "/accounts/ledger", label: "Customer account", icon: "ledger" },
         { href: "/accounts/on-account", label: "On account", icon: "onaccount" },

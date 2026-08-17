@@ -53,6 +53,7 @@ export const NAV: NavGroup[] = [
     label: "Collections",
     items: [
       { href: at("/payments"), label: "Payment Follow-up", icon: "rupee" },
+      { href: at("/outstanding"), label: "Outstanding", icon: "wallet" },
       { href: at("/bills"), label: "Sales Bills", icon: "doc" },
       { href: at("/inactive"), label: "Inactive Watch", icon: "eye" },
     ],
