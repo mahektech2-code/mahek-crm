@@ -2,7 +2,13 @@ export type NavItem = {
   href: string;
   label: string;
   icon: string;
-  badge?: "reminders" | "complaints" | "deactivations";
+  /**
+   * Which count to draw beside the label. An internal discriminator — never
+   * stored, never rendered — so unlike a module key it is free to be renamed,
+   * and it was worth renaming: it read `deactivations` on a screen that also
+   * handles reopening, which is the same half-a-name the route had.
+   */
+  badge?: "reminders" | "complaints" | "statusRequests";
   /**
    * Hidden from anybody who is not a manager or an admin, on top of the module
    * grant.
@@ -86,7 +92,7 @@ export const NAV: NavGroup[] = [
         href: at("/status-requests"),
         label: "Close/Reopen",
         icon: "warning",
-        badge: "deactivations",
+        badge: "statusRequests",
         // The one place `managerOnly` is not decoration.
         //
         // Every other module is withheld per person on the access screen. This

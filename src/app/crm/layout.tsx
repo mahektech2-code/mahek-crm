@@ -59,9 +59,9 @@ export default async function AppLayout({
 async function sidebarBadges() {
   // Both in one wait. The deactivation count is not scoped, matching the queue
   // it labels — a request is work for whoever decides it, not for whoever asked.
-  const [{ dueReminders, openComplaints }, deactivations] = await Promise.all([
+  const [{ dueReminders, openComplaints }, statusRequests] = await Promise.all([
     crmBadgeCounts(),
     customerStatusRequestCount(),
   ]);
-  return { reminders: dueReminders, complaints: openComplaints, deactivations };
+  return { reminders: dueReminders, complaints: openComplaints, statusRequests };
 }

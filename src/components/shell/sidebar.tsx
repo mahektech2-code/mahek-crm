@@ -17,7 +17,7 @@ export function Sidebar({
 }: {
   collapsed: boolean;
   user: User;
-  badges: { reminders: number; complaints: number; deactivations: number };
+  badges: { reminders: number; complaints: number; statusRequests: number };
   groups?: NavGroup[];
 }) {
   const pathname = usePathname();
@@ -47,8 +47,8 @@ export function Sidebar({
                   ? badges.reminders
                   : item.badge === "complaints"
                     ? badges.complaints
-                    : item.badge === "deactivations"
-                      ? badges.deactivations
+                    : item.badge === "statusRequests"
+                      ? badges.statusRequests
                       : 0;
 
               return (
