@@ -15,26 +15,37 @@ import {
   cx,
 } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { OrgTree } from "./org-tree";
 
 /* ---------------------------------------------------------------------------
  * The org chart.
  *
- * AN INDENTED TREE RATHER THAN BOXES AND LINES. At this size — 71 people, four
- * heads — a nested list is readable on a phone, prints, and survives somebody
- * having eleven direct reports. A drawn chart is prettier and becomes a
- * horizontal scroll nobody can follow the moment one branch is wide.
+ * TWO VIEWS, because they are good at opposite things and the argument between
+ * them has no winner.
  *
- * Every person is a row, so the thing you do most — see who reports to whom,
- * and fix one that is wrong — is one click on the row itself rather than a
- * separate edit mode.
+ * The CHART is what everybody pictures when they say org chart: cards, drawn
+ * top-down, joined by lines. It shows shape — who sits under whom, which layer
+ * is wide, where a manager has eleven reports — and it is the view somebody
+ * wants when they are explaining the company to a person.
+ *
+ * The LIST is an indented outline. It reads on a phone, it takes one screen for
+ * a whole department, and it is the view somebody wants when they are working
+ * through twenty-six unplaced people. The chart is bad at exactly that: at this
+ * size, before anybody is placed, it is twenty-six cards in a row.
+ *
+ * Either way a person is one click, because the thing done most on this screen
+ * is fixing a line that is wrong, and an edit mode would put a step in front of
+ * it.
  * ------------------------------------------------------------------------- */
 
 export function OrgScreen({
   chart,
   includeLeavers,
+  view,
 }: {
   chart: OrgChart;
   includeLeavers: boolean;
+  view: "tree" | "list";
 }) {
   const router = useRouter();
   const { run } = useToast();
@@ -42,6 +53,22 @@ export function OrgScreen({
   const [busy, setBusy] = React.useState(false);
 
   const { roots, all, totals } = chart;
+
+  /*
+   * NOBODY-YET IS NOT A BRANCH OF THE COMPANY.
+   *
+   * Everybody starts with no manager, so every unplaced person is technically a
+   * root — and drawing them as one put fifteen lone cards in the top row beside
+   * the actual company, which made the chart four screens wide and buried the
+   * one tree that meant anything. They are the same fact the strip already
+   * counts: work not done yet, not a reporting line.
+   *
+   * A root WITH reports is a real top. A root with none is somebody waiting to
+   * be placed, and belongs in its own strip underneath where it reads as a
+   * to-do list.
+   */
+  const trees = roots.filter((r) => r.reports.length > 0);
+  const unplaced = roots.filter((r) => r.reports.length === 0);
 
   return (
     <div className="max-w-[1440px] px-6 pt-6 pb-10">
@@ -54,6 +81,7 @@ export function OrgScreen({
         metrics={[
           { label: "People", value: String(totals.people) },
           { label: "With a manager", value: String(totals.withManager) },
+          { label: "At the top", value: String(totals.tops) },
           {
             label: "Not placed yet",
             value: String(totals.unassigned),
@@ -82,12 +110,30 @@ export function OrgScreen({
         <CardHeader
           title={includeLeavers ? "Everybody on record" : "Current staff"}
           hint={
-            <Link
-              href={includeLeavers ? "/hrms/org" : "/hrms/org?leavers=1"}
-              className="text-[13px] font-medium text-brand hover:underline"
-            >
-              {includeLeavers ? "Hide people who have left" : "Include people who have left"}
-            </Link>
+            <span className="flex items-center gap-3">
+              <span className="flex items-center gap-1 rounded-[4px] border border-line p-0.5">
+                {(["tree", "list"] as const).map((v) => (
+                  <Link
+                    key={v}
+                    href={`/hrms/org?view=${v}${includeLeavers ? "&leavers=1" : ""}`}
+                    className={cx(
+                      "rounded-[3px] px-2 py-0.5 text-[12px] font-medium no-underline",
+                      view === v
+                        ? "bg-brand text-white"
+                        : "text-body hover:bg-canvas",
+                    )}
+                  >
+                    {v === "tree" ? "Chart" : "List"}
+                  </Link>
+                ))}
+              </span>
+              <Link
+                href={`/hrms/org?view=${view}${includeLeavers ? "" : "&leavers=1"}`}
+                className="text-[13px] font-medium text-brand hover:underline"
+              >
+                {includeLeavers ? "Hide people who have left" : "Include people who have left"}
+              </Link>
+            </span>
           }
         />
 
@@ -96,6 +142,15 @@ export function OrgScreen({
             title="No employees to show"
             body="The employee master is empty, or everybody on it has left."
           />
+        ) : view === "tree" ? (
+          trees.length ? (
+            <OrgTree roots={trees} onEdit={setEditing} busy={busy} />
+          ) : (
+            <EmptyState
+              title="Nobody is placed yet"
+              body="Start with whoever sits at the top, then their heads. Every person you place leaves the list below."
+            />
+          )
         ) : (
           <div className="px-2 py-2">
             {roots.map((person) => (
@@ -110,6 +165,32 @@ export function OrgScreen({
           </div>
         )}
       </Card>
+
+      {view === "tree" && unplaced.length ? (
+        <Card className="mt-4">
+          <CardHeader
+            title="Not placed yet"
+            hint={`${unplaced.length} ${unplaced.length === 1 ? "person" : "people"} with nobody recorded above them`}
+          />
+          <div className="flex flex-wrap gap-2 px-5 py-4">
+            {unplaced.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                disabled={busy}
+                onClick={() => setEditing(p)}
+                title={`Set who ${p.name} reports to`}
+                className="cursor-pointer rounded-[6px] border border-dashed border-line bg-surface px-2.5 py-1.5 text-left hover:border-brand hover:bg-canvas disabled:cursor-not-allowed"
+              >
+                <span className="block text-[13px] font-medium text-ink">{p.name}</span>
+                <span className="mt-px block text-[12px] text-muted italic">
+                  {p.position ?? "No position recorded"}
+                </span>
+              </button>
+            ))}
+          </div>
+        </Card>
+      ) : null}
 
       {/* Keyed on the person, so opening it for somebody else starts fresh. */}
       {editing ? (
