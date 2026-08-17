@@ -158,6 +158,14 @@ export const APP_MODULES: AppModule[] = [
 
   /* -------------------------------------------------------------- the HRMS */
   {
+    key: "hrms.org",
+    app: "hrms",
+    label: "Org Chart",
+    group: "Employees",
+    href: "/hrms/org",
+    note: "Who reports to whom, and the only screen that can change it. Withholding it leaves the chart readable nowhere rather than read-only — there is no other view of it.",
+  },
+  {
     key: "hrms.employees",
     app: "hrms",
     label: "All Employees",

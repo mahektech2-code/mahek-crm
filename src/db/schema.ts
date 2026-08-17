@@ -2715,6 +2715,63 @@ export const employees = pgTable(
 );
 
 /**
+ * WHO REPORTS TO WHOM. A person, pointing at a person.
+ *
+ * ITS OWN TABLE, and that is the point rather than an implementation detail.
+ * `employees` is a MIRROR of the workbook's Employee Details tab — HR maintains
+ * that sheet, the sync rewrites the row on every change, and nothing on an HRMS
+ * screen may be edited because the next pass would silently undo it. This is
+ * the first piece of employee data MahekOne owns rather than reflects, so it
+ * lives outside the mirrored row where the sync cannot reach it. Putting it in
+ * a column would work today — `upsertColumns()` is an allow-list of 44 names —
+ * and would break the first time somebody added the 45th without noticing.
+ *
+ * IT COULD NOT COME FROM THE SHEET. `employees.reports_to` is already there and
+ * looks like the answer until you read it: 60 of 71 rows carry one of four
+ * POSITION titles — "HR and Sales Head", "Production Head", "Bhiwandi Head",
+ * "Sales State Head" — and not one matches an employee's name. It says what
+ * kind of person somebody answers to, never which one, so no tree can be built
+ * from it and nothing above those four heads exists at all.
+ *
+ * One row per employee, so `employee_id` is unique: a person has one manager
+ * here. Dotted lines, matrix reporting and dated history are all real things
+ * and none of them are this — they would each need their own shape, and
+ * inventing that shape before anybody has asked for it would be guessing.
+ */
+export const employeeReporting = pgTable(
+  "employee_reporting",
+  {
+    id: text("id").primaryKey(),
+    /** The person who reports. Cascade: their record going takes the link. */
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    /**
+     * The person they report to.
+     *
+     * Also cascade, deliberately. A manager whose employee record is deleted
+     * leaves their reports MANAGERLESS rather than pointing at nothing — the
+     * tree then shows them as unassigned, which is true and visible, instead of
+     * a dangling id that every query has to remember to guard.
+     */
+    managerId: text("manager_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    /** Who decided this, and when. HR will be asked "who moved me". */
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    // One manager per person. The upsert keys on this.
+    uniqueIndex("employee_reporting_employee_key").on(t.employeeId),
+    // Drawing the tree asks "who reports to this person" once per node.
+    index("employee_reporting_manager_idx").on(t.managerId),
+  ],
+);
+
+/**
  * The Payment Status tab: one row per ORDER, not per line and not per bill.
  *
  * It is a separate table rather than columns on `sheet_order_rows` because the
