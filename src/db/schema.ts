@@ -746,6 +746,26 @@ export const customers = pgTable(
     /** Raised by a telecaller, decided by a manager. */
     deactivationRequested: boolean("deactivation_requested").notNull().default(false),
     /**
+     * WHO ASKED, AND WHEN.
+     *
+     * The request was a boolean and a reason and nothing else. The asker's name
+     * existed only inside the notification text sent to managers — a sentence,
+     * in a table nobody joins, that cannot be listed, sorted or aged. A manager
+     * looking at a pending request could see that somebody wanted a customer
+     * closed and had no way to find out who, or whether the ask was from this
+     * morning or from March.
+     *
+     * Null on requests raised before these columns existed, and the screen says
+     * so rather than guessing. The notification carrying the name is still in
+     * `notifications` for anybody who needs to dig one out.
+     */
+    deactivationRequestedById: text("deactivation_requested_by_id").references(
+      () => users.id,
+    ),
+    deactivationRequestedAt: timestamp("deactivation_requested_at", {
+      withTimezone: true,
+    }),
+    /**
      * The same pair, in the other direction. A deactivated customer who wants
      * to come back is a decision somebody has to take deliberately —
      * `recomputeInactivity` will not do it on the strength of an order — so
@@ -753,6 +773,12 @@ export const customers = pgTable(
      */
     reactivationRequested: boolean("reactivation_requested").notNull().default(false),
     reactivationReason: text("reactivation_reason"),
+    reactivationRequestedById: text("reactivation_requested_by_id").references(
+      () => users.id,
+    ),
+    reactivationRequestedAt: timestamp("reactivation_requested_at", {
+      withTimezone: true,
+    }),
 
     /* commercial terms */
     gstin: text("gstin"),
