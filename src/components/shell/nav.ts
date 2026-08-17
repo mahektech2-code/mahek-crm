@@ -84,7 +84,7 @@ export const NAV: NavGroup[] = [
       },
       {
         href: at("/deactivations"),
-        label: "Deactivation Requests",
+        label: "Close/Reopen",
         icon: "warning",
         badge: "deactivations",
         // The one place `managerOnly` is not decoration.

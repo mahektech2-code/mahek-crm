@@ -2,7 +2,7 @@ import { listCustomerStatusRequests } from "@/lib/queries";
 import { today } from "@/lib/recompute";
 import { RequestsScreen } from "./requests-screen";
 
-export const metadata = { title: "Deactivation Requests — MahekOne CRM" };
+export const metadata = { title: "Status requests — MahekOne CRM" };
 
 /**
  * The list is not scoped. A request is work for whoever decides it, not for

@@ -62,10 +62,15 @@ export function RequestsScreen({ rows, today }: { rows: Row[]; today: string }) 
   const owing = deactivations.filter((r) => r.outstanding > 0);
 
   return (
-    <>
+    // The wrapper every CRM screen brings. `<main>` in the app shell has no
+    // padding of its own — deliberately, so a screen can run edge to edge if it
+    // needs to — which means a screen that forgets this one sits flush against
+    // the sidebar. `max-w-[1440px]` matches Inactive Watch, the table-shaped
+    // sibling this queue was pulled out of.
+    <div className="max-w-[1440px] px-6 pt-6 pb-10">
       <PageHeader
-        title="Deactivation Requests"
-        subtitle="Asked for by whoever works the account, decided here. Nothing on this list has changed a customer's status yet."
+        title="Customer status requests"
+        subtitle="Asked for by whoever works the account, closed or reopened here. Nothing on this list has changed a customer's status yet."
       />
 
       <MetricStrip
@@ -73,7 +78,7 @@ export function RequestsScreen({ rows, today }: { rows: Row[]; today: string }) 
           { label: "Waiting", value: String(rows.length) },
           { label: "To close", value: String(deactivations.length) },
           {
-            label: "To bring back",
+            label: "To reopen",
             value: String(rows.length - deactivations.length),
           },
           {
@@ -89,20 +94,19 @@ export function RequestsScreen({ rows, today }: { rows: Row[]; today: string }) 
         ]}
       />
 
-      <Card>
+      <Card className="overflow-auto">
         <CardHeader
-          title="Every request nobody has answered"
+          title="Waiting to be closed or reopened"
           hint="Oldest first — the longest wait is the one somebody has been waiting on"
         />
 
         {rows.length === 0 ? (
           <EmptyState
             title="Nothing waiting"
-            body="When somebody asks for a customer to be closed or brought back, it appears here and everyone who can decide is notified."
+            body="When somebody asks for a customer account to be closed, or for a closed one to be reopened, it appears here and everyone who can decide is notified."
           />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] border-collapse text-sm">
+          <table>
               <thead>
                 <tr>
                   <Th>Customer</Th>
@@ -196,8 +200,7 @@ export function RequestsScreen({ rows, today }: { rows: Row[]; today: string }) 
                   </Tr>
                 ))}
               </tbody>
-            </table>
-          </div>
+          </table>
         )}
       </Card>
 
@@ -231,7 +234,7 @@ export function RequestsScreen({ rows, today }: { rows: Row[]; today: string }) 
           }}
         />
       ) : null}
-    </>
+    </div>
   );
 }
 
