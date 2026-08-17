@@ -615,6 +615,15 @@ export const SETTINGS = [
     ],
   },
   {
+    key: "people.companyName",
+    type: "text",
+    category: "people",
+    label: "Company name",
+    description:
+      "The organisation everybody ultimately belongs to. It sits at the top of the org chart, above whoever has nobody above them, so the tree has one head instead of several loose ones. It is configuration rather than a constant for the ordinary reason: a name on a screen is a thing somebody eventually wants to change, and this one is already written out as a literal in four other places.",
+    default: "Mahek Marketing India",
+  },
+  {
     key: "people.pickerSearchThreshold",
     type: "integer",
     category: "people",
@@ -2055,6 +2064,7 @@ export type Config = {
   "payments.reportedQuietDays": number;
   "payments.allowOnAccountRemainder": boolean;
   "people.amChangeReasons": string[];
+  "people.companyName": string;
   "people.pickerSearchThreshold": number;
   "payments.modes": string[];
   "payments.referenceRequiredModes": string[];

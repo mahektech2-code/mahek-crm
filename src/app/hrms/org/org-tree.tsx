@@ -52,10 +52,13 @@ const toneFor = (id: string) => {
 
 export function OrgTree({
   roots,
+  company,
   onEdit,
   busy,
 }: {
   roots: OrgPerson[];
+  /** The organisation everybody belongs to. Drawn as the single head. */
+  company: string;
   onEdit: (p: OrgPerson) => void;
   busy: boolean;
 }) {
@@ -84,10 +87,59 @@ export function OrgTree({
     // The scroll lives here, on its own container, so the page body never
     // scrolls sideways however wide a layer gets.
     <div ref={scroller} className="overflow-x-auto px-5 py-6">
-      <div className="inline-flex min-w-full items-start justify-center gap-8">
-        {roots.map((person) => (
-          <Node key={person.id} person={person} onEdit={onEdit} busy={busy} />
-        ))}
+      {/*
+        THE COMPANY IS THE HEAD OF THE TREE.
+        
+        Without it, several people with nobody above them are several loose
+        trees standing side by side, and the chart has no top — which reads as
+        unfinished rather than as "these four report to nobody". One node above
+        them says the true thing: they all belong to the same organisation, and
+        each is a top of their own part of it.
+
+        It is NOT a person. No avatar, no count, and nothing to click, because
+        there is nothing about it to change from here — the name is a setting,
+        and a node that looks clickable and is not is worse than a plain label.
+      */}
+      <div className="inline-flex min-w-full flex-col items-center">
+        <span className="flex items-center gap-2 rounded-[8px] border border-line bg-canvas px-3.5 py-2">
+          <span
+            aria-hidden
+            className="flex size-5 flex-none items-center justify-center rounded-[4px] bg-brand text-[11px] font-bold text-white"
+          >
+            M
+          </span>
+          <span className="text-[13px] font-semibold text-ink">{company}</span>
+        </span>
+
+        {roots.length ? (
+          <>
+            <span aria-hidden className="h-5 w-px flex-none bg-line-strong" />
+            <div className="flex items-start">
+              {roots.map((person, i) => (
+                <div key={person.id} className="relative flex flex-col items-center px-3 pt-5">
+                  {roots.length > 1 ? (
+                    <span
+                      aria-hidden
+                      className={cx(
+                        "absolute top-0 h-px bg-line-strong",
+                        i === 0
+                          ? "left-1/2 right-0"
+                          : i === roots.length - 1
+                            ? "left-0 right-1/2"
+                            : "left-0 right-0",
+                      )}
+                    />
+                  ) : null}
+                  <span
+                    aria-hidden
+                    className="absolute top-0 left-1/2 h-5 w-px -translate-x-1/2 bg-line-strong"
+                  />
+                  <Node person={person} onEdit={onEdit} busy={busy} />
+                </div>
+              ))}
+            </div>
+          </>
+        ) : null}
       </div>
     </div>
   );

@@ -42,10 +42,12 @@ export function OrgScreen({
   chart,
   includeLeavers,
   view,
+  company,
 }: {
   chart: OrgChart;
   includeLeavers: boolean;
   view: "tree" | "list";
+  company: string;
 }) {
   const router = useRouter();
   const { run } = useToast();
@@ -144,7 +146,7 @@ export function OrgScreen({
           />
         ) : view === "tree" ? (
           trees.length ? (
-            <OrgTree roots={trees} onEdit={setEditing} busy={busy} />
+            <OrgTree roots={trees} company={company} onEdit={setEditing} busy={busy} />
           ) : (
             <EmptyState
               title="Nobody is placed yet"
