@@ -40,6 +40,8 @@ export type OrgChart = {
     people: number;
     withManager: number;
     unassigned: number;
+    /** People at the top: no manager, but somebody under them. */
+    tops: number;
     /** Deepest chain, so a chart that has gone strange is visible as a number. */
     depth: number;
     /** Rows that could not be drawn because they sit in a loop. Normally zero. */
@@ -125,7 +127,18 @@ export async function orgChart(includeLeavers = false): Promise<OrgChart> {
     totals: {
       people: all.length,
       withManager: all.filter((p) => p.managerId).length,
-      unassigned: all.filter((p) => !p.managerId).length,
+      /*
+       * NOT PLACED means nobody above AND nobody below — a person the chart
+       * cannot put anywhere.
+       *
+       * Counting everybody without a manager was a different question wearing
+       * the same label: it included whoever sits at the TOP, who is not
+       * unplaced but placed most definitely of all. The strip below the chart
+       * lists exactly this set, and the two disagreeing by one is the kind of
+       * small wrongness that makes somebody stop trusting both numbers.
+       */
+      unassigned: all.filter((p) => !p.managerId && p.reports.length === 0).length,
+      tops: all.filter((p) => !p.managerId && p.reports.length > 0).length,
       depth,
       unreachable: all.length - seen.size,
     },
