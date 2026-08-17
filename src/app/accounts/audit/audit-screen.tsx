@@ -35,6 +35,8 @@ const KIND_TONE: Record<AuditRow["kind"], "success" | "danger" | "warn" | "brand
   reject: "danger",
   refuse: "danger",
   record: "warn",
+  reverse: "danger",
+  hold: "warn",
 };
 
 export function AuditScreen({ rows }: { rows: AuditRow[] }) {
