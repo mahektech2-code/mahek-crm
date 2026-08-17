@@ -83,7 +83,7 @@ export const NAV: NavGroup[] = [
         badge: "complaints",
       },
       {
-        href: at("/deactivations"),
+        href: at("/status-requests"),
         label: "Close/Reopen",
         icon: "warning",
         badge: "deactivations",

@@ -94,17 +94,25 @@ export const APP_MODULES: AppModule[] = [
   crm("inactive", "Inactive Watch", "Collections"),
   crm("customers", "Customers", "Customer records", "The customer list and every customer record behind it."),
   crm("complaints", "Complaints", "Customer records"),
-  // The KEY stays `crm.deactivations` for ever. It is what a grant points at,
-  // and renaming it would silently revoke this screen from everybody holding
-  // it — a label is cosmetic, a key is a join. Only the words changed: the
-  // screen answers requests in both directions, and calling it "Deactivation"
-  // named half of what it does and truncated in the sidebar besides.
-  crm(
-    "deactivations",
-    "Close/Reopen",
-    "Customer records",
-    "Approving or refusing a request to close a customer account, or to reopen one. Withholding it leaves those requests to another manager — the ask still reaches everybody who can decide.",
-  ),
+  // WRITTEN OUT LONGHAND, because the key and the route have to disagree.
+  //
+  // The `crm()` helper derives both from one slug, which is right for every
+  // other screen and wrong for this one: the KEY is `crm.deactivations` and must
+  // stay that way for ever — it is what `app_module_access` rows point at, so
+  // renaming it would silently revoke this screen from everybody holding it —
+  // while the ROUTE moved to `/crm/status-requests`, because "deactivations"
+  // named half of what the screen does.
+  //
+  // A label is cosmetic. A route is a bookmark, and `next.config.ts` redirects
+  // the old one. A key is a join, and it does not move.
+  {
+    key: "crm.deactivations",
+    app: "crm",
+    label: "Close/Reopen",
+    group: "Customer records",
+    href: "/crm/status-requests",
+    note: "Approving or refusing a request to close a customer account, or to reopen one. Withholding it leaves those requests to another manager — the ask still reaches everybody who can decide.",
+  },
   crm("targets", "Monthly Targets", "Targets & reporting", "Whose numbers are whose. Usually a manager's screen."),
   crm("eod", "EOD Report", "Targets & reporting"),
   crm("whatsapp", "WhatsApp", "Communication"),
