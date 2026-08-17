@@ -85,7 +85,16 @@ export type CustomerStatusRequest = {
   reason: string | null;
   /** Null on requests raised before the asker was recorded. Say so; do not guess. */
   askedBy: string | null;
-  askedAt: string | null;
+  /**
+   * The IST calendar date the request was raised on, computed by Postgres.
+   *
+   * NOT an instant for the screen to truncate. Returning a full ISO timestamp
+   * and slicing the first ten characters off it in the component would be the
+   * §11 bug in two halves — `toISOString()` answers in UTC, so a request raised
+   * at 21:00 UTC is the NEXT day in Asia/Kolkata and would display a day early.
+   * Split across two files, the grep that guards this cannot see it.
+   */
+  askedOn: string | null;
   /** Whose book it is, so a manager knows who to ring about it. */
   assignedTo: string | null;
   status: string;
@@ -117,7 +126,7 @@ export async function listCustomerStatusRequests(): Promise<CustomerStatusReques
     kind: "deactivate" | "reactivate";
     reason: string | null;
     asked_by: string | null;
-    asked_at: string | null;
+    asked_on: string | null;
     assigned_to: string | null;
     status: string;
     outstanding: number;
@@ -132,7 +141,7 @@ export async function listCustomerStatusRequests(): Promise<CustomerStatusReques
            'deactivate'                as kind,
            customers.deactivation_reason as reason,
            u.name                      as asked_by,
-           customers.deactivation_requested_at as asked_at,
+           (customers.deactivation_requested_at at time zone 'Asia/Kolkata')::date as asked_on,
            a.name                      as assigned_to,
            customers.status            as status,
            coalesce(customers.outstanding, 0)::bigint as outstanding,
@@ -144,7 +153,7 @@ export async function listCustomerStatusRequests(): Promise<CustomerStatusReques
     union all
     select customers.id, customers.name, 'reactivate',
            customers.reactivation_reason,
-           u.name, customers.reactivation_requested_at,
+           u.name, (customers.reactivation_requested_at at time zone 'Asia/Kolkata')::date,
            a.name, customers.status,
            coalesce(customers.outstanding, 0)::bigint,
            customers.last_order_date
@@ -154,7 +163,7 @@ export async function listCustomerStatusRequests(): Promise<CustomerStatusReques
      where customers.reactivation_requested
      -- Nulls last: a request with no recorded date is one of the old ones, and
      -- it belongs at the bottom rather than pretending to be the newest.
-     order by asked_at asc nulls last, customer_name asc
+     order by asked_on asc nulls last, customer_name asc
   `);
 
   return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
@@ -163,7 +172,7 @@ export async function listCustomerStatusRequests(): Promise<CustomerStatusReques
     kind: r.kind as "deactivate" | "reactivate",
     reason: (r.reason as string | null) ?? null,
     askedBy: (r.asked_by as string | null) ?? null,
-    askedAt: r.asked_at ? new Date(r.asked_at as string).toISOString() : null,
+    askedOn: (r.asked_on as string | null) ?? null,
     assignedTo: (r.assigned_to as string | null) ?? null,
     status: String(r.status),
     outstanding: Number(r.outstanding ?? 0),

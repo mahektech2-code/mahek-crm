@@ -19,6 +19,7 @@ import {
 import { ConfirmDialog } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { longDate, money } from "@/lib/format";
+import { addDays } from "@/lib/business-date";
 
 /* ---------------------------------------------------------------------------
  * ONE QUEUE FOR BOTH DIRECTIONS.
@@ -42,7 +43,7 @@ export type Row = {
   kind: "deactivate" | "reactivate";
   reason: string | null;
   askedBy: string | null;
-  askedAt: string | null;
+  askedOn: string | null;
   assignedTo: string | null;
   status: string;
   outstanding: number;
@@ -151,7 +152,7 @@ export function RequestsScreen({ rows, today }: { rows: Row[]; today: string }) 
                           notification that carried it is still findable. */}
                       {r.askedBy ?? <span className="text-muted">Not recorded</span>}
                       <span className="mt-px block text-[13px] text-muted">
-                        {r.askedAt ? longDate(r.askedAt.slice(0, 10)) : "date not recorded"}
+                        {r.askedOn ? longDate(r.askedOn) : "date not recorded"}
                       </span>
                     </Td>
 
@@ -268,11 +269,4 @@ function confirmBody({ row, approve }: NonNullable<Pending>, today: string): str
     );
   }
   return parts.join(" ");
-}
-
-/** Pure, and only used to ask "was that recent" — no clock is read here. */
-function addDays(day: string, delta: number): string {
-  const d = new Date(`${day}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + delta);
-  return d.toISOString().slice(0, 10);
 }
