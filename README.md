@@ -90,21 +90,34 @@ migration — a colleague's database has no other way to learn about it.
 | | Database | Credentials live in |
 |---|---|---|
 | **Development** | Postgres on your own machine | `.env.local`, from `.env.example` |
-| **Preview / production** | Neon, on the company Vercel project | Vercel — never in git |
+| **Production** | Postgres in a container on the droplet, beside the app | `/opt/mahekone/.env` on the droplet — never in git |
 
-`.env*` is gitignored. To run against preview data (rarely needed):
+There is no preview environment. There used to be one, on Vercel with a Neon
+database behind it; both went away in August 2026 when the app moved to a
+droplet — see DEPLOY.md. What replaced preview is CI, which builds every pull
+request and runs the journeys against a throwaway Postgres of its own.
+
+`.env*` is gitignored. Production Postgres is bound to the droplet's loopback
+and is reachable only over SSH, so working against it means a tunnel rather
+than pulling a credential down:
 
 ```bash
-vercel env pull .env.production.local
+ssh -N -L 5433:127.0.0.1:5432 deploy@<droplet-ip> &
+DATABASE_URL="postgres://mahek:<password>@127.0.0.1:5433/mahekone" npm run db:studio
 ```
 
 Never point `DATABASE_URL` at a shared database and run `db:seed` — it wipes
 everything. `db:setup` refuses to run against a non-local URL for this reason.
 
-### Applying migrations to preview or production
+### Applying migrations to production
 
-The app reads one variable, `DATABASE_URL`, so moving between databases is
-configuration, not code. To apply pending migrations to a deployed database:
+Usually you do not. The Deploy workflow applies pending migrations itself,
+through an SSH tunnel, before the new image is swapped in — so a merge to
+`main` migrates and releases in that order.
+
+By hand, for a migration that has to run outside a deploy: the app reads one
+variable, `DATABASE_URL`, so moving between databases is configuration, not
+code.
 
 ```bash
 DATABASE_URL="postgresql://…" npm run db:deploy

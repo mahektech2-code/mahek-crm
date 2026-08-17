@@ -24,6 +24,15 @@ const ACCOUNTS_ACTIONS = [
   "payment.confirm",
   "payment.reject",
   "payment.apply_on_account",
+  // Every OTHER thing accounts do to a receipt after recording it. Leaving
+  // these out did not make them quiet, it made them invisible: the log showed
+  // "Recorded ₹8,000 as confirmed" and then said nothing when that same ₹8,000
+  // was reversed, which reads as money still on the account. A log that shows
+  // half of a pair of decisions is worse than one that shows neither, because
+  // the half it shows is believed.
+  "payment.hold",
+  "payment.reverse",
+  "payment.reallocate",
   "creditnote.issue",
   "creditnote.refuse",
   // Changing who an account answers to is an accounts decision, so it belongs
@@ -43,7 +52,19 @@ export type AuditRow = {
   on: string;
   entityType: string;
   entityId: string | null;
-  kind: "approve" | "decline" | "confirm" | "reject" | "record" | "issue" | "refuse";
+  kind:
+    | "approve"
+    | "decline"
+    | "confirm"
+    | "reject"
+    | "record"
+    | "issue"
+    | "refuse"
+    /* Its own word, for the same reason the receipt status is its own status:
+     * reversed money COUNTED and then stopped counting, which is a different
+     * thing to tell somebody than money that never arrived. */
+    | "reverse"
+    | "hold";
 };
 
 const KIND: Record<string, AuditRow["kind"]> = {
@@ -56,6 +77,9 @@ const KIND: Record<string, AuditRow["kind"]> = {
   "creditnote.issue": "issue",
   "creditnote.refuse": "refuse",
   "customer.reassign": "record",
+  "payment.reverse": "reverse",
+  "payment.hold": "hold",
+  "payment.reallocate": "record",
 };
 
 export async function accountsAudit(limit = 500): Promise<AuditRow[]> {
