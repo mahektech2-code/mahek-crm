@@ -94,6 +94,12 @@ export const APP_MODULES: AppModule[] = [
   crm("inactive", "Inactive Watch", "Collections"),
   crm("customers", "Customers", "Customer records", "The customer list and every customer record behind it."),
   crm("complaints", "Complaints", "Customer records"),
+  crm(
+    "deactivations",
+    "Deactivation Requests",
+    "Customer records",
+    "Approving or refusing a request to close a customer account, or to bring one back. Withholding it leaves those requests to another manager — the ask still reaches everybody who can decide.",
+  ),
   crm("targets", "Monthly Targets", "Targets & reporting", "Whose numbers are whose. Usually a manager's screen."),
   crm("eod", "EOD Report", "Targets & reporting"),
   crm("whatsapp", "WhatsApp", "Communication"),

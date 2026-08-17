@@ -698,7 +698,14 @@ export async function requestDeactivation(
 
     await db
       .update(customers)
-      .set({ deactivationRequested: true, deactivationReason: reason.trim() })
+      .set({
+        deactivationRequested: true,
+        deactivationReason: reason.trim(),
+        // Stored on the row, not only in the notification. A queue that cannot
+        // say who asked is a queue a manager has to answer on trust.
+        deactivationRequestedById: ctx.user.id,
+        deactivationRequestedAt: new Date(),
+      })
       .where(inArray(customers.id, customerIds));
 
     const managers = await db
@@ -830,7 +837,12 @@ export async function requestReactivation(
 
     await db
       .update(customers)
-      .set({ reactivationRequested: true, reactivationReason: reason.trim() })
+      .set({
+        reactivationRequested: true,
+        reactivationReason: reason.trim(),
+        reactivationRequestedById: ctx.user.id,
+        reactivationRequestedAt: new Date(),
+      })
       .where(
         inArray(
           customers.id,
@@ -849,7 +861,7 @@ export async function requestReactivation(
         title: "Reactivation requested",
         body: `${ctx.user.name} asked to bring back ${deactivated.length} customer${deactivated.length === 1 ? "" : "s"}: ${reason.trim()}`,
         kind: "info",
-        href: "/crm/customers?status=Deactivated",
+        href: "/crm/deactivations",
       });
     }
 

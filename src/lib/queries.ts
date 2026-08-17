@@ -14,7 +14,7 @@ import {
   orders,
   users,
 } from "@/db/schema";
-import { resolveScope, scopedUserIds, scopedToUsers} from "./access-control";
+import { ASSIGNED_TO_SQL, resolveScope, scopedUserIds, scopedToUsers} from "./access-control";
 import { isManager, requireUser } from "./auth";
 import { getScope } from "./scope";
 import { today as businessToday } from "./recompute";
@@ -74,6 +74,112 @@ export const crmBadgeCounts = cache(async function crmBadgeCounts(): Promise<{
     openComplaints: row?.complaints ?? 0,
   };
 });
+
+/* ------------------------------------------ deactivation and reactivation */
+
+export type CustomerStatusRequest = {
+  customerId: string;
+  customerName: string;
+  /** `deactivate` — please close this account. `reactivate` — please reopen it. */
+  kind: "deactivate" | "reactivate";
+  reason: string | null;
+  /** Null on requests raised before the asker was recorded. Say so; do not guess. */
+  askedBy: string | null;
+  askedAt: string | null;
+  /** Whose book it is, so a manager knows who to ring about it. */
+  assignedTo: string | null;
+  status: string;
+  outstanding: number;
+  lastOrderDate: string | null;
+};
+
+/**
+ * EVERY UNANSWERED REQUEST, both directions, oldest first.
+ *
+ * NOT SCOPED. A request is work for whoever decides it, not for whoever raised
+ * it — scoping this to a manager's own book would hide requests raised by
+ * telecallers whose customers sit in somebody else's, which is most of them.
+ * The route already refuses anybody without `customer.deactivate`.
+ *
+ * Oldest first because the oldest ask is the one somebody has been waiting on,
+ * and because six of these have been waiting since before there was a screen to
+ * answer them from.
+ *
+ * `outstanding` and `lastOrderDate` ride along because they are the two facts
+ * that change the answer: closing an account that still owes money is a
+ * different decision from closing one that is square, and a customer who
+ * ordered last week is not finished whatever the request says.
+ */
+export async function listCustomerStatusRequests(): Promise<CustomerStatusRequest[]> {
+  const rows = await db.execute<{
+    customer_id: string;
+    customer_name: string;
+    kind: "deactivate" | "reactivate";
+    reason: string | null;
+    asked_by: string | null;
+    asked_at: string | null;
+    assigned_to: string | null;
+    status: string;
+    outstanding: number;
+    last_order_date: string | null;
+  }>(sql`
+    -- NOT ALIASED. ASSIGNED_TO_SQL is written against the customers table by
+    -- name, so aliasing it here would leave that fragment referencing a table
+    -- which is not in scope — the same class of mistake as the bare-column one
+    -- the section 11 tests guard, in the other direction.
+    select customers.id                as customer_id,
+           customers.name              as customer_name,
+           'deactivate'                as kind,
+           customers.deactivation_reason as reason,
+           u.name                      as asked_by,
+           customers.deactivation_requested_at as asked_at,
+           a.name                      as assigned_to,
+           customers.status            as status,
+           coalesce(customers.outstanding, 0)::bigint as outstanding,
+           customers.last_order_date   as last_order_date
+      from customers
+      left join users u on u.id = customers.deactivation_requested_by_id
+      left join users a on a.id = ${ASSIGNED_TO_SQL}
+     where customers.deactivation_requested
+    union all
+    select customers.id, customers.name, 'reactivate',
+           customers.reactivation_reason,
+           u.name, customers.reactivation_requested_at,
+           a.name, customers.status,
+           coalesce(customers.outstanding, 0)::bigint,
+           customers.last_order_date
+      from customers
+      left join users u on u.id = customers.reactivation_requested_by_id
+      left join users a on a.id = ${ASSIGNED_TO_SQL}
+     where customers.reactivation_requested
+     -- Nulls last: a request with no recorded date is one of the old ones, and
+     -- it belongs at the bottom rather than pretending to be the newest.
+     order by asked_at asc nulls last, customer_name asc
+  `);
+
+  return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+    customerId: String(r.customer_id),
+    customerName: String(r.customer_name),
+    kind: r.kind as "deactivate" | "reactivate",
+    reason: (r.reason as string | null) ?? null,
+    askedBy: (r.asked_by as string | null) ?? null,
+    askedAt: r.asked_at ? new Date(r.asked_at as string).toISOString() : null,
+    assignedTo: (r.assigned_to as string | null) ?? null,
+    status: String(r.status),
+    outstanding: Number(r.outstanding ?? 0),
+    lastOrderDate: (r.last_order_date as string | null) ?? null,
+  }));
+}
+
+/** How many requests are waiting. The sidebar badge and the screen agree. */
+export async function customerStatusRequestCount(): Promise<number> {
+  const [row] = await db.execute<{ n: number }>(sql`
+    select (count(*) filter (where deactivation_requested)
+          + count(*) filter (where reactivation_requested))::int as n
+      from customers
+  `);
+  return row?.n ?? 0;
+}
 
 /**
  * Memoised for the REQUEST, the way `resolveScope` and `getCurrentUser`
