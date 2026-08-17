@@ -17,7 +17,12 @@ import { ToastProvider } from "@/components/ui/toast";
  * still gets a module row, because the second one arrives beside it rather
  * than rearranging the app somebody has learned.
  */
-const MODULES = [{ href: "/hrms/employees", label: "All Employees" }];
+const MODULES = [
+  { href: "/hrms/employees", label: "All Employees" },
+  // The second module the comment above anticipated. It arrives beside the
+  // first rather than rearranging the app somebody has already learned.
+  { href: "/hrms/org", label: "Org Chart" },
+];
 
 export default async function HrmsLayout({
   children,
