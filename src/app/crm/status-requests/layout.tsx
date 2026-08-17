@@ -27,6 +27,9 @@ export default async function DeactivationsModuleLayout({
   children: React.ReactNode;
 }) {
   const user = await requireUser();
+  // The KEY, not the route. This folder is `status-requests` and the grant is
+  // still `crm.deactivations` — see lib/modules.ts, where the two are written
+  // out separately for exactly this reason.
   await requireModule(user.id, "crm.deactivations");
   // To the dashboard rather than /apps: they hold the CRM, just not this.
   if (!isManager(user)) redirect("/crm/dashboard");

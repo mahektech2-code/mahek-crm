@@ -861,7 +861,7 @@ export async function requestReactivation(
         title: "Reactivation requested",
         body: `${ctx.user.name} asked to bring back ${deactivated.length} customer${deactivated.length === 1 ? "" : "s"}: ${reason.trim()}`,
         kind: "info",
-        href: "/crm/deactivations",
+        href: "/crm/status-requests",
       });
     }
 
