@@ -30,6 +30,12 @@ const PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   rupee: <path d="M6 4h12M6 9h12M15 4c0 4-3.5 5-9 5l8 10" />,
+  wallet: (
+    <>
+      <rect x="3" y="6" width="18" height="13" rx="2" />
+      <path d="M3 10h18M16.5 14.5h1.5" />
+    </>
+  ),
   doc: (
     <>
       <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />

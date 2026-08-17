@@ -20,6 +20,10 @@ import {
   assertCustomerInScope, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
 import { isAttemptAllowed, agingBucket, effectiveDueDate } from "../engines/escalation";
+import {
+  groupOutstanding,
+  type OutstandingCustomer,
+} from "../engines/outstanding";
 import { billCreditDaysSql } from "../bill-terms";
 import {
   nextCallOn,
@@ -683,11 +687,39 @@ export async function listBills(filters?: BillFilters) {
       bucket: agingBucket(overdueDays, config),
       status: b.status,
       disputed: b.disputed,
+      /*
+       * Whether anybody has said this bill was paid or is owed.
+       *
+       * Carried on the row rather than left to each caller to fetch, because a
+       * screen showing a balance has to be able to say which kind of number it
+       * is: on an `unstated` bill the balance is the full amount purely because
+       * nothing has been recorded against it either way.
+       */
+      paymentPosition: b.paymentPosition,
     };
   });
 }
 
 export type BillRow = Awaited<ReturnType<typeof listBills>>[number];
+
+/**
+ * Who owes us money, one row per customer, with the bills behind each.
+ *
+ * The ledger answers "what did we bill"; this answers "who owes us", which is
+ * where both a collections call and an accounts chase actually start. It reads
+ * `listBills` rather than a second query of its own — a screen totalling
+ * outstanding from one read of the bills while the ledger showed another is
+ * exactly how two screens come to disagree about one customer.
+ *
+ * Scope-aware through `listBills`: a telecaller sees their own book.
+ */
+export async function listOutstandingByCustomer(): Promise<OutstandingCustomer[]> {
+  // Every open bill, across every financial year. Deliberately NOT cut by
+  // year: the oldest debt on an account is usually last year's, and it is the
+  // first thing anybody chases.
+  const rows = await listBills({ openOnly: true });
+  return groupOutstanding(rows);
+}
 
 /**
  * The aging strip, over bills the caller has ALREADY read.
