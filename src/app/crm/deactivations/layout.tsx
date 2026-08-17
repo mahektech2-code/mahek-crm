@@ -3,7 +3,7 @@ import { requireUser, isManager } from "@/lib/auth";
 import { requireModule } from "@/lib/access";
 
 /**
- * The route guard for Deactivation Requests.
+ * The route guard for Status Requests.
  *
  * TWO CHECKS, because they answer different questions.
  *

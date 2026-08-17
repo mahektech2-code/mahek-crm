@@ -94,11 +94,16 @@ export const APP_MODULES: AppModule[] = [
   crm("inactive", "Inactive Watch", "Collections"),
   crm("customers", "Customers", "Customer records", "The customer list and every customer record behind it."),
   crm("complaints", "Complaints", "Customer records"),
+  // The KEY stays `crm.deactivations` for ever. It is what a grant points at,
+  // and renaming it would silently revoke this screen from everybody holding
+  // it — a label is cosmetic, a key is a join. Only the words changed: the
+  // screen answers requests in both directions, and calling it "Deactivation"
+  // named half of what it does and truncated in the sidebar besides.
   crm(
     "deactivations",
-    "Deactivation Requests",
+    "Close/Reopen",
     "Customer records",
-    "Approving or refusing a request to close a customer account, or to bring one back. Withholding it leaves those requests to another manager — the ask still reaches everybody who can decide.",
+    "Approving or refusing a request to close a customer account, or to reopen one. Withholding it leaves those requests to another manager — the ask still reaches everybody who can decide.",
   ),
   crm("targets", "Monthly Targets", "Targets & reporting", "Whose numbers are whose. Usually a manager's screen."),
   crm("eod", "EOD Report", "Targets & reporting"),
