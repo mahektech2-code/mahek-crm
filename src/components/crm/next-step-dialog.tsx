@@ -20,7 +20,7 @@ import type { NextStep } from "@/lib/engines/next-step";
 
 const TONE = {
   booked: { tone: "brand" as const, word: "You owe them this call" },
-  scheduled: { tone: "neutral" as const, word: "Planned" },
+  scheduled: { tone: "neutral" as const, word: "Scheduled" },
   decide: { tone: "warn" as const, word: "Needs a decision" },
   none: { tone: "muted" as const, word: "Nothing scheduled" },
 };
@@ -101,26 +101,24 @@ export function NextStepDialog({
            */}
           {step.heldToday ? (
             <p className="border-t border-divider pt-3 text-sm text-muted">
-              Not on today&rsquo;s list: {step.heldToday.toLowerCase()}.
+              Not on today&rsquo;s Call Log: {step.heldToday.toLowerCase()}.
             </p>
           ) : null}
 
           {/*
-           * A predicted date is labelled as one. A telecaller who reads this
-           * out as a commitment has made a promise the rules never made.
+           * The date is stated, not hedged. The old sentence here — "it moves
+           * if they order, pay, or ask for a callback" — was true and took the
+           * confirmation back in the same breath: a telecaller cannot act on a
+           * date the screen is already apologising for. The badge is what
+           * separates a promise from a prediction, and it does that without
+           * arguing with the line above it.
            */}
-          {step.kind === "scheduled" ? (
-            <p className="text-xs text-muted">
-              This is when the system will put them back on your list. It moves
-              if they order, pay, or ask for a callback before then.
-            </p>
-          ) : null}
         </div>
       ) : (
         <p className="text-sm leading-relaxed text-body">
           The call is saved. We could not work out what happens next with{" "}
-          {customerName} just now — check their record, or their calling queue
-          in the morning.
+          {customerName} just now — check their record, or your Call Log in the
+          morning.
         </p>
       )}
     </Modal>

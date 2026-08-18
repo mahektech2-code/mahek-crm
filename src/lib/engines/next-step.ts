@@ -38,9 +38,9 @@ export type NextStep = {
   daysAway: number | null;
   /** The queue reason that will put them back on the list, where there is one. */
   reasonKind: QueueReasonKind | null;
-  /** One line, the thing to do. */
+  /** One line: the day they come back to the Call Log, or that none is coming. */
   headline: string;
-  /** One line, why that day and not sooner. */
+  /** One line: what to do, and why that day. */
   detail: string;
   /**
    * Why they are not on today's list, in the queue's own words, or null when
@@ -125,7 +125,8 @@ export function nextStep(
       daysAway: null,
       reasonKind: null,
       headline: "No next call",
-      detail: "This customer is marked do not contact, so nothing will put them back on your list.",
+      detail:
+        "This customer is marked do not contact, so nothing will bring them back to your Call Log.",
       heldToday: null,
     };
   }
@@ -136,7 +137,7 @@ export function nextStep(
     daysAway: null,
     reasonKind: null,
     headline: "Nothing scheduled",
-    detail: `Nothing brings this customer back in the next ${horizonDays} days. They will appear when something changes — an order falls due, or somebody sets a reminder.`,
+    detail: `Nothing brings this customer back to your Call Log in the next ${horizonDays} days. They will appear when something changes — an order falls due, or somebody sets a reminder.`,
     heldToday,
   };
 }
@@ -220,17 +221,36 @@ function describe(
   daysAway: number,
   heldToday: string | null,
 ): NextStep {
-  const when = whenLabel(day, today, daysAway);
   const base = { date: day, daysAway, reasonKind: kind, heldToday };
+
+  /*
+   * The headline is the SAME sentence for every dated reason, and it names the
+   * screen rather than describing one.
+   *
+   * "Back on your list" was true and answered a question nobody asked: a
+   * telecaller does not hold a mental model of "the list", they open the Call
+   * Log. Saying which screen and which day, in a fixed form of words, is what
+   * makes this a confirmation — read once, then recognised at a glance sixty
+   * times a day. What VARIES is the reason underneath, which is the only part
+   * worth reading twice.
+   */
+  const dated = (action: string, reason: string): NextStep => ({
+    ...base,
+    kind: "scheduled",
+    headline: `Comes back to your Call Log ${whenLabel(day, today, daysAway)}`,
+    detail: `${action} — ${reason}`,
+  });
 
   switch (kind) {
     case "reminderOverdue":
     case "reminderDueToday":
       return {
-        ...base,
+        ...dated(
+          "Call them back",
+          "you promised a callback, so this is a date the customer is expecting",
+        ),
+        // A promise, not a prediction. The badge is what separates them.
         kind: "booked",
-        headline: `Call them back ${when}`,
-        detail: "You promised a callback, so this is a date the customer is expecting. It is on your list that morning.",
       };
 
     case "unreachable":
@@ -245,20 +265,13 @@ function describe(
       };
 
     case "paymentOverdue":
-      return {
-        ...base,
-        kind: "scheduled",
-        headline: `Chase the payment ${when}`,
-        detail: `${label}. Collections is what brings them back.`,
-      };
+      return dated("Chase the payment", `${label.toLowerCase()}`);
 
     case "noAnswerRetry":
-      return {
-        ...base,
-        kind: "scheduled",
-        headline: `Try them again ${when}`,
-        detail: "Nobody answered, so the next attempt is spaced out rather than made straight away.",
-      };
+      return dated(
+        "Try them again",
+        "nobody answered, so the next attempt is spaced out rather than made straight away",
+      );
 
     /*
      * The reason, never a claim about what the date means.
@@ -270,67 +283,45 @@ function describe(
      * and the line underneath already says what is holding them.
      */
     case "orderOverdueFullCycle":
-      return {
-        ...base,
-        kind: "scheduled",
-        headline: `Ask for the order ${when}`,
-        detail: "They are more than a full cycle past their reorder date. That is what puts them back on your list.",
-      };
+      return dated(
+        "Ask for the order",
+        "they are more than a full cycle past their reorder date",
+      );
 
     case "orderDue":
-      return {
-        ...base,
-        kind: "scheduled",
-        headline: `Ask for the order ${when}`,
-        detail: "They are due to reorder. That is what puts them back on your list.",
-      };
+      return dated("Ask for the order", "they are due to reorder");
 
     case "routineCall":
-      return {
-        ...base,
-        kind: "scheduled",
-        headline: `Stock check ${when}`,
-        detail:
-          "A short call before their order is due, to ask what they have left on the shelf. Not a call asking for the order.",
-      };
+      return dated(
+        "Stock check",
+        "a short call before their order is due, to ask what they have left on the shelf",
+      );
 
     case "orderStatus":
-      return {
-        ...base,
-        kind: "scheduled",
-        headline: `Check on their order ${when}`,
-        detail: `${label}. Nothing to ask for — their requirement is already in.`,
-      };
+      return dated(
+        "Check on their order",
+        `${label.toLowerCase()} — their requirement is already in`,
+      );
 
     case "checkInDue":
     case "checkInOverdue":
-      return {
-        ...base,
-        kind: "scheduled",
-        headline: `Check in ${when}`,
-        detail:
-          "We cannot measure how often this customer orders yet, so they get a steady check-in until we can.",
-      };
+      return dated(
+        "Check in",
+        "we cannot measure how often this customer orders yet, so they get a steady check-in until we can",
+      );
 
     case "prospect":
-      return {
-        ...base,
-        kind: "scheduled",
-        headline: `Try for a first order ${when}`,
-        detail: "They have never ordered, so they are worked on a short cadence until they do.",
-      };
+      return dated(
+        "Try for a first order",
+        "they have never ordered, so they are worked on a short cadence until they do",
+      );
 
     default:
-      return {
-        ...base,
-        kind: "scheduled",
-        headline: `Back on your list ${when}`,
-        detail: label,
-      };
+      return dated("Call them", label.toLowerCase());
   }
 }
 
-/** "today", "tomorrow", "on Thu 20 Aug (in 5 days)". */
+/** "today", "tomorrow", "on Thu 20 Aug — 5 days away". */
 function whenLabel(day: BusinessDate, today: BusinessDate, daysAway: number): string {
   if (daysAway === 0) return "today";
   if (daysAway === 1) return "tomorrow";

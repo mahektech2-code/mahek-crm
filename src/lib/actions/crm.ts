@@ -442,13 +442,19 @@ export async function logPaymentFollowUpAction(input: {
   /** §5.2 — payment proof already uploaded, bound when the attempt saves. */
   attachmentIds?: string[];
   idempotencyKey: string;
-}): Promise<Result<{ produced: string[]; cleared: boolean }>> {
+}): Promise<
+  Result<{ produced: string[]; cleared: boolean; nextStep: NextStep | null }>
+> {
   try {
     const r = await logPaymentFollowUp({ ...input, chips: input.chips ?? [] });
     if (!r.ok) return r;
     refreshAll();
     return ok(
-      { produced: r.data.produced, cleared: r.data.cleared },
+      {
+        produced: r.data.produced,
+        cleared: r.data.cleared,
+        nextStep: r.data.nextStep,
+      },
       r.message,
     );
   } catch (e) {

@@ -26,6 +26,8 @@ import { addDays, onOrAfterWorkingDay } from "../business-date";
 import { recomputeFollowUpState, today } from "../recompute";
 import { err, ok, type Result } from "../result";
 import { getFollowUpDetail, getPaymentFollowUpPlan } from "./payment-service";
+import { nextStepForCustomer } from "./queue-service";
+import type { NextStep } from "../engines/next-step";
 import { openBillsFor } from "./receipt-service";
 import { CRM_EVENT, callTimelineSummary, writeTimelineEvents } from "../timeline";
 import { money } from "../format";
@@ -226,6 +228,11 @@ export type LogFollowUpResult = {
   produced: string[];
   /** True when the account left the worklist because the payment cleared it. */
   cleared: boolean;
+  /**
+   * When this customer comes back to the Call Log, and why. Null where it
+   * could not be worked out — said plainly on the screen, never guessed.
+   */
+  nextStep: NextStep | null;
 };
 
 export async function logPaymentFollowUp(
@@ -291,8 +298,41 @@ export async function logPaymentFollowUp(
     .from(followUpAttempts)
     .where(eq(followUpAttempts.idempotencyKey, input.idempotencyKey));
   if (dupe) {
+    /*
+     * The sentence this call was answered with the first time, read back off
+     * the call row rather than worked out again. A double-click must not show
+     * a second, different date — see the same rule on `saveInteraction`.
+     */
+    const [prior] = await db
+      .select({
+        kind: calls.nextStepKind,
+        date: calls.nextStepDate,
+        reason: calls.nextStepReason,
+        headline: calls.nextStepHeadline,
+        detail: calls.nextStepDetail,
+        heldToday: calls.nextStepHeldToday,
+      })
+      .from(calls)
+      .where(eq(calls.idempotencyKey, input.idempotencyKey));
+
     return ok(
-      { attemptId: dupe.id, produced: [], cleared: false },
+      {
+        attemptId: dupe.id,
+        produced: [],
+        cleared: false,
+        nextStep:
+          prior?.kind && prior.headline && prior.detail
+            ? {
+                kind: prior.kind,
+                date: prior.date,
+                daysAway: null,
+                reasonKind: prior.reason as NextStep["reasonKind"],
+                headline: prior.headline,
+                detail: prior.detail,
+                heldToday: prior.heldToday,
+              }
+            : null,
+      },
       "Already recorded",
     );
   }
@@ -395,6 +435,10 @@ export async function logPaymentFollowUp(
       startedAt: now,
       notes,
       sourceModule: "payment_follow_up",
+      // The same key the attempt carries. `calls` has its own unique index on
+      // it, and without it the duplicate branch above has no way back to the
+      // sentence this call was already answered with.
+      idempotencyKey: input.idempotencyKey,
       createdById: ctx.user.id,
       updatedById: ctx.user.id,
     });
@@ -613,8 +657,38 @@ export async function logPaymentFollowUp(
     .from(followUpStates)
     .where(eq(followUpStates.customerId, input.customerId));
 
+  /* ------------------------------------------------ what happens next
+   *
+   * AFTER the recompute above, never before: the follow-up just logged is
+   * what moves the stage, the promise and the collections cadence, so reading
+   * it a moment earlier would describe the world as it stood before the call.
+   *
+   * Working it out must never fail the save. The attempt, the receipt and the
+   * call are all in the ledger by this point; the sentence is a courtesy on
+   * top of a completed write, exactly as it is on the routine calling path.
+   */
+  let step: NextStep | null = null;
+  try {
+    step = await nextStepForCustomer(input.customerId);
+    if (step) {
+      await db
+        .update(calls)
+        .set({
+          nextStepKind: step.kind,
+          nextStepDate: step.date,
+          nextStepReason: step.reasonKind,
+          nextStepHeadline: step.headline,
+          nextStepDetail: step.detail,
+          nextStepHeldToday: step.heldToday,
+        })
+        .where(eq(calls.id, callId));
+    }
+  } catch {
+    step = null;
+  }
+
   return ok(
-    { attemptId, produced, cleared: !after },
+    { attemptId, produced, cleared: !after, nextStep: step },
     input.outcome === "paid"
       ? `Recorded — ${customer.name} will not be chased for it while accounts confirm it`
       : "Follow-up logged",

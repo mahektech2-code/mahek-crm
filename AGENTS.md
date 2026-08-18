@@ -460,13 +460,37 @@ drifts within a release, and the sentence a telecaller reads out on a phone
 call would be the copy that was wrong. Pure, like every other engine, and
 `nextStepForCustomer` is the one place it is wired to data.
 
-**A prediction and a promise are drawn differently, because one of them is a
-commitment.** `booked` is a callback the customer asked for; `scheduled` is a
-date the rules produce and which moves the moment they order, pay or ask for a
-callback, and the screen says so underneath. `decide` and `none` carry NO date
-at all — a customer nobody can reach and one marked do-not-contact will not be
-brought back by anything, and putting a date on either would be an invention
-the telecaller has no way to check.
+**A prediction and a promise are drawn differently, and the BADGE is what
+draws them.** `booked` is a callback the customer asked for; `scheduled` is a
+date the rules produce, and it does move the moment they order, pay or ask for
+a callback. That used to be said in a sentence under the date — and the
+sentence took the confirmation back in the same breath, which is the one thing
+this screen cannot afford: a telecaller cannot act on a date the screen is
+already apologising for, and the caveat was true of every scheduled date ever
+shown, so it carried no information at the moment it was read. The badge says
+which kind it is without arguing with the line above it. `decide` and `none`
+carry NO date at all — a customer nobody can reach and one marked
+do-not-contact will not be brought back by anything, and putting a date on
+either would be an invention the telecaller has no way to check.
+
+**The headline is one fixed form of words, and it names the screen.** "Comes
+back to your Call Log on Mon 1 Sep — 13 days away", the same shape for every
+reason, with what to do and why on the line beneath: "Ask for the order — they
+are due to reorder." It said "Back on your list" before, which was true and
+answered a question nobody asked — a telecaller does not hold a mental model
+of "the list", they open the Call Log. A confirmation read sixty times a day
+works by being recognised rather than read, so the part that VARIES is the
+reason underneath, which is the only half worth reading twice.
+
+**And it is shown by every path that logs a call, not just the calling
+queue.** The collections follow-up panel on `/crm/payments` saved and advanced
+straight to the next overdue account for as long as it existed — so the
+telecaller who had just agreed a promise date with a customer had nowhere to
+be told when that customer comes back, on the screen where the question is
+asked hardest. `logPaymentFollowUp` calls the same `nextStepForCustomer` after
+its recompute, stores the six columns on the `calls` row it already writes,
+and `PaymentPanel` renders the same dialog. A confirmation that appears on one
+of two save paths is one telecallers learn not to rely on.
 
 **The headline is the EARLIEST day they come back, and the promise is named
 beside it.** On a prospect or an overdue account the cadence often lands before
