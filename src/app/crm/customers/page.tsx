@@ -44,6 +44,9 @@ export default async function CustomersPage({
       status: one("status"),
       salesAm: one("sales"),
       backOfficeAm: one("backoffice"),
+      // "yes" / "no" / "delivered" — the third is the evidence filter, and the
+      // one the marking work is actually done from.
+      thirdParty: one("party") as "yes" | "no" | "delivered" | undefined,
       page: Number(one("page") ?? 1) || 1,
       perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
     }),
@@ -64,6 +67,7 @@ export default async function CustomersPage({
       // Asked of the same function the action asks, so a visible button and a
       // permitted action can never disagree. The action checks again anyway —
       // a disabled control is not a permission.
+      canClassify={can(user.role, "customer.classify")}
       canReassign={can(user.role, "customer.reassign")}
       amReasons={config["people.amChangeReasons"]}
       amSearchThreshold={config["people.pickerSearchThreshold"]}
@@ -109,6 +113,8 @@ export default async function CustomersPage({
         cycleDays: c.cycleDays,
         route: c.route,
         deactivationRequested: c.deactivationRequested,
+        thirdParty: c.thirdParty,
+        deliveredOrders: c.deliveredOrders,
         reactivationRequested: c.reactivationRequested,
         reactivationReason: c.reactivationReason,
       }))}

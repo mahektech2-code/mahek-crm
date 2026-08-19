@@ -35,6 +35,7 @@ function candidate(over: Partial<QueueCandidate> = {}): QueueCandidate {
     reminders: [],
     lastConfirmedWhatsappDate: null,
     activeInOrderSystem: false,
+  thirdParty: false,
     calledToday: false,
     doNotContact: false,
     skippedTodayReason: null,

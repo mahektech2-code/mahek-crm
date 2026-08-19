@@ -69,6 +69,7 @@ export type JobName =
   | "recompute-slow-payers"
   | "snapshot-queue"
   | "build-queues"
+  | "link-delivery-parties"
   | "seed-targets"
   | "sweep-unconfirmed"
   | "escalate-complaint-sla"
@@ -132,6 +133,22 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
   /* The field app's nightly tidy-up rides the same schedule as the CRM's.
      One cron, one place to look when something did not run. */
   results.push(await run("mbos-nightly", mbosNightly, triggeredById));
+
+  /* Where the goods went, from the tab that has always known and never said.
+     Before the caches, because nothing downstream reads it yet — and after the
+     reconcile that lands the rows it reads. */
+  results.push(
+    await run("link-delivery-parties", async () => {
+      const { linkDeliveryParties } = await import(
+        "@/lib/services/delivery-party-service"
+      );
+      const r = await linkDeliveryParties();
+      return {
+        recordsAffected: r.linked + r.cleared,
+        detail: `${r.linked} linked, ${r.cleared} cleared, ${r.unresolved} unmatched names`,
+      };
+    }, triggeredById),
+  );
 
   results.push(
     await run("recompute-cycles", async () => {
@@ -486,6 +503,33 @@ export async function runJob(
               detail: written
                 ? `Built ${written} rows for ${day}`
                 : `Nothing to build for ${day} — every list was already settled`,
+            };
+          },
+          triggeredById,
+        ),
+      ];
+    case "link-delivery-parties":
+      /*
+       * Where the goods went, rebuilt from the sheet.
+       *
+       * A recompute rather than an import — it derives one column from data
+       * already stored, creates nothing, and running it twice changes nothing
+       * the second time. It belongs in the nightly for the same reason the
+       * other recomputes do: the Taken Order tab gains rows all day.
+       */
+      return [
+        await run(
+          "link-delivery-parties",
+          async () => {
+            const { linkDeliveryParties } = await import(
+              "@/lib/services/delivery-party-service"
+            );
+            const r = await linkDeliveryParties();
+            return {
+              recordsAffected: r.linked + r.cleared,
+              detail:
+                `${r.linked} orders linked to a delivery party, ${r.cleared} cleared` +
+                `; ${r.unresolved} names match no record, ${r.ambiguous} match more than one`,
             };
           },
           triggeredById,

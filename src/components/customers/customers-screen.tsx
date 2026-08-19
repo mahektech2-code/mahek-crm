@@ -36,6 +36,7 @@ import {
   createRemindersBulk,
   decideDeactivation,
   decideReactivation,
+  setThirdParty,
   requestDeactivation,
   requestReactivation,
   updateCustomer,
@@ -73,6 +74,10 @@ type Row = {
   cycleDays: number;
   route: string | null;
   deactivationRequested: boolean;
+  /** A shop we deliver to, served through a distributor. Never prospected. */
+  thirdParty: boolean;
+  /** Orders whose goods came here on somebody else's bill — the evidence. */
+  deliveredOrders: number;
   reactivationRequested: boolean;
   reactivationReason: string | null;
 };
@@ -100,6 +105,7 @@ export function CustomersScreen({
   app,
   scopeLabel,
   isManager,
+  canClassify,
   canReassign,
   amReasons,
   amSearchThreshold,
@@ -129,6 +135,8 @@ export function CustomersScreen({
   app: "crm" | "accounts";
   scopeLabel: string;
   isManager: boolean;
+  /** `customer.classify` — marking an account as one we only deliver to. */
+  canClassify: boolean;
   /**
    * Reassigning is accounts' and admin's, not a manager's — whose book an
    * account is in decides whose targets it counts toward. Passed in rather
@@ -638,6 +646,25 @@ export function CustomersScreen({
                     >
                       {r.status}
                     </Badge>
+                    {/* Beside the status, not instead of it: a marked shop is
+                        still active or inactive in its own right, and the two
+                        answer different questions. The delivery count is the
+                        evidence the mark rests on — a name is a guess, "14
+                        deliveries" is a fact — so it shows whether or not
+                        anybody has marked the account yet. */}
+                    {r.thirdParty ? (
+                      <Badge tone="muted" className="ml-1.5">
+                        Delivered to
+                      </Badge>
+                    ) : null}
+                    {r.deliveredOrders > 0 ? (
+                      <span
+                        className="ml-1.5 text-xs text-muted"
+                        title={`Goods came here on somebody else's bill ${r.deliveredOrders} time${r.deliveredOrders === 1 ? "" : "s"}`}
+                      >
+                        {r.deliveredOrders}&nbsp;del.
+                      </span>
+                    ) : null}
                   </Td>
                   <Td>{r.lastOrderDate ? shortDate(r.lastOrderDate) : "-"}</Td>
                   <Td>{r.lastContactAt ? stamp(r.lastContactAt) : "-"}</Td>
@@ -669,6 +696,19 @@ export function CustomersScreen({
                             label: "Edit details",
                             onSelect: () => setEditing(r),
                           },
+                          ...(canClassify
+                            ? [
+                                {
+                                  label: r.thirdParty
+                                    ? "Not a delivery-only shop"
+                                    : "Mark as delivered-to only",
+                                  onSelect: async () => {
+                                    await run(setThirdParty([r.id], !r.thirdParty));
+                                    router.refresh();
+                                  },
+                                },
+                              ]
+                            : []),
                           /*
                             WhatsApp and the CRM bill list are CRM screens, and
                             an accounts user is redirected out of them. An

@@ -85,6 +85,14 @@ export type QueueCandidate = {
   /** The collections cadence says a payment call is due today. */
   paymentCallDue: { totalOverdue: number; daysOverdue: number } | null;
 
+  /**
+   * A shop we deliver to, served through a distributor — marked by a person,
+   * never derived. It suppresses PROSPECTING and nothing else: an order this
+   * account actually placed, money it owes and a promise somebody made all
+   * still reach the list.
+   */
+  thirdParty: boolean;
+
   /** Tie-breakers. */
   outstanding: number;
   targetGap: number;
@@ -456,9 +464,20 @@ function reasonsFor(
   }
 
   /* ---- prospect ---- */
+  //
   // Never ordered. Worked on its own short cadence, because converting a
   // first order is the growth work and there is no cycle to wait for.
-  if (!c.lastOrderDate) {
+  //
+  // UNLESS SOMEBODY HAS SAID THERE IS NO FIRST ORDER TO CONVERT. A shop served
+  // through a distributor buys from the distributor; ringing it to ask for an
+  // order is asking for something it cannot give. That was the single largest
+  // category of work on the Call Log — 125 rows a day against 67 for the next
+  // reason — and every one of them was speculative.
+  //
+  // Only this reason is suppressed. If a marked account does place an order
+  // with us directly it gains a cycle and is chased on it like anybody else,
+  // so the mark corrects itself and nobody has to remember to lift it.
+  if (!c.lastOrderDate && !c.thirdParty) {
     const since = c.lastContactDate ?? c.createdDate;
     const daysSince = daysBetween(since, today);
     if (daysSince >= config["queue.prospectIntervalDays"]) {

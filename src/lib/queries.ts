@@ -299,6 +299,12 @@ export type CustomerRow = typeof customers.$inferSelect & {
   salesAmName: string | null;
   backOfficeAmName: string | null;
   openComplaints: number;
+  /**
+   * Orders whose goods came here on somebody else's bill. This is the evidence
+   * the marking decision rests on — a name is a guess, "received 14 deliveries"
+   * is a fact — so it sits on the row rather than behind a filter.
+   */
+  deliveredOrders: number;
 };
 
 /**
@@ -331,6 +337,13 @@ export type CustomerListFilters = {
   /** A NAME, matched against what the column shows — see the two SQL consts. */
   salesAm?: string;
   backOfficeAm?: string;
+  /**
+   * "yes" for accounts marked as shops we deliver to, "no" for the rest, and
+   * "delivered" for the ones the sheet shows receiving goods — whether or not
+   * anybody has marked them yet. The third is the one that makes the marking
+   * screen usable: it is the evidence, not the decision.
+   */
+  thirdParty?: "yes" | "no" | "delivered";
   page?: number;
   perPage?: number;
 };
@@ -479,6 +492,16 @@ export async function listCustomersPage(
   if (filters.backOfficeAm) {
     where.push(sql`${BACK_OFFICE_AM_NAME_SQL} = ${filters.backOfficeAm}`);
   }
+  if (filters.thirdParty === "yes") where.push(sql`customers.third_party`);
+  if (filters.thirdParty === "no") where.push(sql`not customers.third_party`);
+  if (filters.thirdParty === "delivered") {
+    // Goods actually went here, on somebody else's bill. `customers.id` spelled
+    // out: Drizzle renders the column reference bare, and a bare `id` inside a
+    // correlated subquery binds to the INNER table and matches every row.
+    where.push(sql`exists (
+      select 1 from orders o where o.delivery_customer_id = customers.id
+    )`);
+  }
 
   const clause = where.length ? and(...where) : undefined;
 
@@ -527,6 +550,13 @@ export async function listCustomersPage(
          where complaints.customer_id = customers.id
            and ${complaints.status} in ('open','in_progress','awaiting_customer')
       )`,
+      // `customers.id` spelled out for the reason the file already documents:
+      // Drizzle renders the reference bare, and a bare `id` inside a correlated
+      // subquery binds to the inner table and quietly matches everything.
+      deliveredOrders: sql<number>`(
+        select count(*)::int from orders o
+         where o.delivery_customer_id = customers.id
+      )`,
     })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
@@ -542,6 +572,7 @@ export async function listCustomersPage(
       salesAmName: r.salesAmName,
       backOfficeAmName: r.backOfficeAmName,
       openComplaints: Number(r.openComplaints),
+      deliveredOrders: Number(r.deliveredOrders),
     })),
     total,
     bookTotal: Number(book?.n ?? 0),
@@ -581,6 +612,10 @@ export async function listCustomers(): Promise<CustomerRow[]> {
          where complaints.customer_id = customers.id
            and ${complaints.status} in ('open','in_progress','awaiting_customer')
       )`,
+      deliveredOrders: sql<number>`(
+        select count(*)::int from orders o
+         where o.delivery_customer_id = customers.id
+      )`,
     })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
@@ -593,6 +628,7 @@ export async function listCustomers(): Promise<CustomerRow[]> {
     salesAmName: r.salesAmName,
     backOfficeAmName: r.backOfficeAmName,
     openComplaints: Number(r.openComplaints),
+      deliveredOrders: Number(r.deliveredOrders),
   }));
 }
 

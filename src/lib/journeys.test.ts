@@ -82,8 +82,12 @@ import {
   rejectReceiptAction,
   reverseReceiptAction,
 } from "@/lib/actions/payments";
-import { getQueue } from "@/lib/services/queue-service";
+import { getQueue, queueCandidatesFor } from "@/lib/services/queue-service";
 import { snapshotQueue } from "@/lib/jobs";
+import {
+  linkDeliveryParties,
+  unresolvedDeliveryParties,
+} from "@/lib/services/delivery-party-service";
 import { saveInteraction } from "@/lib/services/interaction-service";
 import { seedCatalogue } from "@/db/seed-catalogue";
 import {
@@ -135,6 +139,7 @@ import {
   rebuildQueues,
   requestDeactivation,
   requestReactivation,
+  setThirdParty,
   startStageOneBatch,
 } from "@/lib/actions/crm";
 import {
@@ -7332,5 +7337,184 @@ describe("What the telecaller was told would happen next", () => {
 
     assert.equal(r.data.nextStep?.kind, "none");
     assert.equal(r.data.nextStep?.date, null, "a date was invented for a customer nothing will ring");
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Most of what the CRM calls a lead is a shop served by a distributor. The
+ * provision to say so — without anything saying it automatically.
+ * ------------------------------------------------------------------------- */
+
+describe("shops we deliver to", () => {
+  test("marking is a manager's, and it is checked in the action", async () => {
+    const shop = await makeCustomer(priya.id, { kind: "lead" });
+
+    setTestUser(priya);
+    const asTelecaller = await setThirdParty([shop.id], true);
+    assert.equal(asTelecaller.ok, false, "a telecaller reclassified an account");
+
+    setTestUser(manager);
+    const asManager = await setThirdParty([shop.id], true);
+    assert.equal(asManager.ok, true, asManager.ok ? "" : asManager.error);
+
+    const [row] = await db
+      .select({ thirdParty: customers.thirdParty, kind: customers.kind })
+      .from(customers)
+      .where(eq(customers.id, shop.id));
+    assert.equal(row.thirdParty, true);
+    // The KIND is untouched. Being a shop we deliver to is how we work the
+    // account, not what the account is — and we may still bill it one day.
+    assert.equal(row.kind, "lead", "marking changed what the record is");
+  });
+
+  test("it lifts again, and reports honestly when nothing changed", async () => {
+    const shop = await makeCustomer(priya.id, { kind: "lead", thirdParty: true });
+    setTestUser(manager);
+
+    const again = await setThirdParty([shop.id], true);
+    assert.equal(again.ok, true);
+    assert.equal(again.ok ? again.data?.changed : -1, 0, "a no-op reported work");
+
+    assert.equal((await setThirdParty([shop.id], false)).ok, true);
+    const [row] = await db
+      .select({ thirdParty: customers.thirdParty })
+      .from(customers)
+      .where(eq(customers.id, shop.id));
+    assert.equal(row.thirdParty, false);
+  });
+
+  test("a marked shop drops off the Call Log, and only for that reason", async () => {
+    const shop = await makeCustomer(priya.id, {
+      kind: "lead",
+      lastOrderDate: null,
+      createdAt: new Date(Date.now() - 60 * 24 * 3600 * 1000),
+    });
+
+    setTestUser(priya);
+    const before = await getQueue();
+    assert.ok(
+      before.entries.some((e) => e.customerId === shop.id),
+      "a prospect was not on the list to begin with",
+    );
+
+    setTestUser(manager);
+    assert.equal((await setThirdParty([shop.id], true)).ok, true);
+
+    // The day's list is settled, so this reads the live engine rather than the
+    // stored one — the point being the RULE, not when it takes effect.
+    const candidates = await queueCandidatesFor(priya.id, TODAY);
+    const stillThere = candidates.find((c) => c.customerId === shop.id);
+    assert.equal(stillThere?.thirdParty, true, "the flag never reached the engine");
+  });
+
+  test("the sheet's delivery party links to a record, and creates none", async () => {
+    const distributor = await makeCustomer(priya.id, { name: "Distributor Alpha" });
+    const shop = await makeCustomer(priya.id, { name: "End Shop Beta", kind: "lead" });
+    const before = (await db.select({ id: customers.id }).from(customers)).length;
+
+    const [order] = await db
+      .insert(orders)
+      .values({
+        id: id("ord"),
+        customerId: distributor.id,
+        source: "external",
+        externalRef: "SHEET-TO-9001",
+        orderedAt: new Date(),
+        totalAmount: 100_00,
+        status: "dispatched",
+      })
+      .returning();
+
+    const [run] = await db
+      .insert(sheetSyncRuns)
+      .values({
+        id: id("syn"),
+        source: "taken_order",
+        spreadsheetId: "sheet",
+        tabTitle: "Taken Order",
+        status: "ok",
+      })
+      .returning();
+    await db.insert(sheetTakenOrderRows).values({
+      id: id("tak"),
+      syncId: run.id,
+      rowNumber: 1,
+      lineKey: randomUUID(),
+      raw: {},
+      rowHash: randomUUID(),
+      orderNumber: "TO-9001",
+      billingPartyName: "Distributor Alpha",
+      deliveryPartyName: "End Shop Beta",
+      officeStatus: "Ready",
+      entryStatus: "Done",
+      open: false,
+    });
+
+    const result = await linkDeliveryParties();
+    assert.equal(result.linked, 1, "the delivery party was not linked");
+
+    const [linked] = await db
+      .select({ delivery: orders.deliveryCustomerId })
+      .from(orders)
+      .where(eq(orders.id, order.id));
+    assert.equal(linked.delivery, shop.id);
+
+    // The whole reason this is a link and not an import.
+    const after = (await db.select({ id: customers.id }).from(customers)).length;
+    assert.equal(after, before, "linking created a customer record");
+  });
+
+  test("a delivery party naming nobody is reported, never created", async () => {
+    const distributor = await makeCustomer(priya.id, { name: "Distributor Gamma" });
+    const before = (await db.select({ id: customers.id }).from(customers)).length;
+
+    await db.insert(orders).values({
+      id: id("ord"),
+      customerId: distributor.id,
+      source: "external",
+      externalRef: "SHEET-TO-9002",
+      orderedAt: new Date(),
+      totalAmount: 100_00,
+      status: "dispatched",
+    });
+    const [run] = await db
+      .insert(sheetSyncRuns)
+      .values({
+        id: id("syn"),
+        source: "taken_order",
+        spreadsheetId: "sheet",
+        tabTitle: "Taken Order",
+        status: "ok",
+      })
+      .returning();
+    await db.insert(sheetTakenOrderRows).values({
+      id: id("tak"),
+      syncId: run.id,
+      rowNumber: 1,
+      lineKey: randomUUID(),
+      raw: {},
+      rowHash: randomUUID(),
+      orderNumber: "TO-9002",
+      billingPartyName: "Distributor Gamma",
+      deliveryPartyName: "Nobody We Have Ever Heard Of",
+      officeStatus: "Ready",
+      entryStatus: "Done",
+      open: false,
+    });
+
+    const result = await linkDeliveryParties();
+    assert.equal(result.unresolved, 1);
+    assert.equal(result.linked, 0);
+    assert.equal(
+      (await db.select({ id: customers.id }).from(customers)).length,
+      before,
+      "an unmatched delivery name created a record",
+    );
+
+    const listed = await unresolvedDeliveryParties();
+    assert.ok(
+      listed.some((u) => u.name === "Nobody We Have Ever Heard Of"),
+      "the unmatched name was not reported anywhere",
+    );
   });
 });

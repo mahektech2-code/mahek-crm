@@ -690,6 +690,29 @@ export const customers = pgTable(
     kind: customerKindEnum("kind").notNull().default("customer"),
     leadSource: text("lead_source"),
 
+    /*
+     * A shop we deliver to, served through a distributor.
+     *
+     * NOT a third value of `kind`, deliberately. `kind` is exclusive, and this
+     * is not: we may bill one of these directly, rarely, and an account we
+     * invoiced last month is plainly still a shop we deliver to. Being a third
+     * party is not what an account IS, it is how we WORK it — so it sits
+     * beside the kind rather than inside it, and the record goes on being
+     * whatever it already was for search, scope, history and everything else.
+     *
+     * What it means is narrow and it is the whole point: a marked account is
+     * never PROSPECTED. It produces no "never ordered, chase them" row. Every
+     * other reason still reaches the Call Log — an order it actually placed, a
+     * debt, a promise — so a shop that starts buying directly comes back on
+     * the strength of its own orders, without anybody remembering to unmark
+     * it.
+     *
+     * Set by a person. Nothing derives it, and no import may write it: leads
+     * were filled from a spreadsheet once already and that is the mess this
+     * exists to sort out.
+     */
+    thirdParty: boolean("third_party").notNull().default(false),
+
     /* ownership and status */
     status: customerStatusEnum("status").notNull().default("active"),
     ownerId: text("owner_id").references(() => users.id),
@@ -1288,6 +1311,19 @@ export const orders = pgTable(
     customerId: text("customer_id")
       .notNull()
       .references(() => customers.id, { onDelete: "cascade" }),
+    /*
+     * Where the goods went, when that is not where the bill went.
+     *
+     * NULL MEANS THE BILLING PARTY RECEIVED THEM, which is the ordinary case
+     * and true of every row that existed when this column arrived — so nothing
+     * had to be rewritten and no existing order changed meaning.
+     *
+     * Money never follows this column. Credit, term, outstanding, receipts and
+     * collections all stay with `customerId`, whatever the lorry did.
+     */
+    deliveryCustomerId: text("delivery_customer_id").references(
+      () => customers.id,
+    ),
     userId: text("user_id").references(() => users.id),
     /** Kept from day one: Inactive Watch produces false positives without it. */
     source: orderSourceEnum("source").notNull().default("crm"),
