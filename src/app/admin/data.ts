@@ -116,7 +116,10 @@ export const PLATFORM_TABS: Record<string, PlatformTab[]> = {
     { slug: "integrations", label: "Integrations" },
     { slug: "usage", label: "Usage" },
     { slug: "configuration", label: "Configuration" },
-    { slug: "jobs", label: "Job health" },
+    /* "Job health" while it only reported. It now carries two controls — the
+       one-off backfill and the Call Log rebuild — and a tab named for a status
+       report is a tab nobody looks in for a button. */
+    { slug: "jobs", label: "Jobs" },
     /* Two questions about the platform rather than about access: who is signed
        in right now, and which accounts have never been used. They lived under
        People, which now answers one question only. */
