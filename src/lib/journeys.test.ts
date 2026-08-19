@@ -7407,6 +7407,40 @@ describe("shops we deliver to", () => {
     assert.equal(stillThere?.thirdParty, true, "the flag never reached the engine");
   });
 
+  test("a marked account leaves the lead count and joins the third-party one", async () => {
+    // One question, three answers. A marked lead must not be counted in both,
+    // or the split says 1,079 records across 1,178 rows and nobody trusts it.
+    await makeCustomer(priya.id, { kind: "lead", name: "Shop To Mark" });
+    await makeCustomer(priya.id, { kind: "lead", name: "Genuine Lead" });
+    await makeCustomer(priya.id, { kind: "customer", name: "Real Distributor" });
+
+    setTestUser(manager);
+    const before = await listCustomersPage({});
+    assert.equal(before.totals.leads, 2);
+    assert.equal(before.totals.thirdParties, 0);
+
+    const shop = before.rows.find((r) => r.name === "Shop To Mark")!;
+    assert.equal((await setThirdParty([shop.id], true)).ok, true);
+
+    const after = await listCustomersPage({});
+    assert.equal(after.totals.leads, 1, "a marked account was still counted as a lead");
+    assert.equal(after.totals.thirdParties, 1);
+    assert.equal(
+      after.totals.directCustomers + after.totals.leads + after.totals.thirdParties,
+      after.total,
+      "the three counts do not add up to the book",
+    );
+
+    // And the filters agree with the counts.
+    const asLeads = await listCustomersPage({ thirdParty: "lead" });
+    assert.ok(
+      !asLeads.rows.some((r) => r.id === shop.id),
+      "the Leads filter still offered a marked account",
+    );
+    const asThird = await listCustomersPage({ thirdParty: "yes" });
+    assert.deepEqual(asThird.rows.map((r) => r.id), [shop.id]);
+  });
+
   test("the sheet's delivery party links to a record, and creates none", async () => {
     const distributor = await makeCustomer(priya.id, { name: "Distributor Alpha" });
     const shop = await makeCustomer(priya.id, { name: "End Shop Beta", kind: "lead" });

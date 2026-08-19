@@ -89,6 +89,45 @@ type Row = {
  */
 const PER_PAGE = [25, 50, 100] as const;
 
+/*
+ * WHAT AN ACCOUNT IS TO US, as one question with three answers.
+ *
+ * It was two columns answering it between them: a Type badge that only knew
+ * lead-or-customer, and a Delivered-to mark over in Status. Reading a row meant
+ * reading both and doing the arithmetic, and the export did not do it at all —
+ * a marked shop left this screen as a CSV row saying "Lead".
+ *
+ * The mark wins over the kind, deliberately. A marked account is STILL a lead
+ * or a customer underneath — that is what lets us bill one — but "Lead · Third
+ * party" is two facts fighting over one glance on four hundred rows, and the
+ * one somebody scanning this list needs is how the account is worked. The kind
+ * underneath stays on the customer record, where there is room to say it.
+ */
+const ALL_TYPES = "All types";
+const TYPE_FILTERS = [
+  ALL_TYPES,
+  "Direct customers",
+  "Leads",
+  "Third parties",
+  /* Not a type — the EVIDENCE. Accounts the sheet shows receiving goods on
+     somebody else's bill, marked or not, which is the list the marking work is
+     actually done from. */
+  "Receives deliveries",
+] as const;
+
+/** The filter's own word, to the query parameter `listCustomersPage` reads. */
+const TYPE_PARAM: Record<string, string | undefined> = {
+  "Direct customers": "customer",
+  Leads: "lead",
+  "Third parties": "yes",
+  "Receives deliveries": "delivered",
+};
+
+function accountType(r: { kind: string; thirdParty: boolean }): string {
+  if (r.thirdParty) return "Third party";
+  return r.kind === "lead" ? "Lead" : "Direct customer";
+}
+
 const ALL_SALES = "All sales managers";
 const ALL_BACK_OFFICE = "All back office";
 
@@ -157,10 +196,19 @@ export function CustomersScreen({
     status: string;
     salesAm: string;
     backOfficeAm: string;
+    /** The type filter's own word, or empty for all of them. */
+    accountType: string;
     perPage: number;
   };
   pageInfo: { page: number; pageCount: number; total: number; bookTotal: number };
-  totals: { outstanding: number; slowPayers: number; withComplaints: number };
+  totals: {
+    outstanding: number;
+    slowPayers: number;
+    withComplaints: number;
+    directCustomers: number;
+    leads: number;
+    thirdParties: number;
+  };
 }) {
   const router = useRouter();
 
@@ -189,6 +237,7 @@ export function CustomersScreen({
   const status = filters.status || STATUSES[0];
   const salesAm = filters.salesAm || ALL_SALES;
   const backOfficeAm = filters.backOfficeAm || ALL_BACK_OFFICE;
+  const accountTypeFilter = filters.accountType || ALL_TYPES;
   const perPage = filters.perPage;
   const { page, pageCount, total, bookTotal } = pageInfo;
   const query = filters.query;
@@ -280,6 +329,7 @@ export function CustomersScreen({
           "Phone",
           "City",
           "Type",
+          "Deliveries received",
           "Owner",
           "Sales AM",
           "Back office AM",
@@ -293,7 +343,8 @@ export function CustomersScreen({
           r.contactPerson,
           r.phone,
           r.city,
-          r.kind === "lead" ? "Lead" : "Customer",
+          accountType(r),
+          r.deliveredOrders,
           r.ownerName ?? "",
           r.salesAmName ?? "",
           r.backOfficeAmName ?? "",
@@ -309,6 +360,7 @@ export function CustomersScreen({
         // somebody says what it is a list of.
         salesAm === ALL_SALES ? null : `Sales: ${salesAm}`,
         backOfficeAm === ALL_BACK_OFFICE ? null : `Back office: ${backOfficeAm}`,
+        accountTypeFilter === ALL_TYPES ? null : accountTypeFilter,
         query || null,
       ],
     );
@@ -359,6 +411,27 @@ export function CustomersScreen({
             label: "Customers",
             value: String(total),
             sub: `of ${bookTotal.toLocaleString("en-IN")} in the book`,
+          },
+          /*
+           * The split, which is the answer to "what is in this book" and was
+           * previously unknowable without running SQL. It is also the progress
+           * bar for the marking work: third parties climbs as the team works
+           * through them, and leads falls by the same amount.
+           */
+          {
+            label: "Direct customers",
+            value: String(totals.directCustomers),
+            sub: "bill with us",
+          },
+          {
+            label: "Leads",
+            value: String(totals.leads),
+            sub: "not ordered yet",
+          },
+          {
+            label: "Third parties",
+            value: String(totals.thirdParties),
+            sub: "delivered to, billed by their distributor",
           },
           {
             label: "Outstanding",
@@ -421,6 +494,16 @@ export function CustomersScreen({
         >
           {STATUSES.map((s) => (
             <option key={s}>{s}</option>
+          ))}
+        </Select>
+        <Select
+          value={accountTypeFilter}
+          onChange={(e) => navigate({ party: TYPE_PARAM[e.target.value] })}
+          className="h-8"
+          title="Direct customers bill with us. Third parties are delivered to, and billed by their distributor."
+        >
+          {TYPE_FILTERS.map((t) => (
+            <option key={t}>{t}</option>
           ))}
         </Select>
         {/*
@@ -567,9 +650,29 @@ export function CustomersScreen({
                   <Td>{r.contactPerson}</Td>
                   <Td>{phoneDisplay(r.phone)}</Td>
                   <Td>
-                    <Badge tone={r.kind === "lead" ? "brand" : "neutral"}>
-                      {r.kind === "lead" ? "Lead" : "Customer"}
+                    <Badge
+                      tone={
+                        r.thirdParty ? "muted" : r.kind === "lead" ? "brand" : "neutral"
+                      }
+                      title={
+                        r.thirdParty
+                          ? `Delivered to, billed by their distributor. Underneath this record is still a ${r.kind}.`
+                          : undefined
+                      }
+                    >
+                      {accountType(r)}
                     </Badge>
+                    {/* The evidence, beside the answer it justifies rather than
+                        in another column: a name is a guess, "14 deliveries" is
+                        a fact. Shown whether or not anybody has marked it. */}
+                    {r.deliveredOrders > 0 ? (
+                      <span
+                        className="ml-1.5 text-xs text-muted"
+                        title={`Goods came here on somebody else's bill ${r.deliveredOrders} time${r.deliveredOrders === 1 ? "" : "s"}`}
+                      >
+                        {r.deliveredOrders}&nbsp;del.
+                      </span>
+                    ) : null}
                   </Td>
                   {/*
                     Two lines, because a customer answers to two people and a
@@ -646,25 +749,6 @@ export function CustomersScreen({
                     >
                       {r.status}
                     </Badge>
-                    {/* Beside the status, not instead of it: a marked shop is
-                        still active or inactive in its own right, and the two
-                        answer different questions. The delivery count is the
-                        evidence the mark rests on — a name is a guess, "14
-                        deliveries" is a fact — so it shows whether or not
-                        anybody has marked the account yet. */}
-                    {r.thirdParty ? (
-                      <Badge tone="muted" className="ml-1.5">
-                        Delivered to
-                      </Badge>
-                    ) : null}
-                    {r.deliveredOrders > 0 ? (
-                      <span
-                        className="ml-1.5 text-xs text-muted"
-                        title={`Goods came here on somebody else's bill ${r.deliveredOrders} time${r.deliveredOrders === 1 ? "" : "s"}`}
-                      >
-                        {r.deliveredOrders}&nbsp;del.
-                      </span>
-                    ) : null}
                   </Td>
                   <Td>{r.lastOrderDate ? shortDate(r.lastOrderDate) : "-"}</Td>
                   <Td>{r.lastContactAt ? stamp(r.lastContactAt) : "-"}</Td>

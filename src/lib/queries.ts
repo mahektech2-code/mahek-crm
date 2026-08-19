@@ -343,7 +343,7 @@ export type CustomerListFilters = {
    * anybody has marked them yet. The third is the one that makes the marking
    * screen usable: it is the evidence, not the decision.
    */
-  thirdParty?: "yes" | "no" | "delivered";
+  thirdParty?: "yes" | "no" | "delivered" | "lead" | "customer";
   page?: number;
   perPage?: number;
 };
@@ -357,7 +357,15 @@ export type CustomerListPage = {
   page: number;
   pageCount: number;
   /** Over the FILTERED set, not the page — the tiles describe the search. */
-  totals: { outstanding: number; slowPayers: number; withComplaints: number };
+  totals: {
+    outstanding: number;
+    slowPayers: number;
+    withComplaints: number;
+    /** The split, over everything the other filters match. */
+    directCustomers: number;
+    leads: number;
+    thirdParties: number;
+  };
 };
 
 /**
@@ -494,6 +502,16 @@ export async function listCustomersPage(
   }
   if (filters.thirdParty === "yes") where.push(sql`customers.third_party`);
   if (filters.thirdParty === "no") where.push(sql`not customers.third_party`);
+  // A marked account is not offered as a lead or a direct customer, because
+  // the mark is the more specific answer to the same question. Reading the
+  // kind alone would put every marked shop back in the list the filter exists
+  // to take it out of.
+  if (filters.thirdParty === "lead") {
+    where.push(sql`customers.kind = 'lead' and not customers.third_party`);
+  }
+  if (filters.thirdParty === "customer") {
+    where.push(sql`customers.kind = 'customer' and not customers.third_party`);
+  }
   if (filters.thirdParty === "delivered") {
     // Goods actually went here, on somebody else's bill. `customers.id` spelled
     // out: Drizzle renders the column reference bare, and a bare `id` inside a
@@ -512,6 +530,18 @@ export async function listCustomersPage(
       total: sql<number>`count(*)::int`,
       outstanding: sql<number>`coalesce(sum(${customers.outstanding}), 0)::bigint`,
       slowPayers: sql<number>`count(*) filter (where ${customers.slowPayer})::int`,
+      /*
+       * The split, over everything the OTHER filters match.
+       *
+       * Counted here rather than in the browser because the browser holds one
+       * page of twenty-five. It is the number that says how the marking work is
+       * going, and without it nobody can tell without running SQL.
+       */
+      directCustomers: sql<number>`count(*) filter (
+        where customers.kind = 'customer' and not customers.third_party)::int`,
+      leads: sql<number>`count(*) filter (
+        where customers.kind = 'lead' and not customers.third_party)::int`,
+      thirdParties: sql<number>`count(*) filter (where customers.third_party)::int`,
       withComplaints: sql<number>`count(*) filter (where (
         select count(*) from ${complaints}
          where complaints.customer_id = customers.id
@@ -579,6 +609,9 @@ export async function listCustomersPage(
     page,
     pageCount,
     totals: {
+      directCustomers: Number(agg?.directCustomers ?? 0),
+      leads: Number(agg?.leads ?? 0),
+      thirdParties: Number(agg?.thirdParties ?? 0),
       outstanding: Number(agg?.outstanding ?? 0),
       slowPayers: Number(agg?.slowPayers ?? 0),
       withComplaints: Number(agg?.withComplaints ?? 0),
