@@ -40,7 +40,12 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          # The Dockerfile builds and runs on node:24-alpine, so 24 is what
+          # production is. Testing on 22 here meant the gate a change passes
+          # and the runtime it lands on were different versions — and the
+          # deploy's own test job already ran 24, so the disagreement was
+          # settled after the merge rather than before it.
+          node-version: 24
           cache: npm
 
       - run: npm ci
@@ -252,7 +257,12 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          # The Dockerfile builds and runs on node:24-alpine, so 24 is what
+          # production is. Testing on 22 here meant the gate a change passes
+          # and the runtime it lands on were different versions — and the
+          # deploy's own test job already ran 24, so the disagreement was
+          # settled after the merge rather than before it.
+          node-version: 24
           cache: npm
 
       - run: npm ci
