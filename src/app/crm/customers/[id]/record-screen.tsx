@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { categoryLabel } from "@/lib/complaint-labels";
+import type { CustomerRecordDetail } from "@/lib/services/customer-record-service";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -73,6 +75,7 @@ const KIND_TONE: Record<
 };
 
 export function RecordScreen({
+  detail,
   customer,
   amChanges,
   daysSinceOrder,
@@ -94,6 +97,8 @@ export function RecordScreen({
   userName,
   products,
 }: {
+  /** Bills, receipts, orders and the rest — see customer-record-service. */
+  detail: CustomerRecordDetail;
   customer: {
     id: string;
     name: string;
@@ -124,6 +129,12 @@ export function RecordScreen({
     creditTermDays: number;
     gstin: string | null;
     route: string | null;
+    area: string | null;
+    territoryRegion: string | null;
+    dealerCode: string | null;
+    /** A shop we deliver to, billed by its distributor. */
+    thirdParty: boolean;
+    doNotContact: boolean;
     customerSince: string | null;
     deactivationRequested: boolean;
     deactivationReason: string | null;
@@ -372,6 +383,209 @@ export function RecordScreen({
             )}
           </div>
         </Card>
+
+        {/* ------------------------------------------------------------------
+            The record itself: what this customer has bought, been billed, paid
+            and complained about. All of it was already in the database and
+            none of it was on this page — a telecaller preparing for a call had
+            a timeline and five figures, while the drawer they open DURING the
+            call knew the product history and the buying cycle.
+
+            Every panel is the same height and scrolls inside itself. Growing
+            the page instead is what made a customer with three hundred bills
+            unreadable: the more history an account had, the less of its record
+            you could reach.
+        ------------------------------------------------------------------ */}
+
+        <ScrollPanel
+          title="Orders"
+          count={detail.counts.orders}
+          shown={detail.orders.length}
+          empty="No orders recorded against this customer."
+        >
+          {detail.orders.map((o) => (
+            <RowLine
+              key={o.id}
+              left={
+                <>
+                  {o.orderNo ?? "no number"}
+                  {o.deliveredTo ? (
+                    <span className="text-muted"> → {o.deliveredTo}</span>
+                  ) : null}
+                </>
+              }
+              sub={
+                <>
+                  {shortDate(o.orderedAt)} · {o.status.replace(/_/g, " ")}
+                  {o.lines ? ` · ${o.lines} line${o.lines === 1 ? "" : "s"}` : ""}
+                  {/* An order accounts have not agreed to is not a sale, and
+                      the figures above it do not count it. Saying so here is
+                      what stops the two reading as a contradiction. */}
+                  {o.counts ? "" : " · not counted as a sale"}
+                </>
+              }
+              right={money(o.amount)}
+              tone={o.counts ? undefined : "muted"}
+            />
+          ))}
+        </ScrollPanel>
+
+        <ScrollPanel
+          title="Bills"
+          count={detail.counts.bills}
+          shown={detail.bills.length}
+          empty="No bills raised against this customer."
+        >
+          {detail.bills.map((b) => (
+            <RowLine
+              key={b.id}
+              left={b.billNo}
+              sub={
+                <>
+                  {shortDate(b.billDate)}
+                  {b.dueDate ? ` · due ${shortDate(b.dueDate)}` : " · no due date"}
+                  {b.daysOverdue ? ` · ${b.daysOverdue} days overdue` : ""}
+                </>
+              }
+              right={
+                /* An `unstated` bill is neither paid nor owed — nobody has
+                   spoken for it either way — so its balance is not drawn as a
+                   figure. Rendering the full amount beside real balances is
+                   the mistake the payment_position column exists to prevent. */
+                b.stated ? (
+                  <>
+                    {money(b.balance)}
+                    <span className="block text-[12px] text-muted">
+                      of {money(b.amount)}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-[13px] text-muted">
+                    not stated
+                    <span className="block text-[12px]">{money(b.amount)} billed</span>
+                  </span>
+                )
+              }
+              tone={b.daysOverdue ? "danger" : undefined}
+            />
+          ))}
+        </ScrollPanel>
+
+        <ScrollPanel
+          title="Payments received"
+          count={detail.counts.receipts}
+          shown={detail.receipts.length}
+          empty="No payment has been recorded for this customer."
+        >
+          {detail.receipts.map((r) => (
+            <RowLine
+              key={r.id}
+              left={
+                <>
+                  {r.mode}
+                  {r.reference ? (
+                    <span className="text-muted"> · {r.reference}</span>
+                  ) : null}
+                </>
+              }
+              sub={
+                <>
+                  {shortDate(r.receivedAt)}
+                  {/* A cheque has two dates and they answer different
+                      questions: when we got it, and when it can be banked. */}
+                  {r.instrumentDate
+                    ? ` · dated ${shortDate(r.instrumentDate)}`
+                    : ""}
+                  {" · "}
+                  {r.status}
+                  {r.source === "sheet_import" ? " · from the sheet" : ""}
+                </>
+              }
+              right={money(r.amount)}
+              /* Only confirmed money counts anywhere else in the system, so
+                 anything else is drawn as the claim it is. */
+              tone={
+                r.status === "confirmed"
+                  ? undefined
+                  : r.status === "rejected" || r.status === "reversed"
+                    ? "danger"
+                    : "muted"
+              }
+            />
+          ))}
+        </ScrollPanel>
+
+        {detail.deliversTo.length || detail.billedThrough.length ? (
+          <ScrollPanel
+            title={detail.deliversTo.length ? "Delivers to" : "Billed through"}
+            count={
+              detail.deliversTo.length || detail.billedThrough.length
+            }
+            empty=""
+          >
+            {(detail.deliversTo.length ? detail.deliversTo : detail.billedThrough).map(
+              (d) => (
+                <RowLine
+                  key={d.id}
+                  left={
+                    <Link
+                      href={`/crm/customers/${d.id}`}
+                      className="text-ink no-underline hover:underline"
+                    >
+                      {d.name}
+                    </Link>
+                  }
+                  sub={d.lastAt ? `last ${shortDate(d.lastAt)}` : undefined}
+                  right={`${d.orders} order${d.orders === 1 ? "" : "s"}`}
+                />
+              ),
+            )}
+          </ScrollPanel>
+        ) : null}
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <ScrollPanel
+            title="Complaints"
+            count={detail.counts.complaints}
+            shown={detail.complaints.length}
+            empty="No complaint has been raised."
+          >
+            {detail.complaints.map((c) => (
+              <RowLine
+                key={c.id}
+                left={categoryLabel(c.category)}
+                sub={
+                  <>
+                    {shortDate(c.createdAt)} · {c.status.replace(/_/g, " ")}
+                    <span className="block">{c.description}</span>
+                  </>
+                }
+                tone={c.status === "resolved" ? "muted" : "warn"}
+              />
+            ))}
+          </ScrollPanel>
+
+          <ScrollPanel
+            title="Reminders"
+            count={detail.counts.reminders}
+            shown={detail.reminders.length}
+            empty="No reminder has been set."
+          >
+            {detail.reminders.map((rm) => (
+              <RowLine
+                key={rm.id}
+                left={rm.note ?? "no note"}
+                sub={
+                  <>
+                    {shortDate(rm.dueDate)} · {rm.status}
+                    {rm.ownerName ? ` · ${rm.ownerName}` : ""}
+                  </>
+                }
+                tone={rm.status === "pending" ? undefined : "muted"}
+              />
+            ))}
+          </ScrollPanel>
+        </div>
         </div>
 
         <div className="flex flex-col gap-4">
@@ -491,56 +705,90 @@ export function RecordScreen({
 
           <Card className="p-5">
             <SectionLabel>Account</SectionLabel>
-            <div className="mt-2.5 text-sm leading-[22px] text-body">
-              GSTIN {customer.gstin ?? "not recorded"}
-              <br />
-              Credit terms {customer.creditTermDays} days
-              <br />
-              Route {customer.route ?? "not set"}
-              <br />
+            {/*
+              A LABEL AND A VALUE, not a sentence.
+              
+              This was `GSTIN {value}` on one line and `Route {value}` on the
+              next, with nothing between the two halves — so "Route not set"
+              read as prose and a GST number ran straight on from its own
+              label. Two facts sharing a line need something separating them,
+              and the separator this codebase already uses is colour on the
+              label rather than punctuation: muted label, plain value, so the
+              eye picks out the values without reading a word of the labels.
+            */}
+            <dl className="mt-2.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm leading-[22px]">
+              <Fact label="GSTIN" value={customer.gstin} />
+              <Fact label="Credit terms" value={`${customer.creditTermDays} days`} />
+              <Fact label="Route" value={customer.route} />
+              <Fact label="Area" value={customer.area} />
+              <Fact label="Territory" value={customer.territoryRegion} />
+              <Fact label="Dealer code" value={customer.dealerCode} />
               {customer.kind === "lead" ? (
                 <>
-                  Lead since {shortDate(customer.createdAt)}
-                  <br />
-                  Source {customer.leadSource ?? "not recorded"}
+                  <Fact label="Lead since" value={shortDate(customer.createdAt)} />
+                  <Fact label="Source" value={customer.leadSource} />
+                  <Fact label="Owner" value={customer.ownerName} />
                 </>
               ) : (
                 <>
-                  Customer since{" "}
-                  {customer.customerSince
-                    ? shortDate(customer.customerSince)
-                    : "unknown"}
-                  <br />
-                  Sales{" "}
-                  {customer.salesAmName ?? customer.ownerName ?? "unassigned"}
-                  <br />
-                  {/* Named plainly, because an unassigned back office is who a
-                      dispatch or billing question has to go to and there is
-                      nobody. */}
-                  Back office {customer.backOfficeAmName ?? "unassigned"}
-                  {/* Who it was before, and why it moved. The question people
-                      ask after a resignation is not who owns this now — the
-                      line above answers that — it is what happened to it. */}
-                  {amChanges.length ? (
-                    <>
-                      <br />
-                      <span className="mt-1.5 block border-t border-divider pt-1.5">
-                        {amChanges.map((c) => (
-                          <span key={c.id} className="block text-[11px] text-muted">
-                            {shortDate(c.changedAt)} ·{" "}
-                            {c.role === "sales" ? "Sales" : "Back office"}{" "}
-                            {c.fromName ?? "unassigned"} → {c.toName ?? "unassigned"} ·{" "}
-                            {c.reasonCode}
-                            {c.note ? ` — ${c.note}` : ""}
-                            {c.changedBy ? ` (${c.changedBy})` : ""}
-                          </span>
-                        ))}
-                      </span>
-                    </>
-                  ) : null}
+                  <Fact
+                    label="Customer since"
+                    value={
+                      customer.customerSince ? shortDate(customer.customerSince) : null
+                    }
+                  />
+                  {/* The three seats at ONE size, as the customers list draws
+                      them: they are peers, and a hierarchy of type sizes down a
+                      column claims an importance ranking that does not exist. */}
+                  <Fact
+                    label="Sales"
+                    value={customer.salesAmName ?? customer.ownerName}
+                  />
+                  <Fact label="Back office" value={customer.backOfficeAmName} />
+                  <Fact
+                    label="Buying cycle"
+                    value={
+                      customer.cycleIsDefault
+                        ? `${customer.cycleDays} days (default)`
+                        : `${customer.cycleDays} days${
+                            customer.cycleConfidence === null
+                              ? ""
+                              : ` · ${customer.cycleConfidence}% confident`
+                          }`
+                    }
+                  />
                 </>
               )}
-            </div>
+              {customer.thirdParty ? (
+                <Fact
+                  label="Type"
+                  value="Third party - delivered to, billed by their distributor"
+                />
+              ) : null}
+              {customer.doNotContact ? <Fact label="Standing" value="Do not contact" /> : null}
+              {/* Who it was before, and why it moved. The question people ask
+                  after a resignation is not who owns this now — the line above
+                  answers that — it is what happened to it. */}
+              {amChanges.length ? (
+                <>
+                  <dt className="col-span-2 mt-1.5 border-t border-divider pt-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                    Manager history
+                  </dt>
+                  <dd className="col-span-2 m-0">
+                    {amChanges.map((c) => (
+                      <span key={c.id} className="block text-[11px] text-muted">
+                        {shortDate(c.changedAt)} ·{" "}
+                        {c.role === "sales" ? "Sales" : "Back office"}{" "}
+                        {c.fromName ?? "unassigned"} → {c.toName ?? "unassigned"} ·{" "}
+                        {c.reasonCode}
+                        {c.note ? ` — ${c.note}` : ""}
+                        {c.changedBy ? ` (${c.changedBy})` : ""}
+                      </span>
+                    ))}
+                  </dd>
+                </>
+              ) : null}
+            </dl>
           </Card>
         </div>
       </div>
@@ -590,6 +838,107 @@ export function RecordScreen({
           }
         }}
       />
+    </div>
+  );
+}
+
+/**
+ * One fact: a muted label and its value, side by side.
+ *
+ * `-` where there is nothing, in the value's own place rather than as prose,
+ * so a missing GSTIN and a missing route line up as two blanks instead of
+ * reading as two half-sentences.
+ */
+function Fact({ label, value }: { label: string; value: string | number | null }) {
+  return (
+    <>
+      <dt className="text-muted whitespace-nowrap">{label}</dt>
+      <dd className="m-0 min-w-0 break-words text-ink">
+        {value === null || value === "" ? <span className="text-muted">-</span> : value}
+      </dd>
+    </>
+  );
+}
+
+/**
+ * A card of fixed height whose CONTENTS scroll.
+ *
+ * Everything on this page used to grow the page instead: a customer with three
+ * hundred bills pushed the panel below them off the bottom of the screen, so
+ * the more history an account had the less of its record you could reach. The
+ * height is the same for every panel so the page has a rhythm rather than one
+ * enormous box and five small ones.
+ *
+ * The count in the header is the WHOLE count, not the number of rows loaded —
+ * a list silently cut at two hundred is a list somebody trusts and should not.
+ */
+function ScrollPanel({
+  title,
+  count,
+  shown,
+  empty,
+  children,
+}: {
+  title: string;
+  count: number;
+  /** How many are actually rendered, where that is fewer than the count. */
+  shown?: number;
+  empty: string;
+  children: React.ReactNode;
+}) {
+  const capped = shown !== undefined && shown < count;
+  return (
+    <Card className="flex max-h-[420px] flex-col">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-divider px-5 py-3.5">
+        <span className="text-lg leading-6 font-semibold text-ink">{title}</span>
+        <span className="text-[13px] text-muted">
+          {count === 0
+            ? "none"
+            : capped
+              ? `showing ${shown} of ${count}`
+              : `${count}`}
+        </span>
+      </div>
+      {count === 0 ? (
+        <p className="px-5 py-6 text-sm text-muted">{empty}</p>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">{children}</div>
+      )}
+    </Card>
+  );
+}
+
+/** A row of the tables inside the panels above. */
+function RowLine({
+  left,
+  right,
+  sub,
+  tone,
+}: {
+  left: React.ReactNode;
+  right?: React.ReactNode;
+  sub?: React.ReactNode;
+  tone?: "danger" | "warn" | "muted";
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3 border-b border-divider py-2 last:border-b-0">
+      <div className="min-w-0">
+        <div
+          className={
+            tone === "danger"
+              ? "text-sm text-danger"
+              : tone === "muted"
+                ? "text-sm text-muted"
+                : "text-sm text-ink"
+          }
+        >
+          {left}
+        </div>
+        {sub ? <div className="text-[12px] text-muted">{sub}</div> : null}
+      </div>
+      {right !== undefined ? (
+        <div className="shrink-0 text-right text-sm tabular-nums text-ink">{right}</div>
+      ) : null}
     </div>
   );
 }
