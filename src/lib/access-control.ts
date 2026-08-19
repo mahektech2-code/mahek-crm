@@ -209,6 +209,7 @@ export const CAPABILITIES = [
   "creditnote.issue",
   "sheet.import",
   "customer.reassign",
+  "customer.classify",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -217,6 +218,16 @@ export type Capability = (typeof CAPABILITIES)[number];
 const MANAGER_ONLY: ReadonlySet<Capability> = new Set<Capability>([
   "customer.export",
   "customer.deactivate",
+  /*
+   * Marking an account as a shop we deliver to, or unmarking one.
+   *
+   * A manager's rather than accounts': it decides who gets CALLED, which is the
+   * work of the team a manager runs, and it moves no money and no ownership.
+   * That is what separates it from `customer.reassign` next door, which moves
+   * numbers between a manager's own people and is deliberately kept away from
+   * them.
+   */
+  "customer.classify",
   "target.set",
   "target.shortfall",
   "complaint.resolve",

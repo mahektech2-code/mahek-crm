@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -702,6 +702,75 @@ export async function updateCustomer(
 
     refreshAll();
     return okVoid("Customer updated");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Mark accounts as shops we deliver to, or lift the mark.
+ *
+ * The ONLY thing that writes `third_party`. No import may set it and nothing
+ * derives it: the lead book is what it is because a spreadsheet column was once
+ * allowed to decide what a record was, and this is the subsystem that exists to
+ * sort that out. A person decides, one screen, both directions.
+ *
+ * A manager's, by `customer.classify` — it changes who gets called, which is
+ * the work of the team they run. Scoped like every other bulk write here, and
+ * one account outside the book refuses the whole request rather than marking
+ * the rest.
+ */
+export async function setThirdParty(
+  customerIds: string[],
+  thirdParty: boolean,
+): Promise<Result<{ changed: number }>> {
+  try {
+    if (!customerIds.length)
+      return err("Select at least one customer.", "validation");
+    const ctx = await requireCapability("customer.classify");
+
+    const scopeClause = scopedToUsers(scopedUserIds(ctx.scope));
+    if (scopeClause) {
+      const reachable = await db
+        .select({ id: customers.id })
+        .from(customers)
+        .where(and(inArray(customers.id, customerIds), scopeClause));
+      if (reachable.length !== customerIds.length) {
+        return err(
+          "Some of those customers are not in your book.",
+          "not_permitted",
+        );
+      }
+    }
+
+    const changed = await db
+      .update(customers)
+      .set({ thirdParty, updatedAt: new Date(), updatedById: ctx.user.id })
+      .where(and(inArray(customers.id, customerIds), ne(customers.thirdParty, thirdParty)))
+      .returning({ id: customers.id });
+
+    // Written down because it changes who appears on somebody's list tomorrow,
+    // and "why did these forty names vanish" is a question asked later.
+    if (changed.length) {
+      await db.insert(auditLog).values({
+        id: id("aud"),
+        actorId: ctx.user.id,
+        action: thirdParty ? "customer.markThirdParty" : "customer.unmarkThirdParty",
+        entityType: "customer",
+        entityId: changed.length === 1 ? changed[0].id : "bulk",
+        afterState: { thirdParty, customerIds: changed.map((c) => c.id) },
+      });
+    }
+
+    refreshAll();
+    return ok(
+      { changed: changed.length },
+      changed.length === 0
+        ? "Nothing to change - they were already set that way"
+        : thirdParty
+          ? `${changed.length} marked as delivered-to. They will not be chased for a first order.`
+          : `${changed.length} unmarked. They return to the calling list.`,
+    );
   } catch (e) {
     return fromThrown(e);
   }
@@ -1678,7 +1747,8 @@ export async function triggerJob(
     | "sheet-reconcile"
     | "sheet-payments"
     | "project-sheet"
-    | "backfill-timeline",
+    | "backfill-timeline"
+    | "link-delivery-parties",
   options: { owner?: string; bills?: boolean } = {},
 ): Promise<Result<{ ran: string[] }>> {
   try {

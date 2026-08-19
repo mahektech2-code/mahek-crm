@@ -291,6 +291,7 @@ function candidate(over: Partial<QueueCandidate> = {}): QueueCandidate {
     reminders: [],
     lastConfirmedWhatsappDate: null,
     activeInOrderSystem: false,
+  thirdParty: false,
     calledToday: false,
     doNotContact: false,
     skippedTodayReason: null,
@@ -2723,5 +2724,66 @@ describe("what gets called first", () => {
       reason.weight > C["queue.tierWeights"].orderLongOverdue,
       "a customer one cycle late ranked no higher than one who stopped",
     );
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * A shop we deliver to buys from its distributor, not from us. Asking it for a
+ * first order is asking for something it cannot give.
+ * ------------------------------------------------------------------------- */
+
+describe("a shop we only deliver to", () => {
+  test("is never prospected", () => {
+    const shop = candidate({
+      customerId: "shop",
+      lastOrderDate: null,
+      lastContactDate: null,
+      createdDate: addDays(TODAY, -60),
+      thirdParty: true,
+    });
+    const r = buildQueue([shop], TODAY, C);
+    assert.equal(r.entries.length, 0, "a delivered-to shop was put up for a first order");
+  });
+
+  test("an unmarked one still is — the mark is the only difference", () => {
+    const same = candidate({
+      customerId: "same",
+      lastOrderDate: null,
+      lastContactDate: null,
+      createdDate: addDays(TODAY, -60),
+      thirdParty: false,
+    });
+    const r = buildQueue([same], TODAY, C);
+    assert.equal(r.entries.length, 1);
+    assert.equal(r.entries[0].reasons[0].kind, "prospect");
+  });
+
+  test("but a promise made to one is still kept", () => {
+    // Only prospecting is suppressed. A callback somebody committed to is not
+    // speculative work, and breaking it because of a classification would be
+    // the worst kind of broken promise — one the customer never caused.
+    const shop = candidate({
+      customerId: "shop",
+      lastOrderDate: null,
+      thirdParty: true,
+      reminders: [{ id: "r1", dueDate: TODAY, note: "Ring back about the damaged tin" }],
+    });
+    assert.equal(buildQueue([shop], TODAY, C).entries.length, 1);
+  });
+
+  test("and one that orders directly is chased on its own cycle", () => {
+    // The mark corrects itself: nobody has to remember to lift it when a shop
+    // starts buying from us, because the reason it is called changes from
+    // "never ordered" to "their order is due".
+    const buys = candidate({
+      customerId: "buys",
+      lastOrderDate: addDays(TODAY, -30),
+      cycleDays: 22,
+      cycleIsDefault: false,
+      thirdParty: true,
+    });
+    const r = buildQueue([buys], TODAY, C);
+    assert.equal(r.entries.length, 1, "a marked shop that buys directly was never called");
+    assert.match(r.entries[0].reasons[0].kind, /order/i);
   });
 });
