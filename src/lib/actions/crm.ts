@@ -23,6 +23,8 @@ import {
   requireCapability,
   resolveScope,
   assertCustomerInScope,
+  scopedToUsers,
+  scopedUserIds,
 } from "@/lib/access-control";
 import { SCOPE_COOKIE_NAME } from "@/lib/scope";
 import {
@@ -714,6 +716,35 @@ export async function requestDeactivation(
     if (!customerIds.length)
       return err("Select at least one customer.", "validation");
     const ctx = await resolveScope();
+
+    /*
+     * WHOSE CUSTOMERS THESE ARE, checked before anything is written.
+     *
+     * `resolveScope` was called here and its answer never used: the update
+     * matched on the ids alone, so any signed-in person could flag any
+     * customer in the company by id. It only ever set a flag a manager has to
+     * confirm, which is why it never showed up — but a server action is a URL,
+     * and the ids are supplied by whoever calls it.
+     *
+     * Asked as a SELECT rather than folded into the update's WHERE, because
+     * the honest answer to "one of these is not yours" is to write nothing at
+     * all. A bulk action that silently flags nineteen of twenty and reports
+     * success is worse than one that refuses: nobody re-reads a list they have
+     * been told went through.
+     */
+    const scopeClause = scopedToUsers(scopedUserIds(ctx.scope));
+    if (scopeClause) {
+      const reachable = await db
+        .select({ id: customers.id })
+        .from(customers)
+        .where(and(inArray(customers.id, customerIds), scopeClause));
+      if (reachable.length !== customerIds.length) {
+        return err(
+          "Some of those customers are not in your book.",
+          "not_permitted",
+        );
+      }
+    }
 
     await db
       .update(customers)

@@ -931,6 +931,54 @@ describe("Journey 5 - a customer goes quiet and gets a decision", () => {
     assert.equal(row.status, "deactivated", "an order does not undo a decision");
   });
 
+  test("a telecaller cannot ask for somebody else's customer to go", async () => {
+    // `resolveScope` was called and its answer thrown away: the update matched
+    // on the ids alone, so any signed-in person could flag any customer in the
+    // company. It set a flag a manager has to confirm, which is why nobody saw
+    // it — but a server action is a URL and the ids come from the caller.
+    const someoneElses = await makeCustomer(rakesh.id, { lastOrderDate: TODAY });
+
+    setTestUser(priya);
+    const r = await requestDeactivation([someoneElses.id], "Not mine to ask.");
+    assert.equal(r.ok, false, "a telecaller flagged a customer outside their book");
+
+    const [row] = await db
+      .select({ requested: customers.deactivationRequested })
+      .from(customers)
+      .where(eq(customers.id, someoneElses.id));
+    assert.equal(row.requested, false, "the refusal still wrote the flag");
+  });
+
+  test("one customer outside the book refuses the whole request", async () => {
+    // Nobody re-reads a list they have been told went through, so a bulk
+    // action either does all of it or none of it.
+    const mine = await makeCustomer(priya.id, { lastOrderDate: TODAY });
+    const theirs = await makeCustomer(rakesh.id, { lastOrderDate: TODAY });
+
+    setTestUser(priya);
+    const r = await requestDeactivation([mine.id, theirs.id], "Closing both.");
+    assert.equal(r.ok, false);
+
+    const rows = await db
+      .select({ id: customers.id, requested: customers.deactivationRequested })
+      .from(customers)
+      .where(inArray(customers.id, [mine.id, theirs.id]));
+    assert.ok(
+      rows.every((x) => x.requested === false),
+      "part of a refused bulk request was written anyway",
+    );
+  });
+
+  test("a manager reaches the whole team's book", async () => {
+    const theirs = await makeCustomer(rakesh.id, { lastOrderDate: TODAY });
+    setTestUser(manager);
+    assert.equal(
+      (await requestDeactivation([theirs.id], "Team-wide clean-up.")).ok,
+      true,
+      "scoping the write shut a manager out of their own team",
+    );
+  });
+
   test("the way back: requested by a telecaller, decided by a manager", async () => {
     const customer = await makeCustomer(priya.id, { lastOrderDate: TODAY });
 
