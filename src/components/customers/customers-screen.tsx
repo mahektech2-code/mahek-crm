@@ -298,12 +298,30 @@ export function CustomersScreen({
           clear: () => navigate({ backoffice: undefined }),
         }
       : null,
+    accountTypeFilter !== ALL_TYPES
+      ? {
+          label: `Type: ${accountTypeFilter}`,
+          clear: () => navigate({ party: undefined }),
+        }
+      : null,
     query ? { label: `Search: ${query}`, clear: () => { setDraft(""); navigate({ q: undefined }); } } : null,
   ].filter(Boolean) as Array<{ label: string; clear: () => void }>;
 
   function clearAll() {
     setDraft("");
-    navigate({ q: undefined, status: undefined, sales: undefined, backoffice: undefined });
+    // Every filter, and `party` is a filter. Left out of this list it survived
+    // the button that exists to remove it: the list stayed empty, the control
+    // still said "Third parties", and Clear filters read as broken rather than
+    // as incomplete. A filter added anywhere has to be added in four places —
+    // the control, the chip, this, and the export's list of what it was taken
+    // under — and three of them are invisible until somebody presses one.
+    navigate({
+      q: undefined,
+      status: undefined,
+      sales: undefined,
+      backoffice: undefined,
+      party: undefined,
+    });
   }
 
   function toggle(id: string) {
@@ -910,15 +928,37 @@ export function CustomersScreen({
             </tbody>
           </table>
         ) : (
-          <EmptyState
-            title="No customers match these filters"
-            body="Widen the search or clear the filters to see the full book."
-            action={
-              <Button variant="primary" onClick={clearAll}>
-                Clear filters
-              </Button>
-            }
-          />
+          /*
+           * "No customers match these filters" is true of an empty Third
+           * parties list and tells somebody nothing: it reads as a filter that
+           * found nothing when the answer is that the work has not been started.
+           * Nobody is marked until a manager marks them, so the screen says
+           * that, and points at the list the marking is done from.
+           */
+          accountTypeFilter === "Third parties" && !query ? (
+            <EmptyState
+              title="No accounts marked as third party yet"
+              body="A third party is a shop we deliver to and a distributor bills. Nothing is marked automatically - somebody decides, one account at a time. Receives deliveries lists the accounts the order sheet shows taking goods on somebody else's bill, which is where that decision is usually made."
+              action={
+                <Button
+                  variant="primary"
+                  onClick={() => navigate({ party: "delivered" })}
+                >
+                  Show accounts receiving deliveries
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState
+              title="No customers match these filters"
+              body="Widen the search or clear the filters to see the full book."
+              action={
+                <Button variant="primary" onClick={clearAll}>
+                  Clear filters
+                </Button>
+              }
+            />
+          )
         )}
       </Card>
 
