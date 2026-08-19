@@ -477,10 +477,21 @@ export function QueueScreen({
                   {/* Which conversation this is. Since the Inactive Watch went,
                       these customers are worked from here — and the reason
                       badges say they are overdue without saying how far past
-                      the point of ordinary chasing they are. */}
-                  <Badge tone={r.status === "inactive" ? "warn" : "neutral"}>
-                    {r.status === "inactive" ? "Inactive" : "Active"}
-                  </Badge>
+                      the point of ordinary chasing they are.
+
+                      NOT ON A LEAD, unless it actually carries the mark.
+                      `evaluateInactivity` returns "No order history" for
+                      anybody who has never ordered, so a lead is never
+                      assessed and its status sits at the column default —
+                      "Lead · Active" was that default drawn as a finding,
+                      beside a line reading "never ordered, never contacted".
+                      Active is earned by buying and then not stopping, which
+                      is not a thing a lead has had the chance to do. */}
+                  {r.kind === "customer" || r.status === "inactive" ? (
+                    <Badge tone={r.status === "inactive" ? "warn" : "neutral"}>
+                      {r.status === "inactive" ? "Inactive" : "Active"}
+                    </Badge>
+                  ) : null}
                   {r.slowPayer ? <SlowPayerBadge /> : null}
                 </div>
                 <div className="mt-0.5 flex items-center gap-2 text-[13px] text-muted">
