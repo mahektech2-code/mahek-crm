@@ -1,4 +1,5 @@
 import { test, describe } from "node:test";
+import { shortDateWithYear } from "@/lib/format";
 import assert from "node:assert/strict";
 
 import {
@@ -2608,5 +2609,29 @@ describe("what the customer said buys the right quiet", () => {
       lastAnsweredDate: TODAY,
     });
     assert.equal(buildQueue([c], TODAY, C).entries.length, 1);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * A date on a Call Log row is read mid-call, and "14 Apr" means this April.
+ * ------------------------------------------------------------------------- */
+
+describe("a date says which year, once it is not this one", () => {
+  test("this year is bare; an older one carries its year", () => {
+    assert.equal(shortDateWithYear("2026-04-14", "2026-08-20"), "14 Apr");
+    assert.equal(shortDateWithYear("2025-04-14", "2026-08-20"), "14 Apr 2025");
+    // The boundary is the year, not a count of days: the 31st of December is
+    // last year on the 1st of January, however few hours separate them.
+    assert.equal(shortDateWithYear("2025-12-31", "2026-01-01"), "31 Dec 2025");
+    assert.equal(shortDateWithYear(null, "2026-08-20"), "-");
+  });
+
+  test("the overdue reason names a date a person can read", () => {
+    // It interpolated the stored value, so a telecaller was read "expected
+    // 2025-06-26" off the screen mid-call.
+    const c = candidate({ lastOrderDate: addDays(TODAY, -100), cycleDays: 22 });
+    const [reason] = buildQueue([c], TODAY, C).entries[0].reasons;
+    assert.match(reason.label, /expected \d{1,2} [A-Z][a-z]{2}/);
+    assert.doesNotMatch(reason.label, /\d{4}-\d{2}-\d{2}/, "an ISO date reached the screen");
   });
 });

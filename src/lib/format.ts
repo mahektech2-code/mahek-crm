@@ -88,6 +88,30 @@ export function shortDate(iso: string | Date | null | undefined): string {
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
 }
 
+/**
+ * "14 Apr" while it is this year, "14 Apr 2025" once it is not.
+ *
+ * `shortDate` never prints a year, which is right on a date everybody knows is
+ * recent and wrong the moment one is not: a Call Log row read "Last order 14
+ * Apr" against an order placed sixteen months earlier, beside another row's
+ * "6 Mar" that genuinely was this year. Rendered identically, the screen gave
+ * a telecaller no way to tell an old order from a new one — and the one they
+ * were about to ring about was the old one.
+ *
+ * `relativeTo` is a business date rather than the clock, because the clock may
+ * not be read during render and because "this year" on this screen means the
+ * working year, not the server's.
+ */
+export function shortDateWithYear(
+  iso: string | null | undefined,
+  relativeTo: string,
+): string {
+  if (!iso) return "-";
+  const short = shortDate(iso);
+  if (short === "-") return short;
+  return iso.slice(0, 4) === relativeTo.slice(0, 4) ? short : `${short} ${iso.slice(0, 4)}`;
+}
+
 /** "2026-08-12" -> "12 Aug 2026" */
 /** "2026-08" → "August". The design names the month rather than numbering it. */
 export function monthLabel(period: string): string {

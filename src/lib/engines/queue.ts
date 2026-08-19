@@ -1,4 +1,5 @@
 import type { BusinessDate } from "../business-date";
+import { shortDateWithYear } from "../format";
 import { addDays, daysBetween } from "../business-date";
 import type { Config, QueueReasonKind } from "../config/registry";
 
@@ -373,13 +374,13 @@ function reasonsFor(
         if (cyclesMissed >= 1) {
           reasons.push({
             kind: "orderOverdueFullCycle",
-            label: `Order overdue by ${cyclesMissed} full cycle${cyclesMissed === 1 ? "" : "s"} - expected ${expected}`,
+            label: `Order overdue by ${cyclesMissed} full cycle${cyclesMissed === 1 ? "" : "s"} - expected ${shortDateWithYear(expected, today)}`,
             weight: weights.orderOverdueFullCycle,
           });
         } else {
           reasons.push({
             kind: "orderDue",
-            label: `Order overdue by ${overdueDays} day${overdueDays === 1 ? "" : "s"} - expected ${expected}`,
+            label: `Order overdue by ${overdueDays} day${overdueDays === 1 ? "" : "s"} - expected ${shortDateWithYear(expected, today)}`,
             weight: weights.orderDue,
           });
         }
