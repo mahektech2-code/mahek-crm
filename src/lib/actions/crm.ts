@@ -83,7 +83,6 @@ const SHARED = [
   "/crm/history",
   "/crm/payments",
   "/crm/bills",
-  "/crm/inactive",
   "/crm/customers",
   "/crm/complaints",
   "/crm/targets",
@@ -725,7 +724,11 @@ export async function requestDeactivation(
         title: "Deactivation requested",
         body: `${ctx.user.name} asked to deactivate ${customerIds.length} customer${customerIds.length === 1 ? "" : "s"}: ${reason.trim()}`,
         kind: "warn",
-        href: "/crm/inactive",
+        // The customer list, which marks a row whose deactivation has been
+        // asked for. It was the Inactive Watch until that screen went — and a
+        // bell landing on a route that no longer exists is worse than one with
+        // no href at all.
+        href: "/crm/customers",
       });
     }
 

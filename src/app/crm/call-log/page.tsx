@@ -104,6 +104,8 @@ export default async function QueuePage() {
         daysSinceContact: r.daysSinceContact,
         outstanding: r.outstanding,
         kind: r.kind,
+        status: r.status,
+        deactivationRequested: r.deactivationRequested,
         slowPayer: r.slowPayer,
         lastOrderDate: r.lastOrderDate,
         lastNote: r.lastNote,
