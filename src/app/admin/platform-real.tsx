@@ -418,7 +418,7 @@ function RunByHand() {
   const toast = useToast();
   const [busy, setBusy] = React.useState<string | null>(null);
 
-  async function run(job: "backfill-timeline") {
+  async function run(job: "backfill-timeline" | "link-delivery-parties") {
     setBusy(job);
     try {
       const result = await triggerJob(job);
@@ -448,6 +448,21 @@ function RunByHand() {
           Projects every telecaller call already recorded into the shared timeline, so a
           salesman opening a customer sees what the desk team was told. Safe to run twice —
           a call already projected is skipped rather than duplicated.
+        </span>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-line pt-3">
+        <Button
+          variant="secondary"
+          disabled={Boolean(busy)}
+          onClick={() => void run("link-delivery-parties")}
+        >
+          {busy === "link-delivery-parties" ? "Linking…" : "Link delivery parties"}
+        </Button>
+        <span className="max-w-[520px] text-[13px] leading-[19px] text-muted">
+          Reads the Taken Order tab&rsquo;s delivery party against the accounts we already hold,
+          so the customers list can show which shops receive goods on somebody else&rsquo;s
+          bill. Creates no records — a name matching nothing is counted and reported. It runs
+          in the nightly too; this is for when you would rather not wait until 20:13.
         </span>
       </div>
     </Card>
