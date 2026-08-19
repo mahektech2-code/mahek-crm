@@ -7,7 +7,7 @@ import { isManager, requireUser } from "@/lib/auth";
 import { randomUUID } from "node:crypto";
 import { auditLog } from "@/db/schema";
 import { recomputeOutstanding } from "@/lib/recompute";
-import { err as fail, ok, type Result as ActionResult } from "@/lib/result";
+import { err as fail, fromThrown, ok, type Result as ActionResult } from "@/lib/result";
 import { today } from "@/lib/recompute";
 
 const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -42,7 +42,30 @@ const customerRow = z.object({
   ownerName: z.string().trim().optional(),
 });
 
+/*
+ * A THROW HERE IS A DEAD BUTTON.
+ *
+ * These two ran their whole body outside a try, so anything the database
+ * objected to on row four hundred left the screen with a rejected promise
+ * rather than a Result — no message about what went wrong, and an Import
+ * button stuck on "Importing…" until somebody reloaded the page. Every other
+ * action in MahekOne answers with a Result whatever happens, and these two
+ * now do the same. What is already written stays written: the import reports
+ * per row and is re-runnable, so a failure part way is recoverable by running
+ * it again rather than by unwinding it.
+ */
 export async function importCustomers(
+  rows: Array<Record<string, string>>,
+  defaultOwnerId: string,
+): Promise<ActionResult<ImportSummary>> {
+  try {
+    return await importCustomersInner(rows, defaultOwnerId);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+async function importCustomersInner(
   rows: Array<Record<string, string>>,
   defaultOwnerId: string,
 ): Promise<ActionResult<ImportSummary>> {
@@ -131,6 +154,16 @@ const billRow = z.object({
 });
 
 export async function importBills(
+  rows: Array<Record<string, string>>,
+): Promise<ActionResult<ImportSummary>> {
+  try {
+    return await importBillsInner(rows);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+async function importBillsInner(
   rows: Array<Record<string, string>>,
 ): Promise<ActionResult<ImportSummary>> {
   const user = await requireUser();

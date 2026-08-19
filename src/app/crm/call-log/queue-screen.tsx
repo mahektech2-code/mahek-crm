@@ -244,9 +244,14 @@ export function QueueScreen({
               title="The queue is recomputed on every load - this just re-reads it"
               onClick={async () => {
                 setBusy(true);
-                await run(rebuildQueue());
-                setBusy(false);
-                router.refresh();
+                // `finally`: `run` re-throws, and the refresh belongs with the
+                // call that succeeded rather than after one that did not.
+                try {
+                  await run(rebuildQueue());
+                  router.refresh();
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
               Re-prioritise

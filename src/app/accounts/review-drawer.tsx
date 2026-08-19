@@ -128,45 +128,57 @@ export function ReviewDrawer({
           ? "Saving…"
           : undefined;
 
+  /*
+   * `finally` on both of these, because `run` re-throws what the action threw.
+   * A flag cleared only on the way past a successful await leaves the decision
+   * button disabled and reading "Saving…" until somebody reloads — on the two
+   * buttons that approve an order and confirm that money arrived.
+   */
   async function decidePositive() {
     setBusy(true);
     setConflict(null);
-    const result =
-      kind === "orders"
-        ? await run(approveOrderAction(row.id))
-        : kind === "payments"
-          ? await run(confirmReceiptAction(row.id, alloc ?? undefined))
-          : await run(
-              issueCreditNoteAction({
-                complaintId: row.id,
-                amount: amountPaise,
-                reference: reference.trim() || undefined,
-              }),
-            );
-    setBusy(false);
-    if (result.ok) onDecided();
-    // A stale allocation or a row somebody else decided first is not a toast
-    // that vanishes — it stays in the drawer, because it changes what to do.
-    else setConflict(result.error);
+    try {
+      const result =
+        kind === "orders"
+          ? await run(approveOrderAction(row.id))
+          : kind === "payments"
+            ? await run(confirmReceiptAction(row.id, alloc ?? undefined))
+            : await run(
+                issueCreditNoteAction({
+                  complaintId: row.id,
+                  amount: amountPaise,
+                  reference: reference.trim() || undefined,
+                }),
+              );
+      if (result.ok) onDecided();
+      // A stale allocation or a row somebody else decided first is not a toast
+      // that vanishes — it stays in the drawer, because it changes what to do.
+      else setConflict(result.error);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function decideNegative() {
     setBusy(true);
     setConflict(null);
-    const result =
-      kind === "orders"
-        ? await run(declineOrderAction(row.id, reason))
-        : kind === "payments"
-          ? // Hold and reject collect the same thing — a sentence somebody
-            // downstream repeats — so they share the box and differ only in
-            // which action spends it.
-            reasonFor === "hold"
-            ? await run(holdReceiptAction(row.id, reason))
-            : await run(rejectReceiptAction(row.id, reason))
-          : await run(refuseCreditNoteAction(row.id, reason));
-    setBusy(false);
-    if (result.ok) onDecided();
-    else setConflict(result.error);
+    try {
+      const result =
+        kind === "orders"
+          ? await run(declineOrderAction(row.id, reason))
+          : kind === "payments"
+            ? // Hold and reject collect the same thing — a sentence somebody
+              // downstream repeats — so they share the box and differ only in
+              // which action spends it.
+              reasonFor === "hold"
+              ? await run(holdReceiptAction(row.id, reason))
+              : await run(rejectReceiptAction(row.id, reason))
+            : await run(refuseCreditNoteAction(row.id, reason));
+      if (result.ok) onDecided();
+      else setConflict(result.error);
+    } finally {
+      setBusy(false);
+    }
   }
 
   function openReason(what: "reject" | "hold") {
