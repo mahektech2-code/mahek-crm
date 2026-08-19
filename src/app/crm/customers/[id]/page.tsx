@@ -1,4 +1,6 @@
 import { notFound } from "next/navigation";
+import { customerRecordDetail } from "@/lib/services/customer-record-service";
+import { orderCountsSql } from "@/lib/order-status";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { orders, payments } from "@/db/schema";
@@ -75,20 +77,48 @@ export default async function CustomerRecordPage({
     // in one round trip.
     db
       .select({
+        /*
+         * DID THE BUSINESS SELL ANYTHING — `orderCountsSql`, the one place
+         * that question is answered.
+         *
+         * These two said `status <> 'cancelled'`, which is the spelling
+         * `lib/order-status.ts` was written to replace: it counts an order
+         * accounts have not approved yet and one they refused outright. This
+         * page was the last place in `src/` still using it, so a customer's
+         * six-month count and their month-to-date included orders the business
+         * declined — on the screen a telecaller opens to decide how to talk to
+         * them.
+         */
         orders6m: sql<number>`(
           select count(*)::int from ${orders} o
-           where o.customer_id = ${id} and o.status <> 'cancelled'
+           where o.customer_id = ${id} and ${orderCountsSql("o")}
              and o.ordered_at >= now() - interval '6 months'
         )`,
         thisMonth: sql<number>`coalesce((
           select sum(o.total_amount) from ${orders} o
-           where o.customer_id = ${id} and o.status <> 'cancelled'
+           where o.customer_id = ${id} and ${orderCountsSql("o")}
              and o.ordered_at >= date_trunc('month', current_date)
         ), 0)`,
+        /*
+         * HOW LONG THEY ACTUALLY TAKE TO PAY, over money that actually arrived.
+         *
+         * `payments` rows exist for every receipt whatever its status, so this
+         * average was taken over reported claims nobody had checked, receipts
+         * accounts rejected, and — overwhelmingly — reversed ones: 9,421 of
+         * the reversed lines are the assume-everything-settled sheet imports,
+         * spread across 513 of the 561 customers. For almost the whole book
+         * this figure was computed mostly from money the business decided had
+         * never arrived.
+         *
+         * `r.status = 'confirmed'` is the same join `recomputeBillPaid` uses,
+         * and for the same reason: confirmed is the only status that is money.
+         */
         paysInDays: sql<number>`coalesce((
           select round(avg(p.paid_at - b.bill_date))::int
-            from ${payments} p join bills b on b.id = p.bill_id
-           where p.customer_id = ${id}
+            from ${payments} p
+            join bills b on b.id = p.bill_id
+            join payment_receipts r on r.id = p.receipt_id
+           where p.customer_id = ${id} and r.status = 'confirmed'
         ), 0)`,
       })
       .from(orders)
@@ -102,6 +132,11 @@ export default async function CustomerRecordPage({
     popularProducts(),
     listAmChanges(id),
   ]);
+
+  // Everything the record itself is made of. Its own round trip rather than a
+  // join onto the customer read: these are six independent lists and one of
+  // them being slow should not hold the others up.
+  const detail = await customerRecordDetail(id, day);
 
   const target = targets.find((t) => t.customerId === id);
   const totalTarget = targets.reduce((a, t) => a + t.target, 0);
@@ -118,6 +153,7 @@ export default async function CustomerRecordPage({
 
   return (
     <RecordScreen
+      detail={detail}
       amChanges={amChanges}
       customer={{
         id: customer.id,
@@ -154,6 +190,11 @@ export default async function CustomerRecordPage({
         creditTermDays: customer.creditTermDays,
         gstin: customer.gstin,
         route: customer.route,
+        area: customer.area,
+        territoryRegion: customer.territoryRegion,
+        dealerCode: customer.dealerCode,
+        thirdParty: customer.thirdParty,
+        doNotContact: customer.doNotContact,
         customerSince: customer.customerSince,
         deactivationRequested: customer.deactivationRequested,
         reactivationRequested: customer.reactivationRequested,

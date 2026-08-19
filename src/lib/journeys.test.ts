@@ -88,6 +88,7 @@ import {
   linkDeliveryParties,
   unresolvedDeliveryParties,
 } from "@/lib/services/delivery-party-service";
+import { customerRecordDetail } from "@/lib/services/customer-record-service";
 import { saveInteraction } from "@/lib/services/interaction-service";
 import { seedCatalogue } from "@/db/seed-catalogue";
 import {
@@ -7549,6 +7550,84 @@ describe("shops we deliver to", () => {
     assert.ok(
       listed.some((u) => u.name === "Nobody We Have Ever Heard Of"),
       "the unmatched name was not reported anywhere",
+    );
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * The customer record, which held a timeline and five figures while the drawer
+ * opened over the top of it knew more than the page underneath.
+ * ------------------------------------------------------------------------- */
+
+describe("everything on a customer's record", () => {
+  test("a bill nobody has spoken for is listed and never given a balance", async () => {
+    const customer = await makeCustomer(priya.id);
+    await db.insert(bills).values([
+      {
+        id: id("bil"),
+        customerId: customer.id,
+        billNo: "STATED-1",
+        billDate: addDays(TODAY, -40),
+        dueDate: addDays(TODAY, -10),
+        amount: 100_00,
+        paymentPosition: "stated",
+      },
+      {
+        id: id("bil"),
+        customerId: customer.id,
+        billNo: "UNSTATED-1",
+        billDate: addDays(TODAY, -40),
+        dueDate: addDays(TODAY, -10),
+        amount: 250_00,
+        paymentPosition: "unstated",
+      },
+    ]);
+
+    setTestUser(priya);
+    const detail = await customerRecordDetail(customer.id, TODAY);
+
+    const stated = detail.bills.find((b) => b.billNo === "STATED-1")!;
+    const unstated = detail.bills.find((b) => b.billNo === "UNSTATED-1")!;
+
+    assert.equal(detail.counts.bills, 2, "the count is of every bill, not the page");
+    assert.equal(stated.stated, true);
+    assert.equal(stated.daysOverdue, 10);
+
+    // Shown, counted, and never aged: an unstated bill is not a debt, so
+    // giving it a number of days overdue would invent an age for something
+    // nobody has said is owed.
+    assert.equal(unstated.stated, false);
+    assert.equal(unstated.daysOverdue, null, "an unstated bill was aged like a debt");
+  });
+
+  test("an order accounts refused is listed, and says it is not a sale", async () => {
+    const customer = await makeCustomer(priya.id);
+    await db.insert(orders).values([
+      {
+        id: id("ord"),
+        customerId: customer.id,
+        orderedAt: new Date(),
+        totalAmount: 500_00,
+        status: "dispatched",
+      },
+      {
+        id: id("ord"),
+        customerId: customer.id,
+        orderedAt: new Date(),
+        totalAmount: 900_00,
+        status: "declined",
+      },
+    ]);
+
+    setTestUser(priya);
+    const detail = await customerRecordDetail(customer.id, TODAY);
+
+    assert.equal(detail.orders.length, 2, "a declined order vanished from the record");
+    assert.equal(detail.orders.filter((o) => o.counts).length, 1);
+    assert.equal(
+      detail.orders.find((o) => o.amount === 900_00)?.counts,
+      false,
+      "a declined order was presented as a sale",
     );
   });
 });
