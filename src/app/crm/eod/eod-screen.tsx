@@ -102,9 +102,14 @@ export function EodScreen({
               }
               onClick={async () => {
                 setBusy(true);
-                const result = await run(submitEod(message));
-                setBusy(false);
-                if (result.ok) router.refresh();
+                // `finally`: `run` re-throws, and a telecaller at the end of
+                // the day must be able to press this again.
+                try {
+                  const result = await run(submitEod(message));
+                  if (result.ok) router.refresh();
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
               {submittedAt ? "Resubmit EOD" : "Submit EOD"}

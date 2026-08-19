@@ -75,9 +75,14 @@ export function ImportScreen({ state }: { state: ImportState }) {
                 title={blocked}
                 onClick={async () => {
                   setBusy(true);
-                  const r = await run(runBillImportAction(owner));
-                  setBusy(false);
-                  if (r.ok) router.refresh();
+                  // `finally`: `run` re-throws, and an import that fails part
+                  // way must not leave the button reading "Running…" for good.
+                  try {
+                    const r = await run(runBillImportAction(owner));
+                    if (r.ok) router.refresh();
+                  } finally {
+                    setBusy(false);
+                  }
                 }}
                 className={cx(
                   "h-9 rounded-[4px] border px-4 text-sm font-medium",
