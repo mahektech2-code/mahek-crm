@@ -25,7 +25,7 @@ import {
   type ScriptOption,
 } from "@/components/crm/call-panel";
 import { rebuildQueue, requestDeactivation, skipQueueItem } from "@/lib/actions/crm";
-import { money, phoneDisplay, shortDate } from "@/lib/format";
+import { money, phoneDisplay, shortDateWithYear } from "@/lib/format";
 
 type Reason = { kind: string; label: string; weight: number };
 
@@ -100,6 +100,7 @@ const PAYMENT_KINDS = ["paymentOverdue"];
 const RETRY_KINDS = ["noAnswerRetry", "unreachable"];
 
 export function QueueScreen({
+  day,
   scopeLabel,
   showAssignee,
   rows,
@@ -119,6 +120,13 @@ export function QueueScreen({
   products,
   scripts,
 }: {
+  /**
+   * The business day, from the server. A date is shown with its year only when
+   * that year is not the current one, and "current" has to come from the
+   * working day rather than from `new Date()` — the clock may not be read
+   * during render.
+   */
+  day: string;
   scopeLabel: string;
   /** Team view: every row belongs to somebody, so every row says who. */
   showAssignee: boolean;
@@ -455,11 +463,18 @@ export function QueueScreen({
               )}
             >
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2.5">
+                {/* WRAPS, and the name does not shrink.
+                    A Badge sets `whitespace-nowrap`, so on a row carrying a
+                    long reason the only thing that could give was the name —
+                    and "Navkar Tradres (Tungar Phata)" came out stacked four
+                    lines high beside a one-line neighbour. The reason is the
+                    part that varies in length, so the reason is the part that
+                    moves to the next line. */}
+                <div className="flex flex-wrap items-center gap-2.5">
                   <Link
                     href={`/crm/customers/${r.customerId}`}
                     onClick={(e) => e.stopPropagation()}
-                    className="text-sm font-medium text-ink no-underline hover:underline"
+                    className="shrink-0 text-sm font-medium text-ink no-underline hover:underline"
                   >
                     {r.name}
                   </Link>
@@ -469,6 +484,16 @@ export function QueueScreen({
                     <Badge
                       key={`${reason.kind}:${ri}`}
                       tone={REASON_TONE[reason.kind] ?? "neutral"}
+                      /* A reminder's label carries the note the telecaller
+                         typed, so it is as long as somebody felt like being —
+                         and a Badge does not wrap. One of them ran out over
+                         the Assigned to and Outstanding columns and off the
+                         edge of the screen, taking "Slow payer" with it.
+                         Capped at the row and cut short, with the whole thing
+                         on hover; nothing is lost, because the note is printed
+                         in full two lines below. */
+                      className="max-w-full truncate"
+                      title={reason.label}
                     >
                       {reason.label}
                     </Badge>
@@ -501,7 +526,7 @@ export function QueueScreen({
                   <span>·</span>
                   <span>
                     Last order{" "}
-                    {r.lastOrderDate ? shortDate(r.lastOrderDate) : "never"}
+                    {r.lastOrderDate ? shortDateWithYear(r.lastOrderDate, day) : "never"}
                   </span>
                   <span>·</span>
                   <span>

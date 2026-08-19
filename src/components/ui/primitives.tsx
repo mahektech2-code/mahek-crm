@@ -80,13 +80,17 @@ export function Badge({
   tone = "neutral",
   children,
   className,
+  title,
 }: {
   tone?: Tone;
   children: React.ReactNode;
   className?: string;
+  /** The whole text, where the badge is narrow enough to have cut it short. */
+  title?: string;
 }) {
   return (
     <span
+      title={title}
       className={cx(
         "inline-flex h-5 items-center rounded-[3px] px-1.5 text-[11px] font-medium whitespace-nowrap",
         BADGE_TONES[tone],

@@ -88,6 +88,7 @@ export default async function QueuePage() {
 
   return (
     <QueueScreen
+      day={day}
       scopeLabel={scopeLabel(scope, user)}
       // On a team list a row is somebody else's call, and a manager reading it
       // has to know whose. On their own book every row is theirs, so naming a
