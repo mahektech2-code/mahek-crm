@@ -84,6 +84,10 @@ const REASON_TONE: Record<string, "danger" | "warn" | "brand" | "neutral"> = {
   reminderOverdue: "danger",
   reminderDueToday: "warn",
   orderOverdueFullCycle: "danger",
+  // Muted on purpose. Red is for a debt or a promise broken; somebody who
+  // stopped buying eight months ago is not an emergency, and drawing them like
+  // one teaches the eye to skip the colour.
+  orderLongOverdue: "neutral",
   orderDue: "brand",
   routineCall: "brand",
   checkInOverdue: "warn",

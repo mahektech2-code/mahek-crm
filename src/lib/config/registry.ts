@@ -59,6 +59,47 @@ export type SettingDefinition = {
   options?: readonly string[];
 };
 
+/**
+ * The ranking, as data, and the ONE definition of it.
+ *
+ * Exported because the engine needs somewhere to fall back to. A stored
+ * `queue.tierWeights` replaces this object wholesale rather than merging into
+ * it, so a blob written before a reason kind existed — or before one was
+ * renamed — leaves that kind with no weight at all, and `undefined` arithmetic
+ * does not throw, it quietly poisons a sort.
+ */
+export const DEFAULT_TIER_WEIGHTS: Record<QueueReasonKind, number> = {
+  /* P1 — money, and promises made to a customer. */
+  paymentOverdue: 110,
+  reminderOverdue: 100,
+  reminderDueToday: 90,
+  /* P2 — the order that should have happened by now. */
+  orderOverdueFullCycle: 80,
+  orderDue: 70,
+  /* P3 — routine work. */
+  routineCall: 60,
+  prospect: 55,
+  checkInOverdue: 50,
+  /*
+   * P3.5 — the customer who stopped.
+   *
+   * Past the same multiple of their own cycle that earns the Inactive badge,
+   * and deliberately BELOW every call about an order that is merely due. This
+   * is the "why did you stop" conversation, which is worth having and is not
+   * worth having first: there are 322 of these against 198 active customers,
+   * and at `orderOverdueFullCycle`'s weight they filled every 60-row list and
+   * pushed the people about to reorder off the bottom of it. Ranked here, they
+   * are worked when the day's real chasing is done.
+   */
+  orderLongOverdue: 45,
+  checkInDue: 40,
+  /* P4 — chasing a ring nobody answered, and the state after it. */
+  unreachable: 35,
+  noAnswerRetry: 30,
+  /* Not a call for an order at all: an order already on its way. */
+  orderStatus: 10,
+};
+
 export const SETTINGS = [
   /* ----------------------------------------------------------- call log */
   {
@@ -306,25 +347,7 @@ export const SETTINGS = [
     label: "Priority tier weights",
     description:
       "Relative ranking of the reasons a customer can enter the queue. Highest weight wins. Inferred - confirm against the existing system during migration diffing.",
-    default: {
-      /* P1 — money, and promises made to a customer. */
-      paymentOverdue: 110,
-      reminderOverdue: 100,
-      reminderDueToday: 90,
-      /* P2 — the order that should have happened by now. */
-      orderOverdueFullCycle: 80,
-      orderDue: 70,
-      /* P3 — routine work. */
-      routineCall: 60,
-      prospect: 55,
-      checkInOverdue: 50,
-      checkInDue: 40,
-      /* P4 — chasing a ring nobody answered, and the state after it. */
-      unreachable: 35,
-      noAnswerRetry: 30,
-      /* Not a call for an order at all: an order already on its way. */
-      orderStatus: 10,
-    },
+    default: DEFAULT_TIER_WEIGHTS,
   },
 
   /* --------------------------------------------------------- buying cycle */
@@ -2191,6 +2214,8 @@ export type QueueReasonKind =
   | "reminderOverdue"
   | "reminderDueToday"
   | "orderOverdueFullCycle"
+  /** Past the multiple of their own cycle that earns the Inactive badge. */
+  | "orderLongOverdue"
   | "orderDue"
   /** The routine stock check, at a percentage of the customer's own cycle. */
   | "routineCall"
