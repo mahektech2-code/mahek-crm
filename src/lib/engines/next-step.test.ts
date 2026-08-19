@@ -44,7 +44,6 @@ function candidate(over: Partial<QueueCandidate> = {}): QueueCandidate {
     lastNoAnswerAt: null,
     openOrderStatus: null,
     paymentCallDue: null,
-    onInactiveWatch: false,
     outstanding: 0,
     targetGap: 0,
     ...over,
@@ -230,5 +229,51 @@ describe("E10 next step", () => {
     // telecaller has to be able to see without counting.
     assert.equal(step.date, "2026-08-24");
     assert.match(step.headline, /Mon 24 Aug/);
+  });
+
+  /*
+   * The confirmation is a fixed form of words, and it names the screen.
+   *
+   * A telecaller reads this sixty times a day, so what makes it work is that
+   * the first line is always the same shape — where they come back, and when.
+   * A reason that quietly stopped saying "Call Log", or a headline that went
+   * back to describing "your list", would be a screen nobody recognises at a
+   * glance any more, and the reason is the only part worth reading twice.
+   */
+  test("every dated step confirms the Call Log by name, and says why underneath", () => {
+    const cases: Array<[string, ReturnType<typeof candidate>]> = [
+      ["due to reorder", candidate({ lastOrderDate: addDays(TODAY, -30), cycleDays: 30 })],
+      ["a full cycle over", candidate({ lastOrderDate: addDays(TODAY, -90), cycleDays: 30 })],
+      ["never ordered", candidate({ lastOrderDate: null })],
+    ];
+
+    for (const [what, c] of cases) {
+      const step = ask(c);
+      if (!step.date) continue;
+
+      assert.match(
+        step.headline,
+        /^Comes back to your Call Log /,
+        `${what}: the headline has to state the Call Log, not describe a list`,
+      );
+      // The reason is the second line, never folded into the first — a date
+      // that reads as its own cause is the thing this shape exists to avoid.
+      assert.ok(step.detail.includes(" — "), `${what}: no reason beside the action`);
+      assert.doesNotMatch(step.headline, /because|due to reorder/i);
+    }
+  });
+
+  test("a promised callback is still a Call Log date — the badge carries the promise", () => {
+    const step = ask(
+      candidate({
+        reminders: [
+          { id: "rem_1", dueDate: addDays(TODAY, 3), note: "asked for Thursday" },
+        ],
+      }),
+    );
+
+    assert.equal(step.kind, "booked");
+    assert.match(step.headline, /^Comes back to your Call Log /);
+    assert.match(step.detail, /Call them back/);
   });
 });

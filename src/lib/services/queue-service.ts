@@ -1,10 +1,9 @@
 import "server-only";
-import { and, asc, eq, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   calls,
   customers,
-  inactiveWatchItems,
   monthlyTargets,
   orders,
   queueSnapshots,
@@ -50,6 +49,10 @@ export type QueueRow = QueueResult["entries"][number] & {
   /** Whose call this is, by the assignment rule. Shown on team lists. */
   assignedToName: string | null;
   kind: "lead" | "customer";
+  /** Active, or gone quiet past twice their own cycle. Never `deactivated`. */
+  status: "active" | "inactive" | "deactivated";
+  /** Asked for already, and waiting on a manager. Stops a second request. */
+  deactivationRequested: boolean;
   slowPayer: boolean;
   lastOrderDate: string | null;
   lastOrderValue: number;
@@ -247,26 +250,6 @@ async function queueInputs(
       ),
     );
 
-  // Who is open on the Inactive Watch. One query rather than a lookup per
-  // candidate — and only OPEN rows: a customer somebody has already decided
-  // about, or parked until a date, is off the watch and back in the queue.
-  const watched = new Set(
-    (
-      await db
-        .select({ customerId: inactiveWatchItems.customerId })
-        .from(inactiveWatchItems)
-        .where(
-          and(
-            isNull(inactiveWatchItems.outcome),
-            or(
-              isNull(inactiveWatchItems.dismissedUntil),
-              lte(inactiveWatchItems.dismissedUntil, day),
-            ),
-          ),
-        )
-    ).map((r) => r.customerId),
-  );
-
   // Pending reminders assigned to whoever is asking, in one query.
   const reminderRows = await db
     .select({
@@ -352,7 +335,6 @@ async function queueInputs(
       openOrderStatus: openOrderStatus ? orderStatusLabel(openOrderStatus) : null,
       /* Filled in below, from the collections engine's own conclusion. */
       paymentCallDue: null,
-      onInactiveWatch: watched.has(c.id),
     }),
   );
 
@@ -638,6 +620,13 @@ export async function getQueue(): Promise<QueueView> {
       ownerName: row.ownerName,
       assignedToName: row.assignedToName,
       kind: c.kind,
+      // Active or inactive, said on the card. It is `recomputeInactiveWatch`
+      // that writes this — twice the customer's own cycle with no order — and
+      // it clears itself the moment one arrives. The queue no longer holds
+      // these customers back, so the badge is the only thing telling a
+      // telecaller which conversation they are about to have.
+      status: c.status,
+      deactivationRequested: c.deactivationRequested,
       slowPayer: c.slowPayer,
       lastOrderDate: c.lastOrderDate,
       lastOrderValue: c.lastOrderValue,

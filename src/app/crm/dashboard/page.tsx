@@ -156,7 +156,11 @@ export default async function DashboardPage({
       tone: "danger",
     },
     {
-      href: "/crm/inactive",
+      // These are worked from the Call Log now — the Inactive Watch was a
+      // second list for the same customers, and a list nobody opened. The
+      // tile still says what is at risk, and lands on the filter that shows
+      // exactly who it is counting.
+      href: "/crm/call-log?filter=inactive",
       title: "Customers gone quiet",
       sub: `${moneyShort(inactive.reduce((a, i) => a + i.valueAtRisk, 0))} of business at risk`,
       count: inactive.length,

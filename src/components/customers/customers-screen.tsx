@@ -27,13 +27,16 @@ import {
 } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { AccountManagerDialog } from "@/components/crm/account-manager-dialog";
+import { SalesManagerDialog } from "@/components/crm/sales-manager-dialog";
 import { updateAccountManagers } from "@/lib/actions/account-manager";
+import { assignSalesManager } from "@/lib/actions/sales-manager";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { Icon } from "@/components/shell/icons";
 import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
 import {
   createCustomer,
   createRemindersBulk,
+  decideDeactivation,
   decideReactivation,
   requestDeactivation,
   requestReactivation,
@@ -59,6 +62,12 @@ type Row = {
   kind: "lead" | "customer";
   leadSource: string | null;
   salesAmName: string | null;
+  /**
+   * Who the salesperson answers to. A third seat, and it drives nothing — no
+   * queue, no scope, no target — which is why a manager may set it while the
+   * two beside it stay accounts' and admin's.
+   */
+  salesManagerName: string | null;
   backOfficeAmId: string | null;
   backOfficeAmName: string | null;
   status: string;
@@ -83,7 +92,14 @@ type Row = {
  */
 const PER_PAGE = [25, 50, 100] as const;
 
-const ALL_SALES = "All sales managers";
+/*
+ * "All sales people", not "All sales managers" as it read for months. The
+ * filter beside it now IS the sales manager, and two dropdowns claiming the
+ * same word with different answers behind them is worse than either label on
+ * its own.
+ */
+const ALL_SALES = "All sales people";
+const ALL_SALES_MANAGERS = "All sales managers";
 const ALL_BACK_OFFICE = "All back office";
 
 const STATUSES = [
@@ -100,11 +116,13 @@ export function CustomersScreen({
   scopeLabel,
   isManager,
   canReassign,
+  canAssignSalesManager,
   amReasons,
   amSearchThreshold,
   amOptions,
   team,
   backOfficePeople,
+  salesManagerPeople,
   rows,
   filters,
   pageInfo,
@@ -135,18 +153,35 @@ export function CustomersScreen({
    * that guessed would disagree with it.
    */
   canReassign: boolean;
+  /**
+   * Setting the sales manager, which is a MANAGER's and not accounts'.
+   *
+   * A separate question to `canReassign` and deliberately a more generous one:
+   * that seat decides whose targets an account counts toward, this one decides
+   * who reviews the book. Asked of the same function the action asks, so a
+   * visible button and a permitted action cannot disagree.
+   */
+  canAssignSalesManager: boolean;
   amReasons: string[];
   amSearchThreshold: number;
   /** The names each filter offers — the ones the column actually shows. */
-  amOptions: { sales: string[]; backOffice: string[] };
+  amOptions: { sales: string[]; salesManager: string[]; backOffice: string[] };
   team: Array<{ id: string; name: string; role?: string }>;
   /** Accounts plus the current HRMS employees — the back office seat only. */
   backOfficePeople: Array<{ id: string; name: string; role?: string }>;
+  /**
+   * The same list again for the sales manager seat, which needs no login
+   * either — several of the people running a sales line here have never signed
+   * in. Passed separately rather than reusing the back office prop so that the
+   * day one of the two lists narrows, only one of them narrows.
+   */
+  salesManagerPeople: Array<{ id: string; name: string; role?: string }>;
   rows: Row[];
   filters: {
     query: string;
     status: string;
     salesAm: string;
+    salesManager: string;
     backOfficeAm: string;
     perPage: number;
   };
@@ -179,6 +214,7 @@ export function CustomersScreen({
   // shareable link and a working back button for free.
   const status = filters.status || STATUSES[0];
   const salesAm = filters.salesAm || ALL_SALES;
+  const salesManager = filters.salesManager || ALL_SALES_MANAGERS;
   const backOfficeAm = filters.backOfficeAm || ALL_BACK_OFFICE;
   const perPage = filters.perPage;
   const { page, pageCount, total, bookTotal } = pageInfo;
@@ -209,6 +245,15 @@ export function CustomersScreen({
   const [editing, setEditing] = React.useState<Row | null>(null);
   const [bulkRemind, setBulkRemind] = React.useState(false);
   const [changingAm, setChangingAm] = React.useState(false);
+  /*
+   * Which SCOPE the sales manager dialog was opened with. `null` is closed —
+   * one piece of state rather than a boolean plus a mode, because a dialog
+   * that is open with no scope is a state the screen must not be able to
+   * express.
+   */
+  const [smScope, setSmScope] = React.useState<"selection" | "filters" | null>(
+    null,
+  );
   const [deactivating, setDeactivating] = React.useState(false);
   const [reactivating, setReactivating] = React.useState(false);
 
@@ -234,6 +279,12 @@ export function CustomersScreen({
     salesAm !== ALL_SALES
       ? { label: `Sales: ${salesAm}`, clear: () => navigate({ sales: undefined }) }
       : null,
+    salesManager !== ALL_SALES_MANAGERS
+      ? {
+          label: `Sales manager: ${salesManager}`,
+          clear: () => navigate({ salesmanager: undefined }),
+        }
+      : null,
     backOfficeAm !== ALL_BACK_OFFICE
       ? {
           label: `Back office: ${backOfficeAm}`,
@@ -245,7 +296,13 @@ export function CustomersScreen({
 
   function clearAll() {
     setDraft("");
-    navigate({ q: undefined, status: undefined, sales: undefined, backoffice: undefined });
+    navigate({
+      q: undefined,
+      status: undefined,
+      sales: undefined,
+      salesmanager: undefined,
+      backoffice: undefined,
+    });
   }
 
   function toggle(id: string) {
@@ -273,6 +330,7 @@ export function CustomersScreen({
           "Type",
           "Owner",
           "Sales AM",
+          "Sales manager",
           "Back office AM",
           "Lead source",
           "Status",
@@ -287,6 +345,7 @@ export function CustomersScreen({
           r.kind === "lead" ? "Lead" : "Customer",
           r.ownerName ?? "",
           r.salesAmName ?? "",
+          r.salesManagerName ?? "",
           r.backOfficeAmName ?? "",
           r.leadSource ?? "",
           r.status,
@@ -299,6 +358,9 @@ export function CustomersScreen({
         // The export names the filters it was taken under, so a file sent to
         // somebody says what it is a list of.
         salesAm === ALL_SALES ? null : `Sales: ${salesAm}`,
+        salesManager === ALL_SALES_MANAGERS
+          ? null
+          : `Sales manager: ${salesManager}`,
         backOfficeAm === ALL_BACK_OFFICE ? null : `Back office: ${backOfficeAm}`,
         query || null,
       ],
@@ -337,6 +399,31 @@ export function CustomersScreen({
                 Import CSV
               </Link>
             ) : null}
+            {/*
+              The whole-book move, and it lives in the header rather than the
+              selection bar because it acts on the FILTERS and not on a
+              selection — the day somebody leaves, the set that has to move is
+              a hundred and forty-seven accounts spread over six pages, and
+              ticking them is not a thing anybody is going to do. Filter the
+              list to their name, press this, and the accounts that move are
+              the accounts on the screen.
+
+              Shown to everybody and refused with a reason, like every other
+              control here: a button that is absent says the app cannot do
+              this, and a button that is disabled says who can.
+            */}
+            <Button
+              variant="secondary"
+              disabled={!canAssignSalesManager}
+              title={
+                canAssignSalesManager
+                  ? "Set the sales manager on every account these filters match"
+                  : "Setting the sales manager is a manager or admin action"
+              }
+              onClick={() => setSmScope("filters")}
+            >
+              Transfer sales manager
+            </Button>
             <Button variant="primary" onClick={() => setAddOpen(true)}>
               Add lead
             </Button>
@@ -435,6 +522,28 @@ export function CustomersScreen({
         >
           <option>{ALL_SALES}</option>
           {amOptions.sales.map((n) => (
+            <option key={n}>{n}</option>
+          ))}
+        </Select>
+        {/*
+          The sales MANAGER, which is the filter a regional review starts from
+          and the filter a handover starts from. Built from the same expression
+          the column shows, like the two beside it — a dropdown built from
+          `users` could not offer the people running a line who have never
+          signed in, and this seat is full of them.
+        */}
+        <Select
+          value={salesManager}
+          onChange={(e) =>
+            navigate({
+              salesmanager:
+                e.target.value === ALL_SALES_MANAGERS ? undefined : e.target.value,
+            })
+          }
+          className="h-8"
+        >
+          <option>{ALL_SALES_MANAGERS}</option>
+          {amOptions.salesManager.map((n) => (
             <option key={n}>{n}</option>
           ))}
         </Select>
@@ -594,13 +703,25 @@ export function CustomersScreen({
                     reading a name broken across two lines is not.
                   */}
                   <Td className="whitespace-nowrap">
+                    {/*
+                      THREE LINES AT ONE SIZE, and the size is the fix.
+
+                      The second line used to be `text-xs` while the first was
+                      `text-sm`, which made the back office manager read as a
+                      footnote to the salesperson rather than as the other half
+                      of the same answer. They are peers: one sells to the
+                      account, one raises its paperwork, and now a third says
+                      who the first answers to. A hierarchy of type sizes down
+                      a column claims a hierarchy of importance that does not
+                      exist, and at that size the smaller line was simply
+                      harder to read on the screens this is used on.
+
+                      What separates the lines instead is COLOUR on the label
+                      and weight on nothing — the label is muted, the name is
+                      not, and the eye picks out the three names down the
+                      column without reading a word of the labels.
+                    */}
                     <span className="block text-sm text-body">
-                      {/* Named, like the line below it. A bare name under a
-                          header listing three roles makes the reader work out
-                          which one it is, and the answer changes row by row:
-                          a lead answers to its owner, a customer to its sales
-                          account manager. Now that the cell holds its line,
-                          the label costs width the column simply takes. */}
                       <span className="text-muted">
                         {r.kind === "lead" ? "Lead owner: " : "Sales: "}
                       </span>
@@ -608,13 +729,23 @@ export function CustomersScreen({
                         ? (r.ownerName ?? "Unassigned")
                         : (r.salesAmName ?? r.ownerName ?? "Unassigned")}
                     </span>
-                    <span className="block text-xs text-muted">
-                      {/* A lead has no back office manager — nobody raises
-                          paperwork for an account that has not ordered — so
-                          the second line carries where it came from instead. */}
+                    {/* A lead has no sales manager and no back office manager:
+                        nobody runs a line over an account that has not ordered
+                        and nobody raises paperwork for one. It carries where it
+                        came from instead, on the one line it has room for. */}
+                    {r.kind === "lead" ? null : (
+                      <span className="block text-sm text-body">
+                        <span className="text-muted">Sales manager: </span>
+                        {r.salesManagerName ?? "Unassigned"}
+                      </span>
+                    )}
+                    <span className="block text-sm text-body">
+                      <span className="text-muted">
+                        {r.kind === "lead" ? "Source: " : "Back office: "}
+                      </span>
                       {r.kind === "lead"
-                        ? `Source: ${r.leadSource ?? "not recorded"}`
-                        : `Back office: ${r.backOfficeAmName ?? "unassigned"}`}
+                        ? (r.leadSource ?? "not recorded")
+                        : (r.backOfficeAmName ?? "Unassigned")}
                     </span>
                   </Td>
                   <Td>
@@ -734,16 +865,48 @@ export function CustomersScreen({
                                     },
                                   },
                                 ]
-                            : [
-                                {
-                                  label: "Request deactivation",
-                                  destructive: true,
-                                  onSelect: () => {
-                                    setSelected(new Set([r.id]));
-                                    setDeactivating(true);
+                            : isManager && r.deactivationRequested
+                              ? [
+                                  /*
+                                   * The mirror of the reactivation decision
+                                   * above, and it belongs here for the same
+                                   * reason: the manager decides where the
+                                   * customer is. It used to be answered on the
+                                   * Inactive Watch, which is why removing that
+                                   * screen left requests with nowhere to go.
+                                   */
+                                  {
+                                    label: "Approve deactivation",
+                                    destructive: true,
+                                    onSelect: async () => {
+                                      await run(decideDeactivation(r.id, true));
+                                      router.refresh();
+                                    },
                                   },
-                                },
-                              ]),
+                                  {
+                                    label: "Reject the request",
+                                    onSelect: async () => {
+                                      await run(decideDeactivation(r.id, false));
+                                      router.refresh();
+                                    },
+                                  },
+                                ]
+                              : [
+                                  {
+                                    label: r.deactivationRequested
+                                      ? "Deactivation already asked for"
+                                      : "Request deactivation",
+                                    destructive: true,
+                                    disabled: r.deactivationRequested,
+                                    title: r.deactivationRequested
+                                      ? "Asked for already - a manager has yet to decide"
+                                      : undefined,
+                                    onSelect: () => {
+                                      setSelected(new Set([r.id]));
+                                      setDeactivating(true);
+                                    },
+                                  },
+                                ]),
                         ]}
                       />
                     </span>
@@ -872,6 +1035,23 @@ export function CustomersScreen({
           onClick={() => setChangingAm(true)}
         >
           Update account manager
+        </Button>
+        {/* A separate button because it is a separate permission — a manager
+            holds this one and not the one above it. Folding the seat into that
+            dialog would have hidden a control behind a dialog its holder
+            cannot open. */}
+        <Button
+          variant="dark"
+          size="sm"
+          disabled={!canAssignSalesManager}
+          title={
+            canAssignSalesManager
+              ? undefined
+              : "Setting the sales manager is a manager or admin action"
+          }
+          onClick={() => setSmScope("selection")}
+        >
+          Set sales manager
         </Button>
         {/* Which way round depends on what is selected. Offering both at once
             would put "deactivate" next to "bring back" over one tick list. */}
@@ -1082,6 +1262,98 @@ export function CustomersScreen({
           }
         }}
       />
+
+      {/*
+        Rendered only when it is open, because the scope is decided at the
+        moment of opening and the dialog reads it once. Mounting it with a
+        placeholder scope would mean a component whose props describe a
+        transfer nobody asked for.
+      */}
+      {smScope ? (
+        <SalesManagerDialog
+          // Keyed on what it is acting on, so it remounts with fresh state
+          // rather than resetting in an effect — the React Compiler rule every
+          // modal here already follows.
+          key={`sm-${smScope}-${smScope === "selection" ? [...selected].join(",") : search.toString()}`}
+          open
+          scope={
+            smScope === "selection"
+              ? {
+                  kind: "ids",
+                  ids: [...selected],
+                  accounts: visible
+                    .filter((r) => selected.has(r.id))
+                    .map((r) => ({
+                      id: r.id,
+                      name: r.name,
+                      salesManagerName: r.salesManagerName,
+                    })),
+                }
+              : {
+                  kind: "filters",
+                  /*
+                   * Sent verbatim, and the server runs the SAME clause the
+                   * list ran to draw this screen. Re-deriving "which
+                   * customers" on the way in is how a bulk action comes to
+                   * move a set nobody reviewed.
+                   */
+                  filters: {
+                    query: query || undefined,
+                    status: status === STATUSES[0] ? undefined : status,
+                    salesAm: salesAm === ALL_SALES ? undefined : salesAm,
+                    salesManager:
+                      salesManager === ALL_SALES_MANAGERS ? undefined : salesManager,
+                    backOfficeAm:
+                      backOfficeAm === ALL_BACK_OFFICE ? undefined : backOfficeAm,
+                  },
+                  // The chips, which are already the filters said in words —
+                  // one statement of what is on screen, not two that can drift.
+                  describedAs: chips.map((c) => c.label),
+                  // Everything the filters match, NOT the page. The whole
+                  // point is the accounts nobody has scrolled to.
+                  count: total,
+                }
+          }
+          people={salesManagerPeople}
+          reasons={amReasons}
+          searchThreshold={amSearchThreshold}
+          onClose={() => setSmScope(null)}
+          onSubmit={async (change) => {
+            const result = await run(
+              assignSalesManager({
+                scope:
+                  change.ids !== undefined
+                    ? { kind: "ids", customerIds: change.ids }
+                    : {
+                        kind: "filters",
+                        filters: {
+                          query: query || undefined,
+                          status: status === STATUSES[0] ? undefined : status,
+                          salesAm: salesAm === ALL_SALES ? undefined : salesAm,
+                          salesManager:
+                            salesManager === ALL_SALES_MANAGERS
+                              ? undefined
+                              : salesManager,
+                          backOfficeAm:
+                            backOfficeAm === ALL_BACK_OFFICE
+                              ? undefined
+                              : backOfficeAm,
+                        },
+                      },
+                target: change.target,
+                reasonCode: change.reasonCode,
+                note: change.note,
+                expectedCount: change.expectedCount,
+              }),
+            );
+            if (result.ok) {
+              setSmScope(null);
+              setSelected(new Set());
+              router.refresh();
+            }
+          }}
+        />
+      ) : null}
 
       <ConfirmDialog
         open={reactivating}

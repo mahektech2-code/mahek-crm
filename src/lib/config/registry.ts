@@ -271,15 +271,6 @@ export const SETTINGS = [
     default: true,
   },
   {
-    key: "queue.excludeInactiveWatch",
-    type: "boolean",
-    category: "queue",
-    label: "Hold back customers on the inactive watch",
-    description:
-      "A customer past twice their own cycle is worked from the Inactive Watch, where the conversation is why they stopped rather than whether they will reorder. Leaving them in the queue puts every one of them at the top of it, every day, above the customers who are merely due. A reminder still outranks this.",
-    default: true,
-  },
-  {
     key: "queue.excludeCalledToday",
     type: "boolean",
     category: "queue",
@@ -1230,6 +1221,48 @@ export const SETTINGS = [
     max: 50,
   },
 
+  {
+    key: "mbos.location.trackWhileWorking",
+    type: "boolean",
+    category: "mbos-location",
+    label: "Follow the route while somebody is checked in",
+    description:
+      "The handset reports its position every few minutes between the check-in and the check-out, and not one second either side — a track that ran after the day was closed would be following somebody home. Off here means no handset reports at all, and the Live map falls back to the handful of fixes a check-in and each visit already leave.",
+    default: true,
+  },
+  {
+    key: "mbos.location.trackEveryMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How often a position is taken",
+    description:
+      "Minutes between fixes while the day is open. Every minute draws a smoother line and costs battery on a phone that has to last until the evening; every fifteen is a line that cuts corners through buildings. Five is a shape you can recognise a beat from.",
+    default: 5,
+    min: 1,
+    max: 60,
+  },
+
+  {
+    key: "mbos.location.logActivityLocation",
+    type: "boolean",
+    category: "mbos-location",
+    label: "Record where each activity was done",
+    description:
+      "An order, a payment, a complaint and a sample all happen somewhere, and until now only visits and the check-in recorded where. It costs no battery and adds no delay: the position used is almost always one the day's tracking had already taken, and a save is never held up waiting for a fix. Off here means no handset attaches one, checked in the server as well as on the phone.",
+    default: true,
+  },
+  {
+    key: "mbos.location.activityFixMaxAgeSeconds",
+    type: "integer",
+    category: "mbos-location",
+    label: "How old a position may be before it is called stale",
+    description:
+      "Seconds. This changes what the screens CALL a position, never what is stored — the age is recorded either way and a reader can judge it. A fix from four minutes ago is evidence of where somebody was standing; one from four hours ago is evidence of nothing, and a screen that showed them alike would be the more misleading of the two.",
+    default: 900,
+    min: 60,
+    max: 86_400,
+  },
+
   /* ------------------------------------------------------------ ordering */
   {
     key: "mbos.orders.approvalThresholdPaise",
@@ -2011,7 +2044,6 @@ export type Config = {
   "queue.prospectIntervalDays": number;
   "queue.excludeActiveInOrderSystem": boolean;
   "queue.excludeCalledToday": boolean;
-  "queue.excludeInactiveWatch": boolean;
   "queue.maxSizePerUser": number;
   "queue.tierWeights": Record<QueueReasonKind, number>;
   "queue.routineCallPercent": number;
@@ -2124,6 +2156,10 @@ export type Config = {
   "mbos.location.visitMismatchM": number;
   "mbos.location.routeDeviationM": number;
   "mbos.location.unplannedVisitsPerDay": number;
+  "mbos.location.trackWhileWorking": boolean;
+  "mbos.location.trackEveryMinutes": number;
+  "mbos.location.logActivityLocation": boolean;
+  "mbos.location.activityFixMaxAgeSeconds": number;
 
   "mbos.orders.approvalThresholdPaise": number;
   "mbos.orders.secondTierThresholdPaise": number;
