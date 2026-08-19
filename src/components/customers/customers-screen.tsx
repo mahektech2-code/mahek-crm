@@ -34,6 +34,7 @@ import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
 import {
   createCustomer,
   createRemindersBulk,
+  decideDeactivation,
   decideReactivation,
   requestDeactivation,
   requestReactivation,
@@ -734,16 +735,48 @@ export function CustomersScreen({
                                     },
                                   },
                                 ]
-                            : [
-                                {
-                                  label: "Request deactivation",
-                                  destructive: true,
-                                  onSelect: () => {
-                                    setSelected(new Set([r.id]));
-                                    setDeactivating(true);
+                            : isManager && r.deactivationRequested
+                              ? [
+                                  /*
+                                   * The mirror of the reactivation decision
+                                   * above, and it belongs here for the same
+                                   * reason: the manager decides where the
+                                   * customer is. It used to be answered on the
+                                   * Inactive Watch, which is why removing that
+                                   * screen left requests with nowhere to go.
+                                   */
+                                  {
+                                    label: "Approve deactivation",
+                                    destructive: true,
+                                    onSelect: async () => {
+                                      await run(decideDeactivation(r.id, true));
+                                      router.refresh();
+                                    },
                                   },
-                                },
-                              ]),
+                                  {
+                                    label: "Reject the request",
+                                    onSelect: async () => {
+                                      await run(decideDeactivation(r.id, false));
+                                      router.refresh();
+                                    },
+                                  },
+                                ]
+                              : [
+                                  {
+                                    label: r.deactivationRequested
+                                      ? "Deactivation already asked for"
+                                      : "Request deactivation",
+                                    destructive: true,
+                                    disabled: r.deactivationRequested,
+                                    title: r.deactivationRequested
+                                      ? "Asked for already - a manager has yet to decide"
+                                      : undefined,
+                                    onSelect: () => {
+                                      setSelected(new Set([r.id]));
+                                      setDeactivating(true);
+                                    },
+                                  },
+                                ]),
                         ]}
                       />
                     </span>

@@ -44,7 +44,6 @@ function candidate(over: Partial<QueueCandidate> = {}): QueueCandidate {
     lastNoAnswerAt: null,
     openOrderStatus: null,
     paymentCallDue: null,
-    onInactiveWatch: false,
     outstanding: 0,
     targetGap: 0,
     ...over,

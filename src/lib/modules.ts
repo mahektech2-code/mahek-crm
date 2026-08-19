@@ -97,7 +97,6 @@ export const APP_MODULES: AppModule[] = [
     "Who owes what, and the bills behind each balance.",
   ),
   crm("bills", "Sales Bills", "Collections"),
-  crm("inactive", "Inactive Watch", "Collections"),
   crm("customers", "Customers", "Customer records", "The customer list and every customer record behind it."),
   crm("complaints", "Complaints", "Customer records"),
   // WRITTEN OUT LONGHAND, because the key and the route have to disagree.

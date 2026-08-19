@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Badge,
   Button,
@@ -24,7 +24,7 @@ import {
   type QuickNoteOption,
   type ScriptOption,
 } from "@/components/crm/call-panel";
-import { rebuildQueue, skipQueueItem } from "@/lib/actions/crm";
+import { rebuildQueue, requestDeactivation, skipQueueItem } from "@/lib/actions/crm";
 import { money, phoneDisplay, shortDate } from "@/lib/format";
 
 type Reason = { kind: string; label: string; weight: number };
@@ -40,6 +40,10 @@ type Row = {
   daysSinceContact: number | null;
   outstanding: number;
   kind: "lead" | "customer";
+  /** Active, or gone quiet past twice their own cycle. */
+  status: "active" | "inactive" | "deactivated";
+  /** Somebody has already asked for this one, and a manager has yet to decide. */
+  deactivationRequested: boolean;
   slowPayer: boolean;
   lastOrderDate: string | null;
   lastNote: string | null;
@@ -57,8 +61,22 @@ type Filter =
   | "reminders"
   | "checkins"
   | "leads"
+  | "inactive"
   | "payments"
   | "retry";
+
+/** The same set as `Filter`, in a form a URL parameter can be checked against. */
+const FILTERS: Filter[] = [
+  "all",
+  "orders",
+  "complaints",
+  "reminders",
+  "checkins",
+  "leads",
+  "inactive",
+  "payments",
+  "retry",
+];
 
 /** The engine's own reason kinds — nothing here invents a category. */
 const REASON_TONE: Record<string, "danger" | "warn" | "brand" | "neutral"> = {
@@ -134,11 +152,20 @@ export function QueueScreen({
   const router = useRouter();
   const { run } = useToast();
 
-  const [filter, setFilter] = React.useState<Filter>("all");
+  // The dashboard's "customers gone quiet" tile lands here on its own filter,
+  // so the count it showed and the list it opens are the same set. Read once
+  // as the initial state rather than held in sync with the URL — the pills are
+  // the authority after the first render, and a filter that snapped back on
+  // every navigation would fight the person clicking them.
+  const initialFilter = useSearchParams().get("filter");
+  const [filter, setFilter] = React.useState<Filter>(
+    FILTERS.includes(initialFilter as Filter) ? (initialFilter as Filter) : "all",
+  );
   const [selectedRaw, setSelected] = React.useState(0);
   const [openId, setOpenId] = React.useState<string | null>(null);
   const [heldOpen, setHeldOpen] = React.useState(false);
   const [skipping, setSkipping] = React.useState<Row | null>(null);
+  const [deactivating, setDeactivating] = React.useState<Row | null>(null);
   const [busy, setBusy] = React.useState(false);
 
   // The queue is computed on request: a customer who has been called today is
@@ -162,6 +189,8 @@ export function QueueScreen({
         return rows.filter((r) => hasAny(r, CHECKIN_KINDS));
       case "leads":
         return rows.filter((r) => r.kind === "lead");
+      case "inactive":
+        return rows.filter((r) => r.status === "inactive");
       default:
         return rows;
     }
@@ -347,6 +376,11 @@ export function QueueScreen({
               count: rows.filter((r) => r.kind === "lead").length,
             },
             {
+              key: "inactive",
+              label: "Inactive",
+              count: rows.filter((r) => r.status === "inactive").length,
+            },
+            {
               key: "complaints",
               label: "Has complaint",
               count: rows.filter((r) => r.hasComplaint).length,
@@ -440,6 +474,13 @@ export function QueueScreen({
                     </Badge>
                   ))}
                   {r.kind === "lead" ? <Badge tone="brand">Lead</Badge> : null}
+                  {/* Which conversation this is. Since the Inactive Watch went,
+                      these customers are worked from here — and the reason
+                      badges say they are overdue without saying how far past
+                      the point of ordinary chasing they are. */}
+                  <Badge tone={r.status === "inactive" ? "warn" : "neutral"}>
+                    {r.status === "inactive" ? "Inactive" : "Active"}
+                  </Badge>
                   {r.slowPayer ? <SlowPayerBadge /> : null}
                 </div>
                 <div className="mt-0.5 flex items-center gap-2 text-[13px] text-muted">
@@ -529,6 +570,21 @@ export function QueueScreen({
                       destructive: true,
                       onSelect: () => setSkipping(r),
                     },
+                    {
+                      // The same request the customer list raises, on the
+                      // screen where the telecaller learns the shop has
+                      // closed. One action, so a manager decides them all in
+                      // one place whichever screen they were asked from.
+                      label: r.deactivationRequested
+                        ? "Deactivation already requested"
+                        : "Request deactivation",
+                      destructive: true,
+                      disabled: r.deactivationRequested,
+                      title: r.deactivationRequested
+                        ? "Asked for already - a manager has yet to decide"
+                        : undefined,
+                      onSelect: () => setDeactivating(r),
+                    },
                   ]}
                 />
               </div>
@@ -538,22 +594,14 @@ export function QueueScreen({
           <EmptyState
             icon={<Icon name="check" size={24} className="text-success" />}
             title="Queue cleared for today"
-            body="Every customer due today has been worked. Suggested next work: the payment follow-up list, and the customers sitting on the inactive watch without a decision."
+            body="Every customer due today has been worked, the ones gone quiet among them. Suggested next work: the payment follow-up list."
             action={
-              <>
-                <Link
-                  href="/crm/payments"
-                  className="inline-flex h-9 items-center rounded-[4px] border border-brand bg-brand px-4 text-sm font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
-                >
-                  Open payment follow-up
-                </Link>
-                <Link
-                  href="/crm/inactive"
-                  className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-4 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
-                >
-                  Open the inactive watch
-                </Link>
-              </>
+              <Link
+                href="/crm/payments"
+                className="inline-flex h-9 items-center rounded-[4px] border border-brand bg-brand px-4 text-sm font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
+              >
+                Open payment follow-up
+              </Link>
             }
           />
         ) : (
@@ -603,6 +651,22 @@ export function QueueScreen({
         onConfirm={async (reason) => {
           if (!skipping) return;
           await run(skipQueueItem(skipping.customerId, reason));
+          router.refresh();
+        }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deactivating)}
+        title={`Request deactivation for ${deactivating?.name ?? ""}?`}
+        body="They stay visible and stay on your list until a manager approves it. The reason is kept on the record either way."
+        confirmLabel="Request deactivation"
+        destructive
+        needsReason
+        reasonLabel="Why should they be deactivated"
+        onClose={() => setDeactivating(null)}
+        onConfirm={async (reason) => {
+          if (!deactivating) return;
+          await run(requestDeactivation([deactivating.customerId], reason));
           router.refresh();
         }}
       />
