@@ -93,6 +93,8 @@ import {
   finishedGoods as finishedGoodsTable,
   quickNotes as quickNotesTable,
   interactionProductLines,
+  appAccess,
+  queueSnapshots as queueSnapshotsTable,
 } from "@/db/schema";
 import { importCatalogue } from "@/lib/services/catalogue-import";
 import {
@@ -130,6 +132,7 @@ import {
 import {
   decideDeactivation,
   decideReactivation,
+  rebuildQueues,
   requestDeactivation,
   requestReactivation,
   startStageOneBatch,
@@ -6996,6 +6999,105 @@ describe("the call list is settled once a day", () => {
     assert.deepEqual(
       unchanged.entries.map((e) => e.customerId),
       served.entries.map((e) => e.customerId),
+    );
+  });
+
+  /*
+   * The rebuild is the deliberate exception to all of the above. A release
+   * that changes WHO belongs on a list is invisible until tomorrow otherwise,
+   * and somebody has to be able to decide that today is the day.
+   */
+  test("a rebuild is refused to everybody but an administrator", async () => {
+    await snapshotQueue(TODAY);
+
+    setTestUser(priya);
+    const asTelecaller = await rebuildQueues(null);
+    assert.equal(asTelecaller.ok, false, "a telecaller rebuilt a call list");
+
+    // A manager is NOT enough, deliberately: rebuilding reorders the day of
+    // the people whose numbers the manager is measured on.
+    setTestUser(manager);
+    const asManager = await rebuildQueues(null);
+    assert.equal(asManager.ok, false, "a manager rebuilt a call list");
+    assert.match(asManager.ok ? "" : asManager.error, /administrator/i);
+  });
+
+  test("an administrator's rebuild picks up what the settled list could not", async () => {
+    await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      cycleIsDefault: false,
+    });
+    await snapshotQueue(TODAY);
+    setTestUser(priya);
+    const before = await getQueue();
+
+    // Somebody who qualifies, arriving after the day was settled. The warmer
+    // cannot add them — that is the whole point of settling — so the list
+    // stays exactly as long as it was.
+    const late = await makeCustomer(priya.id, {
+      name: "Arrived After The List Was Settled",
+      lastOrderDate: addDays(TODAY, -60),
+      cycleDays: 22,
+      cycleIsDefault: false,
+    });
+    assert.equal(await snapshotQueue(TODAY), 0);
+    const stillSettled = await getQueue();
+    assert.equal(stillSettled.entries.length, before.entries.length);
+
+    const admin = await makeUser("Console Admin", "admin");
+    await db.insert(appAccess).values({ id: id("aca"), userId: admin.id, app: "admin" });
+    setTestUser(admin);
+    const rebuilt = await rebuildQueues([priya.id]);
+    assert.equal(rebuilt.ok, true, rebuilt.ok ? "" : rebuilt.error);
+
+    setTestUser(priya);
+    const after = await getQueue();
+    assert.ok(
+      after.entries.some((e) => e.customerId === late.id),
+      "the rebuild did not pick up a customer who qualified after the list was settled",
+    );
+  });
+
+  test("rebuilding one telecaller leaves everybody else's list alone", async () => {
+    await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      cycleIsDefault: false,
+    });
+    await makeCustomer(rakesh.id, {
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      cycleIsDefault: false,
+    });
+    await snapshotQueue(TODAY);
+
+    const stampFor = async (userId: string) =>
+      (
+        await db
+          .select({ generatedAt: queueSnapshotsTable.generatedAt })
+          .from(queueSnapshotsTable)
+          .where(
+            and(
+              eq(queueSnapshotsTable.day, TODAY),
+              eq(queueSnapshotsTable.userId, userId),
+            ),
+          )
+          .limit(1)
+      )[0]?.generatedAt;
+
+    const rakeshBefore = await stampFor(rakesh.id);
+    assert.ok(rakeshBefore, "rakesh had no list to leave alone");
+
+    const admin = await makeUser("Narrow Admin", "admin");
+    await db.insert(appAccess).values({ id: id("aca"), userId: admin.id, app: "admin" });
+    setTestUser(admin);
+    assert.equal((await rebuildQueues([priya.id])).ok, true);
+
+    assert.deepEqual(
+      await stampFor(rakesh.id),
+      rakeshBefore,
+      "rebuilding one telecaller threw away another's list",
     );
   });
 });

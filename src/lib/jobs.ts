@@ -232,25 +232,85 @@ export async function snapshotQueue(day: BusinessDate): Promise<number> {
       .limit(1);
     if (already.length) continue;
 
-    const candidates = await queueCandidatesFor(user.id, day);
-    const { entries } = buildQueue(candidates, day, config);
-    if (!entries.length) continue;
-    await db
-      .insert(queueSnapshots)
-      .values(
-        entries.map((e, i) => ({
-          day,
-          userId: user.id,
-          customerId: e.customerId,
-          score: e.score,
-          reasons: e.reasons,
-          rank: i,
-        })),
-      )
-      .onConflictDoNothing();
-    written += entries.length;
+    written += await writeDayList(user.id, day, config);
   }
   return written;
+}
+
+/**
+ * Build one person's list and store it. Shared by the warmer above and the
+ * rebuild below, because "what goes on a list" answered in two places is the
+ * bug where a hand-rebuilt list differs from the one the morning would have
+ * produced — and nobody could tell which was right.
+ */
+async function writeDayList(
+  userId: string,
+  day: BusinessDate,
+  config: Awaited<ReturnType<typeof getConfig>>,
+): Promise<number> {
+  const candidates = await queueCandidatesFor(userId, day);
+  const { entries } = buildQueue(candidates, day, config);
+  if (!entries.length) return 0;
+  await db
+    .insert(queueSnapshots)
+    .values(
+      entries.map((e, i) => ({
+        day,
+        userId,
+        customerId: e.customerId,
+        score: e.score,
+        reasons: e.reasons,
+        rank: i,
+      })),
+    )
+    .onConflictDoNothing();
+  return entries.length;
+}
+
+/**
+ * Throw today's list away and build it again, from the rules as they stand now.
+ *
+ * The list is settled once a day ON PURPOSE — it must not reshuffle under
+ * somebody working it. But that makes a deploy invisible until tomorrow: the
+ * day the Inactive Watch was folded into the Call Log, the change went live at
+ * lunchtime and every telecaller carried on reading a list photographed that
+ * morning, with nothing on the screen saying why. Waiting a day is usually
+ * right and occasionally is not, and the difference is a judgement somebody
+ * makes rather than a rule code can hold.
+ *
+ * So it is deliberate, attributed and narrow: an admin names who, and the
+ * audit row says which lists were thrown away and by whom. `snapshotQueue`
+ * keeps refusing to touch a settled day, because a warmer that could reshuffle
+ * an afternoon is a warmer nobody can safely schedule.
+ */
+export async function resettleQueues(
+  day: BusinessDate,
+  userIds: string[] | null,
+): Promise<{ users: number; cleared: number; written: number }> {
+  const config = await getConfig();
+  const telecallers = await db.select().from(users).where(eq(users.active, true));
+  const wanted = userIds?.length
+    ? telecallers.filter((u) => userIds.includes(u.id))
+    : telecallers;
+
+  let cleared = 0;
+  let written = 0;
+  for (const user of wanted) {
+    // Counted before it goes, so the toast can say what was actually thrown
+    // away rather than what was asked for.
+    const [{ n }] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(queueSnapshots)
+      .where(and(eq(queueSnapshots.day, day), eq(queueSnapshots.userId, user.id)));
+    cleared += n;
+
+    await db
+      .delete(queueSnapshots)
+      .where(and(eq(queueSnapshots.day, day), eq(queueSnapshots.userId, user.id)));
+
+    written += await writeDayList(user.id, day, config);
+  }
+  return { users: wanted.length, cleared, written };
 }
 
 /* ----------------------------------------------------------------- hourly */
