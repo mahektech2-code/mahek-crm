@@ -39,6 +39,7 @@ import {
   notificationLog,
   onboardingRows,
   platformHealth,
+  queueOwners,
   usageStats,
 } from "@/lib/services/admin-platform-service";
 import {
@@ -46,6 +47,7 @@ import {
   orderTabTitle,
 } from "@/lib/services/sheet-sync-service";
 import type { Config } from "@/lib/config/registry";
+import { today } from "@/lib/queries";
 import { AdminConsole } from "../console";
 
 export const metadata = { title: "Admin Console · MahekOne" };
@@ -153,6 +155,7 @@ export default async function Page({
     notificationRows,
     sessionRows,
     onboarding,
+    queues,
   ] = await Promise.all([
     attentionItems(),
     platformHealth(),
@@ -166,6 +169,9 @@ export default async function Page({
     notificationLog(),
     liveSessions(),
     onboardingRows(),
+    // The rebuild control lives on the Jobs tab and needs to say how old each
+    // list is, which is the whole question somebody opens it to answer.
+    queueOwners(await today()),
   ]);
 
   // Stored values, projected into the shapes the console's controls edit.
@@ -195,6 +201,7 @@ export default async function Page({
         notifications: notificationRows,
         sessions: sessionRows,
         onboarding,
+        queues,
       }}
       feedback={{
         rows: feedbackRows,

@@ -462,6 +462,53 @@ export type JobRow = {
   failures: number;
 };
 
+export type QueueOwner = {
+  id: string;
+  name: string;
+  role: string;
+  /** Rows on today's list. Zero means nothing has been built for them yet. */
+  rows: number;
+  /** When the list was settled — the answer to "is this list older than the deploy". */
+  settledAt: string | null;
+};
+
+/**
+ * Who has a Call Log today, and how big it is.
+ *
+ * The rebuild control needs names to offer, but the ROW COUNT is what makes
+ * the screen worth reading: a list built at 08:14 and a release that shipped
+ * at 12:30 is the whole reason somebody is standing on this screen, and a
+ * picker of bare names cannot say that.
+ *
+ * Every active user is listed, including those with no list at all — somebody
+ * missing from a picker reads as a broken picker, and "0 rows" is a fact worth
+ * seeing rather than a row worth hiding.
+ */
+export async function queueOwners(day: string): Promise<QueueOwner[]> {
+  const rows = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      role: users.role,
+      rows: sql<number>`(
+        select count(*)::int from queue_snapshots q
+         where q.user_id = users.id and q.day = ${day}
+      )`,
+      settledAt: sql<string | null>`(
+        select to_char(min(q.generated_at) at time zone ${APP_TIMEZONE}, 'HH24:MI')
+          from queue_snapshots q
+         where q.user_id = users.id and q.day = ${day}
+      )`,
+    })
+    .from(users)
+    .where(eq(users.active, true))
+    .orderBy(desc(sql`(
+      select count(*)::int from queue_snapshots q
+       where q.user_id = users.id and q.day = ${day}
+    )`), users.name);
+  return rows;
+}
+
 /** The last run of each job, with how often it has failed in the past week. */
 export async function jobHealth(): Promise<JobRow[]> {
   const rows = await db

@@ -96,6 +96,20 @@ const SHARED = [
  * and there is nothing to revalidate there — so a missing store is expected,
  * not an error worth failing a write over.
  */
+/**
+ * The console's own paths. Kept out of `SHARED` deliberately — a telecaller
+ * logging a call should not invalidate the admin console — and guarded the
+ * same way, because an action called from a test has no request context and
+ * nothing cached to invalidate.
+ */
+function refreshAdmin() {
+  try {
+    revalidatePath("/admin");
+  } catch {
+    /* no request context — see refreshAll */
+  }
+}
+
 function refreshAll() {
   try {
     for (const path of SHARED) revalidatePath(path);
@@ -1525,7 +1539,7 @@ export async function updateConfigSettings(
     const r = await updateSettings(entries, ctx.user.id);
     if (!r.ok) return err(r.error, "validation", r.fields);
     refreshAll();
-    revalidatePath("/admin");
+    refreshAdmin();
     return ok(
       { warnings: r.warnings },
       entries.length === 1
@@ -1547,7 +1561,7 @@ export async function updateConfigSetting(
     if (!r.ok)
       return err(r.error, "validation", [{ field: key, message: r.error }]);
     refreshAll();
-    revalidatePath("/admin");
+    refreshAdmin();
     return ok({ warnings: r.warnings }, "Setting saved");
   } catch (e) {
     return fromThrown(e);
@@ -1564,6 +1578,67 @@ export async function updateConfigSetting(
  * or it did not run at all, and Sales Bills stayed empty through three
  * releases that each claimed to fix it. A merge has to be enough.
  */
+/**
+ * Rebuild today's Call Log, for one telecaller or for everybody.
+ *
+ * ADMIN ONLY, and not by `config.write` — that is a manager's, and a manager
+ * rebuilding a list is a manager reshuffling the day of the people whose
+ * numbers they are measured on, halfway through it. `apps.includes("admin")`
+ * is what the console already means by admin, so the button and the action
+ * answer to the same rule rather than two that can drift.
+ *
+ * It is a bulk action in the sense that matters: it never edits a row of work.
+ * It throws away a cached list and asks the engine the same question again, so
+ * the worst it can do is reorder somebody's afternoon — which is real, which
+ * is why it is audited with the names of whoever was rebuilt.
+ */
+export async function rebuildQueues(
+  userIds: string[] | null,
+): Promise<Result<{ users: number; cleared: number; written: number }>> {
+  try {
+    const ctx = await resolveScope();
+    const { listUserApps } = await import("@/lib/access");
+    const apps = await listUserApps(ctx.user.id);
+    if (!apps.includes("admin")) {
+      return err(
+        "Rebuilding a call list is an administrator's - it reorders somebody else's day.",
+        "not_permitted",
+      );
+    }
+
+    const { resettleQueues } = await import("@/lib/jobs");
+    const day = await today();
+    const result = await resettleQueues(day, userIds);
+
+    // Who did it, to whom, and on which day. A list that changed under
+    // somebody mid-afternoon is exactly the thing they will ask about later.
+    await db.insert(auditLog).values({
+      id: id("aud"),
+      actorId: ctx.user.id,
+      action: "queue.rebuild",
+      entityType: "queue",
+      entityId: day,
+      afterState: {
+        day,
+        users: userIds?.length ? userIds : "all",
+        cleared: result.cleared,
+        written: result.written,
+      },
+    });
+
+    refreshAll();
+    refreshAdmin();
+    return ok(
+      result,
+      result.users === 0
+        ? "Nobody to rebuild"
+        : `Rebuilt ${result.users} list${result.users === 1 ? "" : "s"} - ${result.cleared} rows replaced by ${result.written}`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 export async function triggerJob(
   job:
     | "nightly"
@@ -1580,7 +1655,7 @@ export async function triggerJob(
     const { runJob } = await import("@/lib/jobs");
     const results = await runJob(job, ctx.user.id, options);
     refreshAll();
-    revalidatePath("/admin");
+    refreshAdmin();
     return ok(
       { ran: results.map((r) => `${r.job}: ${r.detail}`) },
       `${job} finished - ${results.reduce((a, r) => a + r.recordsAffected, 0)} records touched`,
