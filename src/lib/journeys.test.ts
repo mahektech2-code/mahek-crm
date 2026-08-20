@@ -7489,8 +7489,100 @@ describe("third-party customers and their distributors", () => {
     });
     setTestUser(manager);
 
-    const names = (await distributorCandidates("Candidate")).map((c) => c.name);
+    const names = (await distributorCandidates("Candidate")).hits.map((c) => c.name);
     assert.deepEqual(names, ["Candidate Direct"]);
+  });
+
+  test("what was typed decides the order, and the cap says it is a cap", async () => {
+    /*
+     * The bug this pins: the list used to be ordered by how many shops an
+     * account already serves and then alphabetically, with the query used only
+     * to filter. Typing "c" put a name whose ninth word contains one above
+     * every account that starts with one, which on a book of 561 direct
+     * customers makes the box unusable for the job it exists to do.
+     */
+    await makeCustomer(priya.id, { kind: "customer", name: "Zeta Paints" });
+    // Already serves a shop, so the old ordering floated it to the top of
+    // every result set it appeared in, whatever was typed.
+    const busy = await makeCustomer(priya.id, {
+      kind: "customer",
+      // Contains the query LATE and in another word, which is exactly the shape
+      // that used to win: it matched, it already served a shop, and the sort
+      // read the shop count before it read anything about the query.
+      name: "A Munsi Paint and zeta chemicals",
+    });
+    const shop = await makeCustomer(priya.id, { kind: "lead", name: "Some Shop" });
+    setTestUser(manager);
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: busy.id }],
+      })).ok,
+      true,
+    );
+
+    const byPrefix = await distributorCandidates("Zeta");
+    assert.equal(
+      byPrefix.hits[0]?.name,
+      "Zeta Paints",
+      "the account whose name starts with what was typed was not first",
+    );
+
+    // A word inside the name counts, which is how somebody finds "Zeta Paints"
+    // by typing what the customer actually says.
+    const byWord = await distributorCandidates("Paints");
+    assert.equal(byWord.hits[0]?.name, "Zeta Paints");
+
+    // And a name typed badly still lands, the way the product search already
+    // forgives one mid-call.
+    const misspelt = await distributorCandidates("Zeta Pants");
+    assert.ok(
+      misspelt.hits.some((h) => h.name === "Zeta Paints"),
+      "a near-miss found nothing at all",
+    );
+
+    // The cap is reported rather than left to look like the whole answer.
+    const capped = await distributorCandidates("", { limit: 1 });
+    assert.equal(capped.hits.length, 1);
+    assert.ok(capped.more > 0, "a trimmed list did not say it was trimmed");
+  });
+
+  test("one letter means names that START with it, and nothing else", async () => {
+    /*
+     * Somebody typing a single character is spelling the beginning of a name
+     * they know. Matching inside words at that length filled the whole list
+     * with accounts that merely contain the letter — "A MUNSI PAINT and
+     * chemicals" for "c" — and pushed every account beginning with one off the
+     * bottom.
+     */
+    await makeCustomer(priya.id, { kind: "customer", name: "Chetan Traders" });
+    await makeCustomer(priya.id, { kind: "customer", name: "A Munsi Paint and chemicals" });
+    await makeCustomer(priya.id, { kind: "customer", name: "Acc Home Decor" });
+    setTestUser(manager);
+
+    const one = await distributorCandidates("c");
+    assert.deepEqual(
+      one.hits.map((h) => h.name),
+      ["Chetan Traders"],
+      "a one-letter query matched inside words instead of at the start",
+    );
+    assert.equal(one.mode, "prefix");
+
+    // Three characters is where it widens: the town, the code, a word inside
+    // the name and a near miss all become worth searching.
+    const three = await distributorCandidates("che");
+    assert.ok(
+      three.hits.some((h) => h.name === "A Munsi Paint and chemicals"),
+      "the wider search never arrived",
+    );
+    assert.equal(three.hits[0]?.name, "Chetan Traders", "the prefix match lost its place");
+    assert.equal(three.mode, "wide");
+
+    // Nothing starting with it is a different answer to nothing at all, and
+    // the screen is told which so it can say so.
+    const none = await distributorCandidates("z");
+    assert.deepEqual(none.hits, []);
+    assert.equal(none.mode, "prefix");
   });
 
   test("a batch converts on one set of distributors", async () => {

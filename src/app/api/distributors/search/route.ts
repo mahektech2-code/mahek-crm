@@ -26,10 +26,11 @@ export async function GET(request: Request) {
   const q = params.get("q") ?? "";
   const exclude = params.get("exclude") ?? undefined;
   try {
-    return NextResponse.json({
-      hits: await distributorCandidates(q, { excludeCustomerId: exclude }),
-    });
+    // `hits` and `more` both, because a capped list that does not say so reads
+    // as the whole answer — and somebody who cannot see their distributor in it
+    // concludes we do not hold the account.
+    return NextResponse.json(await distributorCandidates(q, { excludeCustomerId: exclude }));
   } catch {
-    return NextResponse.json({ hits: [] });
+    return NextResponse.json({ hits: [], more: 0, mode: "wide" });
   }
 }
