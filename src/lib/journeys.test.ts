@@ -7412,6 +7412,7 @@ describe("the customer timeline is a page", () => {
     setTestUser(priya);
 
     const seen: string[] = [];
+    const pages: string[] = [];
     let cursor: { at: string; id: string } | null = null;
     for (let i = 0; i < 10; i++) {
       const page: Awaited<ReturnType<typeof customerTimeline>> =
@@ -7420,15 +7421,43 @@ describe("the customer timeline is a page", () => {
           before: cursor ?? undefined,
         });
       seen.push(...page.entries.map((e) => e.id));
+      pages.push(
+        `page ${i + 1}: ${page.entries.length} rows, more=${page.more}, ` +
+          `cursor=${page.cursor?.at} ${page.cursor?.id}`,
+      );
       cursor = page.cursor;
       if (!page.more) break;
     }
 
-    assert.equal(seen.length, 55, "paging lost rows or invented them");
+    /*
+     * WHAT THE DATABASE THINKS, printed when this fails.
+     *
+     * It passed on a developer's macOS Postgres and failed on CI's
+     * postgres:16, which is the signature of something the two databases
+     * disagree about rather than something the code gets wrong — the sort key
+     * is text, and text ordering is a property of the database's collation.
+     * A failure nobody can reproduce locally has to carry its own evidence.
+     */
+    const repeated = seen.filter((v, i) => seen.indexOf(v) !== i);
+    const [env] = await db.execute<{
+      v: string;
+      tz: string;
+      datcollate: string;
+    }>(sql`
+      select version() as v, current_setting('TimeZone') as tz, datcollate
+        from pg_database where datname = current_database()`);
+    const evidence = [
+      env?.v,
+      `TimeZone=${env?.tz} collate=${env?.datcollate}`,
+      ...pages,
+      `repeated: ${repeated.join(", ") || "none"}`,
+    ].join("\n      ");
+
+    assert.equal(seen.length, 55, `paging lost rows or invented them\n      ${evidence}`);
     assert.equal(
       new Set(seen).size,
       55,
-      "a row came back on two pages - the sort has no tiebreaker",
+      `a row came back on two pages - the sort has no tiebreaker\n      ${evidence}`,
     );
   });
 
