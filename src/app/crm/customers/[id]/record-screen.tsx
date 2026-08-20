@@ -38,10 +38,9 @@ import {
 import { convertToThirdParty, revertThirdParty } from "@/lib/actions/third-party";
 import { ThirdPartyDialog } from "@/components/crm/third-party-dialog";
 import {
-  DistributorPanel,
-  type PanelLink,
-} from "@/components/crm/distributor-panel";
-import type { ServedShop } from "@/lib/services/distributor-service";
+  DeliveryRelations,
+  type Relation,
+} from "@/components/crm/delivery-relations";
 import {
   ageLabel,
   monthLabel,
@@ -90,7 +89,7 @@ export function RecordScreen({
   detail,
   customer,
   distributors,
-  servedShops,
+  deliveryAddresses,
   distributorSuggestions,
   canClassify,
   timelineCursor,
@@ -120,12 +119,14 @@ export function RecordScreen({
   /** Bills, receipts, orders and the rest — see customer-record-service. */
   detail: CustomerRecordDetail;
   /**
-   * The delivery chain, from both ends. `distributors` is who bills THIS shop;
-   * `servedShops` is which shops are billed through it. Both are read for
-   * every record, because an account can sit at both ends at once.
+   * The delivery chain, from both ends, and each end is ONE list: what a
+   * person recorded and what the order sheet has seen, together. `distributors`
+   * is who bills THIS shop; `deliveryAddresses` is which shops are delivered to
+   * on its bills. Both are read for every record, because an account can sit at
+   * both ends at once.
    */
-  distributors: PanelLink[];
-  servedShops: ServedShop[];
+  distributors: Relation[];
+  deliveryAddresses: Relation[];
   /** Who the order history suggests, on a lead nobody has converted yet. */
   distributorSuggestions: Array<{ id: string; name: string; orders: number }>;
   /** `customer.classify` — converting, and editing an arrangement. */
@@ -685,95 +686,36 @@ export function RecordScreen({
         </ScrollPanel>
 
         {/*
-          THE ARRANGEMENT, AND THEN THE EVIDENCE. Two panels, in that order,
-          and they answer different questions.
+          ONE LIST PER DIRECTION, and each one holds both halves of the answer.
 
-          The arrangement is what a person decided: who bills this shop, or
-          which shops are billed through this account. The evidence is what the
-          order sheet has actually seen — `orders.deliveryCustomerId`, derived
-          and never typed. They usually agree, and where they do not that is
-          the most useful thing on the page: a distributor sending loads to a
-          shop nobody has named them for, or a named distributor who has never
-          delivered anything.
+          This was three panels: the arrangement somebody recorded, and then —
+          under a title of its own — every shop the order sheet shows goods
+          going to. Four rows beside eighty-six, two counts, and nothing saying
+          how they differed, so the honest reading was that the page showed the
+          same list twice. What the sheet has seen and nobody has recorded is
+          not a second subject; it is the unfinished part of the first one, and
+          it belongs in the same list with the button that finishes it.
         */}
-        {customer.thirdParty || distributors.length ? (
-          <DistributorPanel
-            customerId={customer.id}
-            customerName={customer.name}
-            links={distributors}
+        {distributors.length || customer.thirdParty ? (
+          <DeliveryRelations
+            anchorId={customer.id}
+            anchorName={customer.name}
+            relations={distributors}
             canEdit={canClassify}
+            direction="distributors"
             isThirdParty={customer.thirdParty}
           />
         ) : null}
 
-        {servedShops.length ? (
-          <ScrollPanel
-            title="Third-party customers served"
-            count={servedShops.length}
-            empty=""
-          >
-            {servedShops.map((sh) => (
-              <RowLine
-                key={sh.id}
-                left={
-                  <>
-                    <Link
-                      href={`/crm/customers/${sh.customerId}`}
-                      className="text-ink no-underline hover:underline"
-                    >
-                      {sh.customerName}
-                    </Link>
-                    {sh.isPrimary ? (
-                      <span className="ml-2">
-                        <Badge tone="brand">We are the usual distributor</Badge>
-                      </span>
-                    ) : null}
-                  </>
-                }
-                sub={
-                  <>
-                    {sh.customerCity ?? ""}
-                    {sh.note ? ` · ${sh.note}` : ""}
-                  </>
-                }
-                right={
-                  sh.deliveredOrders > 0
-                    ? `${sh.deliveredOrders} deliver${sh.deliveredOrders === 1 ? "y" : "ies"}`
-                    : "none yet"
-                }
-              />
-            ))}
-          </ScrollPanel>
-        ) : null}
-
-        {detail.deliversTo.length || detail.billedThrough.length ? (
-          <ScrollPanel
-            title={
-              detail.deliversTo.length
-                ? "Where their goods actually went"
-                : "Who was billed for goods delivered here"
-            }
-            count={detail.deliversTo.length || detail.billedThrough.length}
-            empty=""
-          >
-            {(detail.deliversTo.length ? detail.deliversTo : detail.billedThrough).map(
-              (d) => (
-                <RowLine
-                  key={d.id}
-                  left={
-                    <Link
-                      href={`/crm/customers/${d.id}`}
-                      className="text-ink no-underline hover:underline"
-                    >
-                      {d.name}
-                    </Link>
-                  }
-                  sub={d.lastAt ? `last ${shortDate(d.lastAt)}` : undefined}
-                  right={`${d.orders} order${d.orders === 1 ? "" : "s"}`}
-                />
-              ),
-            )}
-          </ScrollPanel>
+        {deliveryAddresses.length ? (
+          <DeliveryRelations
+            anchorId={customer.id}
+            anchorName={customer.name}
+            relations={deliveryAddresses}
+            canEdit={canClassify}
+            direction="addresses"
+            isThirdParty={customer.thirdParty}
+          />
         ) : null}
 
         <div className="grid gap-4 md:grid-cols-2">
@@ -1007,23 +949,16 @@ export function RecordScreen({
                   />
                   <Fact
                     label="Billed by"
-                    value={
-                      distributors.length
-                        ? (distributors.find((d) => d.isPrimary) ?? distributors[0])
-                            .distributorName +
-                          (distributors.length > 1
-                            ? ` and ${distributors.length - 1} other${distributors.length === 2 ? "" : "s"}`
-                            : "")
-                        : // The state the conversion rules prevent, reachable
-                          // only on an account converted before they existed.
-                          "nobody recorded yet"
-                    }
+                    value={billedBy(distributors)}
                   />
                 </>
-              ) : customer.kind === "customer" && servedShops.length ? (
+              ) : customer.kind === "customer" && deliveryAddresses.length ? (
                 <Fact
                   label="Delivers to"
-                  value={`${servedShops.length} third-party customer${servedShops.length === 1 ? "" : "s"} billed through this account`}
+                  // The RECORDED half, because that is what somebody has
+                  // vouched for. The rest is on the panel, where it can say
+                  // what it is.
+                  value={`${deliveryAddresses.filter((d) => d.recorded).length} recorded of ${deliveryAddresses.length} addresses seen`}
                 />
               ) : null}
               {customer.doNotContact ? <Fact label="Standing" value="Do not contact" /> : null}
@@ -1155,6 +1090,29 @@ function Fact({ label, value }: { label: string; value: string | number | null }
  * The count in the header is the WHOLE count, not the number of rows loaded —
  * a list silently cut at two hundred is a list somebody trusts and should not.
  */
+
+/**
+ * Who bills this shop, in one line — the RECORDED ones only.
+ *
+ * The panel below lists what the order sheet has seen as well, and says so on
+ * each row. This line cannot: "Billed by X" is read as a fact somebody stands
+ * behind, so an account nobody has recorded must not appear in it under a
+ * label that grants it authority it does not have.
+ */
+function billedBy(relations: Array<{ recorded: boolean; isPrimary: boolean; name: string }>): string | null {
+  const recorded = relations.filter((r) => r.recorded);
+  if (!recorded.length) {
+    // The state the conversion rules prevent, reachable only on an account
+    // converted before distributors were recorded.
+    return "nobody recorded yet";
+  }
+  const first = recorded.find((r) => r.isPrimary) ?? recorded[0];
+  const others = recorded.length - 1;
+  return others
+    ? `${first.name} and ${others} other${others === 1 ? "" : "s"}`
+    : first.name;
+}
+
 function ScrollPanel({
   title,
   count,

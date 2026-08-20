@@ -20,8 +20,8 @@ import {
 } from "@/lib/queries";
 import { getFollowUpDetail } from "@/lib/services/payment-service";
 import {
+  deliveryAddressesFor,
   distributorsFor,
-  shopsServedBy,
   suggestedDistributors,
 } from "@/lib/services/distributor-service";
 import { can } from "@/lib/access-control";
@@ -162,9 +162,9 @@ export default async function CustomerRecordPage({
    * lead nobody has converted yet, whose order history already shows goods
    * arriving on somebody's bill.
    */
-  const [distributors, servedShops, suggestions] = await Promise.all([
+  const [distributors, deliveryAddresses, suggestions] = await Promise.all([
     distributorsFor(id),
-    shopsServedBy(id),
+    deliveryAddressesFor(id),
     customer.kind === "lead" && !customer.thirdParty
       ? suggestedDistributors(id)
       : Promise.resolve([]),
@@ -248,7 +248,7 @@ export default async function CustomerRecordPage({
         deactivationReason: customer.deactivationReason,
       }}
       distributors={distributors}
-      servedShops={servedShops}
+      deliveryAddresses={deliveryAddresses}
       distributorSuggestions={suggestions}
       // The same question the action asks, so a drawn control and a permitted
       // action cannot disagree. The action checks again regardless.

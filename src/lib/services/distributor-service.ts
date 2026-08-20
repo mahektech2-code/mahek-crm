@@ -2,6 +2,7 @@ import "server-only";
 import { and, asc, desc, eq, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { customerDistributors, customers, orders } from "@/db/schema";
+import { APP_TIMEZONE } from "@/lib/business-date";
 
 /* ---------------------------------------------------------------------------
  * The arrangement behind the mark.
@@ -12,130 +13,154 @@ import { customerDistributors, customers, orders } from "@/db/schema";
  *
  * Two directions, because two screens ask opposite questions of one table. On
  * a third-party customer: who bills this shop. On a direct customer: which
- * shops do we deliver to on their bill. They are the same rows read from
- * either end, so the two can never disagree about a pair.
+ * shops do we deliver to on their bill — its delivery addresses. They are the
+ * same rows read from either end, so the two records can never disagree about
+ * a pair.
+ *
+ * Each direction answers with the ARRANGEMENT AND THE SHEET IN ONE LIST. See
+ * `DeliveryRelation`: two lists side by side was the shape that put four rows
+ * beside eighty-six under two titles and left nobody able to say what the
+ * difference was.
  * ------------------------------------------------------------------------- */
 
-export type DistributorLink = {
-  id: string;
-  distributorId: string;
-  distributorName: string;
-  distributorCity: string | null;
-  /** Whether that account is still one we bill. See `stillDirect`. */
-  stillDirect: boolean;
+/**
+ * ONE ANSWER PER SHOP, whether a person recorded it or the sheet saw it.
+ *
+ * There were two panels on the customer record answering one question between
+ * them: the arrangement somebody recorded, and — under a title of its own —
+ * every shop the Taken Order tab shows goods going to. Four rows beside
+ * eighty-six, two counts, one question. Nobody reading that page could say
+ * what the difference was, which is the definition of a screen that has stopped
+ * answering.
+ *
+ * They are one list now, and the second source becomes the WORKLIST: a shop
+ * the sheet has seen and nobody has recorded is exactly the row somebody
+ * should act on, so it sits in the same list as the recorded ones saying so,
+ * with the button that records it. The list shrinks into the recorded half as
+ * the work is done, which is what makes it a queue rather than a report.
+ *
+ * `recorded` is the difference and it is drawn on every row. It is never
+ * inferred from the order count: a shop can be recorded with no deliveries
+ * behind it yet, and a shop with two hundred deliveries can be unrecorded.
+ * Those are both real, and both worth seeing.
+ */
+export type DeliveryRelation = {
+  /** The account at the other end — the shop, or the distributor. */
+  customerId: string;
+  name: string;
+  city: string | null;
+  /** Somebody recorded this arrangement. False means only the sheet knows. */
+  recorded: boolean;
+  /** The link row, where there is one — what Edit and Remove act on. */
+  linkId: string | null;
   isPrimary: boolean;
   note: string | null;
-  /**
-   * Orders billed to this distributor whose goods came to the shop. The
-   * EVIDENCE beside the arrangement — a stated distributor with no deliveries
-   * behind it is worth seeing as exactly that, and so is a distributor with
-   * two hundred.
-   */
-  deliveredOrders: number;
-  lastDeliveredAt: string | null;
+  /** Still an account we bill. Only meaningful on a distributor. */
+  stillDirect: boolean;
+  /** What kind of record the OTHER account is, which decides how to record it. */
+  kind: "lead" | "customer";
+  thirdParty: boolean;
+  /** Orders the sheet shows going between the two. */
+  orders: number;
+  lastAt: string | null;
 };
 
-/** A shop served through a distributor, read from the distributor's end. */
-export type ServedShop = {
-  id: string;
+type RelationRow = {
   customerId: string;
-  customerName: string;
-  customerCity: string | null;
-  isPrimary: boolean;
+  name: string;
+  city: string | null;
+  kind: "lead" | "customer";
+  thirdParty: boolean;
+  linkId: string | null;
+  isPrimary: boolean | null;
   note: string | null;
-  deliveredOrders: number;
-  lastDeliveredAt: string | null;
+  orders: number;
+  lastAt: string | null;
 };
+
+const toRelation = (r: RelationRow): DeliveryRelation => ({
+  customerId: r.customerId,
+  name: r.name,
+  city: r.city,
+  recorded: r.linkId !== null,
+  linkId: r.linkId,
+  isPrimary: r.isPrimary ?? false,
+  note: r.note,
+  stillDirect: r.kind === "customer" && !r.thirdParty,
+  kind: r.kind,
+  thirdParty: r.thirdParty,
+  orders: Number(r.orders),
+  lastAt: r.lastAt,
+});
 
 /**
- * How many orders billed to `distributorId` were delivered to `customerId`.
- *
- * Correlated on both sides and spelled out rather than referenced through
- * Drizzle: `${orders.customerId}` renders bare, and a bare column inside a
- * correlated subquery binds to the inner table — the rule this codebase
- * already documents, and the one that shipped a silent `true` once.
+ * A FULL JOIN of the two sources, in SQL rather than in two queries stitched
+ * together in JavaScript. Stitching is where "the same shop twice" comes from:
+ * one row from the link, one from the orders, and nothing to say they are one
+ * account.
  */
-const DELIVERED_COUNT_SQL = sql<number>`(
-  select count(*)::int from orders o
-   where o.customer_id = customer_distributors.distributor_customer_id
-     and o.delivery_customer_id = customer_distributors.customer_id
-)`;
+function relationSql(anchorId: string, direction: "shops" | "distributors") {
+  // Which end of the pair is the OTHER account, on each side of the join.
+  const linkOther =
+    direction === "shops" ? sql`d.customer_id` : sql`d.distributor_customer_id`;
+  const linkAnchor =
+    direction === "shops" ? sql`d.distributor_customer_id` : sql`d.customer_id`;
+  const orderOther =
+    direction === "shops" ? sql`o.delivery_customer_id` : sql`o.customer_id`;
+  const orderAnchor =
+    direction === "shops" ? sql`o.customer_id` : sql`o.delivery_customer_id`;
 
-const DELIVERED_LAST_SQL = sql<string | null>`(
-  select to_char(max(o.ordered_at) at time zone 'Asia/Kolkata', 'YYYY-MM-DD')
-    from orders o
-   where o.customer_id = customer_distributors.distributor_customer_id
-     and o.delivery_customer_id = customer_distributors.customer_id
-)`;
-
-/** Who bills this shop. Ordered with the usual one first. */
-export async function distributorsFor(customerId: string): Promise<DistributorLink[]> {
-  const rows = await db
-    .select({
-      id: customerDistributors.id,
-      distributorId: customers.id,
-      distributorName: customers.name,
-      distributorCity: customers.city,
-      kind: customers.kind,
-      thirdParty: customers.thirdParty,
-      isPrimary: customerDistributors.isPrimary,
-      note: customerDistributors.note,
-      deliveredOrders: DELIVERED_COUNT_SQL,
-      lastDeliveredAt: DELIVERED_LAST_SQL,
-    })
-    .from(customerDistributors)
-    .innerJoin(customers, eq(customers.id, customerDistributors.distributorCustomerId))
-    .where(eq(customerDistributors.customerId, customerId))
-    .orderBy(desc(customerDistributors.isPrimary), asc(customers.name));
-
-  return rows.map((r) => ({
-    id: r.id,
-    distributorId: r.distributorId,
-    distributorName: r.distributorName,
-    distributorCity: r.distributorCity,
-    /*
-     * A link is not rewritten when the account at the other end of it changes.
-     * A distributor that has since been marked as a third party itself, or that
-     * is somehow back to being a lead, is still who billed this shop — the row
-     * stands and the screen says the arrangement needs looking at. Deleting it
-     * on read would destroy the only record of it.
-     */
-    stillDirect: r.kind === "customer" && !r.thirdParty,
-    isPrimary: r.isPrimary,
-    note: r.note,
-    deliveredOrders: Number(r.deliveredOrders),
-    lastDeliveredAt: r.lastDeliveredAt,
-  }));
+  return sql`
+    with recorded as (
+      select ${linkOther} as customer_id, d.id as link_id,
+             d.is_primary, d.note
+        from customer_distributors d
+       where ${linkAnchor} = ${anchorId}
+    ),
+    seen as (
+      select ${orderOther} as customer_id,
+             count(*)::int as orders,
+             to_char(max(o.ordered_at) at time zone ${APP_TIMEZONE}, 'YYYY-MM-DD') as last_at
+        from orders o
+       where ${orderAnchor} = ${anchorId}
+         and ${orderOther} is not null
+         and o.delivery_customer_id is not null
+       group by ${orderOther}
+    )
+    select c.id as "customerId", c.name, c.city,
+           c.kind::text as kind, c.third_party as "thirdParty",
+           r.link_id as "linkId", r.is_primary as "isPrimary", r.note,
+           coalesce(s.orders, 0) as orders, s.last_at as "lastAt"
+      from recorded r
+      full join seen s on s.customer_id = r.customer_id
+      join customers c on c.id = coalesce(r.customer_id, s.customer_id)
+     order by (r.link_id is not null) desc, r.is_primary desc nulls last,
+              coalesce(s.orders, 0) desc, c.name asc
+  `;
 }
 
-/** Which shops we deliver to on this account's bill. */
-export async function shopsServedBy(distributorId: string): Promise<ServedShop[]> {
-  const rows = await db
-    .select({
-      id: customerDistributors.id,
-      customerId: customers.id,
-      customerName: customers.name,
-      customerCity: customers.city,
-      isPrimary: customerDistributors.isPrimary,
-      note: customerDistributors.note,
-      deliveredOrders: DELIVERED_COUNT_SQL,
-      lastDeliveredAt: DELIVERED_LAST_SQL,
-    })
-    .from(customerDistributors)
-    .innerJoin(customers, eq(customers.id, customerDistributors.customerId))
-    .where(eq(customerDistributors.distributorCustomerId, distributorId))
-    .orderBy(desc(customerDistributors.isPrimary), asc(customers.name));
+/** Who bills this shop — recorded first, then whoever the sheet has seen. */
+export async function distributorsFor(
+  customerId: string,
+): Promise<DeliveryRelation[]> {
+  const rows = await db.execute<RelationRow>(
+    relationSql(customerId, "distributors"),
+  );
+  return [...rows].map(toRelation);
+}
 
-  return rows.map((r) => ({
-    id: r.id,
-    customerId: r.customerId,
-    customerName: r.customerName,
-    customerCity: r.customerCity,
-    isPrimary: r.isPrimary,
-    note: r.note,
-    deliveredOrders: Number(r.deliveredOrders),
-    lastDeliveredAt: r.lastDeliveredAt,
-  }));
+/**
+ * The shops this account's goods go to — its delivery addresses.
+ *
+ * The same rows read from the other end, so the two records can never disagree
+ * about a pair: what the shop's page calls its distributor is what the
+ * distributor's page calls its delivery address.
+ */
+export async function deliveryAddressesFor(
+  distributorId: string,
+): Promise<DeliveryRelation[]> {
+  const rows = await db.execute<RelationRow>(relationSql(distributorId, "shops"));
+  return [...rows].map(toRelation);
 }
 
 export type DistributorCandidate = {
