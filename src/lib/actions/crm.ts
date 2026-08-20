@@ -72,6 +72,11 @@ import {
   recomputeLastContact,
   today,
 } from "@/lib/recompute";
+import {
+  customerTimeline,
+  type TimelineCursor,
+  type TimelineKind,
+} from "@/lib/queries";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
 import { initialsOf } from "@/lib/format";
 
@@ -718,6 +723,59 @@ export async function updateCustomer(
  * directions turned out not to be symmetrical, since only a lead may be
  * converted while anything may stop being one.
  */
+
+/**
+ * The next page of a customer's timeline, or the first page of one kind of it.
+ *
+ * A READ behind a server action, which is unusual here and is the point: the
+ * record page renders on the server and the timeline is now a page rather than
+ * the whole history, so paging it from the client needs a door. It is this
+ * rather than a route handler because there is nothing to cache, nothing to
+ * stream and no query string worth having — and `assertCustomerInScope` is the
+ * same check the page itself made before rendering a single row.
+ */
+export async function loadCustomerTimeline(
+  customerId: string,
+  opts: { kind?: TimelineKind; before?: TimelineCursor; limit?: number } = {},
+): Promise<Result<{ entries: SerialisedEntry[]; cursor: TimelineCursor | null; more: boolean }>> {
+  try {
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customerId));
+    if (!customer) return err("That customer no longer exists.", "not_found");
+    await assertCustomerInScope(customer);
+
+    const page = await customerTimeline(customerId, opts);
+    return ok({
+      // Dates cross this boundary as strings. A server action serialises a
+      // Date happily enough, and the screen already formats from a string
+      // everywhere else on this page — two shapes for one field is how a
+      // component ends up calling `toISOString` on a string.
+      entries: page.entries.map((e) => ({
+        id: e.id,
+        kind: e.kind,
+        at: e.at.toISOString(),
+        actor: e.actor,
+        content: e.content,
+        meta: e.meta ?? null,
+      })),
+      cursor: page.cursor,
+      more: page.more,
+    });
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+type SerialisedEntry = {
+  id: string;
+  kind: string;
+  at: string;
+  actor: string;
+  content: string;
+  meta: string | null;
+};
 
 export async function requestDeactivation(
   customerIds: string[],

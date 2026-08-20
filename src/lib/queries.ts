@@ -2,6 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { and, asc, desc, eq, inArray, lte, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
+import { TIMELINE_KINDS, type TimelineKind } from "@/lib/timeline-kinds";
 import {
   bills,
   calls,
@@ -745,40 +746,145 @@ export const getCustomer = cache(async function getCustomer(
 
 /* -------------------------------------------------------------- timeline */
 
+export type { TimelineKind };
+
 export type TimelineEntry = {
   id: string;
-  kind:
-    | "Call"
-    | "WhatsApp"
-    | "Order"
-    | "Reminder"
-    | "Complaint"
-    | "Payment"
-    | "Bill";
+  kind: TimelineKind;
   at: Date;
   actor: string;
   content: string;
   meta?: string;
 };
 
+/** Where a page of the timeline stopped, so the next one can carry on. */
+export type TimelineCursor = { at: string; id: string };
+
+export type TimelinePage = {
+  entries: TimelineEntry[];
+  /** The last entry of this page, or null where the history is exhausted. */
+  cursor: TimelineCursor | null;
+  /** Whether asking again would return anything. */
+  more: boolean;
+};
+
 /**
- * The unified customer timeline, in one round trip.
+ * ONE BRANCH PER KIND, so a filtered read touches one table.
  *
- * `limit` is for callers that want the most recent few — the call panel shows
- * three, and was reading a four-year customer's entire history to do it, every
- * time somebody opened it.
+ * The seven were a single hard-coded `union all`, which meant every read of
+ * this timeline — including "show me the Bills" — scanned the calls, the
+ * messages, the orders, the reminders, the complaints and the receipts as
+ * well. Composed instead, `kind: "Bill"` is a query against `bills` and
+ * nothing else.
+ */
+function timelineBranch(kind: TimelineKind, customerId: string): SQL {
+  switch (kind) {
+    case "Call":
+      return sql`
+        select c.id, 'Call' as kind, c.started_at as at, u.name as actor,
+               coalesce(c.notes, c.outcome::text, 'Call logged') as content,
+               nullif(concat_ws(' · ', c.connection_status, c.outcome), '') as meta
+          from calls c join users u on u.id = c.user_id
+         where c.customer_id = ${customerId}`;
+    case "WhatsApp":
+      return sql`
+        select m.id, 'WhatsApp', coalesce(m.confirmed_sent_at, m.sent_at, m.prepared_at),
+               u.name, coalesce(m.template_name, 'WhatsApp message'),
+               concat_ws(' · ', m.resolved_destination, m.status)
+          from wa_messages m join users u on u.id = m.user_id
+         where m.customer_id = ${customerId}`;
+    case "Order":
+      return sql`
+        select o.id, 'Order', o.ordered_at, coalesce(u.name, 'Order system'),
+               case o.status
+                 when 'pending_approval' then 'Order waiting for approval'
+                 when 'declined' then 'Order declined'
+                 else concat('Order ', o.status)
+               end,
+               -- A declined order says why on the timeline. The telecaller has
+               -- to ring the customer back, and hunting for the reason is how
+               -- that call gets made badly or not at all.
+               concat_ws(' · ',
+                 concat('₹', to_char(round(o.total_amount / 100.0), 'FM9G99G99G999')),
+                 o.decline_reason)
+          from orders o left join users u on u.id = o.user_id
+         where o.customer_id = ${customerId}`;
+    case "Reminder":
+      return sql`
+        select r.id, 'Reminder', r.created_at, u.name, r.note,
+               concat('Due ', to_char(r.due_date, 'DD Mon'), ' · ', r.status)
+          from reminders r join users u on u.id = r.assigned_user_id
+         where r.customer_id = ${customerId}`;
+    case "Complaint":
+      return sql`
+        select cm.id, 'Complaint', cm.created_at, u.name, cm.description,
+               concat(cm.category, ' · ', cm.status)
+          from complaints cm join users u on u.id = cm.logged_by_user_id
+         where cm.customer_id = ${customerId}`;
+    case "Payment":
+      // Receipts, not allocation lines: one arrival of money is one entry,
+      // however many bills it was spread across. A reported receipt appears
+      // the moment it is reported and says it is waiting, and a rejected one
+      // STAYS — a transfer that never landed is a fact about the account, and
+      // dropping it leaves the next person wondering why the balance never
+      // moved.
+      return sql`
+        select pr.id, 'Payment', pr.received_at::timestamptz,
+               coalesce(u.name, 'Accounts'),
+               case pr.status
+                 when 'reported' then concat('Payment of ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'), ' reported')
+                 when 'rejected' then concat('Payment of ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'), ' could not be found')
+                 else concat('Payment received ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'))
+               end,
+               concat_ws(' · ', pr.mode, pr.reference,
+                 case pr.status
+                   when 'reported' then 'waiting for accounts to confirm'
+                   when 'rejected' then pr.reject_reason
+                 end)
+          from payment_receipts pr left join users u on u.id = pr.reported_by_id
+         where pr.customer_id = ${customerId}`;
+    case "Bill":
+      return sql`
+        select b.id, 'Bill', b.bill_date::timestamptz, 'Accounts',
+               concat('Bill ', b.bill_no, ' raised'),
+               concat('₹', to_char(round(b.amount / 100.0), 'FM9G99G99G999'))
+          from bills b where b.customer_id = ${customerId}`;
+  }
+}
+
+/**
+ * The unified customer timeline, A PAGE AT A TIME.
  *
- * The customer RECORD deliberately passes none. Its tabs count what is in each
- * kind — "Calls 47", "Orders 12" — so a capped read there would not shorten a
- * list, it would print a wrong number beside the word Calls, and nothing on the
- * screen would say it had been cut. Bounded per customer either way: every
- * branch below is `where … customer_id = …`, so this is one account's history
- * and never the table.
+ * It used to return the whole history to the customer record, which was fine
+ * on a demo book and not on a real one: COLOUR CAMP has 3,504 entries, and all
+ * 3,504 were serialised into the page and rendered into the DOM. The record of
+ * the oldest, biggest accounts — the ones somebody most needs to read before
+ * ringing — was the hardest to read, because everything under the timeline
+ * (the orders, the bills, the payments, the arrangement) sat below a hundred
+ * screens of it. The page grew with the account's age, which is backwards.
+ *
+ * ORDERED BY `at` AND THEN BY `id`, which the single-column sort could not be:
+ * a thousand bills carry the same midnight timestamp, so `at` alone leaves
+ * their order to the planner. That is invisible until it is paged, and then it
+ * is a row appearing on two pages while another appears on none.
+ *
+ * `before` is a KEYSET, not an offset. Offsets re-read and re-sort everything
+ * skipped, and shift under a write — an order logged while somebody reads page
+ * three pushes a row they have already seen onto page four.
  */
 export async function customerTimeline(
   customerId: string,
-  limit?: number,
-): Promise<TimelineEntry[]> {
+  opts: { limit?: number; kind?: TimelineKind; before?: TimelineCursor } = {},
+): Promise<TimelinePage> {
+  const limit = opts.limit ?? 50;
+  const kinds = opts.kind ? [opts.kind] : [...TIMELINE_KINDS];
+
+  const branches = kinds.map((k) => timelineBranch(k, customerId));
+  const union = sql.join(branches, sql` union all `);
+  const keyset = opts.before
+    ? sql`where (t.at, t.id) < (${opts.before.at}::timestamptz, ${opts.before.id})`
+    : sql``;
+
   const rows = await db.execute<{
     id: string;
     kind: TimelineEntry["kind"];
@@ -787,72 +893,16 @@ export async function customerTimeline(
     content: string;
     meta: string | null;
   }>(sql`
-    select c.id, 'Call' as kind, c.started_at as at, u.name as actor,
-           coalesce(c.notes, c.outcome::text, 'Call logged') as content,
-           nullif(concat_ws(' · ', c.connection_status, c.outcome), '') as meta
-      from calls c join users u on u.id = c.user_id
-     where c.customer_id = ${customerId}
-    union all
-    select m.id, 'WhatsApp', coalesce(m.confirmed_sent_at, m.sent_at, m.prepared_at),
-           u.name, coalesce(m.template_name, 'WhatsApp message'),
-           concat_ws(' · ', m.resolved_destination, m.status)
-      from wa_messages m join users u on u.id = m.user_id
-     where m.customer_id = ${customerId}
-    union all
-    select o.id, 'Order', o.ordered_at, coalesce(u.name, 'Order system'),
-           case o.status
-             when 'pending_approval' then 'Order waiting for approval'
-             when 'declined' then 'Order declined'
-             else concat('Order ', o.status)
-           end,
-           -- A declined order says why on the timeline. The telecaller has to
-           -- ring the customer back, and hunting for the reason is how that
-           -- call gets made badly or not at all.
-           concat_ws(' · ',
-             concat('₹', to_char(round(o.total_amount / 100.0), 'FM9G99G99G999')),
-             o.decline_reason)
-      from orders o left join users u on u.id = o.user_id
-     where o.customer_id = ${customerId}
-    union all
-    select r.id, 'Reminder', r.created_at, u.name, r.note,
-           concat('Due ', to_char(r.due_date, 'DD Mon'), ' · ', r.status)
-      from reminders r join users u on u.id = r.assigned_user_id
-     where r.customer_id = ${customerId}
-    union all
-    select cm.id, 'Complaint', cm.created_at, u.name, cm.description,
-           concat(cm.category, ' · ', cm.status)
-      from complaints cm join users u on u.id = cm.logged_by_user_id
-     where cm.customer_id = ${customerId}
-    union all
-    -- Receipts, not allocation lines: one arrival of money is one entry,
-    -- however many bills it was spread across. A reported receipt appears the
-    -- moment it is reported and says it is waiting, and a rejected one STAYS —
-    -- a transfer that never landed is a fact about the account, and dropping
-    -- it leaves the next person wondering why the balance never moved.
-    select pr.id, 'Payment', pr.received_at::timestamptz,
-           coalesce(u.name, 'Accounts'),
-           case pr.status
-             when 'reported' then concat('Payment of ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'), ' reported')
-             when 'rejected' then concat('Payment of ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'), ' could not be found')
-             else concat('Payment received ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'))
-           end,
-           concat_ws(' · ', pr.mode, pr.reference,
-             case pr.status
-               when 'reported' then 'waiting for accounts to confirm'
-               when 'rejected' then pr.reject_reason
-             end)
-      from payment_receipts pr left join users u on u.id = pr.reported_by_id
-     where pr.customer_id = ${customerId}
-    union all
-    select b.id, 'Bill', b.bill_date::timestamptz, 'Accounts',
-           concat('Bill ', b.bill_no, ' raised'),
-           concat('₹', to_char(round(b.amount / 100.0), 'FM9G99G99G999'))
-      from bills b where b.customer_id = ${customerId}
-    order by at desc
-    ${limit ? sql`limit ${limit}` : sql``}
+    select * from (${union}) as t(id, kind, at, actor, content, meta)
+    ${keyset}
+    order by t.at desc, t.id desc
+    limit ${limit + 1}
   `);
 
-  return rows.map((r) => ({
+  // One more than asked for, purely to find out whether there is a next page.
+  // A "Load older" button that turns out to load nothing is worse than one
+  // that was never drawn.
+  const entries = rows.slice(0, limit).map((r) => ({
     id: r.id,
     kind: r.kind,
     at: new Date(r.at),
@@ -860,6 +910,49 @@ export async function customerTimeline(
     content: r.content,
     meta: r.meta ?? undefined,
   }));
+  const last = entries[entries.length - 1];
+
+  return {
+    entries,
+    cursor: last ? { at: last.at.toISOString(), id: last.id } : null,
+    more: rows.length > limit,
+  };
+}
+
+export type TimelineCounts = { all: number } & Record<TimelineKind, number>;
+
+/**
+ * How many of each kind there are IN THE WHOLE HISTORY.
+ *
+ * The pills counted what had been loaded, which is why the record used to read
+ * every row: a capped read would have printed "Bill 34" beside an account with
+ * 1,060 of them, and nothing on the screen would have said it was a slice.
+ * Counting in SQL is what lets the list be a page and the numbers stay true —
+ * and it is seven `count(*)`s on indexed `customer_id` columns, which is the
+ * cheap half of what the old read was doing anyway.
+ */
+export async function customerTimelineCounts(
+  customerId: string,
+): Promise<TimelineCounts> {
+  const [row] = await db.execute<Record<string, number>>(sql`
+    select
+      (select count(*)::int from calls where customer_id = ${customerId}) as "Call",
+      (select count(*)::int from wa_messages where customer_id = ${customerId}) as "WhatsApp",
+      (select count(*)::int from orders where customer_id = ${customerId}) as "Order",
+      (select count(*)::int from reminders where customer_id = ${customerId}) as "Reminder",
+      (select count(*)::int from complaints where customer_id = ${customerId}) as "Complaint",
+      (select count(*)::int from payment_receipts where customer_id = ${customerId}) as "Payment",
+      (select count(*)::int from bills where customer_id = ${customerId}) as "Bill"
+  `);
+
+  const counts = Object.fromEntries(
+    TIMELINE_KINDS.map((k) => [k, Number(row?.[k] ?? 0)]),
+  ) as Record<TimelineKind, number>;
+
+  return {
+    ...counts,
+    all: TIMELINE_KINDS.reduce((n, k) => n + counts[k], 0),
+  };
 }
 
 /* ------------------------------------------------------- credit note asks */
@@ -945,9 +1038,20 @@ export type CustomerMessage = {
  * carries a one-line summary of each; this is the full text, because a
  * telecaller asked what we actually said needs to read it, not infer it.
  */
+/**
+ * The messages, NEWEST FIRST AND BOUNDED, with the true total beside them.
+ *
+ * Every send is kept and every body is rendered in full, so an account that
+ * has been chased for a year — a reminder every four days, plus whatever
+ * campaigns went out — put a hundred message bubbles on the record before
+ * anything else on it could be reached. The same rule the timeline next door
+ * now follows: the panel is a fixed height, the read is a page, and the count
+ * is the whole history so the sentence at the top stays true.
+ */
 export async function customerMessages(
   customerId: string,
-): Promise<CustomerMessage[]> {
+  limit = 50,
+): Promise<{ messages: CustomerMessage[]; total: number }> {
   const rows = await db.execute<{
     id: string;
     at: Date;
@@ -967,21 +1071,29 @@ export async function customerMessages(
            m.template_name, m.body, m.edited
       from wa_messages m join users u on u.id = m.user_id
      where m.customer_id = ${customerId}
-     order by at desc
+     order by at desc, m.id desc
+     limit ${limit}
   `);
 
-  return rows.map((r) => ({
-    id: r.id,
-    at: new Date(r.at),
-    by: r.by,
-    status: r.status,
-    channelLabel: r.mode === "automatic" ? "Sent by API" : "Sent by hand",
-    destination: r.destination,
-    destKind: r.dest_kind,
-    templateName: r.template_name,
-    body: r.body ?? "",
-    edited: r.edited,
-  }));
+  const [count] = await db.execute<{ n: number }>(sql`
+    select count(*)::int as n from wa_messages where customer_id = ${customerId}
+  `);
+
+  return {
+    messages: rows.map((r) => ({
+      id: r.id,
+      at: new Date(r.at),
+      by: r.by,
+      status: r.status,
+      channelLabel: r.mode === "automatic" ? "Sent by API" : "Sent by hand",
+      destination: r.destination,
+      destKind: r.dest_kind,
+      templateName: r.template_name,
+      body: r.body ?? "",
+      edited: r.edited,
+    })),
+    total: Number(count?.n ?? 0),
+  };
 }
 
 /* ------------------------------------------------------------ interactions */

@@ -408,6 +408,34 @@ waiting for the second would chase somebody who has already heard from us.
 `dest_kind` is shared with `wa_messages`, so read that column as
 personal-or-group only; nothing writes `both` to it.
 
+**A customer record is a FIXED-LENGTH page, however old the account is.** Every
+panel on it is the same height and scrolls inside itself, and the reads behind
+them are capped — the timeline at fifty entries, the messages at fifty, the
+rest at two hundred. COLOUR CAMP is why: 3,504 timeline entries were serialised
+into the page and rendered into the DOM, so the orders, the bills, the payments
+and the arrangement sat a hundred screens below the fold. The accounts with the
+most history are the ones somebody most needs to read before ringing, and they
+were the ones whose record you could reach the least of.
+
+**A capped list says what it is a slice of, and the count comes from SQL.** The
+timeline's filter pills used to count what had been loaded, which is exactly
+why the page loaded everything: a capped read would have printed "Bill 34"
+against an account with 1,060 and nothing on the screen would have said so.
+`customerTimelineCounts` is seven `count(*)`s on indexed columns; the pills read
+those, "Load older" pages with a KEYSET rather than an offset, and picking a
+kind asks the server for that kind's newest page rather than filtering the fifty
+rows the browser happens to hold. Filtering in the browser would answer "the
+bills among the newest fifty entries" and call it the bill history.
+
+**A paged read needs a tiebreaker in its sort.** A thousand bills share a
+handful of midnight timestamps, so `order by at desc` alone leaves their order
+to the planner — invisible until it is paged, and then it is a row appearing on
+two pages while another appears on none. The sort is `at desc, id desc` and the
+cursor is `(at, id) < (…)`. There is a test that pages a book of 55 bills seven
+to a day and asserts it sees all 55 exactly once; the seven is chosen not to
+divide the page size, because at twenty a day with pages of twenty every page
+ended on a date boundary and the broken cursor passed.
+
 **A THIRD-PARTY CUSTOMER is a shop we deliver to and do not bill.** A
 distributor buys from us, is invoiced, and sells the goods on; the shop is
 where the drums actually go. Most of what this CRM called a lead is one of
