@@ -146,14 +146,15 @@ import { loadCustomerTimeline } from "@/lib/actions/crm";
 import {
   addDistributor,
   convertToThirdParty,
+  recordDeliveryAddress,
   removeDistributor,
   revertThirdParty,
   updateDistributor,
 } from "@/lib/actions/third-party";
 import {
+  deliveryAddressesFor,
   distributorCandidates,
   distributorsFor,
-  shopsServedBy,
 } from "@/lib/services/distributor-service";
 import {
   createReminder,
@@ -7634,7 +7635,7 @@ describe("third-party customers and their distributors", () => {
 
     const links = await distributorsFor(shop.id);
     assert.equal(links.length, 1);
-    assert.equal(links[0].distributorId, distributor.id);
+    assert.equal(links[0].customerId, distributor.id);
     assert.equal(links[0].isPrimary, true);
   });
 
@@ -7840,9 +7841,9 @@ describe("third-party customers and their distributors", () => {
     assert.equal(result.ok, true, result.ok ? "" : result.error);
     assert.equal(result.ok ? result.data.converted : 0, 2);
 
-    const served = await shopsServedBy(distributor.id);
+    const served = await deliveryAddressesFor(distributor.id);
     assert.deepEqual(
-      served.map((s) => s.customerId).sort(),
+      served.map((s: { customerId: string }) => s.customerId).sort(),
       [one.id, two.id].sort(),
       "the distributor's own record does not know both shops",
     );
@@ -7880,38 +7881,149 @@ describe("third-party customers and their distributors", () => {
     // Handing the badge over takes it off whoever holds it. Two rows both
     // claiming to be the usual one is a state no screen can render honestly.
     const links = await distributorsFor(shop.id);
-    const secondLink = links.find((l) => l.distributorId === second.id)!;
+    const secondLink = links.find((l) => l.customerId === second.id)!;
     assert.equal(
-      (await updateDistributor({ linkId: secondLink.id, isPrimary: true })).ok,
+      (await updateDistributor({ linkId: secondLink.linkId!, isPrimary: true })).ok,
       true,
     );
     const afterPrimary = await distributorsFor(shop.id);
     assert.deepEqual(
-      afterPrimary.filter((l) => l.isPrimary).map((l) => l.distributorId),
+      afterPrimary.filter((l) => l.isPrimary).map((l) => l.customerId),
       [second.id],
     );
 
     // Swapping WHO it is with keeps the row, so who recorded the arrangement
     // and when survives a corrected name.
     assert.equal(
-      (await updateDistributor({ linkId: secondLink.id, distributorId: third.id })).ok,
+      (await updateDistributor({ linkId: secondLink.linkId!, distributorId: third.id })).ok,
       true,
     );
     const afterSwap = await distributorsFor(shop.id);
-    assert.ok(afterSwap.some((l) => l.distributorId === third.id));
-    assert.ok(!afterSwap.some((l) => l.distributorId === second.id));
+    assert.ok(afterSwap.some((l) => l.customerId === third.id));
+    assert.ok(!afterSwap.some((l) => l.customerId === second.id));
 
     // And a swap onto a distributor already named is refused rather than
     // silently merging two arrangements into one.
-    const firstLink = afterSwap.find((l) => l.distributorId === first.id)!;
+    const firstLink = afterSwap.find((l) => l.customerId === first.id)!;
     assert.equal(
-      (await updateDistributor({ linkId: firstLink.id, distributorId: third.id })).ok,
+      (await updateDistributor({ linkId: firstLink.linkId!, distributorId: third.id })).ok,
       false,
       "a swap collapsed two arrangements into one",
     );
 
-    assert.equal((await removeDistributor(firstLink.id)).ok, true);
+    assert.equal((await removeDistributor(firstLink.linkId!)).ok, true);
     assert.equal((await distributorsFor(shop.id)).length, 1);
+  });
+
+  test("what the sheet saw and what somebody recorded are ONE list", async () => {
+    /*
+     * The bug this pins was on the screen, not in the data: the recorded
+     * arrangement was one panel and every shop the order sheet shows goods
+     * going to was another, under a title of its own. Four rows beside
+     * eighty-six, two counts, and no way to tell what the difference was.
+     *
+     * One list per direction now, and `recorded` is what separates the halves.
+     * A shop the sheet has seen is not a second subject — it is the unfinished
+     * part of the first one.
+     */
+    const distributor = await makeCustomer(priya.id, {
+      kind: "customer",
+      name: "Distributor Merge",
+    });
+    const recordedShop = await makeCustomer(priya.id, {
+      kind: "lead",
+      name: "Recorded Shop",
+    });
+    const seenShop = await makeCustomer(priya.id, {
+      kind: "lead",
+      name: "Seen Only Shop",
+    });
+
+    setTestUser(manager);
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [recordedShop.id],
+        distributors: [{ distributorId: distributor.id, isPrimary: true }],
+      })).ok,
+      true,
+    );
+
+    // The sheet's own knowledge: an order billed to the distributor, delivered
+    // to a shop nobody has recorded.
+    await db.insert(orders).values({
+      id: id("ord"),
+      customerId: distributor.id,
+      deliveryCustomerId: seenShop.id,
+      source: "external",
+      externalRef: `SHEET-${randomUUID().slice(0, 8)}`,
+      orderedAt: new Date(),
+      totalAmount: 100_00,
+      status: "dispatched",
+    });
+
+    const addresses = await deliveryAddressesFor(distributor.id);
+    assert.equal(addresses.length, 2, "the two halves did not land in one list");
+
+    const recorded = addresses.find((a) => a.customerId === recordedShop.id)!;
+    const seen = addresses.find((a) => a.customerId === seenShop.id)!;
+    assert.equal(recorded.recorded, true);
+    assert.equal(recorded.orders, 0, "recorded with no deliveries yet is a real state");
+    assert.equal(seen.recorded, false, "a shop only the sheet knows read as recorded");
+    assert.equal(seen.orders, 1);
+    assert.ok(seen.linkId === null, "an unrecorded row carried a link to edit");
+
+    // Recorded first, whatever the order counts say — the half somebody is
+    // responsible for is the half they should read first.
+    assert.equal(addresses[0].customerId, recordedShop.id);
+
+    // And recording one moves it across, which is what makes the list a
+    // worklist rather than a report.
+    const done = await recordDeliveryAddress({
+      distributorId: distributor.id,
+      shopId: seenShop.id,
+    });
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
+    assert.equal(done.ok ? done.data.converted : false, true, "a lead was not converted");
+
+    const after = await deliveryAddressesFor(distributor.id);
+    assert.equal(after.length, 2, "recording duplicated the row instead of moving it");
+    assert.equal(after.every((a) => a.recorded), true);
+
+    // Read from the shop's own end it is the same arrangement, not a second one.
+    const fromTheShop = await distributorsFor(seenShop.id);
+    assert.deepEqual(
+      fromTheShop.map((d) => d.customerId),
+      [distributor.id],
+    );
+    assert.equal(fromTheShop[0].recorded, true);
+  });
+
+  test("recording a delivery address does not convert an account we bill", async () => {
+    // A direct customer receiving goods on somebody else's bill is ordinary —
+    // they buy both ways. Recording that arrangement is right; calling them a
+    // shop somebody else bills is not, and only a lead may be converted.
+    const distributor = await makeCustomer(priya.id, { kind: "customer", name: "Dist A" });
+    const alsoDirect = await makeCustomer(priya.id, { kind: "customer", name: "Also Direct" });
+    setTestUser(manager);
+
+    const done = await recordDeliveryAddress({
+      distributorId: distributor.id,
+      shopId: alsoDirect.id,
+    });
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
+    assert.equal(done.ok ? done.data.converted : true, false, "an account we bill was converted");
+
+    const [row] = await db
+      .select({ thirdParty: customers.thirdParty, kind: customers.kind })
+      .from(customers)
+      .where(eq(customers.id, alsoDirect.id));
+    assert.equal(row.thirdParty, false);
+    assert.equal(row.kind, "customer");
+
+    // The arrangement is still recorded.
+    const addresses = await deliveryAddressesFor(distributor.id);
+    assert.deepEqual(addresses.map((a) => a.customerId), [alsoDirect.id]);
+    assert.equal(addresses[0].recorded, true);
   });
 
   test("the LAST distributor cannot be removed from a third-party customer", async () => {
@@ -7927,14 +8039,14 @@ describe("third-party customers and their distributors", () => {
     );
 
     const [link] = await distributorsFor(shop.id);
-    const refused = await removeDistributor(link.id);
+    const refused = await removeDistributor(link.linkId!);
     assert.equal(refused.ok, false, "a third-party customer was left with nobody billing it");
     assert.equal((await distributorsFor(shop.id)).length, 1);
 
     // The way out is the other direction: it stops being a third-party
     // customer, and then the arrangement can go.
     assert.equal((await revertThirdParty([shop.id])).ok, true);
-    assert.equal((await removeDistributor(link.id)).ok, true);
+    assert.equal((await removeDistributor(link.linkId!)).ok, true);
   });
 
   test("reverting keeps who used to bill the shop", async () => {

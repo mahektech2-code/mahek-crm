@@ -80,7 +80,14 @@ export type RecordReminder = {
   ownerName: string | null;
 };
 
-export type DeliveryLink = { id: string; name: string; orders: number; lastAt: string | null };
+/*
+ * `deliversTo` and `billedThrough` were here, derived from
+ * `orders.delivery_customer_id`, and each was drawn as its own panel beside
+ * the recorded arrangement. Two lists answering one question is what put four
+ * rows beside eighty-six under two titles — they are one list per direction
+ * now, in `lib/services/distributor-service.ts`, which reads the arrangement
+ * and the order history together so a row can say which it is.
+ */
 
 export type CustomerRecordDetail = {
   bills: RecordBill[];
@@ -88,10 +95,6 @@ export type CustomerRecordDetail = {
   orders: RecordOrder[];
   complaints: RecordComplaint[];
   reminders: RecordReminder[];
-  /** Shops this account's goods were delivered to, on its own bills. */
-  deliversTo: DeliveryLink[];
-  /** Accounts that were billed for goods delivered to THIS one. */
-  billedThrough: DeliveryLink[];
   counts: {
     bills: number;
     receipts: number;
@@ -111,8 +114,6 @@ export async function customerRecordDetail(
     orderRows,
     complaintRows,
     reminderRows,
-    deliversTo,
-    billedThrough,
     counts,
   ] = await Promise.all([
     db
@@ -193,40 +194,7 @@ export async function customerRecordDetail(
       .orderBy(desc(reminders.dueDate))
       .limit(LIMIT),
 
-    /*
-     * The two sides of the delivery relationship, both derived from orders
-     * rather than stored anywhere. On a distributor this answers "which shops
-     * do we send their goods to"; on a shop, "who bills for what we deliver
-     * here". Empty on almost every account, which is correct — only 862 orders
-     * in the whole book went somewhere other than the billing party.
-     */
-    db
-      .select({
-        id: customers.id,
-        name: customers.name,
-        orders: sql<number>`count(*)::int`,
-        lastAt: sql<string | null>`to_char(max(${orders.orderedAt}) at time zone 'Asia/Kolkata', 'YYYY-MM-DD')`,
-      })
-      .from(orders)
-      .innerJoin(customers, eq(customers.id, orders.deliveryCustomerId))
-      .where(eq(orders.customerId, customerId))
-      .groupBy(customers.id, customers.name)
-      .orderBy(sql`count(*) desc`),
-
-    db
-      .select({
-        id: customers.id,
-        name: customers.name,
-        orders: sql<number>`count(*)::int`,
-        lastAt: sql<string | null>`to_char(max(${orders.orderedAt}) at time zone 'Asia/Kolkata', 'YYYY-MM-DD')`,
-      })
-      .from(orders)
-      .innerJoin(customers, eq(customers.id, orders.customerId))
-      .where(eq(orders.deliveryCustomerId, customerId))
-      .groupBy(customers.id, customers.name)
-      .orderBy(sql`count(*) desc`),
-
-    // The real totals, so a capped list can say what it is a slice of.
+        // The real totals, so a capped list can say what it is a slice of.
     db
       .select({
         bills: sql<number>`(select count(*)::int from bills where bills.customer_id = ${customerId})`,
@@ -270,8 +238,6 @@ export async function customerRecordDetail(
     orders: orderRows,
     complaints: complaintRows,
     reminders: reminderRows,
-    deliversTo,
-    billedThrough,
     counts: counts ?? {
       bills: 0,
       receipts: 0,

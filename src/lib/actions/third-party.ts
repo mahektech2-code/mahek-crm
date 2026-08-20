@@ -324,6 +324,65 @@ export async function revertThirdParty(
   }
 }
 
+/**
+ * Record a delivery address the ORDER SHEET already knows about.
+ *
+ * The one-tap version of what the convert dialog does at length, offered on
+ * the row that reports the evidence: goods have gone to this shop on this
+ * account's bills N times and nobody has written down the arrangement. The
+ * button that does something about it belongs on the row that says so — the
+ * alternative is reading the name, opening another screen, searching for it,
+ * and picking the distributor you were just looking at.
+ *
+ * WHAT IT DOES DEPENDS ON WHAT THE SHOP IS, and that decision is made here
+ * rather than on the screen, because it is the same rule the dialog obeys:
+ *
+ *   a lead              → converted, with this account as its distributor
+ *   already third party → the arrangement is added to the ones it has
+ *   a direct customer   → the arrangement is recorded and the account is NOT
+ *                         converted. We invoice it ourselves, so calling it a
+ *                         shop somebody else bills would be false — but the
+ *                         sheet plainly shows goods reaching it on this
+ *                         account's bill, and that is worth recording.
+ */
+export async function recordDeliveryAddress(input: {
+  distributorId: string;
+  shopId: string;
+}): Promise<Result<{ converted: boolean }>> {
+  try {
+    const { distributorId, shopId } = input;
+    if (!distributorId || !shopId) return err("Nothing to record.", "validation");
+
+    const [shop] = await db
+      .select({
+        id: customers.id,
+        name: customers.name,
+        kind: customers.kind,
+        thirdParty: customers.thirdParty,
+      })
+      .from(customers)
+      .where(eq(customers.id, shopId));
+    if (!shop) return err("That shop no longer exists.", "not_found");
+
+    if (shop.kind === "lead" && !shop.thirdParty) {
+      const converted = await convertToThirdParty({
+        customerIds: [shopId],
+        distributors: [{ distributorId }],
+      });
+      return converted.ok
+        ? ok({ converted: true }, `${shop.name} recorded as a third-party customer.`)
+        : converted;
+    }
+
+    const added = await addDistributor({ customerId: shopId, distributorId });
+    return added.ok
+      ? ok({ converted: false }, `${shop.name} recorded as a delivery address.`)
+      : added;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 const addSchema = z.object({
   customerId: z.string().min(1),
   distributorId: z.string().min(1),

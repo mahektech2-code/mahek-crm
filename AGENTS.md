@@ -493,15 +493,32 @@ because a picker is not a permission. The last distributor cannot be removed
 from a marked account — the refusal names the way out, which is another
 distributor or no longer being a third-party customer.
 
-**The arrangement and the evidence are two things, drawn in that order.**
-`customer_distributors` is what a person decided; `orders.delivery_customer_id`
-is what the order sheet has actually seen, derived by `linkDeliveryParties()`
-and never typed. They usually agree, and where they do not that is the most
-useful thing on the record: a distributor sending loads to a shop nobody has
-named them for, or a named distributor who has never delivered anything. The
-convert dialog offers the evidence as suggestions and still makes somebody tap
-one — a suggestion that wrote itself would be the spreadsheet deciding what a
-record is, which is the thing this whole subsystem exists to undo.
+**The arrangement and the evidence are ONE list, and every row says which it
+is.** They were two panels — what somebody recorded, and under a title of its
+own every shop `orders.delivery_customer_id` shows goods going to. On a real
+distributor that drew four rows beside eighty-six, two counts, one question,
+and nothing on the screen saying how they differed; the honest reading was that
+the page showed the same list twice. A shop the sheet has seen and nobody has
+recorded is not a second subject, it is the unfinished part of the first one —
+so it sits in the same list marked "from the order sheet", with the button that
+records it, and the list moves into its recorded half as the work is done. That
+is what makes it a worklist rather than a report. `recorded` is never inferred
+from the order count: a recorded arrangement with no deliveries behind it and
+two hundred deliveries nobody has recorded are both real, and both worth
+seeing.
+
+**One tap records it, and what that tap DOES depends on what the shop is.** A
+lead is converted with this account as its distributor; an account already
+marked gains another distributor; an account we invoice ourselves has the
+arrangement recorded and is NOT converted, because we bill it and calling it a
+shop somebody else bills would be false. The decision is in
+`recordDeliveryAddress` rather than on the screen, since it is the same rule
+the convert dialog obeys.
+
+**A one-line summary names only what somebody recorded.** "Billed by X" on the
+Account card reads as a fact somebody stands behind, so a distributor the sheet
+merely shows must not appear in it — the panel underneath is where a row can
+say what it is.
 
 **One question, three answers, and `lib/account-types.ts` is where they live.**
 Direct customer, Lead, Third-party customer — the mark wins over the kind on a
