@@ -148,6 +148,51 @@ export type DistributorCandidate = {
   deliveries: number;
 };
 
+export type DistributorCandidates = {
+  hits: DistributorCandidate[];
+  /**
+   * Matches the cap left out. A list that simply stops looks like the whole
+   * answer, and somebody who cannot see their distributor concludes we do not
+   * hold it — so the screen says there are more and to keep typing.
+   */
+  more: number;
+};
+
+/**
+ * WHAT WAS TYPED DECIDES THE ORDER. It did not, and that was the bug.
+ *
+ * The first version ranked by how many shops an account already serves and
+ * then alphabetically, ignoring the query completely — so typing "c" put "A
+ * MUNSI PAINT and chemicals" above every account whose name begins with one,
+ * matched on the c in its ninth word. On a book of 561 direct customers that
+ * makes the box unusable for its actual job: you type the first letters of a
+ * name you know, and the thing you are looking for is not on screen.
+ *
+ * The buckets below are the ranking, most specific first, and every one of
+ * them is a real distinction somebody makes while typing: the exact name, then
+ * a name that starts the way they typed, then a WORD inside it that does —
+ * "paints" should find "Shree Paints" — then anything containing it, then the
+ * code, then the town. Shops-served is still in there, and still means what it
+ * meant: among matches equally good, the account already distributing for us
+ * is the likely answer. It just no longer outranks the query.
+ */
+const CANDIDATE_RANK_SQL = (q: string) => {
+  // The word-boundary test is a regular expression, so anything the person
+  // typed that means something to a regex has to stop meaning it. A shop
+  // called "R.K. Paints (Nashik)" is an ordinary name and a broken pattern.
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return sql<number>`case
+    when lower(${customers.name}) = lower(${q}) then 1
+    when ${customers.name} ilike ${q + "%"} then 2
+    when ${customers.name} ~* ${"\\m" + escaped} then 3
+    when ${customers.name} ilike ${"%" + q + "%"} then 4
+    when ${customers.externalCode} ilike ${"%" + q + "%"} then 5
+    when ${customers.city} ilike ${q + "%"} then 6
+    when ${customers.city} ilike ${"%" + q + "%"} then 7
+    else 8
+  end`;
+};
+
 /**
  * The accounts that may be named as a distributor.
  *
@@ -159,11 +204,17 @@ export type DistributorCandidate = {
  * Deactivated accounts are left out: naming one as who bills a shop from
  * today is an arrangement that cannot happen. Links already pointing at one
  * are kept and flagged on the record instead of being quietly dropped.
+ *
+ * A NAME TYPED MID-CALL IS A NAME TYPED BADLY, which the product search
+ * already knows — so three characters or more also match on trigram
+ * similarity, and "shre paints" finds Shree Paints rather than nothing. There
+ * is no trigram index on `customers.name` and none is needed: the filter runs
+ * over the few hundred rows this predicate already narrows to.
  */
 export async function distributorCandidates(
   query: string,
   opts: { excludeCustomerId?: string; limit?: number } = {},
-): Promise<DistributorCandidate[]> {
+): Promise<DistributorCandidates> {
   const q = query.trim();
   const limit = opts.limit ?? 20;
 
@@ -175,24 +226,31 @@ export async function distributorCandidates(
   if (opts.excludeCustomerId) where.push(ne(customers.id, opts.excludeCustomerId));
   if (q) {
     const like = `%${q}%`;
-    where.push(
-      or(
-        sql`${customers.name} ilike ${like}`,
-        sql`${customers.city} ilike ${like}`,
-        sql`${customers.externalCode} ilike ${like}`,
-      )!,
-    );
+    const clauses = [
+      sql`${customers.name} ilike ${like}`,
+      sql`${customers.city} ilike ${like}`,
+      sql`${customers.externalCode} ilike ${like}`,
+    ];
+    // Below three characters similarity is noise — every short string is a
+    // little bit like every name — so a typo is only forgiven once there is
+    // enough typed to tell what was meant.
+    if (q.length >= 3) {
+      clauses.push(sql`similarity(${customers.name}, ${q}) > 0.3`);
+    }
+    where.push(or(...clauses)!);
   }
+
+  const shopsSql = sql<number>`(
+    select count(*)::int from customer_distributors d
+     where d.distributor_customer_id = customers.id
+  )`;
 
   const rows = await db
     .select({
       id: customers.id,
       name: customers.name,
       city: customers.city,
-      shops: sql<number>`(
-        select count(*)::int from customer_distributors d
-         where d.distributor_customer_id = customers.id
-      )`,
+      shops: shopsSql,
       deliveries: sql<number>`(
         select count(*)::int from orders o
          where o.customer_id = customers.id and o.delivery_customer_id is not null
@@ -200,47 +258,26 @@ export async function distributorCandidates(
     })
     .from(customers)
     .where(and(...where))
-    /*
-     * The ones that already serve somebody first, then by name. Whoever is
-     * marking a batch of shops is usually naming the same two or three
-     * distributors over and over, and an alphabetical list buries them.
-     */
-    .orderBy(sql`(
-      select count(*) from customer_distributors d
-       where d.distributor_customer_id = customers.id
-    ) desc`, asc(customers.name))
-    .limit(limit);
-
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    city: r.city,
-    shops: Number(r.shops),
-    deliveries: Number(r.deliveries),
-  }));
-}
-
-/**
- * How many shops each of these accounts serves, in one query.
- *
- * For the customers list, which draws the count on a direct customer's row.
- * Asked per row it would be one query per row.
- */
-export async function servedShopCounts(
-  distributorIds: string[],
-): Promise<Map<string, number>> {
-  if (!distributorIds.length) return new Map();
-  const rows = await db
-    .select({
-      id: customerDistributors.distributorCustomerId,
-      n: sql<number>`count(*)::int`,
-    })
-    .from(customerDistributors)
-    .where(
-      sql`${customerDistributors.distributorCustomerId} = any(${sql.param(distributorIds)})`,
+    .orderBy(
+      // With nothing typed there is nothing to rank against, and the useful
+      // answer is the accounts that already distribute for us.
+      ...(q ? [CANDIDATE_RANK_SQL(q), desc(sql`similarity(${customers.name}, ${q})`)] : []),
+      desc(shopsSql),
+      asc(customers.name),
     )
-    .groupBy(customerDistributors.distributorCustomerId);
-  return new Map(rows.map((r) => [r.id, Number(r.n)]));
+    // One more than the cap, purely to find out whether there IS one more.
+    .limit(limit + 1);
+
+  return {
+    hits: rows.slice(0, limit).map((r) => ({
+      id: r.id,
+      name: r.name,
+      city: r.city,
+      shops: Number(r.shops),
+      deliveries: Number(r.deliveries),
+    })),
+    more: rows.length > limit ? rows.length - limit : 0,
+  };
 }
 
 /*

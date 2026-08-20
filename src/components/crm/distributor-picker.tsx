@@ -58,6 +58,7 @@ export function DistributorPicker({
   const [remote, setRemote] = React.useState<{
     q: string;
     hits: DistributorCandidate[];
+    more: number;
   } | null>(null);
   const [failedFor, setFailedFor] = React.useState<string | null>(null);
 
@@ -71,8 +72,11 @@ export function DistributorPicker({
         const res = await fetch(`/api/distributors/search?${params}`, {
           signal: controller.signal,
         });
-        const data = (await res.json()) as { hits?: DistributorCandidate[] };
-        setRemote({ q, hits: data.hits ?? [] });
+        const data = (await res.json()) as {
+          hits?: DistributorCandidate[];
+          more?: number;
+        };
+        setRemote({ q, hits: data.hits ?? [], more: data.more ?? 0 });
       } catch (e) {
         // An abort is the next keystroke, not a failure. Reporting it would
         // flash "could not search" between every two letters typed.
@@ -86,7 +90,8 @@ export function DistributorPicker({
   }, [query, excludeCustomerId]);
 
   const q = query.trim();
-  const hits = remote && remote.q === q ? remote.hits : null;
+  const answer = remote && remote.q === q ? remote : null;
+  const hits = answer?.hits ?? null;
   const failed = failedFor === q;
 
   const offered = (hits ?? []).filter((h) => !exclude.includes(h.id));
@@ -153,6 +158,21 @@ export function DistributorPicker({
             </button>
           ))
         )}
+        {/*
+          THE CAP, SAID OUT LOUD. The list is trimmed to twenty and a list that
+          simply stops looks like the whole answer — so somebody whose
+          distributor is the twenty-first concludes we do not hold the account
+          and goes looking for another way in. It names the number and what to
+          do about it.
+        */}
+        {answer && answer.more > 0 && offered.length ? (
+          <p className="border-t border-divider px-3 py-2 text-[12px] text-muted">
+            {answer.more === 1
+              ? "One more match is not shown."
+              : `${answer.more} more matches are not shown.`}{" "}
+            Type more of the name to narrow it.
+          </p>
+        ) : null}
       </div>
     </div>
   );
