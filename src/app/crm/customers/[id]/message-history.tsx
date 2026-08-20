@@ -47,7 +47,15 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: "Cancelled",
 };
 
-export function MessageHistory({ messages }: { messages: MessageEntry[] }) {
+export function MessageHistory({
+  messages,
+  total,
+}: {
+  messages: MessageEntry[];
+  /** Every message ever sent, not the page — the sentence has to stay true. */
+  total: number;
+}) {
+  const capped = messages.length < total;
   return (
     <Card>
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-divider px-5 py-3.5">
@@ -55,13 +63,19 @@ export function MessageHistory({ messages }: { messages: MessageEntry[] }) {
           Message history
         </span>
         <span className="text-[13px] text-muted">
-          {messages.length === 1 ? "1 message" : `${messages.length} messages`} ·
-          every send is kept, whichever route it took
+          {capped
+            ? `showing the newest ${messages.length} of ${total.toLocaleString("en-IN")}`
+            : total === 1
+              ? "1 message"
+              : `${total} messages`}{" "}
+          · every send is kept, whichever route it took
         </span>
       </div>
 
       {messages.length ? (
-        <div className="px-5 py-4">
+        // Scrolls inside itself rather than growing the page, like every other
+        // panel on this record.
+        <div className="max-h-[420px] overflow-y-auto px-5 py-4">
           {messages.map((m) => (
             <div
               key={m.id}

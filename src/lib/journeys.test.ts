@@ -142,6 +142,7 @@ import {
   requestReactivation,
   startStageOneBatch,
 } from "@/lib/actions/crm";
+import { loadCustomerTimeline } from "@/lib/actions/crm";
 import {
   addDistributor,
   convertToThirdParty,
@@ -168,6 +169,7 @@ import {
 } from "@/lib/services/order-approval-service";
 import {
   customerTimeline,
+  customerTimelineCounts,
   listAssignableUsers,
   listBackOfficeCandidates,
   listTeam,
@@ -2296,6 +2298,48 @@ describe("The business day is Asia/Kolkata, whatever the database thinks", () =>
     );
   });
 
+  test("no query turns a stored DATE into an instant without saying which zone", async () => {
+    /*
+     * The same rule, read backwards. The two guards beside this one watch
+     * timestamps being turned into dates; this watches dates being turned
+     * into timestamps, which is the direction that produced a bill whose
+     * instant depended on which pooled connection served it — and therefore a
+     * timeline that could not be paged and a time on screen that moved.
+     */
+    const { readFileSync, readdirSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (full.endsWith(".ts") && !full.includes(".test.")) files.push(full);
+      }
+    };
+    walk("src/lib");
+
+    // The date columns that reach a timeline or a sort. A cast on any of them
+    // has to say which midnight it means.
+    const DATE_COLUMNS = /(bill_date|received_at|due_date|order_date|day)\s*\)?::timestamptz/;
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      for (const [i, line] of readFileSync(file, "utf8").split("\n").entries()) {
+        const code = line.trim();
+        if (code.startsWith("*") || code.startsWith("//") || code.startsWith("--")) continue;
+        if (line.includes("time zone")) continue;
+        if (DATE_COLUMNS.test(line)) offenders.push(`${file}:${i + 1}`);
+      }
+    }
+
+    assert.deepEqual(
+      offenders,
+      [],
+      "cast these as `::timestamp at time zone ${APP_TIMEZONE}` — a bare cast is evaluated in the session's zone",
+    );
+  });
+
   test("no JavaScript turns a stored timestamp into a date without saying which zone", async () => {
     // The same rule, the other spelling. `toISOString()` answers in UTC, so
     // `.slice(0, 10)` on it dates a 2am IST row to the previous day — and it
@@ -2490,7 +2534,7 @@ describe("An order is a customer saying yes, not the business saying yes", () =>
 
     setTestUser(priya);
     const timeline = await customerTimeline(customer.id);
-    const entry = timeline.find((t) => t.kind === "Order");
+    const entry = timeline.entries.find((t) => t.kind === "Order");
     assert.ok(entry);
     assert.match(entry.content, /declined/i);
     assert.match(
@@ -7356,6 +7400,204 @@ describe("What the telecaller was told would happen next", () => {
  * Most of what the CRM calls a lead is a shop served by a distributor. The
  * provision to say so — without anything saying it automatically.
  * ------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+ * The record of a four-year account, on a page that does not grow with it.
+ * ------------------------------------------------------------------------- */
+
+describe("the customer timeline is a page", () => {
+  /** A book like COLOUR CAMP's: many bills, all stamped midnight. */
+  async function billedCustomer(n: number) {
+    const customer = await makeCustomer(priya.id);
+    await db.insert(bills).values(
+      Array.from({ length: n }, (_, i) => ({
+        id: id("bil"),
+        customerId: customer.id,
+        // The same DATE on purpose. `bill_date` is a date, so a hundred bills
+        // raised across one week share a handful of midnight timestamps —
+        // which is exactly what breaks a sort with no tiebreaker.
+        //
+        // SEVEN to a day, deliberately NOT a multiple of any page size used
+        // below. At twenty a day with pages of twenty, every page ended
+        // exactly on a date boundary and a cursor that skipped whole
+        // timestamps still came out right — the fixture passed a test of the
+        // thing it was meant to break.
+        billNo: `MMI/26-27/${1000 + i}`,
+        billDate: addDays(TODAY, -Math.floor(i / 7)),
+        dueDate: addDays(TODAY, 30),
+        amount: 1_000_00 + i,
+        paidAmount: 0,
+      })),
+    );
+    return customer;
+  }
+
+  test("the first page is a page, and it says what it is a page of", async () => {
+    const customer = await billedCustomer(60);
+    setTestUser(priya);
+
+    const page = await customerTimeline(customer.id, { limit: 25 });
+    assert.equal(page.entries.length, 25, "the page was not the size asked for");
+    assert.equal(page.more, true, "a capped read did not say there was more");
+    assert.ok(page.cursor, "a page with more after it carried no cursor");
+
+    // The COUNTS are the whole history, not the page. The pills print these,
+    // and printing "Bill 25" against an account with sixty is the reason the
+    // page used to read every row it had.
+    const counts = await customerTimelineCounts(customer.id);
+    assert.equal(counts.Bill, 60);
+    assert.equal(counts.all, 60);
+  });
+
+  test("paging never repeats a row and never loses one", async () => {
+    const customer = await billedCustomer(55);
+    setTestUser(priya);
+
+    const seen: string[] = [];
+    const pages: string[] = [];
+    let cursor: { at: string; id: string } | null = null;
+    for (let i = 0; i < 10; i++) {
+      const page: Awaited<ReturnType<typeof customerTimeline>> =
+        await customerTimeline(customer.id, {
+          limit: 20,
+          before: cursor ?? undefined,
+        });
+      seen.push(...page.entries.map((e) => e.id));
+      pages.push(
+        `page ${i + 1}: ${page.entries.length} rows, more=${page.more}, ` +
+          `cursor=${page.cursor?.at} ${page.cursor?.id}`,
+      );
+      cursor = page.cursor;
+      if (!page.more) break;
+    }
+
+    /*
+     * WHAT THE DATABASE THINKS, printed when this fails.
+     *
+     * It passed on a developer's macOS Postgres and failed on CI's
+     * postgres:16, which is the signature of something the two databases
+     * disagree about rather than something the code gets wrong — the sort key
+     * is text, and text ordering is a property of the database's collation.
+     * A failure nobody can reproduce locally has to carry its own evidence.
+     */
+    const repeated = seen.filter((v, i) => seen.indexOf(v) !== i);
+    const [env] = await db.execute<{
+      v: string;
+      tz: string;
+      datcollate: string;
+    }>(sql`
+      select version() as v, current_setting('TimeZone') as tz, datcollate
+        from pg_database where datname = current_database()`);
+    const evidence = [
+      env?.v,
+      `TimeZone=${env?.tz} collate=${env?.datcollate}`,
+      ...pages,
+      `repeated: ${repeated.join(", ") || "none"}`,
+    ].join("\n      ");
+
+    assert.equal(seen.length, 55, `paging lost rows or invented them\n      ${evidence}`);
+    assert.equal(
+      new Set(seen).size,
+      55,
+      `a row came back on two pages - the sort has no tiebreaker\n      ${evidence}`,
+    );
+  });
+
+  test("a page read on one session zone pages correctly on another", async () => {
+    /*
+     * THE BUG THIS EXISTS FOR, and it is the codebase's oldest rule wearing
+     * its third disguise.
+     *
+     * `bills.bill_date` is a DATE, and a date is not an instant until
+     * something says which midnight is meant. `bill_date::timestamptz` asks
+     * Postgres, and Postgres answers with the SESSION's zone — so the same
+     * bill came back as 00:00Z on one pooled connection and 18:30Z on
+     * another, in one process, because an earlier test in this file leaves a
+     * connection in Asia/Kolkata while the rest sit on the server default. A
+     * cursor taken from one page then excluded nothing on the next and five
+     * rows came back twice.
+     *
+     * It passed on a developer's machine for the reason the rule always
+     * survives: local Postgres runs in Asia/Kolkata, so both halves agreed.
+     * CI runs in UTC and caught it. This forces the mixture rather than
+     * waiting for the pool to produce it.
+     */
+    const customer = await billedCustomer(55);
+    setTestUser(priya);
+
+    const everyConnection = (zone: string) =>
+      Promise.all(
+        Array.from({ length: 12 }, () =>
+          db.execute(sql.raw(`set time zone '${zone}'`)),
+        ),
+      );
+
+    try {
+      await everyConnection("GMT");
+      const first = await customerTimeline(customer.id, { limit: 20 });
+      await everyConnection("Asia/Kolkata");
+      const second = await customerTimeline(customer.id, {
+        limit: 20,
+        before: first.cursor ?? undefined,
+      });
+
+      const firstIds = new Set(first.entries.map((e) => e.id));
+      const repeated = second.entries.filter((e) => firstIds.has(e.id));
+      assert.deepEqual(
+        repeated.map((e) => e.id),
+        [],
+        "a cursor taken in one session zone re-read rows in another",
+      );
+    } finally {
+      // Whatever happens, the pool goes back to what the rest of the file
+      // expects — a connection left in GMT is a booby trap for every test
+      // after this one.
+      await everyConnection("Asia/Kolkata");
+    }
+  });
+
+  test("a kind reads the whole history, not the loaded page", async () => {
+    const customer = await billedCustomer(40);
+    // One call, older than every bill. Under the old screen-side filter it
+    // would be invisible unless somebody had already loaded past forty bills.
+    await db.insert(calls).values({
+      id: id("cal"),
+      customerId: customer.id,
+      userId: priya.id,
+      startedAt: new Date(`${addDays(TODAY, -400)}T09:00:00+05:30`),
+      connectionStatus: "connected",
+      outcome: "order_taken",
+      notes: "The oldest thing on this account",
+      idempotencyKey: randomUUID(),
+    });
+    setTestUser(priya);
+
+    const newest = await customerTimeline(customer.id, { limit: 20 });
+    assert.ok(
+      !newest.entries.some((e) => e.kind === "Call"),
+      "the fixture is wrong - the call was not older than the bills",
+    );
+
+    const calls20 = await customerTimeline(customer.id, {
+      limit: 20,
+      kind: "Call",
+    });
+    assert.equal(calls20.entries.length, 1);
+    assert.equal(calls20.entries[0].content, "The oldest thing on this account");
+    assert.equal(calls20.more, false, "one call was reported as a partial list");
+  });
+
+  test("the reader has to be allowed to see the customer", async () => {
+    const customer = await billedCustomer(1);
+    setTestUser(rakesh);
+    const refused = await loadCustomerTimeline(customer.id);
+    assert.equal(refused.ok, false, "another telecaller's account was paged");
+
+    setTestUser(priya);
+    const allowed = await loadCustomerTimeline(customer.id);
+    assert.equal(allowed.ok, true, allowed.ok ? "" : allowed.error);
+  });
+});
 
 describe("third-party customers and their distributors", () => {
   /** A distributor is an account we bill, so every test needs one. */

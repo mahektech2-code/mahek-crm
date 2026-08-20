@@ -13,6 +13,7 @@ import {
   currentPeriod,
   customerMessages,
   customerTimeline,
+  customerTimelineCounts,
   getCustomer,
   listAmChanges,
   today,
@@ -29,6 +30,12 @@ import { popularProducts } from "@/lib/services/product-service";
 import { quickNotes as quickNotesTable } from "@/db/schema";
 import { listTargets } from "@/lib/services/worklist-services";
 import { customerStatusLabel, daysBetween } from "@/lib/format";
+import { categoryLabel } from "@/lib/complaint-labels";
+// How much of the timeline the page arrives with — see `TIMELINE_PAGE`. The
+// number that matters is not the ten, it is that it IS a number: the page used
+// to carry the account's whole history, so the oldest customers took the
+// longest to open and were the hardest to read.
+import { TIMELINE_PAGE } from "@/lib/timeline-kinds";
 import { addDays, calendarDate } from "@/lib/business-date";
 import { RecordScreen } from "./record-screen";
 
@@ -73,9 +80,12 @@ export default async function CustomerRecordPage({
   const day = await today();
   const period = await currentPeriod();
 
-  const [config, timeline, messages, targets, followUp, stats] = await Promise.all([
+  const [config, timeline, timelineCounts, messages, targets, followUp, stats] =
+    await Promise.all([
     getConfig(),
-    customerTimeline(id),
+    // The FIRST PAGE of it, not the history. See `customerTimeline`.
+    customerTimeline(id, { limit: TIMELINE_PAGE }),
+    customerTimelineCounts(id),
     customerMessages(id),
     listTargets(period),
     getFollowUpDetail(id),
@@ -168,9 +178,18 @@ export default async function CustomerRecordPage({
   const target = targets.find((t) => t.customerId === id);
   const totalTarget = targets.reduce((a, t) => a + t.target, 0);
 
-  const openComplaint = timeline.find(
-    (t) => t.kind === "Complaint" && !t.meta?.includes("resolved"),
-  );
+  /*
+   * The open complaint the banner shouts about, read from the COMPLAINTS
+   * rather than from the timeline.
+   *
+   * It used to scan the timeline, which was every entry this customer had.
+   * Now that the timeline is a page, the same scan would look at the newest
+   * fifty — so on any busy account the complaint would fall off the bottom and
+   * the banner telling a telecaller to mention it before anything else would
+   * quietly stop appearing. The complaints list is the right place to ask, it
+   * is already fetched, and it answers the same question directly.
+   */
+  const openComplaint = detail.complaints.find((c) => c.status !== "resolved");
 
   // The latest dated promise from the follow-up attempt log.
   const promise = followUp?.attempts.find((a) => a.promisedDate);
@@ -261,8 +280,10 @@ export default async function CustomerRecordPage({
       openComplaint={
         openComplaint
           ? {
-              description: openComplaint.content,
-              category: openComplaint.meta?.split(" · ")[0] ?? "Complaint",
+              description: openComplaint.description,
+              // The stored enum is not a label — `packaging_damage` was what
+              // the timeline's meta carried, and it reached the sentence.
+              category: categoryLabel(openComplaint.category),
             }
           : null
       }
@@ -307,7 +328,7 @@ export default async function CustomerRecordPage({
         millilitresPerCan: p.millilitresPerCan,
         cansPerBox: p.cansPerBox,
       }))}
-      timeline={timeline.map((t) => ({
+      timeline={timeline.entries.map((t) => ({
         id: t.id,
         kind: t.kind,
         at: t.at.toISOString(),
@@ -315,7 +336,11 @@ export default async function CustomerRecordPage({
         content: t.content,
         meta: t.meta ?? null,
       }))}
-      messages={messages.map((m) => ({
+      timelineCursor={timeline.cursor}
+      timelineMore={timeline.more}
+      timelineCounts={timelineCounts}
+      messageTotal={messages.total}
+      messages={messages.messages.map((m) => ({
         id: m.id,
         at: m.at.toISOString(),
         by: m.by,

@@ -29,7 +29,12 @@ import {
   type QuickNoteOption,
 } from "@/components/crm/call-panel";
 import { MessageHistory, type MessageEntry } from "./message-history";
-import { createReminder, logComplaint } from "@/lib/actions/crm";
+import { TIMELINE_KINDS, type TimelineKind } from "@/lib/timeline-kinds";
+import {
+  createReminder,
+  loadCustomerTimeline,
+  logComplaint,
+} from "@/lib/actions/crm";
 import { convertToThirdParty, revertThirdParty } from "@/lib/actions/third-party";
 import { ThirdPartyDialog } from "@/components/crm/third-party-dialog";
 import {
@@ -88,6 +93,9 @@ export function RecordScreen({
   servedShops,
   distributorSuggestions,
   canClassify,
+  timelineCursor,
+  timelineMore,
+  timelineCounts,
   amChanges,
   daysSinceOrder,
   followUpStage,
@@ -97,6 +105,7 @@ export function RecordScreen({
   billStats,
   timeline,
   messages,
+  messageTotal,
   categories,
   period,
   complaintCategories,
@@ -121,6 +130,15 @@ export function RecordScreen({
   distributorSuggestions: Array<{ id: string; name: string; orders: number }>;
   /** `customer.classify` — converting, and editing an arrangement. */
   canClassify: boolean;
+  /** Where the first page of the timeline stopped. Null when it is all of it. */
+  timelineCursor: { at: string; id: string } | null;
+  timelineMore: boolean;
+  /**
+   * How many of each kind exist IN THE WHOLE HISTORY, counted in SQL. The
+   * pills used to count what had been loaded, which is exactly why the page
+   * used to load everything.
+   */
+  timelineCounts: { all: number } & Record<string, number>;
   customer: {
     id: string;
     name: string;
@@ -194,6 +212,8 @@ export function RecordScreen({
   }>;
   /** Every WhatsApp message prepared for this customer, newest first. */
   messages: MessageEntry[];
+  /** Every message this customer has been sent — `messages` is the newest page. */
+  messageTotal: number;
   /** Complaint categories, from configuration rather than a constant. */
   categories: string[];
   /** "2026-08" — the month the target figures belong to. */
@@ -218,9 +238,54 @@ export function RecordScreen({
   const [cmpOpen, setCmpOpen] = React.useState(false);
   const [converting, setConverting] = React.useState(false);
 
-  const kinds = ["All", ...Array.from(new Set(timeline.map((t) => t.kind)))];
-  const visible =
-    filter === "All" ? timeline : timeline.filter((t) => t.kind === filter);
+  /*
+   * THE TIMELINE IS A PAGE, and this holds the pages read so far.
+   *
+   * Filtering cannot be done in the browser any more, and that is the point:
+   * with fifty of 3,504 entries loaded, "Bill" filtered in JavaScript would
+   * show the bills among the newest fifty and call it the bill history. Each
+   * pill asks the server for the newest page OF THAT KIND, which is also why
+   * the counts beside them are counted in SQL rather than measured here.
+   */
+  const [entries, setEntries] = React.useState<Entry[]>(timeline);
+  const [cursor, setCursor] = React.useState(timelineCursor);
+  const [more, setMore] = React.useState(timelineMore);
+  const [loading, setLoading] = React.useState<"filter" | "older" | null>(null);
+
+  const kinds = [
+    "All",
+    // Every kind that HAS anything, from the counts rather than from what
+    // happens to be loaded — a pill that appears once you scroll far enough is
+    // not a filter, it is a surprise.
+    ...TIMELINE_KINDS.filter((k) => (timelineCounts[k] ?? 0) > 0),
+  ];
+
+  async function readTimeline(
+    kind: string,
+    before: { at: string; id: string } | null,
+  ) {
+    setLoading(before ? "older" : "filter");
+    try {
+      const result = await run(
+        loadCustomerTimeline(customer.id, {
+          kind: kind === "All" ? undefined : (kind as TimelineKind),
+          before: before ?? undefined,
+        }),
+      );
+      if (!result.ok) return;
+      // Appended when paging, replaced when filtering — the same call answers
+      // both, and which one it is is decided by whether a cursor was sent.
+      setEntries((prev) =>
+        before ? [...prev, ...result.data.entries] : result.data.entries,
+      );
+      setCursor(result.data.cursor);
+      setMore(result.data.more);
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  const visible = entries;
 
   const overCycle =
     daysSinceOrder !== null && daysSinceOrder > customer.cycleDays;
@@ -290,7 +355,18 @@ export function RecordScreen({
             >
               {customer.status}
             </Badge>
-            {customer.slowPayer ? <SlowPayerBadge /> : null}
+            {/*
+              The status badge already says it where the status IS "Slow
+              payer" — `customerStatusLabel` returns that when the flag is set
+              and nothing more urgent applies — so drawing both put "Slow payer
+              Slow payer" side by side on the header of every flagged account.
+              It is still drawn where the status says something else: a
+              deactivated or inactive slow payer is two facts, and the second
+              one is the one somebody needs before they ring.
+            */}
+            {customer.slowPayer && customer.status !== "Slow payer" ? (
+              <SlowPayerBadge />
+            ) : null}
           </span>
         }
         /*
@@ -364,7 +440,7 @@ export function RecordScreen({
 
       <div className="grid grid-cols-[minmax(0,1fr)_clamp(280px,24%,380px)] items-start gap-4">
         <div className="flex flex-col gap-4">
-        <MessageHistory messages={messages} />
+        <MessageHistory messages={messages} total={messageTotal} />
 
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-divider px-5 py-3.5">
@@ -373,19 +449,36 @@ export function RecordScreen({
             </span>
             <FilterPills
               value={filter}
-              onChange={setFilter}
+              onChange={(k) => {
+                if (k === filter) return;
+                setFilter(k);
+                // The newest page OF THAT KIND, from the server. Filtering the
+                // loaded page would answer with the bills among the newest
+                // fifty entries and call it the bill history.
+                void readTimeline(k, null);
+              }}
               options={kinds.map((k) => ({
                 key: k,
                 label: k,
-                count:
-                  k === "All"
-                    ? timeline.length
-                    : timeline.filter((t) => t.kind === k).length,
+                count: k === "All" ? timelineCounts.all : (timelineCounts[k] ?? 0),
               }))}
             />
           </div>
-          <div className="px-5 py-4">
-            {visible.length ? (
+          {/*
+            FIXED HEIGHT, SCROLLING INSIDE ITSELF — the rule every other panel
+            on this page already follows, and the one this panel was written
+            before. Growing the page instead is what made COLOUR CAMP
+            unreadable: 3,504 entries pushed the orders, the bills, the
+            payments and the arrangement a hundred screens down, so the account
+            with the most history was the one whose record you could reach the
+            least of.
+          */}
+          <div className="max-h-[560px] overflow-y-auto px-5 py-4">
+            {loading === "filter" ? (
+              <div className="py-10 text-center text-[15px] text-muted">
+                Reading the {filter === "All" ? "timeline" : filter.toLowerCase()}…
+              </div>
+            ) : visible.length ? (
               visible.map((t) => (
                 <div
                   key={t.id}
@@ -427,6 +520,36 @@ export function RecordScreen({
                 Nothing of this type has been logged against this customer yet.
               </div>
             )}
+            {/*
+              WHAT IS SHOWN AND WHAT IS NOT. A list that simply stops reads as
+              the whole history — and on these accounts it is one page of
+              seventy. The count is the true one, from SQL.
+            */}
+            {more ? (
+              <div className="flex items-center justify-between gap-3 border-t border-divider pt-3">
+                <span className="text-[13px] text-muted">
+                  Showing the newest {visible.length} of{" "}
+                  {(filter === "All"
+                    ? timelineCounts.all
+                    : (timelineCounts[filter] ?? 0)
+                  ).toLocaleString("en-IN")}
+                </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={loading !== null}
+                  onClick={() => void readTimeline(filter, cursor)}
+                >
+                  {loading === "older" ? "Loading…" : "Load older"}
+                </Button>
+              </div>
+            ) : visible.length ? (
+              <div className="border-t border-divider pt-3 text-[13px] text-muted">
+                That is the whole{" "}
+                {filter === "All" ? "history" : `${filter.toLowerCase()} history`} for
+                this customer.
+              </div>
+            ) : null}
           </div>
         </Card>
 
