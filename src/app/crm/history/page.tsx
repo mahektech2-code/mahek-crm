@@ -36,6 +36,7 @@ export default async function HistoryPage() {
         outcome: r.outcome,
         note: r.note,
         produced: r.produced,
+        nextStep: r.nextStep,
       }))}
       openCommitments={reminders
         .filter((r) => r.status === "pending")
@@ -45,6 +46,7 @@ export default async function HistoryPage() {
           dueDate: r.dueDate,
         }))}
       nowMs={nowMs()}
+      today={day}
       activity={{
         attempted: activity.callsAttempted,
         connected: activity.callsConnected,

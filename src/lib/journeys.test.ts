@@ -116,6 +116,7 @@ import {
 } from "@/lib/services/receipt-service";
 import { globalSearch ,
   listCustomersPage,
+  listInteractions,
 } from "@/lib/queries";
 import { describeQuantity } from "@/lib/catalogue";
 import {
@@ -7302,6 +7303,123 @@ describe("No order, and when we ring back", () => {
     // the customer would not say.
     const config = await getConfig();
     assert.equal(config["queue.outcomeCooldownDays"].no_order, 5);
+  });
+});
+
+describe("The next call reaches the lists a telecaller works from", () => {
+  test("the customers list carries it, and only where somebody has called", async () => {
+    /*
+     * The dialog says it once, at the moment a call is saved, and then it was
+     * gone: to find out when a customer comes back you opened their record.
+     * The two screens where somebody is deciding who to work — the book and
+     * the call history — could not answer it at all.
+     *
+     * It is the STORED answer, not a fresh reading: what the screen told the
+     * person who logged the call, on the day they logged it. That is why the
+     * column is empty on a customer nobody has called rather than filled with
+     * a prediction nobody has been told.
+     */
+    const called = await makeCustomer(priya.id, { name: "Has Been Called" });
+    const untouched = await makeCustomer(priya.id, { name: "Never Called" });
+    const when = addDays(TODAY, 9);
+
+    setTestUser(priya);
+    const saved = await saveInteraction({
+      customerId: called.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNextCallDate: when,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
+
+    const page = await listCustomersPage({});
+    const withCall = page.rows.find((r) => r.id === called.id)!;
+    const without = page.rows.find((r) => r.id === untouched.id)!;
+
+    assert.ok(withCall.nextStep, "the call was logged and the list knows nothing");
+    assert.equal(withCall.nextStep!.kind, saved.ok ? saved.data.nextStep?.kind : null);
+    assert.equal(withCall.nextStep!.date, saved.ok ? saved.data.nextStep?.date : null);
+    assert.equal(
+      withCall.nextStep!.toldOn,
+      TODAY,
+      "the day it was said is what makes a stale date readable as stale",
+    );
+    assert.equal(without.nextStep, null, "a customer nobody has called carried a next call");
+  });
+
+  test("the LATEST call is the one the list shows", async () => {
+    // Two calls in a day is ordinary — they rang back, or the customer did.
+    // The column has to be the last thing anybody was told, not the first.
+    const customer = await makeCustomer(priya.id);
+    setTestUser(priya);
+
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNextCallDate: addDays(TODAY, 3),
+      idempotencyKey: randomUUID(),
+    });
+    const second = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNextCallDate: addDays(TODAY, 20),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(second.ok, true, second.ok ? "" : second.error);
+
+    const page = await listCustomersPage({});
+    const row = page.rows.find((r) => r.id === customer.id)!;
+    assert.equal(
+      row.nextStep!.date,
+      second.ok ? second.data.nextStep?.date : null,
+      "the list showed an older call's answer",
+    );
+  });
+
+  test("the call history carries what THAT call said, per row", async () => {
+    const customer = await makeCustomer(priya.id);
+    setTestUser(priya);
+    const saved = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNextCallDate: addDays(TODAY, 6),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
+
+    const rows = await listInteractions();
+    const row = rows.find((r) => r.customerId === customer.id)!;
+    assert.ok(row.nextStep, "the history row lost the sentence the call carried");
+    assert.equal(row.nextStep!.date, saved.ok ? saved.data.nextStep?.date : null);
+    assert.equal(row.nextStep!.toldOn, TODAY);
+  });
+
+  test("a customer nothing will bring back says so, with no date invented", async () => {
+    // `none` and `decide` carry no date, and the word IS the answer. A blank
+    // cell there would read as missing data rather than as "nothing is coming".
+    const customer = await makeCustomer(priya.id);
+    await db
+      .update(customers)
+      .set({ doNotContact: true })
+      .where(eq(customers.id, customer.id));
+
+    setTestUser(priya);
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNoCommitment: true,
+      idempotencyKey: randomUUID(),
+    });
+
+    const page = await listCustomersPage({});
+    const row = page.rows.find((r) => r.id === customer.id)!;
+    assert.equal(row.nextStep!.kind, "none");
+    assert.equal(row.nextStep!.date, null, "a date was invented for a customer nothing will ring");
   });
 });
 
