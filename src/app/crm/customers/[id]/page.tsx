@@ -18,6 +18,12 @@ import {
   today,
 } from "@/lib/queries";
 import { getFollowUpDetail } from "@/lib/services/payment-service";
+import {
+  distributorsFor,
+  shopsServedBy,
+  suggestedDistributors,
+} from "@/lib/services/distributor-service";
+import { can } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { popularProducts } from "@/lib/services/product-service";
 import { quickNotes as quickNotesTable } from "@/db/schema";
@@ -133,6 +139,27 @@ export default async function CustomerRecordPage({
     listAmChanges(id),
   ]);
 
+  /*
+   * THE DELIVERY CHAIN, from whichever end this record sits at.
+   *
+   * `distributors` is who bills this shop; `servedShops` is which shops are
+   * billed through it. Both are read for every record rather than branched on
+   * here, because an account can be at both ends at once — a direct customer
+   * that distributes for us and is also delivered to on somebody else's bill
+   * is unusual and real — and asking for the empty one costs an index lookup.
+   *
+   * The suggestions are only worth fetching where they could be acted on: a
+   * lead nobody has converted yet, whose order history already shows goods
+   * arriving on somebody's bill.
+   */
+  const [distributors, servedShops, suggestions] = await Promise.all([
+    distributorsFor(id),
+    shopsServedBy(id),
+    customer.kind === "lead" && !customer.thirdParty
+      ? suggestedDistributors(id)
+      : Promise.resolve([]),
+  ]);
+
   // Everything the record itself is made of. Its own round trip rather than a
   // join onto the customer read: these are six independent lists and one of
   // them being slow should not hold the others up.
@@ -201,6 +228,12 @@ export default async function CustomerRecordPage({
         reactivationReason: customer.reactivationReason,
         deactivationReason: customer.deactivationReason,
       }}
+      distributors={distributors}
+      servedShops={servedShops}
+      distributorSuggestions={suggestions}
+      // The same question the action asks, so a drawn control and a permitted
+      // action cannot disagree. The action checks again regardless.
+      canClassify={can(user.role, "customer.classify")}
       daysSinceOrder={
         customer.lastOrderDate ? daysBetween(customer.lastOrderDate, day) : null
       }
