@@ -7547,6 +7547,44 @@ describe("third-party customers and their distributors", () => {
     assert.ok(capped.more > 0, "a trimmed list did not say it was trimmed");
   });
 
+  test("one letter means names that START with it, and nothing else", async () => {
+    /*
+     * Somebody typing a single character is spelling the beginning of a name
+     * they know. Matching inside words at that length filled the whole list
+     * with accounts that merely contain the letter — "A MUNSI PAINT and
+     * chemicals" for "c" — and pushed every account beginning with one off the
+     * bottom.
+     */
+    await makeCustomer(priya.id, { kind: "customer", name: "Chetan Traders" });
+    await makeCustomer(priya.id, { kind: "customer", name: "A Munsi Paint and chemicals" });
+    await makeCustomer(priya.id, { kind: "customer", name: "Acc Home Decor" });
+    setTestUser(manager);
+
+    const one = await distributorCandidates("c");
+    assert.deepEqual(
+      one.hits.map((h) => h.name),
+      ["Chetan Traders"],
+      "a one-letter query matched inside words instead of at the start",
+    );
+    assert.equal(one.mode, "prefix");
+
+    // Three characters is where it widens: the town, the code, a word inside
+    // the name and a near miss all become worth searching.
+    const three = await distributorCandidates("che");
+    assert.ok(
+      three.hits.some((h) => h.name === "A Munsi Paint and chemicals"),
+      "the wider search never arrived",
+    );
+    assert.equal(three.hits[0]?.name, "Chetan Traders", "the prefix match lost its place");
+    assert.equal(three.mode, "wide");
+
+    // Nothing starting with it is a different answer to nothing at all, and
+    // the screen is told which so it can say so.
+    const none = await distributorCandidates("z");
+    assert.deepEqual(none.hits, []);
+    assert.equal(none.mode, "prefix");
+  });
+
   test("a batch converts on one set of distributors", async () => {
     const one = await makeCustomer(priya.id, { kind: "lead", name: "Route Shop One" });
     const two = await makeCustomer(priya.id, { kind: "lead", name: "Route Shop Two" });

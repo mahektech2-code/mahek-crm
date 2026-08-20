@@ -59,6 +59,8 @@ export function DistributorPicker({
     q: string;
     hits: DistributorCandidate[];
     more: number;
+    /** Which rule answered — the server's, so the sentence below matches it. */
+    mode: "prefix" | "wide";
   } | null>(null);
   const [failedFor, setFailedFor] = React.useState<string | null>(null);
 
@@ -75,8 +77,14 @@ export function DistributorPicker({
         const data = (await res.json()) as {
           hits?: DistributorCandidate[];
           more?: number;
+          mode?: "prefix" | "wide";
         };
-        setRemote({ q, hits: data.hits ?? [], more: data.more ?? 0 });
+        setRemote({
+          q,
+          hits: data.hits ?? [],
+          more: data.more ?? 0,
+          mode: data.mode ?? "wide",
+        });
       } catch (e) {
         // An abort is the next keystroke, not a failure. Reporting it would
         // flash "could not search" between every two letters typed.
@@ -127,9 +135,14 @@ export function DistributorPicker({
           <p className="px-3 py-4 text-sm text-muted">Searching…</p>
         ) : !offered.length ? (
           <p className="px-3 py-4 text-sm text-muted">
-            {q
-              ? "No direct customer matches that. A distributor has to be an account we bill ourselves."
-              : "No direct customers to offer."}
+            {!q
+              ? "No direct customers to offer."
+              : answer?.mode === "prefix"
+                ? // A short query searched the first letters and only those,
+                  // so the sentence says that rather than implying the whole
+                  // book was looked through and came back empty.
+                  `No direct customer's name starts with "${q}". Keep typing to search inside names and towns too.`
+                : "No direct customer matches that. A distributor has to be an account we bill ourselves."}
           </p>
         ) : (
           offered.map((h) => (

@@ -31,6 +31,6 @@ export async function GET(request: Request) {
     // concludes we do not hold the account.
     return NextResponse.json(await distributorCandidates(q, { excludeCustomerId: exclude }));
   } catch {
-    return NextResponse.json({ hits: [], more: 0 });
+    return NextResponse.json({ hits: [], more: 0, mode: "wide" });
   }
 }

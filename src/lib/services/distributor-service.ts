@@ -151,6 +151,14 @@ export type DistributorCandidate = {
 export type DistributorCandidates = {
   hits: DistributorCandidate[];
   /**
+   * WHICH RULE ANSWERED — sent to the screen so the empty state can say what
+   * was actually searched. "No direct customer matches that" is wrong and
+   * unhelpful when what happened is that nothing STARTS with the letter typed,
+   * and the way forward is to keep typing. The rule lives here, so the sentence
+   * on the screen cannot describe a different one.
+   */
+  mode: "prefix" | "wide";
+  /**
    * Matches the cap left out. A list that simply stops looks like the whole
    * answer, and somebody who cannot see their distributor concludes we do not
    * hold it — so the screen says there are more and to keep typing.
@@ -211,6 +219,8 @@ const CANDIDATE_RANK_SQL = (q: string) => {
  * is no trigram index on `customers.name` and none is needed: the filter runs
  * over the few hundred rows this predicate already narrows to.
  */
+const SHORT_QUERY = 3;
+
 export async function distributorCandidates(
   query: string,
   opts: { excludeCustomerId?: string; limit?: number } = {},
@@ -224,19 +234,39 @@ export async function distributorCandidates(
     ne(customers.status, "deactivated"),
   ];
   if (opts.excludeCustomerId) where.push(ne(customers.id, opts.excludeCustomerId));
+  /*
+   * A SHORT QUERY IS A FIRST LETTER, NOT A SUBSTRING.
+   *
+   * Somebody typing one or two characters is spelling the START of a name they
+   * already know — nobody types "c" meaning "any account with a c in it
+   * somewhere". Matching inside words at that length answers a question nobody
+   * asked and fills the twenty rows with it: on this book, "c" returned "A
+   * MUNSI PAINT and chemicals", "A TO Z COLOURS", "AARTI ELECTRIC & HARDWARE"
+   * and "ACC HOME DECOR" — four accounts, not one of them beginning with a C,
+   * ahead of every account that does.
+   *
+   * So under three characters the filter is the name's own first letters and
+   * nothing else. From three characters on it widens, because by then somebody
+   * is typing a word rather than a letter — "paints" should find "Shree
+   * Paints", the town and the code become worth searching, and a near miss is
+   * worth forgiving.
+   */
   if (q) {
     const like = `%${q}%`;
-    const clauses = [
-      sql`${customers.name} ilike ${like}`,
-      sql`${customers.city} ilike ${like}`,
-      sql`${customers.externalCode} ilike ${like}`,
-    ];
-    // Below three characters similarity is noise — every short string is a
-    // little bit like every name — so a typo is only forgiven once there is
-    // enough typed to tell what was meant.
-    if (q.length >= 3) {
-      clauses.push(sql`similarity(${customers.name}, ${q}) > 0.3`);
-    }
+    const prefix = `${q}%`;
+    const clauses =
+      q.length < SHORT_QUERY
+        ? [sql`${customers.name} ilike ${prefix}`]
+        : [
+            sql`${customers.name} ilike ${like}`,
+            sql`${customers.city} ilike ${like}`,
+            sql`${customers.externalCode} ilike ${like}`,
+            // A name typed mid-call is a name typed badly, which is the rule
+            // the product search already follows. Below three characters
+            // similarity is noise — every short string is a little bit like
+            // every name — which is the other reason for the boundary above.
+            sql`similarity(${customers.name}, ${q}) > 0.3`,
+          ];
     where.push(or(...clauses)!);
   }
 
@@ -269,6 +299,7 @@ export async function distributorCandidates(
     .limit(limit + 1);
 
   return {
+    mode: q && q.length < SHORT_QUERY ? "prefix" : "wide",
     hits: rows.slice(0, limit).map((r) => ({
       id: r.id,
       name: r.name,
