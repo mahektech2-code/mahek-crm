@@ -2,6 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { and, asc, desc, eq, inArray, lte, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import {
   TIMELINE_KINDS,
   TIMELINE_PAGE,
@@ -833,7 +834,12 @@ function timelineBranch(kind: TimelineKind, customerId: string): SQL {
       // dropping it leaves the next person wondering why the balance never
       // moved.
       return sql`
-        select pr.id, 'Payment', pr.received_at::timestamptz,
+        select pr.id, 'Payment',
+               -- A DATE COLUMN, so the cast has to name the zone. See the note
+               -- on the Bill branch below: a bare cast to timestamptz is
+               -- evaluated in the SESSION zone, and the session's zone is not
+               -- a property of the row.
+               pr.received_at::timestamp at time zone ${APP_TIMEZONE},
                coalesce(u.name, 'Accounts'),
                case pr.status
                  when 'reported' then concat('Payment of ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'), ' reported')
@@ -849,7 +855,29 @@ function timelineBranch(kind: TimelineKind, customerId: string): SQL {
          where pr.customer_id = ${customerId}`;
     case "Bill":
       return sql`
-        select b.id, 'Bill', b.bill_date::timestamptz, 'Accounts',
+        select b.id, 'Bill',
+               /*
+                * bill_date IS A DATE, AND A DATE IS NOT AN INSTANT until
+                * something says which midnight is meant.
+                *
+                * A bare cast to timestamptz asks Postgres, and Postgres
+                * answers with the SESSION's timezone — so the same bill came
+                * back as 2026-08-21T00:00:00Z on one connection and
+                * 2026-08-20T18:30:00Z on another, in the same process, because
+                * one connection had been left in Asia/Kolkata by an earlier
+                * test and the rest were on the server default. A row whose
+                * instant depends on which connection served it cannot be
+                * ordered, and it certainly cannot be paged: a keyset taken
+                * from one page excluded nothing on the next, and five rows
+                * came back twice.
+                *
+                * It is the rule this codebase already documents for the
+                * opposite cast, in the other direction: never turn a date and
+                * a timestamp into each other without naming the zone. The
+                * stored date means midnight in Asia/Kolkata, so that is what
+                * is written.
+                */
+               b.bill_date::timestamp at time zone ${APP_TIMEZONE}, 'Accounts',
                concat('Bill ', b.bill_no, ' raised'),
                concat('₹', to_char(round(b.amount / 100.0), 'FM9G99G99G999'))
           from bills b where b.customer_id = ${customerId}`;

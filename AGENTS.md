@@ -428,6 +428,20 @@ kind asks the server for that kind's newest page rather than filtering the fifty
 rows the browser happens to hold. Filtering in the browser would answer "the
 bills among the newest fifty entries" and call it the bill history.
 
+**And a stored DATE is not an instant until something names the midnight.**
+The third spelling of the zone rule, and the one that only shows up under load:
+`bills.bill_date` and `payment_receipts.received_at` are dates, and a bare
+`::timestamptz` on either is evaluated in the SESSION's zone. The session's zone
+is not a property of the row — one pooled connection left in Asia/Kolkata by an
+earlier query returned a bill as 18:30Z while the rest returned it as 00:00Z, in
+one process. A timeline cursor taken from one page then excluded nothing on the
+next, and five rows came back twice. It is
+`::timestamp at time zone ${APP_TIMEZONE}` now, and a third grep test guards the
+direction: the two beside it watch timestamps becoming dates, this one watches
+dates becoming timestamps. Local Postgres runs in Asia/Kolkata and agreed with
+itself, so it passed here and failed in CI — which is the same trap the rule was
+written for, arriving from the other end.
+
 **A paged read needs a tiebreaker in its sort.** A thousand bills share a
 handful of midnight timestamps, so `order by at desc` alone leaves their order
 to the planner — invisible until it is paged, and then it is a row appearing on

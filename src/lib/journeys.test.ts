@@ -2298,6 +2298,48 @@ describe("The business day is Asia/Kolkata, whatever the database thinks", () =>
     );
   });
 
+  test("no query turns a stored DATE into an instant without saying which zone", async () => {
+    /*
+     * The same rule, read backwards. The two guards beside this one watch
+     * timestamps being turned into dates; this watches dates being turned
+     * into timestamps, which is the direction that produced a bill whose
+     * instant depended on which pooled connection served it — and therefore a
+     * timeline that could not be paged and a time on screen that moved.
+     */
+    const { readFileSync, readdirSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (full.endsWith(".ts") && !full.includes(".test.")) files.push(full);
+      }
+    };
+    walk("src/lib");
+
+    // The date columns that reach a timeline or a sort. A cast on any of them
+    // has to say which midnight it means.
+    const DATE_COLUMNS = /(bill_date|received_at|due_date|order_date|day)\s*\)?::timestamptz/;
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      for (const [i, line] of readFileSync(file, "utf8").split("\n").entries()) {
+        const code = line.trim();
+        if (code.startsWith("*") || code.startsWith("//") || code.startsWith("--")) continue;
+        if (line.includes("time zone")) continue;
+        if (DATE_COLUMNS.test(line)) offenders.push(`${file}:${i + 1}`);
+      }
+    }
+
+    assert.deepEqual(
+      offenders,
+      [],
+      "cast these as `::timestamp at time zone ${APP_TIMEZONE}` — a bare cast is evaluated in the session's zone",
+    );
+  });
+
   test("no JavaScript turns a stored timestamp into a date without saying which zone", async () => {
     // The same rule, the other spelling. `toISOString()` answers in UTC, so
     // `.slice(0, 10)` on it dates a 2am IST row to the previous day — and it
@@ -7459,6 +7501,59 @@ describe("the customer timeline is a page", () => {
       55,
       `a row came back on two pages - the sort has no tiebreaker\n      ${evidence}`,
     );
+  });
+
+  test("a page read on one session zone pages correctly on another", async () => {
+    /*
+     * THE BUG THIS EXISTS FOR, and it is the codebase's oldest rule wearing
+     * its third disguise.
+     *
+     * `bills.bill_date` is a DATE, and a date is not an instant until
+     * something says which midnight is meant. `bill_date::timestamptz` asks
+     * Postgres, and Postgres answers with the SESSION's zone — so the same
+     * bill came back as 00:00Z on one pooled connection and 18:30Z on
+     * another, in one process, because an earlier test in this file leaves a
+     * connection in Asia/Kolkata while the rest sit on the server default. A
+     * cursor taken from one page then excluded nothing on the next and five
+     * rows came back twice.
+     *
+     * It passed on a developer's machine for the reason the rule always
+     * survives: local Postgres runs in Asia/Kolkata, so both halves agreed.
+     * CI runs in UTC and caught it. This forces the mixture rather than
+     * waiting for the pool to produce it.
+     */
+    const customer = await billedCustomer(55);
+    setTestUser(priya);
+
+    const everyConnection = (zone: string) =>
+      Promise.all(
+        Array.from({ length: 12 }, () =>
+          db.execute(sql.raw(`set time zone '${zone}'`)),
+        ),
+      );
+
+    try {
+      await everyConnection("GMT");
+      const first = await customerTimeline(customer.id, { limit: 20 });
+      await everyConnection("Asia/Kolkata");
+      const second = await customerTimeline(customer.id, {
+        limit: 20,
+        before: first.cursor ?? undefined,
+      });
+
+      const firstIds = new Set(first.entries.map((e) => e.id));
+      const repeated = second.entries.filter((e) => firstIds.has(e.id));
+      assert.deepEqual(
+        repeated.map((e) => e.id),
+        [],
+        "a cursor taken in one session zone re-read rows in another",
+      );
+    } finally {
+      // Whatever happens, the pool goes back to what the rest of the file
+      // expects — a connection left in GMT is a booby trap for every test
+      // after this one.
+      await everyConnection("Asia/Kolkata");
+    }
   });
 
   test("a kind reads the whole history, not the loaded page", async () => {
