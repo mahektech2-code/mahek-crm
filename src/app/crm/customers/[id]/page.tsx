@@ -31,17 +31,11 @@ import { quickNotes as quickNotesTable } from "@/db/schema";
 import { listTargets } from "@/lib/services/worklist-services";
 import { customerStatusLabel, daysBetween } from "@/lib/format";
 import { categoryLabel } from "@/lib/complaint-labels";
-
-/**
- * How much of the timeline the page arrives with.
- *
- * Fifty is a screenful and a half of the panel, which is what somebody reads
- * before a call — and "Load older" is one click from there. The number that
- * matters is not this one but the fact that it IS a number: the page used to
- * carry the account's entire history, so the oldest customers took the longest
- * to open and were the hardest to read.
- */
-const TIMELINE_PAGE = 50;
+// How much of the timeline the page arrives with — see `TIMELINE_PAGE`. The
+// number that matters is not the ten, it is that it IS a number: the page used
+// to carry the account's whole history, so the oldest customers took the
+// longest to open and were the hardest to read.
+import { TIMELINE_PAGE } from "@/lib/timeline-kinds";
 import { addDays, calendarDate } from "@/lib/business-date";
 import { RecordScreen } from "./record-screen";
 

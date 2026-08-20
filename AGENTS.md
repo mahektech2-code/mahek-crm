@@ -410,8 +410,9 @@ personal-or-group only; nothing writes `both` to it.
 
 **A customer record is a FIXED-LENGTH page, however old the account is.** Every
 panel on it is the same height and scrolls inside itself, and the reads behind
-them are capped — the timeline at fifty entries, the messages at fifty, the
-rest at two hundred. COLOUR CAMP is why: 3,504 timeline entries were serialised
+them are capped — the timeline at ten entries a page (`TIMELINE_PAGE`, one
+constant so the first read, the Load older button and the sentence counting
+them cannot disagree), the messages at fifty, the rest at two hundred. COLOUR CAMP is why: 3,504 timeline entries were serialised
 into the page and rendered into the DOM, so the orders, the bills, the payments
 and the arrangement sat a hundred screens below the fold. The accounts with the
 most history are the ones somebody most needs to read before ringing, and they

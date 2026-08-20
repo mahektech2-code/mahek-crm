@@ -2,7 +2,11 @@ import "server-only";
 import { cache } from "react";
 import { and, asc, desc, eq, inArray, lte, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { TIMELINE_KINDS, type TimelineKind } from "@/lib/timeline-kinds";
+import {
+  TIMELINE_KINDS,
+  TIMELINE_PAGE,
+  type TimelineKind,
+} from "@/lib/timeline-kinds";
 import {
   bills,
   calls,
@@ -876,7 +880,7 @@ export async function customerTimeline(
   customerId: string,
   opts: { limit?: number; kind?: TimelineKind; before?: TimelineCursor } = {},
 ): Promise<TimelinePage> {
-  const limit = opts.limit ?? 50;
+  const limit = opts.limit ?? TIMELINE_PAGE;
   const kinds = opts.kind ? [opts.kind] : [...TIMELINE_KINDS];
 
   const branches = kinds.map((k) => timelineBranch(k, customerId));
