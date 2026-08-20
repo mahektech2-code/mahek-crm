@@ -140,9 +140,20 @@ import {
   rebuildQueues,
   requestDeactivation,
   requestReactivation,
-  setThirdParty,
   startStageOneBatch,
 } from "@/lib/actions/crm";
+import {
+  addDistributor,
+  convertToThirdParty,
+  removeDistributor,
+  revertThirdParty,
+  updateDistributor,
+} from "@/lib/actions/third-party";
+import {
+  distributorCandidates,
+  distributorsFor,
+  shopsServedBy,
+} from "@/lib/services/distributor-service";
 import {
   createReminder,
   completeReminder,
@@ -252,7 +263,7 @@ beforeEach(async () => {
       quick_notes, migration_exceptions,
       follow_up_attempts, follow_up_states, payments, bills,
       orders, calls, eod_reports, attendance, app_access, sessions, password_resets,
-      customers, users, app_settings
+      customer_distributors, customers, users, app_settings
     restart identity cascade
   `);
   invalidateConfig();
@@ -7346,16 +7357,28 @@ describe("What the telecaller was told would happen next", () => {
  * provision to say so — without anything saying it automatically.
  * ------------------------------------------------------------------------- */
 
-describe("shops we deliver to", () => {
-  test("marking is a manager's, and it is checked in the action", async () => {
+describe("third-party customers and their distributors", () => {
+  /** A distributor is an account we bill, so every test needs one. */
+  async function makeDistributor(name = "Distributor Alpha") {
+    return makeCustomer(priya.id, { name, kind: "customer" });
+  }
+
+  test("converting is a manager's, and it is checked in the action", async () => {
     const shop = await makeCustomer(priya.id, { kind: "lead" });
+    const distributor = await makeDistributor();
 
     setTestUser(priya);
-    const asTelecaller = await setThirdParty([shop.id], true);
+    const asTelecaller = await convertToThirdParty({
+      customerIds: [shop.id],
+      distributors: [{ distributorId: distributor.id }],
+    });
     assert.equal(asTelecaller.ok, false, "a telecaller reclassified an account");
 
     setTestUser(manager);
-    const asManager = await setThirdParty([shop.id], true);
+    const asManager = await convertToThirdParty({
+      customerIds: [shop.id],
+      distributors: [{ distributorId: distributor.id, isPrimary: true }],
+    });
     assert.equal(asManager.ok, true, asManager.ok ? "" : asManager.error);
 
     const [row] = await db
@@ -7365,31 +7388,271 @@ describe("shops we deliver to", () => {
     assert.equal(row.thirdParty, true);
     // The KIND is untouched. Being a shop we deliver to is how we work the
     // account, not what the account is — and we may still bill it one day.
-    assert.equal(row.kind, "lead", "marking changed what the record is");
+    assert.equal(row.kind, "lead", "converting changed what the record is");
+
+    const links = await distributorsFor(shop.id);
+    assert.equal(links.length, 1);
+    assert.equal(links[0].distributorId, distributor.id);
+    assert.equal(links[0].isPrimary, true);
   });
 
-  test("it lifts again, and reports honestly when nothing changed", async () => {
-    const shop = await makeCustomer(priya.id, { kind: "lead", thirdParty: true });
+  test("a conversion with no distributor is refused, and nothing is marked", async () => {
+    const shop = await makeCustomer(priya.id, { kind: "lead" });
     setTestUser(manager);
 
-    const again = await setThirdParty([shop.id], true);
-    assert.equal(again.ok, true);
-    assert.equal(again.ok ? again.data?.changed : -1, 0, "a no-op reported work");
+    const result = await convertToThirdParty({
+      customerIds: [shop.id],
+      distributors: [],
+    });
+    assert.equal(result.ok, false, "a shop was converted with nobody billing it");
 
-    assert.equal((await setThirdParty([shop.id], false)).ok, true);
+    const [row] = await db
+      .select({ thirdParty: customers.thirdParty })
+      .from(customers)
+      .where(eq(customers.id, shop.id));
+    assert.equal(row.thirdParty, false, "the mark was written by a refused call");
+  });
+
+  test("a DIRECT CUSTOMER cannot be converted — we bill them ourselves", async () => {
+    const customer = await makeCustomer(priya.id, { kind: "customer" });
+    const distributor = await makeDistributor("Distributor Beta");
+    setTestUser(manager);
+
+    const result = await convertToThirdParty({
+      customerIds: [customer.id],
+      distributors: [{ distributorId: distributor.id }],
+    });
+    assert.equal(result.ok, false, "an account we invoice was made a third party");
+
+    const [row] = await db
+      .select({ thirdParty: customers.thirdParty })
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(row.thirdParty, false);
+  });
+
+  test("a distributor has to be an unmarked direct customer", async () => {
+    const shop = await makeCustomer(priya.id, { kind: "lead" });
+    const aLead = await makeCustomer(priya.id, { kind: "lead", name: "Not A Distributor" });
+    const marked = await makeCustomer(priya.id, {
+      kind: "customer",
+      thirdParty: true,
+      name: "Also Delivered To",
+    });
+    setTestUser(manager);
+
+    // A lead has never ordered, so it cannot bill anybody.
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: aLead.id }],
+      })).ok,
+      false,
+      "a lead was accepted as a distributor",
+    );
+
+    // And a shop somebody else bills cannot be the one holding the invoice.
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: marked.id }],
+      })).ok,
+      false,
+      "a third-party customer was accepted as a distributor",
+    );
+
+    // Nor can an account be its own distributor.
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: shop.id }],
+      })).ok,
+      false,
+      "an account was made its own distributor",
+    );
+
+    assert.deepEqual(await distributorsFor(shop.id), []);
+  });
+
+  test("the picker offers direct customers and nothing else", async () => {
+    await makeCustomer(priya.id, { kind: "customer", name: "Candidate Direct" });
+    await makeCustomer(priya.id, { kind: "lead", name: "Candidate Lead" });
+    await makeCustomer(priya.id, {
+      kind: "customer",
+      thirdParty: true,
+      name: "Candidate Marked",
+    });
+    await makeCustomer(priya.id, {
+      kind: "customer",
+      status: "deactivated",
+      name: "Candidate Gone",
+    });
+    setTestUser(manager);
+
+    const names = (await distributorCandidates("Candidate")).map((c) => c.name);
+    assert.deepEqual(names, ["Candidate Direct"]);
+  });
+
+  test("a batch converts on one set of distributors", async () => {
+    const one = await makeCustomer(priya.id, { kind: "lead", name: "Route Shop One" });
+    const two = await makeCustomer(priya.id, { kind: "lead", name: "Route Shop Two" });
+    const distributor = await makeDistributor("Route Distributor");
+    setTestUser(manager);
+
+    const result = await convertToThirdParty({
+      customerIds: [one.id, two.id],
+      distributors: [{ distributorId: distributor.id, isPrimary: true }],
+    });
+    assert.equal(result.ok, true, result.ok ? "" : result.error);
+    assert.equal(result.ok ? result.data.converted : 0, 2);
+
+    const served = await shopsServedBy(distributor.id);
+    assert.deepEqual(
+      served.map((s) => s.customerId).sort(),
+      [one.id, two.id].sort(),
+      "the distributor's own record does not know both shops",
+    );
+  });
+
+  test("adding, editing and removing an arrangement", async () => {
+    const shop = await makeCustomer(priya.id, { kind: "lead" });
+    const first = await makeDistributor("Distributor First");
+    const second = await makeDistributor("Distributor Second");
+    const third = await makeDistributor("Distributor Third");
+    setTestUser(manager);
+
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: first.id, isPrimary: true }],
+      })).ok,
+      true,
+    );
+
+    const added = await addDistributor({
+      customerId: shop.id,
+      distributorId: second.id,
+      note: "Covers the eastern half",
+    });
+    assert.equal(added.ok, true, added.ok ? "" : added.error);
+
+    // The same distributor twice is one arrangement, not two.
+    assert.equal(
+      (await addDistributor({ customerId: shop.id, distributorId: second.id })).ok,
+      false,
+      "the same distributor was named twice",
+    );
+
+    // Handing the badge over takes it off whoever holds it. Two rows both
+    // claiming to be the usual one is a state no screen can render honestly.
+    const links = await distributorsFor(shop.id);
+    const secondLink = links.find((l) => l.distributorId === second.id)!;
+    assert.equal(
+      (await updateDistributor({ linkId: secondLink.id, isPrimary: true })).ok,
+      true,
+    );
+    const afterPrimary = await distributorsFor(shop.id);
+    assert.deepEqual(
+      afterPrimary.filter((l) => l.isPrimary).map((l) => l.distributorId),
+      [second.id],
+    );
+
+    // Swapping WHO it is with keeps the row, so who recorded the arrangement
+    // and when survives a corrected name.
+    assert.equal(
+      (await updateDistributor({ linkId: secondLink.id, distributorId: third.id })).ok,
+      true,
+    );
+    const afterSwap = await distributorsFor(shop.id);
+    assert.ok(afterSwap.some((l) => l.distributorId === third.id));
+    assert.ok(!afterSwap.some((l) => l.distributorId === second.id));
+
+    // And a swap onto a distributor already named is refused rather than
+    // silently merging two arrangements into one.
+    const firstLink = afterSwap.find((l) => l.distributorId === first.id)!;
+    assert.equal(
+      (await updateDistributor({ linkId: firstLink.id, distributorId: third.id })).ok,
+      false,
+      "a swap collapsed two arrangements into one",
+    );
+
+    assert.equal((await removeDistributor(firstLink.id)).ok, true);
+    assert.equal((await distributorsFor(shop.id)).length, 1);
+  });
+
+  test("the LAST distributor cannot be removed from a third-party customer", async () => {
+    const shop = await makeCustomer(priya.id, { kind: "lead" });
+    const distributor = await makeDistributor("Distributor Only");
+    setTestUser(manager);
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: distributor.id }],
+      })).ok,
+      true,
+    );
+
+    const [link] = await distributorsFor(shop.id);
+    const refused = await removeDistributor(link.id);
+    assert.equal(refused.ok, false, "a third-party customer was left with nobody billing it");
+    assert.equal((await distributorsFor(shop.id)).length, 1);
+
+    // The way out is the other direction: it stops being a third-party
+    // customer, and then the arrangement can go.
+    assert.equal((await revertThirdParty([shop.id])).ok, true);
+    assert.equal((await removeDistributor(link.id)).ok, true);
+  });
+
+  test("reverting keeps who used to bill the shop", async () => {
+    const shop = await makeCustomer(priya.id, { kind: "lead" });
+    const distributor = await makeDistributor("Distributor Was");
+    setTestUser(manager);
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: distributor.id }],
+      })).ok,
+      true,
+    );
+
+    const reverted = await revertThirdParty([shop.id]);
+    assert.equal(reverted.ok, true);
     const [row] = await db
       .select({ thirdParty: customers.thirdParty })
       .from(customers)
       .where(eq(customers.id, shop.id));
     assert.equal(row.thirdParty, false);
+
+    // The links are the record of how it WAS served. Deleting them would
+    // destroy the only account of it.
+    assert.equal((await distributorsFor(shop.id)).length, 1);
+
+    // And a second revert reports honestly rather than claiming work.
+    const again = await revertThirdParty([shop.id]);
+    assert.equal(again.ok, true);
+    assert.equal(again.ok ? again.data.changed : -1, 0, "a no-op reported work");
   });
 
-  test("a marked shop drops off the Call Log, and only for that reason", async () => {
+  test("an account converted before distributors existed is listed, not hidden", async () => {
+    const orphan = await makeCustomer(priya.id, {
+      kind: "lead",
+      thirdParty: true,
+      name: "Marked Before",
+    });
+    await makeCustomer(priya.id, { kind: "lead", name: "Ordinary Lead" });
+    setTestUser(manager);
+
+    const waiting = await listCustomersPage({ thirdParty: "nodistributor" });
+    assert.deepEqual(waiting.rows.map((w) => w.id), [orphan.id]);
+  });
+
+  test("a converted shop drops off the Call Log, and only for that reason", async () => {
     const shop = await makeCustomer(priya.id, {
       kind: "lead",
       lastOrderDate: null,
       createdAt: new Date(Date.now() - 60 * 24 * 3600 * 1000),
     });
+    const distributor = await makeDistributor("Distributor Queue");
 
     setTestUser(priya);
     const before = await getQueue();
@@ -7399,7 +7662,13 @@ describe("shops we deliver to", () => {
     );
 
     setTestUser(manager);
-    assert.equal((await setThirdParty([shop.id], true)).ok, true);
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: distributor.id }],
+      })).ok,
+      true,
+    );
 
     // The day's list is settled, so this reads the live engine rather than the
     // stored one — the point being the RULE, not when it takes effect.
@@ -7408,23 +7677,33 @@ describe("shops we deliver to", () => {
     assert.equal(stillThere?.thirdParty, true, "the flag never reached the engine");
   });
 
-  test("a marked account leaves the lead count and joins the third-party one", async () => {
-    // One question, three answers. A marked lead must not be counted in both,
-    // or the split says 1,079 records across 1,178 rows and nobody trusts it.
-    await makeCustomer(priya.id, { kind: "lead", name: "Shop To Mark" });
+  test("a converted account leaves the lead count and joins the third-party one", async () => {
+    // One question, three answers. A converted lead must not be counted in
+    // both, or the split says 1,079 records across 1,178 rows and nobody
+    // trusts it.
+    await makeCustomer(priya.id, { kind: "lead", name: "Shop To Convert" });
     await makeCustomer(priya.id, { kind: "lead", name: "Genuine Lead" });
-    await makeCustomer(priya.id, { kind: "customer", name: "Real Distributor" });
+    const distributor = await makeCustomer(priya.id, {
+      kind: "customer",
+      name: "Real Distributor",
+    });
 
     setTestUser(manager);
     const before = await listCustomersPage({});
     assert.equal(before.totals.leads, 2);
     assert.equal(before.totals.thirdParties, 0);
 
-    const shop = before.rows.find((r) => r.name === "Shop To Mark")!;
-    assert.equal((await setThirdParty([shop.id], true)).ok, true);
+    const shop = before.rows.find((r) => r.name === "Shop To Convert")!;
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: distributor.id }],
+      })).ok,
+      true,
+    );
 
     const after = await listCustomersPage({});
-    assert.equal(after.totals.leads, 1, "a marked account was still counted as a lead");
+    assert.equal(after.totals.leads, 1, "a converted account was still counted as a lead");
     assert.equal(after.totals.thirdParties, 1);
     assert.equal(
       after.totals.directCustomers + after.totals.leads + after.totals.thirdParties,
@@ -7436,7 +7715,7 @@ describe("shops we deliver to", () => {
     const asLeads = await listCustomersPage({ thirdParty: "lead" });
     assert.ok(
       !asLeads.rows.some((r) => r.id === shop.id),
-      "the Leads filter still offered a marked account",
+      "the Leads filter still offered a converted account",
     );
     const asThird = await listCustomersPage({ thirdParty: "yes" });
     assert.deepEqual(asThird.rows.map((r) => r.id), [shop.id]);

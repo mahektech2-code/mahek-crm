@@ -305,6 +305,12 @@ export type CustomerRow = typeof customers.$inferSelect & {
    * is a fact — so it sits on the row rather than behind a filter.
    */
   deliveredOrders: number;
+  /**
+   * Third-party customers billed through this account — the other end of the
+   * same relationship. On a distributor's row it is the fact that explains why
+   * goods leave on their bill and arrive somewhere else.
+   */
+  servedShops: number;
 };
 
 /**
@@ -343,7 +349,13 @@ export type CustomerListFilters = {
    * anybody has marked them yet. The third is the one that makes the marking
    * screen usable: it is the evidence, not the decision.
    */
-  thirdParty?: "yes" | "no" | "delivered" | "lead" | "customer";
+  thirdParty?:
+    | "yes"
+    | "no"
+    | "delivered"
+    | "lead"
+    | "customer"
+    | "nodistributor";
   page?: number;
   perPage?: number;
 };
@@ -512,6 +524,18 @@ export async function listCustomersPage(
   if (filters.thirdParty === "customer") {
     where.push(sql`customers.kind = 'customer' and not customers.third_party`);
   }
+  if (filters.thirdParty === "nodistributor") {
+    /*
+     * Converted, and nobody recorded as billing them. It should be empty —
+     * `convertToThirdParty` writes the mark and the arrangement in one
+     * transaction — and what fills it is the accounts marked before that was
+     * true. A row nobody can account for is worse than one that says why it is
+     * there, so it is a filter rather than a report nobody opens.
+     */
+    where.push(sql`customers.third_party and not exists (
+      select 1 from customer_distributors d where d.customer_id = customers.id
+    )`);
+  }
   if (filters.thirdParty === "delivered") {
     // Goods actually went here, on somebody else's bill. `customers.id` spelled
     // out: Drizzle renders the column reference bare, and a bare `id` inside a
@@ -587,6 +611,13 @@ export async function listCustomersPage(
         select count(*)::int from orders o
          where o.delivery_customer_id = customers.id
       )`,
+      // The other end of the delivery chain, and spelled out for the same
+      // reason as the line above it: Drizzle renders a column reference bare,
+      // and a bare `id` inside a correlated subquery binds to the inner table.
+      servedShops: sql<number>`(
+        select count(*)::int from customer_distributors d
+         where d.distributor_customer_id = customers.id
+      )`,
     })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
@@ -603,6 +634,7 @@ export async function listCustomersPage(
       backOfficeAmName: r.backOfficeAmName,
       openComplaints: Number(r.openComplaints),
       deliveredOrders: Number(r.deliveredOrders),
+      servedShops: Number(r.servedShops),
     })),
     total,
     bookTotal: Number(book?.n ?? 0),
@@ -649,6 +681,13 @@ export async function listCustomers(): Promise<CustomerRow[]> {
         select count(*)::int from orders o
          where o.delivery_customer_id = customers.id
       )`,
+      // The other end of the delivery chain, and spelled out for the same
+      // reason as the line above it: Drizzle renders a column reference bare,
+      // and a bare `id` inside a correlated subquery binds to the inner table.
+      servedShops: sql<number>`(
+        select count(*)::int from customer_distributors d
+         where d.distributor_customer_id = customers.id
+      )`,
     })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
@@ -661,7 +700,8 @@ export async function listCustomers(): Promise<CustomerRow[]> {
     salesAmName: r.salesAmName,
     backOfficeAmName: r.backOfficeAmName,
     openComplaints: Number(r.openComplaints),
-      deliveredOrders: Number(r.deliveredOrders),
+    deliveredOrders: Number(r.deliveredOrders),
+    servedShops: Number(r.servedShops),
   }));
 }
 

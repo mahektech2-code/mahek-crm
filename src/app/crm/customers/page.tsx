@@ -9,6 +9,10 @@ import {
   listCustomersPage,
 } from "@/lib/queries";
 import { customerStatusLabel } from "@/lib/format";
+import {
+  accountTypeFilterLabel,
+  accountTypeParam,
+} from "@/lib/account-types";
 import { CustomersScreen } from "@/components/customers/customers-screen";
 
 export const metadata = { title: "Customers - MahekOne CRM" };
@@ -45,14 +49,10 @@ export default async function CustomersPage({
       salesAm: one("sales"),
       backOfficeAm: one("backoffice"),
       // "yes" / "no" / "delivered" — the third is the evidence filter, and the
-      // one the marking work is actually done from.
-      thirdParty: one("party") as
-        | "yes"
-        | "no"
-        | "delivered"
-        | "lead"
-        | "customer"
-        | undefined,
+      // one the conversion work is actually done from. Validated rather than
+      // cast: `?party=nonsense` is a typed value the query would carry into a
+      // clause that matches nothing, and an empty list reads as a lost book.
+      thirdParty: accountTypeParam(one("party")),
       page: Number(one("page") ?? 1) || 1,
       perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
     }),
@@ -87,10 +87,7 @@ export default async function CustomersPage({
         backOfficeAm: one("backoffice") ?? "",
         // The filter's own word for what `?party=` holds, so the control shows
         // what was actually applied rather than resetting itself to "All".
-        accountType:
-          { customer: "Direct customers", lead: "Leads", yes: "Third parties", delivered: "Receives deliveries" }[
-            one("party") ?? ""
-          ] ?? "",
+        accountType: accountTypeFilterLabel(one("party")),
         perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
       }}
       pageInfo={{
@@ -127,6 +124,7 @@ export default async function CustomersPage({
         deactivationRequested: c.deactivationRequested,
         thirdParty: c.thirdParty,
         deliveredOrders: c.deliveredOrders,
+        servedShops: c.servedShops,
         reactivationRequested: c.reactivationRequested,
         reactivationReason: c.reactivationReason,
       }))}

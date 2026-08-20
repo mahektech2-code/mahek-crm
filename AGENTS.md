@@ -235,10 +235,20 @@ src/
                            saved, and what happens next with this customer
     crm/payment-mode-fields.tsx
                            how the money came, asked once for three screens
+    crm/distributor-picker.tsx
+                           the searchable list of accounts we bill — the only
+                           thing that may be named as a distributor
+    crm/third-party-dialog.tsx
+                           converting a lead, which is the mark AND who bills it
+    crm/distributor-panel.tsx
+                           the arrangement on the record: add, edit, remove
   db/                      schema, client, seed
     catalogue-seed.ts      the product master, GENERATED from the document
   lib/
     apps.ts                the MahekOne app registry
+    account-types.ts       direct customer / lead / third-party customer, their
+                           filter and their labels — PURE, read by both lists
+                           and both list pages
     config/                registry.ts (every setting + validation) and
                            store.ts (cached reads, audited writes)
     engines/               the derived-state engines — PURE, no I/O:
@@ -255,6 +265,10 @@ src/
     services/access-service.ts
                            who opens what, and who there is to grant to
     actions/access.ts      setAccess — one person's whole access, in one write
+    services/distributor-service.ts
+                           who bills a shop, which shops an account bills for,
+                           and who may be named as a distributor at all
+    actions/third-party.ts converting a lead, and the arrangement's own CRUD
     recompute.ts           the rebuild path for every cached derived value
     business-date.ts       Asia/Kolkata, configurable day boundary
     catalogue.ts           name normalisation + cans/litres/boxes — PURE
@@ -393,6 +407,66 @@ confirmation. One confirmed leg *does* set `lastConfirmedWhatsappDate` —
 waiting for the second would chase somebody who has already heard from us.
 `dest_kind` is shared with `wa_messages`, so read that column as
 personal-or-group only; nothing writes `both` to it.
+
+**A THIRD-PARTY CUSTOMER is a shop we deliver to and do not bill.** A
+distributor buys from us, is invoiced, and sells the goods on; the shop is
+where the drums actually go. Most of what this CRM called a lead is one of
+these, and a lead with no orders is a prospect — so the largest single category
+of work on the calling list was ringing shops for a first order they are in no
+position to give. `customers.third_party` is the mark, and it is deliberately
+NOT a third value of `kind`: `kind` is exclusive and this is not, since we may
+bill one of these directly and an account we invoiced last month is plainly
+still a shop we deliver to. What the mark means is narrow — a marked account is
+never PROSPECTED, and that is all. Its own orders, its debts and a promise
+somebody made all still reach the Call Log, so a shop that starts buying
+directly comes back without anybody remembering to lift the mark.
+
+**And it names WHO BILLS IT, in the same transaction.** A mark that could not
+say who the distributor is took a record off the calling list and left nobody
+to ask about it. `customer_distributors` is that answer, one row per shop per
+distributor, and `convertToThirdParty` writes the mark and at least one link
+together — a converted shop with nobody billing it is not a state that exists.
+It is a LIST rather than a column, because a shop on a territory boundary is
+served by two distributors and storing one of them would make the other
+unrecordable, which is wrong for exactly the accounts that most need it
+recorded. `is_primary` is who serves it usually, at most one, kept true by a
+partial unique index rather than by a rule in a service the next writer will
+not know about.
+
+**Only a LEAD is converted, and anything may stop being one.** A direct
+customer is an account we invoice, so saying it does not bill with us is a
+contradiction — the option is absent from its row menu and its record, and
+`convertToThirdParty` refuses it rather than trusting the menu. The other
+direction is offered on anything carrying the mark: a shop that starts buying
+from us is a good day, and undoing must never be harder than doing. Reverting
+KEEPS the links — who used to bill this shop is a fact about it, and deleting
+them would destroy the only record of how it was served.
+
+**A distributor is an unmarked DIRECT CUSTOMER.** Somebody has to be holding
+the invoice at the end of the chain, and a shop we deliver to is not holding
+one; a lead has never ordered and cannot bill anybody. The picker offers only
+`kind = 'customer' and not third_party`, and the action checks the same thing,
+because a picker is not a permission. The last distributor cannot be removed
+from a marked account — the refusal names the way out, which is another
+distributor or no longer being a third-party customer.
+
+**The arrangement and the evidence are two things, drawn in that order.**
+`customer_distributors` is what a person decided; `orders.delivery_customer_id`
+is what the order sheet has actually seen, derived by `linkDeliveryParties()`
+and never typed. They usually agree, and where they do not that is the most
+useful thing on the record: a distributor sending loads to a shop nobody has
+named them for, or a named distributor who has never delivered anything. The
+convert dialog offers the evidence as suggestions and still makes somebody tap
+one — a suggestion that wrote itself would be the spreadsheet deciding what a
+record is, which is the thing this whole subsystem exists to undo.
+
+**One question, three answers, and `lib/account-types.ts` is where they live.**
+Direct customer, Lead, Third-party customer — the mark wins over the kind on a
+list, because "Lead · Third party" is two facts fighting over one glance on
+four hundred rows. The type filter carries two options that are not types: the
+evidence list, and third parties with nobody billing them, which should be
+empty and is not on a book converted before distributors were recorded. A row
+nobody can account for is worse than one that says why it is there.
 
 **The Call Log chases orders, not contact.** A customer with a measured buying
 cycle gets a stock-check call at a percentage of their own cycle — 70% of 30

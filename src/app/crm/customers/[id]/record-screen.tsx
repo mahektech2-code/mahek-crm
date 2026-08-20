@@ -30,6 +30,13 @@ import {
 } from "@/components/crm/call-panel";
 import { MessageHistory, type MessageEntry } from "./message-history";
 import { createReminder, logComplaint } from "@/lib/actions/crm";
+import { convertToThirdParty, revertThirdParty } from "@/lib/actions/third-party";
+import { ThirdPartyDialog } from "@/components/crm/third-party-dialog";
+import {
+  DistributorPanel,
+  type PanelLink,
+} from "@/components/crm/distributor-panel";
+import type { ServedShop } from "@/lib/services/distributor-service";
 import {
   ageLabel,
   monthLabel,
@@ -77,6 +84,10 @@ const KIND_TONE: Record<
 export function RecordScreen({
   detail,
   customer,
+  distributors,
+  servedShops,
+  distributorSuggestions,
+  canClassify,
   amChanges,
   daysSinceOrder,
   followUpStage,
@@ -99,6 +110,17 @@ export function RecordScreen({
 }: {
   /** Bills, receipts, orders and the rest — see customer-record-service. */
   detail: CustomerRecordDetail;
+  /**
+   * The delivery chain, from both ends. `distributors` is who bills THIS shop;
+   * `servedShops` is which shops are billed through it. Both are read for
+   * every record, because an account can sit at both ends at once.
+   */
+  distributors: PanelLink[];
+  servedShops: ServedShop[];
+  /** Who the order history suggests, on a lead nobody has converted yet. */
+  distributorSuggestions: Array<{ id: string; name: string; orders: number }>;
+  /** `customer.classify` — converting, and editing an arrangement. */
+  canClassify: boolean;
   customer: {
     id: string;
     name: string;
@@ -194,6 +216,7 @@ export function RecordScreen({
   const [calling, setCalling] = React.useState(false);
   const [remOpen, setRemOpen] = React.useState(false);
   const [cmpOpen, setCmpOpen] = React.useState(false);
+  const [converting, setConverting] = React.useState(false);
 
   const kinds = ["All", ...Array.from(new Set(timeline.map((t) => t.kind)))];
   const visible =
@@ -298,6 +321,29 @@ export function RecordScreen({
             <Button variant="secondary" onClick={() => setRemOpen(true)}>
               Set reminder
             </Button>
+            {/*
+              Offered on a LEAD and on a third-party customer, and on nothing
+              else. A direct customer is an account we invoice, so saying it
+              does not bill with us is a contradiction — the button is absent
+              rather than drawn and refused, which is the same rule the
+              customers list follows one screen along.
+            */}
+            {canClassify && customer.thirdParty ? (
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  const result = await run(revertThirdParty([customer.id]));
+                  if (result.ok) router.refresh();
+                }}
+                title="They bill with us now. Who used to bill them stays on the record."
+              >
+                No longer third party
+              </Button>
+            ) : canClassify && customer.kind === "lead" ? (
+              <Button variant="secondary" onClick={() => setConverting(true)}>
+                Convert to third party
+              </Button>
+            ) : null}
             <Button variant="secondary" onClick={() => setCmpOpen(true)}>
               Log complaint
             </Button>
@@ -515,12 +561,76 @@ export function RecordScreen({
           ))}
         </ScrollPanel>
 
+        {/*
+          THE ARRANGEMENT, AND THEN THE EVIDENCE. Two panels, in that order,
+          and they answer different questions.
+
+          The arrangement is what a person decided: who bills this shop, or
+          which shops are billed through this account. The evidence is what the
+          order sheet has actually seen — `orders.deliveryCustomerId`, derived
+          and never typed. They usually agree, and where they do not that is
+          the most useful thing on the page: a distributor sending loads to a
+          shop nobody has named them for, or a named distributor who has never
+          delivered anything.
+        */}
+        {customer.thirdParty || distributors.length ? (
+          <DistributorPanel
+            customerId={customer.id}
+            customerName={customer.name}
+            links={distributors}
+            canEdit={canClassify}
+            isThirdParty={customer.thirdParty}
+          />
+        ) : null}
+
+        {servedShops.length ? (
+          <ScrollPanel
+            title="Third-party customers served"
+            count={servedShops.length}
+            empty=""
+          >
+            {servedShops.map((sh) => (
+              <RowLine
+                key={sh.id}
+                left={
+                  <>
+                    <Link
+                      href={`/crm/customers/${sh.customerId}`}
+                      className="text-ink no-underline hover:underline"
+                    >
+                      {sh.customerName}
+                    </Link>
+                    {sh.isPrimary ? (
+                      <span className="ml-2">
+                        <Badge tone="brand">We are the usual distributor</Badge>
+                      </span>
+                    ) : null}
+                  </>
+                }
+                sub={
+                  <>
+                    {sh.customerCity ?? ""}
+                    {sh.note ? ` · ${sh.note}` : ""}
+                  </>
+                }
+                right={
+                  sh.deliveredOrders > 0
+                    ? `${sh.deliveredOrders} deliver${sh.deliveredOrders === 1 ? "y" : "ies"}`
+                    : "none yet"
+                }
+              />
+            ))}
+          </ScrollPanel>
+        ) : null}
+
         {detail.deliversTo.length || detail.billedThrough.length ? (
           <ScrollPanel
-            title={detail.deliversTo.length ? "Delivers to" : "Billed through"}
-            count={
-              detail.deliversTo.length || detail.billedThrough.length
+            title={
+              detail.deliversTo.length
+                ? "Where their goods actually went"
+                : "Who was billed for goods delivered here"
             }
+            count={detail.deliversTo.length || detail.billedThrough.length}
             empty=""
           >
             {(detail.deliversTo.length ? detail.deliversTo : detail.billedThrough).map(
@@ -759,10 +869,38 @@ export function RecordScreen({
                   />
                 </>
               )}
+              {/*
+                WHAT THIS ACCOUNT IS, said once and in full — this is the one
+                screen with room for it. The list badge answers the same
+                question in two words and has to pick between the mark and the
+                kind; here both fit, and the kind underneath is what explains
+                why a third-party customer can still be invoiced one day.
+              */}
               {customer.thirdParty ? (
+                <>
+                  <Fact
+                    label="Type"
+                    value={`Third-party customer - we deliver, a distributor bills. Underneath, still a ${customer.kind}.`}
+                  />
+                  <Fact
+                    label="Billed by"
+                    value={
+                      distributors.length
+                        ? (distributors.find((d) => d.isPrimary) ?? distributors[0])
+                            .distributorName +
+                          (distributors.length > 1
+                            ? ` and ${distributors.length - 1} other${distributors.length === 2 ? "" : "s"}`
+                            : "")
+                        : // The state the conversion rules prevent, reachable
+                          // only on an account converted before they existed.
+                          "nobody recorded yet"
+                    }
+                  />
+                </>
+              ) : customer.kind === "customer" && servedShops.length ? (
                 <Fact
-                  label="Type"
-                  value="Third party - delivered to, billed by their distributor"
+                  label="Delivers to"
+                  value={`${servedShops.length} third-party customer${servedShops.length === 1 ? "" : "s"} billed through this account`}
                 />
               ) : null}
               {customer.doNotContact ? <Fact label="Standing" value="Do not contact" /> : null}
@@ -792,6 +930,28 @@ export function RecordScreen({
           </Card>
         </div>
       </div>
+
+      <ThirdPartyDialog
+        open={converting}
+        names={[customer.name]}
+        suggestions={distributorSuggestions}
+        excludeCustomerId={customer.id}
+        onClose={() => setConverting(false)}
+        onConfirm={async (chosen) => {
+          const result = await run(
+            convertToThirdParty({
+              customerIds: [customer.id],
+              distributors: chosen.map((d) => ({
+                distributorId: d.id,
+                isPrimary: d.isPrimary,
+                note: d.note.trim() || undefined,
+              })),
+            }),
+          );
+          if (result.ok) router.refresh();
+          return result.ok;
+        }}
+      />
 
       {calling ? (
         <CallPanel

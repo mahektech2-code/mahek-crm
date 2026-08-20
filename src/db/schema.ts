@@ -2335,6 +2335,63 @@ export const sheetRowStatusEnum = pgEnum("sheet_row_status", [
  * Nothing here is ever updated or deleted. A reassignment that turns out to be
  * wrong is corrected by another reassignment, which is another row.
  */
+/**
+ * Who bills the shop we deliver to.
+ *
+ * `customers.thirdParty` says an account is served through a distributor. This
+ * says WHICH — one row per shop per distributor, at least one for every marked
+ * account, and it is what makes the mark an arrangement somebody can act on
+ * rather than an assertion with nothing behind it.
+ *
+ * A LIST, not a column on the customer. A shop on the boundary between two
+ * territories is served by two distributors, and storing one of them would
+ * make the other unrecordable — wrong for exactly the accounts that most need
+ * this recorded. `isPrimary` is who serves it usually, and the partial unique
+ * index is what keeps there being at most one: a rule enforced in a service is
+ * a rule the next writer does not know about.
+ *
+ * The distributor is always an account WE BILL — `kind = 'customer'` and not
+ * itself marked. That is checked in the action rather than expressed here,
+ * because it is a fact about two rows and Postgres cannot state it without a
+ * trigger; the picker only offers direct customers and the action refuses
+ * anything else, which is the same shape as every other capability here.
+ *
+ * Set by a person, like the mark it hangs off. No import writes it and nothing
+ * derives it — `orders.deliveryCustomerId` is the EVIDENCE this decision is
+ * usually made from, and evidence is not the decision.
+ */
+export const customerDistributors = pgTable(
+  "customer_distributors",
+  {
+    id: text("id").primaryKey(),
+    /** The third-party customer — the shop the goods go to. */
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /** The direct customer who buys from us and bills the shop. */
+    distributorCustomerId: text("distributor_customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /** Who serves it usually. At most one per shop, and possibly none. */
+    isPrimary: boolean("is_primary").notNull().default(false),
+    /** The arrangement in somebody's own words — a route, a rate, a caveat. */
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    // Naming the same distributor twice is a double-click, not a second
+    // arrangement, and two identical rows would be counted as two.
+    uniqueIndex("customer_distributors_pair_key").on(t.customerId, t.distributorCustomerId),
+    uniqueIndex("customer_distributors_primary_key")
+      .on(t.customerId)
+      .where(sql`${t.isPrimary}`),
+    index("customer_distributors_distributor_idx").on(t.distributorCustomerId),
+  ],
+);
+
 export const customerAmChanges = pgTable(
   "customer_am_changes",
   {

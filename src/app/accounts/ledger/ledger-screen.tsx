@@ -7,6 +7,7 @@ import { useToast } from "@/components/ui/toast";
 import { ConfirmDialog } from "@/components/ui/overlays";
 import { reverseReceiptAction } from "@/lib/actions/payments";
 import { CustomerSearch } from "../customer-search";
+import type { AccountServing } from "@/lib/services/distributor-service";
 import { downloadCsv, toCsv } from "@/lib/csv";
 import { longDate, money, signedMoney } from "@/lib/format";
 import {
@@ -62,6 +63,7 @@ type Ledger = {
 export function LedgerScreen({
   canReverse,
   ledger,
+  serving,
   from,
   to,
 }: {
@@ -72,6 +74,8 @@ export function LedgerScreen({
    */
   canReverse: boolean;
   ledger: Ledger | null;
+  /** How the account is served — see the note on the page that reads it. */
+  serving: AccountServing | null;
   from: string;
   to: string;
 }) {
@@ -217,6 +221,30 @@ export function LedgerScreen({
             },
           ]}
         />
+
+        {/*
+          WHY THIS STATEMENT LOOKS THE WAY IT DOES, above the figures rather
+          than under them. A third-party customer has no bills and never will,
+          and an empty statement with nothing saying why reads as data missing.
+          Nothing here is editable: converting is a manager's, and an accounts
+          user holds no `customer.classify`.
+        */}
+        {serving?.thirdParty ? (
+          <div className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-3.5 text-sm text-body">
+            <span className="font-medium text-ink">Third-party customer.</span>{" "}
+            We deliver here and do not bill it — the goods are invoiced to{" "}
+            {serving.distributors.length
+              ? serving.distributors.map((d) => d.name).join(", ")
+              : "a distributor nobody has recorded yet"}
+            . Bills and receipts on this account are the exceptions, not the rule.
+          </div>
+        ) : serving && serving.shops > 0 ? (
+          <div className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-3.5 text-sm text-body">
+            <span className="font-medium text-ink">Distributor.</span>{" "}
+            {plural(serving.shops, "third-party customer")} are delivered to on
+            this account&apos;s bills.
+          </div>
+        ) : null}
 
         <div className="mb-4 flex flex-wrap items-end gap-3 rounded-[6px] border border-line bg-surface px-5 py-3.5">
           <label className="block">
