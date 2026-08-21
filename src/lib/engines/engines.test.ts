@@ -1,4 +1,5 @@
 import { test, describe } from "node:test";
+import { shortDateWithYear } from "@/lib/format";
 import assert from "node:assert/strict";
 
 import {
@@ -290,6 +291,7 @@ function candidate(over: Partial<QueueCandidate> = {}): QueueCandidate {
     reminders: [],
     lastConfirmedWhatsappDate: null,
     activeInOrderSystem: false,
+  thirdParty: false,
     calledToday: false,
     doNotContact: false,
     skippedTodayReason: null,
@@ -2608,5 +2610,180 @@ describe("what the customer said buys the right quiet", () => {
       lastAnsweredDate: TODAY,
     });
     assert.equal(buildQueue([c], TODAY, C).entries.length, 1);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * A date on a Call Log row is read mid-call, and "14 Apr" means this April.
+ * ------------------------------------------------------------------------- */
+
+describe("a date says which year, once it is not this one", () => {
+  test("this year is bare; an older one carries its year", () => {
+    assert.equal(shortDateWithYear("2026-04-14", "2026-08-20"), "14 Apr");
+    assert.equal(shortDateWithYear("2025-04-14", "2026-08-20"), "14 Apr 2025");
+    // The boundary is the year, not a count of days: the 31st of December is
+    // last year on the 1st of January, however few hours separate them.
+    assert.equal(shortDateWithYear("2025-12-31", "2026-01-01"), "31 Dec 2025");
+    assert.equal(shortDateWithYear(null, "2026-08-20"), "-");
+  });
+
+  test("the overdue reason names a date a person can read", () => {
+    // It interpolated the stored value, so a telecaller was read "expected
+    // 2025-06-26" off the screen mid-call.
+    const c = candidate({ lastOrderDate: addDays(TODAY, -100), cycleDays: 22 });
+    const [reason] = buildQueue([c], TODAY, C).entries[0].reasons;
+    assert.match(reason.label, /expected \d{1,2} [A-Z][a-z]{2}/);
+    assert.doesNotMatch(reason.label, /\d{4}-\d{2}-\d{2}/, "an ISO date reached the screen");
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * The ranking, and the two ways it was wrong: a stored value that did not
+ * mention half the reasons, and a lapsed customer outranking a live one.
+ * ------------------------------------------------------------------------- */
+
+describe("what gets called first", () => {
+  test("a stored ranking missing a reason does not un-rank it", () => {
+    /*
+     * Production's `queue.tierWeights` held eight keys against the engine's
+     * fourteen — no `paymentOverdue` at all. The weight came back undefined,
+     * which does not throw: it made the score undefined and the comparator
+     * NaN, so the calls about money were ordered arbitrarily and no screen
+     * showed anything wrong.
+     */
+    const partial = {
+      ...C,
+      "queue.tierWeights": {
+        orderDue: 70,
+        orderOverdueFullCycle: 80,
+      } as unknown as (typeof C)["queue.tierWeights"],
+    };
+
+    const owes = candidate({
+      customerId: "owes",
+      outstanding: 32_071_00,
+      paymentCallDue: { totalOverdue: 32_071_00, daysOverdue: 314 },
+    });
+    const due = candidate({
+      customerId: "due",
+      lastOrderDate: addDays(TODAY, -23),
+      cycleDays: 22,
+    });
+
+    const { entries } = buildQueue([due, owes], TODAY, partial);
+    assert.ok(
+      entries.every((e) => Number.isFinite(e.score)),
+      "a reason the stored ranking never mentioned produced a score that is not a number",
+    );
+    assert.equal(entries[0].customerId, "owes", "money did not come first");
+  });
+
+  test("somebody who stopped is worked after somebody merely due", () => {
+    const due = candidate({
+      customerId: "due",
+      lastOrderDate: addDays(TODAY, -30),
+      cycleDays: 22,
+    });
+    // Well past `inactive.cycleMultiplier` cycles — the same threshold that
+    // earns the Inactive badge, so the badge and the rank agree.
+    const gone = candidate({
+      customerId: "gone",
+      lastOrderDate: addDays(TODAY, -220),
+      cycleDays: 22,
+    });
+
+    const { entries } = buildQueue([gone, due], TODAY, C);
+    assert.equal(entries[0].customerId, "due");
+    assert.equal(entries[1].customerId, "gone");
+    assert.equal(entries[1].reasons[0].kind, "orderLongOverdue");
+    assert.match(entries[1].reasons[0].label, /Gone quiet/);
+  });
+
+  test("the lapse line is the one the Inactive badge uses, not a cycle later", () => {
+    // Measured from the last ORDER, exactly as `evaluateInactivity` measures
+    // it. Read from the expected date instead and the two would sit a whole
+    // cycle apart — a customer badged Inactive while ranked as a live chase.
+    const cycleDays = 22;
+    const atTheLine = candidate({
+      customerId: "at",
+      lastOrderDate: addDays(TODAY, -44), // 2 x 22, the default multiple
+      cycleDays,
+    });
+    assert.equal(
+      buildQueue([atTheLine], TODAY, C).entries[0].reasons[0].kind,
+      "orderLongOverdue",
+    );
+
+    // Raise the multiple and a band opens: late enough to have missed a full
+    // cycle, not yet late enough to count as stopped. That is what the older
+    // kind is for, and it still outranks a lapse.
+    const patient = { ...C, "inactive.cycleMultiplier": 3 };
+    const [reason] = buildQueue([atTheLine], TODAY, patient).entries[0].reasons;
+    assert.equal(reason.kind, "orderOverdueFullCycle");
+    assert.ok(
+      reason.weight > C["queue.tierWeights"].orderLongOverdue,
+      "a customer one cycle late ranked no higher than one who stopped",
+    );
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * A shop we deliver to buys from its distributor, not from us. Asking it for a
+ * first order is asking for something it cannot give.
+ * ------------------------------------------------------------------------- */
+
+describe("a shop we only deliver to", () => {
+  test("is never prospected", () => {
+    const shop = candidate({
+      customerId: "shop",
+      lastOrderDate: null,
+      lastContactDate: null,
+      createdDate: addDays(TODAY, -60),
+      thirdParty: true,
+    });
+    const r = buildQueue([shop], TODAY, C);
+    assert.equal(r.entries.length, 0, "a delivered-to shop was put up for a first order");
+  });
+
+  test("an unmarked one still is — the mark is the only difference", () => {
+    const same = candidate({
+      customerId: "same",
+      lastOrderDate: null,
+      lastContactDate: null,
+      createdDate: addDays(TODAY, -60),
+      thirdParty: false,
+    });
+    const r = buildQueue([same], TODAY, C);
+    assert.equal(r.entries.length, 1);
+    assert.equal(r.entries[0].reasons[0].kind, "prospect");
+  });
+
+  test("but a promise made to one is still kept", () => {
+    // Only prospecting is suppressed. A callback somebody committed to is not
+    // speculative work, and breaking it because of a classification would be
+    // the worst kind of broken promise — one the customer never caused.
+    const shop = candidate({
+      customerId: "shop",
+      lastOrderDate: null,
+      thirdParty: true,
+      reminders: [{ id: "r1", dueDate: TODAY, note: "Ring back about the damaged tin" }],
+    });
+    assert.equal(buildQueue([shop], TODAY, C).entries.length, 1);
+  });
+
+  test("and one that orders directly is chased on its own cycle", () => {
+    // The mark corrects itself: nobody has to remember to lift it when a shop
+    // starts buying from us, because the reason it is called changes from
+    // "never ordered" to "their order is due".
+    const buys = candidate({
+      customerId: "buys",
+      lastOrderDate: addDays(TODAY, -30),
+      cycleDays: 22,
+      cycleIsDefault: false,
+      thirdParty: true,
+    });
+    const r = buildQueue([buys], TODAY, C);
+    assert.equal(r.entries.length, 1, "a marked shop that buys directly was never called");
+    assert.match(r.entries[0].reasons[0].kind, /order/i);
   });
 });

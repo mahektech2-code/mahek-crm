@@ -1,6 +1,7 @@
 import type { BusinessDate } from "../business-date";
+import { shortDateWithYear } from "../format";
 import { addDays, daysBetween } from "../business-date";
-import type { Config, QueueReasonKind } from "../config/registry";
+import { DEFAULT_TIER_WEIGHTS, type Config, type QueueReasonKind } from "../config/registry";
 
 /* ---------------------------------------------------------------------------
  * E2 — Queue Builder
@@ -84,6 +85,14 @@ export type QueueCandidate = {
   /** The collections cadence says a payment call is due today. */
   paymentCallDue: { totalOverdue: number; daysOverdue: number } | null;
 
+  /**
+   * A shop we deliver to, served through a distributor — marked by a person,
+   * never derived. It suppresses PROSPECTING and nothing else: an order this
+   * account actually placed, money it owes and a promise somebody made all
+   * still reach the list.
+   */
+  thirdParty: boolean;
+
   /** Tie-breakers. */
   outstanding: number;
   targetGap: number;
@@ -151,7 +160,28 @@ export type QueueConfig = Pick<
   | "queue.excludeCalledToday"
   | "queue.maxSizePerUser"
   | "queue.tierWeights"
+  | "inactive.cycleMultiplier"
 >;
+
+/**
+ * The weight of a reason, and never `undefined`.
+ *
+ * A stored `queue.tierWeights` REPLACES the registry default rather than
+ * merging into it, so a blob written before a kind existed leaves that kind
+ * unweighted — and production was carrying exactly that: eight keys against
+ * the engine's thirteen, missing `paymentOverdue` and holding `orderDueSoon`,
+ * a name the code stopped using. `undefined` does not throw here. It makes
+ * `score` undefined, and `b.score - a.score` NaN, and a comparator that
+ * answers NaN sorts nothing — so the calls about money, the highest tier there
+ * is, were ordered arbitrarily and nothing anywhere looked broken.
+ *
+ * Falling back to the default is not a repair of the stored value; it is the
+ * guarantee that a partial one cannot poison the ranking. The migration
+ * repairs the value.
+ */
+function weightOf(weights: Partial<Record<QueueReasonKind, number>>, kind: QueueReasonKind): number {
+  return weights[kind] ?? DEFAULT_TIER_WEIGHTS[kind];
+}
 
 export function buildQueue(
   candidates: QueueCandidate[],
@@ -301,7 +331,7 @@ function reasonsFor(
     reasons.push({
       kind: "paymentOverdue",
       label: `Payment overdue ${c.paymentCallDue.daysOverdue} day${c.paymentCallDue.daysOverdue === 1 ? "" : "s"} - ${formatPaise(c.paymentCallDue.totalOverdue)}`,
-      weight: weights.paymentOverdue,
+      weight: weightOf(weights, "paymentOverdue"),
     });
   }
 
@@ -313,7 +343,7 @@ function reasonsFor(
     reasons.push({
       kind: "orderStatus",
       label: `Order in progress - ${c.openOrderStatus}`,
-      weight: weights.orderStatus,
+      weight: weightOf(weights, "orderStatus"),
     });
   }
 
@@ -323,13 +353,13 @@ function reasonsFor(
     reasons.push({
       kind: "unreachable",
       label: `Unreachable - ${c.noAnswerCount} attempts, no answer. Decide what happens next.`,
-      weight: weights.unreachable,
+      weight: weightOf(weights, "unreachable"),
     });
   } else if (retry === "due") {
     reasons.push({
       kind: "noAnswerRetry",
       label: `No answer - attempt ${c.noAnswerCount + 1}`,
-      weight: weights.noAnswerRetry,
+      weight: weightOf(weights, "noAnswerRetry"),
     });
   }
 
@@ -340,13 +370,13 @@ function reasonsFor(
       reasons.push({
         kind: "reminderOverdue",
         label: `Reminder ${late} day${late === 1 ? "" : "s"} overdue - ${r.note}`,
-        weight: weights.reminderOverdue,
+        weight: weightOf(weights, "reminderOverdue"),
       });
     } else if (r.dueDate === today) {
       reasons.push({
         kind: "reminderDueToday",
         label: `Reminder due today - ${r.note}`,
-        weight: weights.reminderDueToday,
+        weight: weightOf(weights, "reminderDueToday"),
       });
     }
   }
@@ -371,23 +401,53 @@ function reasonsFor(
         const overdueDays = daysBetween(expected, today);
         const cyclesMissed = Math.floor(overdueDays / Math.max(1, c.cycleDays));
         if (cyclesMissed >= 1) {
+          /*
+           * PAST THE POINT OF CHASING AN ORDER, and it is a different call.
+           *
+           * The same multiple of their own cycle that earns the Inactive
+           * badge, so the badge a telecaller reads and the rank the list is
+           * built on cannot disagree. Below it, a customer is late and worth
+           * chasing hard. Above it they have stopped, and "why did you stop"
+           * is a conversation worth having after the day's real chasing
+           * rather than instead of it — these outnumber the active book, and
+           * ranked as ordinary overdue orders they filled every list.
+           */
+          /*
+           * THE INACTIVITY ENGINE'S OWN LINE, spelled the way it spells it:
+           * days since the last ORDER against a multiple of the cycle, not
+           * cycles missed since the date one was expected. Those differ by a
+           * whole cycle, and getting it wrong would badge a customer Inactive
+           * while ranking them as a live chase — the screen and the order
+           * disagreeing about the same row.
+           *
+           * Under the default multiple of 2 this is exactly "one full cycle
+           * overdue", so the two branches coincide and every one of these
+           * customers is a lapse. Raise the multiple and a band opens between
+           * them: late enough to have missed a cycle, not yet late enough to
+           * have stopped. That band is what `orderOverdueFullCycle` is for.
+           */
+          const longGone =
+            sinceOrder >=
+            Math.round(c.cycleDays * config["inactive.cycleMultiplier"]);
           reasons.push({
-            kind: "orderOverdueFullCycle",
-            label: `Order overdue by ${cyclesMissed} full cycle${cyclesMissed === 1 ? "" : "s"} - expected ${expected}`,
-            weight: weights.orderOverdueFullCycle,
+            kind: longGone ? "orderLongOverdue" : "orderOverdueFullCycle",
+            label: longGone
+              ? `Gone quiet - ${cyclesMissed} cycles since their last order, expected ${shortDateWithYear(expected, today)}`
+              : `Order overdue by ${cyclesMissed} full cycle${cyclesMissed === 1 ? "" : "s"} - expected ${shortDateWithYear(expected, today)}`,
+            weight: weightOf(weights, longGone ? "orderLongOverdue" : "orderOverdueFullCycle"),
           });
         } else {
           reasons.push({
             kind: "orderDue",
-            label: `Order overdue by ${overdueDays} day${overdueDays === 1 ? "" : "s"} - expected ${expected}`,
-            weight: weights.orderDue,
+            label: `Order overdue by ${overdueDays} day${overdueDays === 1 ? "" : "s"} - expected ${shortDateWithYear(expected, today)}`,
+            weight: weightOf(weights, "orderDue"),
           });
         }
       } else if (today === expected) {
         reasons.push({
           kind: "orderDue",
           label: `Order due today - ${c.cycleDays}-day cycle`,
-          weight: weights.orderDue,
+          weight: weightOf(weights, "orderDue"),
         });
       } else {
         // The routine stock check. A different call from "your order is due"
@@ -397,16 +457,27 @@ function reasonsFor(
         reasons.push({
           kind: "routineCall",
           label: `Stock check - orders every ${c.cycleDays} days, next due in ${inDays} day${inDays === 1 ? "" : "s"}`,
-          weight: weights.routineCall,
+          weight: weightOf(weights, "routineCall"),
         });
       }
     }
   }
 
   /* ---- prospect ---- */
+  //
   // Never ordered. Worked on its own short cadence, because converting a
   // first order is the growth work and there is no cycle to wait for.
-  if (!c.lastOrderDate) {
+  //
+  // UNLESS SOMEBODY HAS SAID THERE IS NO FIRST ORDER TO CONVERT. A shop served
+  // through a distributor buys from the distributor; ringing it to ask for an
+  // order is asking for something it cannot give. That was the single largest
+  // category of work on the Call Log — 125 rows a day against 67 for the next
+  // reason — and every one of them was speculative.
+  //
+  // Only this reason is suppressed. If a marked account does place an order
+  // with us directly it gains a cycle and is chased on it like anybody else,
+  // so the mark corrects itself and nobody has to remember to lift it.
+  if (!c.lastOrderDate && !c.thirdParty) {
     const since = c.lastContactDate ?? c.createdDate;
     const daysSince = daysBetween(since, today);
     if (daysSince >= config["queue.prospectIntervalDays"]) {
@@ -415,7 +486,7 @@ function reasonsFor(
         label: c.lastContactDate
           ? `Never ordered - ${daysSince} days since last contact`
           : `Never ordered - on the book ${daysSince} days, never contacted`,
-        weight: weights.prospect,
+        weight: weightOf(weights, "prospect"),
       });
     }
   }
@@ -459,13 +530,13 @@ function reasonsFor(
       reasons.push({
         kind: "checkInOverdue",
         label: `No contact for ${daysSince} days - cycle not established yet`,
-        weight: weights.checkInOverdue,
+        weight: weightOf(weights, "checkInOverdue"),
       });
     } else if (daysSince >= interval) {
       reasons.push({
         kind: "checkInDue",
         label: `Check-in due - ${daysSince} days since last contact`,
-        weight: weights.checkInDue,
+        weight: weightOf(weights, "checkInDue"),
       });
     }
   }
@@ -575,7 +646,11 @@ function isPrediction(kind: QueueReasonKind): boolean {
   return (
     kind === "orderDue" ||
     kind === "routineCall" ||
-    kind === "orderOverdueFullCycle"
+    kind === "orderOverdueFullCycle" ||
+    // Derived from the same cycle, so discounted by the same confidence. A
+    // lapsed customer on a cycle nobody has measured well is a guess about a
+    // guess.
+    kind === "orderLongOverdue"
   );
 }
 

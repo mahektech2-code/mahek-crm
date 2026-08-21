@@ -25,7 +25,7 @@ import {
   type ScriptOption,
 } from "@/components/crm/call-panel";
 import { rebuildQueue, requestDeactivation, skipQueueItem } from "@/lib/actions/crm";
-import { money, phoneDisplay, shortDate } from "@/lib/format";
+import { money, phoneDisplay, shortDateWithYear } from "@/lib/format";
 
 type Reason = { kind: string; label: string; weight: number };
 
@@ -84,6 +84,10 @@ const REASON_TONE: Record<string, "danger" | "warn" | "brand" | "neutral"> = {
   reminderOverdue: "danger",
   reminderDueToday: "warn",
   orderOverdueFullCycle: "danger",
+  // Muted on purpose. Red is for a debt or a promise broken; somebody who
+  // stopped buying eight months ago is not an emergency, and drawing them like
+  // one teaches the eye to skip the colour.
+  orderLongOverdue: "neutral",
   orderDue: "brand",
   routineCall: "brand",
   checkInOverdue: "warn",
@@ -100,6 +104,7 @@ const PAYMENT_KINDS = ["paymentOverdue"];
 const RETRY_KINDS = ["noAnswerRetry", "unreachable"];
 
 export function QueueScreen({
+  day,
   scopeLabel,
   showAssignee,
   rows,
@@ -119,6 +124,13 @@ export function QueueScreen({
   products,
   scripts,
 }: {
+  /**
+   * The business day, from the server. A date is shown with its year only when
+   * that year is not the current one, and "current" has to come from the
+   * working day rather than from `new Date()` — the clock may not be read
+   * during render.
+   */
+  day: string;
   scopeLabel: string;
   /** Team view: every row belongs to somebody, so every row says who. */
   showAssignee: boolean;
@@ -455,11 +467,18 @@ export function QueueScreen({
               )}
             >
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2.5">
+                {/* WRAPS, and the name does not shrink.
+                    A Badge sets `whitespace-nowrap`, so on a row carrying a
+                    long reason the only thing that could give was the name —
+                    and "Navkar Tradres (Tungar Phata)" came out stacked four
+                    lines high beside a one-line neighbour. The reason is the
+                    part that varies in length, so the reason is the part that
+                    moves to the next line. */}
+                <div className="flex flex-wrap items-center gap-2.5">
                   <Link
                     href={`/crm/customers/${r.customerId}`}
                     onClick={(e) => e.stopPropagation()}
-                    className="text-sm font-medium text-ink no-underline hover:underline"
+                    className="shrink-0 text-sm font-medium text-ink no-underline hover:underline"
                   >
                     {r.name}
                   </Link>
@@ -469,6 +488,16 @@ export function QueueScreen({
                     <Badge
                       key={`${reason.kind}:${ri}`}
                       tone={REASON_TONE[reason.kind] ?? "neutral"}
+                      /* A reminder's label carries the note the telecaller
+                         typed, so it is as long as somebody felt like being —
+                         and a Badge does not wrap. One of them ran out over
+                         the Assigned to and Outstanding columns and off the
+                         edge of the screen, taking "Slow payer" with it.
+                         Capped at the row and cut short, with the whole thing
+                         on hover; nothing is lost, because the note is printed
+                         in full two lines below. */
+                      className="max-w-full truncate"
+                      title={reason.label}
                     >
                       {reason.label}
                     </Badge>
@@ -477,10 +506,21 @@ export function QueueScreen({
                   {/* Which conversation this is. Since the Inactive Watch went,
                       these customers are worked from here — and the reason
                       badges say they are overdue without saying how far past
-                      the point of ordinary chasing they are. */}
-                  <Badge tone={r.status === "inactive" ? "warn" : "neutral"}>
-                    {r.status === "inactive" ? "Inactive" : "Active"}
-                  </Badge>
+                      the point of ordinary chasing they are.
+
+                      NOT ON A LEAD, unless it actually carries the mark.
+                      `evaluateInactivity` returns "No order history" for
+                      anybody who has never ordered, so a lead is never
+                      assessed and its status sits at the column default —
+                      "Lead · Active" was that default drawn as a finding,
+                      beside a line reading "never ordered, never contacted".
+                      Active is earned by buying and then not stopping, which
+                      is not a thing a lead has had the chance to do. */}
+                  {r.kind === "customer" || r.status === "inactive" ? (
+                    <Badge tone={r.status === "inactive" ? "warn" : "neutral"}>
+                      {r.status === "inactive" ? "Inactive" : "Active"}
+                    </Badge>
+                  ) : null}
                   {r.slowPayer ? <SlowPayerBadge /> : null}
                 </div>
                 <div className="mt-0.5 flex items-center gap-2 text-[13px] text-muted">
@@ -490,7 +530,7 @@ export function QueueScreen({
                   <span>·</span>
                   <span>
                     Last order{" "}
-                    {r.lastOrderDate ? shortDate(r.lastOrderDate) : "never"}
+                    {r.lastOrderDate ? shortDateWithYear(r.lastOrderDate, day) : "never"}
                   </span>
                   <span>·</span>
                   <span>

@@ -2,6 +2,12 @@ import "server-only";
 import { cache } from "react";
 import { and, asc, desc, eq, inArray, lte, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
+import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
+import {
+  TIMELINE_KINDS,
+  TIMELINE_PAGE,
+  type TimelineKind,
+} from "@/lib/timeline-kinds";
 import {
   bills,
   calls,
@@ -14,7 +20,7 @@ import {
   orders,
   users,
 } from "@/db/schema";
-import { resolveScope, scopedUserIds, scopedToUsers} from "./access-control";
+import { ASSIGNED_TO_SQL, resolveScope, scopedUserIds, scopedToUsers} from "./access-control";
 import { isManager, requireUser } from "./auth";
 import { getScope } from "./scope";
 import { today as businessToday } from "./recompute";
@@ -74,6 +80,121 @@ export const crmBadgeCounts = cache(async function crmBadgeCounts(): Promise<{
     openComplaints: row?.complaints ?? 0,
   };
 });
+
+/* ------------------------------------------ deactivation and reactivation */
+
+export type CustomerStatusRequest = {
+  customerId: string;
+  customerName: string;
+  /** `deactivate` — please close this account. `reactivate` — please reopen it. */
+  kind: "deactivate" | "reactivate";
+  reason: string | null;
+  /** Null on requests raised before the asker was recorded. Say so; do not guess. */
+  askedBy: string | null;
+  /**
+   * The IST calendar date the request was raised on, computed by Postgres.
+   *
+   * NOT an instant for the screen to truncate. Returning a full ISO timestamp
+   * and slicing the first ten characters off it in the component would be the
+   * §11 bug in two halves — `toISOString()` answers in UTC, so a request raised
+   * at 21:00 UTC is the NEXT day in Asia/Kolkata and would display a day early.
+   * Split across two files, the grep that guards this cannot see it.
+   */
+  askedOn: string | null;
+  /** Whose book it is, so a manager knows who to ring about it. */
+  assignedTo: string | null;
+  status: string;
+  outstanding: number;
+  lastOrderDate: string | null;
+};
+
+/**
+ * EVERY UNANSWERED REQUEST, both directions, oldest first.
+ *
+ * NOT SCOPED. A request is work for whoever decides it, not for whoever raised
+ * it — scoping this to a manager's own book would hide requests raised by
+ * telecallers whose customers sit in somebody else's, which is most of them.
+ * The route already refuses anybody without `customer.deactivate`.
+ *
+ * Oldest first because the oldest ask is the one somebody has been waiting on,
+ * and because six of these have been waiting since before there was a screen to
+ * answer them from.
+ *
+ * `outstanding` and `lastOrderDate` ride along because they are the two facts
+ * that change the answer: closing an account that still owes money is a
+ * different decision from closing one that is square, and a customer who
+ * ordered last week is not finished whatever the request says.
+ */
+export async function listCustomerStatusRequests(): Promise<CustomerStatusRequest[]> {
+  const rows = await db.execute<{
+    customer_id: string;
+    customer_name: string;
+    kind: "deactivate" | "reactivate";
+    reason: string | null;
+    asked_by: string | null;
+    asked_on: string | null;
+    assigned_to: string | null;
+    status: string;
+    outstanding: number;
+    last_order_date: string | null;
+  }>(sql`
+    -- NOT ALIASED. ASSIGNED_TO_SQL is written against the customers table by
+    -- name, so aliasing it here would leave that fragment referencing a table
+    -- which is not in scope — the same class of mistake as the bare-column one
+    -- the section 11 tests guard, in the other direction.
+    select customers.id                as customer_id,
+           customers.name              as customer_name,
+           'deactivate'                as kind,
+           customers.deactivation_reason as reason,
+           u.name                      as asked_by,
+           (customers.deactivation_requested_at at time zone 'Asia/Kolkata')::date as asked_on,
+           a.name                      as assigned_to,
+           customers.status            as status,
+           coalesce(customers.outstanding, 0)::bigint as outstanding,
+           customers.last_order_date   as last_order_date
+      from customers
+      left join users u on u.id = customers.deactivation_requested_by_id
+      left join users a on a.id = ${ASSIGNED_TO_SQL}
+     where customers.deactivation_requested
+    union all
+    select customers.id, customers.name, 'reactivate',
+           customers.reactivation_reason,
+           u.name, (customers.reactivation_requested_at at time zone 'Asia/Kolkata')::date,
+           a.name, customers.status,
+           coalesce(customers.outstanding, 0)::bigint,
+           customers.last_order_date
+      from customers
+      left join users u on u.id = customers.reactivation_requested_by_id
+      left join users a on a.id = ${ASSIGNED_TO_SQL}
+     where customers.reactivation_requested
+     -- Nulls last: a request with no recorded date is one of the old ones, and
+     -- it belongs at the bottom rather than pretending to be the newest.
+     order by asked_on asc nulls last, customer_name asc
+  `);
+
+  return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+    customerId: String(r.customer_id),
+    customerName: String(r.customer_name),
+    kind: r.kind as "deactivate" | "reactivate",
+    reason: (r.reason as string | null) ?? null,
+    askedBy: (r.asked_by as string | null) ?? null,
+    askedOn: (r.asked_on as string | null) ?? null,
+    assignedTo: (r.assigned_to as string | null) ?? null,
+    status: String(r.status),
+    outstanding: Number(r.outstanding ?? 0),
+    lastOrderDate: (r.last_order_date as string | null) ?? null,
+  }));
+}
+
+/** How many requests are waiting. The sidebar badge and the screen agree. */
+export async function customerStatusRequestCount(): Promise<number> {
+  const [row] = await db.execute<{ n: number }>(sql`
+    select (count(*) filter (where deactivation_requested)
+          + count(*) filter (where reactivation_requested))::int as n
+      from customers
+  `);
+  return row?.n ?? 0;
+}
 
 /**
  * Memoised for the REQUEST, the way `resolveScope` and `getCurrentUser`
@@ -179,12 +300,51 @@ export async function listBackOfficeCandidates(): Promise<
 
 /* ------------------------------------------------------------- customers */
 
+/**
+ * WHAT THE TELECALLER WAS TOLD, on the last call that was logged.
+ *
+ * Read from the `calls` row rather than derived, and that is the whole point:
+ * these columns are the record of what the screen said on the day somebody
+ * logged the call, not a cache of today's answer. The two are allowed to
+ * differ — a customer who has ordered since has a different next call now —
+ * so anything drawing this has to say when it was told, and must not present
+ * a three-week-old date as a live commitment.
+ *
+ * Null where nobody has logged a call, which is most of a fresh book. An
+ * empty cell is the honest answer there: nothing has been promised because
+ * nobody has spoken to them.
+ */
+export type StoredNextStep = {
+  kind: "booked" | "scheduled" | "decide" | "none";
+  /** Null on `decide` and `none`, where there genuinely is no date. */
+  date: string | null;
+  reason: string | null;
+  headline: string | null;
+  detail: string | null;
+  /** The day the call that produced this was logged. */
+  toldOn: string;
+};
+
 export type CustomerRow = typeof customers.$inferSelect & {
   ownerName: string | null;
   salesAmName: string | null;
   salesManagerName: string | null;
   backOfficeAmName: string | null;
   openComplaints: number;
+  /**
+   * Orders whose goods came here on somebody else's bill. This is the evidence
+   * the marking decision rests on — a name is a guess, "received 14 deliveries"
+   * is a fact — so it sits on the row rather than behind a filter.
+   */
+  deliveredOrders: number;
+  /** The next call, as of the last call logged against them. Null if none. */
+  nextStep: StoredNextStep | null;
+  /**
+   * Third-party customers billed through this account — the other end of the
+   * same relationship. On a distributor's row it is the fact that explains why
+   * goods leave on their bill and arrive somewhere else.
+   */
+  servedShops: number;
 };
 
 /**
@@ -219,6 +379,19 @@ export type CustomerListFilters = {
   /** The line manager above the sales seat. A NAME, like the two beside it. */
   salesManager?: string;
   backOfficeAm?: string;
+  /**
+   * "yes" for accounts marked as shops we deliver to, "no" for the rest, and
+   * "delivered" for the ones the sheet shows receiving goods — whether or not
+   * anybody has marked them yet. The third is the one that makes the marking
+   * screen usable: it is the evidence, not the decision.
+   */
+  thirdParty?:
+    | "yes"
+    | "no"
+    | "delivered"
+    | "lead"
+    | "customer"
+    | "nodistributor";
   page?: number;
   perPage?: number;
 };
@@ -232,7 +405,15 @@ export type CustomerListPage = {
   page: number;
   pageCount: number;
   /** Over the FILTERED set, not the page — the tiles describe the search. */
-  totals: { outstanding: number; slowPayers: number; withComplaints: number };
+  totals: {
+    outstanding: number;
+    slowPayers: number;
+    withComplaints: number;
+    /** The split, over everything the other filters match. */
+    directCustomers: number;
+    leads: number;
+    thirdParties: number;
+  };
 };
 
 /**
@@ -402,6 +583,38 @@ export async function customerFilterClause(
   if (filters.backOfficeAm) {
     where.push(sql`${BACK_OFFICE_AM_NAME_SQL} = ${filters.backOfficeAm}`);
   }
+  if (filters.thirdParty === "yes") where.push(sql`customers.third_party`);
+  if (filters.thirdParty === "no") where.push(sql`not customers.third_party`);
+  // A marked account is not offered as a lead or a direct customer, because
+  // the mark is the more specific answer to the same question. Reading the
+  // kind alone would put every marked shop back in the list the filter exists
+  // to take it out of.
+  if (filters.thirdParty === "lead") {
+    where.push(sql`customers.kind = 'lead' and not customers.third_party`);
+  }
+  if (filters.thirdParty === "customer") {
+    where.push(sql`customers.kind = 'customer' and not customers.third_party`);
+  }
+  if (filters.thirdParty === "nodistributor") {
+    /*
+     * Converted, and nobody recorded as billing them. It should be empty —
+     * `convertToThirdParty` writes the mark and the arrangement in one
+     * transaction — and what fills it is the accounts marked before that was
+     * true. A row nobody can account for is worse than one that says why it is
+     * there, so it is a filter rather than a report nobody opens.
+     */
+    where.push(sql`customers.third_party and not exists (
+      select 1 from customer_distributors d where d.customer_id = customers.id
+    )`);
+  }
+  if (filters.thirdParty === "delivered") {
+    // Goods actually went here, on somebody else's bill. `customers.id` spelled
+    // out: Drizzle renders the column reference bare, and a bare `id` inside a
+    // correlated subquery binds to the INNER table and matches every row.
+    where.push(sql`exists (
+      select 1 from orders o where o.delivery_customer_id = customers.id
+    )`);
+  }
 
   return where.length ? and(...where) : undefined;
 }
@@ -423,6 +636,18 @@ export async function listCustomersPage(
       total: sql<number>`count(*)::int`,
       outstanding: sql<number>`coalesce(sum(${customers.outstanding}), 0)::bigint`,
       slowPayers: sql<number>`count(*) filter (where ${customers.slowPayer})::int`,
+      /*
+       * The split, over everything the OTHER filters match.
+       *
+       * Counted here rather than in the browser because the browser holds one
+       * page of twenty-five. It is the number that says how the marking work is
+       * going, and without it nobody can tell without running SQL.
+       */
+      directCustomers: sql<number>`count(*) filter (
+        where customers.kind = 'customer' and not customers.third_party)::int`,
+      leads: sql<number>`count(*) filter (
+        where customers.kind = 'lead' and not customers.third_party)::int`,
+      thirdParties: sql<number>`count(*) filter (where customers.third_party)::int`,
       withComplaints: sql<number>`count(*) filter (where (
         select count(*) from ${complaints}
          where complaints.customer_id = customers.id
@@ -465,6 +690,40 @@ export async function listCustomersPage(
          where complaints.customer_id = customers.id
            and ${complaints.status} in ('open','in_progress','awaiting_customer')
       )`,
+      // `customers.id` spelled out for the reason the file already documents:
+      // Drizzle renders the reference bare, and a bare `id` inside a correlated
+      // subquery binds to the inner table and quietly matches everything.
+      deliveredOrders: sql<number>`(
+        select count(*)::int from orders o
+         where o.delivery_customer_id = customers.id
+      )`,
+      /*
+       * ONE SUBQUERY, not five. The five columns belong to a single call — the
+       * last one that produced a next step — and reading them as five
+       * correlated scalars would let them come from five different calls the
+       * day two are logged in the same second.
+       */
+      nextStep: sql<StoredNextStep | null>`(
+        select json_build_object(
+                 'kind', c.next_step_kind,
+                 'date', c.next_step_date::text,
+                 'reason', c.next_step_reason,
+                 'headline', c.next_step_headline,
+                 'detail', c.next_step_detail,
+                 'toldOn', to_char(c.started_at at time zone ${APP_TIMEZONE}, 'YYYY-MM-DD')
+               )
+          from calls c
+         where c.customer_id = customers.id and c.next_step_kind is not null
+         order by c.started_at desc, c.id desc
+         limit 1
+      )`,
+      // The other end of the delivery chain, and spelled out for the same
+      // reason as the line above it: Drizzle renders a column reference bare,
+      // and a bare `id` inside a correlated subquery binds to the inner table.
+      servedShops: sql<number>`(
+        select count(*)::int from customer_distributors d
+         where d.distributor_customer_id = customers.id
+      )`,
     })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
@@ -481,12 +740,18 @@ export async function listCustomersPage(
       salesManagerName: r.salesManagerName,
       backOfficeAmName: r.backOfficeAmName,
       openComplaints: Number(r.openComplaints),
+      deliveredOrders: Number(r.deliveredOrders),
+      servedShops: Number(r.servedShops),
+      nextStep: r.nextStep ?? null,
     })),
     total,
     bookTotal: Number(book?.n ?? 0),
     page,
     pageCount,
     totals: {
+      directCustomers: Number(agg?.directCustomers ?? 0),
+      leads: Number(agg?.leads ?? 0),
+      thirdParties: Number(agg?.thirdParties ?? 0),
       outstanding: Number(agg?.outstanding ?? 0),
       slowPayers: Number(agg?.slowPayers ?? 0),
       withComplaints: Number(agg?.withComplaints ?? 0),
@@ -524,6 +789,37 @@ export async function listCustomers(): Promise<CustomerRow[]> {
          where complaints.customer_id = customers.id
            and ${complaints.status} in ('open','in_progress','awaiting_customer')
       )`,
+      deliveredOrders: sql<number>`(
+        select count(*)::int from orders o
+         where o.delivery_customer_id = customers.id
+      )`,
+      /*
+       * ONE SUBQUERY, not five. The five columns belong to a single call — the
+       * last one that produced a next step — and reading them as five
+       * correlated scalars would let them come from five different calls the
+       * day two are logged in the same second.
+       */
+      nextStep: sql<StoredNextStep | null>`(
+        select json_build_object(
+                 'kind', c.next_step_kind,
+                 'date', c.next_step_date::text,
+                 'reason', c.next_step_reason,
+                 'headline', c.next_step_headline,
+                 'detail', c.next_step_detail,
+                 'toldOn', to_char(c.started_at at time zone ${APP_TIMEZONE}, 'YYYY-MM-DD')
+               )
+          from calls c
+         where c.customer_id = customers.id and c.next_step_kind is not null
+         order by c.started_at desc, c.id desc
+         limit 1
+      )`,
+      // The other end of the delivery chain, and spelled out for the same
+      // reason as the line above it: Drizzle renders a column reference bare,
+      // and a bare `id` inside a correlated subquery binds to the inner table.
+      servedShops: sql<number>`(
+        select count(*)::int from customer_distributors d
+         where d.distributor_customer_id = customers.id
+      )`,
     })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
@@ -537,6 +833,9 @@ export async function listCustomers(): Promise<CustomerRow[]> {
     salesManagerName: r.salesManagerName,
     backOfficeAmName: r.backOfficeAmName,
     openComplaints: Number(r.openComplaints),
+    deliveredOrders: Number(r.deliveredOrders),
+    servedShops: Number(r.servedShops),
+    nextStep: r.nextStep ?? null,
   }));
 }
 
@@ -585,40 +884,172 @@ export const getCustomer = cache(async function getCustomer(
 
 /* -------------------------------------------------------------- timeline */
 
+export type { TimelineKind };
+
 export type TimelineEntry = {
   id: string;
-  kind:
-    | "Call"
-    | "WhatsApp"
-    | "Order"
-    | "Reminder"
-    | "Complaint"
-    | "Payment"
-    | "Bill";
+  kind: TimelineKind;
   at: Date;
   actor: string;
   content: string;
   meta?: string;
 };
 
+/** Where a page of the timeline stopped, so the next one can carry on. */
+export type TimelineCursor = { at: string; id: string };
+
+export type TimelinePage = {
+  entries: TimelineEntry[];
+  /** The last entry of this page, or null where the history is exhausted. */
+  cursor: TimelineCursor | null;
+  /** Whether asking again would return anything. */
+  more: boolean;
+};
+
 /**
- * The unified customer timeline, in one round trip.
+ * ONE BRANCH PER KIND, so a filtered read touches one table.
  *
- * `limit` is for callers that want the most recent few — the call panel shows
- * three, and was reading a four-year customer's entire history to do it, every
- * time somebody opened it.
+ * The seven were a single hard-coded `union all`, which meant every read of
+ * this timeline — including "show me the Bills" — scanned the calls, the
+ * messages, the orders, the reminders, the complaints and the receipts as
+ * well. Composed instead, `kind: "Bill"` is a query against `bills` and
+ * nothing else.
+ */
+function timelineBranch(kind: TimelineKind, customerId: string): SQL {
+  switch (kind) {
+    case "Call":
+      return sql`
+        select c.id, 'Call' as kind, c.started_at as at, u.name as actor,
+               coalesce(c.notes, c.outcome::text, 'Call logged') as content,
+               nullif(concat_ws(' · ', c.connection_status, c.outcome), '') as meta
+          from calls c join users u on u.id = c.user_id
+         where c.customer_id = ${customerId}`;
+    case "WhatsApp":
+      return sql`
+        select m.id, 'WhatsApp', coalesce(m.confirmed_sent_at, m.sent_at, m.prepared_at),
+               u.name, coalesce(m.template_name, 'WhatsApp message'),
+               concat_ws(' · ', m.resolved_destination, m.status)
+          from wa_messages m join users u on u.id = m.user_id
+         where m.customer_id = ${customerId}`;
+    case "Order":
+      return sql`
+        select o.id, 'Order', o.ordered_at, coalesce(u.name, 'Order system'),
+               case o.status
+                 when 'pending_approval' then 'Order waiting for approval'
+                 when 'declined' then 'Order declined'
+                 else concat('Order ', o.status)
+               end,
+               -- A declined order says why on the timeline. The telecaller has
+               -- to ring the customer back, and hunting for the reason is how
+               -- that call gets made badly or not at all.
+               concat_ws(' · ',
+                 concat('₹', to_char(round(o.total_amount / 100.0), 'FM9G99G99G999')),
+                 o.decline_reason)
+          from orders o left join users u on u.id = o.user_id
+         where o.customer_id = ${customerId}`;
+    case "Reminder":
+      return sql`
+        select r.id, 'Reminder', r.created_at, u.name, r.note,
+               concat('Due ', to_char(r.due_date, 'DD Mon'), ' · ', r.status)
+          from reminders r join users u on u.id = r.assigned_user_id
+         where r.customer_id = ${customerId}`;
+    case "Complaint":
+      return sql`
+        select cm.id, 'Complaint', cm.created_at, u.name, cm.description,
+               concat(cm.category, ' · ', cm.status)
+          from complaints cm join users u on u.id = cm.logged_by_user_id
+         where cm.customer_id = ${customerId}`;
+    case "Payment":
+      // Receipts, not allocation lines: one arrival of money is one entry,
+      // however many bills it was spread across. A reported receipt appears
+      // the moment it is reported and says it is waiting, and a rejected one
+      // STAYS — a transfer that never landed is a fact about the account, and
+      // dropping it leaves the next person wondering why the balance never
+      // moved.
+      return sql`
+        select pr.id, 'Payment',
+               -- A DATE COLUMN, so the cast has to name the zone. See the note
+               -- on the Bill branch below: a bare cast to timestamptz is
+               -- evaluated in the SESSION zone, and the session's zone is not
+               -- a property of the row.
+               pr.received_at::timestamp at time zone ${APP_TIMEZONE},
+               coalesce(u.name, 'Accounts'),
+               case pr.status
+                 when 'reported' then concat('Payment of ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'), ' reported')
+                 when 'rejected' then concat('Payment of ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'), ' could not be found')
+                 else concat('Payment received ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'))
+               end,
+               concat_ws(' · ', pr.mode, pr.reference,
+                 case pr.status
+                   when 'reported' then 'waiting for accounts to confirm'
+                   when 'rejected' then pr.reject_reason
+                 end)
+          from payment_receipts pr left join users u on u.id = pr.reported_by_id
+         where pr.customer_id = ${customerId}`;
+    case "Bill":
+      return sql`
+        select b.id, 'Bill',
+               /*
+                * bill_date IS A DATE, AND A DATE IS NOT AN INSTANT until
+                * something says which midnight is meant.
+                *
+                * A bare cast to timestamptz asks Postgres, and Postgres
+                * answers with the SESSION's timezone — so the same bill came
+                * back as 2026-08-21T00:00:00Z on one connection and
+                * 2026-08-20T18:30:00Z on another, in the same process, because
+                * one connection had been left in Asia/Kolkata by an earlier
+                * test and the rest were on the server default. A row whose
+                * instant depends on which connection served it cannot be
+                * ordered, and it certainly cannot be paged: a keyset taken
+                * from one page excluded nothing on the next, and five rows
+                * came back twice.
+                *
+                * It is the rule this codebase already documents for the
+                * opposite cast, in the other direction: never turn a date and
+                * a timestamp into each other without naming the zone. The
+                * stored date means midnight in Asia/Kolkata, so that is what
+                * is written.
+                */
+               b.bill_date::timestamp at time zone ${APP_TIMEZONE}, 'Accounts',
+               concat('Bill ', b.bill_no, ' raised'),
+               concat('₹', to_char(round(b.amount / 100.0), 'FM9G99G99G999'))
+          from bills b where b.customer_id = ${customerId}`;
+  }
+}
+
+/**
+ * The unified customer timeline, A PAGE AT A TIME.
  *
- * The customer RECORD deliberately passes none. Its tabs count what is in each
- * kind — "Calls 47", "Orders 12" — so a capped read there would not shorten a
- * list, it would print a wrong number beside the word Calls, and nothing on the
- * screen would say it had been cut. Bounded per customer either way: every
- * branch below is `where … customer_id = …`, so this is one account's history
- * and never the table.
+ * It used to return the whole history to the customer record, which was fine
+ * on a demo book and not on a real one: COLOUR CAMP has 3,504 entries, and all
+ * 3,504 were serialised into the page and rendered into the DOM. The record of
+ * the oldest, biggest accounts — the ones somebody most needs to read before
+ * ringing — was the hardest to read, because everything under the timeline
+ * (the orders, the bills, the payments, the arrangement) sat below a hundred
+ * screens of it. The page grew with the account's age, which is backwards.
+ *
+ * ORDERED BY `at` AND THEN BY `id`, which the single-column sort could not be:
+ * a thousand bills carry the same midnight timestamp, so `at` alone leaves
+ * their order to the planner. That is invisible until it is paged, and then it
+ * is a row appearing on two pages while another appears on none.
+ *
+ * `before` is a KEYSET, not an offset. Offsets re-read and re-sort everything
+ * skipped, and shift under a write — an order logged while somebody reads page
+ * three pushes a row they have already seen onto page four.
  */
 export async function customerTimeline(
   customerId: string,
-  limit?: number,
-): Promise<TimelineEntry[]> {
+  opts: { limit?: number; kind?: TimelineKind; before?: TimelineCursor } = {},
+): Promise<TimelinePage> {
+  const limit = opts.limit ?? TIMELINE_PAGE;
+  const kinds = opts.kind ? [opts.kind] : [...TIMELINE_KINDS];
+
+  const branches = kinds.map((k) => timelineBranch(k, customerId));
+  const union = sql.join(branches, sql` union all `);
+  const keyset = opts.before
+    ? sql`where (t.at, t.id) < (${opts.before.at}::timestamptz, ${opts.before.id})`
+    : sql``;
+
   const rows = await db.execute<{
     id: string;
     kind: TimelineEntry["kind"];
@@ -627,72 +1058,16 @@ export async function customerTimeline(
     content: string;
     meta: string | null;
   }>(sql`
-    select c.id, 'Call' as kind, c.started_at as at, u.name as actor,
-           coalesce(c.notes, c.outcome::text, 'Call logged') as content,
-           nullif(concat_ws(' · ', c.connection_status, c.outcome), '') as meta
-      from calls c join users u on u.id = c.user_id
-     where c.customer_id = ${customerId}
-    union all
-    select m.id, 'WhatsApp', coalesce(m.confirmed_sent_at, m.sent_at, m.prepared_at),
-           u.name, coalesce(m.template_name, 'WhatsApp message'),
-           concat_ws(' · ', m.resolved_destination, m.status)
-      from wa_messages m join users u on u.id = m.user_id
-     where m.customer_id = ${customerId}
-    union all
-    select o.id, 'Order', o.ordered_at, coalesce(u.name, 'Order system'),
-           case o.status
-             when 'pending_approval' then 'Order waiting for approval'
-             when 'declined' then 'Order declined'
-             else concat('Order ', o.status)
-           end,
-           -- A declined order says why on the timeline. The telecaller has to
-           -- ring the customer back, and hunting for the reason is how that
-           -- call gets made badly or not at all.
-           concat_ws(' · ',
-             concat('₹', to_char(round(o.total_amount / 100.0), 'FM9G99G99G999')),
-             o.decline_reason)
-      from orders o left join users u on u.id = o.user_id
-     where o.customer_id = ${customerId}
-    union all
-    select r.id, 'Reminder', r.created_at, u.name, r.note,
-           concat('Due ', to_char(r.due_date, 'DD Mon'), ' · ', r.status)
-      from reminders r join users u on u.id = r.assigned_user_id
-     where r.customer_id = ${customerId}
-    union all
-    select cm.id, 'Complaint', cm.created_at, u.name, cm.description,
-           concat(cm.category, ' · ', cm.status)
-      from complaints cm join users u on u.id = cm.logged_by_user_id
-     where cm.customer_id = ${customerId}
-    union all
-    -- Receipts, not allocation lines: one arrival of money is one entry,
-    -- however many bills it was spread across. A reported receipt appears the
-    -- moment it is reported and says it is waiting, and a rejected one STAYS —
-    -- a transfer that never landed is a fact about the account, and dropping
-    -- it leaves the next person wondering why the balance never moved.
-    select pr.id, 'Payment', pr.received_at::timestamptz,
-           coalesce(u.name, 'Accounts'),
-           case pr.status
-             when 'reported' then concat('Payment of ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'), ' reported')
-             when 'rejected' then concat('Payment of ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'), ' could not be found')
-             else concat('Payment received ₹', to_char(round(pr.amount / 100.0), 'FM9G99G99G999'))
-           end,
-           concat_ws(' · ', pr.mode, pr.reference,
-             case pr.status
-               when 'reported' then 'waiting for accounts to confirm'
-               when 'rejected' then pr.reject_reason
-             end)
-      from payment_receipts pr left join users u on u.id = pr.reported_by_id
-     where pr.customer_id = ${customerId}
-    union all
-    select b.id, 'Bill', b.bill_date::timestamptz, 'Accounts',
-           concat('Bill ', b.bill_no, ' raised'),
-           concat('₹', to_char(round(b.amount / 100.0), 'FM9G99G99G999'))
-      from bills b where b.customer_id = ${customerId}
-    order by at desc
-    ${limit ? sql`limit ${limit}` : sql``}
+    select * from (${union}) as t(id, kind, at, actor, content, meta)
+    ${keyset}
+    order by t.at desc, t.id desc
+    limit ${limit + 1}
   `);
 
-  return rows.map((r) => ({
+  // One more than asked for, purely to find out whether there is a next page.
+  // A "Load older" button that turns out to load nothing is worse than one
+  // that was never drawn.
+  const entries = rows.slice(0, limit).map((r) => ({
     id: r.id,
     kind: r.kind,
     at: new Date(r.at),
@@ -700,6 +1075,49 @@ export async function customerTimeline(
     content: r.content,
     meta: r.meta ?? undefined,
   }));
+  const last = entries[entries.length - 1];
+
+  return {
+    entries,
+    cursor: last ? { at: last.at.toISOString(), id: last.id } : null,
+    more: rows.length > limit,
+  };
+}
+
+export type TimelineCounts = { all: number } & Record<TimelineKind, number>;
+
+/**
+ * How many of each kind there are IN THE WHOLE HISTORY.
+ *
+ * The pills counted what had been loaded, which is why the record used to read
+ * every row: a capped read would have printed "Bill 34" beside an account with
+ * 1,060 of them, and nothing on the screen would have said it was a slice.
+ * Counting in SQL is what lets the list be a page and the numbers stay true —
+ * and it is seven `count(*)`s on indexed `customer_id` columns, which is the
+ * cheap half of what the old read was doing anyway.
+ */
+export async function customerTimelineCounts(
+  customerId: string,
+): Promise<TimelineCounts> {
+  const [row] = await db.execute<Record<string, number>>(sql`
+    select
+      (select count(*)::int from calls where customer_id = ${customerId}) as "Call",
+      (select count(*)::int from wa_messages where customer_id = ${customerId}) as "WhatsApp",
+      (select count(*)::int from orders where customer_id = ${customerId}) as "Order",
+      (select count(*)::int from reminders where customer_id = ${customerId}) as "Reminder",
+      (select count(*)::int from complaints where customer_id = ${customerId}) as "Complaint",
+      (select count(*)::int from payment_receipts where customer_id = ${customerId}) as "Payment",
+      (select count(*)::int from bills where customer_id = ${customerId}) as "Bill"
+  `);
+
+  const counts = Object.fromEntries(
+    TIMELINE_KINDS.map((k) => [k, Number(row?.[k] ?? 0)]),
+  ) as Record<TimelineKind, number>;
+
+  return {
+    ...counts,
+    all: TIMELINE_KINDS.reduce((n, k) => n + counts[k], 0),
+  };
 }
 
 /* ------------------------------------------------------- credit note asks */
@@ -785,9 +1203,20 @@ export type CustomerMessage = {
  * carries a one-line summary of each; this is the full text, because a
  * telecaller asked what we actually said needs to read it, not infer it.
  */
+/**
+ * The messages, NEWEST FIRST AND BOUNDED, with the true total beside them.
+ *
+ * Every send is kept and every body is rendered in full, so an account that
+ * has been chased for a year — a reminder every four days, plus whatever
+ * campaigns went out — put a hundred message bubbles on the record before
+ * anything else on it could be reached. The same rule the timeline next door
+ * now follows: the panel is a fixed height, the read is a page, and the count
+ * is the whole history so the sentence at the top stays true.
+ */
 export async function customerMessages(
   customerId: string,
-): Promise<CustomerMessage[]> {
+  limit = 50,
+): Promise<{ messages: CustomerMessage[]; total: number }> {
   const rows = await db.execute<{
     id: string;
     at: Date;
@@ -807,21 +1236,29 @@ export async function customerMessages(
            m.template_name, m.body, m.edited
       from wa_messages m join users u on u.id = m.user_id
      where m.customer_id = ${customerId}
-     order by at desc
+     order by at desc, m.id desc
+     limit ${limit}
   `);
 
-  return rows.map((r) => ({
-    id: r.id,
-    at: new Date(r.at),
-    by: r.by,
-    status: r.status,
-    channelLabel: r.mode === "automatic" ? "Sent by API" : "Sent by hand",
-    destination: r.destination,
-    destKind: r.dest_kind,
-    templateName: r.template_name,
-    body: r.body ?? "",
-    edited: r.edited,
-  }));
+  const [count] = await db.execute<{ n: number }>(sql`
+    select count(*)::int as n from wa_messages where customer_id = ${customerId}
+  `);
+
+  return {
+    messages: rows.map((r) => ({
+      id: r.id,
+      at: new Date(r.at),
+      by: r.by,
+      status: r.status,
+      channelLabel: r.mode === "automatic" ? "Sent by API" : "Sent by hand",
+      destination: r.destination,
+      destKind: r.dest_kind,
+      templateName: r.template_name,
+      body: r.body ?? "",
+      edited: r.edited,
+    })),
+    total: Number(count?.n ?? 0),
+  };
 }
 
 /* ------------------------------------------------------------ interactions */
@@ -838,6 +1275,8 @@ export type InteractionRow = {
   note: string | null;
   produced: string | null;
   sourceModule: string | null;
+  /** What this call said would happen next. Null on calls logged before it existed. */
+  nextStep: StoredNextStep | null;
 };
 
 export async function listInteractions(limit = 400): Promise<InteractionRow[]> {
@@ -872,6 +1311,25 @@ export async function listInteractions(limit = 400): Promise<InteractionRow[]> {
         .filter(Boolean)
         .join(" · ") || null,
     sourceModule: c.sourceModule,
+    /*
+     * What this call said would happen next — the row's OWN answer, not the
+     * customer's current one. On a history table that is the right half of the
+     * pair: the line says what was logged and what was said about it at the
+     * time, which is what somebody scanning back through a week is reading it
+     * for. Calls logged before these columns existed carry null, and nothing
+     * reconstructs one — a reconstruction would be today's answer wearing an
+     * old call's date.
+     */
+    nextStep: c.nextStepKind
+      ? {
+          kind: c.nextStepKind,
+          date: c.nextStepDate,
+          reason: c.nextStepReason,
+          headline: c.nextStepHeadline,
+          detail: c.nextStepDetail,
+          toldOn: calendarDate(c.startedAt),
+        }
+      : null,
   }));
 }
 

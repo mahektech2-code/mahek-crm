@@ -540,12 +540,35 @@ export const appAccess = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     app: appIdEnum("app").notNull(),
+    /**
+     * The role this grant is held under.
+     *
+     * A person wears several hats and the account could hold one: Vikram is a
+     * manager in the CRM and a clerk in Accounts, which are different powers
+     * over different data rather than one power applied twice. Before this,
+     * whoever set the account up picked the most powerful of the hats and
+     * everything else came with it silently.
+     *
+     * NULL MEANS the account's primary role — which is what every row meant
+     * before this column existed, and what `npm run app:grant` still writes: a
+     * terminal that knows nothing about roles has to go on granting an app
+     * that works.
+     *
+     * What it decides is CAPABILITIES, which are the union across every grant
+     * a person holds. What it does not yet decide is SCOPE: `users.role` is
+     * still what mine/team/all is read from, and it is now derived — the
+     * widest role somebody holds anywhere — so a manager-in-the-CRM sees their
+     * team. Scope per app is the next step, and until it lands an admin
+     * anywhere is an admin everywhere for reading.
+     */
+    role: roleEnum("role"),
     grantedById: text("granted_by_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex("app_access_user_app_key").on(t.userId, t.app),
     index("app_access_user_idx").on(t.userId),
+    index("app_access_role_idx").on(t.role),
   ],
 );
 
@@ -713,6 +736,29 @@ export const customers = pgTable(
     kind: customerKindEnum("kind").notNull().default("customer"),
     leadSource: text("lead_source"),
 
+    /*
+     * A shop we deliver to, served through a distributor.
+     *
+     * NOT a third value of `kind`, deliberately. `kind` is exclusive, and this
+     * is not: we may bill one of these directly, rarely, and an account we
+     * invoiced last month is plainly still a shop we deliver to. Being a third
+     * party is not what an account IS, it is how we WORK it — so it sits
+     * beside the kind rather than inside it, and the record goes on being
+     * whatever it already was for search, scope, history and everything else.
+     *
+     * What it means is narrow and it is the whole point: a marked account is
+     * never PROSPECTED. It produces no "never ordered, chase them" row. Every
+     * other reason still reaches the Call Log — an order it actually placed, a
+     * debt, a promise — so a shop that starts buying directly comes back on
+     * the strength of its own orders, without anybody remembering to unmark
+     * it.
+     *
+     * Set by a person. Nothing derives it, and no import may write it: leads
+     * were filled from a spreadsheet once already and that is the mess this
+     * exists to sort out.
+     */
+    thirdParty: boolean("third_party").notNull().default(false),
+
     /* ownership and status */
     status: customerStatusEnum("status").notNull().default("active"),
     ownerId: text("owner_id").references(() => users.id),
@@ -802,6 +848,26 @@ export const customers = pgTable(
     /** Raised by a telecaller, decided by a manager. */
     deactivationRequested: boolean("deactivation_requested").notNull().default(false),
     /**
+     * WHO ASKED, AND WHEN.
+     *
+     * The request was a boolean and a reason and nothing else. The asker's name
+     * existed only inside the notification text sent to managers — a sentence,
+     * in a table nobody joins, that cannot be listed, sorted or aged. A manager
+     * looking at a pending request could see that somebody wanted a customer
+     * closed and had no way to find out who, or whether the ask was from this
+     * morning or from March.
+     *
+     * Null on requests raised before these columns existed, and the screen says
+     * so rather than guessing. The notification carrying the name is still in
+     * `notifications` for anybody who needs to dig one out.
+     */
+    deactivationRequestedById: text("deactivation_requested_by_id").references(
+      () => users.id,
+    ),
+    deactivationRequestedAt: timestamp("deactivation_requested_at", {
+      withTimezone: true,
+    }),
+    /**
      * The same pair, in the other direction. A deactivated customer who wants
      * to come back is a decision somebody has to take deliberately —
      * `recomputeInactivity` will not do it on the strength of an order — so
@@ -809,6 +875,12 @@ export const customers = pgTable(
      */
     reactivationRequested: boolean("reactivation_requested").notNull().default(false),
     reactivationReason: text("reactivation_reason"),
+    reactivationRequestedById: text("reactivation_requested_by_id").references(
+      () => users.id,
+    ),
+    reactivationRequestedAt: timestamp("reactivation_requested_at", {
+      withTimezone: true,
+    }),
 
     /* commercial terms */
     gstin: text("gstin"),
@@ -1326,6 +1398,19 @@ export const orders = pgTable(
     customerId: text("customer_id")
       .notNull()
       .references(() => customers.id, { onDelete: "cascade" }),
+    /*
+     * Where the goods went, when that is not where the bill went.
+     *
+     * NULL MEANS THE BILLING PARTY RECEIVED THEM, which is the ordinary case
+     * and true of every row that existed when this column arrived — so nothing
+     * had to be rewritten and no existing order changed meaning.
+     *
+     * Money never follows this column. Credit, term, outstanding, receipts and
+     * collections all stay with `customerId`, whatever the lorry did.
+     */
+    deliveryCustomerId: text("delivery_customer_id").references(
+      () => customers.id,
+    ),
     userId: text("user_id").references(() => users.id),
     /** Kept from day one: Inactive Watch produces false positives without it. */
     source: orderSourceEnum("source").notNull().default("crm"),
@@ -2004,6 +2089,20 @@ export const auditLog = pgTable(
     action: text("action").notNull(),
     entityType: text("entity_type").notNull(),
     entityId: text("entity_id"),
+    /**
+     * WHICH ROLE ALLOWED IT.
+     *
+     * With one role per person, "was he allowed to do this" was answerable
+     * from the person. With four it is not: the log says Vikram approved an
+     * order, and nobody can later tell whether he did it as the accounts clerk
+     * — ordinary — or because a manager hat carried it, which it does not and
+     * must not. `requireCapability` knows which role granted the capability,
+     * so it is written down beside the action.
+     *
+     * Null means NOT RECORDED, never "no role": every row that predates this,
+     * and anything written outside a capability check.
+     */
+    actorRole: roleEnum("actor_role"),
     beforeState: jsonb("before_state"),
     afterState: jsonb("after_state"),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
@@ -2354,6 +2453,63 @@ export const sheetRowStatusEnum = pgEnum("sheet_row_status", [
  * Nothing here is ever updated or deleted. A reassignment that turns out to be
  * wrong is corrected by another reassignment, which is another row.
  */
+/**
+ * Who bills the shop we deliver to.
+ *
+ * `customers.thirdParty` says an account is served through a distributor. This
+ * says WHICH — one row per shop per distributor, at least one for every marked
+ * account, and it is what makes the mark an arrangement somebody can act on
+ * rather than an assertion with nothing behind it.
+ *
+ * A LIST, not a column on the customer. A shop on the boundary between two
+ * territories is served by two distributors, and storing one of them would
+ * make the other unrecordable — wrong for exactly the accounts that most need
+ * this recorded. `isPrimary` is who serves it usually, and the partial unique
+ * index is what keeps there being at most one: a rule enforced in a service is
+ * a rule the next writer does not know about.
+ *
+ * The distributor is always an account WE BILL — `kind = 'customer'` and not
+ * itself marked. That is checked in the action rather than expressed here,
+ * because it is a fact about two rows and Postgres cannot state it without a
+ * trigger; the picker only offers direct customers and the action refuses
+ * anything else, which is the same shape as every other capability here.
+ *
+ * Set by a person, like the mark it hangs off. No import writes it and nothing
+ * derives it — `orders.deliveryCustomerId` is the EVIDENCE this decision is
+ * usually made from, and evidence is not the decision.
+ */
+export const customerDistributors = pgTable(
+  "customer_distributors",
+  {
+    id: text("id").primaryKey(),
+    /** The third-party customer — the shop the goods go to. */
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /** The direct customer who buys from us and bills the shop. */
+    distributorCustomerId: text("distributor_customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /** Who serves it usually. At most one per shop, and possibly none. */
+    isPrimary: boolean("is_primary").notNull().default(false),
+    /** The arrangement in somebody's own words — a route, a rate, a caveat. */
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    // Naming the same distributor twice is a double-click, not a second
+    // arrangement, and two identical rows would be counted as two.
+    uniqueIndex("customer_distributors_pair_key").on(t.customerId, t.distributorCustomerId),
+    uniqueIndex("customer_distributors_primary_key")
+      .on(t.customerId)
+      .where(sql`${t.isPrimary}`),
+    index("customer_distributors_distributor_idx").on(t.distributorCustomerId),
+  ],
+);
+
 export const customerAmChanges = pgTable(
   "customer_am_changes",
   {
@@ -2766,6 +2922,63 @@ export const employees = pgTable(
     index("employees_department_idx").on(t.department),
     index("employees_office_idx").on(t.officeName),
     index("employees_row_number_idx").on(t.rowNumber),
+  ],
+);
+
+/**
+ * WHO REPORTS TO WHOM. A person, pointing at a person.
+ *
+ * ITS OWN TABLE, and that is the point rather than an implementation detail.
+ * `employees` is a MIRROR of the workbook's Employee Details tab — HR maintains
+ * that sheet, the sync rewrites the row on every change, and nothing on an HRMS
+ * screen may be edited because the next pass would silently undo it. This is
+ * the first piece of employee data MahekOne owns rather than reflects, so it
+ * lives outside the mirrored row where the sync cannot reach it. Putting it in
+ * a column would work today — `upsertColumns()` is an allow-list of 44 names —
+ * and would break the first time somebody added the 45th without noticing.
+ *
+ * IT COULD NOT COME FROM THE SHEET. `employees.reports_to` is already there and
+ * looks like the answer until you read it: 60 of 71 rows carry one of four
+ * POSITION titles — "HR and Sales Head", "Production Head", "Bhiwandi Head",
+ * "Sales State Head" — and not one matches an employee's name. It says what
+ * kind of person somebody answers to, never which one, so no tree can be built
+ * from it and nothing above those four heads exists at all.
+ *
+ * One row per employee, so `employee_id` is unique: a person has one manager
+ * here. Dotted lines, matrix reporting and dated history are all real things
+ * and none of them are this — they would each need their own shape, and
+ * inventing that shape before anybody has asked for it would be guessing.
+ */
+export const employeeReporting = pgTable(
+  "employee_reporting",
+  {
+    id: text("id").primaryKey(),
+    /** The person who reports. Cascade: their record going takes the link. */
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    /**
+     * The person they report to.
+     *
+     * Also cascade, deliberately. A manager whose employee record is deleted
+     * leaves their reports MANAGERLESS rather than pointing at nothing — the
+     * tree then shows them as unassigned, which is true and visible, instead of
+     * a dangling id that every query has to remember to guard.
+     */
+    managerId: text("manager_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    /** Who decided this, and when. HR will be asked "who moved me". */
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    // One manager per person. The upsert keys on this.
+    uniqueIndex("employee_reporting_employee_key").on(t.employeeId),
+    // Drawing the tree asks "who reports to this person" once per node.
+    index("employee_reporting_manager_idx").on(t.managerId),
   ],
 );
 

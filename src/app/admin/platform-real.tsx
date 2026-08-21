@@ -16,7 +16,8 @@ import {
   type Tone,
 } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
-import { triggerJob } from "@/lib/actions/crm";
+import { rebuildQueues, triggerJob } from "@/lib/actions/crm";
+import type { QueueOwner } from "@/lib/services/admin-platform-service";
 import { stamp, shortDate } from "@/lib/format";
 import type {
   AppHealth,
@@ -58,6 +59,7 @@ export type PlatformData = {
   notifications: NotificationRow[];
   sessions: SessionRow[];
   onboarding: Array<{ name: string; email: string; createdAt: string; apps: number }>;
+  queues: QueueOwner[];
 };
 
 /* ------------------------------------------------------------- attention */
@@ -416,7 +418,7 @@ function RunByHand() {
   const toast = useToast();
   const [busy, setBusy] = React.useState<string | null>(null);
 
-  async function run(job: "backfill-timeline") {
+  async function run(job: "backfill-timeline" | "link-delivery-parties") {
     setBusy(job);
     try {
       const result = await triggerJob(job);
@@ -448,6 +450,135 @@ function RunByHand() {
           a call already projected is skipped rather than duplicated.
         </span>
       </div>
+      <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-line pt-3">
+        <Button
+          variant="secondary"
+          disabled={Boolean(busy)}
+          onClick={() => void run("link-delivery-parties")}
+        >
+          {busy === "link-delivery-parties" ? "Linking…" : "Link delivery parties"}
+        </Button>
+        <span className="max-w-[520px] text-[13px] leading-[19px] text-muted">
+          Reads the Taken Order tab&rsquo;s delivery party against the accounts we already hold,
+          so the customers list can show which shops receive goods on somebody else&rsquo;s
+          bill. Creates no records — a name matching nothing is counted and reported. It runs
+          in the nightly too; this is for when you would rather not wait until 20:13.
+        </span>
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Rebuild today's Call Log.
+ *
+ * The list is settled once a day so it cannot reshuffle under somebody working
+ * it — which also means a release that changes WHO belongs on it is invisible
+ * until tomorrow. That is usually the right trade and occasionally is not, and
+ * this is the screen where a person decides which.
+ *
+ * One telecaller or all of them: a rule change affects everybody, while a
+ * single list that looks wrong is usually one person's. Offering only "all"
+ * would make the small fix cost everybody their afternoon's order.
+ */
+function RebuildQueues({ queues }: { queues: QueueOwner[] }) {
+  const router = useRouter();
+  const toast = useToast();
+  const [busy, setBusy] = React.useState(false);
+  const [picked, setPicked] = React.useState<Set<string>>(new Set());
+
+  async function run(userIds: string[] | null) {
+    setBusy(true);
+    try {
+      const result = await rebuildQueues(userIds);
+      if (result.ok) {
+        toast.push(result.message ?? "Rebuilt");
+        setPicked(new Set());
+        router.refresh();
+      } else {
+        toast.push(result.error);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const settled = queues.filter((q) => q.rows > 0);
+
+  return (
+    <Card className="mt-5 p-4 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
+      <div className="text-[13px] font-semibold uppercase tracking-[0.04em] text-muted">
+        Rebuild the Call Log
+      </div>
+      <p className="mt-2 max-w-[640px] text-[13px] leading-[19px] text-muted">
+        Each telecaller&rsquo;s list is built once a day and then held still, so it cannot
+        reorder under somebody working it. Rebuilding throws today&rsquo;s away and asks the
+        rules again — which is what makes a change to who belongs on the list visible
+        before tomorrow. It moves no work: nothing logged, promised or ordered is touched.
+      </p>
+
+      {queues.length === 0 ? (
+        <p className="mt-3 text-[13px] text-muted">No active users to rebuild.</p>
+      ) : (
+        <>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {queues.map((q) => {
+              const on = picked.has(q.id);
+              return (
+                <button
+                  key={q.id}
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    setPicked((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(q.id)) next.delete(q.id);
+                      else next.add(q.id);
+                      return next;
+                    })
+                  }
+                  className={cx(
+                    "rounded-[4px] border px-2.5 py-1.5 text-left text-[13px] disabled:opacity-50",
+                    on
+                      ? "border-brand bg-brand/10 text-ink"
+                      : "border-line bg-surface text-body hover:bg-canvas",
+                  )}
+                >
+                  <span className="font-medium">{q.name}</span>
+                  {/* The age is the point. A list settled at 08:14 beside a release
+                      that shipped at lunchtime is the reason somebody is here. */}
+                  <span className="ml-2 text-muted">
+                    {q.rows === 0
+                      ? "no list yet"
+                      : `${q.rows} rows · built ${q.settledAt ?? "earlier"}`}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Button
+              variant="secondary"
+              disabled={busy || picked.size === 0}
+              title={picked.size === 0 ? "Pick at least one person" : undefined}
+              onClick={() => void run([...picked])}
+            >
+              {busy ? "Rebuilding…" : `Rebuild ${picked.size || ""} selected`.trim()}
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => void run(null)}
+            >
+              Rebuild all telecallers
+            </Button>
+            <span className="text-[13px] text-muted">
+              {settled.length} of {queues.length} have a list today.
+            </span>
+          </div>
+        </>
+      )}
     </Card>
   );
 }
@@ -456,6 +587,7 @@ export function JobsTab({ data }: { data: PlatformData }) {
   return (
     <>
     <RunByHand />
+    <RebuildQueues queues={data.queues} />
     <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
       <CardHeader
         title="Scheduled work"

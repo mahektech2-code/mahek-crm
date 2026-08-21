@@ -409,6 +409,8 @@ export async function updateAccountManagers(
         audits.push({
           id: id("aud"),
           actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
           action: "customer.reassign",
           entityType: "customer",
           entityId: row.id,

@@ -19,9 +19,9 @@ export async function GET(request: Request) {
   // Three, asked for as three. This read the customer's whole history and then
   // threw all but the first three rows away in JavaScript — on a path that runs
   // every time a telecaller opens the call panel.
-  const timeline = await customerTimeline(customerId, HISTORY_SHOWN);
+  const timeline = await customerTimeline(customerId, { limit: HISTORY_SHOWN });
   return NextResponse.json({
-    history: timeline.slice(0, HISTORY_SHOWN).map((t) => ({
+    history: timeline.entries.map((t) => ({
       kind: t.kind,
       at: t.at.toISOString(),
       actor: t.actor,

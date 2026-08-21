@@ -192,8 +192,25 @@ export type MenuItem = {
   title?: string;
 };
 
-/** Menu width, in px. Named because the placing maths needs the number. */
-const ROW_MENU_WIDTH = 224;
+/**
+ * The menu's width is a FLOOR and a CEILING, never a fixed number.
+ *
+ * It was fixed at 224px, with the items set `whitespace-nowrap` inside a box
+ * carrying `overflow-hidden` — so a label wider than 224px was cut mid-word
+ * with no ellipsis and nothing to hover: "Convert to third-party customer"
+ * rendered as "Convert to third-party custome". That is the same failure the
+ * portal above this was written to fix, arriving from the other direction —
+ * clipped by the menu's own box rather than by a scrolling ancestor.
+ *
+ * A floor, because a menu that shrink-wraps three short verbs is a sliver
+ * nobody can aim at, and a menu whose width changed per row would jitter as
+ * the rows differ. A ceiling, because the labels are phrases and one long
+ * enough to cross a laptop screen is a label to rewrite rather than to draw.
+ * Between the two it takes the width of its longest item, which is what makes
+ * a label the caller thought of clearer than one the component allowed.
+ */
+const ROW_MENU_MIN_WIDTH = 224;
+const ROW_MENU_MAX_WIDTH = 360;
 /** Kept clear of the viewport edge, so the menu never touches the glass. */
 const VIEWPORT_MARGIN = 8;
 
@@ -220,7 +237,17 @@ const VIEWPORT_MARGIN = 8;
 export function RowMenu({ items }: { items: MenuItem[] }) {
   const [at, setAt] = React.useState<{
     top: number;
-    left: number;
+    /*
+     * The distance from the RIGHT edge of the window, not the left.
+     *
+     * The menu is right-aligned with its button, and its width is no longer
+     * known before it renders — it takes the width of its longest label. A
+     * `left` would have to be computed from a width nobody has measured yet,
+     * which is how the old fixed width came to be load-bearing. Anchoring the
+     * right edge lets the box grow leftwards on its own.
+     */
+    right: number;
+    maxWidth: number;
   } | null>(null);
   const open = at !== null;
   const buttonRef = React.useRef<HTMLButtonElement>(null);
@@ -233,6 +260,16 @@ export function RowMenu({ items }: { items: MenuItem[] }) {
     const rect = button.getBoundingClientRect();
     const height = items.length * 32 + 8;
     const below = window.innerHeight - rect.bottom;
+    /*
+     * How much room there is to the left of the button's right edge. The menu
+     * may use all of it and no more, so it can never run off the left of the
+     * window however long a label is — on a narrow screen the ceiling is the
+     * window rather than the constant.
+     */
+    const maxWidth = Math.min(
+      ROW_MENU_MAX_WIDTH,
+      Math.max(ROW_MENU_MIN_WIDTH, rect.right - VIEWPORT_MARGIN * 2),
+    );
     setAt({
       // Above when below will not hold it, which is what the last few rows of
       // any long table need.
@@ -241,13 +278,8 @@ export function RowMenu({ items }: { items: MenuItem[] }) {
           ? Math.max(VIEWPORT_MARGIN, rect.top - height - 4)
           : rect.bottom + 4,
       // Right-aligned with the button, then pulled back inside the window.
-      left: Math.max(
-        VIEWPORT_MARGIN,
-        Math.min(
-          rect.right - ROW_MENU_WIDTH,
-          window.innerWidth - ROW_MENU_WIDTH - VIEWPORT_MARGIN,
-        ),
-      ),
+      right: Math.max(VIEWPORT_MARGIN, window.innerWidth - rect.right),
+      maxWidth,
     });
   };
 
@@ -300,7 +332,14 @@ export function RowMenu({ items }: { items: MenuItem[] }) {
             <span
               ref={menuRef}
               role="menu"
-              style={{ top: at.top, left: at.left, width: ROW_MENU_WIDTH }}
+              style={{
+                top: at.top,
+                right: at.right,
+                minWidth: Math.min(ROW_MENU_MIN_WIDTH, at.maxWidth),
+                maxWidth: at.maxWidth,
+                // Shrink-wrapped to the longest label, between those two.
+                width: "max-content",
+              }}
               className="animate-fade-in fixed z-50 flex flex-col overflow-hidden rounded-[6px] border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
             >
               {items.map((item, i) => (
@@ -318,7 +357,13 @@ export function RowMenu({ items }: { items: MenuItem[] }) {
                     // The label holds its line: these are short phrases, and a
                     // wrapped one made the menu taller than the maths above
                     // expected, which is how it flipped to the wrong side.
-                    "px-3 py-1.5 text-left text-sm whitespace-nowrap",
+                    //
+                    // `truncate` is the last resort and it earns its place: the
+                    // menu now grows to its longest label, so this only bites
+                    // where the window itself is too narrow — and there an
+                    // ellipsis says a word was cut, which a hard edge mid-letter
+                    // does not.
+                    "truncate px-3 py-1.5 text-left text-sm",
                     item.disabled
                       ? "cursor-not-allowed text-line-strong"
                       : item.destructive

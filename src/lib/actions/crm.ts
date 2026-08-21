@@ -23,6 +23,8 @@ import {
   requireCapability,
   resolveScope,
   assertCustomerInScope,
+  scopedToUsers,
+  scopedUserIds,
 } from "@/lib/access-control";
 import { SCOPE_COOKIE_NAME } from "@/lib/scope";
 import {
@@ -70,6 +72,11 @@ import {
   recomputeLastContact,
   today,
 } from "@/lib/recompute";
+import {
+  customerTimeline,
+  type TimelineCursor,
+  type TimelineKind,
+} from "@/lib/queries";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
 import { initialsOf } from "@/lib/format";
 
@@ -96,6 +103,20 @@ const SHARED = [
  * and there is nothing to revalidate there — so a missing store is expected,
  * not an error worth failing a write over.
  */
+/**
+ * The console's own paths. Kept out of `SHARED` deliberately — a telecaller
+ * logging a call should not invalidate the admin console — and guarded the
+ * same way, because an action called from a test has no request context and
+ * nothing cached to invalidate.
+ */
+function refreshAdmin() {
+  try {
+    revalidatePath("/admin");
+  } catch {
+    /* no request context — see refreshAll */
+  }
+}
+
 function refreshAll() {
   try {
     for (const path of SHARED) revalidatePath(path);
@@ -691,6 +712,71 @@ export async function updateCustomer(
   }
 }
 
+/*
+ * `setThirdParty` was here, and it is now two actions in
+ * `lib/actions/third-party.ts`.
+ *
+ * A boolean could say an account is a shop somebody else bills and could not
+ * say WHO — so the mark took a record off the calling list and left nobody to
+ * ask about it. Converting names at least one distributor in the same
+ * transaction, which a two-argument setter cannot express; and the two
+ * directions turned out not to be symmetrical, since only a lead may be
+ * converted while anything may stop being one.
+ */
+
+/**
+ * The next page of a customer's timeline, or the first page of one kind of it.
+ *
+ * A READ behind a server action, which is unusual here and is the point: the
+ * record page renders on the server and the timeline is now a page rather than
+ * the whole history, so paging it from the client needs a door. It is this
+ * rather than a route handler because there is nothing to cache, nothing to
+ * stream and no query string worth having — and `assertCustomerInScope` is the
+ * same check the page itself made before rendering a single row.
+ */
+export async function loadCustomerTimeline(
+  customerId: string,
+  opts: { kind?: TimelineKind; before?: TimelineCursor; limit?: number } = {},
+): Promise<Result<{ entries: SerialisedEntry[]; cursor: TimelineCursor | null; more: boolean }>> {
+  try {
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customerId));
+    if (!customer) return err("That customer no longer exists.", "not_found");
+    await assertCustomerInScope(customer);
+
+    const page = await customerTimeline(customerId, opts);
+    return ok({
+      // Dates cross this boundary as strings. A server action serialises a
+      // Date happily enough, and the screen already formats from a string
+      // everywhere else on this page — two shapes for one field is how a
+      // component ends up calling `toISOString` on a string.
+      entries: page.entries.map((e) => ({
+        id: e.id,
+        kind: e.kind,
+        at: e.at.toISOString(),
+        actor: e.actor,
+        content: e.content,
+        meta: e.meta ?? null,
+      })),
+      cursor: page.cursor,
+      more: page.more,
+    });
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+type SerialisedEntry = {
+  id: string;
+  kind: string;
+  at: string;
+  actor: string;
+  content: string;
+  meta: string | null;
+};
+
 export async function requestDeactivation(
   customerIds: string[],
   reason: string,
@@ -701,9 +787,45 @@ export async function requestDeactivation(
       return err("Select at least one customer.", "validation");
     const ctx = await resolveScope();
 
+    /*
+     * WHOSE CUSTOMERS THESE ARE, checked before anything is written.
+     *
+     * `resolveScope` was called here and its answer never used: the update
+     * matched on the ids alone, so any signed-in person could flag any
+     * customer in the company by id. It only ever set a flag a manager has to
+     * confirm, which is why it never showed up — but a server action is a URL,
+     * and the ids are supplied by whoever calls it.
+     *
+     * Asked as a SELECT rather than folded into the update's WHERE, because
+     * the honest answer to "one of these is not yours" is to write nothing at
+     * all. A bulk action that silently flags nineteen of twenty and reports
+     * success is worse than one that refuses: nobody re-reads a list they have
+     * been told went through.
+     */
+    const scopeClause = scopedToUsers(scopedUserIds(ctx.scope));
+    if (scopeClause) {
+      const reachable = await db
+        .select({ id: customers.id })
+        .from(customers)
+        .where(and(inArray(customers.id, customerIds), scopeClause));
+      if (reachable.length !== customerIds.length) {
+        return err(
+          "Some of those customers are not in your book.",
+          "not_permitted",
+        );
+      }
+    }
+
     await db
       .update(customers)
-      .set({ deactivationRequested: true, deactivationReason: reason.trim() })
+      .set({
+        deactivationRequested: true,
+        deactivationReason: reason.trim(),
+        // Stored on the row, not only in the notification. A queue that cannot
+        // say who asked is a queue a manager has to answer on trust.
+        deactivationRequestedById: ctx.user.id,
+        deactivationRequestedAt: new Date(),
+      })
       .where(inArray(customers.id, customerIds));
 
     const managers = await db
@@ -778,6 +900,8 @@ export async function decideDeactivation(
     await db.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
       action: approve
         ? "customer.deactivate"
         : "customer.deactivation_rejected",
@@ -839,7 +963,12 @@ export async function requestReactivation(
 
     await db
       .update(customers)
-      .set({ reactivationRequested: true, reactivationReason: reason.trim() })
+      .set({
+        reactivationRequested: true,
+        reactivationReason: reason.trim(),
+        reactivationRequestedById: ctx.user.id,
+        reactivationRequestedAt: new Date(),
+      })
       .where(
         inArray(
           customers.id,
@@ -858,7 +987,7 @@ export async function requestReactivation(
         title: "Reactivation requested",
         body: `${ctx.user.name} asked to bring back ${deactivated.length} customer${deactivated.length === 1 ? "" : "s"}: ${reason.trim()}`,
         kind: "info",
-        href: "/crm/customers?status=Deactivated",
+        href: "/crm/status-requests",
       });
     }
 
@@ -934,6 +1063,8 @@ export async function decideReactivation(
     await db.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
       action: approve ? "customer.reactivate" : "customer.reactivation_rejected",
       entityType: "customer",
       entityId: customerId,
@@ -1513,7 +1644,7 @@ export async function updateConfigSettings(
     const r = await updateSettings(entries, ctx.user.id);
     if (!r.ok) return err(r.error, "validation", r.fields);
     refreshAll();
-    revalidatePath("/admin");
+    refreshAdmin();
     return ok(
       { warnings: r.warnings },
       entries.length === 1
@@ -1535,7 +1666,7 @@ export async function updateConfigSetting(
     if (!r.ok)
       return err(r.error, "validation", [{ field: key, message: r.error }]);
     refreshAll();
-    revalidatePath("/admin");
+    refreshAdmin();
     return ok({ warnings: r.warnings }, "Setting saved");
   } catch (e) {
     return fromThrown(e);
@@ -1552,6 +1683,67 @@ export async function updateConfigSetting(
  * or it did not run at all, and Sales Bills stayed empty through three
  * releases that each claimed to fix it. A merge has to be enough.
  */
+/**
+ * Rebuild today's Call Log, for one telecaller or for everybody.
+ *
+ * ADMIN ONLY, and not by `config.write` — that is a manager's, and a manager
+ * rebuilding a list is a manager reshuffling the day of the people whose
+ * numbers they are measured on, halfway through it. `apps.includes("admin")`
+ * is what the console already means by admin, so the button and the action
+ * answer to the same rule rather than two that can drift.
+ *
+ * It is a bulk action in the sense that matters: it never edits a row of work.
+ * It throws away a cached list and asks the engine the same question again, so
+ * the worst it can do is reorder somebody's afternoon — which is real, which
+ * is why it is audited with the names of whoever was rebuilt.
+ */
+export async function rebuildQueues(
+  userIds: string[] | null,
+): Promise<Result<{ users: number; cleared: number; written: number }>> {
+  try {
+    const ctx = await resolveScope();
+    const { listUserApps } = await import("@/lib/access");
+    const apps = await listUserApps(ctx.user.id);
+    if (!apps.includes("admin")) {
+      return err(
+        "Rebuilding a call list is an administrator's - it reorders somebody else's day.",
+        "not_permitted",
+      );
+    }
+
+    const { resettleQueues } = await import("@/lib/jobs");
+    const day = await today();
+    const result = await resettleQueues(day, userIds);
+
+    // Who did it, to whom, and on which day. A list that changed under
+    // somebody mid-afternoon is exactly the thing they will ask about later.
+    await db.insert(auditLog).values({
+      id: id("aud"),
+      actorId: ctx.user.id,
+      action: "queue.rebuild",
+      entityType: "queue",
+      entityId: day,
+      afterState: {
+        day,
+        users: userIds?.length ? userIds : "all",
+        cleared: result.cleared,
+        written: result.written,
+      },
+    });
+
+    refreshAll();
+    refreshAdmin();
+    return ok(
+      result,
+      result.users === 0
+        ? "Nobody to rebuild"
+        : `Rebuilt ${result.users} list${result.users === 1 ? "" : "s"} - ${result.cleared} rows replaced by ${result.written}`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 export async function triggerJob(
   job:
     | "nightly"
@@ -1560,7 +1752,8 @@ export async function triggerJob(
     | "sheet-reconcile"
     | "sheet-payments"
     | "project-sheet"
-    | "backfill-timeline",
+    | "backfill-timeline"
+    | "link-delivery-parties",
   options: { owner?: string; bills?: boolean } = {},
 ): Promise<Result<{ ran: string[] }>> {
   try {
@@ -1568,7 +1761,7 @@ export async function triggerJob(
     const { runJob } = await import("@/lib/jobs");
     const results = await runJob(job, ctx.user.id, options);
     refreshAll();
-    revalidatePath("/admin");
+    refreshAdmin();
     return ok(
       { ran: results.map((r) => `${r.job}: ${r.detail}`) },
       `${job} finished - ${results.reduce((a, r) => a + r.recordsAffected, 0)} records touched`,

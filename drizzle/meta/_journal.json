@@ -374,6 +374,55 @@
       "breakpoints": true
     },
     {
+      "idx": 53,
+      "version": "7",
+      "when": 1786954223330,
+      "tag": "0053_who_asked_to_deactivate",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1787000075689,
+      "tag": "0054_who_reports_to_whom",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1787000076689,
+      "tag": "0055_tier_weights_whole",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1787000077689,
+      "tag": "0056_drop_order_due_soon",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1787000078689,
+      "tag": "0057_third_party_provision",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1787000079689,
+      "tag": "0058_third_party_distributors",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1787500000000,
+      "tag": "0059_a_role_per_app",
+      "breakpoints": true
+    },
+    {
       "idx": 60,
       "version": "7",
       "when": 1787500060000,

@@ -323,6 +323,7 @@ async function queueInputs(
       reminders: remindersByCustomer.get(c.id) ?? [],
       lastConfirmedWhatsappDate: c.lastConfirmedWhatsappDate,
       activeInOrderSystem: c.activeInOrderSystem,
+      thirdParty: c.thirdParty,
       calledToday: Boolean(calledToday),
       doNotContact: c.doNotContact,
       skippedTodayReason: skipReason.get(c.id) ?? null,

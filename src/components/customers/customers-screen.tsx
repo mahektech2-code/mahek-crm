@@ -42,8 +42,21 @@ import {
   requestReactivation,
   updateCustomer,
 } from "@/lib/actions/crm";
+import { convertToThirdParty, revertThirdParty } from "@/lib/actions/third-party";
+import { ThirdPartyDialog } from "@/components/crm/third-party-dialog";
 import { money, phoneDisplay, shortDate, stamp, today } from "@/lib/format";
+import {
+  NextCallCell,
+  type StoredNextStep,
+} from "@/components/crm/next-call-cell";
+import { NEXT_STEP_LABELS } from "@/lib/next-step-labels";
 import { toCsv, downloadCsv } from "@/lib/csv";
+import {
+  ACCOUNT_TYPE_FILTERS,
+  ACCOUNT_TYPE_PARAM,
+  ALL_ACCOUNT_TYPES,
+  accountTypeLabel,
+} from "@/lib/account-types";
 
 type Row = {
   id: string;
@@ -81,8 +94,16 @@ type Row = {
   cycleDays: number;
   route: string | null;
   deactivationRequested: boolean;
+  /** A shop we deliver to, served through a distributor. Never prospected. */
+  thirdParty: boolean;
+  /** Orders whose goods came here on somebody else's bill — the evidence. */
+  deliveredOrders: number;
+  /** Third-party customers billed through this account. */
+  servedShops: number;
   reactivationRequested: boolean;
   reactivationReason: string | null;
+  /** The next call, as of the last call logged. Null where nobody has called. */
+  nextStep: StoredNextStep | null;
 };
 
 /**
@@ -91,6 +112,25 @@ type Row = {
  * count, the totals and the filters all still describe the whole book.
  */
 const PER_PAGE = [25, 50, 100] as const;
+
+/*
+ * The account type, its filter and its label — all from `lib/account-types`,
+ * which is the one statement of them.
+ *
+ * The words were written out here AND in both list pages, which turn `?party=`
+ * back into the control's own phrase so a filtered list draws the filter it
+ * applied. Three copies of one vocabulary: renaming "Third parties" to
+ * "Third-party customers" in this file alone would have left both pages
+ * mapping the parameter to a phrase the control no longer offers, and the
+ * control would quietly read "All types" on a list that was filtered.
+ *
+ * Aliased rather than renamed at every use: the names below read as this
+ * screen's furniture, and the import is where the definition lives.
+ */
+const ALL_TYPES = ALL_ACCOUNT_TYPES;
+const TYPE_FILTERS = ACCOUNT_TYPE_FILTERS;
+const TYPE_PARAM = ACCOUNT_TYPE_PARAM;
+const accountType = accountTypeLabel;
 
 /*
  * "All sales people", not "All sales managers" as it read for months. The
@@ -115,6 +155,7 @@ export function CustomersScreen({
   app,
   scopeLabel,
   isManager,
+  canClassify,
   canReassign,
   canAssignSalesManager,
   amReasons,
@@ -127,6 +168,7 @@ export function CustomersScreen({
   filters,
   pageInfo,
   totals,
+  todayIso,
 }: {
   /**
    * Which app is rendering this.
@@ -146,6 +188,8 @@ export function CustomersScreen({
   app: "crm" | "accounts";
   scopeLabel: string;
   isManager: boolean;
+  /** `customer.classify` — marking an account as one we only deliver to. */
+  canClassify: boolean;
   /**
    * Reassigning is accounts' and admin's, not a manager's — whose book an
    * account is in decides whose targets it counts toward. Passed in rather
@@ -183,10 +227,27 @@ export function CustomersScreen({
     salesAm: string;
     salesManager: string;
     backOfficeAm: string;
+    /** The type filter's own word, or empty for all of them. */
+    accountType: string;
     perPage: number;
   };
   pageInfo: { page: number; pageCount: number; total: number; bookTotal: number };
-  totals: { outstanding: number; slowPayers: number; withComplaints: number };
+  /**
+   * The working day, from the server. Named apart from `today()` in
+   * lib/format, which reads the clock — a client component may not do that
+   * during render, and the value has to be the SERVER's day anyway: a
+   * telecaller's laptop set to the wrong date must not change which next-call
+   * dates read as past.
+   */
+  todayIso: string;
+  totals: {
+    outstanding: number;
+    slowPayers: number;
+    withComplaints: number;
+    directCustomers: number;
+    leads: number;
+    thirdParties: number;
+  };
 }) {
   const router = useRouter();
 
@@ -216,6 +277,7 @@ export function CustomersScreen({
   const salesAm = filters.salesAm || ALL_SALES;
   const salesManager = filters.salesManager || ALL_SALES_MANAGERS;
   const backOfficeAm = filters.backOfficeAm || ALL_BACK_OFFICE;
+  const accountTypeFilter = filters.accountType || ALL_TYPES;
   const perPage = filters.perPage;
   const { page, pageCount, total, bookTotal } = pageInfo;
   const query = filters.query;
@@ -256,6 +318,8 @@ export function CustomersScreen({
   );
   const [deactivating, setDeactivating] = React.useState(false);
   const [reactivating, setReactivating] = React.useState(false);
+  /** The rows the convert dialog is open over — one from a menu, many from the bar. */
+  const [converting, setConverting] = React.useState<Row[] | null>(null);
 
   // Already filtered, counted and sliced by Postgres. `rows` is this page.
   const visible = rows;
@@ -270,6 +334,19 @@ export function CustomersScreen({
     visible
       .filter((r) => selected.has(r.id))
       .every((r) => r.status === "Deactivated");
+  const selectedRows = visible.filter((r) => selected.has(r.id));
+  /*
+   * The same all-or-nothing rule the deactivation button follows, and here it
+   * carries the classification rule with it: only a lead becomes a third-party
+   * customer, so a selection holding one direct customer offers nothing. Acting
+   * on the subset that happens to qualify is how a bulk action surprises
+   * somebody, and this one takes accounts off the calling list.
+   */
+  const selectedAllConvertible =
+    selectedRows.length > 0 &&
+    selectedRows.every((r) => r.kind === "lead" && !r.thirdParty);
+  const selectedAllThirdParty =
+    selectedRows.length > 0 && selectedRows.every((r) => r.thirdParty);
   const from = (page - 1) * perPage;
 
   const chips = [
@@ -291,17 +368,30 @@ export function CustomersScreen({
           clear: () => navigate({ backoffice: undefined }),
         }
       : null,
+    accountTypeFilter !== ALL_TYPES
+      ? {
+          label: `Type: ${accountTypeFilter}`,
+          clear: () => navigate({ party: undefined }),
+        }
+      : null,
     query ? { label: `Search: ${query}`, clear: () => { setDraft(""); navigate({ q: undefined }); } } : null,
   ].filter(Boolean) as Array<{ label: string; clear: () => void }>;
 
   function clearAll() {
     setDraft("");
+    // Every filter, and `party` is a filter. Left out of this list it survived
+    // the button that exists to remove it: the list stayed empty, the control
+    // still said "Third-party customers", and Clear filters read as broken than
+    // as incomplete. A filter added anywhere has to be added in four places —
+    // the control, the chip, this, and the export's list of what it was taken
+    // under — and three of them are invisible until somebody presses one.
     navigate({
       q: undefined,
       status: undefined,
       sales: undefined,
       salesmanager: undefined,
       backoffice: undefined,
+      party: undefined,
     });
   }
 
@@ -328,6 +418,8 @@ export function CustomersScreen({
           "Phone",
           "City",
           "Type",
+          "Deliveries received on another's bill",
+          "Third-party customers billed for",
           "Owner",
           "Sales AM",
           "Sales manager",
@@ -336,13 +428,17 @@ export function CustomersScreen({
           "Status",
           "Last order",
           "Outstanding (₹)",
+          "Next call",
+          "Next call said on",
         ],
         subset.map((r) => [
           r.name,
           r.contactPerson,
           r.phone,
           r.city,
-          r.kind === "lead" ? "Lead" : "Customer",
+          accountType(r),
+          r.deliveredOrders,
+          r.servedShops,
           r.ownerName ?? "",
           r.salesAmName ?? "",
           r.salesManagerName ?? "",
@@ -351,6 +447,12 @@ export function CustomersScreen({
           r.status,
           r.lastOrderDate ?? "",
           Math.round(r.outstanding / 100),
+          // The word where there is no date, so a CSV row can never imply a
+          // call is coming when the answer was "nobody can reach them".
+          r.nextStep
+            ? (r.nextStep.date ?? NEXT_STEP_LABELS[r.nextStep.kind].short)
+            : "",
+          r.nextStep?.toldOn ?? "",
         ]),
       ),
       [
@@ -362,6 +464,7 @@ export function CustomersScreen({
           ? null
           : `Sales manager: ${salesManager}`,
         backOfficeAm === ALL_BACK_OFFICE ? null : `Back office: ${backOfficeAm}`,
+        accountTypeFilter === ALL_TYPES ? null : accountTypeFilter,
         query || null,
       ],
     );
@@ -438,6 +541,27 @@ export function CustomersScreen({
             value: String(total),
             sub: `of ${bookTotal.toLocaleString("en-IN")} in the book`,
           },
+          /*
+           * The split, which is the answer to "what is in this book" and was
+           * previously unknowable without running SQL. It is also the progress
+           * bar for the marking work: third parties climbs as the team works
+           * through them, and leads falls by the same amount.
+           */
+          {
+            label: "Direct customers",
+            value: String(totals.directCustomers),
+            sub: "bill with us",
+          },
+          {
+            label: "Leads",
+            value: String(totals.leads),
+            sub: "not ordered yet",
+          },
+          {
+            label: "Third-party customers",
+            value: String(totals.thirdParties),
+            sub: "we deliver, a distributor bills",
+          },
           {
             label: "Outstanding",
             value: money(totalOutstanding),
@@ -499,6 +623,16 @@ export function CustomersScreen({
         >
           {STATUSES.map((s) => (
             <option key={s}>{s}</option>
+          ))}
+        </Select>
+        <Select
+          value={accountTypeFilter}
+          onChange={(e) => navigate({ party: TYPE_PARAM[e.target.value] })}
+          className="h-8"
+          title="A direct customer bills with us. A third-party customer is a shop we deliver to and a distributor bills."
+        >
+          {TYPE_FILTERS.map((t) => (
+            <option key={t}>{t}</option>
           ))}
         </Select>
         {/*
@@ -620,6 +754,11 @@ export function CustomersScreen({
                 <Th>Last order</Th>
                 <Th>Last contact</Th>
                 <Th align="right">Outstanding</Th>
+                {/* WHEN THEY COME BACK, from the last call anybody logged.
+                    Empty on a customer nobody has called, which is the honest
+                    answer: nothing has been promised because nobody has
+                    spoken to them. */}
+                <Th>Next call</Th>
                 <Th>City</Th>
                 <Th align="right" className={pinnedHead("right")}>
                   Actions
@@ -667,9 +806,40 @@ export function CustomersScreen({
                   <Td>{r.contactPerson}</Td>
                   <Td>{phoneDisplay(r.phone)}</Td>
                   <Td>
-                    <Badge tone={r.kind === "lead" ? "brand" : "neutral"}>
-                      {r.kind === "lead" ? "Lead" : "Customer"}
+                    <Badge
+                      tone={
+                        r.thirdParty ? "muted" : r.kind === "lead" ? "brand" : "neutral"
+                      }
+                      title={
+                        r.thirdParty
+                          ? `We deliver here; a distributor bills. Underneath, this record is still a ${r.kind}.`
+                          : undefined
+                      }
+                    >
+                      {accountType(r)}
                     </Badge>
+                    {/* The evidence, beside the answer it justifies rather than
+                        in another column: a name is a guess, "14 deliveries" is
+                        a fact. Shown whether or not anybody has marked it. */}
+                    {r.deliveredOrders > 0 ? (
+                      <span
+                        className="ml-1.5 text-xs text-muted"
+                        title={`Goods came here on somebody else's bill ${r.deliveredOrders} time${r.deliveredOrders === 1 ? "" : "s"}`}
+                      >
+                        {r.deliveredOrders}&nbsp;deliv.
+                      </span>
+                    ) : null}
+                    {/* The other end of the same relationship. On a
+                        distributor's row this is what explains why goods leave
+                        on their bill and arrive somewhere else. */}
+                    {r.servedShops > 0 ? (
+                      <span
+                        className="ml-1.5 text-xs text-muted"
+                        title={`Bills for ${r.servedShops} third-party customer${r.servedShops === 1 ? "" : "s"}`}
+                      >
+                        serves&nbsp;{r.servedShops}
+                      </span>
+                    ) : null}
                   </Td>
                   {/*
                     Two lines, because a customer answers to two people and a
@@ -779,6 +949,9 @@ export function CustomersScreen({
                   >
                     {money(r.outstanding)}
                   </Td>
+                  <Td>
+                    <NextCallCell step={r.nextStep} today={todayIso} />
+                  </Td>
                   <Td>{r.city}</Td>
                   {/*
                     Pinned, because the table is wide enough to scroll and the
@@ -799,6 +972,35 @@ export function CustomersScreen({
                             label: "Edit details",
                             onSelect: () => setEditing(r),
                           },
+                          /*
+                            CONVERTING IS OFFERED ON A LEAD AND NOWHERE ELSE.
+
+                            A direct customer is an account we invoice, and
+                            saying it does not bill with us is a contradiction
+                            — so the option is absent rather than drawn and
+                            refused. Lifting the mark is offered on anything
+                            carrying it, because a shop that starts buying from
+                            us directly is a good day and undoing must never be
+                            harder than doing.
+                          */
+                          ...(canClassify && r.thirdParty
+                            ? [
+                                {
+                                  label: "No longer a third-party customer",
+                                  onSelect: async () => {
+                                    await run(revertThirdParty([r.id]));
+                                    router.refresh();
+                                  },
+                                },
+                              ]
+                            : canClassify && r.kind === "lead"
+                              ? [
+                                  {
+                                    label: "Convert to third-party customer",
+                                    onSelect: () => setConverting([r]),
+                                  },
+                                ]
+                              : []),
                           /*
                             WhatsApp and the CRM bill list are CRM screens, and
                             an accounts user is redirected out of them. An
@@ -916,15 +1118,39 @@ export function CustomersScreen({
             </tbody>
           </table>
         ) : (
-          <EmptyState
-            title="No customers match these filters"
-            body="Widen the search or clear the filters to see the full book."
-            action={
-              <Button variant="primary" onClick={clearAll}>
-                Clear filters
-              </Button>
-            }
-          />
+          /*
+           * "No customers match these filters" is true of an empty third-party
+           * list and tells somebody nothing: it reads as a filter that found
+           * nothing when the answer is that the work has not been started.
+           * Nothing is converted until a manager converts it, so the screen
+           * says that, and points at the list it is done from.
+           */
+          accountTypeFilter === "Third-party customers" && !query ? (
+            <EmptyState
+              title="No third-party customers yet"
+              body={
+                "A third-party customer is a shop we deliver to and a distributor bills. Nothing is converted automatically - somebody decides who bills the shop, and only a lead can be converted. The 'Delivered to on another\u2019s bill' filter lists the accounts the order sheet shows taking goods somebody else was invoiced for, which is where that decision is usually made."
+              }
+              action={
+                <Button
+                  variant="primary"
+                  onClick={() => navigate({ party: "delivered" })}
+                >
+                  Show accounts delivered to on another&apos;s bill
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState
+              title="No customers match these filters"
+              body="Widen the search or clear the filters to see the full book."
+              action={
+                <Button variant="primary" onClick={clearAll}>
+                  Clear filters
+                </Button>
+              }
+            />
+          )
         )}
       </Card>
 
@@ -1053,6 +1279,35 @@ export function CustomersScreen({
         >
           Set sales manager
         </Button>
+        {/*
+          Converting a batch asks for the distributors ONCE and records them
+          against every shop in it — which is the ordinary case, because a row
+          of shops on one route is served by one distributor and that is why
+          they were filtered onto this screen together. Where it is not true,
+          each shop's own record is where its arrangement is corrected.
+        */}
+        {canClassify && selectedAllConvertible ? (
+          <Button
+            variant="dark"
+            size="sm"
+            onClick={() => setConverting(selectedRows)}
+          >
+            Convert to third party
+          </Button>
+        ) : null}
+        {canClassify && selectedAllThirdParty ? (
+          <Button
+            variant="dark"
+            size="sm"
+            onClick={async () => {
+              await run(revertThirdParty([...selected]));
+              setSelected(new Set());
+              router.refresh();
+            }}
+          >
+            No longer third party
+          </Button>
+        ) : null}
         {/* Which way round depends on what is selected. Offering both at once
             would put "deactivate" next to "bring back" over one tick list. */}
         {selectedAllDeactivated ? (
@@ -1065,6 +1320,34 @@ export function CustomersScreen({
           </Button>
         )}
       </SelectionBar>
+
+      <ThirdPartyDialog
+        // Keyed on the selection, so opening it on a different row starts
+        // empty rather than holding what was chosen last time.
+        key={converting?.map((r) => r.id).join(",") ?? "none"}
+        open={Boolean(converting)}
+        names={converting?.map((r) => r.name) ?? []}
+        excludeCustomerId={converting?.length === 1 ? converting[0].id : undefined}
+        onClose={() => setConverting(null)}
+        onConfirm={async (distributors) => {
+          if (!converting) return false;
+          const result = await run(
+            convertToThirdParty({
+              customerIds: converting.map((r) => r.id),
+              distributors: distributors.map((d) => ({
+                distributorId: d.id,
+                isPrimary: d.isPrimary,
+                note: d.note.trim() || undefined,
+              })),
+            }),
+          );
+          if (result.ok) {
+            setSelected(new Set());
+            router.refresh();
+          }
+          return result.ok;
+        }}
+      />
 
       <CustomerForm
         open={addOpen}

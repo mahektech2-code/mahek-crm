@@ -12,6 +12,7 @@ import {
   calls,
   complaintStatusHistory,
   complaints,
+  customerDistributors,
   customers,
   interactionProductLines,
   migrationExceptions,
@@ -81,7 +82,7 @@ import {
 import { hashPassword } from "../lib/password";
 import { initialsOf } from "../lib/format";
 import { SETTINGS } from "../lib/config/registry";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { seedCatalogue } from "./seed-catalogue";
 
 /* ---------------------------------------------------------------------------
@@ -527,6 +528,7 @@ async function main() {
     attachments,
     bills,
     monthlyTargets,
+    customerDistributors,
     customers,
     appAccess,
     passwordResets,
@@ -684,6 +686,36 @@ async function main() {
       return rest;
     }),
   );
+
+  /*
+   * A shop we deliver to, and the distributor who bills it.
+   *
+   * Two of the leads, converted — so the third-party badge, the Distributors
+   * panel and the direct customer's "delivers to" line are all reachable in
+   * the demo book without anybody hand-editing a row. They are LEADS
+   * underneath, which is what the real book looks like: the shops arrived as
+   * leads because the sheet named them as delivery parties.
+   */
+  console.log("Marking two third-party customers…");
+  const shops = customerRows.filter((c) => c.kind === "lead").slice(0, 2);
+  const distributor = customerRows.find((c) => c.kind === "customer")!;
+  if (shops.length) {
+    await db
+      .update(customers)
+      .set({ thirdParty: true })
+      .where(inArray(customers.id, shops.map((c) => c.id!)));
+    await db.insert(customerDistributors).values(
+      shops.map((shop) => ({
+        id: id("cd"),
+        customerId: shop.id!,
+        distributorCustomerId: distributor.id!,
+        isPrimary: true,
+        note: `Delivered on the ${distributor.route ?? "city"} round`,
+        createdById: managerId,
+        updatedById: managerId,
+      })),
+    );
+  }
 
   console.log("Creating six months of orders…");
   const orderRows: Array<typeof orders.$inferInsert> = [];

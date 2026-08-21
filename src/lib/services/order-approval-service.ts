@@ -171,6 +171,8 @@ export async function approveOrder(orderId: string): Promise<Result> {
     await tx.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
       action: "order.approve",
       entityType: "order",
       entityId: orderId,
@@ -226,6 +228,8 @@ export async function declineOrder(
     await tx.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
       action: "order.decline",
       entityType: "order",
       entityId: orderId,

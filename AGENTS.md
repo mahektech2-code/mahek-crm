@@ -54,6 +54,9 @@ npm run catalogue:parse    # regenerate the product master from the document
 npm run catalogue:import -- --dry-run   # what the import would change
 npm run catalogue:import   # apply it — idempotent, re-runnable
 npm run check:links  # crawl the running app for broken links
+                     # scripts/perf-audit.sql — what the hot screens cost, on
+                     # the real book. Read-only, no meta-commands, runs in the
+                     # droplet's Postgres container. See its own header.
 npx eslint src       # lint, including the React Compiler rules
 ```
 
@@ -115,6 +118,51 @@ holding the whole app and nobody who was deliberately narrowed.
 **Revoking an app takes its module rows with it.** Left behind, they would
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
+
+**A PERSON WEARS SEVERAL HATS, and the grant is where each one is worn.**
+`app_access.role` is the role an app is held under: Vikram is a manager in the
+CRM and a clerk in Accounts, which are different powers over different data
+rather than one power applied twice. Before it, `users.role` held one value and
+decided three separate things — what somebody may do, how much they may see,
+and which controls are drawn — so whoever set up the account of a person with
+four jobs picked the most powerful and everything else came with it silently.
+A grant with NO role means the account's own, which is what every grant meant
+before the column existed and what `npm run app:grant` still writes: a terminal
+that knows nothing about roles has to go on granting an app that works.
+
+**What you may DO is the union; what you may SEE is still one answer.**
+Hold a capability under any hat and you hold it — `canAny`, and
+`requireCapability` checks the union. Scope is not there yet: `users.role` is
+what mine/team/all is read from, and it is now DERIVED — the widest role
+somebody holds anywhere, rebuilt by `setAccess` — so a manager in the CRM gets
+their team on the day the hat is granted, without teaching thirty-one screens
+about a list. The imprecision is named rather than hidden: an admin in the
+console is an admin for reading everywhere, including the calling book. Scope
+resolved per app is the next piece of work, and that paragraph in
+`app_access.role` is what should be deleted when it lands.
+
+**The audit records WHICH HAT allowed it.** With one role per person, "was he
+allowed to do this" was answerable from the person; with four it is not. The
+log said Vikram approved an order and nobody could tell whether he did it as
+the accounts clerk — ordinary — or because a manager hat carried it, which it
+does not and must not. `requireCapability` returns the granting role and every
+audited action writes it into `audit_log.actor_role`. It asks for the NARROWEST
+hat that carries the capability, not the most powerful: admin holds everything,
+so asking admin first would stamp "admin" on every action anybody senior took
+and the column would stop distinguishing the clerk doing their job from the
+administrator reaching past a rule. Null means not recorded, never "no role".
+
+**Two hats that should not meet are named, never refused.** The matrix keeps
+`order.approve` away from managers on purpose — the person chasing a target
+must not sign off the orders that hit it — and a union of roles can put both on
+one person. At nine people that is sometimes the only way the work gets done,
+and a system that refuses it is defeated in a minute by granting admin instead,
+which grants far more and records no reason. So the combination is allowed, the
+review page says in words what it lets them do, and every action taken under it
+carries the hat that authorised it. The rules are in `lib/role-conflicts.ts`,
+pure and client-safe because the review page is a client component and a second
+copy typed into the screen would drift — and the half that drifts is always the
+half somebody reads.
 
 **Access is granted to a person, and the people are in HRMS.** The console's
 People section is one screen, Access, and its dialog reads the employee master
@@ -238,10 +286,20 @@ src/
     crm/sales-manager-dialog.tsx
                            the third seat — who the salesperson answers to,
                            set on a tick-list or on a whole filtered book
+    crm/distributor-picker.tsx
+                           the searchable list of accounts we bill — the only
+                           thing that may be named as a distributor
+    crm/third-party-dialog.tsx
+                           converting a lead, which is the mark AND who bills it
+    crm/distributor-panel.tsx
+                           the arrangement on the record: add, edit, remove
   db/                      schema, client, seed
     catalogue-seed.ts      the product master, GENERATED from the document
   lib/
     apps.ts                the MahekOne app registry
+    account-types.ts       direct customer / lead / third-party customer, their
+                           filter and their labels — PURE, read by both lists
+                           and both list pages
     config/                registry.ts (every setting + validation) and
                            store.ts (cached reads, audited writes)
     engines/               the derived-state engines — PURE, no I/O:
@@ -258,6 +316,10 @@ src/
     services/access-service.ts
                            who opens what, and who there is to grant to
     actions/access.ts      setAccess — one person's whole access, in one write
+    services/distributor-service.ts
+                           who bills a shop, which shops an account bills for,
+                           and who may be named as a distributor at all
+    actions/third-party.ts converting a lead, and the arrangement's own CRUD
     recompute.ts           the rebuild path for every cached derived value
     business-date.ts       Asia/Kolkata, configurable day boundary
     catalogue.ts           name normalisation + cans/litres/boxes — PURE
@@ -400,6 +462,126 @@ waiting for the second would chase somebody who has already heard from us.
 `dest_kind` is shared with `wa_messages`, so read that column as
 personal-or-group only; nothing writes `both` to it.
 
+**A customer record is a FIXED-LENGTH page, however old the account is.** Every
+panel on it is the same height and scrolls inside itself, and the reads behind
+them are capped — the timeline at ten entries a page (`TIMELINE_PAGE`, one
+constant so the first read, the Load older button and the sentence counting
+them cannot disagree), the messages at fifty, the rest at two hundred. COLOUR CAMP is why: 3,504 timeline entries were serialised
+into the page and rendered into the DOM, so the orders, the bills, the payments
+and the arrangement sat a hundred screens below the fold. The accounts with the
+most history are the ones somebody most needs to read before ringing, and they
+were the ones whose record you could reach the least of.
+
+**A capped list says what it is a slice of, and the count comes from SQL.** The
+timeline's filter pills used to count what had been loaded, which is exactly
+why the page loaded everything: a capped read would have printed "Bill 34"
+against an account with 1,060 and nothing on the screen would have said so.
+`customerTimelineCounts` is seven `count(*)`s on indexed columns; the pills read
+those, "Load older" pages with a KEYSET rather than an offset, and picking a
+kind asks the server for that kind's newest page rather than filtering the fifty
+rows the browser happens to hold. Filtering in the browser would answer "the
+bills among the newest fifty entries" and call it the bill history.
+
+**And a stored DATE is not an instant until something names the midnight.**
+The third spelling of the zone rule, and the one that only shows up under load:
+`bills.bill_date` and `payment_receipts.received_at` are dates, and a bare
+`::timestamptz` on either is evaluated in the SESSION's zone. The session's zone
+is not a property of the row — one pooled connection left in Asia/Kolkata by an
+earlier query returned a bill as 18:30Z while the rest returned it as 00:00Z, in
+one process. A timeline cursor taken from one page then excluded nothing on the
+next, and five rows came back twice. It is
+`::timestamp at time zone ${APP_TIMEZONE}` now, and a third grep test guards the
+direction: the two beside it watch timestamps becoming dates, this one watches
+dates becoming timestamps. Local Postgres runs in Asia/Kolkata and agreed with
+itself, so it passed here and failed in CI — which is the same trap the rule was
+written for, arriving from the other end.
+
+**A paged read needs a tiebreaker in its sort.** A thousand bills share a
+handful of midnight timestamps, so `order by at desc` alone leaves their order
+to the planner — invisible until it is paged, and then it is a row appearing on
+two pages while another appears on none. The sort is `at desc, id desc` and the
+cursor is `(at, id) < (…)`. There is a test that pages a book of 55 bills seven
+to a day and asserts it sees all 55 exactly once; the seven is chosen not to
+divide the page size, because at twenty a day with pages of twenty every page
+ended on a date boundary and the broken cursor passed.
+
+**A THIRD-PARTY CUSTOMER is a shop we deliver to and do not bill.** A
+distributor buys from us, is invoiced, and sells the goods on; the shop is
+where the drums actually go. Most of what this CRM called a lead is one of
+these, and a lead with no orders is a prospect — so the largest single category
+of work on the calling list was ringing shops for a first order they are in no
+position to give. `customers.third_party` is the mark, and it is deliberately
+NOT a third value of `kind`: `kind` is exclusive and this is not, since we may
+bill one of these directly and an account we invoiced last month is plainly
+still a shop we deliver to. What the mark means is narrow — a marked account is
+never PROSPECTED, and that is all. Its own orders, its debts and a promise
+somebody made all still reach the Call Log, so a shop that starts buying
+directly comes back without anybody remembering to lift the mark.
+
+**And it names WHO BILLS IT, in the same transaction.** A mark that could not
+say who the distributor is took a record off the calling list and left nobody
+to ask about it. `customer_distributors` is that answer, one row per shop per
+distributor, and `convertToThirdParty` writes the mark and at least one link
+together — a converted shop with nobody billing it is not a state that exists.
+It is a LIST rather than a column, because a shop on a territory boundary is
+served by two distributors and storing one of them would make the other
+unrecordable, which is wrong for exactly the accounts that most need it
+recorded. `is_primary` is who serves it usually, at most one, kept true by a
+partial unique index rather than by a rule in a service the next writer will
+not know about.
+
+**Only a LEAD is converted, and anything may stop being one.** A direct
+customer is an account we invoice, so saying it does not bill with us is a
+contradiction — the option is absent from its row menu and its record, and
+`convertToThirdParty` refuses it rather than trusting the menu. The other
+direction is offered on anything carrying the mark: a shop that starts buying
+from us is a good day, and undoing must never be harder than doing. Reverting
+KEEPS the links — who used to bill this shop is a fact about it, and deleting
+them would destroy the only record of how it was served.
+
+**A distributor is an unmarked DIRECT CUSTOMER.** Somebody has to be holding
+the invoice at the end of the chain, and a shop we deliver to is not holding
+one; a lead has never ordered and cannot bill anybody. The picker offers only
+`kind = 'customer' and not third_party`, and the action checks the same thing,
+because a picker is not a permission. The last distributor cannot be removed
+from a marked account — the refusal names the way out, which is another
+distributor or no longer being a third-party customer.
+
+**The arrangement and the evidence are ONE list, and every row says which it
+is.** They were two panels — what somebody recorded, and under a title of its
+own every shop `orders.delivery_customer_id` shows goods going to. On a real
+distributor that drew four rows beside eighty-six, two counts, one question,
+and nothing on the screen saying how they differed; the honest reading was that
+the page showed the same list twice. A shop the sheet has seen and nobody has
+recorded is not a second subject, it is the unfinished part of the first one —
+so it sits in the same list marked "from the order sheet", with the button that
+records it, and the list moves into its recorded half as the work is done. That
+is what makes it a worklist rather than a report. `recorded` is never inferred
+from the order count: a recorded arrangement with no deliveries behind it and
+two hundred deliveries nobody has recorded are both real, and both worth
+seeing.
+
+**One tap records it, and what that tap DOES depends on what the shop is.** A
+lead is converted with this account as its distributor; an account already
+marked gains another distributor; an account we invoice ourselves has the
+arrangement recorded and is NOT converted, because we bill it and calling it a
+shop somebody else bills would be false. The decision is in
+`recordDeliveryAddress` rather than on the screen, since it is the same rule
+the convert dialog obeys.
+
+**A one-line summary names only what somebody recorded.** "Billed by X" on the
+Account card reads as a fact somebody stands behind, so a distributor the sheet
+merely shows must not appear in it — the panel underneath is where a row can
+say what it is.
+
+**One question, three answers, and `lib/account-types.ts` is where they live.**
+Direct customer, Lead, Third-party customer — the mark wins over the kind on a
+list, because "Lead · Third party" is two facts fighting over one glance on
+four hundred rows. The type filter carries two options that are not types: the
+evidence list, and third parties with nobody billing them, which should be
+empty and is not on a book converted before distributors were recorded. A row
+nobody can account for is worse than one that says why it is there.
+
 **The Call Log chases orders, not contact.** A customer with a measured buying
 cycle gets a stock-check call at a percentage of their own cycle — 70% of 30
 days is day 21 — and is chased from their due date onwards. Underneath it sits
@@ -487,6 +669,31 @@ answered a question nobody asked — a telecaller does not hold a mental model
 of "the list", they open the Call Log. A confirmation read sixty times a day
 works by being recognised rather than read, so the part that VARIES is the
 reason underneath, which is the only half worth reading twice.
+
+**And it is READ where the work is chosen, not only where the call was made.**
+The dialog says it once, at the moment of saving, and then it was gone: to find
+out when a customer comes back you opened their record, one at a time. The two
+screens somebody actually decides from now carry it — the Call history, where
+each row shows what THAT call said would happen next, and the customers list,
+which shows the last thing anybody was told, between Outstanding and City.
+
+**It is the stored answer, and it says when it was said.** These columns are
+what the screen told the person who logged the call, on the day they logged it,
+and a customer who has ordered since has a different next call now — so a date
+already past is drawn muted rather than sitting in a column of future dates
+looking like a commitment, and the day it was said is on the hover. Deriving it
+live for twenty-five rows would mean running the queue engine twenty-five
+times per page, and the answer would no longer be a record of anything.
+
+**An empty cell means nobody has called them.** Which is most of a fresh book,
+and it is the honest answer: nothing has been promised because nobody has
+spoken to them. `decide` and `none` are the opposite case and carry no date by
+design, so they print their word — a blank cell where the answer is "nobody can
+reach them" reads as missing data.
+
+**The three screens share one vocabulary**, in `lib/next-step-labels.ts`, with
+a long word for the dialog and a short one for a table cell: "You owe them this
+call" in a 90px column is a sentence nobody finishes.
 
 **And it is shown by every path that logs a call, not just the calling
 queue.** The collections follow-up panel on `/crm/payments` saved and advanced

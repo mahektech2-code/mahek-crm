@@ -22,7 +22,7 @@ export function AppShell({
   isManager: boolean;
   scope: "mine" | "team";
   notifications: Notification[];
-  badges: { reminders: number; complaints: number };
+  badges: { reminders: number; complaints: number; statusRequests: number };
   apps: AppDefinition[];
   /** The sidebar, already narrowed to what this person may open. */
   nav: NavGroup[];

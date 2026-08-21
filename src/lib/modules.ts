@@ -113,6 +113,25 @@ export const APP_MODULES: AppModule[] = [
   crm("bills", "Sales Bills", "Collections"),
   crm("customers", "Customers", "Customer records", "The customer list and every customer record behind it."),
   crm("complaints", "Complaints", "Customer records"),
+  // WRITTEN OUT LONGHAND, because the key and the route have to disagree.
+  //
+  // The `crm()` helper derives both from one slug, which is right for every
+  // other screen and wrong for this one: the KEY is `crm.deactivations` and must
+  // stay that way for ever — it is what `app_module_access` rows point at, so
+  // renaming it would silently revoke this screen from everybody holding it —
+  // while the ROUTE moved to `/crm/status-requests`, because "deactivations"
+  // named half of what the screen does.
+  //
+  // A label is cosmetic. A route is a bookmark, and `next.config.ts` redirects
+  // the old one. A key is a join, and it does not move.
+  {
+    key: "crm.deactivations",
+    app: "crm",
+    label: "Close/Reopen",
+    group: "Customer records",
+    href: "/crm/status-requests",
+    note: "Approving or refusing a request to close a customer account, or to reopen one. Withholding it leaves those requests to another manager — the ask still reaches everybody who can decide.",
+  },
   crm("targets", "Monthly Targets", "Targets & reporting", "Whose numbers are whose. Usually a manager's screen."),
   crm("eod", "EOD Report", "Targets & reporting"),
   crm("whatsapp", "WhatsApp", "Communication"),
@@ -216,6 +235,14 @@ export const APP_MODULES: AppModule[] = [
   sales("audit", "Audit trail", "Administration", "Every decision made here, with a name against it."),
 
   /* -------------------------------------------------------------- the HRMS */
+  {
+    key: "hrms.org",
+    app: "hrms",
+    label: "Org Chart",
+    group: "Employees",
+    href: "/hrms/org",
+    note: "Who reports to whom, and the only screen that can change it. Withholding it leaves the chart readable nowhere rather than read-only — there is no other view of it.",
+  },
   {
     key: "hrms.employees",
     app: "hrms",

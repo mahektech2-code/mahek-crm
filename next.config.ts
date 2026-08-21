@@ -43,6 +43,28 @@ const nextConfig: NextConfig = {
        */
       { source: "/orders", destination: "/accounts", permanent: true },
       { source: "/orders/:path*", destination: "/accounts/:path*", permanent: true },
+
+      /*
+       * The same lesson at a smaller scale. This screen shipped at
+       * /crm/deactivations and answers requests in BOTH directions — close an
+       * account, reopen a closed one — so the name described half of it and the
+       * route moved to /crm/status-requests.
+       *
+       * The redirect is not hypothetical. Every deactivation and reactivation
+       * request already raised sent a notification to every manager carrying
+       * `/crm/deactivations` as its href, and those rows are still in the
+       * database. Without this, clicking the bell on any of them lands on a 404
+       * — which reads as "the request is gone" rather than "the page moved".
+       *
+       * The permission key did NOT move with it: `app_module_access` still
+       * stores `crm.deactivations`, because a key is a join and renaming one
+       * silently revokes the screen from everybody who holds it.
+       */
+      {
+        source: "/crm/deactivations",
+        destination: "/crm/status-requests",
+        permanent: true,
+      },
     ];
   },
 };

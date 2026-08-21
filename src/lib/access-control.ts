@@ -3,7 +3,7 @@ import { cache } from "react";
 import { randomUUID } from "node:crypto";
 import { eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, users, type User } from "@/db/schema";
+import { appAccess, auditLog, users, type User } from "@/db/schema";
 import { requireUser } from "./auth";
 import { getScope as getScopePreference } from "./scope";
 
@@ -210,6 +210,7 @@ export const CAPABILITIES = [
   "sheet.import",
   "customer.reassign",
   "customer.assignSalesManager",
+  "customer.classify",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -218,6 +219,16 @@ export type Capability = (typeof CAPABILITIES)[number];
 const MANAGER_ONLY: ReadonlySet<Capability> = new Set<Capability>([
   "customer.export",
   "customer.deactivate",
+  /*
+   * Marking an account as a shop we deliver to, or unmarking one.
+   *
+   * A manager's rather than accounts': it decides who gets CALLED, which is the
+   * work of the team a manager runs, and it moves no money and no ownership.
+   * That is what separates it from `customer.reassign` next door, which moves
+   * numbers between a manager's own people and is deliberately kept away from
+   * them.
+   */
+  "customer.classify",
   "target.set",
   "target.shortfall",
   "complaint.resolve",
@@ -300,6 +311,109 @@ const SHARED: ReadonlySet<Capability> = new Set<Capability>([
   "payment.record",
 ]);
 
+/* ---------------------------------------------------------------------------
+ * SEVERAL HATS, ONE PERSON.
+ *
+ * `app_access.role` is the role a grant is held under, so somebody can be a
+ * manager in the CRM and a clerk in Accounts. What they may DO is the union:
+ * hold a capability under any hat and you hold it. That is the whole feature,
+ * and it is also the thing that makes the paragraph below necessary.
+ * ------------------------------------------------------------------------- */
+
+export type Role = "telecaller" | "manager" | "accounts" | "admin";
+
+const ROLE_LABELS: Record<Role, string> = {
+  telecaller: "Telecaller",
+  manager: "Manager",
+  accounts: "Accounts",
+  admin: "Admin",
+};
+
+export function roleLabel(role: Role): string {
+  return ROLE_LABELS[role];
+}
+
+/**
+ * Every role a person holds: one per app they have been granted, plus the
+ * account's own. A grant with no role means the account's primary one, which
+ * is what every grant meant before roles existed and what `app:grant` writes.
+ */
+export async function rolesFor(user: {
+  id: string;
+  role: string;
+}): Promise<Role[]> {
+  const rows = await db
+    .select({ role: appAccess.role })
+    .from(appAccess)
+    .where(eq(appAccess.userId, user.id));
+
+  const held = new Set<Role>([user.role as Role]);
+  for (const r of rows) held.add((r.role ?? user.role) as Role);
+  return [...held];
+}
+
+/**
+ * WHICH HAT ALLOWS IT — the narrowest one, not the most powerful.
+ *
+ * Returned so the audit can say it, and ordered deliberately: an admin holds
+ * everything, so asking admin first would stamp "admin" on every action
+ * anybody senior takes and the log would stop distinguishing the clerk doing
+ * their job from the administrator reaching past a rule. Ask in order of how
+ * ordinary the answer is.
+ */
+const ROLE_ORDER: Role[] = ["telecaller", "accounts", "manager", "admin"];
+
+export function grantingRole(
+  roles: readonly Role[],
+  capability: Capability,
+): Role | null {
+  for (const role of ROLE_ORDER) {
+    if (roles.includes(role) && can(role, capability)) return role;
+  }
+  return null;
+}
+
+/** Holding it under ANY hat is holding it. */
+export function canAny(roles: readonly Role[], capability: Capability): boolean {
+  return grantingRole(roles, capability) !== null;
+}
+
+/**
+ * THE PRIMARY ROLE IS DERIVED, and it is derived for scope alone.
+ *
+ * `users.role` decides mine/team/all and is read by thirty-one screens through
+ * `isManager`. Rather than teach all of them about a list, it becomes a cache:
+ * the widest role somebody holds anywhere. A manager in the CRM sees their
+ * team, which is the answer they expect on the day the role is granted.
+ *
+ * The ordering is by how much a role WIDENS READING, which is the only
+ * question this answers — not by seniority, which accounts and telecaller do
+ * not have between them. Accounts sits above telecaller because the accounts
+ * screens deliberately sit outside the narrowing.
+ *
+ * IT IS IMPRECISE ON PURPOSE, and the imprecision is named: an admin in the
+ * Admin console is an admin for reading everywhere, including the calling
+ * book. Scope resolved per app is the next piece of work, and this comment is
+ * the thing that should be deleted when it lands.
+ */
+const SCOPE_WIDTH: Role[] = ["telecaller", "accounts", "manager", "admin"];
+
+export function widestRole(roles: readonly Role[]): Role {
+  let widest: Role = "telecaller";
+  for (const role of roles) {
+    if (SCOPE_WIDTH.indexOf(role) > SCOPE_WIDTH.indexOf(widest)) widest = role;
+  }
+  return widest;
+}
+
+/*
+ * The conflict rules live in `lib/role-conflicts.ts`, pure and client-safe:
+ * the access dialog has to say them on its review page before anything is
+ * written, and that is a client component. Re-exported here so server code
+ * asking access-control what somebody holds gets the answer from one place.
+ */
+export { conflictsFor, ROLE_CONFLICTS, type RoleConflict } from "@/lib/role-conflicts";
+
 export function can(role: string, capability: Capability): boolean {
   if (SHARED.has(capability)) return true;
   if (ACCOUNTS_ONLY.has(capability)) {
@@ -330,12 +444,22 @@ export class NotPermittedError extends Error {
   }
 }
 
-/** Throws unless the caller holds the capability, and records every denial. */
+/**
+ * Throws unless the caller holds the capability under ANY hat, and records
+ * every denial.
+ *
+ * The check is the union — that is what holding several roles means — and the
+ * hat that granted it comes back in the context so the action can write it
+ * into its audit row. A log that says who did it and not what allowed them is
+ * a log that cannot answer the only question ever asked of it afterwards.
+ */
 export async function requireCapability(
   capability: Capability,
-): Promise<RequestScope> {
+): Promise<RequestScope & { authorisedBy: Role }> {
   const ctx = await resolveScope();
-  if (can(ctx.role, capability)) return ctx;
+  const roles = await rolesFor(ctx.user);
+  const granting = grantingRole(roles, capability);
+  if (granting) return { ...ctx, authorisedBy: granting };
 
   await db.insert(auditLog).values({
     id: `aud_${randomUUID().slice(0, 12)}`,
@@ -343,7 +467,10 @@ export async function requireCapability(
     action: "access.denied",
     entityType: "capability",
     entityId: capability,
-    afterState: { role: ctx.role, capability } as never,
+    // Every hat they were wearing, so a refusal can be argued with. "Vikram
+    // was refused" is unactionable; "Vikram, holding telecaller and accounts,
+    // was refused customer.classify" names the grant that is missing.
+    afterState: { roles, capability } as never,
   });
 
   throw new NotPermittedError(capability);

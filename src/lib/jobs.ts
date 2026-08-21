@@ -69,6 +69,7 @@ export type JobName =
   | "recompute-slow-payers"
   | "snapshot-queue"
   | "build-queues"
+  | "link-delivery-parties"
   | "seed-targets"
   | "sweep-unconfirmed"
   | "escalate-complaint-sla"
@@ -132,6 +133,22 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
   /* The field app's nightly tidy-up rides the same schedule as the CRM's.
      One cron, one place to look when something did not run. */
   results.push(await run("mbos-nightly", mbosNightly, triggeredById));
+
+  /* Where the goods went, from the tab that has always known and never said.
+     Before the caches, because nothing downstream reads it yet — and after the
+     reconcile that lands the rows it reads. */
+  results.push(
+    await run("link-delivery-parties", async () => {
+      const { linkDeliveryParties } = await import(
+        "@/lib/services/delivery-party-service"
+      );
+      const r = await linkDeliveryParties();
+      return {
+        recordsAffected: r.linked + r.cleared,
+        detail: `${r.linked} linked, ${r.cleared} cleared, ${r.unresolved} unmatched names`,
+      };
+    }, triggeredById),
+  );
 
   results.push(
     await run("recompute-cycles", async () => {
@@ -232,25 +249,85 @@ export async function snapshotQueue(day: BusinessDate): Promise<number> {
       .limit(1);
     if (already.length) continue;
 
-    const candidates = await queueCandidatesFor(user.id, day);
-    const { entries } = buildQueue(candidates, day, config);
-    if (!entries.length) continue;
-    await db
-      .insert(queueSnapshots)
-      .values(
-        entries.map((e, i) => ({
-          day,
-          userId: user.id,
-          customerId: e.customerId,
-          score: e.score,
-          reasons: e.reasons,
-          rank: i,
-        })),
-      )
-      .onConflictDoNothing();
-    written += entries.length;
+    written += await writeDayList(user.id, day, config);
   }
   return written;
+}
+
+/**
+ * Build one person's list and store it. Shared by the warmer above and the
+ * rebuild below, because "what goes on a list" answered in two places is the
+ * bug where a hand-rebuilt list differs from the one the morning would have
+ * produced — and nobody could tell which was right.
+ */
+async function writeDayList(
+  userId: string,
+  day: BusinessDate,
+  config: Awaited<ReturnType<typeof getConfig>>,
+): Promise<number> {
+  const candidates = await queueCandidatesFor(userId, day);
+  const { entries } = buildQueue(candidates, day, config);
+  if (!entries.length) return 0;
+  await db
+    .insert(queueSnapshots)
+    .values(
+      entries.map((e, i) => ({
+        day,
+        userId,
+        customerId: e.customerId,
+        score: e.score,
+        reasons: e.reasons,
+        rank: i,
+      })),
+    )
+    .onConflictDoNothing();
+  return entries.length;
+}
+
+/**
+ * Throw today's list away and build it again, from the rules as they stand now.
+ *
+ * The list is settled once a day ON PURPOSE — it must not reshuffle under
+ * somebody working it. But that makes a deploy invisible until tomorrow: the
+ * day the Inactive Watch was folded into the Call Log, the change went live at
+ * lunchtime and every telecaller carried on reading a list photographed that
+ * morning, with nothing on the screen saying why. Waiting a day is usually
+ * right and occasionally is not, and the difference is a judgement somebody
+ * makes rather than a rule code can hold.
+ *
+ * So it is deliberate, attributed and narrow: an admin names who, and the
+ * audit row says which lists were thrown away and by whom. `snapshotQueue`
+ * keeps refusing to touch a settled day, because a warmer that could reshuffle
+ * an afternoon is a warmer nobody can safely schedule.
+ */
+export async function resettleQueues(
+  day: BusinessDate,
+  userIds: string[] | null,
+): Promise<{ users: number; cleared: number; written: number }> {
+  const config = await getConfig();
+  const telecallers = await db.select().from(users).where(eq(users.active, true));
+  const wanted = userIds?.length
+    ? telecallers.filter((u) => userIds.includes(u.id))
+    : telecallers;
+
+  let cleared = 0;
+  let written = 0;
+  for (const user of wanted) {
+    // Counted before it goes, so the toast can say what was actually thrown
+    // away rather than what was asked for.
+    const [{ n }] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(queueSnapshots)
+      .where(and(eq(queueSnapshots.day, day), eq(queueSnapshots.userId, user.id)));
+    cleared += n;
+
+    await db
+      .delete(queueSnapshots)
+      .where(and(eq(queueSnapshots.day, day), eq(queueSnapshots.userId, user.id)));
+
+    written += await writeDayList(user.id, day, config);
+  }
+  return { users: wanted.length, cleared, written };
 }
 
 /* ----------------------------------------------------------------- hourly */
@@ -426,6 +503,33 @@ export async function runJob(
               detail: written
                 ? `Built ${written} rows for ${day}`
                 : `Nothing to build for ${day} — every list was already settled`,
+            };
+          },
+          triggeredById,
+        ),
+      ];
+    case "link-delivery-parties":
+      /*
+       * Where the goods went, rebuilt from the sheet.
+       *
+       * A recompute rather than an import — it derives one column from data
+       * already stored, creates nothing, and running it twice changes nothing
+       * the second time. It belongs in the nightly for the same reason the
+       * other recomputes do: the Taken Order tab gains rows all day.
+       */
+      return [
+        await run(
+          "link-delivery-parties",
+          async () => {
+            const { linkDeliveryParties } = await import(
+              "@/lib/services/delivery-party-service"
+            );
+            const r = await linkDeliveryParties();
+            return {
+              recordsAffected: r.linked + r.cleared,
+              detail:
+                `${r.linked} orders linked to a delivery party, ${r.cleared} cleared` +
+                `; ${r.unresolved} names match no record, ${r.ambiguous} match more than one`,
             };
           },
           triggeredById,

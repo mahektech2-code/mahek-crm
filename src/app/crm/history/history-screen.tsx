@@ -20,6 +20,11 @@ import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { shortDate, stamp } from "@/lib/format";
+import {
+  NextCallCell,
+  type StoredNextStep,
+} from "@/components/crm/next-call-cell";
+import { NEXT_STEP_LABELS } from "@/lib/next-step-labels";
 
 type Row = {
   id: string;
@@ -32,6 +37,8 @@ type Row = {
   outcome: string | null;
   note: string | null;
   produced: string | null;
+  /** What this call said would happen next. Null on calls logged before it existed. */
+  nextStep: StoredNextStep | null;
 };
 
 type Commitment = { customerId: string; note: string; dueDate: string };
@@ -44,6 +51,7 @@ export function HistoryScreen({
   openCommitments,
   activity,
   nowMs,
+  today,
 }: {
   scopeLabel: string;
   isManager: boolean;
@@ -51,6 +59,8 @@ export function HistoryScreen({
   rows: Row[];
   openCommitments: Commitment[];
   nowMs: number;
+  /** The working day, from the server — the clock is not read in render. */
+  today: string;
   activity: {
     attempted: number;
     connected: number;
@@ -135,7 +145,17 @@ export function HistoryScreen({
               downloadCsv(
                 "mahek-interactions",
                 toCsv(
-                  ["Timestamp", "Customer", "Telecaller", "Channel", "Status", "Outcome", "Notes", "Produced"],
+                  [
+                    "Timestamp",
+                    "Customer",
+                    "Telecaller",
+                    "Channel",
+                    "Status",
+                    "Outcome",
+                    "Next call",
+                    "Notes",
+                    "Produced",
+                  ],
                   filtered.map((r) => [
                     r.occurredAt,
                     r.customerName,
@@ -143,6 +163,12 @@ export function HistoryScreen({
                     r.channel,
                     r.connection ?? "",
                     r.outcome ?? "",
+                    // The word where there is no date, so a row in a file can
+                    // never imply a call is coming when the answer was that
+                    // nobody could reach them.
+                    r.nextStep
+                      ? (r.nextStep.date ?? NEXT_STEP_LABELS[r.nextStep.kind].short)
+                      : "",
                     r.note ?? "",
                     r.produced ?? "",
                   ]),
@@ -292,6 +318,11 @@ export function HistoryScreen({
                 <Th>Channel</Th>
                 <Th>Status</Th>
                 <Th>Outcome</Th>
+                {/* What the telecaller was told would happen next, on this
+                    call. The question the row already half answers: they rang,
+                    this is what came of it, and this is when the customer comes
+                    back. */}
+                <Th>Next call</Th>
                 <Th>Notes</Th>
                 <Th>Produced</Th>
               </tr>
@@ -328,6 +359,9 @@ export function HistoryScreen({
                     )}
                   </Td>
                   <Td>{r.outcome ?? "-"}</Td>
+                  <Td>
+                    <NextCallCell step={r.nextStep} today={today} />
+                  </Td>
                   <Td className="max-w-[320px] truncate text-muted" title={r.note ?? ""}>
                     {r.note ?? "-"}
                   </Td>

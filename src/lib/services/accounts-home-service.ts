@@ -377,6 +377,17 @@ export function decisionLine(
       return `Confirmed ${rupees} received`;
     case "payment.reject":
       return `Rejected ${rupees} — ${String(after?.reason ?? "no reason recorded")}`;
+    /* "Reversed", never "rejected". This log is read beside a customer
+     * statement that already draws the distinction, and money that cleared and
+     * then failed is not money that never arrived. */
+    case "payment.reverse":
+      return `Reversed ${rupees} — ${String(after?.reason ?? "no reason recorded")}`;
+    case "payment.hold":
+      return `Put ${rupees} on hold — ${String(after?.reason ?? "no reason recorded")}`;
+    case "payment.reallocate": {
+      const lines = Array.isArray(after?.lines) ? after.lines.length : 0;
+      return `Re-pointed the money${lines > 0 ? ` across ${lines === 1 ? "1 bill" : `${lines} bills`}` : ""}`;
+    }
     case "payment.record":
       return `Recorded ${rupees} as ${String(after?.status ?? "reported")}`;
     case "creditnote.issue":

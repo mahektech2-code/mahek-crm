@@ -83,8 +83,13 @@ import {
   rejectReceiptAction,
   reverseReceiptAction,
 } from "@/lib/actions/payments";
-import { getQueue } from "@/lib/services/queue-service";
+import { getQueue, queueCandidatesFor } from "@/lib/services/queue-service";
 import { snapshotQueue } from "@/lib/jobs";
+import {
+  linkDeliveryParties,
+  unresolvedDeliveryParties,
+} from "@/lib/services/delivery-party-service";
+import { customerRecordDetail } from "@/lib/services/customer-record-service";
 import { saveInteraction } from "@/lib/services/interaction-service";
 import { seedCatalogue } from "@/db/seed-catalogue";
 import {
@@ -94,6 +99,8 @@ import {
   finishedGoods as finishedGoodsTable,
   quickNotes as quickNotesTable,
   interactionProductLines,
+  appAccess,
+  queueSnapshots as queueSnapshotsTable,
 } from "@/db/schema";
 import { importCatalogue } from "@/lib/services/catalogue-import";
 import {
@@ -111,6 +118,7 @@ import {
 import { globalSearch ,
   listAmFilterOptions,
   listCustomersPage,
+  listInteractions,
 } from "@/lib/queries";
 import { describeQuantity } from "@/lib/catalogue";
 import {
@@ -132,10 +140,33 @@ import {
 import {
   decideDeactivation,
   decideReactivation,
+  rebuildQueues,
   requestDeactivation,
   requestReactivation,
   startStageOneBatch,
 } from "@/lib/actions/crm";
+import { loadCustomerTimeline } from "@/lib/actions/crm";
+import {
+  canAny,
+  conflictsFor,
+  grantingRole,
+  requireCapability,
+  rolesFor,
+  widestRole,
+} from "@/lib/access-control";
+import {
+  addDistributor,
+  convertToThirdParty,
+  recordDeliveryAddress,
+  removeDistributor,
+  revertThirdParty,
+  updateDistributor,
+} from "@/lib/actions/third-party";
+import {
+  deliveryAddressesFor,
+  distributorCandidates,
+  distributorsFor,
+} from "@/lib/services/distributor-service";
 import {
   createReminder,
   completeReminder,
@@ -150,6 +181,7 @@ import {
 } from "@/lib/services/order-approval-service";
 import {
   customerTimeline,
+  customerTimelineCounts,
   listAssignableUsers,
   listBackOfficeCandidates,
   listTeam,
@@ -245,7 +277,7 @@ beforeEach(async () => {
       quick_notes, migration_exceptions,
       follow_up_attempts, follow_up_states, payments, bills,
       orders, calls, eod_reports, attendance, app_access, sessions, password_resets,
-      customers, users, app_settings
+      customer_distributors, customers, users, app_settings
     restart identity cascade
   `);
   invalidateConfig();
@@ -928,6 +960,54 @@ describe("Journey 5 - a customer goes quiet and gets a decision", () => {
       .from(customers)
       .where(eq(customers.id, customer.id));
     assert.equal(row.status, "deactivated", "an order does not undo a decision");
+  });
+
+  test("a telecaller cannot ask for somebody else's customer to go", async () => {
+    // `resolveScope` was called and its answer thrown away: the update matched
+    // on the ids alone, so any signed-in person could flag any customer in the
+    // company. It set a flag a manager has to confirm, which is why nobody saw
+    // it — but a server action is a URL and the ids come from the caller.
+    const someoneElses = await makeCustomer(rakesh.id, { lastOrderDate: TODAY });
+
+    setTestUser(priya);
+    const r = await requestDeactivation([someoneElses.id], "Not mine to ask.");
+    assert.equal(r.ok, false, "a telecaller flagged a customer outside their book");
+
+    const [row] = await db
+      .select({ requested: customers.deactivationRequested })
+      .from(customers)
+      .where(eq(customers.id, someoneElses.id));
+    assert.equal(row.requested, false, "the refusal still wrote the flag");
+  });
+
+  test("one customer outside the book refuses the whole request", async () => {
+    // Nobody re-reads a list they have been told went through, so a bulk
+    // action either does all of it or none of it.
+    const mine = await makeCustomer(priya.id, { lastOrderDate: TODAY });
+    const theirs = await makeCustomer(rakesh.id, { lastOrderDate: TODAY });
+
+    setTestUser(priya);
+    const r = await requestDeactivation([mine.id, theirs.id], "Closing both.");
+    assert.equal(r.ok, false);
+
+    const rows = await db
+      .select({ id: customers.id, requested: customers.deactivationRequested })
+      .from(customers)
+      .where(inArray(customers.id, [mine.id, theirs.id]));
+    assert.ok(
+      rows.every((x) => x.requested === false),
+      "part of a refused bulk request was written anyway",
+    );
+  });
+
+  test("a manager reaches the whole team's book", async () => {
+    const theirs = await makeCustomer(rakesh.id, { lastOrderDate: TODAY });
+    setTestUser(manager);
+    assert.equal(
+      (await requestDeactivation([theirs.id], "Team-wide clean-up.")).ok,
+      true,
+      "scoping the write shut a manager out of their own team",
+    );
   });
 
   test("the way back: requested by a telecaller, decided by a manager", async () => {
@@ -2230,6 +2310,48 @@ describe("The business day is Asia/Kolkata, whatever the database thinks", () =>
     );
   });
 
+  test("no query turns a stored DATE into an instant without saying which zone", async () => {
+    /*
+     * The same rule, read backwards. The two guards beside this one watch
+     * timestamps being turned into dates; this watches dates being turned
+     * into timestamps, which is the direction that produced a bill whose
+     * instant depended on which pooled connection served it — and therefore a
+     * timeline that could not be paged and a time on screen that moved.
+     */
+    const { readFileSync, readdirSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (full.endsWith(".ts") && !full.includes(".test.")) files.push(full);
+      }
+    };
+    walk("src/lib");
+
+    // The date columns that reach a timeline or a sort. A cast on any of them
+    // has to say which midnight it means.
+    const DATE_COLUMNS = /(bill_date|received_at|due_date|order_date|day)\s*\)?::timestamptz/;
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      for (const [i, line] of readFileSync(file, "utf8").split("\n").entries()) {
+        const code = line.trim();
+        if (code.startsWith("*") || code.startsWith("//") || code.startsWith("--")) continue;
+        if (line.includes("time zone")) continue;
+        if (DATE_COLUMNS.test(line)) offenders.push(`${file}:${i + 1}`);
+      }
+    }
+
+    assert.deepEqual(
+      offenders,
+      [],
+      "cast these as `::timestamp at time zone ${APP_TIMEZONE}` — a bare cast is evaluated in the session's zone",
+    );
+  });
+
   test("no JavaScript turns a stored timestamp into a date without saying which zone", async () => {
     // The same rule, the other spelling. `toISOString()` answers in UTC, so
     // `.slice(0, 10)` on it dates a 2am IST row to the previous day — and it
@@ -2424,7 +2546,7 @@ describe("An order is a customer saying yes, not the business saying yes", () =>
 
     setTestUser(priya);
     const timeline = await customerTimeline(customer.id);
-    const entry = timeline.find((t) => t.kind === "Order");
+    const entry = timeline.entries.find((t) => t.kind === "Order");
     assert.ok(entry);
     assert.match(entry.content, /declined/i);
     assert.match(
@@ -7000,6 +7122,105 @@ describe("the call list is settled once a day", () => {
       served.entries.map((e) => e.customerId),
     );
   });
+
+  /*
+   * The rebuild is the deliberate exception to all of the above. A release
+   * that changes WHO belongs on a list is invisible until tomorrow otherwise,
+   * and somebody has to be able to decide that today is the day.
+   */
+  test("a rebuild is refused to everybody but an administrator", async () => {
+    await snapshotQueue(TODAY);
+
+    setTestUser(priya);
+    const asTelecaller = await rebuildQueues(null);
+    assert.equal(asTelecaller.ok, false, "a telecaller rebuilt a call list");
+
+    // A manager is NOT enough, deliberately: rebuilding reorders the day of
+    // the people whose numbers the manager is measured on.
+    setTestUser(manager);
+    const asManager = await rebuildQueues(null);
+    assert.equal(asManager.ok, false, "a manager rebuilt a call list");
+    assert.match(asManager.ok ? "" : asManager.error, /administrator/i);
+  });
+
+  test("an administrator's rebuild picks up what the settled list could not", async () => {
+    await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      cycleIsDefault: false,
+    });
+    await snapshotQueue(TODAY);
+    setTestUser(priya);
+    const before = await getQueue();
+
+    // Somebody who qualifies, arriving after the day was settled. The warmer
+    // cannot add them — that is the whole point of settling — so the list
+    // stays exactly as long as it was.
+    const late = await makeCustomer(priya.id, {
+      name: "Arrived After The List Was Settled",
+      lastOrderDate: addDays(TODAY, -60),
+      cycleDays: 22,
+      cycleIsDefault: false,
+    });
+    assert.equal(await snapshotQueue(TODAY), 0);
+    const stillSettled = await getQueue();
+    assert.equal(stillSettled.entries.length, before.entries.length);
+
+    const admin = await makeUser("Console Admin", "admin");
+    await db.insert(appAccess).values({ id: id("aca"), userId: admin.id, app: "admin" });
+    setTestUser(admin);
+    const rebuilt = await rebuildQueues([priya.id]);
+    assert.equal(rebuilt.ok, true, rebuilt.ok ? "" : rebuilt.error);
+
+    setTestUser(priya);
+    const after = await getQueue();
+    assert.ok(
+      after.entries.some((e) => e.customerId === late.id),
+      "the rebuild did not pick up a customer who qualified after the list was settled",
+    );
+  });
+
+  test("rebuilding one telecaller leaves everybody else's list alone", async () => {
+    await makeCustomer(priya.id, {
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      cycleIsDefault: false,
+    });
+    await makeCustomer(rakesh.id, {
+      lastOrderDate: addDays(TODAY, -40),
+      cycleDays: 22,
+      cycleIsDefault: false,
+    });
+    await snapshotQueue(TODAY);
+
+    const stampFor = async (userId: string) =>
+      (
+        await db
+          .select({ generatedAt: queueSnapshotsTable.generatedAt })
+          .from(queueSnapshotsTable)
+          .where(
+            and(
+              eq(queueSnapshotsTable.day, TODAY),
+              eq(queueSnapshotsTable.userId, userId),
+            ),
+          )
+          .limit(1)
+      )[0]?.generatedAt;
+
+    const rakeshBefore = await stampFor(rakesh.id);
+    assert.ok(rakeshBefore, "rakesh had no list to leave alone");
+
+    const admin = await makeUser("Narrow Admin", "admin");
+    await db.insert(appAccess).values({ id: id("aca"), userId: admin.id, app: "admin" });
+    setTestUser(admin);
+    assert.equal((await rebuildQueues([priya.id])).ok, true);
+
+    assert.deepEqual(
+      await stampFor(rakesh.id),
+      rakeshBefore,
+      "rebuilding one telecaller threw away another's list",
+    );
+  });
 });
 
 /* ---------------------------------------------------------------------------
@@ -7092,6 +7313,123 @@ describe("No order, and when we ring back", () => {
     // the customer would not say.
     const config = await getConfig();
     assert.equal(config["queue.outcomeCooldownDays"].no_order, 5);
+  });
+});
+
+describe("The next call reaches the lists a telecaller works from", () => {
+  test("the customers list carries it, and only where somebody has called", async () => {
+    /*
+     * The dialog says it once, at the moment a call is saved, and then it was
+     * gone: to find out when a customer comes back you opened their record.
+     * The two screens where somebody is deciding who to work — the book and
+     * the call history — could not answer it at all.
+     *
+     * It is the STORED answer, not a fresh reading: what the screen told the
+     * person who logged the call, on the day they logged it. That is why the
+     * column is empty on a customer nobody has called rather than filled with
+     * a prediction nobody has been told.
+     */
+    const called = await makeCustomer(priya.id, { name: "Has Been Called" });
+    const untouched = await makeCustomer(priya.id, { name: "Never Called" });
+    const when = addDays(TODAY, 9);
+
+    setTestUser(priya);
+    const saved = await saveInteraction({
+      customerId: called.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNextCallDate: when,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
+
+    const page = await listCustomersPage({});
+    const withCall = page.rows.find((r) => r.id === called.id)!;
+    const without = page.rows.find((r) => r.id === untouched.id)!;
+
+    assert.ok(withCall.nextStep, "the call was logged and the list knows nothing");
+    assert.equal(withCall.nextStep!.kind, saved.ok ? saved.data.nextStep?.kind : null);
+    assert.equal(withCall.nextStep!.date, saved.ok ? saved.data.nextStep?.date : null);
+    assert.equal(
+      withCall.nextStep!.toldOn,
+      TODAY,
+      "the day it was said is what makes a stale date readable as stale",
+    );
+    assert.equal(without.nextStep, null, "a customer nobody has called carried a next call");
+  });
+
+  test("the LATEST call is the one the list shows", async () => {
+    // Two calls in a day is ordinary — they rang back, or the customer did.
+    // The column has to be the last thing anybody was told, not the first.
+    const customer = await makeCustomer(priya.id);
+    setTestUser(priya);
+
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNextCallDate: addDays(TODAY, 3),
+      idempotencyKey: randomUUID(),
+    });
+    const second = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNextCallDate: addDays(TODAY, 20),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(second.ok, true, second.ok ? "" : second.error);
+
+    const page = await listCustomersPage({});
+    const row = page.rows.find((r) => r.id === customer.id)!;
+    assert.equal(
+      row.nextStep!.date,
+      second.ok ? second.data.nextStep?.date : null,
+      "the list showed an older call's answer",
+    );
+  });
+
+  test("the call history carries what THAT call said, per row", async () => {
+    const customer = await makeCustomer(priya.id);
+    setTestUser(priya);
+    const saved = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNextCallDate: addDays(TODAY, 6),
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
+
+    const rows = await listInteractions();
+    const row = rows.find((r) => r.customerId === customer.id)!;
+    assert.ok(row.nextStep, "the history row lost the sentence the call carried");
+    assert.equal(row.nextStep!.date, saved.ok ? saved.data.nextStep?.date : null);
+    assert.equal(row.nextStep!.toldOn, TODAY);
+  });
+
+  test("a customer nothing will bring back says so, with no date invented", async () => {
+    // `none` and `decide` carry no date, and the word IS the answer. A blank
+    // cell there would read as missing data rather than as "nothing is coming".
+    const customer = await makeCustomer(priya.id);
+    await db
+      .update(customers)
+      .set({ doNotContact: true })
+      .where(eq(customers.id, customer.id));
+
+    setTestUser(priya);
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "outbound_call",
+      outcome: "no_order",
+      noOrderNoCommitment: true,
+      idempotencyKey: randomUUID(),
+    });
+
+    const page = await listCustomersPage({});
+    const row = page.rows.find((r) => r.id === customer.id)!;
+    assert.equal(row.nextStep!.kind, "none");
+    assert.equal(row.nextStep!.date, null, "a date was invented for a customer nothing will ring");
   });
 });
 
@@ -7437,5 +7775,1077 @@ describe("The sales manager is a third seat, and a manager's to set", () => {
       .from(customerAmChanges)
       .where(eq(customerAmChanges.customerId, customer.id));
     assert.equal(history.length, 0, "a no-op must not tell anybody their book grew");
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Most of what the CRM calls a lead is a shop served by a distributor. The
+ * provision to say so — without anything saying it automatically.
+ * ------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+ * The record of a four-year account, on a page that does not grow with it.
+ * ------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+ * One person, several hats. A company of nine does not have one job each.
+ * ------------------------------------------------------------------------- */
+
+describe("a person wears several hats", () => {
+  test("capabilities are the union, and the narrowest hat is the one recorded", async () => {
+    /*
+     * Vikram is the sales manager AND the accounts clerk. Before roles hung off
+     * the grants he could be one of them, so whoever set the account up picked
+     * the more powerful and everything else came with it silently.
+     */
+    const vikram = await makeUser("Two Hats", "telecaller");
+    await db.insert(appAccess).values([
+      { id: id("aca"), userId: vikram.id, app: "crm", role: "manager" },
+      { id: id("aca"), userId: vikram.id, app: "accounts", role: "accounts" },
+    ]);
+    setTestUser(vikram);
+
+    const roles = await rolesFor(vikram);
+    assert.deepEqual(roles.sort(), ["accounts", "manager", "telecaller"].sort());
+
+    // Held under EITHER hat is held. Classifying is a manager's, approving is
+    // accounts', and this person does both.
+    assert.equal(canAny(roles, "customer.classify"), true);
+    assert.equal(canAny(roles, "order.approve"), true);
+
+    /*
+     * WHICH hat, and it is the ordinary one rather than the powerful one. An
+     * admin holds everything, so asking admin first would stamp "admin" on
+     * every action anybody senior took and the log would stop telling the
+     * clerk doing their job from the administrator reaching past a rule.
+     */
+    assert.equal(grantingRole(roles, "order.approve"), "accounts");
+    assert.equal(grantingRole(roles, "customer.classify"), "manager");
+    assert.equal(grantingRole(roles, "config.write"), "manager");
+  });
+
+  test("a grant with no hat of its own means the account's role", async () => {
+    // What every grant meant before this column existed, and what
+    // `npm run app:grant` still writes — a terminal that knows nothing about
+    // roles has to go on granting an app that works.
+    const deepa = await makeUser("Inherits", "accounts");
+    await db.insert(appAccess).values({
+      id: id("aca"),
+      userId: deepa.id,
+      app: "accounts",
+      role: null,
+    });
+
+    const roles = await rolesFor(deepa);
+    assert.deepEqual(roles, ["accounts"]);
+    assert.equal(canAny(roles, "order.approve"), true);
+    assert.equal(canAny(roles, "customer.classify"), false, "an accounts clerk classified");
+  });
+
+  test("the capability check refuses what no hat carries, and says which hats were worn", async () => {
+    const priyaOnly = await makeUser("One Hat", "telecaller");
+    await db.insert(appAccess).values({
+      id: id("aca"),
+      userId: priyaOnly.id,
+      app: "crm",
+      role: "telecaller",
+    });
+    setTestUser(priyaOnly);
+
+    await assert.rejects(
+      () => requireCapability("order.approve"),
+      /accounts/i,
+      "a telecaller approved an order",
+    );
+
+    // The refusal names every hat, so it can be argued with: "Vikram was
+    // refused" is unactionable, "Vikram, holding telecaller, was refused" says
+    // which grant is missing.
+    const [denial] = await db
+      .select({ after: auditLog.afterState })
+      .from(auditLog)
+      .where(eq(auditLog.action, "access.denied"));
+    assert.deepEqual((denial.after as { roles: string[] }).roles, ["telecaller"]);
+  });
+
+  test("the primary role is the widest hat, so scope follows the grant", async () => {
+    /*
+     * `users.role` decides mine/team/all through `isManager`, read by
+     * thirty-one screens. Rather than teach every one of them about a list it
+     * is a cache of the hats — and granting somebody the manager hat in the
+     * CRM has to give them their team on the day it is granted, which is what
+     * whoever granted it expects.
+     */
+    assert.equal(widestRole(["telecaller", "manager"]), "manager");
+    assert.equal(widestRole(["telecaller", "accounts"]), "accounts");
+    assert.equal(widestRole(["manager", "admin"]), "admin");
+    assert.equal(widestRole(["telecaller"]), "telecaller");
+  });
+
+  test("two hats that should not meet are named, never refused", async () => {
+    // The matrix keeps approving orders away from managers on purpose. At nine
+    // people the same person does have to do both — so it is allowed, said in
+    // words where it is granted, and recorded on every action taken under it.
+    const both = conflictsFor(["manager", "accounts"]);
+    assert.equal(both.length, 1);
+    assert.match(both[0].sentence, /should not sign off the orders that hit it/i);
+
+    assert.deepEqual(conflictsFor(["telecaller", "manager"]), []);
+    assert.equal(
+      conflictsFor(["telecaller", "accounts"]).length,
+      1,
+      "reporting money and confirming it is the same conflict one level down",
+    );
+  });
+});
+
+describe("the customer timeline is a page", () => {
+  /** A book like COLOUR CAMP's: many bills, all stamped midnight. */
+  async function billedCustomer(n: number) {
+    const customer = await makeCustomer(priya.id);
+    await db.insert(bills).values(
+      Array.from({ length: n }, (_, i) => ({
+        id: id("bil"),
+        customerId: customer.id,
+        // The same DATE on purpose. `bill_date` is a date, so a hundred bills
+        // raised across one week share a handful of midnight timestamps —
+        // which is exactly what breaks a sort with no tiebreaker.
+        //
+        // SEVEN to a day, deliberately NOT a multiple of any page size used
+        // below. At twenty a day with pages of twenty, every page ended
+        // exactly on a date boundary and a cursor that skipped whole
+        // timestamps still came out right — the fixture passed a test of the
+        // thing it was meant to break.
+        billNo: `MMI/26-27/${1000 + i}`,
+        billDate: addDays(TODAY, -Math.floor(i / 7)),
+        dueDate: addDays(TODAY, 30),
+        amount: 1_000_00 + i,
+        paidAmount: 0,
+      })),
+    );
+    return customer;
+  }
+
+  test("the first page is a page, and it says what it is a page of", async () => {
+    const customer = await billedCustomer(60);
+    setTestUser(priya);
+
+    const page = await customerTimeline(customer.id, { limit: 25 });
+    assert.equal(page.entries.length, 25, "the page was not the size asked for");
+    assert.equal(page.more, true, "a capped read did not say there was more");
+    assert.ok(page.cursor, "a page with more after it carried no cursor");
+
+    // The COUNTS are the whole history, not the page. The pills print these,
+    // and printing "Bill 25" against an account with sixty is the reason the
+    // page used to read every row it had.
+    const counts = await customerTimelineCounts(customer.id);
+    assert.equal(counts.Bill, 60);
+    assert.equal(counts.all, 60);
+  });
+
+  test("paging never repeats a row and never loses one", async () => {
+    const customer = await billedCustomer(55);
+    setTestUser(priya);
+
+    const seen: string[] = [];
+    const pages: string[] = [];
+    let cursor: { at: string; id: string } | null = null;
+    for (let i = 0; i < 10; i++) {
+      const page: Awaited<ReturnType<typeof customerTimeline>> =
+        await customerTimeline(customer.id, {
+          limit: 20,
+          before: cursor ?? undefined,
+        });
+      seen.push(...page.entries.map((e) => e.id));
+      pages.push(
+        `page ${i + 1}: ${page.entries.length} rows, more=${page.more}, ` +
+          `cursor=${page.cursor?.at} ${page.cursor?.id}`,
+      );
+      cursor = page.cursor;
+      if (!page.more) break;
+    }
+
+    /*
+     * WHAT THE DATABASE THINKS, printed when this fails.
+     *
+     * It passed on a developer's macOS Postgres and failed on CI's
+     * postgres:16, which is the signature of something the two databases
+     * disagree about rather than something the code gets wrong — the sort key
+     * is text, and text ordering is a property of the database's collation.
+     * A failure nobody can reproduce locally has to carry its own evidence.
+     */
+    const repeated = seen.filter((v, i) => seen.indexOf(v) !== i);
+    const [env] = await db.execute<{
+      v: string;
+      tz: string;
+      datcollate: string;
+    }>(sql`
+      select version() as v, current_setting('TimeZone') as tz, datcollate
+        from pg_database where datname = current_database()`);
+    const evidence = [
+      env?.v,
+      `TimeZone=${env?.tz} collate=${env?.datcollate}`,
+      ...pages,
+      `repeated: ${repeated.join(", ") || "none"}`,
+    ].join("\n      ");
+
+    assert.equal(seen.length, 55, `paging lost rows or invented them\n      ${evidence}`);
+    assert.equal(
+      new Set(seen).size,
+      55,
+      `a row came back on two pages - the sort has no tiebreaker\n      ${evidence}`,
+    );
+  });
+
+  test("a page read on one session zone pages correctly on another", async () => {
+    /*
+     * THE BUG THIS EXISTS FOR, and it is the codebase's oldest rule wearing
+     * its third disguise.
+     *
+     * `bills.bill_date` is a DATE, and a date is not an instant until
+     * something says which midnight is meant. `bill_date::timestamptz` asks
+     * Postgres, and Postgres answers with the SESSION's zone — so the same
+     * bill came back as 00:00Z on one pooled connection and 18:30Z on
+     * another, in one process, because an earlier test in this file leaves a
+     * connection in Asia/Kolkata while the rest sit on the server default. A
+     * cursor taken from one page then excluded nothing on the next and five
+     * rows came back twice.
+     *
+     * It passed on a developer's machine for the reason the rule always
+     * survives: local Postgres runs in Asia/Kolkata, so both halves agreed.
+     * CI runs in UTC and caught it. This forces the mixture rather than
+     * waiting for the pool to produce it.
+     */
+    const customer = await billedCustomer(55);
+    setTestUser(priya);
+
+    const everyConnection = (zone: string) =>
+      Promise.all(
+        Array.from({ length: 12 }, () =>
+          db.execute(sql.raw(`set time zone '${zone}'`)),
+        ),
+      );
+
+    try {
+      await everyConnection("GMT");
+      const first = await customerTimeline(customer.id, { limit: 20 });
+      await everyConnection("Asia/Kolkata");
+      const second = await customerTimeline(customer.id, {
+        limit: 20,
+        before: first.cursor ?? undefined,
+      });
+
+      const firstIds = new Set(first.entries.map((e) => e.id));
+      const repeated = second.entries.filter((e) => firstIds.has(e.id));
+      assert.deepEqual(
+        repeated.map((e) => e.id),
+        [],
+        "a cursor taken in one session zone re-read rows in another",
+      );
+    } finally {
+      // Whatever happens, the pool goes back to what the rest of the file
+      // expects — a connection left in GMT is a booby trap for every test
+      // after this one.
+      await everyConnection("Asia/Kolkata");
+    }
+  });
+
+  test("a kind reads the whole history, not the loaded page", async () => {
+    const customer = await billedCustomer(40);
+    // One call, older than every bill. Under the old screen-side filter it
+    // would be invisible unless somebody had already loaded past forty bills.
+    await db.insert(calls).values({
+      id: id("cal"),
+      customerId: customer.id,
+      userId: priya.id,
+      startedAt: new Date(`${addDays(TODAY, -400)}T09:00:00+05:30`),
+      connectionStatus: "connected",
+      outcome: "order_taken",
+      notes: "The oldest thing on this account",
+      idempotencyKey: randomUUID(),
+    });
+    setTestUser(priya);
+
+    const newest = await customerTimeline(customer.id, { limit: 20 });
+    assert.ok(
+      !newest.entries.some((e) => e.kind === "Call"),
+      "the fixture is wrong - the call was not older than the bills",
+    );
+
+    const calls20 = await customerTimeline(customer.id, {
+      limit: 20,
+      kind: "Call",
+    });
+    assert.equal(calls20.entries.length, 1);
+    assert.equal(calls20.entries[0].content, "The oldest thing on this account");
+    assert.equal(calls20.more, false, "one call was reported as a partial list");
+  });
+
+  test("the reader has to be allowed to see the customer", async () => {
+    const customer = await billedCustomer(1);
+    setTestUser(rakesh);
+    const refused = await loadCustomerTimeline(customer.id);
+    assert.equal(refused.ok, false, "another telecaller's account was paged");
+
+    setTestUser(priya);
+    const allowed = await loadCustomerTimeline(customer.id);
+    assert.equal(allowed.ok, true, allowed.ok ? "" : allowed.error);
+  });
+});
+
+describe("third-party customers and their distributors", () => {
+  /** A distributor is an account we bill, so every test needs one. */
+  async function makeDistributor(name = "Distributor Alpha") {
+    return makeCustomer(priya.id, { name, kind: "customer" });
+  }
+
+  test("converting is a manager's, and it is checked in the action", async () => {
+    const shop = await makeCustomer(priya.id, { kind: "lead" });
+    const distributor = await makeDistributor();
+
+    setTestUser(priya);
+    const asTelecaller = await convertToThirdParty({
+      customerIds: [shop.id],
+      distributors: [{ distributorId: distributor.id }],
+    });
+    assert.equal(asTelecaller.ok, false, "a telecaller reclassified an account");
+
+    setTestUser(manager);
+    const asManager = await convertToThirdParty({
+      customerIds: [shop.id],
+      distributors: [{ distributorId: distributor.id, isPrimary: true }],
+    });
+    assert.equal(asManager.ok, true, asManager.ok ? "" : asManager.error);
+
+    const [row] = await db
+      .select({ thirdParty: customers.thirdParty, kind: customers.kind })
+      .from(customers)
+      .where(eq(customers.id, shop.id));
+    assert.equal(row.thirdParty, true);
+    // The KIND is untouched. Being a shop we deliver to is how we work the
+    // account, not what the account is — and we may still bill it one day.
+    assert.equal(row.kind, "lead", "converting changed what the record is");
+
+    const links = await distributorsFor(shop.id);
+    assert.equal(links.length, 1);
+    assert.equal(links[0].customerId, distributor.id);
+    assert.equal(links[0].isPrimary, true);
+  });
+
+  test("a conversion with no distributor is refused, and nothing is marked", async () => {
+    const shop = await makeCustomer(priya.id, { kind: "lead" });
+    setTestUser(manager);
+
+    const result = await convertToThirdParty({
+      customerIds: [shop.id],
+      distributors: [],
+    });
+    assert.equal(result.ok, false, "a shop was converted with nobody billing it");
+
+    const [row] = await db
+      .select({ thirdParty: customers.thirdParty })
+      .from(customers)
+      .where(eq(customers.id, shop.id));
+    assert.equal(row.thirdParty, false, "the mark was written by a refused call");
+  });
+
+  test("a DIRECT CUSTOMER cannot be converted — we bill them ourselves", async () => {
+    const customer = await makeCustomer(priya.id, { kind: "customer" });
+    const distributor = await makeDistributor("Distributor Beta");
+    setTestUser(manager);
+
+    const result = await convertToThirdParty({
+      customerIds: [customer.id],
+      distributors: [{ distributorId: distributor.id }],
+    });
+    assert.equal(result.ok, false, "an account we invoice was made a third party");
+
+    const [row] = await db
+      .select({ thirdParty: customers.thirdParty })
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(row.thirdParty, false);
+  });
+
+  test("a distributor has to be an unmarked direct customer", async () => {
+    const shop = await makeCustomer(priya.id, { kind: "lead" });
+    const aLead = await makeCustomer(priya.id, { kind: "lead", name: "Not A Distributor" });
+    const marked = await makeCustomer(priya.id, {
+      kind: "customer",
+      thirdParty: true,
+      name: "Also Delivered To",
+    });
+    setTestUser(manager);
+
+    // A lead has never ordered, so it cannot bill anybody.
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: aLead.id }],
+      })).ok,
+      false,
+      "a lead was accepted as a distributor",
+    );
+
+    // And a shop somebody else bills cannot be the one holding the invoice.
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: marked.id }],
+      })).ok,
+      false,
+      "a third-party customer was accepted as a distributor",
+    );
+
+    // Nor can an account be its own distributor.
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: shop.id }],
+      })).ok,
+      false,
+      "an account was made its own distributor",
+    );
+
+    assert.deepEqual(await distributorsFor(shop.id), []);
+  });
+
+  test("the picker offers direct customers and nothing else", async () => {
+    await makeCustomer(priya.id, { kind: "customer", name: "Candidate Direct" });
+    await makeCustomer(priya.id, { kind: "lead", name: "Candidate Lead" });
+    await makeCustomer(priya.id, {
+      kind: "customer",
+      thirdParty: true,
+      name: "Candidate Marked",
+    });
+    await makeCustomer(priya.id, {
+      kind: "customer",
+      status: "deactivated",
+      name: "Candidate Gone",
+    });
+    setTestUser(manager);
+
+    const names = (await distributorCandidates("Candidate")).hits.map((c) => c.name);
+    assert.deepEqual(names, ["Candidate Direct"]);
+  });
+
+  test("what was typed decides the order, and the cap says it is a cap", async () => {
+    /*
+     * The bug this pins: the list used to be ordered by how many shops an
+     * account already serves and then alphabetically, with the query used only
+     * to filter. Typing "c" put a name whose ninth word contains one above
+     * every account that starts with one, which on a book of 561 direct
+     * customers makes the box unusable for the job it exists to do.
+     */
+    await makeCustomer(priya.id, { kind: "customer", name: "Zeta Paints" });
+    // Already serves a shop, so the old ordering floated it to the top of
+    // every result set it appeared in, whatever was typed.
+    const busy = await makeCustomer(priya.id, {
+      kind: "customer",
+      // Contains the query LATE and in another word, which is exactly the shape
+      // that used to win: it matched, it already served a shop, and the sort
+      // read the shop count before it read anything about the query.
+      name: "A Munsi Paint and zeta chemicals",
+    });
+    const shop = await makeCustomer(priya.id, { kind: "lead", name: "Some Shop" });
+    setTestUser(manager);
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: busy.id }],
+      })).ok,
+      true,
+    );
+
+    const byPrefix = await distributorCandidates("Zeta");
+    assert.equal(
+      byPrefix.hits[0]?.name,
+      "Zeta Paints",
+      "the account whose name starts with what was typed was not first",
+    );
+
+    // A word inside the name counts, which is how somebody finds "Zeta Paints"
+    // by typing what the customer actually says.
+    const byWord = await distributorCandidates("Paints");
+    assert.equal(byWord.hits[0]?.name, "Zeta Paints");
+
+    // And a name typed badly still lands, the way the product search already
+    // forgives one mid-call.
+    const misspelt = await distributorCandidates("Zeta Pants");
+    assert.ok(
+      misspelt.hits.some((h) => h.name === "Zeta Paints"),
+      "a near-miss found nothing at all",
+    );
+
+    // The cap is reported rather than left to look like the whole answer.
+    const capped = await distributorCandidates("", { limit: 1 });
+    assert.equal(capped.hits.length, 1);
+    assert.ok(capped.more > 0, "a trimmed list did not say it was trimmed");
+  });
+
+  test("one letter means names that START with it, and nothing else", async () => {
+    /*
+     * Somebody typing a single character is spelling the beginning of a name
+     * they know. Matching inside words at that length filled the whole list
+     * with accounts that merely contain the letter — "A MUNSI PAINT and
+     * chemicals" for "c" — and pushed every account beginning with one off the
+     * bottom.
+     */
+    await makeCustomer(priya.id, { kind: "customer", name: "Chetan Traders" });
+    await makeCustomer(priya.id, { kind: "customer", name: "A Munsi Paint and chemicals" });
+    await makeCustomer(priya.id, { kind: "customer", name: "Acc Home Decor" });
+    setTestUser(manager);
+
+    const one = await distributorCandidates("c");
+    assert.deepEqual(
+      one.hits.map((h) => h.name),
+      ["Chetan Traders"],
+      "a one-letter query matched inside words instead of at the start",
+    );
+    assert.equal(one.mode, "prefix");
+
+    // Three characters is where it widens: the town, the code, a word inside
+    // the name and a near miss all become worth searching.
+    const three = await distributorCandidates("che");
+    assert.ok(
+      three.hits.some((h) => h.name === "A Munsi Paint and chemicals"),
+      "the wider search never arrived",
+    );
+    assert.equal(three.hits[0]?.name, "Chetan Traders", "the prefix match lost its place");
+    assert.equal(three.mode, "wide");
+
+    // Nothing starting with it is a different answer to nothing at all, and
+    // the screen is told which so it can say so.
+    const none = await distributorCandidates("z");
+    assert.deepEqual(none.hits, []);
+    assert.equal(none.mode, "prefix");
+  });
+
+  test("a batch converts on one set of distributors", async () => {
+    const one = await makeCustomer(priya.id, { kind: "lead", name: "Route Shop One" });
+    const two = await makeCustomer(priya.id, { kind: "lead", name: "Route Shop Two" });
+    const distributor = await makeDistributor("Route Distributor");
+    setTestUser(manager);
+
+    const result = await convertToThirdParty({
+      customerIds: [one.id, two.id],
+      distributors: [{ distributorId: distributor.id, isPrimary: true }],
+    });
+    assert.equal(result.ok, true, result.ok ? "" : result.error);
+    assert.equal(result.ok ? result.data.converted : 0, 2);
+
+    const served = await deliveryAddressesFor(distributor.id);
+    assert.deepEqual(
+      served.map((s: { customerId: string }) => s.customerId).sort(),
+      [one.id, two.id].sort(),
+      "the distributor's own record does not know both shops",
+    );
+  });
+
+  test("adding, editing and removing an arrangement", async () => {
+    const shop = await makeCustomer(priya.id, { kind: "lead" });
+    const first = await makeDistributor("Distributor First");
+    const second = await makeDistributor("Distributor Second");
+    const third = await makeDistributor("Distributor Third");
+    setTestUser(manager);
+
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: first.id, isPrimary: true }],
+      })).ok,
+      true,
+    );
+
+    const added = await addDistributor({
+      customerId: shop.id,
+      distributorId: second.id,
+      note: "Covers the eastern half",
+    });
+    assert.equal(added.ok, true, added.ok ? "" : added.error);
+
+    // The same distributor twice is one arrangement, not two.
+    assert.equal(
+      (await addDistributor({ customerId: shop.id, distributorId: second.id })).ok,
+      false,
+      "the same distributor was named twice",
+    );
+
+    // Handing the badge over takes it off whoever holds it. Two rows both
+    // claiming to be the usual one is a state no screen can render honestly.
+    const links = await distributorsFor(shop.id);
+    const secondLink = links.find((l) => l.customerId === second.id)!;
+    assert.equal(
+      (await updateDistributor({ linkId: secondLink.linkId!, isPrimary: true })).ok,
+      true,
+    );
+    const afterPrimary = await distributorsFor(shop.id);
+    assert.deepEqual(
+      afterPrimary.filter((l) => l.isPrimary).map((l) => l.customerId),
+      [second.id],
+    );
+
+    // Swapping WHO it is with keeps the row, so who recorded the arrangement
+    // and when survives a corrected name.
+    assert.equal(
+      (await updateDistributor({ linkId: secondLink.linkId!, distributorId: third.id })).ok,
+      true,
+    );
+    const afterSwap = await distributorsFor(shop.id);
+    assert.ok(afterSwap.some((l) => l.customerId === third.id));
+    assert.ok(!afterSwap.some((l) => l.customerId === second.id));
+
+    // And a swap onto a distributor already named is refused rather than
+    // silently merging two arrangements into one.
+    const firstLink = afterSwap.find((l) => l.customerId === first.id)!;
+    assert.equal(
+      (await updateDistributor({ linkId: firstLink.linkId!, distributorId: third.id })).ok,
+      false,
+      "a swap collapsed two arrangements into one",
+    );
+
+    assert.equal((await removeDistributor(firstLink.linkId!)).ok, true);
+    assert.equal((await distributorsFor(shop.id)).length, 1);
+  });
+
+  test("what the sheet saw and what somebody recorded are ONE list", async () => {
+    /*
+     * The bug this pins was on the screen, not in the data: the recorded
+     * arrangement was one panel and every shop the order sheet shows goods
+     * going to was another, under a title of its own. Four rows beside
+     * eighty-six, two counts, and no way to tell what the difference was.
+     *
+     * One list per direction now, and `recorded` is what separates the halves.
+     * A shop the sheet has seen is not a second subject — it is the unfinished
+     * part of the first one.
+     */
+    const distributor = await makeCustomer(priya.id, {
+      kind: "customer",
+      name: "Distributor Merge",
+    });
+    const recordedShop = await makeCustomer(priya.id, {
+      kind: "lead",
+      name: "Recorded Shop",
+    });
+    const seenShop = await makeCustomer(priya.id, {
+      kind: "lead",
+      name: "Seen Only Shop",
+    });
+
+    setTestUser(manager);
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [recordedShop.id],
+        distributors: [{ distributorId: distributor.id, isPrimary: true }],
+      })).ok,
+      true,
+    );
+
+    // The sheet's own knowledge: an order billed to the distributor, delivered
+    // to a shop nobody has recorded.
+    await db.insert(orders).values({
+      id: id("ord"),
+      customerId: distributor.id,
+      deliveryCustomerId: seenShop.id,
+      source: "external",
+      externalRef: `SHEET-${randomUUID().slice(0, 8)}`,
+      orderedAt: new Date(),
+      totalAmount: 100_00,
+      status: "dispatched",
+    });
+
+    const addresses = await deliveryAddressesFor(distributor.id);
+    assert.equal(addresses.length, 2, "the two halves did not land in one list");
+
+    const recorded = addresses.find((a) => a.customerId === recordedShop.id)!;
+    const seen = addresses.find((a) => a.customerId === seenShop.id)!;
+    assert.equal(recorded.recorded, true);
+    assert.equal(recorded.orders, 0, "recorded with no deliveries yet is a real state");
+    assert.equal(seen.recorded, false, "a shop only the sheet knows read as recorded");
+    assert.equal(seen.orders, 1);
+    assert.ok(seen.linkId === null, "an unrecorded row carried a link to edit");
+
+    // Recorded first, whatever the order counts say — the half somebody is
+    // responsible for is the half they should read first.
+    assert.equal(addresses[0].customerId, recordedShop.id);
+
+    // And recording one moves it across, which is what makes the list a
+    // worklist rather than a report.
+    const done = await recordDeliveryAddress({
+      distributorId: distributor.id,
+      shopId: seenShop.id,
+    });
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
+    assert.equal(done.ok ? done.data.converted : false, true, "a lead was not converted");
+
+    const after = await deliveryAddressesFor(distributor.id);
+    assert.equal(after.length, 2, "recording duplicated the row instead of moving it");
+    assert.equal(after.every((a) => a.recorded), true);
+
+    // Read from the shop's own end it is the same arrangement, not a second one.
+    const fromTheShop = await distributorsFor(seenShop.id);
+    assert.deepEqual(
+      fromTheShop.map((d) => d.customerId),
+      [distributor.id],
+    );
+    assert.equal(fromTheShop[0].recorded, true);
+  });
+
+  test("recording a delivery address does not convert an account we bill", async () => {
+    // A direct customer receiving goods on somebody else's bill is ordinary —
+    // they buy both ways. Recording that arrangement is right; calling them a
+    // shop somebody else bills is not, and only a lead may be converted.
+    const distributor = await makeCustomer(priya.id, { kind: "customer", name: "Dist A" });
+    const alsoDirect = await makeCustomer(priya.id, { kind: "customer", name: "Also Direct" });
+    setTestUser(manager);
+
+    const done = await recordDeliveryAddress({
+      distributorId: distributor.id,
+      shopId: alsoDirect.id,
+    });
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
+    assert.equal(done.ok ? done.data.converted : true, false, "an account we bill was converted");
+
+    const [row] = await db
+      .select({ thirdParty: customers.thirdParty, kind: customers.kind })
+      .from(customers)
+      .where(eq(customers.id, alsoDirect.id));
+    assert.equal(row.thirdParty, false);
+    assert.equal(row.kind, "customer");
+
+    // The arrangement is still recorded.
+    const addresses = await deliveryAddressesFor(distributor.id);
+    assert.deepEqual(addresses.map((a) => a.customerId), [alsoDirect.id]);
+    assert.equal(addresses[0].recorded, true);
+  });
+
+  test("the LAST distributor cannot be removed from a third-party customer", async () => {
+    const shop = await makeCustomer(priya.id, { kind: "lead" });
+    const distributor = await makeDistributor("Distributor Only");
+    setTestUser(manager);
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: distributor.id }],
+      })).ok,
+      true,
+    );
+
+    const [link] = await distributorsFor(shop.id);
+    const refused = await removeDistributor(link.linkId!);
+    assert.equal(refused.ok, false, "a third-party customer was left with nobody billing it");
+    assert.equal((await distributorsFor(shop.id)).length, 1);
+
+    // The way out is the other direction: it stops being a third-party
+    // customer, and then the arrangement can go.
+    assert.equal((await revertThirdParty([shop.id])).ok, true);
+    assert.equal((await removeDistributor(link.linkId!)).ok, true);
+  });
+
+  test("reverting keeps who used to bill the shop", async () => {
+    const shop = await makeCustomer(priya.id, { kind: "lead" });
+    const distributor = await makeDistributor("Distributor Was");
+    setTestUser(manager);
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: distributor.id }],
+      })).ok,
+      true,
+    );
+
+    const reverted = await revertThirdParty([shop.id]);
+    assert.equal(reverted.ok, true);
+    const [row] = await db
+      .select({ thirdParty: customers.thirdParty })
+      .from(customers)
+      .where(eq(customers.id, shop.id));
+    assert.equal(row.thirdParty, false);
+
+    // The links are the record of how it WAS served. Deleting them would
+    // destroy the only account of it.
+    assert.equal((await distributorsFor(shop.id)).length, 1);
+
+    // And a second revert reports honestly rather than claiming work.
+    const again = await revertThirdParty([shop.id]);
+    assert.equal(again.ok, true);
+    assert.equal(again.ok ? again.data.changed : -1, 0, "a no-op reported work");
+  });
+
+  test("an account converted before distributors existed is listed, not hidden", async () => {
+    const orphan = await makeCustomer(priya.id, {
+      kind: "lead",
+      thirdParty: true,
+      name: "Marked Before",
+    });
+    await makeCustomer(priya.id, { kind: "lead", name: "Ordinary Lead" });
+    setTestUser(manager);
+
+    const waiting = await listCustomersPage({ thirdParty: "nodistributor" });
+    assert.deepEqual(waiting.rows.map((w) => w.id), [orphan.id]);
+  });
+
+  test("a converted shop drops off the Call Log, and only for that reason", async () => {
+    const shop = await makeCustomer(priya.id, {
+      kind: "lead",
+      lastOrderDate: null,
+      createdAt: new Date(Date.now() - 60 * 24 * 3600 * 1000),
+    });
+    const distributor = await makeDistributor("Distributor Queue");
+
+    setTestUser(priya);
+    const before = await getQueue();
+    assert.ok(
+      before.entries.some((e) => e.customerId === shop.id),
+      "a prospect was not on the list to begin with",
+    );
+
+    setTestUser(manager);
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: distributor.id }],
+      })).ok,
+      true,
+    );
+
+    // The day's list is settled, so this reads the live engine rather than the
+    // stored one — the point being the RULE, not when it takes effect.
+    const candidates = await queueCandidatesFor(priya.id, TODAY);
+    const stillThere = candidates.find((c) => c.customerId === shop.id);
+    assert.equal(stillThere?.thirdParty, true, "the flag never reached the engine");
+  });
+
+  test("a converted account leaves the lead count and joins the third-party one", async () => {
+    // One question, three answers. A converted lead must not be counted in
+    // both, or the split says 1,079 records across 1,178 rows and nobody
+    // trusts it.
+    await makeCustomer(priya.id, { kind: "lead", name: "Shop To Convert" });
+    await makeCustomer(priya.id, { kind: "lead", name: "Genuine Lead" });
+    const distributor = await makeCustomer(priya.id, {
+      kind: "customer",
+      name: "Real Distributor",
+    });
+
+    setTestUser(manager);
+    const before = await listCustomersPage({});
+    assert.equal(before.totals.leads, 2);
+    assert.equal(before.totals.thirdParties, 0);
+
+    const shop = before.rows.find((r) => r.name === "Shop To Convert")!;
+    assert.equal(
+      (await convertToThirdParty({
+        customerIds: [shop.id],
+        distributors: [{ distributorId: distributor.id }],
+      })).ok,
+      true,
+    );
+
+    const after = await listCustomersPage({});
+    assert.equal(after.totals.leads, 1, "a converted account was still counted as a lead");
+    assert.equal(after.totals.thirdParties, 1);
+    assert.equal(
+      after.totals.directCustomers + after.totals.leads + after.totals.thirdParties,
+      after.total,
+      "the three counts do not add up to the book",
+    );
+
+    // And the filters agree with the counts.
+    const asLeads = await listCustomersPage({ thirdParty: "lead" });
+    assert.ok(
+      !asLeads.rows.some((r) => r.id === shop.id),
+      "the Leads filter still offered a converted account",
+    );
+    const asThird = await listCustomersPage({ thirdParty: "yes" });
+    assert.deepEqual(asThird.rows.map((r) => r.id), [shop.id]);
+  });
+
+  test("the sheet's delivery party links to a record, and creates none", async () => {
+    const distributor = await makeCustomer(priya.id, { name: "Distributor Alpha" });
+    const shop = await makeCustomer(priya.id, { name: "End Shop Beta", kind: "lead" });
+    const before = (await db.select({ id: customers.id }).from(customers)).length;
+
+    const [order] = await db
+      .insert(orders)
+      .values({
+        id: id("ord"),
+        customerId: distributor.id,
+        source: "external",
+        externalRef: "SHEET-TO-9001",
+        orderedAt: new Date(),
+        totalAmount: 100_00,
+        status: "dispatched",
+      })
+      .returning();
+
+    const [run] = await db
+      .insert(sheetSyncRuns)
+      .values({
+        id: id("syn"),
+        source: "taken_order",
+        spreadsheetId: "sheet",
+        tabTitle: "Taken Order",
+        status: "ok",
+      })
+      .returning();
+    await db.insert(sheetTakenOrderRows).values({
+      id: id("tak"),
+      syncId: run.id,
+      rowNumber: 1,
+      lineKey: randomUUID(),
+      raw: {},
+      rowHash: randomUUID(),
+      orderNumber: "TO-9001",
+      billingPartyName: "Distributor Alpha",
+      deliveryPartyName: "End Shop Beta",
+      officeStatus: "Ready",
+      entryStatus: "Done",
+      open: false,
+    });
+
+    const result = await linkDeliveryParties();
+    assert.equal(result.linked, 1, "the delivery party was not linked");
+
+    const [linked] = await db
+      .select({ delivery: orders.deliveryCustomerId })
+      .from(orders)
+      .where(eq(orders.id, order.id));
+    assert.equal(linked.delivery, shop.id);
+
+    // The whole reason this is a link and not an import.
+    const after = (await db.select({ id: customers.id }).from(customers)).length;
+    assert.equal(after, before, "linking created a customer record");
+  });
+
+  test("a delivery party naming nobody is reported, never created", async () => {
+    const distributor = await makeCustomer(priya.id, { name: "Distributor Gamma" });
+    const before = (await db.select({ id: customers.id }).from(customers)).length;
+
+    await db.insert(orders).values({
+      id: id("ord"),
+      customerId: distributor.id,
+      source: "external",
+      externalRef: "SHEET-TO-9002",
+      orderedAt: new Date(),
+      totalAmount: 100_00,
+      status: "dispatched",
+    });
+    const [run] = await db
+      .insert(sheetSyncRuns)
+      .values({
+        id: id("syn"),
+        source: "taken_order",
+        spreadsheetId: "sheet",
+        tabTitle: "Taken Order",
+        status: "ok",
+      })
+      .returning();
+    await db.insert(sheetTakenOrderRows).values({
+      id: id("tak"),
+      syncId: run.id,
+      rowNumber: 1,
+      lineKey: randomUUID(),
+      raw: {},
+      rowHash: randomUUID(),
+      orderNumber: "TO-9002",
+      billingPartyName: "Distributor Gamma",
+      deliveryPartyName: "Nobody We Have Ever Heard Of",
+      officeStatus: "Ready",
+      entryStatus: "Done",
+      open: false,
+    });
+
+    const result = await linkDeliveryParties();
+    assert.equal(result.unresolved, 1);
+    assert.equal(result.linked, 0);
+    assert.equal(
+      (await db.select({ id: customers.id }).from(customers)).length,
+      before,
+      "an unmatched delivery name created a record",
+    );
+
+    const listed = await unresolvedDeliveryParties();
+    assert.ok(
+      listed.some((u) => u.name === "Nobody We Have Ever Heard Of"),
+      "the unmatched name was not reported anywhere",
+    );
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * The customer record, which held a timeline and five figures while the drawer
+ * opened over the top of it knew more than the page underneath.
+ * ------------------------------------------------------------------------- */
+
+describe("everything on a customer's record", () => {
+  test("a bill nobody has spoken for is listed and never given a balance", async () => {
+    const customer = await makeCustomer(priya.id);
+    await db.insert(bills).values([
+      {
+        id: id("bil"),
+        customerId: customer.id,
+        billNo: "STATED-1",
+        billDate: addDays(TODAY, -40),
+        dueDate: addDays(TODAY, -10),
+        amount: 100_00,
+        paymentPosition: "stated",
+      },
+      {
+        id: id("bil"),
+        customerId: customer.id,
+        billNo: "UNSTATED-1",
+        billDate: addDays(TODAY, -40),
+        dueDate: addDays(TODAY, -10),
+        amount: 250_00,
+        paymentPosition: "unstated",
+      },
+    ]);
+
+    setTestUser(priya);
+    const detail = await customerRecordDetail(customer.id, TODAY);
+
+    const stated = detail.bills.find((b) => b.billNo === "STATED-1")!;
+    const unstated = detail.bills.find((b) => b.billNo === "UNSTATED-1")!;
+
+    assert.equal(detail.counts.bills, 2, "the count is of every bill, not the page");
+    assert.equal(stated.stated, true);
+    assert.equal(stated.daysOverdue, 10);
+
+    // Shown, counted, and never aged: an unstated bill is not a debt, so
+    // giving it a number of days overdue would invent an age for something
+    // nobody has said is owed.
+    assert.equal(unstated.stated, false);
+    assert.equal(unstated.daysOverdue, null, "an unstated bill was aged like a debt");
+  });
+
+  test("an order accounts refused is listed, and says it is not a sale", async () => {
+    const customer = await makeCustomer(priya.id);
+    await db.insert(orders).values([
+      {
+        id: id("ord"),
+        customerId: customer.id,
+        orderedAt: new Date(),
+        totalAmount: 500_00,
+        status: "dispatched",
+      },
+      {
+        id: id("ord"),
+        customerId: customer.id,
+        orderedAt: new Date(),
+        totalAmount: 900_00,
+        status: "declined",
+      },
+    ]);
+
+    setTestUser(priya);
+    const detail = await customerRecordDetail(customer.id, TODAY);
+
+    assert.equal(detail.orders.length, 2, "a declined order vanished from the record");
+    assert.equal(detail.orders.filter((o) => o.counts).length, 1);
+    assert.equal(
+      detail.orders.find((o) => o.amount === 900_00)?.counts,
+      false,
+      "a declined order was presented as a sale",
+    );
   });
 });
