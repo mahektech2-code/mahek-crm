@@ -171,6 +171,8 @@ export type PullPayload = {
   courses?: unknown[];
   leaveBalances?: unknown[];
   approvals?: unknown[];
+  /** His own month, scored by the office. Reference only — nothing here writes it. */
+  performance?: unknown[];
   /**
    * `{ mediaId, transcript }` per voice note the office has written out. It is
    * what releases the recording here — see `sync/media.ts`.

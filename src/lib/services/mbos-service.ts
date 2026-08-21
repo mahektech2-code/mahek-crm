@@ -404,6 +404,16 @@ export type BootstrapPayload = {
   documents: unknown[];
   courses: unknown[];
   notifications: unknown[];
+  /**
+   * The months he is being measured on, from the cache.
+   *
+   * On the delta channel this is gated on `computed_at`, which is right there
+   * and wrong here — a fresh install has no cursor, so the delta sends nothing
+   * and a handset signed in on a new phone would show an empty Performance
+   * screen until the nightly rebuild happened to run. Bootstrap asks for it
+   * unconditionally.
+   */
+  performance: unknown[];
   config: Record<string, unknown>;
 };
 
@@ -432,6 +442,7 @@ export async function buildBootstrap(
     documentRows,
     courseRows,
     notificationRows,
+    performanceRows,
     config,
   ] = await Promise.all([
     customersForDevice(ids),
@@ -447,6 +458,8 @@ export async function buildBootstrap(
     visibleDocuments(principal.role, ids),
     coursesFor(principal.user.id),
     unreadNotifications(principal.user.id),
+    // The epoch, so the cache's own `computed_at` gate lets everything through.
+    performanceFor(principal.user.id, new Date(0).toISOString()),
     mbosConfigPayload(),
   ]);
 
@@ -475,6 +488,7 @@ export async function buildBootstrap(
     documents: documentRows,
     courses: courseRows,
     notifications: notificationRows,
+    performance: performanceRows,
     config,
   };
 }
@@ -823,6 +837,61 @@ async function deletionsSince(userId: string, since: string) {
  * the sync endpoint is how a handset on 2G ends up downloading the book on
  * every pass.
  */
+/**
+ * His own score, from the cache.
+ *
+ * Two periods rather than one: on the 2nd of a month the month he is actually
+ * being judged on is still the previous one, and a handset showing a two-day-
+ * old month with nothing in it reads as a broken screen. The categories ride
+ * along as JSON on the row, because a handset that has one of the two halves
+ * can render neither.
+ */
+async function performanceFor(
+  userId: string,
+  sinceIso: string,
+): Promise<Record<string, unknown>[]> {
+  return db.execute<Record<string, unknown>>(sql`
+    select p.period,
+           p.revenue_target_paise as "revenueTargetPaise",
+           p.revenue_actual_paise as "revenueActualPaise",
+           p.revenue_achievement_bp as "revenueAchievementBp",
+           p.volume_target_ml as "volumeTargetMl",
+           p.volume_actual_ml as "volumeActualMl",
+           p.volume_achievement_bp as "volumeAchievementBp",
+           p.mix_achievement_bp as "mixAchievementBp",
+           p.new_customer_target as "newCustomerTarget",
+           p.new_customer_actual as "newCustomerActual",
+           p.collection_target_paise as "collectionTargetPaise",
+           p.collection_actual_paise as "collectionActualPaise",
+           p.activity_target as "activityTarget",
+           p.activity_actual as "activityActual",
+           p.total_score_bp as "totalScoreBp",
+           p.rating,
+           p.untargeted,
+           p.unmatched_revenue_paise as "unmatchedRevenuePaise",
+           p.computed_at as "computedAt",
+           coalesce(
+             (select json_agg(json_build_object(
+                        'name', pc.name,
+                        'targetBp', c.target_bp,
+                        'minimumBp', c.minimum_bp,
+                        'actualBp', c.actual_bp,
+                        'actualMl', c.actual_ml,
+                        'status', c.status)
+                      order by pc.display_order)
+                from sales_performance_categories c
+                join product_categories pc on pc.id = c.category_id
+               where c.performance_id = p.id),
+             '[]'::json
+           ) as categories
+      from sales_performance p
+     where p.user_id = ${userId}
+       and p.computed_at > ${sinceIso}
+     order by p.period desc
+     limit 2
+  `);
+}
+
 export async function buildPull(
   principal: MbosPrincipal,
   cursor: string | null | undefined,
@@ -842,6 +911,7 @@ export async function buildPull(
       transcripts: [],
       journeyStops: [],
       approvals: [],
+      performance: [],
       planDays: [],
       leaveBalances: [],
       priceList: [],
@@ -1096,5 +1166,6 @@ export async function buildPull(
     documents: documentChanges as unknown[],
     courses: courseChanges as unknown[],
     deletions: deletionRows,
+    performance: await performanceFor(principal.user.id, sinceIso),
   };
 }

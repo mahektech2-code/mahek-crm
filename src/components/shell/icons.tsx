@@ -62,6 +62,13 @@ const PATHS: Record<string, React.ReactNode> = {
       <path d="M12 9v4M12 17h.01" />
     </>
   ),
+  chart: (
+    <>
+      <path d="M4 19V5" />
+      <path d="M4 19h16" />
+      <path d="M8 16v-5M12 16V8M16 16v-7" />
+    </>
+  ),
   target: (
     <>
       <circle cx="12" cy="12" r="8.5" />

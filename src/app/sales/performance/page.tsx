@@ -1,14 +1,19 @@
 import Link from "next/link";
-import { money } from "@/lib/format";
-import { APP_TIMEZONE, endOfMonth } from "@/lib/business-date";
+import { money, moneyShort } from "@/lib/format";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
-import { performance } from "@/lib/services/sales-service";
+import { BP } from "@/lib/engines/performance";
+import {
+  readingsForPeriod,
+  unattributedForPeriod,
+} from "@/lib/services/performance-service";
 import {
   Banner,
   Cell,
   Empty,
   HeadCell,
   MetricRow,
+  Pill,
   Row,
   ScreenHeader,
   Table,
@@ -17,18 +22,21 @@ import {
 export const metadata = { title: "Performance — Sales Dashboard — MahekOne" };
 
 /**
- * A month, per salesman.
+ * The month, per person, scored.
  *
- * **There is no target column, and that is a decision rather than an
- * omission.** `monthly_targets` is the CRM's, set per telecaller; nothing sets
- * one for a field salesman. A percentage against a target nobody set would be
- * a number this screen invented, and the design's own rule — inherited from
- * the order form — is that a confident wrong figure is worse than a blank.
+ * This screen used to carry a banner saying no targets existed for the field
+ * and that a percentage here would be invented. That was true and is not any
+ * more: `sales_targets` sets one per PERSON, and every figure below is
+ * measured against what somebody actually asked for. Where a target was not
+ * set the column still says so rather than showing a zero — the old rule
+ * survives, it just applies to fewer cells.
  *
- * Order value is CAPTURED value. An MBOS order sits at pending approval until
- * accounts decide it, so this is what the team sold and not what the business
- * booked. The screen says so under the table rather than leaving it to be
- * assumed.
+ * **The two columns to read together are Revenue and Volume.** A price
+ * revision moves the first and cannot move the second, so revenue at target
+ * with volume well below it is the month somebody would otherwise be
+ * congratulated for. That comparison is the reason this screen exists in this
+ * shape, and it is why the alert column is not at the far right where it would
+ * be scrolled past.
  */
 export default async function Page({
   searchParams,
@@ -37,34 +45,37 @@ export default async function Page({
 }) {
   const params = await searchParams;
   const now = await today();
+  const month = /^\d{4}-\d{2}$/.test(params.month ?? "")
+    ? params.month!
+    : now.slice(0, 7);
 
-  const month = /^\d{4}-\d{2}$/.test(params.month ?? "") ? params.month! : now.slice(0, 7);
-  const from = `${month}-01`;
-  const to = endOfMonth(month);
+  const [rows, orphaned] = await Promise.all([
+    readingsForPeriod(month, now),
+    unattributedForPeriod(month),
+  ]);
 
-  const rows = await performance(from, to);
-
+  const scored = rows.filter((r) => r.hasTarget);
   const totals = rows.reduce(
     (a, r) => ({
-      visits: a.visits + Number(r.visits),
-      orders: a.orders + Number(r.orders),
-      value: a.value + Number(r.orderValuePaise),
-      collected: a.collected + Number(r.collectedPaise),
-      newCustomers: a.newCustomers + Number(r.newCustomers),
+      revenue: a.revenue + r.actuals.revenuePaise,
+      millilitres: a.millilitres + r.actuals.millilitres,
+      collected: a.collected + r.actuals.collectionPaise,
+      newCustomers: a.newCustomers + r.actuals.newCustomers,
+      unmatched: a.unmatched + r.unmatchedPaise,
     }),
-    { visits: 0, orders: 0, value: 0, collected: 0, newCustomers: 0 },
+    { revenue: 0, millilitres: 0, collected: 0, newCustomers: 0, unmatched: 0 },
   );
 
-  const best = [...rows].sort(
-    (a, b) => Number(b.orderValuePaise) - Number(a.orderValuePaise),
+  const days = rows[0];
+  const priceRisk = rows.filter((r) =>
+    r.alerts.some((a) => a.key === "price-not-volume"),
   );
-  const widest = Math.max(1, ...rows.map((r) => Number(r.orderValuePaise)));
 
   return (
     <div className="p-6">
       <ScreenHeader
         title="Performance"
-        subtitle={`${monthName(month)} — what each salesman did, measured in what actually happened rather than against a target nobody set.`}
+        subtitle={`${monthName(month)} — revenue, litres, product mix, new customers, collection and activity, scored out of 100.`}
         actions={
           <div className="flex items-center gap-1 text-[13px]">
             <Link
@@ -80,134 +91,234 @@ export default async function Page({
             >
               →
             </Link>
+            <Link
+              href={`/sales/targets?period=${month}`}
+              className="ml-2 rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              Set targets
+            </Link>
           </div>
         }
       />
 
-      <Banner
-        tone="info"
-        title="No targets are set for the field"
-        body="The design shows achievement against a monthly target. MahekOne sets targets per telecaller in the CRM and none for a field salesman, so there is nothing to divide by — a percentage here would be invented. What is shown is what happened."
-      />
+      {priceRisk.length > 0 ? (
+        <Banner
+          tone="warn"
+          title={
+            priceRisk.length === 1
+              ? `${priceRisk[0].userName} is at target on revenue but not on volume`
+              : `${priceRisk.length} people are at target on revenue but not on volume`
+          }
+          body="Revenue can rise on a price revision alone. Where volume has not risen with it, the month is a price effect rather than more selling — the litres column is the one to read."
+        />
+      ) : null}
+
+      {orphaned.revenuePaise > 0 ? (
+        <Banner
+          tone="info"
+          title={`${money(orphaned.revenuePaise)} is not counted towards anybody`}
+          body={`${orphaned.customers} ${orphaned.customers === 1 ? "customer has" : "customers have"} neither a salesperson nor a back office person, so their orders belong to no one's target. Setting either seat on the customer record fixes it — nothing here guesses.`}
+        />
+      ) : null}
 
       <MetricRow
         metrics={[
-          { label: "Visits", value: String(totals.visits) },
-          { label: "Orders", value: String(totals.orders) },
-          { label: "Order value", value: money(totals.value), sub: "captured, not approved" },
-          { label: "Collected", value: money(totals.collected), sub: "reported, not banked" },
+          { label: "Revenue", value: money(totals.revenue) },
+          {
+            label: "Volume",
+            value: litres(totals.millilitres),
+            sub: totals.unmatched
+              ? `${money(totals.unmatched)} on unrecognised products`
+              : undefined,
+          },
+          { label: "Collected", value: money(totals.collected), sub: "confirmed only" },
           { label: "New customers", value: String(totals.newCustomers) },
+          {
+            label: "Working days",
+            value: days ? `${days.workingDaysElapsed} of ${days.workingDaysTotal}` : "—",
+          },
         ]}
       />
 
       {rows.length === 0 ? (
-        <Empty title="Nobody in the field" body="The field team is whoever holds the Salesman App." />
+        <Empty
+          title="Nobody to score yet"
+          body="Nobody holds a published target for this month and nothing has been sold against a customer with a salesperson or a back office person."
+        />
       ) : (
         <>
-          {totals.value ? (
-            <section className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-4">
-              <div className="mb-3 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                Order value, most to least
-              </div>
-              <div className="space-y-2">
-                {best.map((r) => (
-                  <div key={r.salesmanId} className="flex items-center gap-3">
-                    <span className="w-[180px] flex-none truncate text-[13px] text-body">
-                      {r.salesmanName}
-                    </span>
-                    <span className="h-2 min-w-0 flex-1 overflow-hidden rounded-[4px] bg-canvas">
-                      <span
-                        className="block h-full rounded-[4px] bg-brand"
-                        style={{
-                          width: `${Math.round((Number(r.orderValuePaise) / widest) * 100)}%`,
-                        }}
-                      />
-                    </span>
-                    <span className="w-[150px] flex-none text-right text-[13px] text-ink tabular-nums">
-                      {Number(r.orderValuePaise) ? money(r.orderValuePaise) : "—"}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          ) : null}
-
           <Table
-            minWidth={1160}
+            minWidth={1240}
             head={
               <>
-                <HeadCell width={200}>Salesman</HeadCell>
-                <HeadCell align="right" width={110}>Days out</HeadCell>
-                <HeadCell align="right" width={130}>Visits</HeadCell>
-                <HeadCell align="right" width={150}>Route kept</HeadCell>
-                <HeadCell align="right" width={110}>Orders</HeadCell>
-                <HeadCell align="right" width={150}>Order value</HeadCell>
-                <HeadCell align="right" width={150}>Collected</HeadCell>
-                <HeadCell align="right" width={130}>New shops</HeadCell>
+                <HeadCell width={170}>Person</HeadCell>
+                <HeadCell align="right" width={90}>Score</HeadCell>
+                <HeadCell width={130}>Rating</HeadCell>
+                <HeadCell align="right" width={160}>Revenue</HeadCell>
+                <HeadCell align="right" width={150}>Volume</HeadCell>
+                <HeadCell align="right" width={90}>Mix</HeadCell>
+                <HeadCell align="right" width={100}>New</HeadCell>
+                <HeadCell align="right" width={110}>Collection</HeadCell>
+                <HeadCell align="right" width={100}>Activity</HeadCell>
+                <HeadCell width={180}>Wants attention</HeadCell>
               </>
             }
           >
-            {rows.map((r, i) => (
-              <Row key={r.salesmanId} striped={i % 2 === 1}>
-                <Cell truncate={200}>
-                  <Link
-                    href={`/sales/people/${r.salesmanId}`}
-                    className="font-medium text-ink no-underline hover:underline"
-                  >
-                    {r.salesmanName}
-                  </Link>
-                </Cell>
-                <Cell align="right">{r.daysWorked}</Cell>
-                <Cell align="right">
-                  {r.visits}
-                  {Number(r.visits) !== Number(r.verifiedVisits) ? (
-                    <span
-                      className="ml-1 text-warn-ink"
-                      title="Visits saved with the location checklist unsatisfied. Each carries the reason the salesman gave."
-                    >
-                      ({r.verifiedVisits} verified)
-                    </span>
-                  ) : null}
-                </Cell>
-                <Cell align="right">
-                  {r.plannedStops ? (
-                    `${r.walkedStops} of ${r.plannedStops}`
-                  ) : (
-                    <span className="text-muted">no plan</span>
-                  )}
-                </Cell>
-                <Cell align="right">{r.orders || <span className="text-muted">—</span>}</Cell>
-                <Cell align="right">
-                  {Number(r.orderValuePaise) ? (
-                    money(r.orderValuePaise)
-                  ) : (
-                    <span className="text-muted">—</span>
-                  )}
-                </Cell>
-                <Cell align="right">
-                  {Number(r.collectedPaise) ? (
-                    money(r.collectedPaise)
-                  ) : (
-                    <span className="text-muted">—</span>
-                  )}
-                </Cell>
-                <Cell align="right">
-                  {r.newCustomers || <span className="text-muted">—</span>}
-                </Cell>
-              </Row>
-            ))}
+            {rows.map((r, i) => {
+              const by = (k: string) =>
+                r.score.components.find((c) => c.key === k)?.achievementBp ?? null;
+              const revenue = by("revenue");
+              const volume = by("volume");
+              const diverging =
+                revenue !== null && volume !== null && revenue >= BP && volume < BP;
+
+              return (
+                <Row key={r.userId} striped={i % 2 === 1}>
+                  <Cell truncate={170}>
+                    <span className="font-medium text-ink">{r.userName}</span>
+                  </Cell>
+                  <Cell align="right">
+                    {r.hasTarget ? (
+                      <span className="font-medium text-ink tabular-nums">
+                        {(r.score.totalBp / 100).toFixed(1)}
+                      </span>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </Cell>
+                  <Cell>
+                    {r.hasTarget ? (
+                      <Pill tone={ratingTone(r.score.totalBp)}>{r.rating}</Pill>
+                    ) : (
+                      <span
+                        className="text-[12px] text-muted"
+                        title="Nothing has been asked of this person for this month, so there is nothing to score them against."
+                      >
+                        no target set
+                      </span>
+                    )}
+                  </Cell>
+                  <Cell align="right">
+                    <Achieved
+                      actual={money(r.actuals.revenuePaise)}
+                      bp={revenue}
+                      emphasise={diverging}
+                    />
+                  </Cell>
+                  <Cell align="right">
+                    <Achieved
+                      actual={litres(r.actuals.millilitres)}
+                      bp={volume}
+                      emphasise={diverging}
+                    />
+                  </Cell>
+                  <Cell align="right">{pct(r.mix.achievementBp)}</Cell>
+                  <Cell align="right">
+                    <Achieved actual={String(r.actuals.newCustomers)} bp={by("newCustomers")} />
+                  </Cell>
+                  <Cell align="right">
+                    <Achieved
+                      actual={moneyShort(r.actuals.collectionPaise)}
+                      bp={by("collection")}
+                    />
+                  </Cell>
+                  <Cell align="right">
+                    <Achieved actual={String(r.actuals.activity)} bp={by("activity")} />
+                  </Cell>
+                  <Cell truncate={180}>
+                    {r.alerts.length ? (
+                      <span
+                        className="text-[12px] text-warn-ink"
+                        title={r.alerts.map((a) => a.message).join("\n")}
+                      >
+                        {r.alerts[0].message}
+                      </span>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </Cell>
+                </Row>
+              );
+            })}
           </Table>
 
-          <p className="mt-3 max-w-[820px] text-[13px] text-pretty text-muted">
-            Order value is what was captured in the field and is awaiting accounts&rsquo;
-            approval. Collected is what salesmen reported, which becomes money the business has
-            seen only when accounts confirm it against the bank. Neither figure has moved a target
-            or an outstanding balance.
+          <p className="mt-3 max-w-[860px] text-[13px] text-pretty text-muted">
+            A customer&rsquo;s figures count towards their salesperson, and where an
+            account has none, towards the back office person who works it — one person
+            per customer, never both, so these rows add up to the company rather than
+            past it. Revenue is orders accounts have accepted; collection is money
+            accounts have confirmed against the bank. Litres are known only for order
+            lines whose product could be matched to the catalogue
+            {totals.unmatched
+              ? `, and ${money(totals.unmatched)} this month could not be`
+              : ""}
+            .{" "}
+            {scored.length < rows.length
+              ? `${rows.length - scored.length} of these people have no published target for ${monthName(month)}.`
+              : ""}
           </p>
         </>
       )}
     </div>
   );
+}
+
+/**
+ * A figure and what it is against.
+ *
+ * Both, always. The percentage alone hides that somebody's target was tiny,
+ * and the rupees alone hide that they missed it — a manager comparing two
+ * people needs the pair.
+ */
+function Achieved({
+  actual,
+  bp,
+  emphasise,
+}: {
+  actual: string;
+  bp: number | null;
+  emphasise?: boolean;
+}) {
+  return (
+    <span className="tabular-nums">
+      <span className="text-ink">{actual}</span>
+      {bp === null ? null : (
+        <span
+          className={
+            emphasise
+              ? "ml-1.5 text-[12px] font-medium text-warn-ink"
+              : bp >= BP
+                ? "ml-1.5 text-[12px] text-success"
+                : "ml-1.5 text-[12px] text-muted"
+          }
+        >
+          {(bp / 100).toFixed(0)}%
+        </span>
+      )}
+    </span>
+  );
+}
+
+function pct(bp: number | null) {
+  return bp === null ? (
+    <span className="text-muted">—</span>
+  ) : (
+    <span className="tabular-nums text-ink">{(bp / 100).toFixed(0)}%</span>
+  );
+}
+
+/** Millilitres are what is stored; litres are what anybody says out loud. */
+function litres(ml: number): string {
+  if (!ml) return "0 L";
+  return `${Math.round(ml / 1000).toLocaleString("en-IN")} L`;
+}
+
+function ratingTone(bp: number): "success" | "brand" | "warn" | "danger" {
+  const score = bp / 100;
+  if (score >= 90) return "success";
+  if (score >= 80) return "brand";
+  if (score >= 60) return "warn";
+  return "danger";
 }
 
 function shiftMonth(month: string, by: number): string {
@@ -224,4 +335,3 @@ function monthName(month: string): string {
     timeZone: APP_TIMEZONE,
   }).format(new Date(Date.UTC(y, m - 1, 15)));
 }
-

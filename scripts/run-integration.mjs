@@ -40,6 +40,7 @@ const files = [
   "src/lib/feedback.test.ts",
   "src/lib/activity-location.test.ts",
   "src/lib/outstanding-import.test.ts",
+  "src/lib/performance.test.ts",
 ];
 
 let failed = 0;

@@ -28,7 +28,8 @@ import {
 import { sweepUnconfirmed } from "./services/whatsapp-service";
 import { sweepOrphans } from "./services/attachment-service";
 import { autoGenerateEodReports } from "./services/eod-service";
-import { isWorkingDay, nextWorkingDay, type BusinessDate } from "./business-date";
+import { addMonths, isWorkingDay, nextWorkingDay, type BusinessDate } from "./business-date";
+import { recomputeSalesPerformance } from "./services/performance-service";
 import { buildQueue } from "./engines/queue";
 import { queueCandidatesFor } from "./services/queue-service";
 import {
@@ -71,6 +72,7 @@ export type JobName =
   | "build-queues"
   | "link-delivery-parties"
   | "seed-targets"
+  | "recompute-performance"
   | "sweep-unconfirmed"
   | "escalate-complaint-sla"
   | "auto-eod"
@@ -197,6 +199,29 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
     await run("snapshot-queue", async () => {
       const n = await snapshotQueue(day);
       return { recordsAffected: n, detail: `${n} rows recorded for ${day}` };
+    }, triggeredById),
+  );
+
+  /*
+   * The salesman score, AFTER the money recomputes above.
+   *
+   * Order matters: collection reads confirmed receipts and outstanding has
+   * just been rebuilt, so scoring first would grade everybody against
+   * yesterday's ledger. Both the current month and the previous one are
+   * rebuilt — a receipt confirmed on the 2nd of September is usually August's
+   * collection, and a month that stopped being recomputed the moment it ended
+   * would freeze half-finished.
+   */
+  results.push(
+    await run("recompute-performance", async () => {
+      const period = day.slice(0, 7);
+      const previous = addMonths(period, -1);
+      const now = await recomputeSalesPerformance(period, day);
+      const then = await recomputeSalesPerformance(previous, day);
+      return {
+        recordsAffected: now.people + then.people,
+        detail: `${now.people} scored for ${period}, ${then.people} for ${previous}`,
+      };
     }, triggeredById),
   );
 

@@ -484,6 +484,13 @@
       "when": 1787500540000,
       "tag": "0068_sales_manager",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1787500600000,
+      "tag": "0069_salesman_targets",
+      "breakpoints": true
     }
   ]
 }

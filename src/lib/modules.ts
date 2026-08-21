@@ -133,6 +133,21 @@ export const APP_MODULES: AppModule[] = [
     note: "Approving or refusing a request to close a customer account, or to reopen one. Withholding it leaves those requests to another manager — the ask still reaches everybody who can decide.",
   },
   crm("targets", "Monthly Targets", "Targets & reporting", "Whose numbers are whose. Usually a manager's screen."),
+  /*
+   * A person's OWN score, and not a manager's screen.
+   *
+   * It is in the CRM rather than only in the Sales Dashboard because of the
+   * fall-through rule: an account with no salesperson is carried by the back
+   * office, so a telecaller holds real targets — and telecallers are
+   * redirected out of `/sales` entirely. Without this they would be measured
+   * on a number they had no way to read.
+   */
+  crm(
+    "performance",
+    "My Performance",
+    "Targets & reporting",
+    "Their own target and how the month is going against it. Not a manager's screen — everybody who carries customers has one.",
+  ),
   crm("eod", "EOD Report", "Targets & reporting"),
   crm("whatsapp", "WhatsApp", "Communication"),
   crm("help", "Help Center", "Support", "The SOPs. Withholding it is rarely what anybody means."),
@@ -203,6 +218,12 @@ export const APP_MODULES: AppModule[] = [
   sales("live", "Live map", "Overview", "Where every salesman is right now. GPS runs only while somebody is checked in."),
   sales("territory", "Territory", "Overview", "Which states, cities and beats belong to whom."),
   sales("performance", "Performance", "Overview", "Targets, achievement and the month against the one before it."),
+  sales(
+    "targets",
+    "Sales Targets",
+    "Decisions",
+    "Setting what each person is asked for in a month, and publishing it to them. Withholding it leaves the month readable and unchangeable, which is the right shape for anybody who reviews performance without setting it.",
+  ),
 
   sales("tasks", "Tasks", "Field work", "What each salesman has been asked to do, and what is overdue."),
   sales(

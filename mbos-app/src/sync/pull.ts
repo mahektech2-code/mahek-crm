@@ -32,6 +32,7 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertLeaveBalances(pull.leaveBalances, now);
     touched += await upsertDocuments(pull.documents, now);
     touched += await upsertCourses(pull.courses, now);
+    touched += await upsertPerformance(pull.performance, now);
     touched += await applyApprovals(pull.approvals);
     touched += await applyDeletions(pull.deletions);
   });
@@ -148,6 +149,16 @@ function upsertNotifications(rows: unknown[] | undefined) {
 
 function upsertLeaveBalances(rows: unknown[] | undefined, now: number) {
   return upsert('leave_balances', 'kind', rows, { lastSyncedAt: now });
+}
+
+/*
+ * Keyed on the PERIOD, so a rebuilt month replaces itself rather than stacking.
+ * The office recomputes this hourly and the same period comes down again and
+ * again; an id-keyed upsert would leave one row per rebuild and the screen
+ * would pick whichever it read first.
+ */
+function upsertPerformance(rows: unknown[] | undefined, now: number) {
+  return upsert('performance', 'period', rows, { lastSyncedAt: now });
 }
 
 function upsertDocuments(rows: unknown[] | undefined, now: number) {

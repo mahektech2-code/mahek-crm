@@ -22,6 +22,8 @@ export type SettingCategory =
   | "bills"
   | "payments"
   | "targets"
+  /** How a salesman is measured: the six weights, the bands and the ceiling. */
+  | "performance"
   | "working-day"
   | "reminders"
   | "complaints"
@@ -757,6 +759,187 @@ export const SETTINGS = [
     label: "Pro-rate new customers",
     description: "Scale the first month's target by the portion of the month they existed.",
     default: true,
+  },
+
+  /* ------------------------------------------------------ salesman scoring */
+  /*
+   * The six weights. They must total 100, which `checkConsistency` enforces —
+   * a score "out of 100" computed from weights totalling 95 is a different
+   * number wearing the same label, and nothing on any screen would say so.
+   */
+  {
+    key: "performance.weightRevenue",
+    type: "integer",
+    category: "performance",
+    label: "Weight: revenue",
+    description:
+      "How many of the hundred points revenue is worth. It is the largest single weight and deliberately not the only one - a salesman measured on rupees alone is rewarded for a price rise he had no part in.",
+    default: 35,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "performance.weightVolume",
+    type: "integer",
+    category: "performance",
+    label: "Weight: volume",
+    description:
+      "How many points litres sold are worth. This is the half of the score a price revision cannot move, which is the whole reason it sits beside revenue.",
+    default: 20,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "performance.weightMix",
+    type: "integer",
+    category: "performance",
+    label: "Weight: product mix",
+    description:
+      "How many points selling the strategic products is worth. Without it the easy-selling lines carry the month and Universal, PU and Nano are nobody's problem.",
+    default: 20,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "performance.weightNewCustomers",
+    type: "integer",
+    category: "performance",
+    label: "Weight: new customers",
+    description:
+      "How many points acquisition is worth. It stops an excellent score being reachable by billing the same book harder every month.",
+    default: 10,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "performance.weightCollection",
+    type: "integer",
+    category: "performance",
+    label: "Weight: collection",
+    description:
+      "How many points collected money is worth. A sale that is never paid for is not a sale, and this is where that shows up in the score.",
+    default: 10,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "performance.weightActivity",
+    type: "integer",
+    category: "performance",
+    label: "Weight: activity",
+    description:
+      "How many points visits and calls are worth. The smallest weight on purpose - it measures effort rather than result, and a score that pays well for effort is one people learn to farm.",
+    default: 5,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "performance.maxAchievementPercent",
+    type: "integer",
+    category: "performance",
+    label: "Scoring ceiling",
+    description:
+      "The most any one component may score, as a percentage of its target. 400% of a small revenue target would otherwise pay out more than every other component put together. The ceiling applies to the SCORE only - the screens print the real achievement beside it.",
+    default: 120,
+    min: 100,
+    max: 300,
+  },
+  {
+    key: "performance.mixScoreAtMinimum",
+    type: "integer",
+    category: "performance",
+    label: "Mix: what the minimum share pays",
+    description:
+      "What a product category earns when its share lands exactly on the minimum, as a percentage of what that category is worth. Below the minimum it falls away to nothing; above it, it climbs to the target.",
+    default: 60,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "performance.mixScoreAtTarget",
+    type: "integer",
+    category: "performance",
+    label: "Mix: what the target share pays",
+    description: "What a product category earns when its share lands on the target.",
+    default: 100,
+    min: 0,
+    max: 200,
+  },
+  {
+    key: "performance.mixScoreAtStretch",
+    type: "integer",
+    category: "performance",
+    label: "Mix: what the stretch share pays",
+    description:
+      "What a category earns at or above its stretch share. Above 100 it rewards exceptional depth in one line; the mix component as a whole is still capped at 100%, so stretch can never pay for another category being absent.",
+    default: 110,
+    min: 0,
+    max: 200,
+  },
+  {
+    key: "performance.ratingBands",
+    type: "structured",
+    category: "performance",
+    label: "Rating bands",
+    description:
+      "The word printed beside the score. Read highest first, so the lowest band catches everything beneath the one above it.",
+    default: [
+      { min: 90, label: "Excellent" },
+      { min: 80, label: "Very good" },
+      { min: 70, label: "Good" },
+      { min: 60, label: "Needs improvement" },
+      { min: 0, label: "Poor" },
+    ],
+  },
+  {
+    key: "performance.volumeDivergencePoints",
+    type: "integer",
+    category: "performance",
+    label: "Revenue-vs-volume divergence",
+    description:
+      "How many percentage points volume may sit below revenue before the month is flagged. Revenue at target with volume well under it means the money came from the price list rather than from selling more - which is the single most important thing this module was built to make visible, and the month in which somebody would otherwise be congratulated.",
+    default: 10,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "performance.paceWarningPercent",
+    type: "integer",
+    category: "performance",
+    label: "Pace warning",
+    description:
+      "How far behind the month's own pace revenue may fall before it is flagged, as a percentage of the elapsed share of working days. At 80, a salesman half way through the working month is flagged below 40% of target. Measured in WORKING days, so a fortnight with three holidays does not read as a slow start.",
+    default: 80,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "performance.newCustomerBasis",
+    type: "text",
+    category: "performance",
+    label: "What makes a customer new",
+    description:
+      "Whether a customer counts as won on their first order or on their first bill. Creating a lead never counts either way - a name in a list is not a customer, and counting it would make the acquisition target reachable from a desk.",
+    default: "first-order",
+    options: ["first-order", "first-bill"],
+  },
+  {
+    key: "performance.revisionReasons",
+    type: "structured",
+    category: "performance",
+    label: "Why a target was revised",
+    description:
+      "The reasons a manager may pick from when changing a published target. A list rather than free text, because the question people actually ask months later is which targets moved for a price revision and which moved because somebody was struggling.",
+    default: [
+      "Price revision",
+      "Territory change",
+      "Product discontinued",
+      "New product launch",
+      "Customer transferred",
+      "Salesman transferred",
+      "Market disruption",
+      "Correction",
+    ],
   },
 
   /* ----------------------------------------------------------- working day */
@@ -1886,6 +2069,49 @@ export function checkConsistency(config: Config): string[] {
     problems.push("Payment terms must be whole numbers of days, none of them negative.");
   }
 
+  /*
+   * The six weights are a division of one hundred points. Letting them total
+   * 95 or 110 does not break anything visibly — it produces a score out of a
+   * different number, printed under a heading that says 100, and the appraisal
+   * conversation happens on the strength of it.
+   */
+  const weightKeys = [
+    "performance.weightRevenue",
+    "performance.weightVolume",
+    "performance.weightMix",
+    "performance.weightNewCustomers",
+    "performance.weightCollection",
+    "performance.weightActivity",
+  ] as const;
+  const weightTotal = weightKeys.reduce((sum, k) => sum + config[k], 0);
+  if (weightTotal !== 100) {
+    problems.push(
+      `The performance weights total ${weightTotal}, not 100. A score presented out of 100 has to be computed out of 100 — adjust one of the six.`,
+    );
+  }
+
+  // Anchors that do not increase make the mix score fall as a share rises,
+  // which is invisible until somebody is marked down for selling more Nano.
+  if (
+    !(
+      config["performance.mixScoreAtMinimum"] <= config["performance.mixScoreAtTarget"] &&
+      config["performance.mixScoreAtTarget"] <= config["performance.mixScoreAtStretch"]
+    )
+  ) {
+    problems.push(
+      "Mix scoring must not fall as a share rises: minimum ≤ target ≤ stretch.",
+    );
+  }
+
+  const bands = config["performance.ratingBands"];
+  if (!Array.isArray(bands) || bands.length === 0) {
+    problems.push("At least one rating band is needed, or a score has no word beside it.");
+  } else if (!bands.some((b) => b.min <= 0)) {
+    problems.push(
+      "The lowest rating band must start at 0, or a poor enough score falls through every band and is left unrated.",
+    );
+  }
+
   if (config["buyingCycle.minDays"] > config["buyingCycle.maxDays"]) {
     problems.push("Minimum buying cycle cannot exceed the maximum.");
   }
@@ -2133,6 +2359,22 @@ export type Config = {
   "targets.trailingMonths": number;
   "targets.defaultUpliftPercent": number;
   "targets.proRateNewCustomers": boolean;
+
+  "performance.weightRevenue": number;
+  "performance.weightVolume": number;
+  "performance.weightMix": number;
+  "performance.weightNewCustomers": number;
+  "performance.weightCollection": number;
+  "performance.weightActivity": number;
+  "performance.maxAchievementPercent": number;
+  "performance.mixScoreAtMinimum": number;
+  "performance.mixScoreAtTarget": number;
+  "performance.mixScoreAtStretch": number;
+  "performance.ratingBands": { min: number; label: string }[];
+  "performance.volumeDivergencePoints": number;
+  "performance.paceWarningPercent": number;
+  "performance.newCustomerBasis": "first-order" | "first-bill";
+  "performance.revisionReasons": string[];
 
   "workingDay.shiftStart": string;
   "workingDay.shiftEnd": string;
