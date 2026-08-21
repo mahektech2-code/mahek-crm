@@ -115,6 +115,26 @@ Phases 0–2 of the brief, and the frame of everything after.
 - The rejection review screen at `/rejections`
 - Server: `/api/mbos/auth/login` · `/refresh` · `/bootstrap` · `/sync` · `/media`
 - Scheduled work in MahekOne's own job registry (`mbos-nightly`, `mbos-hourly`)
+- Every entity the outbox can carry has a handler: visit, order, payment,
+  complaint, sample, lead, task, expense, attendance, customer, leave, approval,
+  plan day
+
+**A plan is agreed, not issued.** The office proposes a CITY for a day and this
+app answers — yes, or no with a reason and somewhere better. Only the salesman
+picks the customers, because he is the one who knows the city. The days waiting
+on an answer sit above today's route on the journey screen, which is the only
+thing on that screen that goes away once it is dealt with. See PROTOCOL.md §4.2.
+
+**The wire is a contract now, and it was not.** Both halves were written
+against `PROTOCOL.md`, and for as long as that document said `"payload": { }`
+they drifted into two vocabularies — which is the worst way to disagree,
+because an unknown field is not an invalid one. Half of it was refused (an
+order sending `cans` to a server reading `quantityCans`) and half was silently
+dropped (a visit sending `checkIn: { lat, lng }` to a server reading
+`checkInLat`, landing with a customer and nothing else). §4.1 of that document
+is the field-by-field contract, `src/lib/wire.ts` is every translation that
+remains, pure and tested, and nothing may add a thirteenth entity without
+adding it to both.
 
 ## What is not
 
@@ -122,11 +142,16 @@ Named plainly rather than implied:
 
 | | Status |
 |---|---|
+| **The office end** | **Nothing in MahekOne shows a single `mbos_*` table.** The `field` app is `built: false` and `/field` is a placeholder. Everything below arrives correctly and nobody can look at it: no approvals screen, no expense or leave decisions, no visit review. This is the largest piece left, and all of it is web-side. |
+| Most of the pull | The handset reads eleven channels; the server sends ten — customers, products, timeline, notifications, config, transcripts, journey stops, plan days, approvals and leave balances. Missing: price list, schemes, documents, courses, deletions. |
 | Push notifications | In-app only. No device tokens, no APNs/FCM. |
+| OTP sign-in, forgot password | Both are on the login screen; neither has a server, and MahekOne has no SMS provider of any kind. `mbosLogin` accepts an `otp` field and ignores it. |
 | Reports and exports | Screens exist; no server-side report or PDF/Excel. |
 | Offline documents | Listed, not downloadable. |
 | Salary, performance | Read fixtures — no payroll or ranking source exists. |
 | Conflict resolution | Implemented for customer edits only, the one mutable record the handset touches. |
+| Competitor intelligence | Captured on the customer screen, written locally, never queued. `mbos_competitor_records` is empty by construction. |
+| The journey plan | Whole. The Sales Dashboard proposes a city per day, this app agrees or refuses it with a reason, and the shops are picked here. What is not built is a screen for picking them against an *agreed* day — that still happens by the office arranging the stops, which the console offers as its exception. |
 
 **WhatsApp is copy-to-send, and that is the design.** The Business API is not
 live, so nothing here sends on the company's behalf. `src/lib/messaging.ts`

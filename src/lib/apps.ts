@@ -9,6 +9,7 @@
 export const APP_IDS = [
   "crm",
   "field",
+  "sales",
   "accounts",
   "people",
   "reports",
@@ -50,6 +51,25 @@ export const APPS: AppDefinition[] = [
     href: "/field",
     tone: "neutral",
     built: false,
+  },
+  {
+    id: "sales",
+    /*
+     * The office end of MBOS, and deliberately a different app from `field`.
+     *
+     * `field` is the handset — MBOS sign-in refuses without that grant — and an
+     * app grant with no module rows means every module of it, so a salesman
+     * granted `field` from a terminal would open the approvals queue and the
+     * whole team's figures beside his own day. Two audiences, two grants, and
+     * a manager who genuinely walks a beat can hold both.
+     */
+    name: "Sales Dashboard",
+    initials: "SD",
+    description:
+      "The field team's day, the journeys they walk, and every decision waiting on you.",
+    href: "/sales",
+    tone: "neutral",
+    built: true,
   },
   {
     id: "accounts",

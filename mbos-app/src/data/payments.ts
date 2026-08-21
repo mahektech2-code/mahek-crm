@@ -5,6 +5,7 @@ import { getConfig } from './config';
 import { notify } from './notifications';
 import { cashPosition } from '../engines/cash';
 import { createTask } from './tasks';
+import { isoDate } from '../lib/format';
 
 /**
  * Collecting money.
@@ -17,6 +18,29 @@ import { createTask } from './tasks';
  */
 
 export type PaymentMode = 'Cash' | 'Cheque' | 'UPI' | 'Bank transfer';
+
+/**
+ * The cheque's bank and date, and whether this was money in advance, said in
+ * the one sentence the receipt has room for.
+ *
+ * MahekOne's receipt carries an amount, a mode, a reference and a note. It has
+ * no column for the bank a cheque is drawn on or the date written across it,
+ * and inventing one from this end is not this app's decision to take — so they
+ * go where a person will read them rather than nowhere at all. A cheque dated
+ * next month is the difference between money accounts can bank this morning
+ * and money they cannot.
+ */
+function collectionNote(args: {
+  bank?: string | null;
+  chequeDate?: string | null;
+  isAdvance?: boolean;
+}): string | undefined {
+  const parts: string[] = [];
+  if (args.bank) parts.push(args.bank);
+  if (args.chequeDate) parts.push(`dated ${args.chequeDate}`);
+  if (args.isAdvance) parts.push('taken in advance');
+  return parts.length ? parts.join(' · ') : undefined;
+}
 
 export async function collectPayment(args: {
   customerId: string;
@@ -78,20 +102,28 @@ export async function collectPayment(args: {
     entityType: 'payment',
     entityId: base.id,
     op: 'create',
+    /* PROTOCOL.md §4.1. Two of these mattered more than the names suggest:
+       `billRefs` reached a server reading `billIds`, so every collection was
+       spread oldest-first however carefully the salesman had named the bills;
+       and the cheque number went as `chequeNumber` to a field called
+       `reference`, which is the string accounts match against the bank
+       statement — so the one thing that identifies the money was dropped. */
     payload: {
       id: base.id,
       customerId: args.customerId,
       customerName: args.customerName,
-      userId: args.userId,
       amountPaise: args.amountPaise,
       mode: args.mode,
-      chequeNumber: args.chequeNumber ?? null,
-      bank: args.bank ?? null,
+      /* What identifies this money to whoever holds the statement: the cheque
+         number where there is one, the transfer reference otherwise. */
+      reference: args.chequeNumber || undefined,
+      note: collectionNote(args),
+      billIds: args.billRefs ?? undefined,
+      receivedAt: isoDate(new Date()),
+      visitId: args.visitId ?? undefined,
       localReceiptRef: receiptRef,
-      isAdvance: !!args.isAdvance,
-      billRefs: args.billRefs ?? [],
-      collectedAt: base.clientCreatedAt,
       deviceId: base.deviceId,
+      clientCreatedAt: base.clientCreatedAt,
     },
     dependsOn: args.visitId ? [args.visitId] : [],
   });
@@ -206,7 +238,7 @@ export async function markBounced(paymentId: string): Promise<void> {
     title: `Ring ${name} — the cheque bounced`,
     customerId: payment.customerId,
     priority: 'High',
-    dueDate: new Date().toISOString().slice(0, 10),
+    dueDate: isoDate(new Date()),
   });
 
   await notify({

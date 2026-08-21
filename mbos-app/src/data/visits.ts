@@ -3,6 +3,8 @@ import { enqueue } from '../sync/queue';
 import { insertLocal, stamp } from './write';
 import { notify } from './notifications';
 import type { Fix } from '../native/location';
+import { isoDate } from '../lib/format';
+import { wireOutcome } from '../lib/wire';
 
 /**
  * Saving a visit.
@@ -14,6 +16,11 @@ import type { Fix } from '../native/location';
  * something that never happened, and nobody can reconstruct which half was
  * real afterwards.
  */
+
+/** GPS accuracy comes back fractional; the column it lands in is an integer. */
+function round(value: number | null | undefined): number | undefined {
+  return value == null ? undefined : Math.round(value);
+}
 
 export type SaveVisitArgs = {
   customerId: string;
@@ -93,18 +100,16 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
       if (id) await run(`UPDATE ${table} SET visitId = ? WHERE id = ?`, [base.id, id]);
     }
 
-    /* A follow-up date the salesman set becomes a task he will actually see. */
+    /* A follow-up date the salesman set becomes a task he will actually see —
+       and one the office sees too. It was written locally and never queued,
+       so a follow-up promised in a shop existed on one handset only. */
     if (args.nextFollowUpDate) {
-      await insertLocal('tasks', {
-        id: newId('task'),
+      const { createTask } = await import('./tasks');
+      await createTask({
         title: `Follow up with ${args.customerName}`,
         customerId: args.customerId,
         priority: 'Normal',
         dueDate: args.nextFollowUpDate,
-        status: 'open',
-        clientCreatedAt: Date.now(),
-        deviceId: base.deviceId,
-        syncState: 'queued',
       });
     }
 
@@ -126,14 +131,46 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
       summary: args.notes || args.transcript || 'Visited',
     });
 
-    await run('UPDATE customers SET lastVisitDate = ? WHERE id = ?', [new Date().toISOString().slice(0, 10), args.customerId]);
+    await run('UPDATE customers SET lastVisitDate = ? WHERE id = ?', [isoDate(new Date()), args.customerId]);
   });
 
   await enqueue({
     entityType: 'visit',
     entityId: base.id,
     op: 'create',
-    payload: { ...args, id: base.id, durationSeconds, clientCreatedAt: base.clientCreatedAt, deviceId: base.deviceId },
+    /* Spelled out rather than spread — see PROTOCOL.md §4.1. Spreading `args`
+       sent the handset's own shapes, so a `checkIn: { lat, lng, at }` reached
+       a server reading `checkInLat`, `checkInLng`, `checkInAt` and every fix,
+       photograph and duration was quietly dropped on the way in: the visit
+       landed with a customer and nothing else, and nothing on either end
+       reported a loss, because an unknown field is not an invalid one. */
+    payload: {
+      id: base.id,
+      customerId: args.customerId,
+      customerName: args.customerName,
+      checkInAt: args.checkIn?.at ?? undefined,
+      checkInLat: args.checkIn?.lat ?? undefined,
+      checkInLng: args.checkIn?.lng ?? undefined,
+      checkInAccuracyM: round(args.checkIn?.accuracyM),
+      checkOutAt: args.checkOut?.at ?? undefined,
+      checkOutLat: args.checkOut?.lat ?? undefined,
+      checkOutLng: args.checkOut?.lng ?? undefined,
+      checkOutAccuracyM: round(args.checkOut?.accuracyM),
+      durationSeconds: durationSeconds ?? undefined,
+      outcome: wireOutcome(args.outcome),
+      notes: args.notes ?? undefined,
+      transcript: args.transcript ?? undefined,
+      transcriptIsAi: args.transcriptIsAi,
+      shopPhotoId: args.shopPhotoId ?? undefined,
+      custPhotoId: args.custPhotoId ?? undefined,
+      voiceNoteId: args.voiceNoteId ?? undefined,
+      journeyPlanStopId: args.journeyStopId ?? undefined,
+      wasPlanned: args.wasPlanned,
+      deviationReason: args.deviationReason ?? undefined,
+      nextFollowUpDate: args.nextFollowUpDate ?? undefined,
+      clientCreatedAt: base.clientCreatedAt,
+      deviceId: base.deviceId,
+    },
   });
 
   /* Anything punched inside the visit must not reach the server before it. */

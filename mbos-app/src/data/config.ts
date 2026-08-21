@@ -26,6 +26,10 @@ const DEFAULTS: Record<string, unknown> = {
   'mbos.location.visitMismatchM': 150,
   'mbos.location.routeDeviationM': 2000,
   'mbos.location.unplannedVisitsPerDay': 3,
+  /* Following the route while the day is open. The office decides; this is
+     what a handset does before it has ever heard from the office. */
+  'mbos.location.trackWhileWorking': true,
+  'mbos.location.trackEveryMinutes': 5,
 
   /* visits */
   'mbos.visits.minimumDwellSeconds': 120,

@@ -26,6 +26,7 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertSchemes(pull.schemes);
     touched += await upsertTimeline(pull.timeline);
     touched += await upsertStops(pull.journeyStops, now);
+    touched += await upsertPlanDays(pull.planDays, now);
     touched += await upsertConfig(pull.config, now);
     touched += await upsertNotifications(pull.notifications);
     touched += await upsertLeaveBalances(pull.leaveBalances, now);
@@ -35,7 +36,34 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await applyDeletions(pull.deletions);
   });
 
+  /* Outside the transaction, because confirming a transcript deletes the audio
+     file from the filesystem — which is not a thing a database transaction can
+     roll back, and not a thing to hold one open across. */
+  touched += await applyTranscripts(pull.transcripts);
+
   return touched;
+}
+
+/**
+ * The words the office wrote out, coming home.
+ *
+ * This is the other end of the rule in `sync/media.ts`: a recording is kept
+ * until its transcription is confirmed STORED, not merely until the upload
+ * succeeded. Until this channel existed the confirmation never arrived, so
+ * every voice note ever recorded stayed on the handset — correctly, and
+ * forever.
+ */
+async function applyTranscripts(
+  rows: { mediaId: string; transcript: string }[] | undefined,
+): Promise<number> {
+  if (!rows?.length) return 0;
+  const { confirmTranscription } = await import('./media');
+  for (const row of rows) {
+    if (row.mediaId && row.transcript) {
+      await confirmTranscription(row.mediaId, row.transcript);
+    }
+  }
+  return rows.length;
 }
 
 /* ------------------------------------------------------------- primitives */
@@ -100,6 +128,18 @@ function upsertTimeline(rows: unknown[] | undefined) {
 
 function upsertStops(rows: unknown[] | undefined, now: number) {
   return upsert('journey_stops', 'id', rows, { lastSyncedAt: now });
+}
+
+/**
+ * The days, and where each has got to.
+ *
+ * `syncState: 'synced'` is set alongside, because a pull is the office's word
+ * arriving — it overwrites whatever this handset thought, including an answer
+ * that has since been superseded. An answer still waiting in the outbox is not
+ * lost by this: the outbox is what will resend it.
+ */
+function upsertPlanDays(rows: unknown[] | undefined, now: number) {
+  return upsert('journey_days', 'id', rows, { lastSyncedAt: now, syncState: 'synced' });
 }
 
 function upsertNotifications(rows: unknown[] | undefined) {

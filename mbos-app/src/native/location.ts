@@ -1,4 +1,5 @@
 import * as Location from 'expo-location';
+import { setKv } from '../db';
 
 /**
  * The radio.
@@ -71,6 +72,8 @@ export async function getFix(opts: { accuracyThresholdM: number; timeoutMs?: num
 
     /* Worse than the configured threshold is not a valid location — but the
        action proceeds, carrying the flag. Blocking here would be the mistake. */
+    remember(fix);
+
     if (fix.accuracyM > opts.accuracyThresholdM) {
       return {
         status: 'coarse',
@@ -88,4 +91,26 @@ export async function getFix(opts: { accuracyThresholdM: number; timeoutMs?: num
 /** The fix, whatever its quality, or null. Callers record the absence. */
 export function fixOf(result: FixResult): Fix | null {
   return result.status === 'ok' || result.status === 'coarse' ? result.fix : null;
+}
+
+/**
+ * The last fix this handset got, whoever asked for it.
+ *
+ * Remembered HERE, in the one function that talks to the radio, rather than at
+ * the five places that call it — so the visit screen's own fix, the check-in's
+ * and every trail tick all feed the same answer without any of them knowing
+ * about it. That is what lets an order logged inside a shop carry the fix the
+ * visit took at its door seconds earlier, instead of waiting for a new one.
+ *
+ * A coarse fix is remembered too. Five hundred metres is poor evidence of a
+ * doorway and perfectly good evidence of which part of the city somebody is
+ * in, and the accuracy travels with it so nothing downstream has to guess.
+ *
+ * Written and never awaited by the caller: this must not add a step to a path
+ * a salesman is waiting on.
+ */
+const LAST_FIX = 'lastFix';
+
+function remember(fix: Fix): void {
+  void setKv(LAST_FIX, JSON.stringify(fix)).catch(() => {});
 }

@@ -151,6 +151,8 @@ export function RecordScreen({
     leadSource: string | null;
     createdAt: string;
     salesAmName: string | null;
+    /** Who the salesperson answers to — a third seat, and a manager's to set. */
+    salesManagerName: string | null;
     backOfficeAmName: string | null;
     status: string;
     slowPayer: boolean;
@@ -203,7 +205,7 @@ export function RecordScreen({
   /** Every change of account manager, newest first. Names as stored. */
   amChanges: Array<{
     id: string;
-    role: "sales" | "back_office";
+    role: "sales" | "sales_manager" | "back_office";
     fromName: string | null;
     toName: string | null;
     reasonCode: string;
@@ -383,7 +385,7 @@ export function RecordScreen({
         subtitle={`${customer.contactPerson} · ${phoneDisplay(customer.phone)} · ${customer.city} · ${
           customer.kind === "lead"
             ? `Lead owner ${customer.ownerName ?? "unassigned"}`
-            : `Sales ${customer.salesAmName ?? "unassigned"} · Back office ${customer.backOfficeAmName ?? "unassigned"}`
+            : `Sales ${customer.salesAmName ?? "unassigned"} · Sales manager ${customer.salesManagerName ?? "unassigned"} · Back office ${customer.backOfficeAmName ?? "unassigned"}`
         }`}
         actions={
           <>
@@ -919,6 +921,11 @@ export function RecordScreen({
                     label="Sales"
                     value={customer.salesAmName ?? customer.ownerName}
                   />
+                  {/* Who the salesperson answers to. Named here rather than
+                      left to the list, because this is the screen somebody is
+                      on when they ask who to escalate an account to — and it
+                      is the one seat of the three that is a manager's to set. */}
+                  <Fact label="Sales manager" value={customer.salesManagerName} />
                   <Fact label="Back office" value={customer.backOfficeAmName} />
                   <Fact
                     label="Buying cycle"
@@ -974,7 +981,14 @@ export function RecordScreen({
                     {amChanges.map((c) => (
                       <span key={c.id} className="block text-[11px] text-muted">
                         {shortDate(c.changedAt)} ·{" "}
-                        {c.role === "sales" ? "Sales" : "Back office"}{" "}
+                        {/* Three seats now, so the label cannot be a boolean. A
+                            history line calling a sales manager change "Back
+                            office" is worse than one saying nothing. */}
+                        {c.role === "sales"
+                          ? "Sales"
+                          : c.role === "sales_manager"
+                            ? "Sales manager"
+                            : "Back office"}{" "}
                         {c.fromName ?? "unassigned"} → {c.toName ?? "unassigned"} ·{" "}
                         {c.reasonCode}
                         {c.note ? ` — ${c.note}` : ""}

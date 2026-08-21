@@ -6,7 +6,15 @@ import { DashedButton, PrimaryButton, SecondaryButton, T } from '../src/componen
 import { ActionSheet } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, radius, shadow, type, weight } from '../src/theme/tokens';
-import { saveStopOrder, todayStops, type JourneyStop } from '../src/data/journey';
+import {
+  agreeDay,
+  planDays,
+  refuseDay,
+  saveStopOrder,
+  todayStops,
+  type JourneyStop,
+  type PlanDay,
+} from '../src/data/journey';
 import { getConfig } from '../src/data/config';
 import { optimiseRoute } from '../src/engines/route';
 import { fixOf, getFix } from '../src/native/location';
@@ -33,6 +41,7 @@ export default function JourneyScreen() {
   const beginVisit = useStore((s) => s.beginVisit);
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [stops, setStops] = React.useState<JourneyStop[]>([]);
+  const [days, setDays] = React.useState<PlanDay[]>([]);
   const [now, setNow] = React.useState(() => Date.now());
   React.useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60_000);
@@ -44,12 +53,51 @@ export default function JourneyScreen() {
     void todayStops().then((r) => {
       if (live) setStops(r);
     });
+    void planDays().then((r) => {
+      if (live) setDays(r);
+    });
     return () => {
       live = false;
     };
   }, []);
 
   useFocusEffect(load);
+
+  /*
+   * The days the office has asked about.
+   *
+   * A plan is AGREED, not issued: they propose a city, and you are the one who
+   * knows whether that market is open on a Wednesday. Only the proposed ones
+   * appear — a day already agreed is waiting on you to pick shops, and one
+   * already planned is simply the route.
+   */
+  const asking = days.filter((d) => d.dayState === 'proposed');
+
+  const say = React.useCallback(
+    async (day: PlanDay, yes: boolean) => {
+      if (yes) {
+        await agreeDay(day.id);
+        setDays(await planDays());
+        notify(dayLabel(day.planDate) + ' agreed. Pick your shops when you are ready.');
+        return;
+      }
+      askConfirm({
+        title: 'Not ' + dayLabel(day.planDate) + '?',
+        body:
+          (day.city ?? 'That day') +
+          ' was proposed. Say why it will not work — without a reason your manager has nothing to go on, and the day stays unplanned. Name somewhere you would rather go if you have one.',
+        reasonLabel: 'Why, and where instead',
+        confirmLabel: 'Send it back',
+        run: async (reason: string) => {
+          const out = await refuseDay(day.id, reason);
+          if (!out.ok) return notify(out.message ?? 'Say why it will not work.');
+          setDays(await planDays());
+          notify('Sent back to your manager.');
+        },
+      });
+    },
+    [askConfirm, notify],
+  );
 
   const doneCount = stops.filter((x) => x.status === 'visited').length;
   const next = stops.find((x) => x.status === 'planned');
@@ -101,6 +149,119 @@ export default function JourneyScreen() {
 
   return (
     <AppFrame title="Today’s route" activeTab="journey" contentStyle={{ padding: 16, paddingBottom: 24 }}>
+      {/*
+        The days you have been asked about, above today's route.
+        Above, because a question somebody is waiting on you to answer outranks
+        a list you already know — and because it is the only thing on this
+        screen that goes away once you deal with it.
+      */}
+      {asking.length ? (
+        <View style={{ marginBottom: 16 }}>
+          <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
+            {asking.length === 1 ? 'A day to agree' : plural(asking.length, 'day') + ' to agree'}
+          </T>
+          {asking.map((d) => (
+            <View
+              key={d.id}
+              style={{
+                backgroundColor: C.surface,
+                borderRadius: radius.card,
+                borderLeftWidth: 3,
+                borderLeftColor: C.primary,
+                padding: 14,
+                marginBottom: 8,
+                boxShadow: shadow.card,
+              }}>
+              <T style={[type.body, weight(600), { color: C.ink }]}>{dayLabel(d.planDate)}</T>
+              <T s="small" style={{ color: C.body, marginTop: 2 }}>
+                {d.city ? d.city + ' was proposed' : 'A day was proposed'}
+                {d.proposedBy ? ' by ' + d.proposedBy : ''}
+              </T>
+              <T s="small" style={{ color: C.muted, marginTop: 6 }}>
+                You pick the shops once you agree — you know the city.
+              </T>
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <PrimaryButton label="Yes, that works" fullWidth onPress={() => void say(d, true)} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <SecondaryButton label="Not that day" fullWidth onPress={() => void say(d, false)} />
+                </View>
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {/*
+        Days you have agreed and not yet filled.
+
+        Between the two states there is nothing to walk: the office knows you
+        will be in Nagpur and does not know which doors. This is the only
+        prompt that gets somebody from one to the other, so it sits directly
+        under the questions rather than at the bottom of the screen.
+      */}
+      {days.filter((d) => d.dayState === 'agreed').length ? (
+        <View style={{ marginBottom: 16 }}>
+          <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
+            Agreed — shops to pick
+          </T>
+          {days
+            .filter((d) => d.dayState === 'agreed')
+            .map((d) => (
+              <Pressable
+                key={d.id}
+                onPress={() => router.push({ pathname: '/pick', params: { day: d.id } })}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 12,
+                  backgroundColor: C.surface,
+                  borderRadius: radius.card,
+                  padding: 14,
+                  marginBottom: 8,
+                  boxShadow: shadow.card,
+                }}>
+                <View style={{ flex: 1 }}>
+                  <T style={[type.body, weight(600), { color: C.ink }]}>{dayLabel(d.planDate)}</T>
+                  <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+                    {(d.city ? d.city + ' · ' : '') + 'no shops picked yet'}
+                  </T>
+                </View>
+                <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
+              </Pressable>
+            ))}
+        </View>
+      ) : null}
+
+      {/* What you have already sent back, so a refusal does not vanish. */}
+      {days.filter((d) => d.dayState === 'refused').length ? (
+        <View style={{ marginBottom: 16 }}>
+          {days
+            .filter((d) => d.dayState === 'refused')
+            .map((d) => (
+              <View
+                key={d.id}
+                style={{
+                  backgroundColor: C.warnBg,
+                  borderRadius: radius.card,
+                  padding: 12,
+                  marginBottom: 8,
+                }}>
+                <T s="small" style={{ color: C.warnInk }}>
+                  {dayLabel(d.planDate)} — sent back
+                  {d.syncState === 'queued' ? ', waiting for signal' : ''}
+                </T>
+                {d.refusalReason ? (
+                  <T s="small" style={{ color: C.body, marginTop: 2 }}>
+                    “{d.refusalReason}”
+                  </T>
+                ) : null}
+              </View>
+            ))}
+        </View>
+      ) : null}
+
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 }}>
         <View style={{ minWidth: 0, flex: 1 }}>
           <T style={type.h1}>{doneCount + ' of ' + stops.length + ' done'}</T>
@@ -294,4 +455,20 @@ export default function JourneyScreen() {
 function hhmm(ms: number): string {
   const d = new Date(ms);
   return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+
+/**
+ * `Mon 18 Aug` — a day named the way somebody says it out loud.
+ *
+ * Built in UTC deliberately: these are calendar days with no time of day in
+ * them, so there is no zone to get right, and building them locally is what
+ * shifts a date across a DST boundary.
+ */
+function dayLabel(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const at = new Date(Date.UTC(y, m - 1, d));
+  const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][at.getUTCDay()];
+  const month = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][at.getUTCMonth()];
+  return day + ' ' + at.getUTCDate() + ' ' + month;
 }

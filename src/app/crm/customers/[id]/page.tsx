@@ -212,6 +212,7 @@ export default async function CustomerRecordPage({
         leadSource: customer.leadSource,
         createdAt: calendarDate(customer.createdAt),
         salesAmName: customer.salesAmName,
+        salesManagerName: customer.salesManagerName,
         backOfficeAmName: customer.backOfficeAmName,
         status: customerStatusLabel(customer),
         slowPayer: customer.slowPayer,

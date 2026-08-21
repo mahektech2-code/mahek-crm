@@ -1,0 +1,22 @@
+-- The Sales Dashboard — the office end of MBOS.
+--
+-- MBOS has been writing visits, orders, payments, attendance, leave, expenses,
+-- samples, leads and approvals into `mbos_*` for as long as it has existed, and
+-- no screen in MahekOne has ever shown one of them. A salesman standing in a
+-- shop over his credit limit raised an approval that reached the database and
+-- stopped there, because there was nowhere for anybody to answer it.
+--
+-- It is a SEPARATE app id from `field` rather than a section of it. `field` is
+-- the handset — `runLoginChecks` refuses MBOS sign-in without that grant — and
+-- an app grant with no module rows means every module of it, so a salesman
+-- granted `field` from a terminal would have opened the approvals queue and the
+-- team's figures along with his own day. Two audiences, two grants.
+--
+-- Nothing is granted here, and it cannot be: Postgres refuses to USE a value
+-- added to an enum until that transaction commits, and drizzle-kit applies
+-- every pending migration in ONE transaction — so a grant in the next migration
+-- file fails on any database that has not already been through this one.
+-- `npm run app:grant -- sales <email>` is the way in, which suits this app
+-- anyway: it carries the whole field team's figures and every decision waiting
+-- on them, and that is granted deliberately.
+ALTER TYPE "public"."app_id" ADD VALUE IF NOT EXISTS 'sales';

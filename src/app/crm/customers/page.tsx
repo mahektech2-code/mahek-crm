@@ -52,6 +52,7 @@ export default async function CustomersPage({
       query: one("q"),
       status: one("status"),
       salesAm: one("sales"),
+      salesManager: one("salesmanager"),
       backOfficeAm: one("backoffice"),
       // "yes" / "no" / "delivered" — the third is the evidence filter, and the
       // one the conversion work is actually done from. Validated rather than
@@ -80,15 +81,23 @@ export default async function CustomersPage({
       // a disabled control is not a permission.
       canClassify={can(user.role, "customer.classify")}
       canReassign={can(user.role, "customer.reassign")}
+      // A different question, and a more generous answer: the sales manager
+      // seat drives no queue, no scope and no target, so a manager may set it
+      // while the two beside it stay accounts' and admin's.
+      canAssignSalesManager={can(user.role, "customer.assignSalesManager")}
       amReasons={config["people.amChangeReasons"]}
       amSearchThreshold={config["people.pickerSearchThreshold"]}
       amOptions={amOptions}
       team={team.map((t) => ({ id: t.id, name: t.name, role: t.role }))}
       backOfficePeople={backOfficePeople}
+      // The same list — this seat needs no login either, and several of the
+      // people running a sales line here have never signed in.
+      salesManagerPeople={backOfficePeople}
       filters={{
         query: one("q") ?? "",
         status: one("status") ?? "",
         salesAm: one("sales") ?? "",
+        salesManager: one("salesmanager") ?? "",
         backOfficeAm: one("backoffice") ?? "",
         // The filter's own word for what `?party=` holds, so the control shows
         // what was actually applied rather than resetting itself to "All".
@@ -115,6 +124,7 @@ export default async function CustomersPage({
         kind: c.kind,
         leadSource: c.leadSource,
         salesAmName: c.salesAmName,
+        salesManagerName: c.salesManagerName,
         backOfficeAmId: c.backOfficeAmId,
         backOfficeAmName: c.backOfficeAmName,
         status: customerStatusLabel(c),

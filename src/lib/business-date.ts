@@ -214,6 +214,21 @@ export function daysInMonth(date: BusinessDate): number {
   return new Date(Date.UTC(y, m, 0)).getUTCDate();
 }
 
+/**
+ * The last day of the month a KEY names — `endOfMonth("2026-08")` is
+ * `"2026-08-31"`.
+ *
+ * It exists because the obvious spelling, `Date.UTC(y, m, 0).toISOString()
+ * .slice(0, 10)`, is the exact shape §11's grep test refuses: a date-only
+ * value has no instant to lose, but it is indistinguishable on sight from
+ * truncating a stored one in UTC, which is the bug the rule is for. Two
+ * screens had written it out; this is the one place it lives.
+ */
+export function endOfMonth(key: string): string {
+  const first = `${key}-01`;
+  return addDays(first, daysInMonth(first) - 1);
+}
+
 /** Shift a month key by `months`, e.g. addMonths("2026-08", -3) -> "2026-05". */
 export function addMonths(key: string, months: number): string {
   const [y, m] = key.split("-").map(Number);

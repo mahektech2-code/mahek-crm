@@ -23,6 +23,8 @@ import { crmBadgeCounts } from "./queries";
 import { pendingReceiptCount } from "./services/receipt-service";
 import { pendingCreditNoteCount } from "./services/credit-note-service";
 import { activeEmployeeCount } from "./services/employee-service";
+import { pendingApprovalCount, unplannedCount } from "./services/sales-service";
+import { addDays } from "./business-date";
 
 /* ---------------------------------------------------------------------------
  * Who can open what, and what is waiting for them inside it.
@@ -149,6 +151,41 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
       out.push({
         ...app,
         count: waiting,
+        status: parts.length ? parts.join(" · ") : "Nothing waiting",
+      });
+      continue;
+    }
+
+    /*
+     * The Sales Dashboard holds two kinds of waiting and they are not the same
+     * urgency, so the badge counts only one of them.
+     *
+     * An approval is somebody standing in a shop unable to move; a day nobody
+     * has planned is a route that will simply be improvised. Both are said in
+     * the sentence, and only the first drives the red pill — a badge that
+     * counted unplanned days would sit permanently at the size of the team,
+     * which is how a badge stops meaning anything.
+     */
+    if (app.id === "sales") {
+      const day = await today();
+      const [approvals, unplanned] = await Promise.all([
+        pendingApprovalCount(),
+        unplannedCount(addDays(day, 1)),
+      ]);
+
+      const parts: string[] = [];
+      if (approvals) {
+        parts.push(`${approvals} approval${approvals === 1 ? "" : "s"} waiting`);
+      }
+      if (unplanned) {
+        parts.push(
+          `${unplanned} ${unplanned === 1 ? "salesman has" : "salesmen have"} no route tomorrow`,
+        );
+      }
+
+      out.push({
+        ...app,
+        count: approvals,
         status: parts.length ? parts.join(" · ") : "Nothing waiting",
       });
       continue;

@@ -1,5 +1,7 @@
 import { all, one, run } from '../db';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
+import { isoDate } from '../lib/format';
+import { wirePriority } from '../lib/wire';
 
 export type Task = {
   id: string;
@@ -35,6 +37,8 @@ export async function createTask(args: {
       dueDate: args.dueDate,
       status: 'open',
     },
+    /* The row keeps the design's word; the wire carries MahekOne's. */
+    payloadExtras: { priority: wirePriority(args.priority) },
   });
 }
 
@@ -87,7 +91,7 @@ export async function snoozeTask(id: string, newDate: string, reason: string): P
  * escalated is not escalated again, so re-running the sweep costs nothing.
  */
 export async function escalateOverdue(hours: number, now = Date.now()): Promise<number> {
-  const cutoff = new Date(now - hours * 3_600_000).toISOString().slice(0, 10);
+  const cutoff = isoDate(new Date(now - hours * 3_600_000));
   const due = await all<{ id: string }>(
     `SELECT id FROM tasks WHERE status = 'open' AND escalated = 0 AND dueDate < ?`,
     [cutoff],

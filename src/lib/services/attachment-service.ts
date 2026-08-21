@@ -8,6 +8,8 @@ import {
   calls,
   customers,
   followUpAttempts,
+  mbosCourses,
+  mbosDocuments,
   paymentReceipts,
 } from "@/db/schema";
 import { resolveScope, assertCustomerInScope } from "../access-control";
@@ -45,7 +47,11 @@ export type ParentType =
   | "follow_up_attempt"
   | "payment_receipt"
   | "feedback"
-  | "feedback_message";
+  | "feedback_message"
+  /** The document library: a price sheet, a policy, one customer's agreement. */
+  | "mbos_document"
+  /** Training material — a slide deck, a product sheet, a safety brief. */
+  | "mbos_course";
 
 export type AttachmentView = {
   id: string;
@@ -72,6 +78,12 @@ export async function limitFor(parentType: ParentType): Promise<number> {
     case "feedback":
     case "feedback_message":
       return config["attachments.maxPerFeedback"];
+    case "mbos_document":
+    case "mbos_course":
+      /* A document IS its file. Two would make "open the price list"
+       * ambiguous on a handset, and the row carries one `attachment_id`
+       * anyway — a second could never be found. */
+      return 1;
     default:
       // An interaction carries whatever the complaint it produced carries.
       return config["attachments.maxPerComplaint"];
@@ -297,6 +309,28 @@ export async function canRead(attachmentId: string): Promise<boolean> {
     return canSeeFeedback(ctx.user, feedbackId);
   }
 
+  /* The library, and the training beside it.
+   *
+   * A published document has no customer behind it unless somebody named one,
+   * so it cannot be answered by a customer's scope either. Who may open it is
+   * who the document was published TO: the roles on the row, and — where it
+   * names a customer — that customer's scope on top. A withdrawn document is
+   * refused, because withdrawing is how the office takes something back and it
+   * would be no kind of withdrawal if the file stayed readable.
+   *
+   * Training is simpler: a course is published to the whole field or it is not
+   * published. */
+  if (row.parentType === "mbos_document") {
+    return canReadDocument(row.parentId);
+  }
+  if (row.parentType === "mbos_course") {
+    const [course] = await db
+      .select({ active: mbosCourses.active })
+      .from(mbosCourses)
+      .where(eq(mbosCourses.id, row.parentId));
+    return Boolean(course?.active);
+  }
+
   const customerId = await customerBehind(row.parentType, row.parentId);
   if (!customerId) return false;
 
@@ -316,6 +350,45 @@ export async function canRead(attachmentId: string): Promise<boolean> {
     .where(eq(customers.id, customerId));
   if (!customer) return false;
 
+  try {
+    await assertCustomerInScope(customer);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * One document, and whether this person is among the people it was published
+ * to. The role list is checked here rather than only in the pull, because a
+ * file the payload declines to mention is still a file a URL can ask for.
+ */
+async function canReadDocument(documentId: string): Promise<boolean> {
+  const [doc] = await db
+    .select({
+      active: mbosDocuments.active,
+      customerId: mbosDocuments.customerId,
+      visibleToRoles: mbosDocuments.visibleToRoles,
+    })
+    .from(mbosDocuments)
+    .where(eq(mbosDocuments.id, documentId));
+  if (!doc?.active) return false;
+
+  const ctx = await resolveScope();
+  if (doc.visibleToRoles?.length && !doc.visibleToRoles.includes(ctx.user.role)) {
+    return false;
+  }
+  if (!doc.customerId) return true;
+
+  const [customer] = await db
+    .select({
+      kind: customers.kind,
+      ownerId: customers.ownerId,
+      salesAmId: customers.salesAmId,
+    })
+    .from(customers)
+    .where(eq(customers.id, doc.customerId));
+  if (!customer) return false;
   try {
     await assertCustomerInScope(customer);
     return true;

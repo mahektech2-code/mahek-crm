@@ -171,6 +171,18 @@ export type PullPayload = {
   courses?: unknown[];
   leaveBalances?: unknown[];
   approvals?: unknown[];
+  /**
+   * `{ mediaId, transcript }` per voice note the office has written out. It is
+   * what releases the recording here — see `sync/media.ts`.
+   */
+  transcripts?: { mediaId: string; transcript: string }[];
+  /**
+   * The days themselves, and how far each has got in being agreed. A stop only
+   * exists once a day is PLANNED, so without this a month laid out in advance
+   * is invisible here and the first anybody knows of a day is a route they
+   * were never asked about.
+   */
+  planDays?: unknown[];
   deletions?: { entity: string; ids: string[] }[];
 };
 
@@ -189,6 +201,14 @@ export type WireItem = {
   clientCreatedAt: number;
   dependsOn: string[];
   payload: unknown;
+  /**
+   * Where the salesman was when he did this.
+   *
+   * A sibling of the payload, never a field inside it: `idempotencyKey` is a
+   * hash of the payload, and the same order enqueued twice from two spots on
+   * a street has to stay one order.
+   */
+  location?: unknown;
 };
 
 export type SyncResult = {
@@ -256,4 +276,21 @@ export async function lastPullAt(): Promise<number> {
 
 export async function markPulled(at = Date.now()): Promise<void> {
   await setKv('lastPullAt', String(at));
+}
+
+/**
+ * The trail, in batches.
+ *
+ * Its own call rather than a sync entity type: a position is one of a hundred
+ * and worth nothing on its own, so it must never sit in a dependency-ordered
+ * outbox in front of the visit behind it. `tracking: 'off'` is the office
+ * saying stop, which is an answer rather than a failure.
+ */
+export async function postPositions(
+  positions: { id: string; at: number; lat: number; lng: number; accuracyM: number | null }[],
+): Promise<{ ok: boolean; stored: number; tracking?: string }> {
+  return request('/api/mbos/positions', {
+    method: 'POST',
+    body: JSON.stringify({ positions, deviceId: await deviceId() }),
+  });
 }

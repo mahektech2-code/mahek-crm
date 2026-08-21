@@ -3,6 +3,7 @@ import { enqueue } from '../sync/queue';
 import { insertAndQueue, insertLocal, stamp, updateAndQueue } from './write';
 import { getConfig } from './config';
 import { isoDate } from '../lib/format';
+import { wireNotes, wireStage } from '../lib/wire';
 import {
   matchDuplicate,
   normaliseMobile,
@@ -169,6 +170,15 @@ export async function createLead(args: {
   const id = await insertAndQueue({
     table: 'leads',
     entityType: 'lead',
+    /* This table's columns and the wire's fields are not the same words —
+       PROTOCOL.md §4.1. `company`, a capitalised stage and notes as a list are
+       ours; MahekOne reads `companyName`, a lower-case stage and one string.
+       Every lead a salesman created was refused on all three at once. */
+    payloadExtras: {
+      companyName: args.company?.trim() || undefined,
+      stage: 'new',
+      notes: wireNotes(notes),
+    },
     row: {
       ...base,
       name: args.name.trim(),
@@ -224,6 +234,7 @@ export async function setStage(
       notes,
       lastActivityDate: today,
     },
+    payloadExtras: { stage: wireStage(stage), notes: wireNotes(notes) },
   });
 
   return { ok: true, value: null };
@@ -245,6 +256,7 @@ export async function addNote(id: string, text: string, today = isoDate(new Date
     entityType: 'lead',
     id,
     patch: { notes, lastActivityDate: today },
+    payloadExtras: { notes: wireNotes(notes) },
   });
   return { ok: true, value: null };
 }
@@ -389,7 +401,12 @@ export async function convertToCustomer(
     entityType: 'lead',
     entityId: lead.id,
     op: 'update',
-    payload: { id: lead.id, stage: 'Converted', convertedCustomerId: customerId, lastActivityDate: today },
+    payload: {
+      id: lead.id,
+      stage: wireStage('Converted'),
+      convertedCustomerId: customerId,
+      lastActivityDate: today,
+    },
     dependsOn: [customerId],
   });
 

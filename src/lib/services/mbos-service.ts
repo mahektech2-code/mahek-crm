@@ -17,7 +17,7 @@ import { getConfig } from "../config/store";
 import { verifyPassword } from "../password";
 import { bearerFrom, verifyToken, signingKeyPresent } from "../mbos/token";
 import { today } from "../recompute";
-import { addDays } from "../business-date";
+import { addDays, APP_TIMEZONE } from "../business-date";
 import type { PullDelta } from "../mbos/types";
 
 /* ---------------------------------------------------------------------------
@@ -382,7 +382,20 @@ export type BootstrapPayload = {
   device: { deviceId: string };
   customers: unknown[];
   products: unknown[];
-  journey: { today: unknown[]; tomorrow: unknown[] };
+  /**
+   * Today's route and tomorrow's, as flat stops.
+   *
+   * It was `journey: { today, tomorrow }` and the handset reads `journeyStops`
+   * — so the plan was built, sent, and applied by nothing. The split is not
+   * needed either: every screen there asks for a `planDate`, which is on each
+   * row, and a grouping by two fixed days cannot answer "the day after
+   * tomorrow" the moment somebody plans one.
+   */
+  journeyStops: unknown[];
+  /** In force today. See `priceListRows` — the handset replaces it wholesale. */
+  priceList: unknown[];
+  /** Live promotions, as data. Nothing here interprets eligibility or benefit. */
+  schemes: unknown[];
   tasks: unknown[];
   samples: unknown[];
   leads: unknown[];
@@ -409,6 +422,8 @@ export async function buildBootstrap(
     customerRows,
     productRows,
     journeyRows,
+    priceRows,
+    schemeRowsForBootstrap,
     taskRows,
     sampleRows,
     leadRows,
@@ -422,6 +437,8 @@ export async function buildBootstrap(
     customersForDevice(ids),
     activeCatalogue(),
     journeyStops(principal.user.id, [day, tomorrow]),
+    priceListRows(),
+    schemeRows(null),
     openTasks(principal.user.id),
     openSamples(principal.user.id, ids),
     openLeads(principal.user.id),
@@ -447,10 +464,9 @@ export async function buildBootstrap(
     device: { deviceId: principal.deviceId },
     customers: customerRows,
     products: productRows,
-    journey: {
-      today: journeyRows.filter((r) => r.planDate === day),
-      tomorrow: journeyRows.filter((r) => r.planDate === tomorrow),
-    },
+    journeyStops: journeyRows,
+    priceList: priceRows,
+    schemes: schemeRowsForBootstrap,
     tasks: taskRows,
     samples: sampleRows,
     leads: leadRows,
@@ -528,12 +544,39 @@ async function activeCatalogue() {
   `);
 }
 
+/**
+ * The day's route, in the columns the handset's own table has.
+ *
+ * A pull row IS the local row — `applyPull` upserts whatever columns arrive,
+ * verbatim — so this is the one query where the aliases are not MahekOne's
+ * vocabulary but the app's. `sequence` is `seq` there and `actual_visit_at` is
+ * `actualAt`; sending the server's spelling writes nothing at all, because
+ * SQLite refuses a column it does not have and the whole plan goes with it.
+ *
+ * `beat`, `area` and the plan's status are deliberately NOT sent. The screen
+ * joins each stop to the customer it names for everything it shows, and a
+ * second copy of the shop's area on the stop is a second thing to keep true.
+ */
 async function journeyStops(userId: string, days: string[]) {
   const rows = await db.execute<{ planDate: string } & Record<string, unknown>>(sql`
-    select s.id, s.plan_id as "planId", s.customer_id as "customerId",
-           s.sequence, s.planned_at as "plannedAt", s.status,
-           s.actual_visit_at as "actualVisitAt", s.skip_reason as "skipReason",
-           p.plan_date::text as "planDate", p.beat, p.area, p.status as "planStatus"
+    select s.id,
+           p.plan_date::text as "planDate",
+           s.customer_id as "customerId",
+           s.sequence as "seq",
+           /* HH:MM in Asia/Kolkata, because that is what the SCREEN treats
+            * this as -- it prints the value (Planned 09:30) and compares it
+            * against the wall clock to decide whether the salesman is running
+            * late. A timestamp would print as an ISO string and compare as
+            * nonsense. */
+           to_char(s.planned_at at time zone ${APP_TIMEZONE}, 'HH24:MI') as "plannedAt",
+           /* Epoch milliseconds: the column on the handset is an INTEGER, and
+            * every other instant in that store is counted the same way.
+            * double precision rather than bigint so it arrives as a number --
+            * a bigint comes back as a string, and this is well inside the
+            * range a float carries exactly. */
+           (extract(epoch from s.actual_visit_at) * 1000)::double precision as "actualAt",
+           s.status,
+           s.skip_reason as "skipReason"
       from mbos_journey_stops s
       join mbos_journey_plans p on p.id = s.plan_id
      where p.user_id = ${userId}
@@ -637,7 +680,7 @@ async function leaveBalances(userId: string, year: number) {
  * still a price list the field team needs, and an empty list read as "nobody"
  * would produce a document section that is silently blank on every handset.
  */
-async function visibleDocuments(role: string, customerIds: string[]) {
+async function visibleDocuments(role: string, customerIds: string[], since?: string | null) {
   const scoped = customerIds.length
     ? sql`(d.customer_id is null or d.customer_id in ${sql`(${sql.join(customerIds.map((i) => sql`${i}`), sql`, `)})`})`
     : sql`d.customer_id is null`;
@@ -650,11 +693,12 @@ async function visibleDocuments(role: string, customerIds: string[]) {
        and (jsonb_array_length(d.visible_to_roles) = 0
             or d.visible_to_roles ? ${role})
        and ${scoped}
+       ${since ? sql`and d.updated_at > ${since}` : sql``}
      order by d.category asc, d.title asc
   `);
 }
 
-async function coursesFor(userId: string) {
+async function coursesFor(userId: string, since?: string | null) {
   return db.execute<Record<string, unknown>>(sql`
     select c.id, c.title, c.category, c.duration_minutes as "durationMinutes",
            c.attachment_id as "attachmentId",
@@ -667,6 +711,7 @@ async function coursesFor(userId: string) {
       left join mbos_course_progress p
              on p.course_id = c.id and p.user_id = ${userId}
      where c.active = true
+       ${since ? sql`and (c.updated_at > ${since} or p.updated_at > ${since})` : sql``}
      order by c.mandatory desc, c.due_date asc nulls last, c.title asc
   `);
 }
@@ -685,6 +730,86 @@ async function unreadNotifications(userId: string) {
     .where(and(eq(notifications.userId, userId), eq(notifications.read, false)))
     .orderBy(sql`${notifications.createdAt} desc`)
     .limit(100);
+}
+
+/**
+ * What a customer pays, per can.
+ *
+ * Only rates in force TODAY. A rate dated out is not a rate — sending it would
+ * put the handset in the position of deciding which of two prices applies, and
+ * the answer to that is a date comparison the server has already made.
+ *
+ * The whole list rather than a delta, because the handset replaces it
+ * wholesale: a withdrawn rate has to disappear, and there is no `updated_at`
+ * on a row that no longer exists to say so.
+ */
+async function priceListRows() {
+  return db.execute<Record<string, unknown>>(sql`
+    select pl.customer_price_tag as "priceTag",
+           pl.product_id as "productId",
+           pl.rate_paise as "ratePaise"
+      from mbos_price_list pl
+     where (pl.valid_from is null
+            or pl.valid_from <= (now() at time zone ${APP_TIMEZONE})::date)
+       and (pl.valid_to is null
+            or pl.valid_to >= (now() at time zone ${APP_TIMEZONE})::date)
+     order by pl.customer_price_tag asc, pl.product_id asc
+     limit 20000
+  `);
+}
+
+/**
+ * Live promotions.
+ *
+ * Eligibility and benefit go down as they are stored — as data. That is what
+ * lets a manager add a Diwali scheme in October without shipping a handset
+ * build, and it is why nothing here interprets either column.
+ *
+ * A scheme whose dates have passed is not sent; the tombstone channel is what
+ * removes it from a phone that already has it.
+ */
+async function schemeRows(since: string | null) {
+  return db.execute<Record<string, unknown>>(sql`
+    select s.id, s.name, s.description, s.eligibility, s.benefit,
+           s.valid_from::text as "validFrom", s.valid_to::text as "validTo",
+           s.active
+      from mbos_schemes s
+     where s.active
+       and (s.valid_from is null or s.valid_from <= (now() at time zone ${APP_TIMEZONE})::date)
+       and (s.valid_to is null or s.valid_to >= (now() at time zone ${APP_TIMEZONE})::date)
+       ${since ? sql`and s.updated_at > ${since}` : sql``}
+     order by s.updated_at asc
+     limit 500
+  `);
+}
+
+/**
+ * Rows the server says are gone.
+ *
+ * Two kinds in one channel: a tombstone written against this salesman, and one
+ * written against nobody — a product withdrawn from the catalogue is gone for
+ * the whole team, so `user_id is null` means everybody.
+ *
+ * Grouped by table on the way out because that is the shape the handset
+ * applies: one `DELETE … WHERE id IN` per entity rather than one per row.
+ */
+async function deletionsSince(userId: string, since: string) {
+  const rows = await db.execute<{ entity: string; entityId: string }>(sql`
+    select d.entity, d.entity_id as "entityId"
+      from mbos_deletions d
+     where d.at > ${since}
+       and (d.user_id is null or d.user_id = ${userId})
+     order by d.at asc
+     limit 2000
+  `);
+
+  const byEntity = new Map<string, string[]>();
+  for (const row of rows) {
+    const list = byEntity.get(row.entity);
+    if (list) list.push(row.entityId);
+    else byEntity.set(row.entity, [row.entityId]);
+  }
+  return [...byEntity].map(([entity, ids]) => ({ entity, ids }));
 }
 
 /* ---------------------------------------------------------------- the delta */
@@ -714,16 +839,53 @@ export async function buildPull(
       timeline: [],
       config: await mbosConfigPayload(),
       notifications: [],
+      transcripts: [],
+      journeyStops: [],
+      approvals: [],
+      planDays: [],
+      leaveBalances: [],
+      priceList: [],
+      schemes: [],
+      documents: [],
+      courses: [],
+      deletions: [],
     };
   }
+
+  /* A parameter is a STRING, not a Date.
+   *
+   * `postgres` serialises a JS Date by asking Node to measure it as text, and
+   * on Node 25 that throws — so every query in this delta carrying the cursor
+   * failed, which is every query in it. It fails inside the driver rather than
+   * in SQL, so the type checker sees nothing and the whole pull answers 500
+   * the moment a handset has a cursor. Bootstrap passes no Date at all, which
+   * is exactly why sign-in worked and syncing after it did not.
+   *
+   * An ISO instant carries its own zone, so this is not the bare-cast rule in
+   * different clothes — nothing is being truncated to a day here. */
+  const sinceIso = since.toISOString();
 
   const ids = await customerIdsInScope(principal);
   const idList = ids.length
     ? sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`
     : null;
 
-  const [changedCustomers, changedProducts, newTimeline, freshNotifications] =
-    await Promise.all([
+  const [
+    changedCustomers,
+    changedProducts,
+    newTimeline,
+    freshNotifications,
+    newTranscripts,
+    journeyRows,
+    approvalRows,
+    planDayRows,
+    leaveBalanceRows,
+    priceRows,
+    schemeChanges,
+    documentChanges,
+    courseChanges,
+    deletionRows,
+  ] = await Promise.all([
       idList
         ? db.execute<Record<string, unknown>>(sql`
             select c.id, c.name, c.contact_person as "contactPerson", c.phone,
@@ -741,7 +903,7 @@ export async function buildPull(
                    c.last_visit_date as "lastVisitDate",
                    c.updated_at as "updatedAt"
               from customers c
-             where c.id in ${idList} and c.updated_at > ${since}
+             where c.id in ${idList} and c.updated_at > ${sinceIso}
              order by c.updated_at asc
              limit 2000
           `)
@@ -752,7 +914,7 @@ export async function buildPull(
                p.cans_per_box as "cansPerBox", p.active, p.status,
                p.updated_at as "updatedAt"
           from products p
-         where p.updated_at > ${since}
+         where p.updated_at > ${sinceIso}
          order by p.updated_at asc
          limit 2000
       `),
@@ -763,7 +925,7 @@ export async function buildPull(
                    t.occurred_at as "occurredAt", t.actor_user_id as "actorUserId",
                    t.summary
               from timeline_events t
-             where t.customer_id in ${idList} and t.created_at > ${since}
+             where t.customer_id in ${idList} and t.created_at > ${sinceIso}
              order by t.created_at asc
              limit 2000
           `)
@@ -781,11 +943,140 @@ export async function buildPull(
         .where(
           and(
             eq(notifications.userId, principal.user.id),
-            sql`${notifications.createdAt} > ${since}`,
+            sql`${notifications.createdAt} > ${sinceIso}`,
           ),
         )
         .orderBy(sql`${notifications.createdAt} asc`)
         .limit(200),
+
+      /* What the voice note said.
+       *
+       * This is what lets a handset let go of a recording: the audio is kept
+       * until the transcript is confirmed STORED, not merely until the upload
+       * succeeded, because it is the only copy of what the customer actually
+       * said. Without this channel the confirmation never came and every
+       * recording ever made stayed on the phone. */
+      db.execute<Record<string, unknown>>(sql`
+        select v.voice_note_id as "mediaId", v.transcript, v.id as "visitId"
+          from mbos_visits v
+         where v.created_by_id = ${principal.user.id}
+           and v.voice_note_id is not null
+           and v.transcript is not null
+           and v.updated_at > ${sinceIso}
+         order by v.updated_at asc
+         limit 200
+      `),
+
+      /* The route, on every pass and not only at sign-in.
+       *
+       * A plan is made in the office, often for tomorrow and sometimes for
+       * this afternoon. Sending it only in the bootstrap meant a salesman had
+       * to sign out and back in to see a day somebody had just planned for
+       * him — and signing out is the one thing an offline-first app makes
+       * expensive, because the outbox goes with the session. */
+      db.execute<Record<string, unknown>>(sql`
+        select s.id,
+               p.plan_date::text as "planDate",
+               s.customer_id as "customerId",
+               s.sequence as "seq",
+               to_char(s.planned_at at time zone ${APP_TIMEZONE}, 'HH24:MI') as "plannedAt",
+               (extract(epoch from s.actual_visit_at) * 1000)::double precision as "actualAt",
+               s.status,
+               s.skip_reason as "skipReason"
+          from mbos_journey_stops s
+          join mbos_journey_plans p on p.id = s.plan_id
+         where p.user_id = ${principal.user.id}
+           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date
+           and (s.updated_at > ${sinceIso} or p.updated_at > ${sinceIso})
+         order by p.plan_date asc, s.sequence asc
+         limit 500
+      `),
+
+      /* The answer to something he asked for.
+       *
+       * The handset has applied this channel since the day it was written — it
+       * moves the expense to Approved, the leave to Rejected, the order to
+       * approved — and the server had never sent a single row, so a salesman
+       * who asked for anything watched it sit at Pending for ever. There was
+       * nothing to send until the Sales Dashboard existed to decide them.
+       *
+       * Pending rows go too, not only decided ones: the handset minted the id
+       * and this is what confirms the office holds it. */
+      db.execute<Record<string, unknown>>(sql`
+        select ap.id, ap.subject_type as "subjectType", ap.subject_id as "subjectId",
+               ap.state::text as state,
+               (extract(epoch from ap.decided_at) * 1000)::double precision as "decidedAt",
+               ap.decision_note as "decisionNote",
+               ap.approved_amount_paise as "approvedAmountPaise",
+               d.name as "approverName"
+          from mbos_approvals ap
+          left join users d on d.id = ap.approver_user_id
+         where ap.requested_by_user_id = ${principal.user.id}
+           and ap.updated_at > ${sinceIso}
+         order by ap.updated_at asc
+         limit 500
+      `),
+
+      /* The days themselves, and how far each has got in being agreed.
+       *
+       * A stop only exists once a day is PLANNED, so the stops channel alone
+       * cannot show a salesman the days he is being asked about — which, on a
+       * month laid out in advance, is nearly all of them. */
+      db.execute<Record<string, unknown>>(sql`
+        select p.id, p.plan_date::text as "planDate", p.city, p.beat,
+               p.day_state::text as "dayState",
+               p.refusal_reason as "refusalReason",
+               p.counter_city as "counterCity",
+               (extract(epoch from p.proposed_at) * 1000)::double precision as "proposedAt",
+               m.name as "proposedBy",
+               (select count(*)::int from mbos_journey_stops s where s.plan_id = p.id)
+                 as "picked"
+          from mbos_journey_plans p
+          left join users m on m.id = p.proposed_by_id
+         where p.user_id = ${principal.user.id}
+           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date
+           and p.updated_at > ${sinceIso}
+         order by p.plan_date asc
+         limit 200
+      `),
+
+      /* What leave he has left.
+       *
+       * The handset's leave screen builds its list of kinds from these, so
+       * with none sent the only thing it could offer was Loss of pay — a
+       * salesman with twelve days of casual leave being shown no way to ask
+       * for any of it. The balance is a subtraction rather than a stored
+       * number, because a stored one is a figure two writers can disagree
+       * about. */
+      db.execute<Record<string, unknown>>(sql`
+        select b.leave_type::text as kind,
+               b.entitled_days as entitled,
+               b.used_days as used,
+               (b.entitled_days - b.used_days) as available
+          from mbos_leave_balances b
+         where b.user_id = ${principal.user.id}
+           and b.year = extract(year from (now() at time zone ${APP_TIMEZONE}))
+         order by b.leave_type asc
+      `),
+
+      /* What the customer pays.
+       *
+       * Sent whole on every pass rather than as a delta, because the handset
+       * replaces the table wholesale — a rate that was withdrawn has to
+       * disappear, and a row that no longer exists has no `updated_at` to say
+       * so. It is a few hundred rows of three columns; a delta would save
+       * nothing worth the way it fails. */
+      priceListRows(),
+
+      schemeRows(sinceIso),
+
+      /* The library and the training, narrowed exactly as the bootstrap
+       * narrows them — same functions, so a document a salesman could not see
+       * at sign-in cannot arrive an hour later through the delta. */
+      visibleDocuments(principal.role, ids, sinceIso),
+      coursesFor(principal.user.id, sinceIso),
+
+      deletionsSince(principal.user.id, sinceIso),
     ]);
 
   return {
@@ -795,5 +1086,15 @@ export async function buildPull(
     timeline: newTimeline as unknown[],
     config: await mbosConfigPayload(),
     notifications: freshNotifications as unknown[],
+    transcripts: newTranscripts as unknown[],
+    journeyStops: journeyRows as unknown[],
+    approvals: approvalRows as unknown[],
+    planDays: planDayRows as unknown[],
+    leaveBalances: leaveBalanceRows as unknown[],
+    priceList: priceRows as unknown[],
+    schemes: schemeChanges as unknown[],
+    documents: documentChanges as unknown[],
+    courses: courseChanges as unknown[],
+    deletions: deletionRows,
   };
 }

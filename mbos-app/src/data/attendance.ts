@@ -5,6 +5,8 @@ import { getConfig } from './config';
 import { withinGeofence } from '../engines/geo';
 import { deriveStatus } from '../engines/attendance';
 import type { Fix } from '../native/location';
+import { isoDate } from '../lib/format';
+import * as trail from '../sync/trail';
 
 /**
  * Attendance.
@@ -73,7 +75,7 @@ export function durationLabel(minutes: number): string {
 }
 
 export function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return isoDate(new Date());
 }
 
 export async function todayRow(userId: string): Promise<AttendanceDay | null> {
@@ -118,8 +120,15 @@ export async function checkIn(args: {
       entityType: 'attendance',
       entityId: existing.id,
       op: 'update',
-      payload: { id: existing.id, sessions, resumedAt: Date.now() },
+      /* `day` is on every attendance payload, update as well as create: the
+         server keys one row per person per day off it, so an update without
+         it names nothing. PROTOCOL.md §4.1. */
+      payload: { id: existing.id, day, sessions, resumedAt: Date.now() },
     });
+    /* Back from lunch: the trail starts again with the session it belongs to.
+       It was stopped at the check-out, and an afternoon with no line on the map
+       reads as an afternoon nobody worked. */
+    void trail.start();
     return { id: existing.id, withinRadius, needsOverride: false };
   }
 
@@ -151,13 +160,28 @@ export async function checkIn(args: {
     entityId: base.id,
     op: 'create',
     payload: {
-      id: base.id, userId: args.userId, day,
+      id: base.id,
+      day,
       checkInAt: base.clientCreatedAt,
-      lat: args.fix?.lat ?? null, lng: args.fix?.lng ?? null, accuracyM: args.fix?.accuracyM ?? null,
-      withinRadius, fieldVisitOverride: withinRadius === false, overrideReason: args.overrideReason ?? null,
+      checkInLat: args.fix?.lat ?? undefined,
+      checkInLng: args.fix?.lng ?? undefined,
+      checkInAccuracyM: args.fix?.accuracyM ?? undefined,
+      selfieId: args.selfieMediaId ?? undefined,
+      /* `withinRadius` here, `withinGeofence` there — the same question about
+         the same fix, asked in two vocabularies, and the answer was landing
+         nowhere. A check-in outside the radius is never blocked; it is marked,
+         and the mark is the whole point of having asked. */
+      withinGeofence: withinRadius ?? undefined,
+      regularisationRequested: withinRadius === false,
+      regularisationReason: args.overrideReason ?? undefined,
       deviceId: base.deviceId,
     },
   });
+
+  /* The day is open, so the trail runs. Between here and the check-out and not
+     one second either side — a track that carried on afterwards would be
+     following somebody home. */
+  void trail.start();
 
   return { id: base.id, withinRadius, needsOverride };
 }
@@ -171,11 +195,17 @@ export async function checkIn(args: {
  * dismisses the question, is precisely the block this module exists to avoid.
  */
 export async function setOverrideReason(id: string, reason: string): Promise<void> {
+  const row = await one<{ day: string }>('SELECT day FROM attendance_days WHERE id = ?', [id]);
   await updateAndQueue({
     table: 'attendance_days',
     entityType: 'attendance',
     id,
     patch: { fieldVisitOverride: true, overrideReason: reason },
+    payloadExtras: {
+      day: row?.day,
+      regularisationRequested: true,
+      regularisationReason: reason,
+    },
   });
 }
 
@@ -231,14 +261,24 @@ export async function checkOut(
     op: 'update',
     payload: {
       id: row.id,
+      day: row.day,
+      checkOutLat: fix?.lat ?? undefined,
+      checkOutLng: fix?.lng ?? undefined,
+      checkOutAccuracyM: fix?.accuracyM ?? undefined,
       sessions,
       checkOutAt: at,
-      lat: fix?.lat ?? null,
-      lng: fix?.lng ?? null,
+      /* `workedMinutes` and `status` go for the record's own sake and the
+         server ignores both: they are DERIVED there, rebuilt from the two
+         marks, and a handset that could type them could type a full day onto
+         an hour's work. */
       workedMinutes: worked,
       status: verdict.status,
     },
   });
+
+  /* The day is closed. Stop, and send what is held — the last stretch of the
+     afternoon is the part most likely still to be on the phone. */
+  void trail.stop();
 
   return { ok: true, workedMinutes: worked };
 }
@@ -311,7 +351,13 @@ export async function requestRegularisation(dayId: string, reason: string): Prom
     entityType: 'attendance',
     entityId: dayId,
     op: 'update',
-    payload: { id: dayId, regularisationRequested: true, regularisationReason: reason, approvalId },
+    payload: {
+      id: dayId,
+      day: (await one<{ day: string }>('SELECT day FROM attendance_days WHERE id = ?', [dayId]))?.day,
+      regularisationRequested: true,
+      regularisationReason: reason,
+      approvalId,
+    },
   });
 
   return approvalId;
