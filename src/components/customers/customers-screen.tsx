@@ -43,6 +43,11 @@ import {
 import { convertToThirdParty, revertThirdParty } from "@/lib/actions/third-party";
 import { ThirdPartyDialog } from "@/components/crm/third-party-dialog";
 import { money, phoneDisplay, shortDate, stamp, today } from "@/lib/format";
+import {
+  NextCallCell,
+  type StoredNextStep,
+} from "@/components/crm/next-call-cell";
+import { NEXT_STEP_LABELS } from "@/lib/next-step-labels";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import {
   ACCOUNT_TYPE_FILTERS,
@@ -89,6 +94,8 @@ type Row = {
   servedShops: number;
   reactivationRequested: boolean;
   reactivationReason: string | null;
+  /** The next call, as of the last call logged. Null where nobody has called. */
+  nextStep: StoredNextStep | null;
 };
 
 /**
@@ -144,6 +151,7 @@ export function CustomersScreen({
   filters,
   pageInfo,
   totals,
+  todayIso,
 }: {
   /**
    * Which app is rendering this.
@@ -190,6 +198,14 @@ export function CustomersScreen({
     perPage: number;
   };
   pageInfo: { page: number; pageCount: number; total: number; bookTotal: number };
+  /**
+   * The working day, from the server. Named apart from `today()` in
+   * lib/format, which reads the clock — a client component may not do that
+   * during render, and the value has to be the SERVER's day anyway: a
+   * telecaller's laptop set to the wrong date must not change which next-call
+   * dates read as past.
+   */
+  todayIso: string;
   totals: {
     outstanding: number;
     slowPayers: number;
@@ -360,6 +376,8 @@ export function CustomersScreen({
           "Status",
           "Last order",
           "Outstanding (₹)",
+          "Next call",
+          "Next call said on",
         ],
         subset.map((r) => [
           r.name,
@@ -376,6 +394,12 @@ export function CustomersScreen({
           r.status,
           r.lastOrderDate ?? "",
           Math.round(r.outstanding / 100),
+          // The word where there is no date, so a CSV row can never imply a
+          // call is coming when the answer was "nobody can reach them".
+          r.nextStep
+            ? (r.nextStep.date ?? NEXT_STEP_LABELS[r.nextStep.kind].short)
+            : "",
+          r.nextStep?.toldOn ?? "",
         ]),
       ),
       [
@@ -627,6 +651,11 @@ export function CustomersScreen({
                 <Th>Last order</Th>
                 <Th>Last contact</Th>
                 <Th align="right">Outstanding</Th>
+                {/* WHEN THEY COME BACK, from the last call anybody logged.
+                    Empty on a customer nobody has called, which is the honest
+                    answer: nothing has been promised because nobody has
+                    spoken to them. */}
+                <Th>Next call</Th>
                 <Th>City</Th>
                 <Th align="right" className={pinnedHead("right")}>
                   Actions
@@ -794,6 +823,9 @@ export function CustomersScreen({
                     }
                   >
                     {money(r.outstanding)}
+                  </Td>
+                  <Td>
+                    <NextCallCell step={r.nextStep} today={todayIso} />
                   </Td>
                   <Td>{r.city}</Td>
                   {/*

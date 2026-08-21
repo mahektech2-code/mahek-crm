@@ -7,6 +7,7 @@ import {
   listAssignableUsers,
   listBackOfficeCandidates,
   listCustomersPage,
+  today,
 } from "@/lib/queries";
 import { customerStatusLabel } from "@/lib/format";
 import {
@@ -40,6 +41,10 @@ export default async function CustomersPage({
 
   const user = await requireUser();
   const scope = await getScope(user);
+  // The SERVER's working day, for the Next call column — a client component
+  // may not read the clock in render, and a laptop set to the wrong date must
+  // not change which dates read as past.
+  const day = await today();
 
   const perPage = Number(one("per") ?? 25);
   const [page, team, config, backOfficePeople, amOptions] = await Promise.all([
@@ -97,6 +102,7 @@ export default async function CustomersPage({
         bookTotal: page.bookTotal,
       }}
       totals={page.totals}
+      todayIso={day}
       rows={page.rows.map((c) => ({
         id: c.id,
         name: c.name,
@@ -125,6 +131,7 @@ export default async function CustomersPage({
         thirdParty: c.thirdParty,
         deliveredOrders: c.deliveredOrders,
         servedShops: c.servedShops,
+        nextStep: c.nextStep,
         reactivationRequested: c.reactivationRequested,
         reactivationReason: c.reactivationReason,
       }))}

@@ -3,6 +3,7 @@
 import { Modal } from "@/components/ui/modal";
 import { Badge, Button } from "@/components/ui/primitives";
 import type { NextStep } from "@/lib/engines/next-step";
+import { NEXT_STEP_LABELS } from "@/lib/next-step-labels";
 
 /* ---------------------------------------------------------------------------
  * "Saved — and here is what happens next."
@@ -18,12 +19,10 @@ import type { NextStep } from "@/lib/engines/next-step";
  * interrupting sixty calls a day for.
  * ------------------------------------------------------------------------- */
 
-const TONE = {
-  booked: { tone: "brand" as const, word: "You owe them this call" },
-  scheduled: { tone: "neutral" as const, word: "Scheduled" },
-  decide: { tone: "warn" as const, word: "Needs a decision" },
-  none: { tone: "muted" as const, word: "Nothing scheduled" },
-};
+// The vocabulary is shared with the Call history table and the customers
+// list — see `lib/next-step-labels.ts`. Three screens saying this in three
+// wordings is how a telecaller ends up not trusting any of them.
+const TONE = NEXT_STEP_LABELS;
 
 export function NextStepDialog({
   open,

@@ -2,7 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { and, asc, desc, eq, inArray, lte, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { APP_TIMEZONE } from "@/lib/business-date";
+import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import {
   TIMELINE_KINDS,
   TIMELINE_PAGE,
@@ -300,6 +300,31 @@ export async function listBackOfficeCandidates(): Promise<
 
 /* ------------------------------------------------------------- customers */
 
+/**
+ * WHAT THE TELECALLER WAS TOLD, on the last call that was logged.
+ *
+ * Read from the `calls` row rather than derived, and that is the whole point:
+ * these columns are the record of what the screen said on the day somebody
+ * logged the call, not a cache of today's answer. The two are allowed to
+ * differ — a customer who has ordered since has a different next call now —
+ * so anything drawing this has to say when it was told, and must not present
+ * a three-week-old date as a live commitment.
+ *
+ * Null where nobody has logged a call, which is most of a fresh book. An
+ * empty cell is the honest answer there: nothing has been promised because
+ * nobody has spoken to them.
+ */
+export type StoredNextStep = {
+  kind: "booked" | "scheduled" | "decide" | "none";
+  /** Null on `decide` and `none`, where there genuinely is no date. */
+  date: string | null;
+  reason: string | null;
+  headline: string | null;
+  detail: string | null;
+  /** The day the call that produced this was logged. */
+  toldOn: string;
+};
+
 export type CustomerRow = typeof customers.$inferSelect & {
   ownerName: string | null;
   salesAmName: string | null;
@@ -311,6 +336,8 @@ export type CustomerRow = typeof customers.$inferSelect & {
    * is a fact — so it sits on the row rather than behind a filter.
    */
   deliveredOrders: number;
+  /** The next call, as of the last call logged against them. Null if none. */
+  nextStep: StoredNextStep | null;
   /**
    * Third-party customers billed through this account — the other end of the
    * same relationship. On a distributor's row it is the fact that explains why
@@ -617,6 +644,26 @@ export async function listCustomersPage(
         select count(*)::int from orders o
          where o.delivery_customer_id = customers.id
       )`,
+      /*
+       * ONE SUBQUERY, not five. The five columns belong to a single call — the
+       * last one that produced a next step — and reading them as five
+       * correlated scalars would let them come from five different calls the
+       * day two are logged in the same second.
+       */
+      nextStep: sql<StoredNextStep | null>`(
+        select json_build_object(
+                 'kind', c.next_step_kind,
+                 'date', c.next_step_date::text,
+                 'reason', c.next_step_reason,
+                 'headline', c.next_step_headline,
+                 'detail', c.next_step_detail,
+                 'toldOn', to_char(c.started_at at time zone ${APP_TIMEZONE}, 'YYYY-MM-DD')
+               )
+          from calls c
+         where c.customer_id = customers.id and c.next_step_kind is not null
+         order by c.started_at desc, c.id desc
+         limit 1
+      )`,
       // The other end of the delivery chain, and spelled out for the same
       // reason as the line above it: Drizzle renders a column reference bare,
       // and a bare `id` inside a correlated subquery binds to the inner table.
@@ -641,6 +688,7 @@ export async function listCustomersPage(
       openComplaints: Number(r.openComplaints),
       deliveredOrders: Number(r.deliveredOrders),
       servedShops: Number(r.servedShops),
+      nextStep: r.nextStep ?? null,
     })),
     total,
     bookTotal: Number(book?.n ?? 0),
@@ -687,6 +735,26 @@ export async function listCustomers(): Promise<CustomerRow[]> {
         select count(*)::int from orders o
          where o.delivery_customer_id = customers.id
       )`,
+      /*
+       * ONE SUBQUERY, not five. The five columns belong to a single call — the
+       * last one that produced a next step — and reading them as five
+       * correlated scalars would let them come from five different calls the
+       * day two are logged in the same second.
+       */
+      nextStep: sql<StoredNextStep | null>`(
+        select json_build_object(
+                 'kind', c.next_step_kind,
+                 'date', c.next_step_date::text,
+                 'reason', c.next_step_reason,
+                 'headline', c.next_step_headline,
+                 'detail', c.next_step_detail,
+                 'toldOn', to_char(c.started_at at time zone ${APP_TIMEZONE}, 'YYYY-MM-DD')
+               )
+          from calls c
+         where c.customer_id = customers.id and c.next_step_kind is not null
+         order by c.started_at desc, c.id desc
+         limit 1
+      )`,
       // The other end of the delivery chain, and spelled out for the same
       // reason as the line above it: Drizzle renders a column reference bare,
       // and a bare `id` inside a correlated subquery binds to the inner table.
@@ -708,6 +776,7 @@ export async function listCustomers(): Promise<CustomerRow[]> {
     openComplaints: Number(r.openComplaints),
     deliveredOrders: Number(r.deliveredOrders),
     servedShops: Number(r.servedShops),
+    nextStep: r.nextStep ?? null,
   }));
 }
 
@@ -1142,6 +1211,8 @@ export type InteractionRow = {
   note: string | null;
   produced: string | null;
   sourceModule: string | null;
+  /** What this call said would happen next. Null on calls logged before it existed. */
+  nextStep: StoredNextStep | null;
 };
 
 export async function listInteractions(limit = 400): Promise<InteractionRow[]> {
@@ -1176,6 +1247,25 @@ export async function listInteractions(limit = 400): Promise<InteractionRow[]> {
         .filter(Boolean)
         .join(" · ") || null,
     sourceModule: c.sourceModule,
+    /*
+     * What this call said would happen next — the row's OWN answer, not the
+     * customer's current one. On a history table that is the right half of the
+     * pair: the line says what was logged and what was said about it at the
+     * time, which is what somebody scanning back through a week is reading it
+     * for. Calls logged before these columns existed carry null, and nothing
+     * reconstructs one — a reconstruction would be today's answer wearing an
+     * old call's date.
+     */
+    nextStep: c.nextStepKind
+      ? {
+          kind: c.nextStepKind,
+          date: c.nextStepDate,
+          reason: c.nextStepReason,
+          headline: c.nextStepHeadline,
+          detail: c.nextStepDetail,
+          toldOn: calendarDate(c.startedAt),
+        }
+      : null,
   }));
 }
 

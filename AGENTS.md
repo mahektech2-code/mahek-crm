@@ -616,6 +616,31 @@ of "the list", they open the Call Log. A confirmation read sixty times a day
 works by being recognised rather than read, so the part that VARIES is the
 reason underneath, which is the only half worth reading twice.
 
+**And it is READ where the work is chosen, not only where the call was made.**
+The dialog says it once, at the moment of saving, and then it was gone: to find
+out when a customer comes back you opened their record, one at a time. The two
+screens somebody actually decides from now carry it — the Call history, where
+each row shows what THAT call said would happen next, and the customers list,
+which shows the last thing anybody was told, between Outstanding and City.
+
+**It is the stored answer, and it says when it was said.** These columns are
+what the screen told the person who logged the call, on the day they logged it,
+and a customer who has ordered since has a different next call now — so a date
+already past is drawn muted rather than sitting in a column of future dates
+looking like a commitment, and the day it was said is on the hover. Deriving it
+live for twenty-five rows would mean running the queue engine twenty-five
+times per page, and the answer would no longer be a record of anything.
+
+**An empty cell means nobody has called them.** Which is most of a fresh book,
+and it is the honest answer: nothing has been promised because nobody has
+spoken to them. `decide` and `none` are the opposite case and carry no date by
+design, so they print their word — a blank cell where the answer is "nobody can
+reach them" reads as missing data.
+
+**The three screens share one vocabulary**, in `lib/next-step-labels.ts`, with
+a long word for the dialog and a short one for a table cell: "You owe them this
+call" in a 90px column is a sentence nobody finishes.
+
 **And it is shown by every path that logs a call, not just the calling
 queue.** The collections follow-up panel on `/crm/payments` saved and advanced
 straight to the next overdue account for as long as it existed — so the
