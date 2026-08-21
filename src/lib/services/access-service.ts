@@ -1,4 +1,9 @@
 import "server-only";
+import {
+  conflictsFor,
+  type Role,
+  type RoleConflict,
+} from "@/lib/access-control";
 import { asc } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, appModuleAccess, employees, users } from "@/db/schema";
@@ -30,6 +35,13 @@ export type ModuleGrant = {
 export type AppGrant = {
   app: AppId;
   appName: string;
+  /**
+   * The hat this app is held under. Null means the account's own role, which
+   * is what every grant meant before roles existed and what `app:grant`
+   * writes — the screen shows the account's role there rather than an empty
+   * box, because "inherited" and "unset" look identical and are not.
+   */
+  role: Role | null;
   /** Every module of the app, ticked or not — the review table renders this. */
   modules: ModuleGrant[];
   grantedCount: number;
@@ -52,6 +64,14 @@ export type AccessRow = {
   /** Active in the employee sheet. Null where HRMS has never heard of them. */
   employeeStatus: "active" | "inactive" | "unknown" | null;
   grants: AppGrant[];
+  /**
+   * Every hat this person wears, and what the combination lets them do that
+   * the capability matrix was written to prevent. Empty for almost everybody;
+   * where it is not, the screen says it in words rather than refusing the
+   * grant — at nine people the same person does have to do both.
+   */
+  roles: Role[];
+  conflicts: RoleConflict[];
 };
 
 /**
@@ -123,6 +143,7 @@ async function employeeRows(): Promise<EmployeeLite[]> {
 function buildGrants(
   apps: AppId[],
   modulesByApp: Map<AppId, string[]>,
+  roleFor: (app: AppId) => Role | null,
 ): AppGrant[] {
   return APPS.filter((a) => apps.includes(a.id)).map((a) => {
     const stored = modulesByApp.get(a.id) ?? [];
@@ -130,6 +151,7 @@ function buildGrants(
     // No stored rows means the whole app — the same rule the guard reads, said
     // once in `moduleAllowed` and shown here rather than re-derived.
     const whole = stored.length === 0;
+    const role = roleFor(a.id);
     const modules: ModuleGrant[] = all.map((m) => ({
       key: m.key,
       label: m.label,
@@ -139,6 +161,7 @@ function buildGrants(
     return {
       app: a.id,
       appName: a.name,
+      role,
       modules,
       grantedCount: modules.filter((m) => m.granted).length,
       totalCount: modules.length,
@@ -162,7 +185,9 @@ export async function listAccess(): Promise<AccessRow[]> {
       })
       .from(users)
       .orderBy(asc(users.name)),
-    db.select({ userId: appAccess.userId, app: appAccess.app }).from(appAccess),
+    db
+      .select({ userId: appAccess.userId, app: appAccess.app, role: appAccess.role })
+      .from(appAccess),
     db
       .select({
         userId: appModuleAccess.userId,
@@ -174,10 +199,12 @@ export async function listAccess(): Promise<AccessRow[]> {
   ]);
 
   const appsByUser = new Map<string, AppId[]>();
+  const rolesByUserApp = new Map<string, Role | null>();
   for (const a of access) {
     const list = appsByUser.get(a.userId) ?? [];
     list.push(a.app as AppId);
     appsByUser.set(a.userId, list);
+    rolesByUserApp.set(`${a.userId}:${a.app}`, (a.role as Role) ?? null);
   }
 
   const modulesByUser = new Map<string, Map<AppId, string[]>>();
@@ -198,6 +225,16 @@ export async function listAccess(): Promise<AccessRow[]> {
   }
 
   return accounts.map((u) => {
+    // Every hat, the account's own included: a grant with no role of its own
+    // is held under it, so it is one of the roles this person wears.
+    const heldRoles = [
+      ...new Set<Role>([
+        u.role as Role,
+        ...(appsByUser.get(u.id) ?? []).map(
+          (app) => rolesByUserApp.get(`${u.id}:${app}`) ?? (u.role as Role),
+        ),
+      ]),
+    ];
     const match =
       byEmail.get(emailKey(u.email) ?? "") ??
       byPhone.get(phoneKey(u.phone) ?? "") ??
@@ -216,7 +253,10 @@ export async function listAccess(): Promise<AccessRow[]> {
       grants: buildGrants(
         appsByUser.get(u.id) ?? [],
         modulesByUser.get(u.id) ?? new Map(),
+        (app) => rolesByUserApp.get(`${u.id}:${app}`) ?? null,
       ),
+      roles: heldRoles,
+      conflicts: conflictsFor(heldRoles),
     };
   });
 }
@@ -269,14 +309,18 @@ export async function listCandidates(): Promise<Candidate[]> {
       })
       .from(users)
       .orderBy(asc(users.name)),
-    db.select({ userId: appAccess.userId, app: appAccess.app }).from(appAccess),
+    db
+      .select({ userId: appAccess.userId, app: appAccess.app, role: appAccess.role })
+      .from(appAccess),
   ]);
 
   const appsByUser = new Map<string, AppId[]>();
+  const rolesByUserApp = new Map<string, Role | null>();
   for (const a of access) {
     const list = appsByUser.get(a.userId) ?? [];
     list.push(a.app as AppId);
     appsByUser.set(a.userId, list);
+    rolesByUserApp.set(`${a.userId}:${a.app}`, (a.role as Role) ?? null);
   }
 
   const userByEmail = new Map(

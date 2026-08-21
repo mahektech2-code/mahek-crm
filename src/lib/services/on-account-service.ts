@@ -229,6 +229,8 @@ export async function applyOnAccount(
     await tx.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
       action: "payment.apply_on_account",
       entityType: "bill",
       entityId: bill.id,

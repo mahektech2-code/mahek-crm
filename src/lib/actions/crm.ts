@@ -900,6 +900,8 @@ export async function decideDeactivation(
     await db.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
       action: approve
         ? "customer.deactivate"
         : "customer.deactivation_rejected",
@@ -1061,6 +1063,8 @@ export async function decideReactivation(
     await db.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
       action: approve ? "customer.reactivate" : "customer.reactivation_rejected",
       entityType: "customer",
       entityId: customerId,

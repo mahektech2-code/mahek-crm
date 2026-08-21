@@ -414,6 +414,13 @@
       "when": 1787000079689,
       "tag": "0058_third_party_distributors",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1787500000000,
+      "tag": "0059_a_role_per_app",
+      "breakpoints": true
     }
   ]
 }
