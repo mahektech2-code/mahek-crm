@@ -72,11 +72,13 @@ async function makeBill(amount: number, over: Partial<typeof bills.$inferInsert>
 async function makeReceipt(billId: string, amount: number, source: string) {
   const receiptId = id("rcp");
   const at = addDays(TODAY, -5);
-  // Raw, naming only the columns the DEPLOYED schema has — the same reason the
-  // service inserts this way. `0053_receipt_cash_deposit` is in the journal and
-  // has never actually applied, so neither production nor mahekone_test carries
-  // `deposited_at`, while `schema.ts` does. A fixture built through Drizzle's
-  // insert builder would name it and fail before reaching the code under test.
+  // Raw, naming only the columns every deployment is known to have — the same
+  // reason the service inserts this way. A fixture built through Drizzle's
+  // insert builder names every column in the model, so it fails before
+  // reaching the code under test whenever the model is ahead of the database
+  // the suite is pointed at. Keeping the fixture on the same footing as the
+  // service is also what makes this suite meaningful: it exercises the insert
+  // the way production will see it.
   await db.execute(sql`
     insert into payment_receipts
       (id, customer_id, amount, received_at, mode, status, source, idempotency_key)

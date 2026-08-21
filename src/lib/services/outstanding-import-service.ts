@@ -267,13 +267,18 @@ async function createAssumed(bill: BillRow, amount: number, row: OutstandingRow,
 
   // Written as raw SQL naming ONLY the columns this row actually needs.
   //
-  // Drizzle's insert builder names every column in the model, defaults
+  // Drizzle's insert builder names every column in the MODEL, defaults
   // included, so it fails outright against a database whose schema is older
-  // than the checkout — which is exactly what production is: the deployed app
-  // predates `0053_receipt_cash_deposit`, and `payment_receipts` there has no
-  // `deposited_at`. This import is a hand-run correction to a live ledger, and
-  // it must not require a schema migration as a side effect of being run. The
-  // columns below have existed since the table did.
+  // than the checkout it is run from. That is not a hypothetical: this is a
+  // hand-run tool, and the natural way to run it is from whatever branch you
+  // happen to be on — one whose `schema.ts` may carry columns whose migration
+  // has not merged, let alone deployed. The first production run of this
+  // import died exactly that way, part way through, on a `deposited_at` that
+  // existed in the model and not in the database.
+  //
+  // Naming the columns explicitly makes the tool depend on the LEDGER rather
+  // than on the checkout, which is the only thing it should need. They have
+  // existed since the table did.
   await db.execute(sql`
     insert into payment_receipts
       (id, customer_id, amount, received_at, mode, status, source, note, idempotency_key)
