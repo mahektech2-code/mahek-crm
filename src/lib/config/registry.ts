@@ -24,6 +24,8 @@ export type SettingCategory =
   | "targets"
   /** How a salesman is measured: the six weights, the bands and the ceiling. */
   | "performance"
+  /** The owner's five KPIs: the lead cohort window and the health bands. */
+  | "owner"
   | "working-day"
   | "reminders"
   | "complaints"
@@ -940,6 +942,91 @@ export const SETTINGS = [
       "Market disruption",
       "Correction",
     ],
+  },
+
+  /* ------------------------------------------------------- the owner's five */
+  /*
+   * The health bands. `dormant` is deliberately absent: it IS
+   * `inactive.cycleMultiplier`, which is the one threshold the source document
+   * states precisely and the point at which `customers.status` becomes
+   * inactive. A second dormant number would be two answers to "has this
+   * customer gone quiet", and the day they drift the Call Log is chasing
+   * somebody the owner's screen has written off.
+   */
+  {
+    key: "health.atRiskCycleMultiplier",
+    type: "decimal",
+    category: "owner",
+    label: "At risk after",
+    description:
+      "How many of the customer's OWN buying cycles may pass before they are called at risk. A fortnightly buyer and a twice-a-year buyer are both a quarter late at 1.25 of their own cycle; a flat 30/60/90 would call the first lost and the second fine. Must sit below the inactive multiplier, which is where dormant begins.",
+    default: 1.25,
+    min: 1,
+    max: 10,
+  },
+  {
+    key: "health.lostCycleMultiplier",
+    type: "decimal",
+    category: "owner",
+    label: "Lost after",
+    description:
+      "Beyond this many of their own cycles a customer is treated as lost rather than dormant. It changes no other screen - dormant is already where the inactive flag falls - but it separates somebody worth one more call from somebody worth a campaign.",
+    default: 3.0,
+    min: 1,
+    max: 20,
+  },
+  {
+    key: "owner.conversionWindowDays",
+    type: "integer",
+    category: "owner",
+    label: "Conversion window",
+    description:
+      "How long a lead has to place its first order before the cohort it belongs to stops waiting for it. Conversion is measured by COHORT - the leads created in a month, and how many of them ordered within this window - because dividing this month's first orders by this month's leads asks a lead created on the 29th to have ordered by the 31st.",
+    default: 90,
+    min: 1,
+    max: 730,
+  },
+  {
+    key: "owner.frequencyMediumOrders",
+    type: "integer",
+    category: "owner",
+    label: "Medium frequency from",
+    description: "Orders in the period at which a customer stops being low frequency.",
+    default: 4,
+    min: 1,
+    max: 100,
+  },
+  {
+    key: "owner.frequencyHighOrders",
+    type: "integer",
+    category: "owner",
+    label: "High frequency from",
+    description: "Orders in the period at which a customer counts as high frequency.",
+    default: 8,
+    min: 1,
+    max: 200,
+  },
+  {
+    key: "owner.conversionTargetPercent",
+    type: "decimal",
+    category: "owner",
+    label: "Conversion rate target",
+    description:
+      "The lead-to-order conversion the owner expects. Below it the dashboard raises an alert - it is the only one of the five KPIs with an absolute target rather than a comparison against the period before.",
+    default: 15,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "owner.kpiAlertChangePercent",
+    type: "decimal",
+    category: "owner",
+    label: "Movement worth an alert",
+    description:
+      "How far a KPI must move against the period before it to be worth saying out loud. Too low and every month raises six alerts, which is the same as raising none.",
+    default: 10,
+    min: 0,
+    max: 100,
   },
 
   /* ----------------------------------------------------------- working day */
@@ -2112,6 +2199,29 @@ export function checkConsistency(config: Config): string[] {
     );
   }
 
+  /*
+   * The bands have to increase, and dormant is `inactive.cycleMultiplier`.
+   * Out of order they would classify a customer who is further behind as
+   * healthier — invisible until somebody asks why a two-year-silent account is
+   * on the active list.
+   */
+  const health = {
+    atRisk: config["health.atRiskCycleMultiplier"],
+    dormant: config["inactive.cycleMultiplier"],
+    lost: config["health.lostCycleMultiplier"],
+  };
+  if (!(health.atRisk < health.dormant && health.dormant < health.lost)) {
+    problems.push(
+      `Customer health bands must increase: at risk (${health.atRisk}) < dormant (${health.dormant}, the inactive multiplier) < lost (${health.lost}).`,
+    );
+  }
+
+  if (config["owner.frequencyMediumOrders"] >= config["owner.frequencyHighOrders"]) {
+    problems.push(
+      "High frequency must start above medium frequency, or no customer can ever be medium.",
+    );
+  }
+
   if (config["buyingCycle.minDays"] > config["buyingCycle.maxDays"]) {
     problems.push("Minimum buying cycle cannot exceed the maximum.");
   }
@@ -2375,6 +2485,14 @@ export type Config = {
   "performance.paceWarningPercent": number;
   "performance.newCustomerBasis": "first-order" | "first-bill";
   "performance.revisionReasons": string[];
+
+  "health.atRiskCycleMultiplier": number;
+  "health.lostCycleMultiplier": number;
+  "owner.conversionWindowDays": number;
+  "owner.frequencyHighOrders": number;
+  "owner.frequencyMediumOrders": number;
+  "owner.conversionTargetPercent": number;
+  "owner.kpiAlertChangePercent": number;
 
   "workingDay.shiftStart": string;
   "workingDay.shiftEnd": string;

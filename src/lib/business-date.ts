@@ -433,3 +433,177 @@ function zoneOffset(timezone: string): string {
   }
   return offset;
 }
+
+/* ------------------------------------------------- the owner's own periods */
+
+/**
+ * The spans the owner dashboard reads over.
+ *
+ * A SECOND vocabulary beside `DashboardPeriod`, and deliberately not a
+ * widening of it. The four the CRM dashboard offers are about the work in
+ * front of somebody today — today, yesterday, this week, this month — and the
+ * telecaller screens are built around exactly those. An owner is asking a
+ * different question over a different shape of time: quarters, a year to date,
+ * and the same months a year ago. Widening the CRM's enum would put "previous
+ * quarter" in a period switcher above a calling queue, where a quarter of
+ * work waiting is not a thing.
+ */
+export type ReportPeriod =
+  | "today"
+  | "week"
+  | "month"
+  | "last-month"
+  | "quarter"
+  | "last-quarter"
+  | "ytd"
+  | "custom";
+
+export const REPORT_PERIODS: ReportPeriod[] = [
+  "today",
+  "week",
+  "month",
+  "last-month",
+  "quarter",
+  "last-quarter",
+  "ytd",
+  "custom",
+];
+
+export function isReportPeriod(v: string | undefined): v is ReportPeriod {
+  return !!v && (REPORT_PERIODS as string[]).includes(v);
+}
+
+export const REPORT_PERIOD_LABELS: Record<ReportPeriod, string> = {
+  today: "Today",
+  week: "This week",
+  month: "This month",
+  "last-month": "Last month",
+  quarter: "This quarter",
+  "last-quarter": "Last quarter",
+  ytd: "Year to date",
+  custom: "Custom range",
+};
+
+/** The quarter a date falls in, 1–4. Calendar quarters, not the Indian FY. */
+export function quarterOf(date: BusinessDate): number {
+  return Math.floor((Number(date.slice(5, 7)) - 1) / 3) + 1;
+}
+
+function startOfQuarter(date: BusinessDate): BusinessDate {
+  const year = date.slice(0, 4);
+  const month = (quarterOf(date) - 1) * 3 + 1;
+  return `${year}-${String(month).padStart(2, "0")}-01`;
+}
+
+/**
+ * What a period covers, ending today where the period is still running.
+ *
+ * The same rule `periodRange` follows and for the same reason: a span that ran
+ * to a future end date would be mostly days that have not happened, and every
+ * figure in it would read as a collapse. A CLOSED period — last month, last
+ * quarter — runs to its real end, because it is over.
+ */
+export function reportRange(
+  day: BusinessDate,
+  period: ReportPeriod,
+  custom?: Partial<DateRange>,
+): DateRange {
+  switch (period) {
+    case "today":
+      return { from: day, to: day };
+    case "week":
+      return { from: startOfWeek(day), to: day };
+    case "month":
+      return { from: startOfMonth(day), to: day };
+    case "last-month": {
+      const key = addMonths(monthKey(day), -1);
+      return { from: `${key}-01`, to: endOfMonth(key) };
+    }
+    case "quarter":
+      return { from: startOfQuarter(day), to: day };
+    case "last-quarter": {
+      const start = startOfQuarter(day);
+      const previousStart = addMonths(monthKey(start), -3);
+      return {
+        from: `${previousStart}-01`,
+        to: addDays(start, -1),
+      };
+    }
+    case "ytd":
+      return { from: `${day.slice(0, 4)}-01-01`, to: day };
+    case "custom":
+      // A half-given custom range is the day itself rather than an error: the
+      // screen is a set of URL parameters and somebody will arrive with one of
+      // the two.
+      return { from: custom?.from ?? day, to: custom?.to ?? day };
+  }
+}
+
+/**
+ * What a period is measured against — and NOT what `previousRange` answers.
+ *
+ * `previousRange` gives the equally long span immediately before, which is the
+ * right comparison for a calling day and the wrong one for a calendar month.
+ * Twenty-two days of August compared against 10–31 July is an equal span
+ * nobody recognises: an owner asking "how are we doing against last month"
+ * means the same twenty-two days of July, not a window that straddles two of
+ * them.
+ *
+ * So this one is CALENDAR-ALIGNED and equal-length at once — the same
+ * day-of-month range one period earlier. Both properties matter: aligned, so
+ * the comparison is the one somebody meant; equal-length, so a month-to-date
+ * is never held against a whole month, which is the trap `previousRange` was
+ * written to avoid and which does not stop being a trap here.
+ */
+export function comparableRange(
+  range: DateRange,
+  period: ReportPeriod,
+): DateRange {
+  const shiftMonths = (months: number): DateRange => ({
+    from: shiftKeepingDay(range.from, months),
+    to: shiftKeepingDay(range.to, months),
+  });
+
+  switch (period) {
+    case "today":
+    case "week":
+    case "custom": {
+      // No calendar unit to align to, so the equal span immediately before is
+      // the only honest answer.
+      const length = daysBetween(range.from, range.to) + 1;
+      return { from: addDays(range.from, -length), to: addDays(range.from, -1) };
+    }
+    case "month":
+    case "last-month":
+      return shiftMonths(-1);
+    case "quarter":
+    case "last-quarter":
+      return shiftMonths(-3);
+    case "ytd":
+      return shiftMonths(-12);
+  }
+}
+
+/** The same dates a year earlier — §3's "same period last year". */
+export function sameRangeLastYear(range: DateRange): DateRange {
+  return {
+    from: shiftKeepingDay(range.from, -12),
+    to: shiftKeepingDay(range.to, -12),
+  };
+}
+
+/**
+ * Shift a date by whole months, keeping the day of the month.
+ *
+ * The 31st of a month shifted into one with thirty days lands on the 30th
+ * rather than rolling into the next month, which is what a naive
+ * `setMonth` does — and a comparison range that silently started on the 1st of
+ * the following month would be wrong by a whole month with nothing on the
+ * screen saying so.
+ */
+function shiftKeepingDay(date: BusinessDate, months: number): BusinessDate {
+  const key = addMonths(monthKey(date), months);
+  const day = Number(date.slice(8, 10));
+  const last = daysInMonth(`${key}-01`);
+  return `${key}-${String(Math.min(day, last)).padStart(2, "0")}`;
+}

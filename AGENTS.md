@@ -33,6 +33,7 @@ npm run test         # engine tests — pure, no database
 npm run test:db      # (re)create mahekone_test from the migrations
 npm run test:integration   # the six §11 journeys, end to end
 npm run test:performance   # salesman targets and the score, on their own
+npm run test:owner         # the owner's five KPIs, on their own
 npm run db:generate  # write a migration after editing src/db/schema.ts
 npm run db:migrate   # apply migrations locally
 npm run db:seed      # wipe and reseed with demo data (also clears sessions)
@@ -239,6 +240,9 @@ src/
       forgot/  reset/      ask for a reset link, and spend it
     apps/                  the launcher, 1–9 opens an app
     field/                 placeholder shell for an app not built yet
+    reports/               the Reports app — the owner's five KPIs, and the
+                           three screens behind them: leads & conversion,
+                           bill size & frequency, customer health
     accounts/              the Accounts app — today, order approvals, payments
                            to confirm, credit notes, record a payment,
                            outstanding, bills, customer account, on account,
@@ -309,6 +313,8 @@ src/
                            next-step — when this customer comes back, and why,
                            performance — the six weights, the mix bands, the
                            month-end forecast and the price-rise alert,
+                           owner-kpis — new leads, cohort conversion, bill
+                           size, purchase frequency and retention movement,
                            receipt-match — is this money we already know about
                            + engines.test.ts, allocation.test.ts,
                            next-step.test.ts
@@ -318,6 +324,9 @@ src/
                            read by both the review table and the route guard
     sales-attribution.ts   whose number a customer's is — the fall-through to
                            the back office, and the ONE place it is written
+    services/owner-dashboard-service.ts
+                           the owner's five, read off the book, and the nightly
+                           customer-health snapshot behind the movement report
     services/performance-service.ts
                            the six actuals, wired to the ledger, and the
                            rebuild of the score cache
@@ -2190,6 +2199,109 @@ nothing — says nothing about why, so it is refused at the form instead.
 decides who may open a file FROM the parent kind, so a course deck filed as a
 document would be read under the document rules — role lists and a customer's
 scope, neither of which a course has.
+
+**THE OWNER IS ASKING FIVE QUESTIONS, and they are one funnel rather than five
+reports.** New leads, what became of them, what an order is worth, how often
+one comes, and whether the customers it produced are still buying. That is why
+they live in one engine, share one definition of a period, and each opens the
+thing behind it — a headline figure nobody can get behind is a number they have
+to take on trust. Margin is absent on two counts: the brief excludes it, and
+`products.priceSource` is still `unset`, so a cost here would be an invention on
+the one screen where a wrong number does the most damage.
+
+**A LEAD LIVES IN TWO TABLES and both count.** `customers.kind = 'lead'` is a
+party the book knows has never ordered — an owner, a source, a created date,
+and no ladder at all. `mbos_leads` is somebody a salesman actually met, with the
+full rung list: new → contacted → qualified → negotiation → won/lost. The
+owner's question is whether the company is generating opportunities, not which
+table one landed in, so `leadsCreatedIn` reads both. They are DEDUPLICATED
+across the join: a converted field lead writes a customer row, and counting that
+row as well would inflate the very KPI that measures lead generation.
+
+**Conversion is measured by COHORT, never by dividing this month by this
+month.** Orders this month over leads this month asks a lead created on the 29th
+to have ordered by the 31st, and mixes orders from leads generated in March into
+a rate labelled with August's lead count. A cohort follows one window's leads
+forward for `owner.conversionWindowDays` and reports what became of them.
+
+**A cohort read before its window closes is UNFINISHED, not failing.** A lead
+eleven days old with a ninety-day window has not failed to convert. `stillOpen`
+carries how many are still inside it and every screen says so in words — the
+difference between a low rate and an incomplete one is the single most misread
+figure in the module.
+
+**The denominator is EVERY lead in the cohort, and the qualified rate sits
+beside it.** Only a field lead can be `qualified`, because only a field lead has
+a ladder. A denominator restricted to qualified leads would silently drop every
+CRM lead — most of this book — and report a flattering number with nothing on
+the screen saying why. Both are shown; the headline is the one somebody can
+verify by counting.
+
+**A rate moves in POINTS and a count moves in percent.** 12.5% to 14.8% is up
+2.3 percentage points, not up 18.4%, and printing the second is the commonest
+way a dashboard flatters itself. `changeInCount` and `changeInRate` are separate
+functions returning a `kind`, and the pill prints "pp" so the reader can see
+which they are looking at. Growth from nothing is `null` rather than a
+percentage: one lead last month and forty this month is not up 3,900%.
+
+**A month is compared CALENDAR-ALIGNED and equal-length at once.**
+`comparableRange` is not `previousRange` and must not be confused with it: the
+latter gives the equal span immediately before, which is right for a calling day
+and wrong for a month — twenty-two days of August against 10–31 July is an equal
+window nobody recognises. Aligned so the comparison is the one somebody meant,
+equal-length so a month-to-date is never held against a whole month. The 31st
+shifted into a thirty-day month lands on the 30th rather than rolling forward,
+which a naive `setMonth` gets wrong by a whole month.
+
+**Average bill size is net of credit notes, and the COUNT is untouched.** A
+credit note is not a sale that un-happened, it is money given back on one that
+did — removing the transaction would raise the average every time somebody
+allowed a claim. It is datable at all only because `issueCreditNote` writes a
+confirmed receipt keyed `creditnote:<complaint>`; there is no issue date column.
+That same key is why a credit note no longer counts towards a salesman's
+COLLECTION figure, which it did until this landed: AGENTS.md already said
+`Adjustment` is not money arriving, and the collection component was counting it
+as though it were.
+
+**Frequency divides by customers who ORDERED, not by the book.** Dividing by
+every customer would make the figure fall every time somebody added a prospect.
+"A thousand transactions" says nothing without the number of customers behind
+it — a thousand from 250 is a different business to a thousand from 900.
+
+**CUSTOMER HEALTH IS FOUR BANDS OF ONE EXISTING RULE, not a second one.** Active,
+at risk, dormant and lost, measured in multiples of the customer's OWN buying
+cycle — a fortnightly buyer and a twice-a-year buyer are both a quarter late at
+1.25 of their own rhythm, and a flat 30/60/90 would call the first lost and the
+second fine. `dormant` is deliberately NOT its own setting: it IS
+`inactive.cycleMultiplier`, the threshold the source document states precisely
+and the point at which `customers.status` becomes `inactive`. One number, so the
+Call Log cannot chase somebody the owner's screen has written off. The bands
+live in `engines/inactivity.ts` and `evaluateInactivity` reads them, so nothing
+moved on the day they shipped — there is a test asserting the flag still fires
+exactly where it did.
+
+**A customer who never ordered is in NO band, and a lead is not in the book at
+all.** They have not stopped buying, they have not started; folding them into
+Active is how a retention figure flatters itself and calling them Lost is worse.
+A DEACTIVATED account is out entirely — somebody closed it deliberately, and
+counting a business decision as a retention failure is a different lie. Both are
+counted and printed rather than hidden.
+
+**Movement is the figure the counts cannot give you.** 145 at risk in both
+months looks stable and may be 145 different customers, half recovered and half
+newly slipping. `customer_health_snapshots` holds where each customer stood at
+the end of a month and is the only place that survives — a band is a statement
+about a day, unrecoverable once the customer has ordered. It is a SNAPSHOT, not
+a cache: nothing rewrites a past month and nothing may learn to, because a
+rebuild would destroy the thing it exists for. The nightly pass writes over the
+CURRENT month's row, which is what makes a closed month correct for free — it
+stops being overwritten on the last night of the month, so no job has to fire on
+exactly the right day. **It cannot be backfilled**, and the screen says "we
+cannot say yet" rather than drawing a movement of zero.
+
+**The Reports app narrows by scope like every other list.** It is the owner's,
+but a manager granted it must not see the whole company through it — a reporting
+screen that skips the narrowing is a way around it rather than a report.
 
 **A SALESMAN IS NOT MEASURED IN RUPEES ALONE, and the reason is arithmetic
 rather than philosophy.** A price revision moves every rupee figure in the
