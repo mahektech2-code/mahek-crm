@@ -55,12 +55,16 @@ import { useAdmin } from "./store";
 
 const APPS = grantableApps();
 
+import { ROLE_CONFLICTS } from "@/lib/role-conflicts";
+
 const ROLES = [
   { id: "telecaller", label: "Telecaller" },
   { id: "manager", label: "Manager" },
   { id: "accounts", label: "Accounts" },
   { id: "admin", label: "Admin" },
 ] as const;
+
+type RoleId = (typeof ROLES)[number]["id"];
 
 const VIEWS = [
   "Everyone with access",
@@ -460,6 +464,21 @@ function AccessDialog({
   }, [person]);
 
   const [draft, setDraft] = React.useState<Draft>(before);
+  /*
+   * WHICH HAT EACH APP IS HELD UNDER, beside the screens it opens.
+   *
+   * A person is a manager in the CRM and a clerk in Accounts — different
+   * powers over different data, not one power applied twice. Seeded from what
+   * they hold today, falling back to the account's own role, which is what a
+   * grant with no hat of its own means.
+   */
+  const [roleDraft, setRoleDraft] = React.useState<Record<string, RoleId>>(() => {
+    const out: Record<string, RoleId> = {};
+    for (const g of person?.grants ?? []) {
+      out[g.app] = (g.role ?? person?.role ?? "telecaller") as RoleId;
+    }
+    return out;
+  });
   const [email, setEmail] = React.useState(person?.email ?? "");
   const [phone, setPhone] = React.useState(person?.phone ?? "");
   const [role, setRole] = React.useState<(typeof ROLES)[number]["id"]>("telecaller");
@@ -486,7 +505,13 @@ function AccessDialog({
     void setAccess({
       userId: chosen.userId,
       employeeId: chosen.employeeId,
-      grants: Object.entries(draft).map(([app, modules]) => ({ app, modules })),
+      grants: Object.entries(draft).map(([app, modules]) => ({
+        app,
+        modules,
+        // The hat, defaulting to the one the account already carries so a
+        // dialog opened and saved without touching this changes nothing.
+        role: roleDraft[app] ?? (person?.role as RoleId) ?? role,
+      })),
       account: chosen.userId
         ? undefined
         : { email: email.trim(), phone: phone.trim() || null, role },
@@ -561,6 +586,9 @@ function AccessDialog({
           onRole={setRole}
           draft={draft}
           onDraft={setDraft}
+          roleDraft={roleDraft}
+          onRoleDraft={setRoleDraft}
+          accountRole={(person?.role as RoleId) ?? role}
           fieldError={fieldError}
         />
       ) : (
@@ -571,6 +599,8 @@ function AccessDialog({
           role={role}
           changes={changes}
           draft={draft}
+          roleDraft={roleDraft}
+          accountRole={(person?.role as RoleId) ?? role}
         />
       )}
     </Modal>
@@ -726,6 +756,9 @@ function AccessStep({
   onRole,
   draft,
   onDraft,
+  roleDraft,
+  onRoleDraft,
+  accountRole,
   fieldError,
 }: {
   needsAccount: boolean;
@@ -738,6 +771,11 @@ function AccessStep({
   onRole: (v: (typeof ROLES)[number]["id"]) => void;
   draft: Draft;
   onDraft: (next: Draft) => void;
+  /** The hat each granted app is held under. */
+  roleDraft: Record<string, RoleId>;
+  onRoleDraft: (next: Record<string, RoleId>) => void;
+  /** What a newly ticked app is held under until somebody says otherwise. */
+  accountRole: RoleId;
   fieldError: Record<string, string>;
 }) {
   const setApp = (app: AppId, modules: string[]) => {
@@ -809,6 +847,8 @@ function AccessStep({
             built={app.built}
             ticked={draft[app.id] ?? []}
             first={i === 0}
+            role={roleDraft[app.id] ?? accountRole}
+            onRole={(next) => onRoleDraft({ ...roleDraft, [app.id]: next })}
             onChange={(modules) => setApp(app.id, modules)}
           />
         ))}
@@ -832,6 +872,8 @@ function AppBlock({
   built,
   ticked,
   first,
+  role,
+  onRole,
   onChange,
 }: {
   app: AppId;
@@ -840,6 +882,8 @@ function AppBlock({
   built: boolean;
   ticked: string[];
   first: boolean;
+  role: RoleId;
+  onRole: (next: RoleId) => void;
   onChange: (modules: string[]) => void;
 }) {
   const all = ALL_OF(app);
@@ -869,6 +913,33 @@ function AppBlock({
           <span className="text-[11px] whitespace-nowrap text-muted">not built yet</span>
         )}
         <span className="flex-1" />
+        {/*
+          THE HAT, on the app's own line and only while it is granted.
+          
+          A role picker on an app nobody holds is a question about nothing, and
+          it would read as though the role were the thing being granted. It
+          sits before the module count because it is the more consequential of
+          the two: withholding a screen hides a link, choosing a hat decides
+          what the person may DO with the ones they keep.
+        */}
+        {on ? (
+          <span className="flex items-center gap-1.5">
+            <span className="text-[11px] whitespace-nowrap text-muted">as</span>
+            <select
+              value={role}
+              aria-label={`Role for ${name}`}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => onRole(e.target.value as RoleId)}
+              className="h-6 cursor-pointer rounded-[3px] border border-line bg-surface px-1 text-[11px] text-body"
+            >
+              {ROLES.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </span>
+        ) : null}
         {on && !whole ? (
           <span className="rounded-[3px] bg-warn-soft px-1.5 text-[11px] font-medium text-warn-ink">
             {ticked.length}/{all.length}
@@ -995,6 +1066,8 @@ function ReviewStep({
   role,
   changes,
   draft,
+  roleDraft,
+  accountRole,
 }: {
   name: string;
   creating: boolean;
@@ -1002,8 +1075,28 @@ function ReviewStep({
   role: string;
   changes: Changes;
   draft: Draft;
+  /** The hat each granted app will be held under, after this save. */
+  roleDraft: Record<string, RoleId>;
+  accountRole: RoleId;
 }) {
   const appName = (id: AppId) => APPS.find((a) => a.id === id)?.name ?? id;
+  const roleOf = (id: AppId) => roleDraft[id] ?? accountRole;
+  const roleName = (id: RoleId) => ROLES.find((r) => r.id === id)?.label ?? id;
+
+  /*
+   * WHAT THE COMBINATION LETS THEM DO, said before it is written.
+   *
+   * The capability matrix keeps approving orders away from managers on
+   * purpose: the person chasing a target must not sign off the orders that hit
+   * it. Several hats can put both on one person, and at nine people that is
+   * sometimes the only way the work gets done — so it is allowed, and said
+   * here in the words of the rule it bends, on the page where somebody is
+   * deciding.
+   */
+  const held = [...new Set<RoleId>(Object.keys(draft).map((a) => roleOf(a as AppId)))];
+  const conflicts = ROLE_CONFLICTS.filter(
+    (c) => held.includes(c.roles[0]) && held.includes(c.roles[1]),
+  );
   const scope = (id: AppId) => {
     const n = (draft[id] ?? []).length;
     const total = ALL_OF(id).length;
@@ -1037,7 +1130,7 @@ function ReviewStep({
       tone: "success" as const,
       tag: "Grant",
       what: appName(a),
-      detail: scope(a),
+      detail: `${scope(a)}, as ${roleName(roleOf(a)).toLowerCase()}.`,
     })),
     ...changes.widened.map((a) => ({
       key: `w:${a}`,
@@ -1099,6 +1192,30 @@ function ReviewStep({
           ))}
         </div>
       )}
+
+      {conflicts.length ? (
+        <div className="mt-2 rounded-[4px] border border-warn bg-warn-soft px-3 py-2.5">
+          <div className="text-[13px] font-medium text-warn-ink">
+            {name} will wear {held.length} hats at once
+          </div>
+          {conflicts.map((c) => (
+            <p
+              key={c.roles.join("+")}
+              className="mt-1 text-[13px] leading-[19px] text-warn-ink"
+            >
+              <span className="font-medium">
+                {roleName(c.roles[0])} and {roleName(c.roles[1])}:
+              </span>{" "}
+              {c.sentence}
+            </p>
+          ))}
+          <p className="mt-1.5 text-[12px] leading-[18px] text-warn-ink">
+            This is allowed — in a company this size the same person often has
+            to do both. Every action taken under it records which hat allowed
+            it, so the audit can answer for it later.
+          </p>
+        </div>
+      ) : null}
 
       {changes.unchanged.length ? (
         <p className="mt-2 text-[13px] text-muted">

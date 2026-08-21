@@ -276,6 +276,8 @@ export async function issueCreditNote(input: {
     await tx.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
       action: "creditnote.issue",
       entityType: "complaint",
       entityId: input.complaintId,
@@ -346,6 +348,8 @@ export async function refuseCreditNote(
     await tx.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
       action: "creditnote.refuse",
       entityType: "complaint",
       entityId: complaintId,

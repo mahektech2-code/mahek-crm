@@ -145,6 +145,14 @@ import {
 } from "@/lib/actions/crm";
 import { loadCustomerTimeline } from "@/lib/actions/crm";
 import {
+  canAny,
+  conflictsFor,
+  grantingRole,
+  requireCapability,
+  rolesFor,
+  widestRole,
+} from "@/lib/access-control";
+import {
   addDistributor,
   convertToThirdParty,
   recordDeliveryAddress,
@@ -7523,6 +7531,118 @@ describe("What the telecaller was told would happen next", () => {
 /* ---------------------------------------------------------------------------
  * The record of a four-year account, on a page that does not grow with it.
  * ------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+ * One person, several hats. A company of nine does not have one job each.
+ * ------------------------------------------------------------------------- */
+
+describe("a person wears several hats", () => {
+  test("capabilities are the union, and the narrowest hat is the one recorded", async () => {
+    /*
+     * Vikram is the sales manager AND the accounts clerk. Before roles hung off
+     * the grants he could be one of them, so whoever set the account up picked
+     * the more powerful and everything else came with it silently.
+     */
+    const vikram = await makeUser("Two Hats", "telecaller");
+    await db.insert(appAccess).values([
+      { id: id("aca"), userId: vikram.id, app: "crm", role: "manager" },
+      { id: id("aca"), userId: vikram.id, app: "accounts", role: "accounts" },
+    ]);
+    setTestUser(vikram);
+
+    const roles = await rolesFor(vikram);
+    assert.deepEqual(roles.sort(), ["accounts", "manager", "telecaller"].sort());
+
+    // Held under EITHER hat is held. Classifying is a manager's, approving is
+    // accounts', and this person does both.
+    assert.equal(canAny(roles, "customer.classify"), true);
+    assert.equal(canAny(roles, "order.approve"), true);
+
+    /*
+     * WHICH hat, and it is the ordinary one rather than the powerful one. An
+     * admin holds everything, so asking admin first would stamp "admin" on
+     * every action anybody senior took and the log would stop telling the
+     * clerk doing their job from the administrator reaching past a rule.
+     */
+    assert.equal(grantingRole(roles, "order.approve"), "accounts");
+    assert.equal(grantingRole(roles, "customer.classify"), "manager");
+    assert.equal(grantingRole(roles, "config.write"), "manager");
+  });
+
+  test("a grant with no hat of its own means the account's role", async () => {
+    // What every grant meant before this column existed, and what
+    // `npm run app:grant` still writes — a terminal that knows nothing about
+    // roles has to go on granting an app that works.
+    const deepa = await makeUser("Inherits", "accounts");
+    await db.insert(appAccess).values({
+      id: id("aca"),
+      userId: deepa.id,
+      app: "accounts",
+      role: null,
+    });
+
+    const roles = await rolesFor(deepa);
+    assert.deepEqual(roles, ["accounts"]);
+    assert.equal(canAny(roles, "order.approve"), true);
+    assert.equal(canAny(roles, "customer.classify"), false, "an accounts clerk classified");
+  });
+
+  test("the capability check refuses what no hat carries, and says which hats were worn", async () => {
+    const priyaOnly = await makeUser("One Hat", "telecaller");
+    await db.insert(appAccess).values({
+      id: id("aca"),
+      userId: priyaOnly.id,
+      app: "crm",
+      role: "telecaller",
+    });
+    setTestUser(priyaOnly);
+
+    await assert.rejects(
+      () => requireCapability("order.approve"),
+      /accounts/i,
+      "a telecaller approved an order",
+    );
+
+    // The refusal names every hat, so it can be argued with: "Vikram was
+    // refused" is unactionable, "Vikram, holding telecaller, was refused" says
+    // which grant is missing.
+    const [denial] = await db
+      .select({ after: auditLog.afterState })
+      .from(auditLog)
+      .where(eq(auditLog.action, "access.denied"));
+    assert.deepEqual((denial.after as { roles: string[] }).roles, ["telecaller"]);
+  });
+
+  test("the primary role is the widest hat, so scope follows the grant", async () => {
+    /*
+     * `users.role` decides mine/team/all through `isManager`, read by
+     * thirty-one screens. Rather than teach every one of them about a list it
+     * is a cache of the hats — and granting somebody the manager hat in the
+     * CRM has to give them their team on the day it is granted, which is what
+     * whoever granted it expects.
+     */
+    assert.equal(widestRole(["telecaller", "manager"]), "manager");
+    assert.equal(widestRole(["telecaller", "accounts"]), "accounts");
+    assert.equal(widestRole(["manager", "admin"]), "admin");
+    assert.equal(widestRole(["telecaller"]), "telecaller");
+  });
+
+  test("two hats that should not meet are named, never refused", async () => {
+    // The matrix keeps approving orders away from managers on purpose. At nine
+    // people the same person does have to do both — so it is allowed, said in
+    // words where it is granted, and recorded on every action taken under it.
+    const both = conflictsFor(["manager", "accounts"]);
+    assert.equal(both.length, 1);
+    assert.match(both[0].sentence, /should not sign off the orders that hit it/i);
+
+    assert.deepEqual(conflictsFor(["telecaller", "manager"]), []);
+    assert.equal(
+      conflictsFor(["telecaller", "accounts"]).length,
+      1,
+      "reporting money and confirming it is the same conflict one level down",
+    );
+  });
+});
 
 describe("the customer timeline is a page", () => {
   /** A book like COLOUR CAMP's: many bills, all stamped midnight. */

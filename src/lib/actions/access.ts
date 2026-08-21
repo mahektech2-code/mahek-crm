@@ -24,6 +24,7 @@ import {
   RESET_TTL_MINUTES,
 } from "@/lib/password-reset";
 import { err as fail, fieldErr, ok, type Result } from "@/lib/result";
+import { widestRole, type Role } from "@/lib/access-control";
 import { listCandidates, type Candidate } from "@/lib/services/access-service";
 
 /* ---------------------------------------------------------------------------
@@ -92,6 +93,16 @@ export type AccessGrantInput = {
   app: string;
   /** The modules left ticked. An app with none is an app not granted. */
   modules: string[];
+  /**
+   * The hat this app is held under. A person is a manager in the CRM and a
+   * clerk in Accounts, and those are different powers over different data.
+   *
+   * Absent means the account's own role, which is what every grant meant
+   * before roles existed and what `npm run app:grant` still writes — so a
+   * dialog that does not send one, or a terminal that knows nothing about
+   * them, goes on granting an app that works.
+   */
+  role?: "telecaller" | "manager" | "accounts" | "admin" | null;
 };
 
 export type SetAccessInput = {
@@ -140,20 +151,33 @@ function cleanModules(app: AppId, keys: string[]): { ok: string[]; bad: string[]
  * grant onto nothing — that invalid state is removed here as well as being
  * impossible to draw, because the screen is not where authority lives.
  */
-function desiredState(
-  grants: AccessGrantInput[],
-): { state: Map<AppId, string[]>; error: string | null } {
+function desiredState(grants: AccessGrantInput[]): {
+  state: Map<AppId, string[]>;
+  /** The hat each granted app is held under. Null means the account's own. */
+  roles: Map<AppId, Role | null>;
+  error: string | null;
+} {
   const state = new Map<AppId, string[]>();
+  const roles = new Map<AppId, Role | null>();
   for (const g of grants) {
     const app = g.app as AppId;
-    if (!APP_IDS.includes(app)) return { state, error: `Not an app: ${g.app}` };
+    if (!APP_IDS.includes(app)) return { state, roles, error: `Not an app: ${g.app}` };
     const { ok: modules, bad } = cleanModules(app, g.modules);
-    if (bad.length) return { state, error: `Not a module of ${app}: ${bad.join(", ")}` };
+    if (bad.length) {
+      return { state, roles, error: `Not a module of ${app}: ${bad.join(", ")}` };
+    }
+    if (g.role && !ROLES.includes(g.role)) {
+      return { state, roles, error: `Not a role: ${g.role}` };
+    }
     if (!modules.length) continue;
     state.set(app, [...(state.get(app) ?? []), ...modules]);
+    roles.set(app, g.role ?? null);
   }
-  return { state, error: null };
+  return { state, roles, error: null };
 }
+
+/** The four, as a list, so an unknown one is refused rather than stored. */
+const ROLES = ["telecaller", "manager", "accounts", "admin"] as const;
 
 /**
  * Write one app's module rows.
@@ -204,7 +228,7 @@ export async function setAccess(
     return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
   }
 
-  const { state: wanted, error } = desiredState(input.grants);
+  const { state: wanted, roles: wantedRoles, error } = desiredState(input.grants);
   if (error) return fail(error);
 
   let userId = input.userId ?? null;
@@ -297,7 +321,13 @@ export async function setAccess(
         active: true,
       });
       await tx.insert(appAccess).values(
-        apps.map((app) => ({ id: newId("acc"), userId: userId!, app, grantedById: me.id })),
+        apps.map((app) => ({
+          id: newId("acc"),
+          userId: userId!,
+          app,
+          role: wantedRoles.get(app) ?? null,
+          grantedById: me.id,
+        })),
       );
       for (const [app, modules] of wanted) {
         await writeModules(tx, userId!, app, modules, me.id);
@@ -327,7 +357,14 @@ export async function setAccess(
   /* ------------------------------------------------- an existing account */
 
   const [account] = await db
-    .select({ id: users.id, name: users.name, active: users.active })
+    .select({
+      id: users.id,
+      name: users.name,
+      active: users.active,
+      // The account's own role, which is what a grant with no hat of its own
+      // means — and what the primary role falls back to.
+      role: users.role,
+    })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
@@ -394,8 +431,46 @@ export async function setAccess(
     }
     if (granted.length) {
       await tx.insert(appAccess).values(
-        granted.map((app) => ({ id: newId("acc"), userId: userId!, app, grantedById: me.id })),
+        granted.map((app) => ({
+          id: newId("acc"),
+          userId: userId!,
+          app,
+          role: wantedRoles.get(app) ?? null,
+          grantedById: me.id,
+        })),
       );
+    }
+    /*
+     * The hat on an app somebody already holds. Changing it is not granting or
+     * revoking anything — the app stays open, the screens stay the same — so
+     * it is written here rather than being expressed as a revoke and a grant,
+     * which would read as losing the app for a moment in the audit and in any
+     * notification built from it.
+     */
+    for (const [app, role] of wantedRoles) {
+      if (!wanted.has(app) || granted.includes(app)) continue;
+      await tx
+        .update(appAccess)
+        .set({ role })
+        .where(and(eq(appAccess.userId, userId!), eq(appAccess.app, app)));
+    }
+
+    /*
+     * THE PRIMARY ROLE IS A CACHE of the hats, and this is where it is
+     * rebuilt. `users.role` decides mine/team/all through `isManager`, read by
+     * thirty-one screens; rather than teach every one of them about a list, it
+     * holds the widest role the person holds anywhere. Granting somebody the
+     * manager hat in the CRM gives them their team on the day it is granted,
+     * which is what the person granting it expects.
+     */
+    const heldRoles = [...wanted.keys()].map(
+      (app) => (wantedRoles.get(app) ?? account.role) as Role,
+    );
+    if (heldRoles.length) {
+      await tx
+        .update(users)
+        .set({ role: widestRole(heldRoles) })
+        .where(eq(users.id, userId!));
     }
     for (const app of [...granted, ...changed]) {
       await writeModules(tx, userId!, app, wanted.get(app)!, me.id);

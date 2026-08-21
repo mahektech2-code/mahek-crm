@@ -116,6 +116,51 @@ holding the whole app and nobody who was deliberately narrowed.
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
 
+**A PERSON WEARS SEVERAL HATS, and the grant is where each one is worn.**
+`app_access.role` is the role an app is held under: Vikram is a manager in the
+CRM and a clerk in Accounts, which are different powers over different data
+rather than one power applied twice. Before it, `users.role` held one value and
+decided three separate things — what somebody may do, how much they may see,
+and which controls are drawn — so whoever set up the account of a person with
+four jobs picked the most powerful and everything else came with it silently.
+A grant with NO role means the account's own, which is what every grant meant
+before the column existed and what `npm run app:grant` still writes: a terminal
+that knows nothing about roles has to go on granting an app that works.
+
+**What you may DO is the union; what you may SEE is still one answer.**
+Hold a capability under any hat and you hold it — `canAny`, and
+`requireCapability` checks the union. Scope is not there yet: `users.role` is
+what mine/team/all is read from, and it is now DERIVED — the widest role
+somebody holds anywhere, rebuilt by `setAccess` — so a manager in the CRM gets
+their team on the day the hat is granted, without teaching thirty-one screens
+about a list. The imprecision is named rather than hidden: an admin in the
+console is an admin for reading everywhere, including the calling book. Scope
+resolved per app is the next piece of work, and that paragraph in
+`app_access.role` is what should be deleted when it lands.
+
+**The audit records WHICH HAT allowed it.** With one role per person, "was he
+allowed to do this" was answerable from the person; with four it is not. The
+log said Vikram approved an order and nobody could tell whether he did it as
+the accounts clerk — ordinary — or because a manager hat carried it, which it
+does not and must not. `requireCapability` returns the granting role and every
+audited action writes it into `audit_log.actor_role`. It asks for the NARROWEST
+hat that carries the capability, not the most powerful: admin holds everything,
+so asking admin first would stamp "admin" on every action anybody senior took
+and the column would stop distinguishing the clerk doing their job from the
+administrator reaching past a rule. Null means not recorded, never "no role".
+
+**Two hats that should not meet are named, never refused.** The matrix keeps
+`order.approve` away from managers on purpose — the person chasing a target
+must not sign off the orders that hit it — and a union of roles can put both on
+one person. At nine people that is sometimes the only way the work gets done,
+and a system that refuses it is defeated in a minute by granting admin instead,
+which grants far more and records no reason. So the combination is allowed, the
+review page says in words what it lets them do, and every action taken under it
+carries the hat that authorised it. The rules are in `lib/role-conflicts.ts`,
+pure and client-safe because the review page is a client component and a second
+copy typed into the screen would drift — and the half that drifts is always the
+half somebody reads.
+
 **Access is granted to a person, and the people are in HRMS.** The console's
 People section is one screen, Access, and its dialog reads the employee master
 rather than the accounts table. Somebody with no MahekOne account gets one

@@ -517,12 +517,35 @@ export const appAccess = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     app: appIdEnum("app").notNull(),
+    /**
+     * The role this grant is held under.
+     *
+     * A person wears several hats and the account could hold one: Vikram is a
+     * manager in the CRM and a clerk in Accounts, which are different powers
+     * over different data rather than one power applied twice. Before this,
+     * whoever set the account up picked the most powerful of the hats and
+     * everything else came with it silently.
+     *
+     * NULL MEANS the account's primary role — which is what every row meant
+     * before this column existed, and what `npm run app:grant` still writes: a
+     * terminal that knows nothing about roles has to go on granting an app
+     * that works.
+     *
+     * What it decides is CAPABILITIES, which are the union across every grant
+     * a person holds. What it does not yet decide is SCOPE: `users.role` is
+     * still what mine/team/all is read from, and it is now derived — the
+     * widest role somebody holds anywhere — so a manager-in-the-CRM sees their
+     * team. Scope per app is the next step, and until it lands an admin
+     * anywhere is an admin everywhere for reading.
+     */
+    role: roleEnum("role"),
     grantedById: text("granted_by_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex("app_access_user_app_key").on(t.userId, t.app),
     index("app_access_user_idx").on(t.userId),
+    index("app_access_role_idx").on(t.role),
   ],
 );
 
@@ -1985,6 +2008,20 @@ export const auditLog = pgTable(
     action: text("action").notNull(),
     entityType: text("entity_type").notNull(),
     entityId: text("entity_id"),
+    /**
+     * WHICH ROLE ALLOWED IT.
+     *
+     * With one role per person, "was he allowed to do this" was answerable
+     * from the person. With four it is not: the log says Vikram approved an
+     * order, and nobody can later tell whether he did it as the accounts clerk
+     * — ordinary — or because a manager hat carried it, which it does not and
+     * must not. `requireCapability` knows which role granted the capability,
+     * so it is written down beside the action.
+     *
+     * Null means NOT RECORDED, never "no role": every row that predates this,
+     * and anything written outside a capability check.
+     */
+    actorRole: roleEnum("actor_role"),
     beforeState: jsonb("before_state"),
     afterState: jsonb("after_state"),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),

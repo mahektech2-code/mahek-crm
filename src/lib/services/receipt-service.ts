@@ -400,6 +400,8 @@ export async function recordReceipt(
     await tx.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
       action: "payment.record",
       entityType: "payment_receipt",
       entityId: receiptId,
@@ -719,6 +721,8 @@ export async function holdReceipt(
     await tx.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
       action: "payment.hold",
       entityType: "payment_receipt",
       entityId: receiptId,
@@ -832,6 +836,8 @@ export async function confirmReceipt(
     await tx.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
       action: "payment.confirm",
       entityType: "payment_receipt",
       entityId: receiptId,
@@ -901,6 +907,8 @@ export async function rejectReceipt(
     await tx.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
       action: "payment.reject",
       entityType: "payment_receipt",
       entityId: receiptId,
@@ -999,6 +1007,8 @@ export async function reverseReceipt(
     await tx.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
       action: "payment.reverse",
       entityType: "payment_receipt",
       entityId: receiptId,
@@ -1099,6 +1109,8 @@ async function reallocate(
     await tx.insert(auditLog).values({
       id: id("aud"),
       actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
       action: "payment.reallocate",
       entityType: "payment_receipt",
       entityId: receipt.id,
@@ -1336,6 +1348,8 @@ export async function confirmAsMatch(input: {
   await db.insert(auditLog).values({
     id: id("aud"),
     actorId: ctx.user.id,
+      // Which hat allowed it — see `audit_log.actor_role`.
+      actorRole: ctx.authorisedBy,
     action: "payment.matchedToBankEntry",
     entityType: "payment_receipt",
     entityId: input.receiptId,
