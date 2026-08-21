@@ -770,19 +770,24 @@ function SendComposer({
               className="w-full"
               onClick={async () => {
                 setBusy(true);
-                const result = await act(
-                  queueMessage({
-                    customerId: customer.id,
-                    templateId: template?.id ?? null,
-                    body,
-                    edited,
-                    destKind: dest,
-                  }),
-                );
-                setBusy(false);
-                if (result.ok) {
-                  onSent();
-                  router.refresh();
+                // `finally`: `act` re-throws what the action threw, and this
+                // button is the only way the message gets copied at all.
+                try {
+                  const result = await act(
+                    queueMessage({
+                      customerId: customer.id,
+                      templateId: template?.id ?? null,
+                      body,
+                      edited,
+                      destKind: dest,
+                    }),
+                  );
+                  if (result.ok) {
+                    onSent();
+                    router.refresh();
+                  }
+                } finally {
+                  setBusy(false);
                 }
               }}
             >

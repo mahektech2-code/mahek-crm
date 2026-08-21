@@ -68,6 +68,8 @@ export async function insertAndQueue(args: {
   /** Extra fields the server needs that are not columns here — the customer's
    *  name on an order, so a rejection can say whose order it was. */
   payloadExtras?: Record<string, unknown>;
+  /** False for paperwork rather than field work — see `native/where.ts`. */
+  location?: boolean;
 }): Promise<string> {
   const { cols, values } = toColumns(args.row);
   const marks = cols.map(() => '?').join(',');
@@ -79,18 +81,30 @@ export async function insertAndQueue(args: {
     op: 'create',
     payload: { ...args.row, ...(args.payloadExtras ?? {}) },
     dependsOn: args.dependsOn,
+    location: args.location,
   });
 
   return args.row.id as string;
 }
 
-/** An edit to a record that already exists. Mutable records only. */
+/**
+ * An edit to a record that already exists. Mutable records only.
+ *
+ * An update payload is PARTIAL by design — it names the id and the fields that
+ * changed, and nothing else. The server has a partial schema for each entity
+ * that reads it that way; sending the whole record instead would make every
+ * edit a chance to overwrite a column somebody else had corrected.
+ */
 export async function updateAndQueue(args: {
   table: string;
   entityType: string;
   id: string;
   patch: Record<string, unknown>;
+  /** False for paperwork rather than field work — see `native/where.ts`. */
+  location?: boolean;
   dependsOn?: string[];
+  /** Where a column's name or vocabulary is not the wire's — see PROTOCOL §4.1. */
+  payloadExtras?: Record<string, unknown>;
 }): Promise<void> {
   const { cols, values } = toColumns(args.patch);
   const sets = cols.map((c) => `${c} = ?`).join(', ');
@@ -100,8 +114,9 @@ export async function updateAndQueue(args: {
     entityType: args.entityType,
     entityId: args.id,
     op: 'update',
-    payload: { id: args.id, ...args.patch },
+    payload: { id: args.id, ...args.patch, ...(args.payloadExtras ?? {}) },
     dependsOn: args.dependsOn,
+    location: args.location,
   });
 }
 

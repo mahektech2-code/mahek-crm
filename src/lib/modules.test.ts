@@ -1,6 +1,13 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
-import { APP_MODULES, moduleAllowed, moduleForPath, modulesForApp } from "./modules";
+import {
+  APP_MODULES,
+  moduleAllowed,
+  moduleForPath,
+  moduleGroupsForApp,
+  modulesForApp,
+} from "./modules";
+import { grantableApps } from "./modules";
 import { NAV } from "@/components/shell/nav";
 
 /* ---------------------------------------------------------------------------
@@ -71,6 +78,42 @@ describe("the registry and the navigation agree", () => {
     for (const m of APP_MODULES) {
       assert.equal(seen.has(m.key), false, `duplicate module key ${m.key}`);
       seen.add(m.key);
+    }
+  });
+
+  /**
+   * The review table keys its sections on the group NAME, so a group that came
+   * back twice handed React two children with the same key — and drew the same
+   * heading twice with something else wedged between them.
+   *
+   * It happened for a reason that will happen again: `sales.approvals` is not
+   * in the sidebar, so it was written beside Today where the comment explaining
+   * it belongs, and it split Overview into two runs. Anybody inserting a module
+   * mid-list can do the same thing tomorrow, in an app they were not thinking
+   * about. This is cheaper than remembering.
+   */
+  it("every app's module groups are whole, so a group name is a usable key", () => {
+    for (const app of grantableApps()) {
+      const groups = moduleGroupsForApp(app.id);
+      const names = groups.map((g) => g.group);
+      assert.deepEqual(
+        names,
+        [...new Set(names)],
+        `${app.id} returns the same group more than once: ${names.join(", ")}`,
+      );
+    }
+  });
+
+  it("grouping loses no module and invents none", () => {
+    for (const app of grantableApps()) {
+      const flat = moduleGroupsForApp(app.id).flatMap((g) => g.modules.map((m) => m.key));
+      assert.deepEqual(
+        [...flat].sort(),
+        modulesForApp(app.id)
+          .map((m) => m.key)
+          .sort(),
+        `${app.id} lost or duplicated a module in grouping`,
+      );
     }
   });
 

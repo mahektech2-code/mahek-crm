@@ -52,6 +52,7 @@ export default async function Page({
       query: one("q"),
       status: one("status"),
       salesAm: one("sales"),
+      salesManager: one("salesmanager"),
       backOfficeAm: one("backoffice"),
       page: Number(one("page") ?? 1) || 1,
       perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
@@ -71,15 +72,23 @@ export default async function Page({
       // cannot disagree. The action checks again regardless — a disabled
       // control is not a permission.
       canReassign={can(user.role, "customer.reassign")}
+      // A different question, and a more generous answer: the sales manager
+      // seat drives no queue, no scope and no target, so a manager may set it
+      // while the two beside it stay accounts' and admin's.
+      canAssignSalesManager={can(user.role, "customer.assignSalesManager")}
       amReasons={config["people.amChangeReasons"]}
       amSearchThreshold={config["people.pickerSearchThreshold"]}
       amOptions={amOptions}
       team={team.map((t) => ({ id: t.id, name: t.name, role: t.role }))}
       backOfficePeople={backOfficePeople}
+      // The same list — this seat needs no login either, and several of the
+      // people running a sales line here have never signed in.
+      salesManagerPeople={backOfficePeople}
       filters={{
         query: one("q") ?? "",
         status: one("status") ?? "",
         salesAm: one("sales") ?? "",
+        salesManager: one("salesmanager") ?? "",
         backOfficeAm: one("backoffice") ?? "",
         perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
       }}
@@ -104,6 +113,7 @@ export default async function Page({
         kind: c.kind,
         leadSource: c.leadSource,
         salesAmName: c.salesAmName,
+        salesManagerName: c.salesManagerName,
         backOfficeAmId: c.backOfficeAmId,
         backOfficeAmName: c.backOfficeAmName,
         status: customerStatusLabel(c),

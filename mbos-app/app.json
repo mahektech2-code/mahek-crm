@@ -31,7 +31,13 @@
       "expo-sqlite",
       "expo-secure-store",
       "expo-audio",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "MahekOne records where a visit, an order or a payment was taken, and follows your route only while your day is open. It stops when you check out."
+        }
+      ]
     ],
     "scheme": "mbos",
     "backgroundColor": "#F7F8FA"

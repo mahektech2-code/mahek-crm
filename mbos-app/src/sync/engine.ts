@@ -11,7 +11,9 @@ import {
   type QueueItem,
 } from './queue';
 import { applyPull } from './pull';
+import { flush as flushTrail } from './trail';
 import { runMediaQueue } from './media';
+import { isoDate } from '../lib/format';
 
 /**
  * The sync loop.
@@ -116,6 +118,9 @@ export async function syncNow(opts: { manual?: boolean } = {}): Promise<SyncOutc
     /* Media goes after records, always. The parent has to exist on the server
        before its photograph has anything to attach to. */
     void runMediaQueue();
+    /* And the trail last of all. It depends on nothing and nothing depends on
+       it, so it takes whatever signal is left after the work has gone up. */
+    void flushTrail();
   }
 }
 
@@ -129,7 +134,18 @@ function toWireItem(item: QueueItem): api.WireItem {
     clientCreatedAt: item.createdAt,
     dependsOn: JSON.parse(item.dependsOn),
     payload: JSON.parse(item.payload),
+    location: item.location ? safeParse(item.location) : undefined,
   };
+}
+
+/** A location that will not parse is one activity without a place, not a sync
+ *  that fails — the record is what matters and it is already written. */
+function safeParse(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
 }
 
 /** An order number or receipt number the server assigned on first acceptance. */
@@ -168,7 +184,7 @@ async function onRejection(item: QueueItem, code: string, message: string): Prom
       description: `${message} (${code})`,
       customerId: payload.customerId,
       priority: 'High',
-      dueDate: new Date().toISOString().slice(0, 10),
+      dueDate: isoDate(new Date()),
     });
   }
 }

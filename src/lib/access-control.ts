@@ -209,6 +209,7 @@ export const CAPABILITIES = [
   "creditnote.issue",
   "sheet.import",
   "customer.reassign",
+  "customer.assignSalesManager",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -224,6 +225,22 @@ const MANAGER_ONLY: ReadonlySet<Capability> = new Set<Capability>([
   "whatsapp.template.write",
   "team.report",
   "config.write",
+  /*
+   * Who the salesperson answers to — a manager's, and deliberately NOT in
+   * `ACCOUNTS_ONLY` beside `customer.reassign`.
+   *
+   * The two look like the same act and are not. The sales seat decides who is
+   * credited for an account's orders and whose targets it counts toward, so a
+   * manager moving it is a manager moving numbers between their own people;
+   * that is why it sits in the narrowest set in this file. The sales MANAGER
+   * seat drives nothing at all — no queue, no scope, no target — so the
+   * conflict does not exist, and holding it back would put the line management
+   * of a sales team in the hands of the one desk that does not do any.
+   *
+   * Manager-only rather than shared: it moves work in bulk and by filter, and
+   * "everything Rahul had" is a hundred accounts in one press.
+   */
+  "customer.assignSalesManager",
 ]);
 
 /**

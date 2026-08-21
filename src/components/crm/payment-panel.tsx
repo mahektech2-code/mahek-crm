@@ -14,6 +14,8 @@ import {
 import { useEscape } from "@/components/ui/overlays";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
+import { NextStepDialog } from "@/components/crm/next-step-dialog";
+import type { NextStep } from "@/lib/engines/next-step";
 import {
   logPaymentFollowUpAction,
   queueMessage,
@@ -63,11 +65,60 @@ export function PaymentPanel(props: {
   /** Refresh the list behind without closing — used after a per-bill payment. */
   onRefresh: () => void;
 }) {
-  if (!props.target) return null;
-  // Remounted per customer: every field starts clean rather than being reset
-  // in an effect. See AGENTS.md on the React Compiler rules.
-  return <PanelBody key={props.target.customerId} {...props} target={props.target} />;
+  /*
+   * The confirmation lives HERE, above the body, for the reason the call
+   * drawer's does: saving revalidates the worklist, the customer just worked
+   * drops off it, and `target` goes with them — a dialog rendered inside the
+   * body would be unmounted in the frame it opened, and the answer never seen.
+   * Everything it needs is captured at the moment of saving.
+   */
+  const [logged, setLogged] = React.useState<LoggedFollowUp | null>(null);
+  const [stepOpen, setStepOpen] = React.useState(false);
+
+  function dismiss(advance: boolean) {
+    setStepOpen(false);
+    if (advance) props.onSavedNext();
+    else props.onSaved();
+  }
+
+  return (
+    <>
+      {props.target ? (
+        // Remounted per customer: every field starts clean rather than being
+        // reset in an effect. See AGENTS.md on the React Compiler rules.
+        <PanelBody
+          key={props.target.customerId}
+          {...props}
+          target={props.target}
+          onLogged={(entry) => {
+            setLogged(entry);
+            setStepOpen(true);
+          }}
+        />
+      ) : null}
+
+      {logged ? (
+        <NextStepDialog
+          open={stepOpen}
+          savedLabel={logged.label}
+          step={logged.step}
+          customerName={logged.customerName}
+          defaultNext={logged.wantsNext}
+          onNext={() => dismiss(true)}
+          onStay={() => dismiss(false)}
+        />
+      ) : null}
+    </>
+  );
 }
+
+/** Captured at the moment of saving, so it outlives the row it came from. */
+type LoggedFollowUp = {
+  label: string;
+  customerName: string;
+  step: NextStep | null;
+  wantsNext: boolean;
+};
 
 function PanelBody({
   modes,
@@ -77,9 +128,9 @@ function PanelBody({
   outcomes,
   onClose,
   onMove,
-  onSavedNext,
   onSaved,
   onRefresh,
+  onLogged,
 }: {
   /** `payments.modes` — the list is configuration, never a literal on a screen. */
   modes: string[];
@@ -91,9 +142,15 @@ function PanelBody({
   outcomes: PayOutcomeDefinition[];
   onClose: () => void;
   onMove: (delta: number) => void;
-  onSavedNext: () => void;
+  /*
+   * Advancing is the WRAPPER's, because the confirmation stands between the
+   * save and the next customer now. `onSaved` stays: a per-bill payment
+   * refreshes without logging a call, so it has no next step to confirm.
+   */
   onSaved: () => void;
   onRefresh: () => void;
+  /** Handed up rather than advancing here — the confirmation is shown first. */
+  onLogged: (entry: LoggedFollowUp) => void;
 }) {
   const { run, push } = useToast();
 
@@ -186,8 +243,20 @@ function PanelBody({
       );
       if (result.ok) {
         setErrors({});
-        if (next) onSavedNext();
-        else onSaved();
+        /*
+         * Handed UP rather than advancing here, and the advance goes with it.
+         *
+         * Moving straight to the next overdue account was what made the answer
+         * invisible on this screen: the telecaller had just agreed a promise
+         * date with the customer and had nowhere to be told when that customer
+         * comes back. Pressing Enter still advances in one keystroke.
+         */
+        onLogged({
+          label: def.label,
+          customerName: panel.name,
+          step: result.data.nextStep,
+          wantsNext: next,
+        });
       } else if (result.fieldErrors?.length) {
         setErrors(
           Object.fromEntries(result.fieldErrors.map((f) => [f.field, f.message])),

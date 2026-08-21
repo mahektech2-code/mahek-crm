@@ -38,6 +38,7 @@ const files = [
   "src/lib/journeys.test.ts",
   "src/lib/accounts.test.ts",
   "src/lib/feedback.test.ts",
+  "src/lib/activity-location.test.ts",
 ];
 
 let failed = 0;

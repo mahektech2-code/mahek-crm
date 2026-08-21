@@ -8,11 +8,16 @@ import {
   bills,
   complaints,
   customers,
+  mbosApprovals,
   mbosAttendanceDays,
   mbosConflicts,
   mbosDevices,
   mbosExpenses,
   mbosLeads,
+  mbosActivityLocations,
+  mbosJourneyPlans,
+  mbosJourneyStops,
+  mbosLeaveRequests,
   mbosSamples,
   mbosSyncReceipts,
   mbosTasks,
@@ -33,7 +38,8 @@ import { today, recomputeOutstanding, recomputeLastContact } from "../recompute"
 import { allocate, type AllocatableBill } from "../engines/allocation";
 import { computeHealth, type HealthFacts } from "../engines/health";
 import { fileStorage } from "../storage";
-import { sniffContentType } from "../file-types";
+import { transcribeSpeech } from "../dictation";
+import { sniffContentType, ACCEPTED_AUDIO_TYPES } from "../file-types";
 import { issueToken, verifyToken, signingKeyPresent } from "../mbos/token";
 import {
   checkDeviceBinding,
@@ -519,6 +525,9 @@ const DEPENDENCY_TABLES: Record<string, string> = {
   expense: "mbos_expenses",
   attendance: "mbos_attendance_days",
   customer: "customers",
+  leave: "mbos_leave_requests",
+  approval: "mbos_approvals",
+  plan: "mbos_journey_plans",
 };
 
 function entityOfClientId(id: string): string | null {
@@ -574,7 +583,87 @@ async function missingDependencies(
 
 /* ---------------------------------------------------------------- handlers */
 
+/**
+ * One item, and where it was done.
+ *
+ * The location is recorded HERE rather than in each handler, and that is the
+ * whole design: twelve handlers each remembering to write a coordinate is
+ * eleven handlers remembering and one forgetting, which is precisely the state
+ * this replaced — four tables out of twenty-seven carried one. A thirteenth
+ * entity type gets it by existing.
+ *
+ * It is written only for an ACCEPTED item. A refused order did not happen, and
+ * a position for it would be a record of somewhere the salesman stood while
+ * something failed — noise on every screen that reads this, and one more row
+ * to hold about a person for no reason. A retry writes the same row rather
+ * than a second one, on the unique index.
+ *
+ * **It never affects the outcome.** The record is already written by the time
+ * this runs, so a failure here leaves the activity intact with no location —
+ * the same rule attachments follow, and for the same reason: a save must not
+ * be lost to a thing that decorates it.
+ */
 async function handleItem(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const handled = await dispatchItem(principal, item);
+  if (handled.kind === "accepted") {
+    await recordActivityLocation(principal, item).catch(() => {});
+  }
+  return handled;
+}
+
+async function recordActivityLocation(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<void> {
+  const where = item.location;
+  if (!where) return;
+
+  /* Checked on the server as well as on the handset. A setting that is only
+     honoured by the phone is not a setting — an older build carries on doing
+     whatever it was built to do, and the office turning this off has to mean
+     nothing is stored. */
+  const config = await getConfig();
+  if (!config["mbos.location.logActivityLocation"]) return;
+
+  const hasFix = typeof where.lat === "number" && typeof where.lng === "number";
+  const inRange =
+    hasFix &&
+    (where.lat as number) >= -90 &&
+    (where.lat as number) <= 90 &&
+    (where.lng as number) >= -180 &&
+    (where.lng as number) <= 180;
+
+  await db
+    .insert(mbosActivityLocations)
+    .values({
+      id: gen("aloc"),
+      entityType: item.entityType,
+      entityId: item.entityId,
+      userId: principal.user.id,
+      lat: inRange ? (where.lat as number) : null,
+      lng: inRange ? (where.lng as number) : null,
+      accuracyM: numberOrNull(where.accuracyM),
+      capturedAt: where.capturedAt ? new Date(where.capturedAt) : null,
+      ageSeconds: numberOrNull(where.ageSeconds),
+      source: inRange ? (where.source ?? null) : null,
+      /* No coordinates means the reason has to carry the answer, and an
+         out-of-range pair is as good as none — `unavailable` rather than a
+         silent null, so a screen can still tell asked-and-failed from
+         never-asked. */
+      reason: inRange ? null : (where.reason ?? "unavailable"),
+      deviceId: principal.deviceId,
+    })
+    .onConflictDoNothing();
+}
+
+function numberOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null;
+}
+
+async function dispatchItem(
   principal: MbosPrincipal,
   item: SyncItem,
 ): Promise<Handled> {
@@ -600,6 +689,14 @@ async function handleItem(
       return handleAttendance(principal, item);
     case "customer":
       return handleCustomerEdit(principal, item);
+    case "leave":
+      return handleLeave(principal, item);
+    case "approval":
+      return handleApproval(principal, item);
+    case "plan_day":
+      return handlePlanDay(principal, item);
+    case "plan_stops":
+      return handlePlanStops(principal, item);
     default:
       return {
         kind: "rejected",
@@ -701,28 +798,28 @@ async function scopedCustomer(
 
 const visitSchema = z.object({
   customerId: z.string(),
-  checkInAt: z.number().optional(),
-  checkOutAt: z.number().optional(),
-  checkInLat: z.number().optional(),
-  checkInLng: z.number().optional(),
-  checkInAccuracyM: z.number().int().optional(),
-  checkOutLat: z.number().optional(),
-  checkOutLng: z.number().optional(),
-  checkOutAccuracyM: z.number().int().optional(),
-  durationSeconds: z.number().int().optional(),
+  checkInAt: z.number().nullish(),
+  checkOutAt: z.number().nullish(),
+  checkInLat: z.number().nullish(),
+  checkInLng: z.number().nullish(),
+  checkInAccuracyM: z.number().int().nullish(),
+  checkOutLat: z.number().nullish(),
+  checkOutLng: z.number().nullish(),
+  checkOutAccuracyM: z.number().int().nullish(),
+  durationSeconds: z.number().int().nullish(),
   outcome: z
     .enum(["visited", "order", "payment", "complaint", "sample", "not_available", "closed"])
     .default("visited"),
-  notes: z.string().max(4000).optional(),
-  transcript: z.string().max(20000).optional(),
-  transcriptIsAi: z.boolean().optional(),
-  shopPhotoId: z.string().optional(),
-  custPhotoId: z.string().optional(),
-  voiceNoteId: z.string().optional(),
-  journeyPlanStopId: z.string().optional(),
-  wasPlanned: z.boolean().optional(),
-  deviationReason: z.string().max(500).optional(),
-  nextFollowUpDate: z.string().optional(),
+  notes: z.string().max(4000).nullish(),
+  transcript: z.string().max(20000).nullish(),
+  transcriptIsAi: z.boolean().nullish(),
+  shopPhotoId: z.string().nullish(),
+  custPhotoId: z.string().nullish(),
+  voiceNoteId: z.string().nullish(),
+  journeyPlanStopId: z.string().nullish(),
+  wasPlanned: z.boolean().nullish(),
+  deviationReason: z.string().max(500).nullish(),
+  nextFollowUpDate: z.string().nullish(),
 });
 
 /** Metres between two fixes. Enough precision for "is this the same street". */
@@ -863,26 +960,26 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
 
 const orderSchema = z.object({
   customerId: z.string(),
-  orderedAt: z.number().optional(),
+  orderedAt: z.number().nullish(),
   lines: z
     .array(
       z.object({
         productId: z.string(),
         /** CANS, like every other quantity in MahekOne. */
         quantityCans: z.number().int().positive(),
-        ratePaise: z.number().int().nonnegative().optional(),
+        ratePaise: z.number().int().nonnegative().nullish(),
       }),
     )
     .min(1),
   totalAmountPaise: z.number().int().nonnegative(),
-  creditDays: z.number().int().optional(),
-  expectedDispatch: z.string().optional(),
+  creditDays: z.number().int().nullish(),
+  expectedDispatch: z.string().nullish(),
   /** What the handset believed the customer owed when it took the order. */
-  outstandingAsOfPaise: z.number().int().optional(),
-  outstandingAsOf: z.number().optional(),
+  outstandingAsOfPaise: z.number().int().nullish(),
+  outstandingAsOf: z.number().nullish(),
   /** The price tag the lines were priced against, where they were priced. */
-  priceTag: z.string().optional(),
-  visitId: z.string().optional(),
+  priceTag: z.string().nullish(),
+  visitId: z.string().nullish(),
 });
 
 async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
@@ -1136,16 +1233,114 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
 const paymentSchema = z.object({
   customerId: z.string(),
   amountPaise: z.number().int().positive(),
-  receivedAt: z.string().optional(),
-  mode: z.string().max(60).optional(),
-  reference: z.string().max(120).optional(),
-  note: z.string().max(2000).optional(),
+  receivedAt: z.string().nullish(),
+  mode: z.string().max(60).nullish(),
+  reference: z.string().max(120).nullish(),
+  note: z.string().max(2000).nullish(),
   /** Named bills, or nothing — in which case the money goes oldest first. */
-  billIds: z.array(z.string()).optional(),
-  visitId: z.string().optional(),
+  billIds: z.array(z.string()).nullish(),
+  visitId: z.string().nullish(),
 });
 
+const paymentUpdateSchema = z.object({
+  /** Cash paid into the bank, with the slip photographed. */
+  deposited: z.boolean().nullish(),
+  depositedAt: z.number().nullish(),
+  depositProofId: z.string().nullish(),
+  /** The cheque came back. */
+  bounced: z.boolean().nullish(),
+  bouncedAt: z.number().nullish(),
+});
+
+/**
+ * The two things that happen to money after it is collected.
+ *
+ * Neither of them moves a figure, and that is the point of them being here
+ * rather than anywhere near `applyToLedger`. A deposit is the salesman saying
+ * he banked the cash; the money still counts for nothing until accounts find
+ * it on the statement and confirm it, which is the second half of the answer
+ * and the office's to give.
+ *
+ * A bounce is the same shape in reverse. On a receipt still `reported` there
+ * is nothing to unwind — it never counted — so what the handset is doing is
+ * TELLING somebody, and the note plus the notification is the whole of it. On
+ * one accounts had already confirmed, reversing is their decision and their
+ * capability: taking money off an account is the same kind of act as putting
+ * it on, and a handset does not get to do it from a market.
+ */
+async function handlePaymentUpdate(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const parsed = paymentUpdateSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const [receipt] = await db
+    .select({
+      id: paymentReceipts.id,
+      status: paymentReceipts.status,
+      amount: paymentReceipts.amount,
+      note: paymentReceipts.note,
+      customerId: paymentReceipts.customerId,
+    })
+    .from(paymentReceipts)
+    .where(eq(paymentReceipts.id, item.entityId))
+    .limit(1);
+
+  if (!receipt) {
+    return {
+      kind: "retry",
+      message:
+        "That collection has not reached the office yet, so there is nothing to change. It will be tried again once it has.",
+    };
+  }
+
+  const changed: Partial<typeof paymentReceipts.$inferInsert> = {
+    updatedAt: new Date(),
+    updatedById: principal.user.id,
+  };
+
+  if (p.deposited) {
+    changed.depositedAt = new Date(p.depositedAt ?? Date.now());
+    changed.depositedById = principal.user.id;
+    if (p.depositProofId) changed.depositProofId = p.depositProofId;
+  }
+
+  if (p.bounced) {
+    const said = `Cheque returned unpaid, reported from the field on ${
+      await today()
+    }.`;
+    changed.note = receipt.note ? `${receipt.note}\n${said}` : said;
+
+    const [customer] = await db
+      .select({ name: customers.name })
+      .from(customers)
+      .where(eq(customers.id, receipt.customerId))
+      .limit(1);
+
+    await notifyManagers(
+      principal.user.id,
+      "A cheque has bounced",
+      `${customer?.name ?? "A customer"}'s cheque for ${rupees(receipt.amount)} came back unpaid.${
+        receipt.status === "confirmed"
+          ? " This receipt was already confirmed, so accounts have to reverse it — it is still counting against their balance until they do."
+          : " It had not been confirmed, so nothing was counting; no reversal is needed."
+      }`,
+    );
+  }
+
+  await db
+    .update(paymentReceipts)
+    .set(changed)
+    .where(eq(paymentReceipts.id, item.entityId));
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
 async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  if (item.op === "update") return handlePaymentUpdate(principal, item);
+
   const parsed = paymentSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;
@@ -1219,7 +1414,7 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
   const allocation = allocate(allocatable, {
     amount: p.amountPaise,
     mode: p.billIds?.length ? "settle" : "auto",
-    selectedBillIds: p.billIds,
+    selectedBillIds: p.billIds ?? undefined,
   });
 
   const day = await today();
@@ -1335,10 +1530,10 @@ const complaintSchema = z.object({
     "other",
   ]),
   description: z.string().min(1).max(4000),
-  severity: z.enum(["low", "medium", "high"]).optional(),
-  mobileNumber: z.string().max(20).optional(),
-  requestCn: z.boolean().optional(),
-  visitId: z.string().optional(),
+  severity: z.enum(["low", "medium", "high"]).nullish(),
+  mobileNumber: z.string().max(20).nullish(),
+  requestCn: z.boolean().nullish(),
+  visitId: z.string().nullish(),
 });
 
 async function handleComplaint(
@@ -1404,14 +1599,14 @@ async function handleComplaint(
 
 const sampleSchema = z.object({
   customerId: z.string(),
-  productId: z.string().optional(),
-  quantityCans: z.number().int().positive().optional(),
-  requestedDate: z.string().optional(),
-  deliveredAt: z.number().optional(),
-  deliveryPhotoId: z.string().optional(),
-  followUpDate: z.string().optional(),
-  feedbackNotes: z.string().max(2000).optional(),
-  visitId: z.string().optional(),
+  productId: z.string().nullish(),
+  quantityCans: z.number().int().positive().nullish(),
+  requestedDate: z.string().nullish(),
+  deliveredAt: z.number().nullish(),
+  deliveryPhotoId: z.string().nullish(),
+  followUpDate: z.string().nullish(),
+  feedbackNotes: z.string().max(2000).nullish(),
+  visitId: z.string().nullish(),
 });
 
 async function handleSample(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
@@ -1485,23 +1680,98 @@ async function handleSample(principal: MbosPrincipal, item: SyncItem): Promise<H
 
 const leadSchema = z.object({
   name: z.string().min(1).max(200),
-  companyName: z.string().max(200).optional(),
+  companyName: z.string().max(200).nullish(),
   mobile: z.string().min(6).max(20),
-  city: z.string().max(120).optional(),
-  area: z.string().max(120).optional(),
+  city: z.string().max(120).nullish(),
+  area: z.string().max(120).nullish(),
   source: z
     .enum(["manual", "website", "referral", "exhibition", "cold_call", "whatsapp", "campaign"])
-    .optional(),
-  estimatedPotentialPaise: z.number().int().nonnegative().optional(),
-  stage: z.enum(["new", "contacted", "qualified", "negotiation", "won", "lost"]).optional(),
-  nextFollowUpDate: z.string().optional(),
-  notes: z.string().max(4000).optional(),
-  gpsLat: z.number().optional(),
-  gpsLng: z.number().optional(),
-  lostReason: z.string().max(500).optional(),
+    .nullish(),
+  estimatedPotentialPaise: z.number().int().nonnegative().nullish(),
+  stage: z.enum(["new", "contacted", "qualified", "negotiation", "won", "lost"]).nullish(),
+  nextFollowUpDate: z.string().nullish(),
+  notes: z.string().max(4000).nullish(),
+  gpsLat: z.number().nullish(),
+  gpsLng: z.number().nullish(),
+  lostReason: z.string().max(500).nullish(),
+  /** Out of the way, not gone — a filter on every read, never a delete. */
+  archived: z.boolean().nullish(),
+  /** The shop this lead became, so the two records stay joined up. */
+  convertedCustomerId: z.string().nullish(),
 });
 
+/**
+ * Moving a lead along: a stage, a note, a follow-up date, an archive.
+ *
+ * Partial like every other update — see `handleTaskUpdate`. The name and the
+ * mobile are required to CREATE a lead and are not resent to change its stage,
+ * so the create schema refused all five of the handset's edits.
+ */
+async function handleLeadUpdate(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const parsed = leadSchema.partial().safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const [existing] = await db
+    .select({ id: mbosLeads.id, name: mbosLeads.name })
+    .from(mbosLeads)
+    .where(eq(mbosLeads.id, item.entityId))
+    .limit(1);
+
+  if (!existing) {
+    return {
+      kind: "retry",
+      message:
+        "That lead has not reached the office yet, so there is nothing to change. It will be tried again once it has.",
+    };
+  }
+
+  if (p.stage === "lost" && !p.lostReason) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `${existing.name} was marked lost with no reason. A loss nobody explained teaches nothing — reopen it and say what happened.`,
+      ),
+    };
+  }
+
+  const changed: Partial<typeof mbosLeads.$inferInsert> = {
+    /* Any edit is contact, and staleness is measured from the last thing that
+     * happened — so working a lead moves the clock whatever else it changed. */
+    lastActivityDate: await today(),
+    updatedAt: new Date(),
+    updatedById: principal.user.id,
+  };
+  if (p.name != null) changed.name = p.name;
+  if (p.companyName != null) changed.companyName = p.companyName;
+  if (p.mobile != null) changed.mobile = p.mobile;
+  if (p.city != null) changed.city = p.city;
+  if (p.area != null) changed.area = p.area;
+  if (p.stage != null) changed.stage = p.stage;
+  if (p.nextFollowUpDate != null) changed.nextFollowUpDate = p.nextFollowUpDate;
+  if (p.notes != null) changed.notes = p.notes;
+  if (p.estimatedPotentialPaise != null) {
+    changed.estimatedPotentialPaise = p.estimatedPotentialPaise;
+  }
+  if (p.lostReason != null) changed.lostReason = p.lostReason;
+  if (p.archived != null) changed.archived = p.archived;
+  if (p.convertedCustomerId != null) {
+    changed.convertedCustomerId = p.convertedCustomerId;
+    changed.convertedAt = new Date();
+  }
+
+  await db.update(mbosLeads).set(changed).where(eq(mbosLeads.id, item.entityId));
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
 async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  if (item.op === "update") return handleLeadUpdate(principal, item);
+
   const parsed = leadSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;
@@ -1585,18 +1855,88 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
 
 const taskSchema = z.object({
   title: z.string().min(1).max(200),
-  description: z.string().max(4000).optional(),
-  customerId: z.string().optional(),
-  priority: z.enum(["low", "medium", "high"]).optional(),
-  dueDate: z.string().optional(),
-  status: z.enum(["open", "in_progress", "done", "cancelled"]).optional(),
-  completionNote: z.string().max(2000).optional(),
-  completionPhotoId: z.string().optional(),
-  snoozedTo: z.string().optional(),
-  snoozeReason: z.string().max(500).optional(),
+  description: z.string().max(4000).nullish(),
+  customerId: z.string().nullish(),
+  priority: z.enum(["low", "medium", "high"]).nullish(),
+  dueDate: z.string().nullish(),
+  status: z.enum(["open", "in_progress", "done", "cancelled"]).nullish(),
+  completionNote: z.string().max(2000).nullish(),
+  completionPhotoId: z.string().nullish(),
+  snoozedTo: z.string().nullish(),
+  snoozeReason: z.string().max(500).nullish(),
 });
 
+/**
+ * Completing a task, snoozing one, moving its date.
+ *
+ * An update payload names the id and what CHANGED, and nothing else — which is
+ * the shape every edit on the handset has always sent and the shape nothing
+ * here could read. Parsed against the create schema, a completion was missing
+ * `title` and was refused as invalid: the salesman closed the task, the office
+ * never heard, and he was told his own tick had been rejected. Absent means
+ * unchanged; the columns nobody named are not touched.
+ */
+async function handleTaskUpdate(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const parsed = taskSchema.partial().safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const [existing] = await db
+    .select({ id: mbosTasks.id, title: mbosTasks.title })
+    .from(mbosTasks)
+    .where(eq(mbosTasks.id, item.entityId))
+    .limit(1);
+
+  /* The create is somewhere behind this in the outbox — a retry rather than a
+   * refusal, or a tick would be lost for being quicker than the thing it
+   * ticked. */
+  if (!existing) {
+    return {
+      kind: "retry",
+      message:
+        "That task has not reached the office yet, so there is nothing to change. It will be tried again once it has.",
+    };
+  }
+
+  const config = await getConfig();
+  if (p.status === "done" && config["mbos.tasks.requireCompletionNote"] && !p.completionNote) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `"${existing.title}" was closed with nothing said about how. A completion note is required — reopen it and write one line.`,
+      ),
+    };
+  }
+
+  const changed: Partial<typeof mbosTasks.$inferInsert> = {
+    updatedAt: new Date(),
+    updatedById: principal.user.id,
+  };
+  if (p.title != null) changed.title = p.title;
+  if (p.description != null) changed.description = p.description;
+  if (p.priority != null) changed.priority = p.priority;
+  if (p.dueDate != null) changed.dueDate = p.dueDate;
+  if (p.status != null) {
+    changed.status = p.status;
+    changed.completedAt = p.status === "done" ? new Date() : null;
+  }
+  if (p.completionNote != null) changed.completionNote = p.completionNote;
+  if (p.completionPhotoId != null) changed.completionPhotoId = p.completionPhotoId;
+  if (p.snoozedTo != null) changed.snoozedTo = p.snoozedTo;
+  if (p.snoozeReason != null) changed.snoozeReason = p.snoozeReason;
+
+  await db.update(mbosTasks).set(changed).where(eq(mbosTasks.id, item.entityId));
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
 async function handleTask(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  if (item.op === "update") return handleTaskUpdate(principal, item);
+
   const parsed = taskSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;
@@ -1666,9 +2006,9 @@ const expenseSchema = z.object({
   category: z.enum(["travel", "food", "lodging", "other"]),
   amountPaise: z.number().int().positive(),
   expenseDate: z.string(),
-  description: z.string().max(2000).optional(),
-  billPhotoId: z.string().optional(),
-  claimId: z.string().optional(),
+  description: z.string().max(2000).nullish(),
+  billPhotoId: z.string().nullish(),
+  claimId: z.string().nullish(),
 });
 
 async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
@@ -1738,12 +2078,22 @@ async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<
 
 const attendanceSchema = z.object({
   day: z.string(),
-  checkInAt: z.number().optional(),
-  checkOutAt: z.number().optional(),
-  checkInLat: z.number().optional(),
-  checkInLng: z.number().optional(),
-  selfieId: z.string().optional(),
-  notes: z.string().max(1000).optional(),
+  checkInAt: z.number().nullish(),
+  checkOutAt: z.number().nullish(),
+  checkInLat: z.number().nullish(),
+  checkInLng: z.number().nullish(),
+  checkInAccuracyM: z.number().nullish(),
+  checkOutLat: z.number().nullish(),
+  checkOutLng: z.number().nullish(),
+  checkOutAccuracyM: z.number().nullish(),
+  selfieId: z.string().nullish(),
+  notes: z.string().max(1000).nullish(),
+  /** Whether the check-in was inside the permitted radius, where one is set. */
+  withinGeofence: z.boolean().nullish(),
+  geofenceDistanceM: z.number().nullish(),
+  /** A correction asked for. The DECISION lives in `mbos_approvals`. */
+  regularisationRequested: z.boolean().nullish(),
+  regularisationReason: z.string().max(1000).nullish(),
 });
 
 async function handleAttendance(
@@ -1775,8 +2125,16 @@ async function handleAttendance(
       checkInAt: p.checkInAt ? new Date(p.checkInAt) : null,
       checkInLat: p.checkInLat ?? null,
       checkInLng: p.checkInLng ?? null,
+      checkInAccuracyM: round(p.checkInAccuracyM),
       checkInSelfieId: p.selfieId ?? null,
       checkOutAt: p.checkOutAt ? new Date(p.checkOutAt) : null,
+      checkOutLat: p.checkOutLat ?? null,
+      checkOutLng: p.checkOutLng ?? null,
+      checkOutAccuracyM: round(p.checkOutAccuracyM),
+      withinGeofence: p.withinGeofence ?? null,
+      geofenceDistanceM: round(p.geofenceDistanceM),
+      regularisationRequested: p.regularisationRequested ?? false,
+      regularisationReason: p.regularisationReason ?? null,
       clientCreatedAt: new Date(item.clientCreatedAt),
       createdById: principal.user.id,
       updatedById: principal.user.id,
@@ -1790,12 +2148,590 @@ async function handleAttendance(
       // the two marks rather than values this may type.
       set: {
         ...(p.checkOutAt ? { checkOutAt: new Date(p.checkOutAt) } : {}),
+        ...(p.checkOutLat != null ? { checkOutLat: p.checkOutLat } : {}),
+        ...(p.checkOutLng != null ? { checkOutLng: p.checkOutLng } : {}),
+        ...(p.checkOutAccuracyM != null
+          ? { checkOutAccuracyM: round(p.checkOutAccuracyM) }
+          : {}),
+        /* A correction asked for after the fact — the reason for a check-in
+         * outside the radius, or a day somebody wants changed. It arrives as
+         * its own write because the day starts when the button is pressed:
+         * asking why first, and losing the check-in if nobody answers, is the
+         * block this whole module exists to avoid. */
+        ...(p.regularisationRequested != null
+          ? { regularisationRequested: p.regularisationRequested }
+          : {}),
+        ...(p.regularisationReason != null
+          ? { regularisationReason: p.regularisationReason }
+          : {}),
         updatedAt: new Date(),
         updatedById: principal.user.id,
       },
     });
 
   return { kind: "accepted", value: { serverId: rowId } };
+}
+
+/** GPS accuracy arrives fractional; the columns it lands in are integers. */
+function round(value: number | null | undefined): number | null {
+  return value == null ? null : Math.round(value);
+}
+
+/* -------------------------------------------------------------------- leave */
+
+/**
+ * The four leave types the schema knows, keyed by every spelling a handset
+ * might send one under.
+ *
+ * The kind arrives as the WORD the salesman saw on the button — "Casual",
+ * "Loss of pay" — because the list on that screen is drawn from his own
+ * balances rather than from an enum. Normalising here rather than demanding
+ * the enum spelling is what lets the balance channel keep sending readable
+ * names; an unrecognised one is refused by name rather than filed as
+ * something adjacent, because "we recorded your sick leave as casual" is a
+ * conversation about somebody's pay.
+ */
+const LEAVE_TYPES = ["casual", "sick", "earned", "loss_of_pay"] as const;
+type LeaveType = (typeof LEAVE_TYPES)[number];
+
+function leaveTypeOf(kind: string): LeaveType | null {
+  const key = kind.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const direct = LEAVE_TYPES.find((t) => t === key);
+  if (direct) return direct;
+  /* "Casual leave", "Sick Leave", "LOP" — the words around the word. */
+  if (key.includes("casual")) return "casual";
+  if (key.includes("sick")) return "sick";
+  if (key.includes("earned") || key.includes("privilege")) return "earned";
+  if (key.includes("loss_of_pay") || key === "lop" || key.includes("unpaid")) {
+    return "loss_of_pay";
+  }
+  return null;
+}
+
+const leaveSchema = z.object({
+  kind: z.string().min(1).max(60),
+  fromDate: z.string(),
+  toDate: z.string(),
+  /** "Morning" or "Afternoon" on a single day; absent on a whole one. */
+  halfDay: z.string().nullish(),
+  reason: z.string().max(2000).nullish(),
+});
+
+/** Whole calendar days between two ISO dates, both ends counted. */
+function inclusiveDays(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+  return Math.floor((b - a) / 86_400_000) + 1;
+}
+
+/**
+ * §2.11 — a leave request, and its withdrawal.
+ *
+ * `days` is RECOMPUTED here rather than taken from the payload, like every
+ * other derived figure in this file: it is what a balance is debited by, and a
+ * number the handset can set is a number somebody can set. A half day is a
+ * single day with `halfDay` true rather than a `days` of 0.5, because the
+ * column is an integer and half of one day is a fact about the day, not a
+ * different quantity of them.
+ *
+ * The overlap check is here as well as on the handset. It is one of the two
+ * outright refusals in MBOS, and the reason is that the alternative is not a
+ * doubtful record — it is a second request approved by somebody who could not
+ * see the first, and a balance debited twice for one absence.
+ */
+async function handleLeave(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  /* A withdrawal is a partial payload naming only the new state. It is not a
+   * cancellation by the office — the person asking is the person who asked —
+   * so it needs no approval and simply marks the row. */
+  if (item.op === "update") {
+    const state = typeof item.payload.state === "string" ? item.payload.state : "";
+    if (state.toLowerCase() !== "withdrawn") {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          "The only change a handset may make to a leave request is to withdraw it. Anything else is the approver's.",
+        ),
+      };
+    }
+
+    const [existing] = await db
+      .select({ id: mbosLeaveRequests.id, cancelledAt: mbosLeaveRequests.cancelledAt })
+      .from(mbosLeaveRequests)
+      .where(
+        and(
+          eq(mbosLeaveRequests.id, item.entityId),
+          eq(mbosLeaveRequests.userId, principal.user.id),
+        ),
+      )
+      .limit(1);
+
+    if (!existing) {
+      return {
+        kind: "retry",
+        message:
+          "That leave request has not reached the office yet, so there is nothing to withdraw. It will be tried again once it has.",
+      };
+    }
+
+    /* Withdrawing twice is the same withdrawal — the first date stands, or a
+     * retried request would move the moment it was cancelled. */
+    if (!existing.cancelledAt) {
+      await db
+        .update(mbosLeaveRequests)
+        .set({
+          cancelledAt: new Date(),
+          cancelReason: typeof item.payload.cancelReason === "string"
+            ? item.payload.cancelReason
+            : null,
+          updatedAt: new Date(),
+          updatedById: principal.user.id,
+        })
+        .where(eq(mbosLeaveRequests.id, item.entityId));
+
+      await notifyManagers(
+        principal.user.id,
+        "A leave request was withdrawn",
+        `${principal.user.name} withdrew the leave they had asked for. Nothing needs deciding.`,
+      );
+    }
+
+    return { kind: "accepted", value: { serverId: item.entityId } };
+  }
+
+  const parsed = leaveSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const leaveType = leaveTypeOf(p.kind);
+  if (!leaveType) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `"${p.kind}" is not a kind of leave MahekOne records. Ask your manager which of casual, sick, earned or loss of pay this should be, and apply again.`,
+      ),
+    };
+  }
+
+  const from = p.fromDate;
+  const to = p.toDate || p.fromDate;
+  if (to < from) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        "That request ends before it starts. Check the dates and apply again.",
+      ),
+    };
+  }
+
+  const days = inclusiveDays(from, to);
+  if (days < 1) {
+    return {
+      kind: "rejected",
+      value: reject("validation", "Those are not two dates this can count days between."),
+    };
+  }
+
+  /* A half only means anything on a single day: the middle days of a range are
+   * whole days whatever the marker says, which is the same reading the pure
+   * engine on the handset takes. */
+  const halfDay = Boolean(p.halfDay) && from === to;
+
+  /* Pending AND approved, because two requests for the same week sit in the
+   * same inbox and get decided separately by somebody reading them one at a
+   * time. A withdrawn one is not in anybody's way. */
+  const clashes = await db
+    .select({
+      id: mbosLeaveRequests.id,
+      fromDate: mbosLeaveRequests.fromDate,
+      toDate: mbosLeaveRequests.toDate,
+    })
+    .from(mbosLeaveRequests)
+    .where(
+      and(
+        eq(mbosLeaveRequests.userId, principal.user.id),
+        sql`${mbosLeaveRequests.cancelledAt} is null`,
+        sql`${mbosLeaveRequests.id} <> ${item.entityId}`,
+        sql`${mbosLeaveRequests.fromDate} <= ${to}`,
+        sql`${mbosLeaveRequests.toDate} >= ${from}`,
+      ),
+    )
+    .limit(1);
+
+  if (clashes.length) {
+    const clash = clashes[0];
+    return {
+      kind: "rejected",
+      value: reject(
+        "duplicate",
+        `You have already asked for leave covering ${clash.fromDate} to ${clash.toDate}. Withdraw that one first if this is meant to replace it.`,
+      ),
+    };
+  }
+
+  await db
+    .insert(mbosLeaveRequests)
+    .values({
+      id: item.entityId,
+      userId: principal.user.id,
+      leaveType,
+      fromDate: from,
+      toDate: to,
+      halfDay,
+      days,
+      reason: p.reason ?? null,
+      clientCreatedAt: new Date(item.clientCreatedAt),
+      createdById: principal.user.id,
+      updatedById: principal.user.id,
+      deviceId: principal.deviceId,
+    })
+    .onConflictDoNothing({ target: mbosLeaveRequests.id });
+
+  const span = from === to
+    ? `${from}${halfDay ? " (half day)" : ""}`
+    : `${from} to ${to}, ${days} days`;
+  await notifyManagers(
+    principal.user.id,
+    "Leave requested",
+    `${principal.user.name} has asked for ${leaveType.replace(/_/g, " ")} leave — ${span}.${
+      p.reason ? ` ${p.reason}` : ""
+    }`,
+  );
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/* ------------------------------------------------------------- the plan day */
+
+const planDaySchema = z.object({
+  /** `agreed` or `refused`. Nothing else is the handset's to say. */
+  answer: z.enum(["agreed", "refused"]),
+  reason: z.string().max(2000).nullish(),
+  /** Where he would rather go. Optional — "not this" is a legitimate answer. */
+  counterCity: z.string().max(120).nullish(),
+});
+
+/**
+ * The salesman answering a proposed day.
+ *
+ * This is the half of the negotiation the handset speaks, and it is the whole
+ * reason the model exists: the office proposes a city, and the man who walks
+ * it is the one who knows the market shuts on Wednesdays.
+ *
+ * **A refusal must carry a reason.** Without one the manager has nothing to
+ * act on and the day sits unplanned while each waits for the other — which is
+ * worse than either answer.
+ *
+ * What he cannot do is move a day to `planned`. That happens when he picks
+ * shops, which is an ordinary stop write; conflating the two would let an
+ * empty day claim to be a route.
+ */
+async function handlePlanDay(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  const parsed = planDaySchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const [plan] = await db
+    .select()
+    .from(mbosJourneyPlans)
+    .where(
+      and(
+        eq(mbosJourneyPlans.id, item.entityId),
+        eq(mbosJourneyPlans.userId, principal.user.id),
+      ),
+    )
+    .limit(1);
+
+  if (!plan) {
+    return {
+      kind: "retry",
+      message:
+        "That day is not on the office's plan yet. It will be tried again once it is.",
+    };
+  }
+
+  /* Already walked, or already picked. Answering it now would unpick a day
+   * that has moved on. */
+  if (plan.dayState === "planned") {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `${plan.planDate} already has its shops picked, so there is nothing left to agree. Change the stops instead.`,
+      ),
+    };
+  }
+
+  if (p.answer === "refused" && !p.reason?.trim()) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        "Say why the day will not work. Without a reason your manager has nothing to go on and the day stays unplanned.",
+      ),
+    };
+  }
+
+  await db
+    .update(mbosJourneyPlans)
+    .set({
+      dayState: p.answer,
+      refusalReason: p.answer === "refused" ? (p.reason ?? "").trim() : null,
+      counterCity: p.answer === "refused" ? (p.counterCity?.trim() || null) : null,
+      respondedAt: new Date(),
+      updatedAt: new Date(),
+      updatedById: principal.user.id,
+    })
+    .where(eq(mbosJourneyPlans.id, item.entityId));
+
+  /* The manager is the other half of this conversation and has no reason to
+   * be looking at the screen when the answer arrives. */
+  await notifyManagers(
+    principal.user.id,
+    p.answer === "agreed"
+      ? `${principal.user.name} agreed ${plan.planDate}`
+      : `${principal.user.name} cannot work ${plan.planDate}`,
+    p.answer === "agreed"
+      ? `${plan.city ?? "The day"} is agreed. He picks the shops next.`
+      : `${(p.reason ?? "").trim()}${p.counterCity ? ` He would rather have ${p.counterCity.trim()}.` : ""}`,
+  );
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/* ------------------------------------------------------- picking the shops */
+
+const planStopsSchema = z.object({
+  /** In the order he means to walk them. The sequence IS the array's order. */
+  customerIds: z.array(z.string().min(1)).max(60),
+});
+
+/**
+ * The shops he picked for a day he agreed.
+ *
+ * The other half of the negotiation. The office proposes a city; the man who
+ * walks it picks the doors, because he is the one who knows which of them are
+ * worth a Tuesday morning. Until this existed he could agree to a day and then
+ * had no way to fill it — the office arranged the stops, which the console
+ * offers as its explicit exception rather than as the ordinary path.
+ *
+ * **It REPLACES the day's stops rather than adding to them.** Picking is one
+ * act performed on one screen, and the payload is the whole answer: sending a
+ * shorter list is how a shop is unpicked, and merging would make that
+ * impossible. A stop already visited is kept regardless — the day has started
+ * and a visit is not a plan any more.
+ *
+ * **The day only becomes `planned` if something was picked.** An empty day
+ * claiming to be a route is the one state this model exists to prevent.
+ */
+async function handlePlanStops(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  const parsed = planStopsSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const wanted = [...new Set(parsed.data.customerIds)];
+
+  const [plan] = await db
+    .select()
+    .from(mbosJourneyPlans)
+    .where(
+      and(
+        eq(mbosJourneyPlans.id, item.entityId),
+        eq(mbosJourneyPlans.userId, principal.user.id),
+      ),
+    )
+    .limit(1);
+
+  if (!plan) {
+    return {
+      kind: "retry",
+      message: "That day is not on the office's plan yet. It will be tried again once it is.",
+    };
+  }
+
+  /* A day he has not agreed to, or has sent back. Picking shops for it would
+   * agree to it by the back door, and the answer he gave is the record. */
+  if (plan.dayState !== "agreed" && plan.dayState !== "planned") {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `${plan.planDate} has not been agreed, so there is nothing to pick shops for yet.`,
+      ),
+    };
+  }
+
+  /* Every shop, checked against his own book — one bad id must not cost the
+   * other nineteen, so an unreachable customer is dropped and counted rather
+   * than refusing the whole day. */
+  const allowed: string[] = [];
+  const refused: string[] = [];
+  for (const customerId of wanted) {
+    const found = await scopedCustomer(principal, customerId);
+    if (found.ok) allowed.push(customerId);
+    else refused.push(customerId);
+  }
+
+  await db.transaction(async (tx) => {
+    /* Anything already walked stays. The rest is replaced, because the payload
+     * is the whole answer and a shorter list is how something is unpicked. */
+    await tx
+      .delete(mbosJourneyStops)
+      .where(
+        and(
+          eq(mbosJourneyStops.planId, plan.id),
+          eq(mbosJourneyStops.status, "planned"),
+        ),
+      );
+
+    const kept = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(mbosJourneyStops)
+      .where(eq(mbosJourneyStops.planId, plan.id));
+    let sequence = Number(kept[0]?.n ?? 0);
+
+    for (const customerId of allowed) {
+      sequence += 1;
+      await tx.insert(mbosJourneyStops).values({
+        id: `mbos_stop_${randomUUID()}`,
+        planId: plan.id,
+        customerId,
+        sequence,
+        status: "planned",
+        createdById: principal.user.id,
+        updatedById: principal.user.id,
+        deviceId: principal.deviceId,
+      });
+    }
+
+    await tx
+      .update(mbosJourneyPlans)
+      .set({
+        /* Picked nothing puts the day back to agreed rather than leaving it
+         * `planned` with no stops — an empty route is not a route. */
+        dayState: sequence > 0 ? "planned" : "agreed",
+        updatedAt: new Date(),
+        updatedById: principal.user.id,
+      })
+      .where(eq(mbosJourneyPlans.id, plan.id));
+  });
+
+  await notifyManagers(
+    principal.user.id,
+    `${principal.user.name} planned ${plan.planDate}`,
+    `${allowed.length} ${allowed.length === 1 ? "shop" : "shops"} picked${plan.city ? ` in ${plan.city}` : ""}.`,
+  );
+
+  /* Accepted, and the shortfall said out loud rather than swallowed. Silently
+   * planning nineteen of twenty shops is how somebody walks a day missing a
+   * stop they chose, and finds out at four in the afternoon. It goes as a
+   * notification because the accept has no room for a sentence and inventing
+   * one would change the shape of every other handler's answer. */
+  if (refused.length) {
+    await db
+      .insert(notifications)
+      .values({
+        id: gen("ntf"),
+        userId: principal.user.id,
+        title: `${plan.planDate}: ${refused.length} ${refused.length === 1 ? "shop" : "shops"} left out`,
+        body: `${allowed.length} of ${allowed.length + refused.length} picked. The rest are not in your book any more — ask your manager if one of them should be.`,
+        kind: "warning",
+        href: "/journey",
+      })
+      .catch(() => {});
+  }
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/* ---------------------------------------------------------------- approvals */
+
+const APPROVAL_TYPES = [
+  "order",
+  "expense_claim",
+  "leave",
+  "tour",
+  "sample",
+  "attendance_regularisation",
+] as const;
+type ApprovalType = (typeof APPROVAL_TYPES)[number];
+
+const approvalSchema = z.object({
+  type: z.string().min(1).max(60),
+  subjectType: z.string().min(1).max(60),
+  subjectId: z.string().min(1),
+  reason: z.string().max(2000).nullish(),
+});
+
+/**
+ * The handset names WHY as well as what — `order_over_credit` and
+ * `order_over_threshold` are both an order approval, and the difference
+ * between them is a sentence in `reason` rather than a second kind of thing
+ * for an approver to learn. `out_of_territory` is a visit somewhere it should
+ * not have been, which is the same conversation as regularising a day.
+ */
+const APPROVAL_ALIASES: Record<string, ApprovalType> = {
+  order_over_credit: "order",
+  order_over_threshold: "order",
+  out_of_territory: "attendance_regularisation",
+  expense: "expense_claim",
+};
+
+function approvalTypeOf(raw: string): ApprovalType | null {
+  const key = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return APPROVAL_TYPES.find((t) => t === key) ?? APPROVAL_ALIASES[key] ?? null;
+}
+
+/**
+ * Somebody in the field asking somebody in the office to say yes.
+ *
+ * This is the record the handset always wrote and never sent: `raiseApproval`
+ * filed it locally, marked it queued and stopped, so a salesman standing in a
+ * shop over his credit limit waited on a request that existed on his own phone
+ * and nowhere else. `mbos_approvals` was on the other end of that the whole
+ * time, with the nightly sweep already watching it for anything undecided too
+ * long.
+ *
+ * The decision is deliberately NOT here. Nothing a handset sends may set
+ * `state`, `approverUserId` or `decidedAt` — an approval that could approve
+ * itself is not an approval — so the row is written pending and the office
+ * decides it.
+ */
+async function handleApproval(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  const parsed = approvalSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const type = approvalTypeOf(p.type);
+  if (!type) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `MahekOne has nobody to send a "${p.type}" approval to. This is a bug to report rather than something to try again.`,
+      ),
+    };
+  }
+
+  await db
+    .insert(mbosApprovals)
+    .values({
+      id: item.entityId,
+      type,
+      requestedByUserId: principal.user.id,
+      subjectType: p.subjectType,
+      subjectId: p.subjectId,
+      reason: p.reason ?? null,
+      requestedAt: new Date(item.clientCreatedAt),
+      clientCreatedAt: new Date(item.clientCreatedAt),
+      createdById: principal.user.id,
+      updatedById: principal.user.id,
+      deviceId: principal.deviceId,
+    })
+    .onConflictDoNothing({ target: mbosApprovals.id });
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
 }
 
 /* -------------------------------------------- the one thing that can conflict */
@@ -1846,10 +2782,96 @@ const FORBIDDEN_CUSTOMER_FIELDS = [
   "ownerId",
 ];
 
+const customerCreateSchema = z.object({
+  name: z.string().min(1).max(200),
+  contactPerson: z.string().max(200).nullish(),
+  phone: z.string().min(6).max(20),
+  city: z.string().max(120).nullish(),
+  address: z.string().max(500).nullish(),
+  /** The lead this shop was won from, so the two records stay joined up. */
+  fromLeadId: z.string().nullish(),
+  estimatedPotentialPaise: z.number().int().nonnegative().nullish(),
+  gpsLat: z.number().nullish(),
+  gpsLng: z.number().nullish(),
+});
+
+/**
+ * A lead that became a shop.
+ *
+ * The handset has always been able to convert one — it writes the customer
+ * locally, moves the lead to Converted and opens the new record. What it could
+ * not do was tell anybody: `customer` only ever meant an EDIT here, so the
+ * conversion arrived asking to change a customer that existed on one phone,
+ * was refused as out of territory, and the salesman was left working an
+ * account MahekOne had never heard of.
+ *
+ * What it does NOT set is the commercial machinery. A credit limit, a
+ * potential band and a visit frequency are the office's to decide with the
+ * ledger in front of them, and a new account arriving with a confident zero in
+ * each of them reads as a decision somebody made. `salesAmId` is the salesman
+ * who won it, because scope has to resolve to somebody who can see the work.
+ */
+async function handleCustomerCreate(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const parsed = customerCreateSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  /* Four columns on `customers` are NOT NULL and a lead is not required to
+   * carry all of them. Refusing with the missing one named is better than
+   * inventing a blank city that somebody has to find and fix later. */
+  if (!p.city) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `${p.name} cannot be opened as an account without a town. Add it to the lead and convert again.`,
+      ),
+    };
+  }
+
+  const existing = await db
+    .select({ id: customers.id })
+    .from(customers)
+    .where(eq(customers.id, item.entityId))
+    .limit(1);
+  if (existing.length) {
+    /* A replay of the conversion, not a second shop. */
+    return { kind: "accepted", value: { serverId: item.entityId } };
+  }
+
+  await db.insert(customers).values({
+    id: item.entityId,
+    name: p.name,
+    contactPerson: p.contactPerson || p.name,
+    phone: p.phone,
+    city: p.city,
+    address: p.address ?? null,
+    kind: "customer",
+    leadSource: "mbos",
+    ownerId: principal.user.id,
+    salesAmId: principal.user.id,
+    gpsLat: p.gpsLat ?? null,
+    gpsLng: p.gpsLng ?? null,
+  });
+
+  await notifyManagers(
+    principal.user.id,
+    "A new account was opened in the field",
+    `${principal.user.name} converted ${p.name} in ${p.city} from a lead. It has no credit limit or terms yet — accounts decide those.`,
+  );
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
 async function handleCustomerEdit(
   principal: MbosPrincipal,
   item: SyncItem,
 ): Promise<Handled> {
+  if (item.op === "create") return handleCustomerCreate(principal, item);
+
   const attempted = FORBIDDEN_CUSTOMER_FIELDS.filter((f) => f in (item.payload ?? {}));
   if (attempted.length) {
     return {
@@ -2251,7 +3273,16 @@ export async function storeMbosMedia(
   /* Validated on the BYTES. `.jpg` is three characters anyone can type, and
    * the declared MIME comes from the same untrusted place the name does. */
   const actual = sniffContentType(input.bytes);
-  const accepted = config["attachments.acceptedTypes"];
+
+  /* A voice note is the one upload that may be audio, and only that kind may
+   * be. Nobody picks an audio file on a form — a handset records one — so the
+   * permitted list is not widened for every attachment field in MahekOne to
+   * carry this. */
+  const isVoiceNote = input.kind === "voice_note";
+  const accepted = isVoiceNote
+    ? [...config["attachments.acceptedTypes"], ...ACCEPTED_AUDIO_TYPES]
+    : config["attachments.acceptedTypes"];
+
   if (!actual || !accepted.includes(actual)) {
     return {
       ok: false,
@@ -2292,6 +3323,18 @@ export async function storeMbosMedia(
         },
       });
 
+    /* The transcript, where this was speech. Deliberately AFTER the bytes are
+     * safe and deliberately unable to fail the upload: the recording is the
+     * only copy of what the customer actually said, and losing it because a
+     * transcription provider was slow would be the worst trade in the app. A
+     * failure leaves the audio stored and untranscribed, which is exactly the
+     * state the handset already knows how to wait in. */
+    if (isVoiceNote) {
+      await transcribeVoiceNote(principal, input.clientId, actual, input.bytes).catch(
+        () => {},
+      );
+    }
+
     return { ok: true, attachmentId: input.clientId, deduped: false };
   } catch (e) {
     return {
@@ -2302,6 +3345,68 @@ export async function storeMbosMedia(
       }. The handset will try again.`,
     };
   }
+}
+
+/**
+ * What was said in the shop, in writing.
+ *
+ * The handset keeps the audio until a transcript comes BACK — not merely until
+ * the upload succeeded — so this closing of the loop is what lets a salesman's
+ * phone let go of a recording. Nothing did it before: the bytes were refused
+ * at the door for being audio at all, and had they been accepted there was
+ * nothing here to transcribe them and no channel to return one.
+ *
+ * The same two providers the CRM's own dictation uses, through the same
+ * function, so a deployment configures this once. Where neither is configured
+ * the audio simply stays audio, and the visit says so rather than claiming a
+ * note nobody wrote.
+ */
+async function transcribeVoiceNote(
+  principal: MbosPrincipal,
+  attachmentId: string,
+  mediaType: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  const config = await getConfig();
+  if (!config["voice.enabled"]) return;
+
+  const [visit] = await db
+    .select({ id: mbosVisits.id, transcript: mbosVisits.transcript })
+    .from(mbosVisits)
+    .where(eq(mbosVisits.voiceNoteId, attachmentId))
+    .limit(1);
+
+  /* No visit yet, or one somebody has already written a note onto by hand.
+   * Media syncs after its parent, so the first is a race rather than a rule —
+   * and re-transcribing on a re-upload would overwrite a corrected note. */
+  if (!visit || visit.transcript) return;
+
+  const heard = await transcribeSpeech({
+    audio: bytes,
+    mediaType,
+    /* The recorder counted the seconds and the handset does not send them with
+     * the file. Past Sarvam's 30-second ceiling this is simply wrong in the
+     * safe direction: it routes to OpenAI, which is where a long recording was
+     * going anyway. */
+    seconds: config["voice.maxSeconds"],
+    provider: config["voice.transcriptionProvider"],
+    fallbackToOpenai: config["voice.fallbackToOpenai"],
+    sarvamModel: config["voice.transcriptionModel"],
+    openaiTranscriptionModel: config["voice.openaiTranscriptionModel"],
+    languageModel: config["voice.languageModel"],
+  });
+
+  if (!heard.ok) return;
+
+  await db
+    .update(mbosVisits)
+    .set({
+      transcript: heard.english,
+      transcriptIsAi: true,
+      updatedAt: new Date(),
+      updatedById: principal.user.id,
+    })
+    .where(eq(mbosVisits.id, visit.id));
 }
 
 /* ------------------------------------------------------------------ helpers */

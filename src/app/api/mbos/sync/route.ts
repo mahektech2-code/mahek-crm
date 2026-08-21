@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { authenticate, buildPull } from "@/lib/services/mbos-service";
 import { ingestSyncBatch } from "@/lib/actions/mbos";
 import { getConfig } from "@/lib/config/store";
-import { SYNC_ENTITY_TYPES, type SyncItem } from "@/lib/mbos/types";
+import { SYNC_ENTITY_TYPES, type SyncItem, type SyncResult } from "@/lib/mbos/types";
 
 /* ---------------------------------------------------------------------------
  * One round trip, both directions — PROTOCOL.md §4.
@@ -70,27 +70,60 @@ export async function POST(request: Request) {
   }
 
   const items: SyncItem[] = [];
+  /* A malformed item is refused BY ITSELF, never by taking the batch with it.
+   *
+   * This used to answer 400 for the whole request, which meant one item the
+   * server had no handler for — a leave request, for months — stopped every
+   * visit, order and payment queued behind it from ever landing, on a handset
+   * with nothing on screen saying why. A refusal the client can attribute to
+   * one row leaves the rest of the outbox moving, and `rejected` is a state it
+   * already knows how to show and retain. */
+  const refusals: SyncResult[] = [];
   for (const entry of raw) {
     const item = entry as Partial<SyncItem>;
-    /* An item with no idempotency key cannot be made safe to retry, and a
-     * retry is most requests. It is refused at the door rather than written
-     * once and then written again by the next pass. */
-    if (
-      typeof item?.queueId !== "string" ||
-      typeof item?.entityId !== "string" ||
-      typeof item?.idempotencyKey !== "string" ||
-      !SYNC_ENTITY_TYPES.includes(item.entityType as never)
-    ) {
+
+    /* An item with no queue id cannot be answered at all — the queue id is the
+     * client's handle on the attempt, and a result carrying none matches
+     * nothing. That one still refuses the request, because the alternative is
+     * dropping work silently. */
+    if (typeof item?.queueId !== "string") {
       return NextResponse.json(
         {
           ok: false,
           code: "validation",
           error:
-            "One of the queue items is missing its queue id, entity id, entity type or idempotency key. Nothing in the batch was written.",
+            "One of the queue items has no queue id, so there is no way to answer it. Nothing in the batch was written.",
         },
         { status: 400 },
       );
     }
+
+    /* An item with no idempotency key cannot be made safe to retry, and a
+     * retry is most requests. It is refused at the door rather than written
+     * once and then written again by the next pass. */
+    const refuse = (wrong: string) => {
+      refusals.push({
+        queueId: item.queueId as string,
+        status: "rejected",
+        code: "validation",
+        message: `The office could not file this: ${wrong}. Everything else in this batch was sent.`,
+        blocks: [],
+      });
+    };
+
+    if (typeof item.entityId !== "string") {
+      refuse("it names no record");
+      continue;
+    }
+    if (typeof item.idempotencyKey !== "string") {
+      refuse("it carries no idempotency key, so it cannot be retried safely");
+      continue;
+    }
+    if (!SYNC_ENTITY_TYPES.includes(item.entityType as never)) {
+      refuse(`this MahekOne does not handle "${String(item.entityType)}" records`);
+      continue;
+    }
+
     items.push({
       queueId: item.queueId,
       entityType: item.entityType!,
@@ -106,10 +139,18 @@ export async function POST(request: Request) {
         item.payload && typeof item.payload === "object"
           ? (item.payload as Record<string, unknown>)
           : {},
+      /* A sibling of the payload, never a field inside it — the idempotency
+         key is a hash of the payload, and the same order enqueued twice from
+         two spots on a street has to stay one order. Shape-checked in the
+         action; taken as given here, which is what every other field does. */
+      location:
+        item.location && typeof item.location === "object"
+          ? (item.location as SyncItem["location"])
+          : undefined,
     });
   }
 
-  const results = await ingestSyncBatch(auth.principal, items);
+  const results = [...refusals, ...(await ingestSyncBatch(auth.principal, items))];
   const pull = await buildPull(
     auth.principal,
     typeof body.cursor === "string" ? body.cursor : null,

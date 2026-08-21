@@ -688,31 +688,41 @@ function PaymentForm({
               title={blocked}
               onClick={async () => {
                 setBusy(true);
-                const r = await run(
-                  recordReceiptAction({
-                    customerId: customer.customerId,
-                    amount,
-                    receivedAt,
-                    mode,
-                    reference: reference.trim() || undefined,
-                    instrumentDate: instrumentDate || undefined,
-                    note: note.trim() || undefined,
-                    allocation,
-                    order,
-                    selectedBillIds: selected,
-                    custom: Object.fromEntries(
-                      Object.entries(custom)
-                        .map(([k, v]) => [k, parseRupees(v) ?? 0] as const)
-                        .filter(([, v]) => v > 0),
-                    ),
-                    source: "accounts",
-                    idempotencyKey,
-                  }),
-                );
-                setBusy(false);
-                if (r.ok) {
-                  onBack();
-                  router.refresh();
+                /*
+                 * `finally`, because `run` re-throws whatever the action threw.
+                 * Clearing the flag only on the way past a successful await is
+                 * what leaves this button reading "Saving..." for the rest of
+                 * the session after one failure, with a reload as the only way
+                 * back to it - on the screen where money is recorded.
+                 */
+                try {
+                  const r = await run(
+                    recordReceiptAction({
+                      customerId: customer.customerId,
+                      amount,
+                      receivedAt,
+                      mode,
+                      reference: reference.trim() || undefined,
+                      instrumentDate: instrumentDate || undefined,
+                      note: note.trim() || undefined,
+                      allocation,
+                      order,
+                      selectedBillIds: selected,
+                      custom: Object.fromEntries(
+                        Object.entries(custom)
+                          .map(([k, v]) => [k, parseRupees(v) ?? 0] as const)
+                          .filter(([, v]) => v > 0),
+                      ),
+                      source: "accounts",
+                      idempotencyKey,
+                    }),
+                  );
+                  if (r.ok) {
+                    onBack();
+                    router.refresh();
+                  }
+                } finally {
+                  setBusy(false);
                 }
               }}
               className={cx(
@@ -747,39 +757,42 @@ function PaymentForm({
           onConfirm={async () => {
             setBusy(true);
             setMergeError(null);
-            const r = await run(
-              confirmAsMatchAction({
-                receiptId: merging.candidate.receiptId,
-                confirmAmount: parseRupees(typed) ?? 0,
-                // What accounts hold that the telecaller did not: the string
-                // off the bank statement, and the day it actually landed.
-                reference: reference.trim() || undefined,
-                receivedAt,
-                mode,
-                // Where they have just decided the money should go. They are
-                // looking at the bills; asking again on a second screen would
-                // be asking the same question twice.
-                allocation: {
-                  mode: allocation,
-                  order,
-                  selectedBillIds: selected,
-                  custom: Object.fromEntries(
-                    Object.entries(custom)
-                      .map(([k, v]) => [k, parseRupees(v) ?? 0] as const)
-                      .filter(([, v]) => v > 0),
-                  ),
-                },
-              }),
-            );
-            setBusy(false);
-            if (r.ok) {
-              setMerging(null);
-              onBack();
-              router.refresh();
-            } else {
-              // It stays in the dialog rather than vanishing as a toast: a
-              // refused merge changes what to do next.
-              setMergeError(r.error);
+            try {
+              const r = await run(
+                confirmAsMatchAction({
+                  receiptId: merging.candidate.receiptId,
+                  confirmAmount: parseRupees(typed) ?? 0,
+                  // What accounts hold that the telecaller did not: the string
+                  // off the bank statement, and the day it actually landed.
+                  reference: reference.trim() || undefined,
+                  receivedAt,
+                  mode,
+                  // Where they have just decided the money should go. They are
+                  // looking at the bills; asking again on a second screen would
+                  // be asking the same question twice.
+                  allocation: {
+                    mode: allocation,
+                    order,
+                    selectedBillIds: selected,
+                    custom: Object.fromEntries(
+                      Object.entries(custom)
+                        .map(([k, v]) => [k, parseRupees(v) ?? 0] as const)
+                        .filter(([, v]) => v > 0),
+                    ),
+                  },
+                }),
+              );
+              if (r.ok) {
+                setMerging(null);
+                onBack();
+                router.refresh();
+              } else {
+                // It stays in the dialog rather than vanishing as a toast: a
+                // refused merge changes what to do next.
+                setMergeError(r.error);
+              }
+            } finally {
+              setBusy(false);
             }
           }}
         />

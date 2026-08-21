@@ -1,5 +1,6 @@
 import { all, newId, one, payloadHash, run } from '../db';
 import { backoffFor as computeBackoff, MAX_ATTEMPTS as MAX, partition } from './ordering';
+import { whereNow } from '../native/where';
 
 /**
  * The outbox.
@@ -33,6 +34,8 @@ export type QueueItem = {
   payload: string;
   dependsOn: string;
   idempotencyKey: string;
+  /** JSON — where this was done. See `native/where.ts`. */
+  location: string | null;
   attempts: number;
   lastAttemptAt: number | null;
   nextAttemptAt: number;
@@ -52,6 +55,22 @@ export const MAX_ATTEMPTS = MAX;
 
 /* --------------------------------------------------------------- enqueue */
 
+/**
+ * Queue one write, and remember where it was done.
+ *
+ * The location is attached HERE, in the one function every write in the app
+ * passes through, so a new kind of activity carries it by existing rather than
+ * by somebody remembering. Fourteen call sites each fetching a position is
+ * thirteen doing it and one forgetting — which is the state this replaced.
+ *
+ * It is stored in its own COLUMN and hashed into nothing. `idempotencyKey` is
+ * a hash of the payload, so folding a position in would make the same order
+ * enqueued twice from two spots on a street into two orders. Where somebody
+ * stood is a fact about the act, not part of the record's content — and the
+ * dedupe below is the reason that distinction has to be kept.
+ *
+ * `whereNow()` never waits on the radio, so this adds no delay to a save.
+ */
 export async function enqueue(args: {
   entityType: string;
   entityId: string;
@@ -59,6 +78,8 @@ export async function enqueue(args: {
   payload: unknown;
   dependsOn?: string[];
   now?: number;
+  /** Set false for a write that is paperwork rather than field work. */
+  location?: boolean;
 }): Promise<string> {
   const now = args.now ?? Date.now();
   const hash = await payloadHash(args.payload);
@@ -69,11 +90,25 @@ export async function enqueue(args: {
   const existing = await one<{ id: string }>('SELECT id FROM sync_queue WHERE idempotencyKey = ?', [key]);
   if (existing) return existing.id;
 
+  /* Composed before the insert and never awaited on the radio — see
+     `native/where.ts`. A failure here is a queue item with no location, which
+     is exactly what a phone in a basement should produce. */
+  let location: string | null = null;
+  if (args.location !== false) {
+    try {
+      const where = await whereNow();
+      if (where) location = JSON.stringify(where);
+    } catch {
+      /* Nothing to tell anybody: the record is what matters and it is about
+         to be written either way. */
+    }
+  }
+
   const id = newId('q');
   await run(
     `INSERT INTO sync_queue
-       (id, entityType, entityId, op, payload, dependsOn, idempotencyKey, nextAttemptAt, state, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
+       (id, entityType, entityId, op, payload, dependsOn, idempotencyKey, nextAttemptAt, state, createdAt, location)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
     [
       id,
       args.entityType,
@@ -84,6 +119,7 @@ export async function enqueue(args: {
       key,
       now,
       now,
+      location,
     ],
   );
   return id;
@@ -237,6 +273,7 @@ const ENTITY_TABLE: Record<string, string> = {
   leave: 'leave_requests',
   competitor: 'competitor_records',
   approval: 'approvals',
+  plan_day: 'journey_days',
 };
 
 async function setEntityState(

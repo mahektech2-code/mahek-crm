@@ -5,6 +5,7 @@ import { getConfig } from './config';
 import { assessOrder } from '../engines/credit';
 import { canValueOrders, derivedQuantities, lineValuePaise, type PriceSource } from '../engines/order';
 import { applySchemes } from '../engines/schemes';
+import { isoDate } from '../lib/format';
 
 /**
  * Punching an order.
@@ -170,18 +171,13 @@ export async function saveOrder(args: {
     /* The approval request is a record of its own, and the order's state is
        DERIVED from it — nothing sets a flag on the order independently. */
     if (needsApproval) {
-      const approvalId = newId('approval');
-      await insertLocal('approvals', {
-        id: approvalId,
+      const { raiseApproval } = await import('./requests');
+      const approvalId = await raiseApproval({
         type: args.assessment.overByPaise > 0 ? 'order_over_credit' : 'order_over_threshold',
         subjectType: 'order',
         subjectId: base.id,
         reason: args.assessment.reason,
-        requestedAt: Date.now(),
-        state: 'pending',
-        clientCreatedAt: Date.now(),
         deviceId: base.deviceId,
-        syncState: 'queued',
       });
       await run('UPDATE orders SET approvalId = ? WHERE id = ?', [approvalId, base.id]);
     }
@@ -201,7 +197,7 @@ export async function saveOrder(args: {
        that stops the queue chasing somebody who ordered this morning, and a
        slow approval must not cause a second ring. */
     await run('UPDATE customers SET lastOrderDate = ?, submittedNotInvoicedPaise = submittedNotInvoicedPaise + ? WHERE id = ?', [
-      new Date().toISOString().slice(0, 10),
+      isoDate(new Date()),
       args.assessment.valuePaise ?? 0,
       args.customerId,
     ]);
@@ -211,21 +207,27 @@ export async function saveOrder(args: {
     entityType: 'order',
     entityId: base.id,
     op: 'create',
+    /* The WIRE names, which are not this table's column names — see
+       PROTOCOL.md §4.1. `cans` is what a telecaller counts and what this app
+       stores; `quantityCans` is what MahekOne calls the same number, and the
+       payload is MahekOne's vocabulary rather than ours. Sending our own put
+       every field order on the rejections screen with a validation message
+       about a field nobody on either end had typed. */
     payload: {
       id: base.id,
       customerId: args.customerId,
+      /* Not read by the server. Kept so a refusal can name the shop on the
+         handset, which is the screen the salesman is actually looking at. */
       customerName: args.customerName,
-      userId: args.userId,
-      visitId: args.visitId ?? null,
+      visitId: args.visitId ?? undefined,
       orderedAt: base.clientCreatedAt,
-      netTotalPaise: args.assessment.valuePaise,
+      totalAmountPaise: args.assessment.valuePaise ?? 0,
       valueUnavailable: args.assessment.valueUnavailable,
-      needsApproval,
+      creditDays: args.paymentTermDays ?? undefined,
       lines: args.assessment.lines.map((p) => ({
-        productId: p.line.productId, productName: p.line.productName,
-        cans: p.cans, boxes: p.boxes, litres: p.litres,
-        ratePaise: p.line.sellingPricePaise ?? p.line.typedRatePaise ?? null,
-        lineTotalPaise: p.valuePaise,
+        productId: p.line.productId,
+        quantityCans: p.cans,
+        ratePaise: p.line.sellingPricePaise ?? p.line.typedRatePaise ?? undefined,
       })),
       deviceId: base.deviceId,
       clientCreatedAt: base.clientCreatedAt,

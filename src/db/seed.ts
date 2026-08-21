@@ -41,6 +41,42 @@ import {
   waReplies,
   waRuns,
   waTemplates,
+  appModuleAccess,
+  attachments,
+  complaintImages,
+  customerAmChanges,
+  feedbackMessages,
+  queueSnapshots,
+  sheetSyncRuns,
+  timelineEvents,
+  mbosActivityLocations,
+  mbosApprovals,
+  mbosAttendanceDays,
+  mbosCompetitorRecords,
+  mbosConflicts,
+  mbosCourseProgress,
+  mbosCourses,
+  mbosDeletions,
+  mbosDevices,
+  mbosDocuments,
+  mbosExpenseClaims,
+  mbosExpenses,
+  mbosHolidays,
+  mbosInternalNotes,
+  mbosJourneyPlans,
+  mbosJourneyStops,
+  mbosLeads,
+  mbosLeaveBalances,
+  mbosLeaveRequests,
+  mbosManagerTerritories,
+  mbosPositions,
+  mbosPriceList,
+  mbosSamples,
+  mbosSchemes,
+  mbosSyncReceipts,
+  mbosTasks,
+  mbosTours,
+  mbosVisits,
 } from "./schema";
 import { hashPassword } from "../lib/password";
 import { initialsOf } from "../lib/format";
@@ -395,7 +431,64 @@ const LEAD_SOURCES = [
 
 async function main() {
   console.log("Clearing…");
+  /*
+   * ORDER IS THE WHOLE THING HERE: children before parents, because these are
+   * DELETEs and not a cascading truncate. A cascade would be shorter and would
+   * also take `employees` and the sheet staging tables with it — the employee
+   * master is a mirror of a workbook that HR maintains and the staging tables
+   * are what makes a bad import reversible, so neither may be collateral of
+   * reseeding the demo book.
+   *
+   * The list had rotted. Every table below the CRM block was added by a later
+   * app and never added here, so `db:seed` died on a foreign key the moment
+   * anything had used MBOS — "Key (id)=(usr_…) is still referenced from table
+   * mbos_sync_receipts", after it had already emptied half the database. A
+   * seed that fails half way is worse than one that refuses to start: it
+   * leaves a book nobody can sign into and no way back but doing it by hand.
+   *
+   * Adding an app means adding its tables here. There is no way around that
+   * short of the cascade this deliberately does not use.
+   */
   for (const table of [
+    /* --- MBOS, first: it points at attachments, complaints and users, all of
+       which are further down this list. --- */
+    mbosActivityLocations,
+    mbosPositions,
+    mbosConflicts,
+    mbosSyncReceipts,
+    mbosApprovals,
+    mbosCourseProgress,
+    mbosCourses,
+    mbosDocuments,
+    mbosInternalNotes,
+    mbosCompetitorRecords,
+    mbosTasks,
+    mbosTours,
+    mbosHolidays,
+    mbosManagerTerritories,
+    mbosLeaveBalances,
+    mbosLeaveRequests,
+    mbosAttendanceDays,
+    // Expenses before the claim they sit on, which does not cascade.
+    mbosExpenses,
+    mbosExpenseClaims,
+    mbosLeads,
+    mbosVisits,
+    mbosSamples,
+    mbosJourneyStops,
+    mbosJourneyPlans,
+    mbosDeletions,
+    mbosPriceList,
+    mbosSchemes,
+    mbosDevices,
+    /* --- the rest of what points at users, customers or complaints --- */
+    queueSnapshots,
+    timelineEvents,
+    customerAmChanges,
+    feedbackMessages,
+    complaintImages,
+    appModuleAccess,
+    sheetSyncRuns,
     auditLog,
     jobRuns,
     notifications,
@@ -428,6 +521,10 @@ async function main() {
     productFormulations,
     payments,
     paymentReceipts,
+    // AFTER the receipts and the MBOS rows that point at it — a payment proof
+    // and a visit photograph both hold an attachment id, and neither FK
+    // cascades.
+    attachments,
     bills,
     monthlyTargets,
     customers,
@@ -538,6 +635,23 @@ async function main() {
       leadSource: i % 7 === 3 ? LEAD_SOURCES[i % LEAD_SOURCES.length] : null,
       ownerId: owner.id,
       salesAmId: i % 7 === 3 ? null : owner.id,
+      /*
+       * The sales manager, seeded three ways on purpose: an account for most,
+       * a NAME with no login for some — which is the ordinary case here, and
+       * the one a picker built from `users` could never produce — and nobody
+       * at all for the rest, so every state the column can be in is reachable
+       * without hand-editing the database.
+       */
+      salesManagerId:
+        i % 7 === 3 || i % 5 === 1 || i % 5 === 2
+          ? null
+          : crmUsers[(i + 1) % crmUsers.length].id,
+      salesManagerPersonName:
+        i % 7 === 3 || i % 5 === 2
+          ? null
+          : i % 5 === 1
+            ? "Western Line Sale"
+            : crmUsers[(i + 1) % crmUsers.length].name,
       // Back office is left unassigned on some, which the modal flags.
       backOfficeAmId:
         i % 7 === 3

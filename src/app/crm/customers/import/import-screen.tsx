@@ -178,15 +178,20 @@ export function ImportScreen({
               disabled={busy}
               onClick={async () => {
                 setBusy(true);
-                const result = await run(
-                  tab === "customers"
-                    ? importCustomers(rows, ownerId)
-                    : importBills(rows),
-                );
-                setBusy(false);
-                if (result.ok && result.data) {
-                  setSummary(result.data);
-                  router.refresh();
+                // `finally`: `run` re-throws, and an import that dies on row
+                // four hundred must leave a button somebody can press again.
+                try {
+                  const result = await run(
+                    tab === "customers"
+                      ? importCustomers(rows, ownerId)
+                      : importBills(rows),
+                  );
+                  if (result.ok && result.data) {
+                    setSummary(result.data);
+                    router.refresh();
+                  }
+                } finally {
+                  setBusy(false);
                 }
               }}
             >

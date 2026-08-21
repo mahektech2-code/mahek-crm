@@ -20,7 +20,7 @@
  *   conflict.
  */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 5;
 
 /**
  * Every statement is idempotent, and migrations are applied in order by
@@ -567,6 +567,85 @@ export const MIGRATIONS: string[][] = [
         SET sessions = json_array(json_object('inAt', checkInAt, 'outAt', checkOutAt))
       WHERE sessions = '[]' AND checkInAt IS NOT NULL;`,
   ],
+
+  /* ---- v3 ------------------------------------------------------------- */
+  [
+    /*
+     * A day is AGREED, not issued.
+     *
+     * The office proposes a city; this handset answers. Until now the only
+     * thing that came down was a stop, and a stop exists only once a day is
+     * already planned — so a month laid out in advance was invisible here, and
+     * the first the salesman knew of a day was a route he had never been asked
+     * about.
+     *
+     * `picked` is how many shops he has chosen. It is a count from the server
+     * rather than a join on `journey_stops`, because a day can be agreed with
+     * no stops yet and the difference between "none picked" and "not planned"
+     * is the whole state machine.
+     */
+    `CREATE TABLE IF NOT EXISTS journey_days (
+      id TEXT PRIMARY KEY,
+      planDate TEXT NOT NULL,
+      city TEXT,
+      beat TEXT,
+      dayState TEXT NOT NULL DEFAULT 'proposed',
+      refusalReason TEXT,
+      counterCity TEXT,
+      proposedAt INTEGER,
+      proposedBy TEXT,
+      picked INTEGER NOT NULL DEFAULT 0,
+      syncState TEXT NOT NULL DEFAULT 'synced',
+      syncMessage TEXT,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_days_date ON journey_days(planDate);`,
+  ],
+
+  /* ---- v4 ------------------------------------------------------------- */
+  [
+    /*
+     * The trail.
+     *
+     * Where somebody actually went, while they were working. Two fixes a day —
+     * the check-in and each visit — is not a track, and a map drawn from them
+     * would look like tracking without being it.
+     *
+     * It is NOT in the outbox, and that is the point. The outbox is
+     * dependency-ordered and retries for ever, because a visit that never
+     * arrives is a call nobody has a record of. A position is the opposite
+     * kind of thing: one of a hundred, worth nothing on its own, and a
+     * position lost is a slightly coarser line on a map. Retrying them through
+     * the same machinery would put a hundred rows a day in front of the visit
+     * behind them, on a 2G connection, for no gain.
+     *
+     * So they queue here, go up in batches, and are DELETED once acknowledged.
+     * Sent-but-unacknowledged is the only state worth having.
+     */
+    `CREATE TABLE IF NOT EXISTS positions (
+      id TEXT PRIMARY KEY,
+      at INTEGER NOT NULL,
+      lat REAL NOT NULL,
+      lng REAL NOT NULL,
+      accuracyM INTEGER,
+      sentAt INTEGER
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_positions_at ON positions(at);`,
+  ],
+
+  /* ---- v5 ------------------------------------------------------------- */
+  [
+    /*
+     * Where each thing was done.
+     *
+     * A SIBLING of the payload rather than a field inside it, and that is the
+     * whole reason it is a column here instead: `idempotencyKey` is a hash of
+     * the payload, so folding a position into it would make the same order
+     * enqueued twice from two spots on a street into two orders. Where
+     * somebody was standing is a fact about the act, not part of the record.
+     */
+    `ALTER TABLE sync_queue ADD COLUMN location TEXT;`,
+  ],
 ];
 
 /** Tables holding work the salesman authored. A sync never deletes from these. */
@@ -580,4 +659,14 @@ export const OWNED_TABLES = [
 export const REFERENCE_TABLES = [
   'customers', 'products', 'price_list', 'schemes', 'timeline_events',
   'journey_stops', 'leave_balances', 'documents', 'courses', 'notifications',
+  /*
+   * `journey_days` is here, and it is the awkward one.
+   *
+   * The office owns the day and the salesman owns his answer to it, so it is
+   * neither purely reference nor purely owned. It is cleared on sign-out
+   * because the answer is on the SERVER the moment it syncs — a refusal that
+   * has not synced is in the outbox, which survives, and one that has is
+   * already the office's record.
+   */
+  'journey_days',
 ] as const;

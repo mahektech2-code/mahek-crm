@@ -47,6 +47,13 @@ confirms it against the bank statement. `payments.deposited` /
 `depositedAt` / `depositProofId` is the first half, and the server owns the
 second.
 
+The server half had nowhere to land until `0053_receipt_cash_deposit` —
+`payment_receipts` now carries `deposited_at`, `deposited_by_id` and
+`deposit_proof_id`, and the handset's deposit reaches them. It is deliberately
+NOT a confirmation: `status` still moves to `confirmed` only when accounts find
+the money on the statement, every money path in MahekOne keys on that, and so
+the column moved no figure on any screen the day it arrived.
+
 Either half alone leaves a gap somebody reconciles from memory later. Cash in
 hand is a real personal liability for the person carrying it, so it is worth
 two steps.

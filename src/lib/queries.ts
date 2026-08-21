@@ -182,6 +182,7 @@ export async function listBackOfficeCandidates(): Promise<
 export type CustomerRow = typeof customers.$inferSelect & {
   ownerName: string | null;
   salesAmName: string | null;
+  salesManagerName: string | null;
   backOfficeAmName: string | null;
   openComplaints: number;
 };
@@ -215,6 +216,8 @@ export type CustomerListFilters = {
   status?: string;
   /** A NAME, matched against what the column shows — see the two SQL consts. */
   salesAm?: string;
+  /** The line manager above the sales seat. A NAME, like the two beside it. */
+  salesManager?: string;
   backOfficeAm?: string;
   page?: number;
   perPage?: number;
@@ -274,6 +277,26 @@ export const SALES_AM_NAME_SQL = sql<string | null>`case
   )
 end`;
 
+/**
+ * The line manager above the sales seat.
+ *
+ * The account first and the stored name second, like back office and NOT like
+ * sales. `sales_person_name` is a mirror of the customer master and is read
+ * first up there because the sheet is the better authority on who sells to an
+ * account; nothing outside MahekOne states a sales manager at all, so both
+ * halves of this seat are only ever set by somebody choosing, and the one that
+ * can be resolved to a live account is the better of the two.
+ *
+ * There is no fallback to the owner. A customer with no sales manager has no
+ * sales manager, and falling through to whoever imported the book would put
+ * one name against eleven hundred accounts and call it a line management
+ * structure.
+ */
+export const SALES_MANAGER_NAME_SQL = sql<string | null>`coalesce(
+  (select name from users u where u.id = customers.sales_manager_id),
+  customers.sales_manager_person_name
+)`;
+
 export const BACK_OFFICE_AM_NAME_SQL = sql<string | null>`coalesce(
   (select name from users u where u.id = customers.back_office_am_id),
   customers.back_office_name
@@ -294,6 +317,7 @@ export const BACK_OFFICE_AM_NAME_SQL = sql<string | null>`coalesce(
  */
 export async function listAmFilterOptions(): Promise<{
   sales: string[];
+  salesManager: string[];
   backOffice: string[];
 }> {
   const ctx = await resolveScope();
@@ -326,21 +350,32 @@ export async function listAmFilterOptions(): Promise<{
       .sort((a, b) => a.localeCompare(b));
   };
 
-  const [sales, backOffice] = await Promise.all([
+  const [sales, salesManager, backOffice] = await Promise.all([
     distinctNames(SALES_AM_NAME_SQL),
+    distinctNames(SALES_MANAGER_NAME_SQL),
     distinctNames(BACK_OFFICE_AM_NAME_SQL),
   ]);
-  return { sales, backOffice };
+  return { sales, salesManager, backOffice };
 }
 
-export async function listCustomersPage(
+/**
+ * What a set of filters MEANS, as one clause, scope included.
+ *
+ * Exported because the customer list is no longer the only thing that has to
+ * agree with it. "Move everything under Rahul to Sunita" is a write against
+ * whatever the screen is showing, and the honest way to do that is for the
+ * write to run the same clause the list ran rather than a second reading of
+ * the same five filters. Two spellings of "which customers" is how a bulk
+ * action comes to move a set nobody reviewed.
+ *
+ * The scope is part of it, deliberately: somebody acting on "all matching"
+ * acts on what they can see and nothing behind it.
+ */
+export async function customerFilterClause(
   filters: CustomerListFilters = {},
-): Promise<CustomerListPage> {
+): Promise<SQL | undefined> {
   const ctx = await resolveScope();
-  const ids = scopedUserIds(ctx.scope);
-  const perPage = Math.min(Math.max(filters.perPage ?? 25, 1), 200);
-
-  const scoped = scopedToUsers(ids);
+  const scoped = scopedToUsers(scopedUserIds(ctx.scope));
 
   const where: SQL[] = [];
   if (scoped) where.push(scoped);
@@ -361,11 +396,25 @@ export async function listCustomersPage(
   if (filters.salesAm) {
     where.push(sql`${SALES_AM_NAME_SQL} = ${filters.salesAm}`);
   }
+  if (filters.salesManager) {
+    where.push(sql`${SALES_MANAGER_NAME_SQL} = ${filters.salesManager}`);
+  }
   if (filters.backOfficeAm) {
     where.push(sql`${BACK_OFFICE_AM_NAME_SQL} = ${filters.backOfficeAm}`);
   }
 
-  const clause = where.length ? and(...where) : undefined;
+  return where.length ? and(...where) : undefined;
+}
+
+export async function listCustomersPage(
+  filters: CustomerListFilters = {},
+): Promise<CustomerListPage> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const perPage = Math.min(Math.max(filters.perPage ?? 25, 1), 200);
+
+  const scoped = scopedToUsers(ids);
+  const clause = await customerFilterClause(filters);
 
   // One pass for the count and the tiles. Summing these in the browser meant
   // sending every row to add them up.
@@ -400,6 +449,10 @@ export async function listCustomersPage(
       // where the sheet is silent. Reading the account first showed the
       // telecaller who owns the book as the salesperson on every customer.
       salesAmName: SALES_AM_NAME_SQL,
+      // The line manager above the sales seat. Read the same way in all three
+      // places this row is built, or the list and the record page would show
+      // two different answers about one account.
+      salesManagerName: SALES_MANAGER_NAME_SQL,
       // The ACCOUNT first here, and the sheet's name second — the opposite of
       // the sales side above, deliberately. `sales_am_id` is bulk-assigned by
       // the import, so reading it first names the telecaller who owns the book
@@ -425,6 +478,7 @@ export async function listCustomersPage(
       ...r.customer,
       ownerName: r.ownerName,
       salesAmName: r.salesAmName,
+      salesManagerName: r.salesManagerName,
       backOfficeAmName: r.backOfficeAmName,
       openComplaints: Number(r.openComplaints),
     })),
@@ -454,6 +508,10 @@ export async function listCustomers(): Promise<CustomerRow[]> {
       // where the sheet is silent. Reading the account first showed the
       // telecaller who owns the book as the salesperson on every customer.
       salesAmName: SALES_AM_NAME_SQL,
+      // The line manager above the sales seat. Read the same way in all three
+      // places this row is built, or the list and the record page would show
+      // two different answers about one account.
+      salesManagerName: SALES_MANAGER_NAME_SQL,
       // The ACCOUNT first here, and the sheet's name second — the opposite of
       // the sales side above, deliberately. `sales_am_id` is bulk-assigned by
       // the import, so reading it first names the telecaller who owns the book
@@ -476,6 +534,7 @@ export async function listCustomers(): Promise<CustomerRow[]> {
     ...r.customer,
     ownerName: r.ownerName,
     salesAmName: r.salesAmName,
+    salesManagerName: r.salesManagerName,
     backOfficeAmName: r.backOfficeAmName,
     openComplaints: Number(r.openComplaints),
   }));
@@ -498,6 +557,10 @@ export const getCustomer = cache(async function getCustomer(
       // where the sheet is silent. Reading the account first showed the
       // telecaller who owns the book as the salesperson on every customer.
       salesAmName: SALES_AM_NAME_SQL,
+      // The line manager above the sales seat. Read the same way in all three
+      // places this row is built, or the list and the record page would show
+      // two different answers about one account.
+      salesManagerName: SALES_MANAGER_NAME_SQL,
       // The ACCOUNT first here, and the sheet's name second — the opposite of
       // the sales side above, deliberately. `sales_am_id` is bulk-assigned by
       // the import, so reading it first names the telecaller who owns the book
@@ -515,6 +578,7 @@ export const getCustomer = cache(async function getCustomer(
     ...rows[0].customer,
     ownerName: rows[0].ownerName,
     salesAmName: rows[0].salesAmName,
+    salesManagerName: rows[0].salesManagerName,
     backOfficeAmName: rows[0].backOfficeAmName,
   };
 });

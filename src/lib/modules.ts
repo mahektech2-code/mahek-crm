@@ -256,13 +256,33 @@ export function moduleKeysForApp(app: AppId): string[] {
   return modulesForApp(app).map((m) => m.key);
 }
 
-/** The review table renders in sections, in the order the sidebar draws them. */
+/**
+ * The review table renders in sections, in the order the sidebar draws them.
+ *
+ * ONE SECTION PER GROUP NAME, not one per run of them. This used to merge only
+ * ADJACENT modules, which is the same thing right up until somebody inserts a
+ * module in the middle of a run — and `sales.approvals` is exactly that: it is
+ * deliberately not in the sidebar, so it was written next to Today where the
+ * comment explaining it belongs, and it split Overview in half. The table drew
+ * OVERVIEW, then DECISIONS, then OVERVIEW again, and React was handed two
+ * children keyed "Overview".
+ *
+ * The order is first appearance, so the sidebar's order still decides the
+ * sections. What changes is only that a group is whole wherever its members
+ * were written.
+ */
 export function moduleGroupsForApp(app: AppId): Array<{ group: string; modules: AppModule[] }> {
   const out: Array<{ group: string; modules: AppModule[] }> = [];
+  const at = new Map<string, { group: string; modules: AppModule[] }>();
   for (const m of modulesForApp(app)) {
-    const last = out[out.length - 1];
-    if (last && last.group === m.group) last.modules.push(m);
-    else out.push({ group: m.group, modules: [m] });
+    const existing = at.get(m.group);
+    if (existing) {
+      existing.modules.push(m);
+      continue;
+    }
+    const fresh = { group: m.group, modules: [m] };
+    at.set(m.group, fresh);
+    out.push(fresh);
   }
   return out;
 }

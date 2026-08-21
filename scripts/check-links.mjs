@@ -27,6 +27,16 @@ const seen = new Map(); // url -> status
 const linkedFrom = new Map(); // url -> page that linked to it
 const queue = ["/apps"];
 
+/**
+ * How many query-string variants of one pathname are worth crawling.
+ *
+ * Enough to reach the branches a parameter turns on, and few enough that a
+ * date-paged screen cannot walk a calendar for ever.
+ */
+const MAX_QUERY_VARIANTS = 3;
+/** pathname -> how many of its variants have been queued. */
+const variants = new Map();
+
 /** Only follow same-origin, non-asset links. */
 function normalise(href, from) {
   if (!href || href.startsWith("#") || href.startsWith("mailto:")) return null;
@@ -40,6 +50,25 @@ function normalise(href, from) {
   if (/\.(png|jpe?g|svg|ico|css|js|woff2?)$/i.test(u.pathname)) return null;
   if (u.pathname.startsWith("/_next") || u.pathname.startsWith("/api")) return null;
   const path = u.pathname + u.search;
+
+  /*
+   * A screen that pages by date links to the day either side of it, and that
+   * day links to the day either side of THAT. The link space is infinite: this
+   * crawl walked /sales?day=… from 2022 to 2030 and would have gone on for
+   * ever, which looks exactly like a hang.
+   *
+   * So a pathname is crawled with a bounded number of query variants. The
+   * point of following a query string at all is to reach the branches a
+   * parameter turns on — a filtered list, a different day — and three is
+   * enough for that. The bare path is never counted against the cap, because
+   * that one is the screen itself.
+   */
+  if (u.search) {
+    const seenHere = (variants.get(u.pathname) ?? 0) + 1;
+    if (seenHere > MAX_QUERY_VARIANTS) return null;
+    variants.set(u.pathname, seenHere);
+  }
+
   if (!linkedFrom.has(path)) linkedFrom.set(path, from);
   return path;
 }

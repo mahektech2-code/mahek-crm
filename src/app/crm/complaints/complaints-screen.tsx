@@ -492,17 +492,22 @@ export function ComplaintsScreen({
                     return;
                   }
                   setBusy(true);
-                  const result = await run(
-                    resolveComplaint({
-                      id: current.id,
-                      resolutionNote: notes,
-                      customerTold: told,
-                    }),
-                  );
-                  setBusy(false);
-                  if (result.ok) {
-                    setCurrent(null);
-                    router.refresh();
+                  // `finally`: `run` re-throws, and a flag cleared only on the
+                  // way past the await disables this button for good.
+                  try {
+                    const result = await run(
+                      resolveComplaint({
+                        id: current.id,
+                        resolutionNote: notes,
+                        customerTold: told,
+                      }),
+                    );
+                    if (result.ok) {
+                      setCurrent(null);
+                      router.refresh();
+                    }
+                  } finally {
+                    setBusy(false);
                   }
                 }}
               >

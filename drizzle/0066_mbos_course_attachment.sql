@@ -1,0 +1,13 @@
+-- Training material is its own parent kind.
+--
+-- It could have borrowed `mbos_document`, and that would have been wrong in the
+-- one place it matters: `canRead` decides who may open a file FROM the parent
+-- kind, so a course deck filed as a document would be read under the document
+-- rules — role lists and a customer's scope, neither of which a course has.
+-- Two audiences, two rules, two kinds.
+--
+-- Its own migration because Postgres refuses to USE a value added to an enum
+-- until that transaction commits, and drizzle-kit applies every pending
+-- migration in one — so a value added here cannot be written by anything in the
+-- same batch. Nothing in this file uses it; the code that does ships behind it.
+ALTER TYPE "attachment_parent" ADD VALUE IF NOT EXISTS 'mbos_course';

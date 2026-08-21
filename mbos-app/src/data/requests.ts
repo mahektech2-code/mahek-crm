@@ -1,7 +1,9 @@
 import { all, newId, one, run } from '../db';
-import { insertAndQueue, insertLocal, stamp, updateAndQueue } from './write';
+import { insertAndQueue, stamp, updateAndQueue } from './write';
 import { getConfig } from './config';
 import { leaveDays, overlaps, balanceAfter } from '../engines/leave';
+import { isoDate } from '../lib/format';
+import { wireComplaintCategory } from '../lib/wire';
 
 /**
  * The things that need somebody's permission: expenses, leave, samples.
@@ -17,6 +19,19 @@ export type ApprovalType =
   | 'order_over_credit' | 'order_over_threshold' | 'expense_claim'
   | 'leave' | 'tour' | 'sample' | 'attendance_regularisation' | 'out_of_territory';
 
+/**
+ * Ask somebody in the office to say yes.
+ *
+ * This used to write the row and stop. It marked itself `queued`, which is the
+ * word this app uses for "on its way", and it was on its way nowhere: a
+ * salesman standing in a shop over his credit limit was waiting on a request
+ * that existed on his own handset and no server had ever heard of. It goes out
+ * like every other write now.
+ *
+ * `dependsOn` is the subject. An approval that overtook the expense or the
+ * leave request it is about would reach the office naming a record nobody
+ * could open.
+ */
 export async function raiseApproval(args: {
   type: ApprovalType;
   subjectType: string;
@@ -24,20 +39,23 @@ export async function raiseApproval(args: {
   reason: string;
   deviceId: string;
 }): Promise<string> {
-  const id = newId('approval');
-  await insertLocal('approvals', {
-    id,
-    type: args.type,
-    subjectType: args.subjectType,
-    subjectId: args.subjectId,
-    reason: args.reason,
-    requestedAt: Date.now(),
-    state: 'pending',
-    clientCreatedAt: Date.now(),
-    deviceId: args.deviceId,
-    syncState: 'queued',
+  return insertAndQueue({
+    table: 'approvals',
+    entityType: 'approval',
+    dependsOn: [args.subjectId],
+    row: {
+      id: newId('approval'),
+      type: args.type,
+      subjectType: args.subjectType,
+      subjectId: args.subjectId,
+      reason: args.reason,
+      requestedAt: Date.now(),
+      state: 'pending',
+      clientCreatedAt: Date.now(),
+      deviceId: args.deviceId,
+      syncState: 'queued',
+    },
   });
-  return id;
 }
 
 /* ------------------------------------------------------------- expenses */
@@ -89,7 +107,15 @@ export async function claimExpense(args: {
       remarks: args.remarks,
       state: 'Pending',
     },
-    payloadExtras: { overCap },
+    /* `spentOn` and `remarks` are this table's words; MahekOne reads
+       `expenseDate` and `description`, and the first of them is REQUIRED — so
+       every claim made in the field was refused for want of a date it was
+       carrying all along. PROTOCOL.md §4.1. */
+    payloadExtras: {
+      overCap,
+      expenseDate: args.spentOn,
+      description: args.remarks || undefined,
+    },
   });
 
   if (args.billPhotoId) await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, args.billPhotoId]);
@@ -168,6 +194,9 @@ export async function applyForLeave(args: {
   const id = await insertAndQueue({
     table: 'leave_requests',
     entityType: 'leave',
+    /* Asking for leave is paperwork and often done from home. Pinning a
+       location to it records where somebody lives, to answer nothing. */
+    location: false,
     row: {
       ...base,
       userId: args.userId,
@@ -223,6 +252,11 @@ export async function logComplaint(args: {
       photoIds: args.photoIds ?? [],
       status: 'open',
     },
+    /* The five categories on the buttons are the design's words and MahekOne's
+       column is an enum, so the picker's own string was refused outright —
+       a complaint lost at the door is the one record here that had to move
+       fast. PROTOCOL.md §4.1. */
+    payloadExtras: { category: wireComplaintCategory(args.category) },
     dependsOn: args.visitId ? [args.visitId] : [],
   });
 
@@ -266,6 +300,16 @@ export async function requestSample(args: {
       requestedAt: Date.now(),
       state: 'Requested',
       followUpDate: args.followUpDate,
+    },
+    /* Cans are `cans` here and `quantityCans` on the wire, and the reason for
+       the sample is the note MahekOne keeps against it. Neither was refused —
+       both were silently dropped, so a sample reached the office naming a
+       customer and nothing else. PROTOCOL.md §4.1. */
+    payloadExtras: {
+      quantityCans: args.cans,
+      requestedDate: isoDate(new Date()),
+      feedbackNotes: args.reason || undefined,
+      visitId: args.visitId ?? undefined,
     },
     dependsOn: args.visitId ? [args.visitId] : [],
   });

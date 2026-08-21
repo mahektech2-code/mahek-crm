@@ -71,6 +71,7 @@ import {
 } from "@/lib/recompute";
 import { addDays } from "@/lib/business-date";
 import { updateAccountManagers } from "@/lib/actions/account-manager";
+import { assignSalesManager } from "@/lib/actions/sales-manager";
 import { projectParties } from "@/lib/services/party-projection-service";
 import { assignedUserId } from "@/lib/access-control";
 import { partyNameKey } from "@/lib/sheet-parse";
@@ -108,6 +109,7 @@ import {
   rejectReceipt,
 } from "@/lib/services/receipt-service";
 import { globalSearch ,
+  listAmFilterOptions,
   listCustomersPage,
 } from "@/lib/queries";
 import { describeQuantity } from "@/lib/catalogue";
@@ -7182,5 +7184,258 @@ describe("What the telecaller was told would happen next", () => {
 
     assert.equal(r.data.nextStep?.kind, "none");
     assert.equal(r.data.nextStep?.date, null, "a date was invented for a customer nothing will ring");
+  });
+});
+
+/* ------------------------------------------ the third seat: sales manager */
+
+/**
+ * Who the SALESPERSON answers to.
+ *
+ * It is the one of the three seats that drives nothing — no queue, no scope,
+ * no target, no collections list — and that is exactly why it is a manager's
+ * to set while the other two stay accounts' and admin's. These tests pin both
+ * halves of that: that a manager may, and that the seat still moves nothing.
+ */
+describe("The sales manager is a third seat, and a manager's to set", () => {
+  const REASON = "Salesperson left";
+
+  test("a manager may set it; a telecaller may not", async () => {
+    const customer = await makeCustomer(priya.id, { name: "Third Seat" });
+
+    setTestUser(priya);
+    const refused = await assignSalesManager({
+      scope: { kind: "ids", customerIds: [customer.id] },
+      target: { kind: "user", userId: rakesh.id },
+      reasonCode: REASON,
+    });
+    assert.equal(refused.ok, false, "a telecaller must not move a book");
+
+    setTestUser(manager);
+    const done = await assignSalesManager({
+      scope: { kind: "ids", customerIds: [customer.id] },
+      target: { kind: "user", userId: rakesh.id },
+      reasonCode: REASON,
+    });
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
+
+    const [row] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(row.salesManagerId, rakesh.id);
+    assert.equal(row.salesManagerPersonName, rakesh.name);
+  });
+
+  /**
+   * The whole reason it is a manager's. If setting it moved a book, the
+   * conflict that keeps `customer.reassign` out of a manager's hands would
+   * apply here too — a manager could move accounts, and therefore targets,
+   * between their own people by way of the seat nobody was watching.
+   */
+  test("setting it moves no book: the sales seat and the sheet mark are untouched", async () => {
+    const customer = await makeCustomer(priya.id, { name: "Moves Nothing" });
+
+    setTestUser(manager);
+    const done = await assignSalesManager({
+      scope: { kind: "ids", customerIds: [customer.id] },
+      target: { kind: "user", userId: rakesh.id },
+      reasonCode: REASON,
+    });
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
+
+    const [row] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(row.salesAmId, priya.id, "whose book it is must not have moved");
+    assert.equal(row.ownerId, priya.id);
+    /*
+     * And no `amDecidedAt`. That mark holds the sheet off the sales and back
+     * office seats; stamping it here would silently freeze two seats against a
+     * sync as a side effect of naming a line manager.
+     */
+    assert.equal(row.amDecidedAt, null, "a sales manager change is not a decision about the other two seats");
+  });
+
+  test("it is written down: one history row per account, with the reason", async () => {
+    const customer = await makeCustomer(priya.id, { name: "Written Down" });
+
+    setTestUser(manager);
+    await assignSalesManager({
+      scope: { kind: "ids", customerIds: [customer.id] },
+      target: { kind: "user", userId: rakesh.id },
+      reasonCode: REASON,
+      note: "took the Nashik line",
+    });
+
+    const history = await db
+      .select()
+      .from(customerAmChanges)
+      .where(eq(customerAmChanges.customerId, customer.id));
+    assert.equal(history.length, 1);
+    assert.equal(history[0].role, "sales_manager");
+    assert.equal(history[0].toUserId, rakesh.id);
+    assert.equal(history[0].reasonCode, REASON);
+    assert.equal(history[0].note, "took the Nashik line");
+  });
+
+  /**
+   * The day somebody leaves. The set that has to move is spread over pages
+   * nobody is going to tick, so the transfer runs the FILTERS — and it runs
+   * them on the server, through the same clause the list ran.
+   */
+  test("everything under one manager transfers by filter, and nothing else does", async () => {
+    for (let i = 0; i < 5; i++) {
+      await makeCustomer(priya.id, {
+        name: `Leaver ${i}`,
+        salesManagerId: rakesh.id,
+        salesManagerPersonName: rakesh.name,
+      });
+    }
+    await makeCustomer(priya.id, { name: "Somebody Else", salesManagerPersonName: "Western Line Sale" });
+    await makeCustomer(priya.id, { name: "Nobody At All" });
+
+    setTestUser(manager);
+    const moved = await assignSalesManager({
+      scope: { kind: "filters", filters: { salesManager: rakesh.name } },
+      target: { kind: "user", userId: manager.id },
+      reasonCode: REASON,
+      expectedCount: 5,
+    });
+    assert.equal(moved.ok, true, moved.ok ? "" : moved.error);
+
+    const under = await listCustomersPage({ salesManager: manager.name, perPage: 200 });
+    assert.equal(under.total, 5, "everything under the leaver moved");
+    const left = await listCustomersPage({ salesManager: rakesh.name, perPage: 200 });
+    assert.equal(left.total, 0, "and nothing was left behind");
+    const untouched = await listCustomersPage({
+      salesManager: "Western Line Sale",
+      perPage: 200,
+    });
+    assert.equal(untouched.total, 1, "a filter must not reach past what it names");
+  });
+
+  /**
+   * The count is reviewed on one screen and spent on another. Between the two
+   * an import can land, and a transfer that would touch a different set has to
+   * stop rather than quietly grow.
+   */
+  test("a filtered transfer is refused when the set has changed under it", async () => {
+    for (let i = 0; i < 3; i++) {
+      await makeCustomer(priya.id, {
+        name: `Drifting ${i}`,
+        salesManagerId: rakesh.id,
+        salesManagerPersonName: rakesh.name,
+      });
+    }
+    setTestUser(manager);
+    const stale = await assignSalesManager({
+      scope: { kind: "filters", filters: { salesManager: rakesh.name } },
+      target: { kind: "user", userId: manager.id },
+      reasonCode: REASON,
+      expectedCount: 2,
+    });
+    assert.equal(stale.ok, false, "a set that grew under the review must not be moved");
+  });
+
+  /**
+   * Several of the people running a sales line here have never signed in.
+   * Refusing them would mean the true answer could not be recorded at all,
+   * which is the state `salesPersonName` and `backOfficeName` already exist to
+   * escape.
+   */
+  test("somebody with no login can hold the seat, and the filter can find them", async () => {
+    const staff = await makeEmployee("Prakash Vasudev Prasad", "active");
+
+    const customer = await makeCustomer(priya.id, { name: "No Login Above Them" });
+
+    setTestUser(manager);
+    const done = await assignSalesManager({
+      scope: { kind: "ids", customerIds: [customer.id] },
+      target: { kind: "employee", employeeId: staff.id },
+      reasonCode: REASON,
+    });
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
+
+    const [row] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customer.id));
+    assert.equal(row.salesManagerId, null, "a name is not an account");
+    assert.equal(row.salesManagerPersonName, "Prakash Vasudev Prasad");
+
+    const options = await listAmFilterOptions();
+    assert.ok(
+      options.salesManager.includes("Prakash Vasudev Prasad"),
+      "a filter that cannot offer a name the table is showing is one somebody tries once",
+    );
+    const page = await listCustomersPage({
+      salesManager: "Prakash Vasudev Prasad",
+      perPage: 200,
+    });
+    assert.equal(page.total, 1);
+  });
+
+  /**
+   * A lead answers to its OWNER and has no salesperson, so there is no seat
+   * for this one to sit above. Writing it anyway would store something no
+   * screen shows — the list draws no sales manager line on a lead and the
+   * record page names none — which ends with somebody insisting they set it
+   * and nobody able to find it.
+   */
+  test("a lead is left alone, counted, and said out loud", async () => {
+    await makeCustomer(priya.id, { name: "Real Customer" });
+    await makeCustomer(priya.id, {
+      name: "Just A Lead",
+      kind: "lead",
+      salesAmId: null,
+    });
+
+    setTestUser(manager);
+    const done = await assignSalesManager({
+      scope: { kind: "filters", filters: {} },
+      target: { kind: "user", userId: rakesh.id },
+      reasonCode: REASON,
+      expectedCount: 2,
+    });
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
+    assert.match(
+      done.ok ? (done.message ?? "") : "",
+      /lead/i,
+      "a count smaller than the screen promised has to say why",
+    );
+
+    const [lead] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.name, "Just A Lead"));
+    assert.equal(lead.salesManagerId, null, "a lead has no seat for this to sit above");
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.name, "Real Customer"));
+    assert.equal(customer.salesManagerId, rakesh.id);
+  });
+
+  test("re-assigning to the same person writes nothing", async () => {
+    const customer = await makeCustomer(priya.id, {
+      name: "Already Theirs",
+      salesManagerId: rakesh.id,
+      salesManagerPersonName: rakesh.name,
+    });
+
+    setTestUser(manager);
+    const again = await assignSalesManager({
+      scope: { kind: "ids", customerIds: [customer.id] },
+      target: { kind: "user", userId: rakesh.id },
+      reasonCode: REASON,
+    });
+    assert.equal(again.ok, true);
+    const history = await db
+      .select()
+      .from(customerAmChanges)
+      .where(eq(customerAmChanges.customerId, customer.id));
+    assert.equal(history.length, 0, "a no-op must not tell anybody their book grew");
   });
 });

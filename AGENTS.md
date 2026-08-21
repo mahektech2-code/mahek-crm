@@ -235,6 +235,9 @@ src/
                            saved, and what happens next with this customer
     crm/payment-mode-fields.tsx
                            how the money came, asked once for three screens
+    crm/sales-manager-dialog.tsx
+                           the third seat — who the salesperson answers to,
+                           set on a tick-list or on a whole filtered book
   db/                      schema, client, seed
     catalogue-seed.ts      the product master, GENERATED from the document
   lib/
@@ -276,6 +279,9 @@ src/
     result.ts              the Result type every action returns
     queries.ts             every scope-aware read
     actions/               every write
+    actions/sales-manager.ts
+                           assignSalesManager — the third seat, by ids or by
+                           the filters the list is showing
     journeys.test.ts       the six §11 journeys, end to end
     format.ts merge.ts csv.ts scope.ts auth.ts
   app/admin/               the console — platform sections (platform-real.tsx,
@@ -460,13 +466,37 @@ drifts within a release, and the sentence a telecaller reads out on a phone
 call would be the copy that was wrong. Pure, like every other engine, and
 `nextStepForCustomer` is the one place it is wired to data.
 
-**A prediction and a promise are drawn differently, because one of them is a
-commitment.** `booked` is a callback the customer asked for; `scheduled` is a
-date the rules produce and which moves the moment they order, pay or ask for a
-callback, and the screen says so underneath. `decide` and `none` carry NO date
-at all — a customer nobody can reach and one marked do-not-contact will not be
-brought back by anything, and putting a date on either would be an invention
-the telecaller has no way to check.
+**A prediction and a promise are drawn differently, and the BADGE is what
+draws them.** `booked` is a callback the customer asked for; `scheduled` is a
+date the rules produce, and it does move the moment they order, pay or ask for
+a callback. That used to be said in a sentence under the date — and the
+sentence took the confirmation back in the same breath, which is the one thing
+this screen cannot afford: a telecaller cannot act on a date the screen is
+already apologising for, and the caveat was true of every scheduled date ever
+shown, so it carried no information at the moment it was read. The badge says
+which kind it is without arguing with the line above it. `decide` and `none`
+carry NO date at all — a customer nobody can reach and one marked
+do-not-contact will not be brought back by anything, and putting a date on
+either would be an invention the telecaller has no way to check.
+
+**The headline is one fixed form of words, and it names the screen.** "Comes
+back to your Call Log on Mon 1 Sep — 13 days away", the same shape for every
+reason, with what to do and why on the line beneath: "Ask for the order — they
+are due to reorder." It said "Back on your list" before, which was true and
+answered a question nobody asked — a telecaller does not hold a mental model
+of "the list", they open the Call Log. A confirmation read sixty times a day
+works by being recognised rather than read, so the part that VARIES is the
+reason underneath, which is the only half worth reading twice.
+
+**And it is shown by every path that logs a call, not just the calling
+queue.** The collections follow-up panel on `/crm/payments` saved and advanced
+straight to the next overdue account for as long as it existed — so the
+telecaller who had just agreed a promise date with a customer had nowhere to
+be told when that customer comes back, on the screen where the question is
+asked hardest. `logPaymentFollowUp` calls the same `nextStepForCustomer` after
+its recompute, stores the six columns on the `calls` row it already writes,
+and `PaymentPanel` renders the same dialog. A confirmation that appears on one
+of two save paths is one telecallers learn not to rely on.
 
 **The headline is the EARLIEST day they come back, and the promise is named
 beside it.** On a prospect or an overdue account the cadence often lands before
@@ -1315,6 +1345,57 @@ numbers between their own people, including themselves — the same conflict
 `order.approve` exists to avoid, one level up. `customer.reassign` sits in
 `ACCOUNTS_ONLY` and is checked in the action, not by hiding the button.
 
+**An account has a THIRD seat above the sales one, and it drives nothing.**
+The sales manager is who the salesperson answers to — the person a regional
+review starts from, and the person whose departure moves a hundred accounts at
+once. `ASSIGNED_TO_SQL` does not read it, no queue is dated from it, no target
+counts against it, no collections list narrows by it and no scope resolves
+through it. That is the whole reason it can be a MANAGER's while the two
+beside it stay accounts' and admin's: `customer.reassign` is the narrowest
+capability in the app because moving the sales seat moves numbers between a
+manager's own people, and moving this one moves none. It is its own capability
+(`customer.assignSalesManager`), its own action and its own dialog — folding it
+into `updateAccountManagers` would have put one function behind one capability
+doing two jobs with two answers about who may do them, and the generous answer
+always wins in the end.
+
+**And it takes no `amDecidedAt`.** That mark exists to hold the sheet off the
+two seats it keeps restating; the customer master carries no sales manager at
+all, so there is nothing to hold off, and stamping it here would silently
+freeze the OTHER two seats against a sync as a side effect of naming a line
+manager. `sales_manager_person_name` is the seat itself where the person
+holding it has no login, like `back_office_name` and unlike `sales_person_name`
+— nothing rebuilds it, because nothing outside MahekOne states it.
+
+**A whole book moves by FILTER, not by ticking twenty-five rows at a time.**
+The question this seat exists to answer is asked hardest on the day somebody
+leaves, and the answer is "everything Rahul had" — a hundred and forty-seven
+accounts spread over six pages. So the transfer sends the filters and the
+server runs `customerFilterClause`, the SAME clause the list ran to draw the
+screen the person is looking at. Re-deriving "which customers" on the way in
+would be a second reading of it, and a bulk action that moves a set nobody
+reviewed is the worst thing on the screen. The count that was on the screen is
+sent with it and refused if it no longer matches: between reviewing a number
+and spending it, an import can land, and a transfer that would touch a
+different set has to stop rather than quietly grow.
+
+**And the review changes shape with the scope.** A tick-list is read line by
+line and the from-column is what catches a selection that caught too much. A
+hundred and forty-seven checkboxes is a review in name only — it looks like
+diligence and is scrolled past — so a filtered transfer is reviewed as the
+count, the destination, and the filters said back in words. No filters at all
+is the whole book, and the screen says exactly that in red: it is a legitimate
+thing to do and a terrifying thing to do by accident.
+
+**The three seats are drawn at ONE font size.** The second line of that column
+was `text-xs` under a `text-sm` first line, which made the back office manager
+read as a footnote to the salesperson rather than as the other half of the same
+answer. They are peers — one sells to the account, one raises its paperwork,
+one says who the first answers to — and a hierarchy of type sizes down a column
+claims a hierarchy of importance that does not exist. What separates the lines
+is colour on the LABEL: muted label, plain name, so the eye picks out the three
+names without reading a word of the labels.
+
 **An account has TWO managers and they move independently.** Sales is whose
 book it is; back office is dispatch, billing and paperwork. Either or both can
 be changed in one action, and each writes its own history row, because a
@@ -1833,6 +1914,150 @@ between. `ALTER TYPE app_id RENAME VALUE` changes it in place: every existing
 grant keeps pointing at the same app without being touched. The old URLs are
 kept alive by a permanent redirect in `next.config.ts`, because a slug lives in
 bookmarks, in emails and in screenshots long after it has changed in the code.
+
+**A plan is agreed, not issued, and BOTH halves of that are writes.** The
+office proposes a city and the salesman answers — `proposed → refused → agreed
+→ planned` — and it is the salesman who picks the shops, because he is the one
+who knows which doors are worth a Tuesday morning. He could agree to a day and
+then had no way to fill it, so the office arranged the stops; that is still
+available to them, as the exception it should be rather than the only path.
+`plan_stops` carries the WHOLE list rather than a difference: sending a shorter
+one is how a shop is unpicked, and a merge would make unpicking impossible.
+Picking nothing leaves the day `agreed`, because an empty day claiming to be a
+route is the state the model exists to prevent. A shop that has left his book
+since he picked it is dropped, counted and NOTIFIED — refusing the whole day
+over one stale id loses the nineteen he got right, and dropping it silently is
+how somebody walks a day missing a stop they chose.
+
+**A pull says what exists; only a tombstone says what stopped.** A deleted row
+has no `updated_at` for a delta to notice, so without `mbos_deletions` a
+withdrawn document, a removed stop and a reassigned customer sit on the handset
+for ever — and the salesman walks to a shop that is not his any more with
+nothing anywhere looking wrong. It is reference data only: nothing he authored
+is ever deleted by a sync, not a rejected order and not a visit that lost a
+conflict. `user_id` null means everybody, which is what a withdrawn product is.
+
+**The price list is replaced wholesale, and everything else is upserted.** A
+rate that was withdrawn has to disappear, and a per-row upsert leaves it behind
+— an order priced from a rate nobody sells at. It is a few hundred rows of three
+columns; a delta would save nothing worth the way it fails.
+
+**A parameter is a string, not a Date.** `postgres` serialises a JS Date by
+asking Node to measure it as text, and on Node 25 that throws — inside the
+driver, where no type check sees it. Every query in the MBOS pull delta carried
+the cursor, so every one of them failed and the whole pull answered 500 the
+moment a handset had a cursor; bootstrap passes no Date at all, which is exactly
+why sign-in worked and syncing after it did not. An ISO instant carries its own
+zone, so this is not the bare-cast rule in different clothes.
+
+**Publishing to the field is a decision, and withdrawing is the same decision
+reversed.** The document library and the training centre had tables, handset
+screens that read them, and no door between the two — both were empty because
+they could not be filled. Neither `publishDocument` nor `publishCourse` deletes:
+a policy a salesman quoted to a customer in March is a fact about March, and
+somebody half-way through a course does not become unfinished because the
+material was taken down. `active = false` takes it off the handsets and the
+tombstone is what tells them it went.
+
+**A document must have a file; a course need not.** A briefing delivered in a
+meeting is still a course to record and tick off. A document with nothing behind
+it is a row the handset lists and cannot open, and the failure — a tap that does
+nothing — says nothing about why, so it is refused at the form instead.
+
+**A course's file is its own attachment parent.** It could have borrowed
+`mbos_document`, and that would be wrong exactly where it matters: `canRead`
+decides who may open a file FROM the parent kind, so a course deck filed as a
+document would be read under the document rules — role lists and a customer's
+scope, neither of which a course has.
+
+**Salary is read, never written.** HR maintains the employee workbook, HRMS
+mirrors it hash-for-hash, and the salary columns are already in it — so the
+Sales Dashboard reads what payroll publishes and a correction is made in the
+workbook. Days worked and reimbursements sit BESIDE the pay without being added
+to it: a reimbursement is money owed back rather than earnings, and a single
+figure combining them is neither. There is no incentive column, because
+MahekOne sets no monthly target for a field salesman and a figure with nothing
+to be computed from would be an invention on the one screen where a wrong number
+is least forgivable.
+
+**Tracking runs between the check-in and the check-out and not one second either
+side.** A track that carried on after the day was closed would be following
+somebody home. The handset takes a fix every few minutes and posts batches to
+its own endpoint rather than through the outbox — a position is one of a
+hundred, worth nothing alone, and queueing them ahead of the visit behind them
+on a 2G connection buys nothing. `mbos.location.trackWhileWorking` is checked in
+the route as well as on the handset, because a hidden control is not a disabled
+feature.
+
+**Every activity is logged with where it was done, and it is written in ONE
+place.** Four MBOS tables carried a coordinate and twenty-three did not, so an
+order taken at a shop, a payment collected at a counter and a complaint raised
+in a godown were all recorded with no idea where they happened.
+`mbos_activity_locations` is one row per activity rather than a lat/lng pair on
+each table — "where was this done" is one question with one answer shape, and
+answering it in twelve places is answering it in eleven and forgetting the
+twelfth. The server writes it in the sync DISPATCHER and no handler mentions it,
+which is what makes a thirteenth entity type carry it by existing; the handset
+attaches it in `enqueue`, the one function every write passes through, for the
+same reason.
+
+**It is a sibling of the payload, never a field inside it.** `idempotencyKey` is
+a hash of the payload, so folding a position in would make the same order
+enqueued twice from two spots on a street into two orders. Where somebody stood
+is a fact about the act, not part of the record's content.
+
+**A position never delays a save, and never costs one.** `whereNow()` answers
+from the freshest fix already known — almost always one the day's trail took
+minutes ago, which is why this needs no extra battery — and the top-up happens
+after the write has returned. A missing fix, a refused permission, a nonsense
+coordinate: the activity lands regardless, which is the same rule attachments
+follow and for the same reason.
+
+**Age is part of the reading, exactly as accuracy is.** Four minutes is evidence
+of where somebody stood; four hours is evidence of nothing. Both are stored with
+their age and `mbos.location.activityFixMaxAgeSeconds` decides what the screens
+CALL stale — dropping the older one would throw away a fact to avoid having to
+explain it. A stale mark is drawn hollow rather than hidden: the act is certain
+and only its place is not.
+
+**No fix is a recorded fact, not a missing row.** Coordinates null with a reason
+says we asked and could not; no row at all says nothing asked. Those are
+different facts about somebody's day and no screen may render them alike.
+
+**Paperwork carries no location, and that is deliberate.** Leave requests,
+agreeing a proposed day and picking shops all happen on a sofa at nine in the
+evening as often as anywhere. Where an order was taken answers a real question;
+where a form was filled in records where somebody lives and answers none.
+
+**It is written only for an ACCEPTED item.** A refused order did not happen, and
+a position for it is a record of somewhere a salesman stood while something
+failed — noise on every screen, and one more row held about a person for no
+reason.
+
+**The Live map has no tiles under it, and the design never asked for any.** It
+is pins on a grid: an equirectangular projection of the team's own bounding box,
+so a pin's place is its place relative to everybody else — who is out east, who
+is bunched together, who is nowhere near their beat. Streets would mean sending
+the coordinates of Mahek's salesmen to whoever supplies them, on every render,
+plus a key and a bill, to answer a question nobody was asking. Two views, because
+they answer two questions: where they are NOW is the morning one, and everywhere
+they went TODAY is the evening one.
+
+**The projection FITS, it does not fill.** One scale for both axes and the
+remainder as margin — stretching the box to the canvas draws a six-kilometre
+walk north and a five-hundred-metre step east as a square, and quietly makes
+every day look like the same day. That is also why the canvas has a fixed
+aspect ratio rather than the design's fixed height: the fit has to be computed
+on the server, where the rendered width is not known. Longitude is squeezed by
+cos(latitude) or a Nagpur day comes out a fifth too wide, and one `project`
+answers for both a pin and a point on a trail so the two cannot drift apart.
+
+**A pin is only drawn where there is a fix.** The design mock spaces salesmen
+out arithmetically, which is fine in a picture of a screen and a lie on a real
+one. Somebody with no position today is in the team list saying exactly that and
+nowhere on the canvas — inventing a spot for them is the one thing a map of
+where people are must not do. The list reads the newest of the trail, the
+check-in and each visit, so somebody whose tracking is off still appears.
 
 ## Testing
 

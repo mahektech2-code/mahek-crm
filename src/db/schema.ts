@@ -205,7 +205,20 @@ export const billPaymentPositionEnum = pgEnum("bill_payment_position", [
  * invoices — which is why a change names one of these rather than moving
  * "the owner".
  */
-export const amRoleEnum = pgEnum("am_role", ["sales", "back_office"]);
+/**
+ * Which seat moved. Three of them, and they answer three questions: SALES is
+ * who sells to the account and whose book it is, SALES_MANAGER is who that
+ * salesperson answers to, BACK_OFFICE is dispatch, billing and paperwork.
+ *
+ * `sales_manager` is appended rather than slotted in beside `sales`: enum
+ * order is not display order anywhere, and reordering a live enum rewrites
+ * every row that uses it to buy nothing.
+ */
+export const amRoleEnum = pgEnum("am_role", [
+  "sales",
+  "sales_manager",
+  "back_office",
+]);
 
 /**
  * Money the customer says arrived is not money the business has seen. A
@@ -409,6 +422,14 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   "mbos_sample",
   "mbos_task",
   "mbos_document",
+  /**
+   * Training material. It could have borrowed `mbos_document` and that would
+   * have been wrong where it matters: `canRead` decides who may open a file
+   * FROM the parent kind, so a course deck filed as a document would be read
+   * under the document rules — role lists and a customer's scope, neither of
+   * which a course has.
+   */
+  "mbos_course",
 ]);
 
 /**
@@ -426,6 +447,8 @@ export const attachmentStatusEnum = pgEnum("attachment_status", [
 export const appIdEnum = pgEnum("app_id", [
   "crm",
   "field",
+  /** The office end of MBOS. `field` is the handset; these are two audiences. */
+  "sales",
   "accounts",
   "people",
   "reports",
@@ -711,6 +734,39 @@ export const customers = pgTable(
      * with no account cannot be given a book.
      */
     salesPersonName: text("sales_person_name"),
+    /**
+     * Who the SALESPERSON answers to.
+     *
+     * A third seat, and a different question to the two beside it. Sales is
+     * who sells to this account; back office is who raises its paperwork; this
+     * is the line manager above the sales seat — the person a manager reviews
+     * a region's book with, and the person whose departure moves a hundred
+     * accounts at once.
+     *
+     * It drives NOTHING. `ASSIGNED_TO_SQL` does not read it, no queue is
+     * dated from it, no target counts against it and no scope narrows by it.
+     * That is exactly why it is a manager's to set while `customer.reassign`
+     * stays accounts' and admin's: moving a sales manager moves no numbers
+     * between anybody's people, so the conflict that keeps the sales seat out
+     * of a manager's hands does not exist here.
+     *
+     * There is no `sales_manager_decided_at` beside it, and there must not be
+     * one. `am_decided_at` exists because the sheet keeps restating the sales
+     * and back office seats on every pass; the customer master carries no
+     * sales manager at all, so there is no source to hold off — and a mark
+     * that guards nothing is a mark somebody later reads as meaning something.
+     */
+    salesManagerId: text("sales_manager_id").references(() => users.id),
+    /**
+     * The same seat as a NAME, for somebody with no MahekOne login.
+     *
+     * The mirror of `backOfficeName` and for the same reason: several of the
+     * people running a sales line here have never signed in, and refusing to
+     * record them would mean the true answer could not be written down at all.
+     * Unlike `salesPersonName` this is NOT a cache of the sheet — nothing
+     * rebuilds it, because nothing outside MahekOne states it.
+     */
+    salesManagerPersonName: text("sales_manager_person_name"),
     /** Dispatch, billing and paperwork. Null on leads, and may be unassigned. */
     backOfficeAmId: text("back_office_am_id").references(() => users.id),
     /**
@@ -865,6 +921,14 @@ export const customers = pgTable(
   },
   (t) => [
     index("customers_owner_idx").on(t.ownerId),
+    /*
+     * "Everything under Rahul" — asked on a book of eleven hundred, and asked
+     * hardest on the day he leaves. Both halves of the seat are indexed: an
+     * account whose sales manager has no login is held by the name alone, and
+     * that is the row a transfer would otherwise scan the table for.
+     */
+    index("customers_sales_manager_idx").on(t.salesManagerId),
+    index("customers_sales_manager_name_idx").on(t.salesManagerPersonName),
     index("customers_name_idx").on(t.name),
     index("customers_phone_idx").on(t.phone),
     index("customers_status_idx").on(t.status),
@@ -1458,6 +1522,23 @@ export const paymentReceipts = pgTable(
     heldById: text("held_by_id").references(() => users.id),
     heldAt: timestamp("held_at", { withTimezone: true }),
     holdReason: text("hold_reason"),
+
+    /* --------------------------------------------------- the cash deposit
+     *
+     * Cash a salesman collected and then paid into the bank, with the slip
+     * photographed. It is the FIRST half of a two-step answer and it is not a
+     * confirmation: the salesman says he banked it, and the back office says
+     * it appeared on the statement, which is `confirmed` and nothing else.
+     * Either half alone leaves somebody reconciling from memory later, and
+     * cash in hand is a real personal liability for the person carrying it.
+     *
+     * Only cash has a deposit. A transfer is already in the bank, and a cheque
+     * is banked by the office rather than by the man who took it.
+     */
+    depositedAt: timestamp("deposited_at", { withTimezone: true }),
+    depositedById: text("deposited_by_id").references(() => users.id),
+    /** The paying-in slip. An `attachments` id, like every other photograph. */
+    depositProofId: text("deposit_proof_id").references(() => attachments.id),
 
     idempotencyKey: text("idempotency_key").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -3115,6 +3196,22 @@ export const mbosJourneyPlanStatusEnum = pgEnum("mbos_journey_plan_status", [
   "abandoned",
 ]);
 
+/**
+ * How far a day has got in being AGREED, which is a different axis from how
+ * far it has got in being walked.
+ *
+ * The design's model: the manager proposes a city, the salesman refuses it
+ * with a reason or agrees, and once agreed he picks the shops himself —
+ * because he is the one who knows whether that market is shut on a Wednesday.
+ * Only then is the day planned.
+ */
+export const mbosPlanDayStateEnum = pgEnum("mbos_plan_day_state", [
+  "proposed",
+  "refused",
+  "agreed",
+  "planned",
+]);
+
 export const mbosJourneyStopStatusEnum = pgEnum("mbos_journey_stop_status", [
   "planned",
   "visited",
@@ -3141,10 +3238,27 @@ export const mbosJourneyPlans = pgTable(
     optimised: boolean("optimised").notNull().default(false),
     estimatedTravelMinutes: integer("estimated_travel_minutes"),
     notes: text("notes"),
+
+    /* ---- the negotiation ----
+     *
+     * A plan is agreed rather than issued. `dayState` defaults to `planned` so
+     * every row that existed before this kept exactly the meaning it had.
+     */
+    dayState: mbosPlanDayStateEnum("day_state").notNull().default("planned"),
+    /** What the manager proposes. A beat is the salesman's own division of it. */
+    city: text("city"),
+    proposedById: text("proposed_by_id").references(() => users.id),
+    proposedAt: timestamp("proposed_at", { withTimezone: true }),
+    /** Why he will not walk it. Required by the action that writes a refusal. */
+    refusalReason: text("refusal_reason"),
+    /** What he wants instead. Optional — "not this" is a legitimate answer. */
+    counterCity: text("counter_city"),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
   },
   (t) => [
     uniqueIndex("mbos_journey_plans_user_day_key").on(t.userId, t.planDate),
     index("mbos_journey_plans_date_idx").on(t.planDate),
+    index("mbos_journey_plans_state_idx").on(t.dayState, t.planDate),
   ],
 );
 
@@ -3612,6 +3726,56 @@ export const mbosLeaveBalances = pgTable(
 /* ----------------------------------------------------------------- tours */
 
 /** §2.11 — a multi-day outstation tour, distinct from a daily journey plan. */
+/**
+ * Which regions a sales manager covers.
+ *
+ * **No rows means national.** That is the load-bearing part: it is what let
+ * this ship without changing the meaning of a single existing grant, and it is
+ * the same rule `app_module_access` uses for modules — a permission model that
+ * silently narrows what people already hold is one nobody can deploy.
+ *
+ * `region` is text matching `customers.territory_region`, not a foreign key: a
+ * region is whatever the customer master says it is, and a second list would
+ * offer the console regions the book does not use.
+ */
+export const mbosManagerTerritories = pgTable(
+  "mbos_manager_territories",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    region: text("region").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+  },
+  (t) => [uniqueIndex("mbos_manager_territories_key").on(t.userId, t.region)],
+);
+
+/**
+ * §2.11 — the days nobody is expected to work.
+ *
+ * `scope` is free text and not a foreign key to a beat, because a holiday is
+ * regional in a way the territory model cannot express: "Nagpur East and
+ * Nagpur West" is two beats, "all beats" is every beat there will ever be, and
+ * a join table would need maintaining every time a beat is renamed. Null means
+ * everywhere.
+ */
+export const mbosHolidays = pgTable(
+  "mbos_holidays",
+  {
+    id: text("id").primaryKey(),
+    onDate: date("on_date").notNull(),
+    name: text("name").notNull(),
+    scope: text("scope"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [index("mbos_holidays_date_idx").on(t.onDate)],
+);
+
 export const mbosTours = pgTable(
   "mbos_tours",
   {
@@ -4023,6 +4187,137 @@ export const mbosSchemes = pgTable(
     validTo: date("valid_to"),
   },
   (t) => [index("mbos_schemes_active_idx").on(t.active, t.validFrom)],
+);
+
+/* ------------------------------------------------------------- tombstones */
+
+/**
+ * What went away.
+ *
+ * A pull tells a handset what exists; nothing tells it what stopped existing.
+ * A stop the office removed from tomorrow's route, a document withdrawn, a
+ * customer reassigned out of somebody's book — all of them simply stay on the
+ * phone for ever, because a deleted row has no `updated_at` for a delta to
+ * notice. The salesman walks to a shop that is not his any more and nothing
+ * anywhere looks wrong.
+ *
+ * A delete leaves no row to sync, so it leaves this instead.
+ *
+ * `userId` narrows it: a deletion is only worth sending to the handset that
+ * holds the thing. Null means everybody — a product withdrawn from the
+ * catalogue is gone for the whole team.
+ */
+export const mbosDeletions = pgTable(
+  "mbos_deletions",
+  {
+    id: text("id").primaryKey(),
+    /** The handset's OWN table name, because a pull row is a local row. */
+    entity: text("entity").notNull(),
+    entityId: text("entity_id").notNull(),
+    userId: text("user_id"),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    reason: text("reason"),
+  },
+  (t) => [
+    index("mbos_deletions_at_idx").on(t.at),
+    index("mbos_deletions_user_idx").on(t.userId, t.at),
+  ],
+);
+
+/* -------------------------------------------------------------- positions */
+
+/**
+ * Where somebody actually went.
+ *
+ * MBOS stored a coordinate on the check-in and one on each visit and nothing
+ * else, so "the live map" could only ever be a handful of fixes a day — a map
+ * drawn from them looks like tracking without being it, which is worse than a
+ * screen that says it has nothing.
+ *
+ * This is the stream. The handset posts a position while it is checked in and
+ * stops when the day is closed, which is the same rule the salesman was told
+ * when he agreed to it: tracking runs while you are working and not otherwise.
+ *
+ * It is deliberately thin. No address, no speed, no battery — a position is a
+ * lat, a lng, how sure the phone was, and when. Anything more is another thing
+ * to justify holding about somebody's day.
+ */
+export const mbosPositions = pgTable(
+  "mbos_positions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** The handset's clock. A track is a shape, and a shape needs its own order. */
+    at: timestamp("at", { withTimezone: true }).notNull(),
+    lat: doublePrecision("lat").notNull(),
+    lng: doublePrecision("lng").notNull(),
+    accuracyM: integer("accuracy_m"),
+    deviceId: text("device_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("mbos_positions_user_at_idx").on(t.userId, t.at)],
+);
+
+/* ----------------------------------------------------- activity locations */
+
+/**
+ * Where each thing was done.
+ *
+ * Four tables carried a coordinate — visits, leads, attendance and the trail —
+ * and the other twenty-three did not, so an order taken at a shop, a payment
+ * collected at a counter and a complaint raised in a godown were all recorded
+ * with no idea where they happened.
+ *
+ * **One table rather than a lat/lng pair on each.** "Where was this done" is
+ * one question with one answer shape, and answering it in twelve places is
+ * answering it in eleven and forgetting the twelfth. It also means the
+ * thirteenth kind of activity costs nothing to cover, and retention has one
+ * place to reach.
+ *
+ * **A row can say there was NO fix.** Coordinates null with a `reason` is the
+ * record that we asked and could not get one — indoors in a concrete godown,
+ * or permission refused. No row at all means nothing was asked. Those are
+ * different facts, and a screen that could not tell them apart would say "no
+ * location" for both.
+ *
+ * **Age is part of the reading, exactly as accuracy is.** Almost every fix
+ * here is one the day's trail had already taken, which is what makes this cost
+ * no battery and add no delay to a save — and it is also why a reader has to
+ * be told how old it was. Four minutes is evidence; four hours is not.
+ */
+export const mbosActivityLocations = pgTable(
+  "mbos_activity_locations",
+  {
+    id: text("id").primaryKey(),
+    /** The handset's own entity type — `order`, `payment`, `sample`, … */
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    /** Part of the reading, never a filter. A 500 m fix is not a doorway. */
+    accuracyM: integer("accuracy_m"),
+    /** When the FIX was taken, by the handset's clock. */
+    capturedAt: timestamp("captured_at", { withTimezone: true }),
+    /** How old that fix was when the activity was recorded. */
+    ageSeconds: integer("age_seconds"),
+    /** `fresh` — taken for this act. `trail` — one the day's tracking had. */
+    source: text("source"),
+    /** Only where there are no coordinates: denied, unavailable, off. */
+    reason: text("reason"),
+    deviceId: text("device_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    /* One location per activity, so a retried sync writes the same row rather
+       than a second one — idempotent without having to ask. */
+    uniqueIndex("mbos_activity_locations_entity_key").on(t.entityType, t.entityId),
+    index("mbos_activity_locations_user_idx").on(t.userId, t.capturedAt),
+  ],
 );
 
 /* --------------------------------------------------------------- relations */
