@@ -54,6 +54,9 @@ npm run catalogue:parse    # regenerate the product master from the document
 npm run catalogue:import -- --dry-run   # what the import would change
 npm run catalogue:import   # apply it — idempotent, re-runnable
 npm run check:links  # crawl the running app for broken links
+                     # scripts/perf-audit.sql — what the hot screens cost, on
+                     # the real book. Read-only, no meta-commands, runs in the
+                     # droplet's Postgres container. See its own header.
 npx eslint src       # lint, including the React Compiler rules
 ```
 
