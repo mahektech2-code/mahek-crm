@@ -30,6 +30,7 @@ import { sweepOrphans } from "./services/attachment-service";
 import { autoGenerateEodReports } from "./services/eod-service";
 import { addMonths, isWorkingDay, nextWorkingDay, type BusinessDate } from "./business-date";
 import { recomputeSalesPerformance } from "./services/performance-service";
+import { snapshotCustomerHealth } from "./services/owner-dashboard-service";
 import { buildQueue } from "./engines/queue";
 import { queueCandidatesFor } from "./services/queue-service";
 import {
@@ -73,6 +74,7 @@ export type JobName =
   | "link-delivery-parties"
   | "seed-targets"
   | "recompute-performance"
+  | "snapshot-customer-health"
   | "sweep-unconfirmed"
   | "escalate-complaint-sla"
   | "auto-eod"
@@ -199,6 +201,23 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
     await run("snapshot-queue", async () => {
       const n = await snapshotQueue(day);
       return { recordsAffected: n, detail: `${n} rows recorded for ${day}` };
+    }, triggeredById),
+  );
+
+  /*
+   * Where every customer stands, written over this month's row.
+   *
+   * AFTER the cycle and outstanding recomputes, because the band is measured
+   * against the customer's own cycle and reading it first would snapshot last
+   * night's rhythm. It is the only thing in this job that is not a cache: a
+   * past month's row is never rewritten, because it is the only surviving
+   * record of where somebody stood then, and "how many customers came back"
+   * has no answer without it.
+   */
+  results.push(
+    await run("snapshot-customer-health", async () => {
+      const { customers, period } = await snapshotCustomerHealth(day);
+      return { recordsAffected: customers, detail: `${customers} banded for ${period}` };
     }, triggeredById),
   );
 

@@ -38,6 +38,7 @@
     "receivables:prod": "tsx --conditions=react-server --env-file=.env.prod.local scripts/apply-receivables.ts",
     "outstanding": "tsx --conditions=react-server --env-file=.env.local scripts/apply-outstanding.ts",
     "outstanding:prod": "tsx --conditions=react-server scripts/apply-outstanding.ts",
+    "test:owner": "node --env-file=.env.local scripts/run-owner-tests.mjs",
     "test:performance": "node --env-file=.env.local scripts/run-performance-tests.mjs",
     "test:outstanding": "node --env-file=.env.local scripts/run-outstanding-tests.mjs",
     "outstanding:restore": "tsx --conditions=react-server scripts/restore-outstanding-snapshot.ts",

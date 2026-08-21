@@ -4836,6 +4836,62 @@ export const salesPerformanceCategories = pgTable(
   ],
 );
 
+/* ------------------------------------------- §3.31 customer health history */
+
+/**
+ * Where each customer stood at the end of a month.
+ *
+ * The one thing the owner dashboard cannot derive. Every other figure on it is
+ * a read of the present or a sum over a window, but "how many customers came
+ * BACK" is a comparison between two readings, and the earlier reading is gone
+ * the moment it stops being true. A book with 145 at risk in both months looks
+ * stable and may be 145 different people, half recovered and half newly
+ * slipping — the counts cannot tell those apart and this can.
+ *
+ * WRITTEN NIGHTLY, over the CURRENT month's row. That is what makes a closed
+ * month correct for free: it stops being overwritten on the last night of the
+ * month, so the row is the band as it stood at month end, and no separate
+ * month-end job has to fire on the right day to be right.
+ *
+ * It is a snapshot rather than a cache: a cache is rebuilt when the answer
+ * changes, and rebuilding this would destroy the very thing it is for. Nothing
+ * recomputes a past month, and nothing may learn to — the same rule the
+ * `calls.next_step_*` columns follow. It also cannot be backfilled: before the
+ * first night this ran there is no reading to compare against, and the screen
+ * says so rather than showing a movement of zero.
+ */
+export const customerHealthSnapshots = pgTable(
+  "customer_health_snapshots",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /** `YYYY-MM`, the same key everything else in this schema uses. */
+    period: text("period").notNull(),
+    /** `active` | `at-risk` | `dormant` | `lost` — see `engines/inactivity.ts`. */
+    band: text("band").notNull(),
+    /**
+     * The cycle the band was measured against, kept ON the row.
+     *
+     * A customer's cycle moves as they order, so a snapshot that stored only
+     * the band could never be explained afterwards — "why was this account
+     * dormant in March" has no answer once the cycle it was judged against has
+     * changed underneath it.
+     */
+    cycleDays: integer("cycle_days"),
+    /** Hundredths of a cycle: 250 is 2.5 cycles elapsed. Integers, like money. */
+    cyclesElapsedBp: integer("cycles_elapsed_bp"),
+    daysOverdue: integer("days_overdue"),
+    lastOrderDate: date("last_order_date"),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("customer_health_snapshots_key").on(t.customerId, t.period),
+    index("customer_health_snapshots_period_idx").on(t.period, t.band),
+  ],
+);
+
 /* --------------------------------------------------------------- relations */
 
 export const usersRelations = relations(users, ({ many, one }) => ({

@@ -102,10 +102,10 @@ export const APPS: AppDefinition[] = [
     id: "reports",
     name: "Reports",
     initials: "RP",
-    description: "Sales, collections and performance across every app.",
+    description: "New business, what it is worth, and whether customers are still buying.",
     href: "/reports",
     tone: "neutral",
-    built: false,
+    built: true,
   },
   {
     id: "hrms",

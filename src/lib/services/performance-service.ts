@@ -360,6 +360,17 @@ export async function actualsForPeriod(
       from payment_receipts r
       join customers c on c.id = r.customer_id
      where r.status = 'confirmed'
+       -- A CREDIT NOTE IS NOT MONEY COLLECTED.
+       --
+       -- issueCreditNote settles a bill by writing a confirmed receipt with
+       -- mode 'Adjustment', which is the right way to close the bill and the
+       -- wrong thing to credit somebody with collecting: nothing reached the
+       -- bank. AGENTS.md says as much about the mode list -- "neither is money
+       -- arriving" -- and the collection component was counting both.
+       -- Identified by the idempotency key the issuer writes, which is the
+       -- only mark that separates a credit note from a genuine adjustment
+       -- somebody recorded by hand.
+       and coalesce(r.idempotency_key, '') not like 'creditnote:%'
        and r.received_at >= ${sql.raw(`'${from}'::date`)}
        and r.received_at <= ${sql.raw(`'${to}'::date`)}
      group by 1
