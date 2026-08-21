@@ -398,6 +398,42 @@ export const MIGRATIONS: string[][] = [
       lastSyncedAt INTEGER NOT NULL DEFAULT 0
     );`,
 
+    /*
+     * His own month, as the office scored it.
+     *
+     * PURE REFERENCE, and one of the few tables here the handset can only
+     * read: nothing on this phone may write a target or a score, which is the
+     * same rule the office screens enforce and for the same reason — a
+     * salesman who can edit what he is measured against is not being measured.
+     *
+     * `computedAt` is on the row and the screen prints it. The figures are a
+     * cache the office rebuilds, so they are minutes to an hour old rather
+     * than live, and a screen that implied otherwise would be read as live.
+     */
+    `CREATE TABLE IF NOT EXISTS performance (
+      period TEXT PRIMARY KEY,
+      revenueTargetPaise INTEGER,
+      revenueActualPaise INTEGER,
+      revenueAchievementBp INTEGER,
+      volumeTargetMl INTEGER,
+      volumeActualMl INTEGER,
+      volumeAchievementBp INTEGER,
+      mixAchievementBp INTEGER,
+      newCustomerTarget INTEGER,
+      newCustomerActual INTEGER,
+      collectionTargetPaise INTEGER,
+      collectionActualPaise INTEGER,
+      activityTarget INTEGER,
+      activityActual INTEGER,
+      totalScoreBp INTEGER,
+      rating TEXT,
+      untargeted TEXT,
+      unmatchedRevenuePaise INTEGER,
+      categories TEXT,
+      computedAt TEXT,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+
     `CREATE TABLE IF NOT EXISTS competitor_records (
       id TEXT PRIMARY KEY,
       customerId TEXT NOT NULL,
@@ -659,6 +695,7 @@ export const OWNED_TABLES = [
 export const REFERENCE_TABLES = [
   'customers', 'products', 'price_list', 'schemes', 'timeline_events',
   'journey_stops', 'leave_balances', 'documents', 'courses', 'notifications',
+  'performance',
   /*
    * `journey_days` is here, and it is the awkward one.
    *

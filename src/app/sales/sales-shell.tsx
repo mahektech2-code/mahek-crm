@@ -57,6 +57,7 @@ const NAV: Array<{ label: string; items: Item[] }> = [
       { href: "/sales/live", label: "Live map", icon: "pin" },
       { href: "/sales/territory", label: "Territory", icon: "grid" },
       { href: "/sales/performance", label: "Performance", icon: "chart" },
+      { href: "/sales/targets", label: "Sales Targets", icon: "target" },
     ],
   },
   {

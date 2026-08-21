@@ -1135,6 +1135,45 @@ export const calls = pgTable(
  * that history refers to does.
  * ------------------------------------------------------------------------- */
 
+/**
+ * A group of products that a mix target can be set on.
+ *
+ * The brief names four — Universal, PU, Nano, Other — and the catalogue has
+ * nineteen formulations, so a category cannot be a formulation and must not be
+ * four strings typed into a screen. It is a row, formulations point at it, and
+ * a manager can add "Epoxy" the day epoxy becomes strategic.
+ *
+ * Exactly one category is the RESIDUAL, which is what "Other" is: every
+ * formulation nobody has classified, plus every order line whose product name
+ * matched nothing in the catalogue, lands in it. Without a residual the shares
+ * would not total 100% and every percentage on the screen would be wrong by an
+ * amount nothing named.
+ */
+export const productCategories = pgTable(
+  "product_categories",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    /**
+     * The catch-all. At most one row may carry it, which the partial unique
+     * index below enforces — two residuals would mean unclassified value
+     * counted twice and every share overstated.
+     */
+    isResidual: boolean("is_residual").notNull().default(false),
+    active: boolean("active").notNull().default(true),
+    displayOrder: integer("display_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("product_categories_slug_key").on(t.slug),
+    uniqueIndex("product_categories_residual_key")
+      .on(t.isResidual)
+      .where(sql`is_residual`),
+  ],
+);
+
 export const productFormulations = pgTable(
   "product_formulations",
   {
@@ -1143,6 +1182,23 @@ export const productFormulations = pgTable(
     /** Lowercased, punctuation stripped — the match key, unique. */
     slug: text("slug").notNull(),
     notes: text("notes"),
+    /*
+     * Which mix category this liquid sells under — Universal, PU, Nano, Other.
+     *
+     * The classification hangs on the FORMULATION rather than on the brand or
+     * the SKU because that is the level at which it is actually true: one
+     * liquid sells as Nano, Astar Nano and M5x4 Thinner, and all three are the
+     * same strategic product. Classifying brands would mean saying it three
+     * times, and the day somebody says it twice and differently is the day the
+     * mix percentages stop adding up.
+     *
+     * Null is not an error and not a backlog: it means the residual category,
+     * which is what "Other" is. A new formulation is therefore Other until
+     * somebody says otherwise, which is the safe direction — the alternative
+     * is a product that silently belongs to no category and value that
+     * disappears out of the denominator.
+     */
+    categoryId: text("category_id").references(() => productCategories.id),
     active: boolean("active").notNull().default(true),
     displayOrder: integer("display_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -4530,6 +4586,253 @@ export const mbosActivityLocations = pgTable(
        than a second one — idempotent without having to ask. */
     uniqueIndex("mbos_activity_locations_entity_key").on(t.entityType, t.entityId),
     index("mbos_activity_locations_user_idx").on(t.userId, t.capturedAt),
+  ],
+);
+
+/* ------------------------------------------- §3.30 salesman targets & score */
+
+/*
+ * A person is measured on six things, and this is where the six are asked for
+ * and where the answers are kept.
+ *
+ * The table next door, `monthly_targets`, is a target per CUSTOMER: what one
+ * account is expected to buy. These are targets per PERSON. They are not two
+ * spellings of one idea and neither is derived from the other — a customer
+ * target is a forecast about an account, and a person target is what somebody
+ * is appraised against, including on things no customer target mentions:
+ * litres, product mix, new names, collected money and visits made.
+ */
+
+/**
+ * `draft` is a target being worked out; `published` is one the person can see.
+ *
+ * The split exists because a manager builds thirty of these in an afternoon,
+ * and a salesman watching his number change four times before lunch stops
+ * believing any of them. Nothing reaches a handset until it is published.
+ */
+export const salesTargetStatusEnum = pgEnum("sales_target_status", [
+  "draft",
+  "published",
+]);
+
+export const salesTargets = pgTable(
+  "sales_targets",
+  {
+    id: text("id").primaryKey(),
+    /**
+     * WHO carries it.
+     *
+     * A `users` row rather than an employee, because a target has to be
+     * readable by the person it is set for, and reading it means signing in.
+     * It is deliberately not restricted to field salesmen: an account with no
+     * salesman is worked by the back office, so a telecaller carries the
+     * targets of every such customer and has to be able to hold one.
+     */
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** `YYYY-MM`, the same key `monthKey()` produces. */
+    period: text("period").notNull(),
+
+    /* ---- the six asks. Null means not asked, which is NOT the same as zero.
+       An unset component is dropped from the score and its weight shared out;
+       a zero would be a target nobody can fail, scored at infinity. ---- */
+    revenueTargetPaise: bigint("revenue_target_paise", { mode: "number" }),
+    /**
+     * Millilitres, like the catalogue, and litres only on the way to a screen.
+     * A drum is 210 litres and a can is 0.5, so litres cannot be an integer
+     * and a float target is a target that fails an equality check.
+     */
+    volumeTargetMl: bigint("volume_target_ml", { mode: "number" }),
+    newCustomerTarget: integer("new_customer_target"),
+    collectionTargetPaise: bigint("collection_target_paise", { mode: "number" }),
+    activityTarget: integer("activity_target"),
+
+    status: salesTargetStatusEnum("status").notNull().default("draft"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedById: text("published_by_id").references(() => users.id),
+    notes: text("notes"),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    uniqueIndex("sales_targets_key").on(t.userId, t.period),
+    index("sales_targets_period_idx").on(t.period, t.status),
+  ],
+);
+
+/**
+ * The mix bands, one row per category per target.
+ *
+ * Three numbers rather than one, because §5 of the brief is explicit that not
+ * every salesman can be held to exactly 30% Universal — a territory selling
+ * into furniture and one selling into automotive are different books. Minimum
+ * is what is not acceptable below, target is the ask, stretch is exceptional.
+ */
+export const salesTargetCategories = pgTable(
+  "sales_target_categories",
+  {
+    id: text("id").primaryKey(),
+    targetId: text("target_id")
+      .notNull()
+      .references(() => salesTargets.id, { onDelete: "cascade" }),
+    categoryId: text("category_id")
+      .notNull()
+      .references(() => productCategories.id),
+    /** Basis points of total value. 3000 is 30%. */
+    minimumBp: integer("minimum_bp").notNull().default(0),
+    targetBp: integer("target_bp").notNull().default(0),
+    stretchBp: integer("stretch_bp").notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex("sales_target_categories_key").on(t.targetId, t.categoryId),
+    /* A band that does not increase would score a larger share lower than a
+       smaller one — invisible until somebody is marked down for selling more
+       of exactly what they were asked to sell. */
+    check(
+      "sales_target_categories_band_order",
+      sql`minimum_bp <= target_bp and target_bp <= stretch_bp`,
+    ),
+  ],
+);
+
+/**
+ * Every change to a published target, and why.
+ *
+ * §20 of the brief, and the reason it is a table rather than a line in
+ * `audit_log`: the question somebody asks in March is "which targets moved for
+ * the price revision", and an audit log can only answer that by grep. The
+ * reason is a code from `performance.revisionReasons`, so it can be counted.
+ *
+ * A DRAFT is not revised, it is edited — nothing has been promised to anybody
+ * yet, and logging every keystroke of target-setting would bury the four
+ * changes that actually matter.
+ */
+export const salesTargetRevisions = pgTable(
+  "sales_target_revisions",
+  {
+    id: text("id").primaryKey(),
+    targetId: text("target_id")
+      .notNull()
+      .references(() => salesTargets.id, { onDelete: "cascade" }),
+    /** `revenue`, `volume`, `mix:universal`, … — what moved. */
+    field: text("field").notNull(),
+    /** Rendered, not raw: "₹13,00,000" reads back in a year, "130000000" does not. */
+    oldValue: text("old_value"),
+    newValue: text("new_value"),
+    reason: text("reason").notNull(),
+    reasonNote: text("reason_note"),
+    changedById: text("changed_by_id").references(() => users.id),
+    /**
+     * Stored ON the row beside the id, like `customer_am_changes` — a history
+     * has to stay readable after the person leaves and their account goes.
+     */
+    changedByName: text("changed_by_name"),
+    changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("sales_target_revisions_target_idx").on(t.targetId, t.changedAt)],
+);
+
+/**
+ * The score, as a CACHE.
+ *
+ * Same rule as every other derived value here: never hand-edited, rebuilt by
+ * `recomputeSalesPerformance()` in `lib/recompute.ts`. It exists because the
+ * manager dashboard asks this question for thirty people at once and the
+ * handset asks it on a 2G connection — computing six components and a mix over
+ * a month of order lines on every read would make both unusable.
+ *
+ * It is NOT the same kind of column as `calls.next_step_*`, which record what
+ * somebody was told on a day and must never be rebuilt. This is a reading of
+ * the present, and a rebuild is a correction rather than a destruction.
+ */
+export const salesPerformance = pgTable(
+  "sales_performance",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    period: text("period").notNull(),
+    targetId: text("target_id").references(() => salesTargets.id, {
+      onDelete: "set null",
+    }),
+
+    revenueTargetPaise: bigint("revenue_target_paise", { mode: "number" }),
+    revenueActualPaise: bigint("revenue_actual_paise", { mode: "number" }).notNull().default(0),
+    revenueAchievementBp: integer("revenue_achievement_bp"),
+
+    volumeTargetMl: bigint("volume_target_ml", { mode: "number" }),
+    volumeActualMl: bigint("volume_actual_ml", { mode: "number" }).notNull().default(0),
+    volumeAchievementBp: integer("volume_achievement_bp"),
+
+    mixAchievementBp: integer("mix_achievement_bp"),
+
+    newCustomerTarget: integer("new_customer_target"),
+    newCustomerActual: integer("new_customer_actual").notNull().default(0),
+    newCustomerAchievementBp: integer("new_customer_achievement_bp"),
+
+    collectionTargetPaise: bigint("collection_target_paise", { mode: "number" }),
+    collectionActualPaise: bigint("collection_actual_paise", { mode: "number" }).notNull().default(0),
+    collectionAchievementBp: integer("collection_achievement_bp"),
+
+    activityTarget: integer("activity_target"),
+    activityActual: integer("activity_actual").notNull().default(0),
+    activityAchievementBp: integer("activity_achievement_bp"),
+
+    /** Out of 100, in basis points. 9140 is 91.40. */
+    totalScoreBp: integer("total_score_bp").notNull().default(0),
+    rating: text("rating"),
+    /** Components nobody set a target for, whose weight was shared out. */
+    untargeted: jsonb("untargeted").$type<string[]>(),
+
+    /**
+     * How much of the revenue could NOT be resolved to a catalogue SKU.
+     *
+     * Order lines carry a product NAME, and four of the sheet's names match
+     * nothing. Those lines are real money and count towards revenue in full;
+     * what they cannot do is contribute litres or a mix category. Carrying the
+     * figure means the screen can say "the mix is computed over 94% of the
+     * value" instead of presenting a share that is quietly wrong.
+     */
+    unmatchedRevenuePaise: bigint("unmatched_revenue_paise", { mode: "number" })
+      .notNull()
+      .default(0),
+
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sales_performance_key").on(t.userId, t.period),
+    index("sales_performance_period_idx").on(t.period),
+  ],
+);
+
+export const salesPerformanceCategories = pgTable(
+  "sales_performance_categories",
+  {
+    id: text("id").primaryKey(),
+    performanceId: text("performance_id")
+      .notNull()
+      .references(() => salesPerformance.id, { onDelete: "cascade" }),
+    categoryId: text("category_id")
+      .notNull()
+      .references(() => productCategories.id),
+    targetBp: integer("target_bp").notNull().default(0),
+    minimumBp: integer("minimum_bp").notNull().default(0),
+    stretchBp: integer("stretch_bp").notNull().default(0),
+    actualPaise: bigint("actual_paise", { mode: "number" }).notNull().default(0),
+    /** Shown beside the share, never scored — see the unmatched note above. */
+    actualMl: bigint("actual_ml", { mode: "number" }).notNull().default(0),
+    actualBp: integer("actual_bp").notNull().default(0),
+    /** `below-minimum` | `below-target` | `on-target` | `stretch` */
+    status: text("status").notNull(),
+    scoreBp: integer("score_bp").notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex("sales_performance_categories_key").on(t.performanceId, t.categoryId),
   ],
 );
 

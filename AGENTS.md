@@ -32,6 +32,7 @@ npm run build        # production build (runs tsc)
 npm run test         # engine tests — pure, no database
 npm run test:db      # (re)create mahekone_test from the migrations
 npm run test:integration   # the six §11 journeys, end to end
+npm run test:performance   # salesman targets and the score, on their own
 npm run db:generate  # write a migration after editing src/db/schema.ts
 npm run db:migrate   # apply migrations locally
 npm run db:seed      # wipe and reseed with demo data (also clears sessions)
@@ -306,6 +307,8 @@ src/
                            buying-cycle, queue, escalation, inactivity,
                            targets, eod, payment-followup, allocation,
                            next-step — when this customer comes back, and why,
+                           performance — the six weights, the mix bands, the
+                           month-end forecast and the price-rise alert,
                            receipt-match — is this money we already know about
                            + engines.test.ts, allocation.test.ts,
                            next-step.test.ts
@@ -313,6 +316,17 @@ src/
     access-control.ts      scope resolution + capabilities (§8)
     modules.ts             what a person can open INSIDE an app — PURE, and
                            read by both the review table and the route guard
+    sales-attribution.ts   whose number a customer's is — the fall-through to
+                           the back office, and the ONE place it is written
+    services/performance-service.ts
+                           the six actuals, wired to the ledger, and the
+                           rebuild of the score cache
+    services/sales-target-service.ts
+                           who can be given a target, and what they have
+                           actually been doing, for the screen that sets one
+    actions/sales-targets.ts
+                           saving a target, publishing it, and revising a
+                           published one with its reason
     services/access-service.ts
                            who opens what, and who there is to grant to
     actions/access.ts      setAccess — one person's whole access, in one write
@@ -2176,6 +2190,140 @@ nothing — says nothing about why, so it is refused at the form instead.
 decides who may open a file FROM the parent kind, so a course deck filed as a
 document would be read under the document rules — role lists and a customer's
 scope, neither of which a course has.
+
+**A SALESMAN IS NOT MEASURED IN RUPEES ALONE, and the reason is arithmetic
+rather than philosophy.** A price revision moves every rupee figure in the
+business without one extra can leaving the godown, so a book measured on
+revenue alone reports the month prices went up 30% as the month everybody
+improved 30% — and the salesman who actually sold less outranks the one who
+sold more. `sales_targets` therefore asks for five figures and a mix, and
+`lib/engines/performance.ts` scores six components out of a hundred: revenue
+35, volume 20, product mix 20, new customers 10, collection 10, activity 5.
+Every weight is configuration and `checkConsistency` refuses a set that does
+not total 100 — a score presented out of 100 computed out of 95 is a different
+number wearing the same label, and nothing on any screen would say so.
+
+**Volume is the half a price list cannot move, so the divergence between the
+two is the alert.** Revenue at or above target with volume more than
+`performance.volumeDivergencePoints` below it means the money came from the
+price list, and it is exactly the month somebody would otherwise be
+congratulated for. It is drawn on the team dashboard, on the person's own
+screen and on the handset, because the person being congratulated is the one
+who most needs to know.
+
+**Litres are derived from the SKU's packing, and revenue is not derived from
+anything.** Quantity is cans, `products.millilitres_per_can` turns it into
+millilitres, and the value of a line is what was actually billed — the product
+master still holds no prices and `canValueOrders()` still answers no. Nothing
+here reaches for a packing cost to make a total look complete.
+
+**Whose number it is falls through, and it is ONE person.**
+`lib/sales-attribution.ts` is the only place that rule is written: the
+salesperson on the account, and where there is none, the back office person who
+works it. Not both — `scopedToUsers` deliberately answers with both seats,
+because two people may need to SEE an account, and exactly one may be CREDITED
+with it or the team's revenue adds up to more than the company's and every
+comparison between two salesmen is drawn from a total that does not exist.
+`owner_id` is deliberately absent from the chain although `ASSIGNED_TO_SQL`
+ends with it: on an imported book it is whoever ran the import, one person on
+more than a thousand rows, and ending there would hand them the revenue of the
+whole company on the day somebody set them a target. A customer with neither
+seat is UNATTRIBUTED, counted, and printed on the dashboard — a figure nobody
+can account for is worse than one that says why it is there.
+
+**Which is why a telecaller has a performance screen.** Back office people
+carry a large part of this book under that fall-through, and they are
+redirected out of `/sales` by its own layout — so `crm.performance` exists, it
+shows one person and only ever the signed-in one, and it takes no id. A manager
+comparing people has the Sales Dashboard; an id on this route would make it a
+way for anybody to read anybody's appraisal.
+
+**A mix category is a row, not four strings in a screen.** The brief names
+Universal, PU and Nano and the catalogue carries nineteen formulations, so the
+classification hangs on `product_formulations.category_id` — the level at which
+it is actually true, since one liquid sells as Nano, Astar Nano and M5x4
+Thinner and all three are the same strategic product. Exactly one category is
+the RESIDUAL, enforced by a partial unique index, and it catches both the
+formulations nobody has classified and every order line whose product name
+matched nothing. Without a residual the shares would not total 100% and every
+percentage on every screen would be wrong by an amount nothing named.
+
+**Unmatched money counts as revenue, contributes no litres, and is REPORTED.**
+Order lines carry a product NAME and several of the sheet's names match
+nothing. That money is real; what it cannot do is claim to be litres of a known
+product. `sales_performance.unmatched_revenue_paise` carries the figure so a
+screen can say the mix was computed over 94% of the value rather than present a
+share that is quietly wrong.
+
+**Each mix category is weighted by what was ASKED, never by what arrived.**
+Weighting by the actual share would let somebody who sold nothing but the easy
+line score a perfect mix — that category would be the only one with any weight
+and it would be far above its target. Three numbers rather than one, because a
+book selling into furniture and one selling into automotive cannot be held to
+the same 30%, and a band that does not increase is refused by a check
+constraint: it would score a larger share lower than a smaller one, invisible
+until somebody is marked down for selling more of exactly what they were asked
+to sell.
+
+**A component nobody set a target for is DROPPED, and its weight is shared
+out.** Null and zero are different answers here. Scoring an unset component 0%
+marks somebody down for a question never put to them and scoring it 100% pays
+them for it, so it leaves the score and the remaining weights are restated out
+of a hundred — which keeps the sentence "this is out of 100, against what was
+actually asked of you" true. The names of the dropped components are stored and
+the screens print them.
+
+**A target is DRAFT until it is published, and a published one changes only
+with a reason.** A manager builds thirty of these in an afternoon and a
+salesman watching his number change four times before lunch stops believing any
+of them, so nothing reaches a handset until it is published.
+`sales_target_revisions` is a table rather than a line in `audit_log` because
+the question somebody asks in March is "which targets moved for the price
+revision", and an audit log can only answer that by grep — the reason is a code
+from `performance.revisionReasons` so it can be counted, one row per figure
+that moved, and the person is notified. A draft is EDITED rather than revised:
+nothing has been promised to anybody, and logging every keystroke of
+target-setting buries the four changes that matter.
+
+**A salesman cannot reach any of it.** `target.set` is manager-only and is
+checked in the action on every path — a server action is a URL and a hidden
+button is not a permission. It is deliberately not the same capability as
+`customer.reassign`, which moves which accounts feed a target and stays
+accounts' and admin's, so no one person both chooses the number and chooses the
+book that fills it.
+
+**The score is a CACHE, and not the same kind of column as
+`calls.next_step_*`.** `sales_performance` is rebuilt by
+`recomputeSalesPerformance()` — nightly for this month and the last, hourly for
+this month, because the handset reads the cache and a salesman who took three
+orders this morning must not see yesterday's figures all day. Those next-step
+columns record what somebody was TOLD on a day and must never be rebuilt; this
+is a reading of the present, so a rebuild is a correction rather than a
+destruction. The handset is sent the cache with its `computed_at` and prints
+it, because a screen that implied it was live would be believed.
+
+**Working days, never dates.** A month with four Sundays left is not two thirds
+gone because twenty of thirty dates have passed, and a forecast built on dates
+tells a salesman on the 20th that he is further behind than he is. Holidays
+come from `mbos_holidays` and the working week from configuration. The current
+day is not counted as elapsed — dividing by a day still being worked makes
+everybody look behind every morning — and with no completed day there is no
+forecast at all, because one day's selling multiplied by thirty is a
+multiplication rather than a projection.
+
+**A visit's ACTIVITY is counted on the server's clock.** `client_created_at` is
+what the phone said and its owner can set it, so anything anybody is paid on
+reads `server_created_at`. Believing the handset would let somebody backdate a
+fortnight of visits into a month they had missed.
+
+**Collection counts confirmed receipts only.** A `reported` or `held` payment
+moves no money anywhere else in this product and moves none here either — a
+collection target met on a telecaller's word is a target met on money nobody
+has found in the bank.
+
+**A new customer is one whose FIRST counting order lands in the period.**
+Creating a lead never counts, which is the only definition that cannot be
+worked from a desk, and a customer is won exactly once.
 
 **Salary is read, never written.** HR maintains the employee workbook, HRMS
 mirrors it hash-for-hash, and the salary columns are already in it — so the

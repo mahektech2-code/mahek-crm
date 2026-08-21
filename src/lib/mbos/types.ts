@@ -209,6 +209,18 @@ export type PullDelta = {
    * there was nothing to send until the Sales Dashboard existed to decide them.
    */
   approvals: unknown[];
+  /**
+   * His own month, scored: the six figures, what was asked for each, and the
+   * product mix behind the third of them.
+   *
+   * Sent from the CACHE rather than derived per pull. Deriving it would mean a
+   * pass over the whole company's order book on every sync from every handset,
+   * several times an hour, to answer a question about one person. The row
+   * carries `computedAt` and the screen prints it, so the handset says how old
+   * the figure is rather than implying it is live — which is the same rule the
+   * credit limit and the outstanding balance already follow.
+   */
+  performance: unknown[];
 };
 
 export type SyncResponse = {

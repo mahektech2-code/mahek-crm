@@ -14,6 +14,8 @@ import {
 } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
 import { APP_TIMEZONE } from "@/lib/business-date";
+import { today } from "@/lib/recompute";
+import { recomputeSalesPerformance } from "@/lib/services/performance-service";
 
 /**
  * The scheduled work MBOS needs, per brief §8.
@@ -243,8 +245,32 @@ export async function mbosNightly(): Promise<Counted> {
   };
 }
 
+/**
+ * The current month's score, rebuilt hourly.
+ *
+ * The nightly job does both this month and the last one; this does only the
+ * current month, and it exists because the handset reads the CACHE. Nightly
+ * alone would mean a salesman who took three orders this morning saw
+ * yesterday's figures all day, on the one screen whose whole purpose is to
+ * tell him where he stands right now.
+ *
+ * It is one pass over one month of orders for the whole company, which at this
+ * size is cheap enough to do every hour and far too expensive to do on every
+ * handset's sync.
+ */
+async function refreshPerformance(): Promise<Counted> {
+  const day = await today();
+  const { people } = await recomputeSalesPerformance(day.slice(0, 7), day);
+  return { recordsAffected: people, detail: `${people} scored for ${day.slice(0, 7)}` };
+}
+
 export async function mbosHourly(): Promise<Counted> {
-  const parts = [await escalateOverdueTasks(), await escalateApprovals(), await flagOverdueSamples()];
+  const parts = [
+    await escalateOverdueTasks(),
+    await escalateApprovals(),
+    await flagOverdueSamples(),
+    await refreshPerformance(),
+  ];
   return {
     recordsAffected: parts.reduce((a, p) => a + p.recordsAffected, 0),
     detail: parts.map((p) => p.detail).join(" · "),

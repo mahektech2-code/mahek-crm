@@ -108,6 +108,7 @@ export const NAV: NavGroup[] = [
     label: "Targets & reporting",
     items: [
       { href: at("/targets"), label: "Monthly Targets", icon: "target" },
+      { href: at("/performance"), label: "My Performance", icon: "chart" },
       { href: at("/eod"), label: "EOD Report", icon: "clipboard" },
     ],
   },

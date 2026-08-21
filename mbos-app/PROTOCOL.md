@@ -132,7 +132,7 @@ Response:
   "pull": { "cursor": "...", "customers": [], "products": [], "timeline": [],
             "config": { }, "notifications": [], "transcripts": [],
             "journeyStops": [], "planDays": [], "approvals": [],
-            "leaveBalances": [] }
+            "leaveBalances": [], "performance": [] }
 }
 ```
 
@@ -241,7 +241,33 @@ published anything".
 | `schemes` | `{ id, name, eligibility, benefit, validFrom, validTo }` | upsert by id |
 | `documents` `courses` | rows, narrowed exactly as the bootstrap narrows them | upsert by id |
 | `deletions` | `{ entity, ids }[]` — `entity` is the HANDSET's table name | delete by id |
+| `performance` | one row per month: the six figures, what was asked for each, the score, and the mix as JSON | upsert by `period` |
 | `config` | every `mbos.*` key | replace |
+
+**`performance` is keyed on the PERIOD, not on an id.** The office rebuilds the
+current month hourly, so the same month comes down again and again; keyed on an
+id the handset would keep one row per rebuild and the screen would render
+whichever it read first. At most two months are ever sent — on the 2nd of a
+month the month somebody is actually being judged on is still the previous one,
+and a screen showing two days of a fresh month reads as broken.
+
+It is sent from the office's CACHE rather than derived per pull. Deriving it
+would mean a pass over the whole company's order book on every sync from every
+handset to answer a question about one person. The row carries `computedAt` and
+the screen prints it, so the handset says how old the figure is rather than
+implying it is live — the same rule the credit limit and the outstanding
+balance already follow.
+
+**Nothing on the handset writes it.** There is no entity type for a target or a
+score and there will not be one: a salesman who can edit what he is measured
+against is not being measured. It is the only channel here that is read-only in
+both directions of the word — reference data the handset cannot even queue a
+change to.
+
+**Bootstrap sends it unconditionally**, because the delta gates on
+`computed_at > cursor` and a fresh install has no cursor. Without that, somebody
+signing in on a new phone would see an empty Performance screen until the next
+rebuild happened to run.
 
 **`priceList` is replaced rather than merged** because a rate that was withdrawn
 has to disappear, and a per-row upsert leaves it behind — an order priced from a
