@@ -1943,6 +1943,12 @@ const SETTING_GROUPS: Array<{ category: string; label: string; blurb: string }> 
     blurb:
       "Batch sizes, the offline login window, and what the handset holds. Changing these changes how a phone behaves in a market with no signal.",
   },
+  {
+    category: "mbos-devices",
+    label: "Handsets",
+    blurb:
+      "Whether a field account may be signed in on more than one phone at a time. Read the setting before changing it — a second live handset is convenient on the Tuesday somebody's phone breaks and permanent afterwards.",
+  },
 ];
 
 /**

@@ -157,7 +157,7 @@ export type DeviceOutcome =
   | { ok: false; error: string };
 
 /**
- * One active handset per person.
+ * One active handset per person — by default, and now only by default.
  *
  * A shared handset is how one salesman's visits get attributed to another, and
  * a phone that left the company with a live session is a customer book
@@ -168,6 +168,10 @@ export type DeviceOutcome =
  * The override is `active = false` on the previous binding: releasing a device
  * is what an admin does, and this reads that rather than inventing a second
  * flag that could disagree with it.
+ *
+ * `mbos.devices.onePerPerson` can suspend the rule for a business that needs
+ * to — see the note at the check itself. The rule that a handset belongs to
+ * ONE employee is not part of that and cannot be switched off.
  */
 export async function checkDeviceBinding(
   userId: string,
@@ -194,12 +198,30 @@ export async function checkDeviceBinding(
     .from(mbosDevices)
     .where(and(eq(mbosDevices.userId, userId), eq(mbosDevices.active, true)));
 
+  /*
+   * ONE HANDSET PER PERSON IS A SETTING, NOT A CONSTANT.
+   *
+   * It is on by default and should usually stay on — the reasoning above is
+   * still the reasoning. But it is a rule about how a business chooses to run
+   * its field team rather than a fact about the data, and it was the one thing
+   * in this file a manager could not change: a salesman whose phone broke on a
+   * Tuesday had no way back in short of somebody with database access, because
+   * the screen the refusal names does not exist yet. A rule with no way to
+   * suspend it and no way to satisfy it is a rule people work around by
+   * sharing a login, which is worse than the thing it was protecting against.
+   *
+   * Turning it off never lets somebody take over a handset registered to
+   * ANOTHER employee — that check is above this one and is not configurable,
+   * because it is about whose phone it is rather than how many they may hold.
+   */
+  const onePerPerson = (await getConfig())["mbos.devices.onePerPerson"];
+
   const conflicting = otherActive.filter((d) => d.deviceId !== deviceId);
-  if (conflicting.length && !existingForDevice) {
+  if (onePerPerson && conflicting.length && !existingForDevice) {
     return {
       ok: false,
       error:
-        "You are already signed in on another handset. One device per person — ask an admin to release the old one in the Admin Console, then sign in here.",
+        "You are already signed in on another handset. One device per person — ask an admin to release the old one, or have them allow more than one handset in the Sales Dashboard settings.",
     };
   }
 

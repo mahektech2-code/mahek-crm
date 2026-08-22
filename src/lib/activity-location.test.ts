@@ -37,7 +37,11 @@ import {
 } from "@/db/schema";
 import { invalidateConfig, seedConfig, updateSettings } from "@/lib/config/store";
 import { ingestSyncBatch } from "@/lib/actions/mbos";
-import { buildBootstrap, type MbosPrincipal } from "@/lib/services/mbos-service";
+import {
+  buildBootstrap,
+  checkDeviceBinding,
+  type MbosPrincipal,
+} from "@/lib/services/mbos-service";
 import type { SyncItem } from "@/lib/mbos/types";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -366,9 +370,31 @@ describe("The pull carries who bills each shop", () => {
 
 describe("A field order carries who was billed and where it went", () => {
   /** A SKU to hang a line on — an order with none is refused before this. */
+  /*
+   * A SKU to put on the order line, and this file has to make its own.
+   *
+   * It used to take whatever `products` happened to hold, and `products` is
+   * not in the truncate list above — so these three tests passed only because
+   * an earlier suite in the same run had left a catalogue behind. Run this
+   * file on its own and `anySku()` returned undefined, which arrives as
+   * `Cannot read properties of undefined (reading 'id')` several lines later
+   * and reads as a bug in the order handler rather than a missing fixture.
+   */
   async function anySku() {
-    const [p] = await db.select({ id: products.id }).from(products).limit(1);
-    return p;
+    const [existing] = await db.select({ id: products.id }).from(products).limit(1);
+    if (existing) return existing;
+
+    const [made] = await db
+      .insert(products)
+      .values({
+        id: id("prd"),
+        name: `Test Thinner - 5 Liter (Loose) ${randomUUID().slice(0, 6)}`,
+        packing: "Loose",
+        millilitresPerCan: 5000,
+        cansPerBox: 1,
+      })
+      .returning({ id: products.id });
+    return made;
   }
 
   test("the bill goes to the distributor and the goods to the shop", async () => {
@@ -623,6 +649,81 @@ describe("A shop can be opened from the field", () => {
     assert.ok(
       flags[0].sheetValue?.includes(alreadyHere.name),
       "the flag does not name the record it might duplicate",
+    );
+  });
+});
+
+describe("How many handsets one person may hold", () => {
+  /*
+   * The rule shipped as a constant and had to become a setting: the screen its
+   * own refusal named — "ask an admin to release the old one in the Admin
+   * Console" — does not exist, so a salesman whose phone broke had no way back
+   * in at all. Both states are pinned here, because a switch that is only ever
+   * tested in its default position is a switch nobody has tested.
+   */
+  const SECOND = "second-handset";
+
+  test("on by default, a second handset is refused", async () => {
+    const outcome = await checkDeviceBinding(salesman.id, SECOND);
+    assert.equal(outcome.ok, false);
+    assert.match(
+      outcome.ok === false ? outcome.error : "",
+      /already signed in on another handset/i,
+      "the refusal does not say what is wrong",
+    );
+  });
+
+  test("switched off, the same person may hold two", async () => {
+    await updateSettings([{ key: "mbos.devices.onePerPerson", value: false }], salesman.id);
+    invalidateConfig();
+
+    const outcome = await checkDeviceBinding(salesman.id, SECOND);
+    assert.equal(outcome.ok, true, "the setting was written and nothing read it");
+    assert.equal(
+      outcome.ok === true ? outcome.firstBind : null,
+      true,
+      "a handset the server has never seen is not a first bind",
+    );
+  });
+
+  test("the handset he is already on is never a second one", async () => {
+    // The existing binding must keep working whichever way the switch is set,
+    // or turning the rule ON would sign everybody out of the phone they hold.
+    for (const onePerPerson of [true, false]) {
+      await updateSettings(
+        [{ key: "mbos.devices.onePerPerson", value: onePerPerson }],
+        salesman.id,
+      );
+      invalidateConfig();
+      const outcome = await checkDeviceBinding(salesman.id, "probe-device");
+      assert.equal(outcome.ok, true, `his own handset was refused with the rule ${onePerPerson}`);
+    }
+  });
+
+  test("somebody else's handset is refused either way", async () => {
+    // This is a different rule and deliberately not part of the switch: it is
+    // about whose phone it is, not how many one person may hold.
+    const [other] = await db
+      .insert(users)
+      .values({
+        id: id("usr"),
+        name: "Rakesh",
+        email: "rakesh@test.local",
+        phone: "9820011002",
+        passwordHash: "x",
+        role: "telecaller",
+        initials: "RK",
+      })
+      .returning();
+
+    await updateSettings([{ key: "mbos.devices.onePerPerson", value: false }], salesman.id);
+    invalidateConfig();
+
+    const outcome = await checkDeviceBinding(other.id, "probe-device");
+    assert.equal(outcome.ok, false, "one salesman took over another's phone");
+    assert.match(
+      outcome.ok === false ? outcome.error : "",
+      /registered to another employee/i,
     );
   });
 });
