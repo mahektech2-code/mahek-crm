@@ -85,8 +85,36 @@ Check it has propagated before continuing: `dig +short crm.mahek.in`.
 | `SSH_PRIVATE_KEY` | private key whose public half is on the droplet |
 | `SSH_KNOWN_HOSTS` | output of `ssh-keyscan <ip>` — pinned, not trust-on-first-use |
 | `POSTGRES_PASSWORD` | same value as in `.env` |
-| `DOCR_TOKEN` | DigitalOcean registry token, read/write |
+| `DOCR_TOKEN` | DigitalOcean registry token, read/write — pushes the image |
+| `DO_API_TOKEN` | DigitalOcean **account** API token, read/write — prunes the registry |
 | `DOMAIN` | `crm.mahek.in` |
+
+**`DO_API_TOKEN` is a second token on purpose, and the deploy still runs
+without it.** `DOCR_TOKEN` is registry-scoped, which is exactly right for
+pushing and is why it is not the account token — but a registry credential
+cannot list tags or start a garbage collection, and the prune step needs
+both. Where it is missing the step logs a warning and the deploy carries on;
+what you get instead is the quota, three or four deploys later.
+
+**The registry is 500 MB and an image is about 130 MB.** Nothing used to
+remove one, so it filled and the next push failed with `denied: quota
+exceeded` — a green test job, a failed build, and the `deploy` job skipped
+underneath without a word about storage. It has happened twice: once when the
+build cache lived here as `buildcache` tags, and again from the images
+themselves. The `prune` job now runs BEFORE the build, keeps the newest three
+plus `latest`, and waits for the collection to finish — because deleting a tag
+frees nothing until it does.
+
+If a deploy has already failed this way, the fix is to add the secret and
+re-run it: the prune runs first, so the run that was blocked clears its own
+space. By hand it is:
+
+```bash
+doctl auth init
+doctl registry repository list-tags app
+doctl registry repository delete-tag app <old-sha> --force
+doctl registry garbage-collection start --include-untagged-manifests
+```
 
 ## 5. First start
 
@@ -250,8 +278,13 @@ sed -i 's|^IMAGE=.*|IMAGE=registry.digitalocean.com/mahekone/app:<sha>|' .env
 docker compose up -d app
 ```
 
-Old tags stay in the registry for a week. A rollback that also has to undo a
-migration is a different and harder thing — restore the dump.
+The newest three tags are kept, plus `latest` — the `prune` job in the deploy
+workflow enforces it before each push. This used to read "old tags stay in the
+registry for a week", which sounded like a policy and was only a description
+of what nobody had got round to deleting; the registry filled up twice on the
+strength of it. Three is what 500 MB holds at ~130 MB an image, so a rollback
+can reach the last three deploys and no further. A rollback that also has to
+undo a migration is a different and harder thing — restore the dump.
 
 **Jobs by hand** still work; they run on your laptop against the droplet
 through a tunnel:

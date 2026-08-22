@@ -46,8 +46,102 @@ jobs:
       - run: npx eslint src
       - run: npm test
 
-  build:
+  # MAKE ROOM BEFORE PUSHING, because the push is what fails.
+  #
+  # The free tier is 500 MB and each image is around 130 MB, so the registry
+  # is full after three or four deploys and the next push dies with `denied:
+  # quota exceeded` — a deploy broken by storage rather than by code, with a
+  # green test job above it and the `deploy` job skipped silently underneath.
+  #
+  # This is the SECOND time that ceiling has been hit. The first was the build
+  # cache, which lived in the registry as `buildcache` tags and reached 480 MB
+  # on its own; that moved to GitHub's cache and the comment on `cache-to`
+  # explains it. The images themselves were left, and nothing has ever removed
+  # one. DEPLOY.md said old tags "stay in the registry for a week", which read
+  # as a policy and was only ever a description of what nobody had deleted.
+  #
+  # Deleting a tag does not reclaim anything on DigitalOcean — the blobs stay
+  # until a garbage collection runs — so the GC is the step that actually
+  # frees the space, and it is waited on rather than fired and forgotten.
+  prune:
     needs: test
+    runs-on: ubuntu-latest
+    steps:
+      # `DOCR_TOKEN` cannot do this. It is a registry-scoped credential, which
+      # is right for pushing and deliberate — see the note on the login step —
+      # but the registry API cannot list or garbage-collect, and `doctl` wants
+      # an account token. So this takes its own secret, and does NOT fall back
+      # to the pushing credential.
+      - name: Prune old images from the registry
+        env:
+          DO_API_TOKEN: ${{ secrets.DO_API_TOKEN }}
+          # Enough to roll back to, and few enough to fit. Each is ~130 MB
+          # against 500 MB, and `latest` shares its blobs with the newest tag
+          # so it costs nothing extra.
+          KEEP: "3"
+        run: |
+          set -euo pipefail
+
+          # A missing secret is a WARNING, never a failed deploy. Somebody who
+          # has not added it yet should still be able to ship; they will hit
+          # the quota eventually and this line is what tells them why.
+          if [ -z "${DO_API_TOKEN}" ]; then
+            echo "::warning title=Registry not pruned::DO_API_TOKEN is not set, so old images were left in place. The free tier holds three or four of them and then pushes fail with 'denied: quota exceeded'. See DEPLOY.md."
+            exit 0
+          fi
+
+          curl -sSL https://github.com/digitalocean/doctl/releases/latest/download/doctl-linux-amd64.tar.gz \
+            | tar xz -C /usr/local/bin doctl
+          doctl auth init --access-token "${DO_API_TOKEN}" >/dev/null
+
+          echo "Tags before:"
+          doctl registry repository list-tags app --format Tag,UpdatedAt || true
+
+          # Newest first by update time. `latest` is never a candidate: it
+          # points at whatever was pushed last and deleting it would leave a
+          # fresh droplet with nothing to pull.
+          mapfile -t OLD < <(
+            doctl registry repository list-tags app \
+              --format Tag,UpdatedAt --no-header 2>/dev/null \
+              | sort -k2 -r \
+              | awk '$1 != "latest" { print $1 }' \
+              | tail -n +$((KEEP + 1))
+          )
+
+          if [ ${#OLD[@]} -eq 0 ]; then
+            echo "Nothing to prune — ${KEEP} or fewer images are stored."
+          else
+            for tag in "${OLD[@]}"; do
+              echo "Deleting ${tag}"
+              doctl registry repository delete-tag app "${tag}" --force || true
+            done
+          fi
+
+          # Only one collection may run at a time, and one already running is
+          # an ordinary result of two deploys close together rather than a
+          # failure — the space it frees is the space this run wanted.
+          if ! doctl registry garbage-collection start --include-untagged-manifests --force; then
+            echo "::notice::A garbage collection was already running; letting it finish."
+          fi
+
+          # Space is not free until the collection is. Bounded, because a
+          # deploy must not hang on it: if it is still going after five
+          # minutes the push will either fit or fail with the same clear
+          # message it does today.
+          for _ in $(seq 1 30); do
+            status="$(doctl registry garbage-collection get --format Status --no-header 2>/dev/null || echo none)"
+            case "${status}" in
+              *SUCCEEDED*|none|"") echo "Collection finished (${status:-none})."; break ;;
+              *FAILED*)             echo "::warning::Garbage collection failed; the push may still hit the quota."; break ;;
+              *)                    echo "Collecting… (${status})"; sleep 10 ;;
+            esac
+          done
+
+          echo "Tags after:"
+          doctl registry repository list-tags app --format Tag,UpdatedAt || true
+
+  build:
+    needs: [test, prune]
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.tag.outputs.image }}
