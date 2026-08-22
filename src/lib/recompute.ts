@@ -74,48 +74,66 @@ export async function recomputeBuyingCycle(customerId: string): Promise<void> {
   await writeCycle(customerId, rows, config, await lastPlaced(customerId));
 }
 
+
 /**
- * When they last PLACED an order, approved or not.
+ * When they last PLACED an order, approved or not — billed OR delivered.
  *
  * Separate from the cycle on purpose. The cycle is a fact about purchases and
  * must ignore anything accounts have not accepted; this is the signal that
  * stops the calling queue chasing somebody who ordered this morning, and it
- * would be wrong to make a telecaller ring them because approval is slow.
- * A declined order drops out of both.
+ * would be wrong to make a telecaller ring them because approval is slow. A
+ * declined order drops out of both.
  *
- * The TAKEN ORDER tab counts too, and it has to.
- *
- * That tab is where an order lands first — typed as the customer gives it,
- * hours or days before it is dispatched, billed, or written to Order Details
- * and projected into `orders`. Two things were supposed to cover a customer
- * between ordering and being chased again: `activeInOrderSystem` holds them
- * while any line is still open, and this date keeps them quiet afterwards. The
- * hold released on dispatch and handed over to a date that knew nothing about
- * the order, so the customer went back on the list days after their material
- * shipped — asked to order the thing they had just received. GMP Technical
- * Solutions ordered on 7 August and the Call Log had them "overdue by 6 days".
+ * The TAKEN ORDER tab counts too, and it has to. That tab is where an order
+ * lands first — typed as the customer gives it, hours or days before it is
+ * dispatched, billed, or written to Order Details and projected into `orders`.
+ * Two things were supposed to cover a customer between ordering and being
+ * chased again: `activeInOrderSystem` holds them while any line is still open,
+ * and this date keeps them quiet afterwards. The hold released on dispatch and
+ * handed over to a date that knew nothing about the order, so the customer
+ * went back on the list days after their material shipped — asked to order the
+ * thing they had just received. GMP Technical Solutions ordered on 7 August
+ * and the Call Log had them "overdue by 6 days".
  *
  * Cancelled lines are excluded. A cancelled row is the one status that
  * releases the hold on its own, precisely because the customer behind it has
  * not ordered anything — counting it here would mute exactly the person who
  * should be rung.
+ *
+ * Written once and rendered for both the per-customer path and the nightly
+ * one, because the comment on the bulk query already says what happens when
+ * they drift: a queue that changes its mind overnight. It takes the outer
+ * table's alias as a string, since the two callers spell it differently and a
+ * bare `id` inside a correlated subquery silently binds to the INNER table —
+ * the mistake §11 has a test for.
+ *
+ * DELIVERY COUNTS AS CONTACT, and only as contact. A shop receiving goods on
+ * its distributor's bill has been served, so chasing it to order is a call
+ * that annoys somebody who is already stocked — that is what this stops. What
+ * it deliberately does NOT do is make the delivery a sale: the buying cycle,
+ * the average order value, EOD figures, targets, outstanding and the product
+ * history are all read from `orders.customer_id` elsewhere and stay with
+ * whoever was invoiced. The shop's own cycle is still built from what the shop
+ * itself bought, which on a purely third-party account is nothing — so it
+ * reads as a prospect, which is what it is to us.
  */
-const TAKEN_ORDER_PLACED_SQL = sql`
-  select max(t.order_date)::text as d
-    from sheet_taken_order_rows t
-   where t.matched_customer_id = customers.id
-     and t.status = 'present'
-     and lower(coalesce(t.office_status, '')) <> ${CANCELLED_STATUS}`;
+const placedDateSql = (alias: string) => sql`
+  greatest(
+    (select max((o.ordered_at at time zone ${APP_TIMEZONE}))::date::text
+       from orders o
+      where (o.customer_id = ${sql.raw(alias)}.id
+             or o.delivery_customer_id = ${sql.raw(alias)}.id)
+        and o.status in ('captured', 'pending_approval', 'confirmed', 'dispatched')),
+    (select max(t.order_date)::text
+       from sheet_taken_order_rows t
+      where t.matched_customer_id = ${sql.raw(alias)}.id
+        and t.status = 'present'
+        and lower(coalesce(t.office_status, '')) <> ${CANCELLED_STATUS})
+  )`;
 
 async function lastPlaced(customerId: string): Promise<string | null> {
   const rows = await db.execute<{ d: string | null }>(sql`
-    select greatest(
-      (select max((o.ordered_at at time zone ${APP_TIMEZONE}))::date::text
-         from orders o
-        where o.customer_id = customers.id
-          and o.status in ('captured', 'pending_approval', 'confirmed', 'dispatched')),
-      (${TAKEN_ORDER_PLACED_SQL})
-    ) as d
+    select ${placedDateSql("customers")} as d
     from customers
     where customers.id = ${customerId}
   `);
@@ -187,18 +205,7 @@ export async function recomputeAllBuyingCycles(): Promise<number> {
   // disagreeing about when somebody last ordered is a queue that changes its
   // mind overnight.
   const placed = await db.execute<{ customer_id: string; d: string | null }>(sql`
-    select c.id as customer_id,
-           greatest(
-             (select max((o.ordered_at at time zone ${APP_TIMEZONE}))::date::text
-                from orders o
-               where o.customer_id = c.id
-                 and o.status in ('captured', 'pending_approval', 'confirmed', 'dispatched')),
-             (select max(t.order_date)::text
-                from sheet_taken_order_rows t
-               where t.matched_customer_id = c.id
-                 and t.status = 'present'
-                 and lower(coalesce(t.office_status, '')) <> ${CANCELLED_STATUS})
-           ) as d
+    select c.id as customer_id, ${placedDateSql("c")} as d
       from customers c
   `);
   const placedBy = new Map(placed.map((r) => [r.customer_id, r.d]));

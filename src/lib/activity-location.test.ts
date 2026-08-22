@@ -22,13 +22,22 @@
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, customers, mbosDevices, users } from "@/db/schema";
+import {
+  appAccess,
+  customerDistributors,
+  customers,
+  mbosDevices,
+  orders,
+  products,
+  syncConflicts,
+  users,
+} from "@/db/schema";
 import { invalidateConfig, seedConfig, updateSettings } from "@/lib/config/store";
 import { ingestSyncBatch } from "@/lib/actions/mbos";
-import type { MbosPrincipal } from "@/lib/services/mbos-service";
+import { buildBootstrap, type MbosPrincipal } from "@/lib/services/mbos-service";
 import type { SyncItem } from "@/lib/mbos/types";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -281,5 +290,339 @@ describe("Every activity is logged with where it happened", () => {
       select count(*)::int as n from mbos_activity_locations
        where entity_type = 'task' and entity_id = ${task.entityId}`);
     assert.equal(rows[0].n, 1);
+  });
+});
+
+
+/* -------------------------------------- who we bill for the shop we deliver to */
+
+/**
+ * The handset has to be able to ask "who do I bill for this?" while standing
+ * in the shop, offline.
+ *
+ * The server has held both parties on an order since `delivery_customer_id`
+ * arrived; the arrangement behind them — which shop is third party, and which
+ * distributor invoices it — lived only on the web side. Without it in the
+ * pull the salesman either guesses or the order is refused at sync hours
+ * later with nothing on the screen explaining why.
+ */
+describe("The pull carries who bills each shop", () => {
+  test("a third-party shop arrives marked, with its distributors", async () => {
+    const [distributor] = await db
+      .insert(customers)
+      .values({
+        id: id("cus"),
+        name: "Nashik Distributors",
+        contactPerson: "Contact",
+        phone: "9820000111",
+        city: "Nashik",
+        ownerId: salesman.id,
+        salesAmId: salesman.id,
+      })
+      .returning();
+
+    await db
+      .update(customers)
+      .set({ thirdParty: true })
+      .where(eq(customers.id, shop.id));
+    await db.insert(customerDistributors).values({
+      id: id("cd"),
+      customerId: shop.id,
+      distributorCustomerId: distributor.id,
+      isPrimary: true,
+    });
+
+    const payload = await buildBootstrap(principal);
+    const rows = payload.customers as Array<Record<string, unknown>>;
+
+    const sent = rows.find((r) => r.id === shop.id);
+    assert.ok(sent, "the shop was not in the pull at all");
+    assert.equal(sent.thirdParty, true, "the shop arrived without the mark");
+
+    const arrangement = sent.distributors as Array<{ id: string; name: string; isPrimary: boolean }>;
+    assert.equal(arrangement.length, 1, "the handset was sent no distributor to bill");
+    assert.equal(arrangement[0].id, distributor.id);
+    assert.equal(arrangement[0].name, "Nashik Distributors", "a name it can show on the form");
+    assert.equal(arrangement[0].isPrimary, true);
+  });
+
+  /**
+   * An ordinary direct customer must arrive with an EMPTY list rather than
+   * null: the handset defaults the billing party from this, and a null would
+   * make every order form branch on a missing value instead of on a length.
+   */
+  test("a direct customer arrives unmarked, with an empty arrangement", async () => {
+    const payload = await buildBootstrap(principal);
+    const rows = payload.customers as Array<Record<string, unknown>>;
+    const sent = rows.find((r) => r.id === shop.id);
+    assert.ok(sent);
+    assert.equal(sent.thirdParty, false);
+    assert.deepEqual(sent.distributors, [], "an empty arrangement must be a list, not null");
+  });
+});
+
+
+/* ----------------------- a field order names both parties, or means neither */
+
+describe("A field order carries who was billed and where it went", () => {
+  /** A SKU to hang a line on — an order with none is refused before this. */
+  async function anySku() {
+    const [p] = await db.select({ id: products.id }).from(products).limit(1);
+    return p;
+  }
+
+  test("the bill goes to the distributor and the goods to the shop", async () => {
+    const sku = await anySku();
+    const [distributor] = await db
+      .insert(customers)
+      .values({
+        id: id("cus"),
+        name: "Nashik Distributors",
+        contactPerson: "Contact",
+        phone: "9820000222",
+        city: "Nashik",
+        ownerId: salesman.id,
+        salesAmId: salesman.id,
+      })
+      .returning();
+
+    const entityId = id("mbos");
+    const [result] = await ingestSyncBatch(principal, [
+      item({
+        entityType: "order",
+        entityId,
+        payload: {
+          id: entityId,
+          customerId: distributor.id,
+          deliveryCustomerId: shop.id,
+          orderedAt: Date.now(),
+          totalAmountPaise: 250_00,
+          lines: [{ productId: sku.id, quantityCans: 5 }],
+        },
+      }),
+    ]);
+    assert.equal(result.status, "accepted", JSON.stringify(result));
+
+    const [row] = await db.select().from(orders).where(eq(orders.id, entityId));
+    assert.ok(row, "the order was not written");
+    assert.equal(row.customerId, distributor.id, "the invoice went to the wrong account");
+    assert.equal(row.deliveryCustomerId, shop.id, "where the goods went was not recorded");
+  });
+
+  /**
+   * Every handset built before the form learned to ask sends no delivery
+   * party, and must go on meaning what it has always meant.
+   */
+  test("an order with no delivery party means the biller received it", async () => {
+    const sku = await anySku();
+    const entityId = id("mbos");
+    const [result] = await ingestSyncBatch(principal, [
+      item({
+        entityType: "order",
+        entityId,
+        payload: {
+          id: entityId,
+          customerId: shop.id,
+          orderedAt: Date.now(),
+          totalAmountPaise: 100_00,
+          lines: [{ productId: sku.id, quantityCans: 2 }],
+        },
+      }),
+    ]);
+    assert.equal(result.status, "accepted", JSON.stringify(result));
+    const [row] = await db.select().from(orders).where(eq(orders.id, entityId));
+    assert.equal(row.deliveryCustomerId, null);
+  });
+
+  /**
+   * A shop that has left MahekOne since the salesman stood in it. Its own
+   * code, because the payload was correct when it was written — the same
+   * shape as `outstanding_stale`, wanting "sync and take it again" rather
+   * than a message that reads as a bug in the app.
+   */
+  test("a delivery party that no longer exists is refused by name", async () => {
+    const sku = await anySku();
+    const entityId = id("mbos");
+    const [result] = await ingestSyncBatch(principal, [
+      item({
+        entityType: "order",
+        entityId,
+        payload: {
+          id: entityId,
+          customerId: shop.id,
+          deliveryCustomerId: "cus_gone_for_good",
+          orderedAt: Date.now(),
+          totalAmountPaise: 100_00,
+          lines: [{ productId: sku.id, quantityCans: 1 }],
+        },
+      }),
+    ]);
+    assert.equal(result.status, "rejected");
+    assert.equal(result.code, "delivery_party_unknown");
+  });
+});
+
+
+/* ------------------------- a shop opened while standing inside it */
+
+describe("A shop can be opened from the field", () => {
+  async function aDistributor(name = "Nashik Distributors") {
+    const [d] = await db
+      .insert(customers)
+      .values({
+        id: id("cus"),
+        name,
+        contactPerson: "Contact",
+        phone: "9820000333",
+        city: "Nashik",
+        ownerId: salesman.id,
+        salesAmId: salesman.id,
+      })
+      .returning();
+    return d;
+  }
+
+  test("it arrives marked, with the distributor recorded as billing it", async () => {
+    const distributor = await aDistributor();
+    const entityId = id("cus");
+
+    const [result] = await ingestSyncBatch(principal, [
+      item({
+        entityType: "customer",
+        entityId,
+        payload: {
+          id: entityId,
+          name: "New Corner Outlet",
+          phone: "9812345678",
+          city: "Nashik",
+          thirdParty: true,
+          distributorCustomerId: distributor.id,
+        },
+      }),
+    ]);
+    assert.equal(result.status, "accepted", JSON.stringify(result));
+
+    const [row] = await db.select().from(customers).where(eq(customers.id, entityId));
+    assert.ok(row, "the shop was not created");
+    assert.equal(row.thirdParty, true, "it arrived without the mark");
+
+    const [link] = await db
+      .select()
+      .from(customerDistributors)
+      .where(eq(customerDistributors.customerId, entityId));
+    assert.ok(link, "nobody was recorded as billing it");
+    assert.equal(link.distributorCustomerId, distributor.id);
+    assert.equal(link.isPrimary, true, "the only distributor is the one that serves it");
+  });
+
+  /**
+   * A shop marked as one we do not bill, with nobody recorded as billing it,
+   * is exactly the row the console already has a tidying list for. Creating
+   * those from the field would fill it faster than anybody empties it.
+   */
+  test("a shop we do not bill must say who does", async () => {
+    const entityId = id("cus");
+    const [result] = await ingestSyncBatch(principal, [
+      item({
+        entityType: "customer",
+        entityId,
+        payload: {
+          id: entityId,
+          name: "Nobody Bills Me",
+          phone: "9812345679",
+          city: "Nashik",
+          thirdParty: true,
+        },
+      }),
+    ]);
+    assert.equal(result.status, "rejected");
+    const [row] = await db.select().from(customers).where(eq(customers.id, entityId));
+    assert.equal(row, undefined, "a shop nobody bills was created anyway");
+  });
+
+  test("the biller has to be an account we actually invoice", async () => {
+    const [otherShop] = await db
+      .insert(customers)
+      .values({
+        id: id("cus"),
+        name: "Another Third Party",
+        contactPerson: "Contact",
+        phone: "9820000444",
+        city: "Nashik",
+        ownerId: salesman.id,
+        salesAmId: salesman.id,
+        thirdParty: true,
+      })
+      .returning();
+
+    const entityId = id("cus");
+    const [result] = await ingestSyncBatch(principal, [
+      item({
+        entityType: "customer",
+        entityId,
+        payload: {
+          id: entityId,
+          name: "Pointed At A Shop",
+          phone: "9812345670",
+          city: "Nashik",
+          thirdParty: true,
+          distributorCustomerId: otherShop.id,
+        },
+      }),
+    ]);
+    assert.equal(result.status, "rejected", "a shop was allowed to bill another shop");
+  });
+
+  /**
+   * Flagged, not refused and not merged. Merging is impossible — the handset
+   * does not act on the id we return — and refusing would lose the order he is
+   * holding, which teaches him to retype the name until it goes through.
+   */
+  test("a shop on a number we already hold is created AND flagged", async () => {
+    const distributor = await aDistributor();
+    const [alreadyHere] = await db
+      .insert(customers)
+      .values({
+        id: id("cus"),
+        name: "Corner Shop",
+        contactPerson: "Contact",
+        phone: "98123 45678",
+        city: "Nashik",
+        ownerId: salesman.id,
+        salesAmId: salesman.id,
+      })
+      .returning();
+
+    const entityId = id("cus");
+    const [result] = await ingestSyncBatch(principal, [
+      item({
+        entityType: "customer",
+        entityId,
+        payload: {
+          id: entityId,
+          // The same number, spaced differently, and the shop named otherwise.
+          name: "Corner Stores",
+          phone: "+91 9812345678",
+          city: "Nashik",
+          thirdParty: true,
+          distributorCustomerId: distributor.id,
+        },
+      }),
+    ]);
+    assert.equal(result.status, "accepted", "the salesman lost his order to a duplicate check");
+
+    const [row] = await db.select().from(customers).where(eq(customers.id, entityId));
+    assert.ok(row, "the shop was refused rather than flagged");
+
+    const flags = await db
+      .select()
+      .from(syncConflicts)
+      .where(eq(syncConflicts.entityId, entityId));
+    assert.equal(flags.length, 1, "nobody was told these might be the same shop");
+    assert.equal(flags[0].field, "phone");
+    assert.ok(
+      flags[0].sheetValue?.includes(alreadyHere.name),
+      "the flag does not name the record it might duplicate",
+    );
   });
 });

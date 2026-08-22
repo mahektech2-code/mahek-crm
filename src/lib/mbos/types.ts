@@ -18,6 +18,16 @@ export const REJECTION_CODES = [
   "price_changed",
   "bill_settled",
   "outstanding_stale",
+  /*
+   * The shop the goods were to go to is not on MahekOne any more.
+   *
+   * Its own code rather than `validation`, because it is not a malformed
+   * payload — the handset sent something that was true when the salesman
+   * stood in the shop and has since stopped being true, which is the same
+   * shape as `outstanding_stale` and wants the same "sync and take it again"
+   * answer rather than "this app has a bug".
+   */
+  "delivery_party_unknown",
   "duplicate",
   "validation",
   "not_permitted",

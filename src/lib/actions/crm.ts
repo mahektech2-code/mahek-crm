@@ -189,6 +189,12 @@ export type SaveInteractionActionInput = {
   /** Photos of the damaged or short goods. Best-effort, like the dialog's. */
   complaintImages?: File[];
   orderDate?: string;
+  /**
+   * Who to invoice, and where the goods go. Both default to the customer the
+   * call is with, so an omitted pair means "bill them, deliver to them".
+   */
+  billingCustomerId?: string;
+  deliveryCustomerId?: string;
   sourceModule?:
     | "call_queue"
     | "payment_follow_up"
@@ -230,6 +236,8 @@ export async function saveInteractionAction(
       complaintBillId: raw.complaintBillId,
       complaintGoodsDescription: raw.complaintGoodsDescription,
       orderDate: raw.orderDate,
+      billingCustomerId: raw.billingCustomerId,
+      deliveryCustomerId: raw.deliveryCustomerId,
       sourceModule: raw.sourceModule ?? "ad_hoc",
       queuePosition: raw.queuePosition,
       idempotencyKey: raw.idempotencyKey ?? randomUUID(),

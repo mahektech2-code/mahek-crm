@@ -7,7 +7,9 @@ import {
   attachments,
   bills,
   complaints,
+  customerDistributors,
   customers,
+  syncConflicts,
   mbosApprovals,
   mbosAttendanceDays,
   mbosConflicts,
@@ -980,6 +982,17 @@ const orderSchema = z.object({
   /** The price tag the lines were priced against, where they were priced. */
   priceTag: z.string().nullish(),
   visitId: z.string().nullish(),
+  /**
+   * Where the goods go, when that is not where the bill goes.
+   *
+   * `customerId` above is who we INVOICE and stays the account every figure is
+   * read from — credit, term, outstanding, the queue. This is the shop the
+   * lorry stops at, and on a third-party account the two differ.
+   *
+   * Nullish, so every handset built before this sends nothing and means what
+   * it has always meant: the billing party received them.
+   */
+  deliveryCustomerId: z.string().nullish(),
 });
 
 async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
@@ -987,10 +1000,45 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;
 
+  /*
+   * The BILLING party, and it is scope-checked. Whose credit limit, term and
+   * outstanding this order is judged against is this account, so a salesman
+   * may only bill somebody in his own book.
+   */
   const found = await scopedCustomer(principal, p.customerId);
   if (!found.ok) return { kind: "rejected", value: found.value };
   const customer = found.customer;
   const config = await getConfig();
+
+  /*
+   * The delivery party, which is NOT scope-checked and must not be.
+   *
+   * It is an address on somebody else's order — the shop a distributor's goods
+   * go to — and it routinely sits in another salesman's book or in nobody's.
+   * Refusing it on scope would make the ordinary third-party case
+   * unrecordable, which is the state this field exists to end. Nothing about
+   * it moves money and no figure on this order is read from it.
+   *
+   * Naming the biller here is folded to null rather than refused: two
+   * spellings of "they received it themselves" must not both reach the column.
+   */
+  let deliveryCustomerId: string | null = null;
+  if (p.deliveryCustomerId && p.deliveryCustomerId !== customer.id) {
+    const [shop] = await db
+      .select({ id: customers.id })
+      .from(customers)
+      .where(eq(customers.id, p.deliveryCustomerId));
+    if (!shop) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "delivery_party_unknown",
+          "The shop this was to be delivered to is not on MahekOne any more. Sync and take the order again.",
+        ),
+      };
+    }
+    deliveryCustomerId = shop.id;
+  }
 
   /* The same id arriving under a different idempotency key is a create the
    * handset changed and resent, not a retry. Accepting it would put a second
@@ -1146,6 +1194,22 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
 
   /* --- accepted. The number comes from the series, in the transaction. --- */
   const orderedAt = p.orderedAt ? new Date(p.orderedAt) : new Date(item.clientCreatedAt);
+  /*
+   * A PARAMETER IS A STRING, NOT A DATE.
+   *
+   * `postgres` serialises a JS Date by asking Node to measure it as text, and
+   * on Node 25 that throws — inside the driver, where no type check sees it.
+   * The two `update customers` statements below both bind this, so every field
+   * order failed with `Failed query: update customers set last_order_date …`
+   * and came back as a RETRY: the outbox would resend it for ever and the
+   * salesman's order would never land, with nothing on either end naming the
+   * cause. It is the same bug the pull delta had, and the rule outlives both.
+   *
+   * An ISO instant carries its own zone, so this is not the bare-cast rule in
+   * different clothes — the SQL still names Asia/Kolkata for the DATE it
+   * truncates to.
+   */
+  const orderedAtIso = orderedAt.toISOString();
   const day = await today();
   const fy = financialYearOf(day);
   const prefix = seriesPrefix(config["mbos.orders.numberSeriesPrefix"], "MBOS");
@@ -1172,6 +1236,9 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     await tx.insert(orders).values({
       id: item.entityId,
       customerId: customer.id,
+      // Null where the billing party received them, which is every field order
+      // taken before the handset learned to ask.
+      deliveryCustomerId,
       userId: principal.user.id,
       // A field order is its own source. `external` means the external ORDER
       // SYSTEM the office types into and `crm` means a telecaller took it;
@@ -1201,12 +1268,34 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       update customers
          set last_order_date = greatest(
                coalesce(last_order_date, date '1900-01-01'),
-               (${orderedAt}::timestamptz at time zone 'Asia/Kolkata')::date
+               (${orderedAtIso}::timestamptz at time zone 'Asia/Kolkata')::date
              ),
              last_order_value = ${p.totalAmountPaise},
              updated_at = now()
        where id = ${customer.id}
     `);
+
+    /*
+     * The shop it was DELIVERED to stops being chased as well.
+     *
+     * Being served is being served, whoever was invoiced — ringing a shop to
+     * ask for an order the day after a lorry unloaded there is the call this
+     * prevents. Only the DATE moves: `last_order_value` stays with the biller,
+     * and so do the cycle, the targets, the outstanding and the product
+     * history, all of which read `orders.customer_id`. The shop's own buying
+     * cycle is still built from what the shop itself bought.
+     */
+    if (deliveryCustomerId) {
+      await tx.execute(sql`
+        update customers
+           set last_order_date = greatest(
+                 coalesce(last_order_date, date '1900-01-01'),
+                 (${orderedAtIso}::timestamptz at time zone 'Asia/Kolkata')::date
+               ),
+               updated_at = now()
+         where id = ${deliveryCustomerId}
+      `);
+    }
 
     await writeTimeline(tx, {
       customerId: customer.id,
@@ -2793,6 +2882,22 @@ const customerCreateSchema = z.object({
   estimatedPotentialPaise: z.number().int().nonnegative().nullish(),
   gpsLat: z.number().nullish(),
   gpsLng: z.number().nullish(),
+  /**
+   * A shop we DELIVER to and do not bill, opened in the field.
+   *
+   * The case is a salesman standing in an outlet that is not on the book,
+   * taking an order that his distributor will be invoiced for. Without this he
+   * either abandons the order or files it as though the distributor received
+   * the goods, and where the lorry actually went is lost.
+   */
+  thirdParty: z.boolean().nullish(),
+  /**
+   * Who invoices it. Required WITH `thirdParty`, because a shop marked as one
+   * we do not bill, with nobody recorded as billing it, is precisely the row
+   * the console already has a tidying list for — and creating those from the
+   * field would fill it faster than anybody empties it.
+   */
+  distributorCustomerId: z.string().nullish(),
 });
 
 /**
@@ -2831,6 +2936,9 @@ async function handleCustomerCreate(
       ),
     };
   }
+  /* Held in a const: the guard above narrows `p.city`, and that narrowing does
+     not survive into the transaction callback below. */
+  const city = p.city;
 
   const existing = await db
     .select({ id: customers.id })
@@ -2842,19 +2950,128 @@ async function handleCustomerCreate(
     return { kind: "accepted", value: { serverId: item.entityId } };
   }
 
-  await db.insert(customers).values({
-    id: item.entityId,
-    name: p.name,
-    contactPerson: p.contactPerson || p.name,
-    phone: p.phone,
-    city: p.city,
-    address: p.address ?? null,
-    kind: "customer",
-    leadSource: "mbos",
-    ownerId: principal.user.id,
-    salesAmId: principal.user.id,
-    gpsLat: p.gpsLat ?? null,
-    gpsLng: p.gpsLng ?? null,
+  /*
+   * A shop we do not bill has to say who does.
+   *
+   * Checked here rather than trusted: the distributor must be an account we
+   * actually invoice — a real customer, and not itself a third party — which
+   * is the same rule the console's own picker enforces. A shop pointed at
+   * another shop is an arrangement that cannot be acted on.
+   */
+  let distributor: { id: string; name: string } | null = null;
+  if (p.thirdParty) {
+    if (!p.distributorCustomerId) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          `${p.name} was opened as a shop we deliver to but nobody was named as billing it. Say who is invoiced and add it again.`,
+        ),
+      };
+    }
+    const [biller] = await db
+      .select({
+        id: customers.id,
+        name: customers.name,
+        kind: customers.kind,
+        thirdParty: customers.thirdParty,
+      })
+      .from(customers)
+      .where(eq(customers.id, p.distributorCustomerId))
+      .limit(1);
+    if (!biller || biller.kind !== "customer" || biller.thirdParty) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          `Whoever was named as billing ${p.name} is not an account we invoice. Pick the distributor again and add it.`,
+        ),
+      };
+    }
+    distributor = { id: biller.id, name: biller.name };
+  }
+
+  /*
+   * THE DUPLICATE IS FLAGGED, NOT REFUSED, AND NOT MERGED.
+   *
+   * Merged is impossible: the handset does not act on the `serverId` we return,
+   * so folding this onto an existing record would leave the phone holding a
+   * customer id that exists nowhere — and the order queued behind it would
+   * fail against a shop that was never created.
+   *
+   * Refused is worse than it looks. The salesman is standing in the shop with
+   * the order in his hand; losing it to a message about a record he cannot see
+   * teaches him to type the name slightly differently until it goes through,
+   * which is how three spellings of one shop get onto the book.
+   *
+   * So the shop is created and the collision is written down where somebody
+   * can act on it. The phone is the right key: it is the one field two people
+   * will type identically, and a shop's name is not.
+   */
+  const digits = p.phone.replace(/\D/g, "").slice(-10);
+  const clash = digits.length === 10
+    ? await db
+        .select({ id: customers.id, name: customers.name })
+        .from(customers)
+        /*
+         * `[^0-9]`, NOT `\D`. Postgres does not read that escape the way
+         * JavaScript does — `regexp_replace('98123 45678', '\D', '', 'g')`
+         * returns `8123 45678`, stripping a digit and keeping the space, which
+         * would have made this match almost nothing and looked like "we simply
+         * have no duplicates". The JS side above is a real JS regex and `\D`
+         * is right there.
+         */
+        .where(sql`right(regexp_replace(${customers.phone}, '[^0-9]', '', 'g'), 10) = ${digits}`)
+        .limit(1)
+    : [];
+
+  await db.transaction(async (tx) => {
+    await tx.insert(customers).values({
+      id: item.entityId,
+      name: p.name,
+      contactPerson: p.contactPerson || p.name,
+      phone: p.phone,
+      city,
+      address: p.address ?? null,
+      kind: "customer",
+      leadSource: "mbos",
+      ownerId: principal.user.id,
+      salesAmId: principal.user.id,
+      // Goods here, invoice elsewhere — the mark and the arrangement are
+      // written together, or the console gets a shop nobody bills.
+      thirdParty: Boolean(p.thirdParty),
+      gpsLat: p.gpsLat ?? null,
+      gpsLng: p.gpsLng ?? null,
+    });
+
+    if (distributor) {
+      await tx.insert(customerDistributors).values({
+        id: `cd_${randomUUID().slice(0, 12)}`,
+        customerId: item.entityId,
+        distributorCustomerId: distributor.id,
+        // The only one there is, so it is the one that serves it usually.
+        isPrimary: true,
+        note: "Opened in the field",
+        createdById: principal.user.id,
+        updatedById: principal.user.id,
+      });
+    }
+
+    if (clash.length) {
+      await tx
+        .insert(syncConflicts)
+        .values({
+          id: `cfl_${randomUUID().slice(0, 12)}`,
+          entityType: "customers",
+          entityId: item.entityId,
+          field: "phone",
+          sheetValue: `${clash[0].name} (${clash[0].id})`,
+          appValue: `${p.name} (${item.entityId})`,
+          decidedById: principal.user.id,
+          decidedAt: new Date(),
+        })
+        .onConflictDoNothing();
+    }
   });
 
   await notifyManagers(

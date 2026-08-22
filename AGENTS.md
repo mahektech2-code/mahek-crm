@@ -2180,6 +2180,17 @@ moment a handset had a cursor; bootstrap passes no Date at all, which is exactly
 why sign-in worked and syncing after it did not. An ISO instant carries its own
 zone, so this is not the bare-cast rule in different clothes.
 
+**And it came back, in the order handler, where it failed differently.**
+`handleOrder` bound `orderedAt` — a Date — into both `update customers set
+last_order_date …` statements, so EVERY field order was refused with a
+`Failed query` message and came back as a **retry** rather than a rejection.
+That is the worse of the two shapes: the outbox resends for ever, the salesman
+sees an order that never lands, and nothing on either end names the cause. It
+was found by the first test to send a real order payload through the handler,
+which is the point — the rule is invisible until something actually binds a
+Date, and no type check will ever see it. Grep for `${` followed by a Date
+before adding a raw query, and pass `.toISOString()`.
+
 **Publishing to the field is a decision, and withdrawing is the same decision
 reversed.** The document library and the training centre had tables, handset
 screens that read them, and no door between the two — both were empty because

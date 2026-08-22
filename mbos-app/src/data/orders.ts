@@ -52,13 +52,21 @@ export type OrderAssessment = {
  * A credit-blocked customer is the ONLY outright block in this app. Everything
  * else — over the limit, over the approval threshold — flags or routes to
  * approval, and the order still saves.
+ *
+ * THE ID IS THE BILLING PARTY, always. On a shop served through a distributor
+ * the goods and the invoice go to different accounts, and the limit, the
+ * outstanding and the block belong to whoever is invoiced — the shop's own
+ * credit says nothing about whether we can afford to sell to the distributor,
+ * and on a purely third-party shop there is no limit recorded at all. Passing
+ * the delivery party here would assess an order against a blank account and
+ * wave everything through.
  */
-export async function assessCart(customerId: string, lines: CartLine[]): Promise<OrderAssessment> {
+export async function assessCart(billingCustomerId: string, lines: CartLine[]): Promise<OrderAssessment> {
   const customer = await one<{
     creditBlocked: number; creditBlockReason: string | null;
     creditLimitPaise: number | null; outstandingPaise: number; submittedNotInvoicedPaise: number;
     customerType: string | null;
-  }>('SELECT * FROM customers WHERE id = ?', [customerId]);
+  }>('SELECT * FROM customers WHERE id = ?', [billingCustomerId]);
 
   const priceSource = await getConfig<PriceSource>('products.priceSource', 'unset');
   const approvalThreshold = await getConfig<number>('mbos.orders.approvalThresholdPaise', 0);
@@ -134,8 +142,23 @@ export async function assessCart(customerId: string, lines: CartLine[]): Promise
  * it arrives the screen shows the client reference and says so.
  */
 export async function saveOrder(args: {
+  /**
+   * Who we INVOICE. Every figure is read from this one — the credit
+   * assessment, the outstanding it adds to, the term, and the account the
+   * order belongs to commercially.
+   */
   customerId: string;
   customerName: string;
+  /**
+   * Where the goods GO, when that is not where the bill goes.
+   *
+   * Undefined or the billing party's own id both mean "they received them
+   * themselves": the two spellings are folded to null before anything is
+   * stored, or one arrangement reaches the column two ways and every read has
+   * to know both.
+   */
+  deliveryCustomerId?: string | null;
+  deliveryCustomerName?: string | null;
   userId: string;
   visitId?: string | null;
   lines: CartLine[];
@@ -144,14 +167,18 @@ export async function saveOrder(args: {
 }): Promise<{ orderId: string; needsApproval: boolean }> {
   const base = await stamp('order');
   const needsApproval = args.assessment.decision === 'needs_approval';
+  const deliveryId =
+    args.deliveryCustomerId && args.deliveryCustomerId !== args.customerId
+      ? args.deliveryCustomerId
+      : null;
 
   await tx(async () => {
     await run(
-      `INSERT INTO orders (id, customerId, userId, visitId, orderedAt, status, paymentTermDays,
+      `INSERT INTO orders (id, customerId, deliveryCustomerId, userId, visitId, orderedAt, status, paymentTermDays,
                            netTotalPaise, valueUnavailable, clientCreatedAt, deviceId, syncState)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,'queued')`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'queued')`,
       [
-        base.id, args.customerId, args.userId, args.visitId ?? null, Date.now(),
+        base.id, args.customerId, deliveryId, args.userId, args.visitId ?? null, Date.now(),
         needsApproval ? 'pending_approval' : 'submitted',
         args.paymentTermDays ?? null,
         args.assessment.valuePaise, args.assessment.valueUnavailable ? 1 : 0,
@@ -182,9 +209,17 @@ export async function saveOrder(args: {
       await run('UPDATE orders SET approvalId = ? WHERE id = ?', [approvalId, base.id]);
     }
 
+    /*
+     * The event goes where the salesman was STANDING.
+     *
+     * He opens a shop's screen and wants to see that an order was taken there;
+     * filing it only against the distributor leaves that shop's history empty
+     * on the day he served it. The order's commercial home is the order row,
+     * which names the biller — this is a record of activity at a place.
+     */
     await insertLocal('timeline_events', {
       id: newId('tl'),
-      customerId: args.customerId,
+      customerId: deliveryId ?? args.customerId,
       eventType: 'order',
       sourceApp: 'mbos',
       sourceRecordId: base.id,
@@ -201,6 +236,16 @@ export async function saveOrder(args: {
       args.assessment.valuePaise ?? 0,
       args.customerId,
     ]);
+
+    /* The shop it was DELIVERED to stops being chased too — being served is
+       being served, whoever was invoiced. Only the DATE moves: the money is
+       the biller's and `submittedNotInvoicedPaise` stays with them. */
+    if (deliveryId) {
+      await run('UPDATE customers SET lastOrderDate = ? WHERE id = ?', [
+        isoDate(new Date()),
+        deliveryId,
+      ]);
+    }
   });
 
   await enqueue({
@@ -219,6 +264,9 @@ export async function saveOrder(args: {
       /* Not read by the server. Kept so a refusal can name the shop on the
          handset, which is the screen the salesman is actually looking at. */
       customerName: args.customerName,
+      /* Null where the biller received them. The server folds its own copy of
+         this rule too, because a payload is not a place to trust. */
+      deliveryCustomerId: deliveryId ?? undefined,
       visitId: args.visitId ?? undefined,
       orderedAt: base.clientCreatedAt,
       totalAmountPaise: args.assessment.valuePaise ?? 0,

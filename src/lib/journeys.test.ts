@@ -8849,3 +8849,168 @@ describe("everything on a customer's record", () => {
     );
   });
 });
+
+/* --------------------------------------- billing party and delivery party */
+
+/**
+ * Who we invoice and where the goods go are two questions.
+ *
+ * On a shop served through a distributor they have different answers, and the
+ * model has held both since `orders.delivery_customer_id` arrived. What it
+ * never had was anybody ASKING — the delivery party was reconstructed nightly
+ * by matching the order sheet's names against the book, which is why that job
+ * reports `unresolved` and `ambiguous`. These pin the captured version.
+ */
+describe("An order has a billing party and a delivery party", () => {
+  /** The catalogue is seeded per test; any SKU will do — an order needs a line. */
+  async function firstProduct() {
+    const [p] = await db.select().from(productsTable).limit(1);
+    return p;
+  }
+
+  test("billing defaults to the customer called, and delivery to nobody else", async () => {
+    const customer = await makeCustomer(priya.id, { name: "Ordinary Direct" });
+    const product = await firstProduct();
+    setTestUser(priya);
+    const saved = await saveInteraction({
+      customerId: customer.id,
+      interactionType: "order_received",
+      productQuantities: { [product.id]: 3 },
+      orderDate: TODAY,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
+
+    const [row] = await db.select().from(orders).where(eq(orders.customerId, customer.id));
+    assert.ok(row, "the order was not billed to the customer called");
+    assert.equal(
+      row.deliveryCustomerId,
+      null,
+      "null means they received it themselves, which is every order written before this was asked",
+    );
+  });
+
+  test("goods to the shop, bill to the distributor", async () => {
+    const distributor = await makeCustomer(priya.id, {
+      name: "Nashik Distributors",
+      // `creditDays` is what the order reads; `creditTermDays` is the column
+      // beside it that the information tab shows.
+      creditDays: 45,
+    });
+    const shop = await makeCustomer(priya.id, { name: "Corner Shop", thirdParty: true });
+
+    const product = await firstProduct();
+    setTestUser(priya);
+    const saved = await saveInteraction({
+      customerId: shop.id,
+      interactionType: "order_received",
+      productQuantities: { [product.id]: 3 },
+      orderDate: TODAY,
+      billingCustomerId: distributor.id,
+      deliveryCustomerId: shop.id,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
+
+    const [row] = await db
+      .select()
+      .from(orders)
+      .where(eq(orders.customerId, distributor.id));
+    assert.ok(row, "the order was not billed to the distributor");
+    assert.equal(row.deliveryCustomerId, shop.id, "the goods did not record where they went");
+    /*
+     * The term of whoever is BILLED. Reading the shop's would put a date on the
+     * bill that nobody agreed with the person paying it.
+     */
+    assert.equal(row.creditDays, 45, "the due date was taken from the wrong party's term");
+  });
+
+  /**
+   * The rule chosen deliberately, with its cost accepted: a shop being served
+   * stops being chased, and its SALES figures do not move.
+   */
+  test("delivery is contact, and it is not a sale", async () => {
+    const distributor = await makeCustomer(priya.id, { name: "The Biller" });
+    const shop = await makeCustomer(priya.id, {
+      name: "Served Shop",
+      thirdParty: true,
+      lastOrderDate: null,
+      avgOrderValue: 0,
+    });
+
+    const product = await firstProduct();
+    setTestUser(priya);
+    const saved = await saveInteraction({
+      customerId: shop.id,
+      interactionType: "order_received",
+      productQuantities: { [product.id]: 3 },
+      orderDate: TODAY,
+      billingCustomerId: distributor.id,
+      deliveryCustomerId: shop.id,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(saved.ok, true, saved.ok ? "" : saved.error);
+
+    await recomputeBuyingCycle(shop.id);
+    const [after] = await db.select().from(customers).where(eq(customers.id, shop.id));
+
+    assert.equal(
+      after.lastOrderDate,
+      TODAY,
+      "a shop that has just been served is still being chased to order",
+    );
+    assert.equal(
+      after.avgOrderValue,
+      0,
+      "a delivery was counted as the shop's own purchase",
+    );
+    assert.equal(
+      after.cycleIsDefault,
+      true,
+      "the shop's buying cycle was built from goods it never bought from us",
+    );
+  });
+
+  test("a lead cannot be billed", async () => {
+    const lead = await makeCustomer(priya.id, {
+      name: "Never Ordered",
+      kind: "lead",
+      salesAmId: null,
+    });
+    const shop = await makeCustomer(priya.id, { name: "Some Shop" });
+
+    const product = await firstProduct();
+    setTestUser(priya);
+    const refused = await saveInteraction({
+      customerId: shop.id,
+      interactionType: "order_received",
+      productQuantities: { [product.id]: 3 },
+      orderDate: TODAY,
+      billingCustomerId: lead.id,
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(refused.ok, false, "a prospect was quietly turned into a debtor");
+  });
+
+  /**
+   * Two spellings of "they received it themselves" must not both reach the
+   * column, or one arrangement is stored two ways and every read has to know
+   * both.
+   */
+  test("naming the biller as the delivery party is folded to null", async () => {
+    const customer = await makeCustomer(priya.id, { name: "Self Delivered" });
+    const product = await firstProduct();
+    setTestUser(priya);
+    await saveInteraction({
+      customerId: customer.id,
+      interactionType: "order_received",
+      productQuantities: { [product.id]: 3 },
+      orderDate: TODAY,
+      billingCustomerId: customer.id,
+      deliveryCustomerId: customer.id,
+      idempotencyKey: randomUUID(),
+    });
+    const [row] = await db.select().from(orders).where(eq(orders.customerId, customer.id));
+    assert.equal(row.deliveryCustomerId, null);
+  });
+});

@@ -6,7 +6,13 @@ import { Card, Input, ListCard, PrimaryButton, SectionLabel, T } from '../src/co
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, radius, shadow, tabular, type, weight } from '../src/theme/tokens';
 import { inr, plural } from '../src/lib/format';
-import { frequentProducts, searchProducts, starterProducts } from '../src/data/customers';
+import {
+  billingChoicesFor,
+  frequentProducts,
+  searchProducts,
+  starterProducts,
+  type BillingChoice,
+} from '../src/data/customers';
 import { assessCart, saveOrder, type CartLine, type OrderAssessment } from '../src/data/orders';
 import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
@@ -65,6 +71,22 @@ export default function OrderScreen() {
   const [resultsFor, setResultsFor] = React.useState<string | null>(null);
   const [assessment, setAssessment] = React.useState<OrderAssessment | null>(null);
 
+  /* ------------------------------------------- who we bill, who we deliver to
+   *
+   * The customer whose screen this is, is where the GOODS go — the salesman is
+   * standing in it. Who gets INVOICED is a second question, and on a shop
+   * served through a distributor it has a different answer.
+   *
+   * `billing` is the chosen id and starts null, meaning "not worked out yet";
+   * the effect below settles it to the best answer the arrangement gives, and
+   * the salesman can change it. It is deliberately not defaulted to the shop:
+   * doing that would flash a wrong biller and a wrong credit bar for a frame
+   * on exactly the accounts this exists for.
+   */
+  const [billingOptions, setBillingOptions] = React.useState<BillingChoice[] | null>(null);
+  const [billing, setBilling] = React.useState<string | null>(null);
+  const [pickingBiller, setPickingBiller] = React.useState(false);
+
   const remember = React.useCallback((rows: Product[]) => {
     setKnown((prev) => {
       const next = { ...prev };
@@ -74,6 +96,34 @@ export default function OrderScreen() {
   }, []);
 
   const custId = c?.id ?? null;
+
+  /* The arrangement, read once per customer. It came down with the pull, so
+     this is a local read and works with no signal. */
+  React.useEffect(() => {
+    let live = true;
+    if (!c) {
+      setBillingOptions(null);
+      setBilling(null);
+      return;
+    }
+    void billingChoicesFor(c).then((options) => {
+      if (!live) return;
+      setBillingOptions(options);
+      /* The first option that can actually be billed. On a direct customer
+         that is the shop itself; on a third-party one it is the primary
+         distributor, falling through to the shop where his distributor is
+         somebody else's account. */
+      setBilling(options.find((o) => o.onBook)?.id ?? null);
+    });
+    return () => {
+      live = false;
+    };
+  }, [c]);
+
+  /** Who is being invoiced. Every credit figure on this screen is theirs. */
+  const biller = billingOptions?.find((o) => o.id === billing) ?? null;
+  /** Where the goods go, when that is not where the bill goes. */
+  const deliverTo = c && billing && billing !== c.id ? c : null;
 
   useFocusEffect(
     React.useCallback(() => {
@@ -134,14 +184,17 @@ export default function OrderScreen() {
      because the answer to "does this fit" changes with every can. */
   React.useEffect(() => {
     let live = true;
-    if (!custId) return;
-    void assessCart(custId, lines).then((a) => {
+    /* The BILLING party, not the shop. The limit, the outstanding and the
+       block belong to whoever is invoiced — assessing against a third-party
+       shop reads a blank account and waves everything through. */
+    if (!billing) return;
+    void assessCart(billing, lines).then((a) => {
       if (live) setAssessment(a);
     });
     return () => {
       live = false;
     };
-  }, [custId, lines]);
+  }, [billing, lines]);
 
   if (!c) {
     return (
@@ -167,7 +220,7 @@ export default function OrderScreen() {
 
   const inCart = lines.filter((l) => cart[l.productId] != null);
   const blank = inCart.some((l) => !l.cans);
-  const canSubmit = inCart.length > 0 && !blank && !blocked;
+  const canSubmit = inCart.length > 0 && !blank && !blocked && !!billing;
 
   const frequentOffered = frequent.filter((k) => !cart[k.id]);
 
@@ -175,10 +228,19 @@ export default function OrderScreen() {
     if (!inCart.length) return notify('Add something first');
     if (blank) return notify('Every line needs a quantity');
     if (!assessment || blocked) return notify(assessment?.blockReason ?? 'This customer cannot be ordered for');
+    /* Said while he is standing in the shop rather than by a refusal at sync
+       hours later: the arrangement names a distributor who is not his. */
+    if (!billing || !biller) {
+      return notify(
+        `${c.name} is billed to ${billingOptions?.[0]?.name ?? 'somebody'}, who is not on your book. Ask the office to move the account or bill the shop direct.`,
+      );
+    }
 
     const { needsApproval: sentForApproval } = await saveOrder({
-      customerId: c.id,
-      customerName: c.name,
+      customerId: biller.id,
+      customerName: biller.name,
+      deliveryCustomerId: deliverTo?.id ?? null,
+      deliveryCustomerName: deliverTo?.name ?? null,
       userId: boot.session?.user.id ?? '',
       lines: inCart,
       assessment,
@@ -201,7 +263,88 @@ export default function OrderScreen() {
     <AppFrame title="New order" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
 
-      <T s="caption">{c.name + ' · ' + (dues ? inr(dues) + ' already owing' : 'nothing owing')}</T>
+      {/* The owing figure is the BILLER's, so it is named. Reading "nothing
+          owing" under a shop's name while the distributor paying for it is
+          over their limit is the misreading this line exists to prevent. */}
+      <T s="caption">
+        {(biller?.name ?? c.name) + ' · ' + (dues ? inr(dues) + ' already owing' : 'nothing owing')}
+      </T>
+
+      {/* --------------------------------------------- who pays, who receives
+          Drawn ONLY where the two differ or there is a choice to make. On an
+          ordinary direct customer both answers are the customer whose screen
+          this is, and a row restating that twice is furniture. */}
+      {billingOptions && (deliverTo || billingOptions.filter((o) => o.onBook).length > 1) ? (
+        <Card style={{ marginTop: 12 }}>
+          <SectionLabel style={{ marginBottom: 8 }}>Who pays for this</SectionLabel>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <T s="body" style={weight(500)}>
+                {'Bill to ' + (biller?.name ?? 'nobody on your book')}
+              </T>
+              <T s="caption" style={{ color: C.muted }}>
+                {deliverTo ? 'Deliver to ' + deliverTo.name : 'Delivered to them'}
+              </T>
+            </View>
+            {billingOptions.filter((o) => o.onBook).length > 1 ? (
+              <Pressable
+                onPress={() => setPickingBiller((v) => !v)}
+                style={{ paddingHorizontal: 10, paddingVertical: 6 }}
+              >
+                <T s="caption" style={{ color: C.primaryDeep, ...weight(500) }}>
+                  {pickingBiller ? 'Done' : 'Change'}
+                </T>
+              </Pressable>
+            ) : null}
+          </View>
+
+          {pickingBiller ? (
+            <View style={{ marginTop: 10, gap: 6 }}>
+              {billingOptions.map((o) => (
+                <Pressable
+                  key={o.id}
+                  disabled={!o.onBook}
+                  onPress={() => {
+                    setBilling(o.id);
+                    setPickingBiller(false);
+                  }}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: o.id === billing ? C.primaryDeep : C.hairline,
+                    borderRadius: radius.sm,
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                    opacity: o.onBook ? 1 : 0.5,
+                  }}
+                >
+                  <T s="body">{o.name}</T>
+                  <T s="caption" style={{ color: C.muted }}>
+                    {!o.onBook
+                      ? 'Not on your book — you cannot bill them'
+                      : o.id === c.id
+                        ? 'Bill the shop direct'
+                        : o.isPrimary
+                          ? 'Usually bills this shop'
+                          : 'Also bills this shop'}
+                  </T>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+
+          {/* The dead end, said plainly. His shop is billed to somebody whose
+              account he does not hold, so this order cannot be written — and
+              he needs to know that now, not when it is refused at sync. */}
+          {!biller ? (
+            <T s="caption" style={{ color: C.danger, marginTop: 8 }}>
+              {'Billed to ' +
+                (billingOptions[0]?.name ?? 'somebody') +
+                ', who is not on your book. Ask the office to move the account, or bill the shop direct.'}
+            </T>
+          ) : null}
+        </Card>
+      ) : null}
 
       {/* The one hard block. The sentence is the office's own, not this
           screen's — accounts stopped this customer and said why. */}

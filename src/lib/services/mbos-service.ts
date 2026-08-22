@@ -504,6 +504,28 @@ export async function buildBootstrap(
  * either, and `outstandingAsOf` is what lets the app say how old its answer is
  * rather than presenting a cached figure as current (PROTOCOL §8).
  */
+/**
+ * The book, and — new — who we BILL for each account in it.
+ *
+ * `thirdParty` says the goods go to this shop and the invoice does not.
+ * `distributors` says where the invoice goes instead. A LIST, because a shop
+ * on a territory boundary is served by two and storing one of them makes the
+ * other unrecordable; `isPrimary` is who serves it usually.
+ *
+ * Sent so the handset can default the billing party the moment a salesman
+ * picks a shop, offline, with no round trip. It is REFERENCE data about the
+ * arrangement and not permission to bill: the billing party still has to be a
+ * customer in this salesman's own book, because that is the account whose
+ * credit limit, term and outstanding decide whether the order can be taken at
+ * all. A shop whose distributor belongs to somebody else is one this salesman
+ * cannot write an order for — and with this list the handset can say so while
+ * he is standing in the shop, rather than the order being refused at sync
+ * hours later with nothing on the screen explaining why.
+ *
+ * The comment above is out here rather than inside the query because the SQL
+ * is a template literal, and a backtick in a comment inside one ends the
+ * string.
+ */
 async function customersForDevice(ids: string[]) {
   if (!ids.length) return [];
   return db.execute<Record<string, unknown>>(sql`
@@ -529,6 +551,18 @@ async function customersForDevice(ids: string[]) {
            c.visit_frequency_days as "visitFrequencyDays",
            c.cycle_days as "cycleDays",
            c.sales_person_name as "salesPersonName",
+           -- who we bill for this one; see the note above the function
+           c.third_party as "thirdParty",
+           coalesce((
+             select json_agg(json_build_object(
+                      'id', d.distributor_customer_id,
+                      'name', dc.name,
+                      'isPrimary', d.is_primary
+                    ) order by d.is_primary desc, dc.name asc)
+               from customer_distributors d
+               join customers dc on dc.id = d.distributor_customer_id
+              where d.customer_id = c.id
+           ), '[]'::json) as "distributors",
            c.updated_at as "updatedAt"
       from customers c
      where c.id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
