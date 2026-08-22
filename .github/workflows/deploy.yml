@@ -97,21 +97,43 @@ jobs:
           echo "Tags before:"
           doctl registry repository list-tags app --format Tag,UpdatedAt || true
 
-          # Newest first by update time. `latest` is never a candidate: it
-          # points at whatever was pushed last and deleting it would leave a
-          # fresh droplet with nothing to pull.
-          mapfile -t OLD < <(
+          # THE TIMESTAMP LEADS THE LINE, AND THAT IS THE WHOLE POINT.
+          #
+          # This asked for `Tag,UpdatedAt` and sorted with `sort -k2 -r`, which
+          # is wrong in a way that reads as correct: doctl PADS its columns to
+          # align them, `-k2` means "field 2 to end of line", and sort does not
+          # skip leading blanks unless told to. So the key began with a run of
+          # spaces whose length varied with the tag's, and the list came back
+          # ordered by how long the tag name was. A newer image sorted below an
+          # older one and `latest` sorted to the very bottom — saved from
+          # deletion only by the awk filter below, which is luck rather than
+          # design. Left alone it would eventually have kept the oldest three
+          # images and deleted the one the droplet is running.
+          #
+          # Asking for `UpdatedAt,Tag` puts the timestamp first, where nothing
+          # pads in front of it, and a plain reverse sort on the whole line is
+          # then honest: the format is `2026-08-22 16:48:03 +0000 UTC`, which
+          # is lexically ordered for any two instants in the same zone.
+          #
+          # `latest` is still never a candidate — it points at whatever was
+          # pushed last, and deleting it leaves a fresh droplet nothing to pull.
+          OLD=""
+          while read -r tag; do
+            [ -n "${tag}" ] && OLD="${OLD}${tag} "
+          done < <(
             doctl registry repository list-tags app \
-              --format Tag,UpdatedAt --no-header 2>/dev/null \
-              | sort -k2 -r \
-              | awk '$1 != "latest" { print $1 }' \
+              --format UpdatedAt,Tag --no-header 2>/dev/null \
+              | sed 's/^[[:space:]]*//' \
+              | sort -r \
+              | awk '{ print $NF }' \
+              | awk '$1 != "latest"' \
               | tail -n +$((KEEP + 1))
           )
 
-          if [ ${#OLD[@]} -eq 0 ]; then
+          if [ -z "${OLD}" ]; then
             echo "Nothing to prune — ${KEEP} or fewer images are stored."
           else
-            for tag in "${OLD[@]}"; do
+            for tag in ${OLD}; do
               echo "Deleting ${tag}"
               doctl registry repository delete-tag app "${tag}" --force || true
             done
