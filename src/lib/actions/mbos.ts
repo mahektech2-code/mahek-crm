@@ -884,6 +884,15 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   }
 
   const checkInAt = p.checkInAt ? new Date(p.checkInAt) : new Date(item.clientCreatedAt);
+  /*
+   * A PARAMETER IS A STRING, NOT A DATE — the same rule as the order handler
+   * below, and the visit is where it costs most. The two raw statements that
+   * bind this are the derived `last_visit_date` and the journey stop, so every
+   * visit came back as a RETRY: the outbox resends for ever, and because a
+   * visit is the DEPENDENCY of the order and the payment taken on it, the
+   * whole of a salesman's day stayed on the handset behind it.
+   */
+  const checkInAtIso = checkInAt.toISOString();
   const checkOutAt = p.checkOutAt ? new Date(p.checkOutAt) : null;
 
   await db.transaction(async (tx) => {
@@ -940,7 +949,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       update customers
          set last_visit_date = greatest(
                coalesce(last_visit_date, date '1900-01-01'),
-               (${checkInAt}::timestamptz at time zone 'Asia/Kolkata')::date
+               (${checkInAtIso}::timestamptz at time zone 'Asia/Kolkata')::date
              ),
              updated_at = now()
        where id = ${customer.id}
@@ -949,7 +958,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     if (p.journeyPlanStopId) {
       await tx.execute(sql`
         update mbos_journey_stops
-           set status = 'visited', actual_visit_at = ${checkInAt}, updated_at = now()
+           set status = 'visited', actual_visit_at = ${checkInAtIso}, updated_at = now()
          where id = ${p.journeyPlanStopId}
       `);
     }

@@ -2191,6 +2191,16 @@ which is the point — the rule is invisible until something actually binds a
 Date, and no type check will ever see it. Grep for `${` followed by a Date
 before adding a raw query, and pass `.toISOString()`.
 
+**And it was in the visit handler too, where it cost the whole day.**
+`handleVisit` bound `checkInAt` into the derived `last_visit_date` and into
+the journey stop, so every visit came back as a **retry** — and a visit is the
+DEPENDENCY of the order and the payment taken on it, so the order and the
+payment never went either. A salesman's whole day sat in the outbox behind a
+record that would never land, with the office seeing nothing and the handset
+saying only that it was still trying. It was found by sending a real visit
+payload through the HTTP endpoint rather than the service, which is the only
+way any of these three ever show up.
+
 **Publishing to the field is a decision, and withdrawing is the same decision
 reversed.** The document library and the training centre had tables, handset
 screens that read them, and no door between the two — both were empty because

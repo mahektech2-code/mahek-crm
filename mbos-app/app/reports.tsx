@@ -1,6 +1,5 @@
 import React from 'react';
 import { AppFrame, BackLink, StubCard, useCameFrom } from '../src/components/shell/AppFrame';
-import { T } from '../src/components/ui/primitives';
 
 /**
  * Not built yet, and it says so in the design's own words rather than showing
@@ -18,7 +17,6 @@ export default function ReportsScreen() {
         title="Reports"
         body="Your own numbers — visits, orders, collections and how the month is tracking."
       />
-      <T s="caption" style={{ marginTop: 12 }}>These figures are not live yet.</T>
     </AppFrame>
   );
 }
