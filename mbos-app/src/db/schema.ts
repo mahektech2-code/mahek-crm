@@ -20,7 +20,7 @@
  *   conflict.
  */
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /**
  * Every statement is idempotent, and migrations are applied in order by
@@ -681,6 +681,53 @@ export const MIGRATIONS: string[][] = [
      * somebody was standing is a fact about the act, not part of the record.
      */
     `ALTER TABLE sync_queue ADD COLUMN location TEXT;`,
+  ],
+
+  /* ---- v6 ------------------------------------------------------------- */
+  [
+    /*
+     * Who we BILL for this shop, as opposed to who receives the goods.
+     *
+     * Two questions with different answers on a shop served through a
+     * distributor, and the server has held both since `orders` grew a delivery
+     * party. What was missing was anybody asking at the point of order — so
+     * these two columns are what let the handset ask it offline.
+     *
+     * `thirdParty` is the mark: goods come here, the invoice does not.
+     * `distributors` is a JSON array of who the invoice goes to instead, and
+     * it is an ARRAY because a shop on a territory boundary is served by two;
+     * storing one would make the other unrecordable, which is wrong for
+     * exactly the shops that most need it recorded. The generic upsert already
+     * writes whatever the server sends and already turns an array into JSON,
+     * so nothing in `sync/pull.ts` had to learn about either of these — the
+     * columns simply have to exist or the insert fails on an unknown column.
+     *
+     * Reference data, not permission. The billing party still has to be a
+     * customer in this salesman's own book: that is whose credit limit, term
+     * and outstanding decide whether the order can be taken. What this buys is
+     * that the handset can SAY SO while he is standing in the shop, instead of
+     * the order being refused at sync hours later with nothing explaining why.
+     */
+    /*
+     * NOT added to the v1 CREATE beside this, deliberately. Every migration
+     * runs in order on a fresh install too, so a column declared in both would
+     * make v6 fail on a duplicate — `sync_queue.location` and
+     * `attendance_days.sessions` are here for the same reason and neither is
+     * in its own CREATE either. The v1 statements are the schema as it was,
+     * not the schema as it is.
+     */
+    `ALTER TABLE customers ADD COLUMN thirdParty INTEGER NOT NULL DEFAULT 0;`,
+    `ALTER TABLE customers ADD COLUMN distributors TEXT NOT NULL DEFAULT '[]';`,
+    /*
+     * Where the goods went, when that is not where the bill went.
+     *
+     * `customerId` on an order is who we INVOICE and stays the account every
+     * figure is read from. This is the shop the lorry stops at. NULL means the
+     * billing party received them, which is the ordinary case and what every
+     * order taken before the form learned to ask means — so nothing had to be
+     * rewritten and no stored order changed meaning.
+     */
+    `ALTER TABLE orders ADD COLUMN deliveryCustomerId TEXT;`,
   ],
 ];
 

@@ -2,6 +2,7 @@ import { getSecret, setSecret } from '../native/secure';
 import * as Crypto from 'expo-crypto';
 import { getKv, setKv } from '../db';
 import * as api from '../sync/api';
+import { ApiError } from '../sync/api';
 import { applyPull } from '../sync/pull';
 
 /**
@@ -76,14 +77,28 @@ export async function signIn(args: {
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Could not sign in';
 
-    /* A server that answered and refused is a real refusal — do not fall back
-       to the cache and let somebody in that MahekOne just turned away. */
-    if (/not active|inactive|territory|password|credential|otp/i.test(message)) {
-      const step: LoginStep = /not active|inactive/i.test(message)
-        ? 'status'
-        : /territory/i.test(message)
-          ? 'territory'
-          : 'credential';
+    /*
+     * A server that answered and refused is a real refusal — do not fall back
+     * to the cache and let somebody in that MahekOne just turned away.
+     *
+     * That rule was written here and then defeated by how it was tested for.
+     * The check was a regex over the refusal's English, so it recognised only
+     * the sentences containing "inactive" or "territory"; `unknown_user`,
+     * `device_bound` and `bootstrap_failed` all fell past it into the offline
+     * path, where a cached password inside the seven-day window signs the
+     * person in. An `ApiError` is by definition an answer, so ANY of them
+     * stops here now, and the server's own `step` says which field to put it
+     * against rather than being guessed at from prose.
+     */
+    if (e instanceof ApiError) {
+      const step: LoginStep =
+        e.step === 'inactive' || e.step === 'bootstrap_failed' || e.step === 'not_configured'
+          ? 'status'
+          : e.step === 'no_app_access'
+            ? 'territory'
+            : e.step === 'bad_password'
+              ? 'credential'
+              : 'mobile';
       return { ok: false, step, message };
     }
 

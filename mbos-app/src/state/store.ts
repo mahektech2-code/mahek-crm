@@ -92,12 +92,7 @@ type State = {
   payAmt: string;
   payChq: string;
 
-  /* ---- home ---- */
-  period: string;
-  dismissed: string[];
-
   /* ---- people ---- */
-  slMonth: string;
   catQ: string;
 
   /* ---- profile ---- */
@@ -172,10 +167,6 @@ export const useStore = create<State & Actions>((set, get) => ({
   payAmt: '',
   payChq: '',
 
-  period: 'month',
-  dismissed: [],
-
-  slMonth: 'July 2026',
   catQ: '',
 
   pfSaved: {},

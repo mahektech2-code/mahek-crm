@@ -90,6 +90,7 @@ export default function Login() {
       if (method === 'password' && pw.length < 8) return setErr('pw');
     }
     setErr(null);
+    setServerMessage(null);
     setStage('verifying');
     setStep(0);
 
@@ -232,6 +233,7 @@ export default function Login() {
                      refusal later, after the password has been entered too. */
                   set({ mob: v.replace(/[^0-9]/g, '').slice(0, MOBILE_DIGITS) });
                   setErr(null);
+                  setServerMessage(null);
                 }}
                 maxLength={MOBILE_DIGITS + 1}
                 placeholder="98250 41172"
@@ -242,9 +244,18 @@ export default function Login() {
             </View>
             {err === 'mob' ? (
               <Text style={{ fontSize: 14, color: C.danger, marginTop: 6 }}>
-                {mob.length === 0
-                  ? 'Enter your mobile number.'
-                  : `That is ${mob.length} digits — a mobile number has ${MOBILE_DIGITS}.`}
+                {/* The server's own sentence wins. It names the reason — no
+                    such account, already signed in on another handset, the
+                    book would not load — and each sends the person somewhere
+                    different. The digit count is only ever right when nothing
+                    reached the server, and printing it over a real refusal is
+                    how a valid ten-digit number came to be told it was not
+                    ten digits. */}
+                {serverMessage
+                  ? serverMessage
+                  : mob.length === 0
+                    ? 'Enter your mobile number.'
+                    : `That is ${mob.length} digits — a mobile number has ${MOBILE_DIGITS}.`}
               </Text>
             ) : null}
 
@@ -254,7 +265,7 @@ export default function Login() {
                 return (
                   <Pressable
                     key={m}
-                    onPress={() => { set({ method: m }); setErr(null); }}
+                    onPress={() => { set({ method: m }); setErr(null); setServerMessage(null); }}
                     style={[
                       { flex: 1, minHeight: HIT, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? C.surface : 'transparent' },
                       on && { boxShadow: '0 1px 3px rgba(22,22,22,0.08)' },
@@ -273,7 +284,7 @@ export default function Login() {
                 <View style={{ position: 'relative' }}>
                   <TextInput
                     value={pw}
-                    onChangeText={(v) => { set({ pw: v }); setErr(null); }}
+                    onChangeText={(v) => { set({ pw: v }); setErr(null); setServerMessage(null); }}
                     placeholder="••••••••"
                     placeholderTextColor={C.faint}
                     secureTextEntry={!pwShow}
@@ -297,7 +308,9 @@ export default function Login() {
                   </Pressable>
                 </View>
                 {err === 'pw' ? (
-                  <Text style={{ fontSize: 14, color: C.danger, marginTop: 6 }}>Password must be at least 8 characters.</Text>
+                  <Text style={{ fontSize: 14, color: C.danger, marginTop: 6 }}>
+                    {serverMessage ?? 'Password must be at least 8 characters.'}
+                  </Text>
                 ) : null}
 
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 20 }}>

@@ -129,6 +129,41 @@ export const saveInteractionSchema = z.object({
   /** Order-received only. User-entered, may be in the past, never the future. */
   orderDate: z.string().optional(),
 
+  /* ---------------------------------------------------- the two parties --
+   *
+   * WHO WE INVOICE and WHERE THE GOODS GO are two questions, and on a shop
+   * served through a distributor they have different answers. The model has
+   * held both since `orders.delivery_customer_id` arrived; what it has never
+   * had is anybody ASKING. `linkDeliveryParties()` reconstructs the delivery
+   * party nightly by matching the order sheet's names against the book, which
+   * is why it reports `unresolved` and `ambiguous` — it is guessing after the
+   * fact at something the person taking the order knew at the time.
+   *
+   * Both are OPTIONAL and both default to the customer the call is with, so
+   * every existing caller keeps its exact behaviour: bill them, deliver to
+   * them, `deliveryCustomerId` null.
+   */
+
+  /**
+   * Who gets invoiced. Defaults to the customer being called.
+   *
+   * It can differ from them: a call with a third-party shop produces an order
+   * billed to its distributor, because that is who buys from us. Money follows
+   * this one — credit, term, outstanding, receipts and collections — which is
+   * why it is checked against the caller's scope like any other write.
+   */
+  billingCustomerId: z.string().optional(),
+  /**
+   * Where the goods go, when that is not where the bill goes.
+   *
+   * Null means the billing party received them, which is the ordinary case and
+   * what every order written before this existed means. Never send the billing
+   * party's own id here: "delivered to themselves" and "delivered elsewhere"
+   * must not both be expressible, or two rows describing one arrangement read
+   * differently.
+   */
+  deliveryCustomerId: z.string().optional(),
+
 
   sourceModule: z
     .enum([
@@ -219,6 +254,78 @@ export async function saveInteraction(
     .where(eq(customers.id, input.customerId));
   if (!customer) return err("That customer no longer exists.", "not_found");
   await assertCustomerInScope(customer);
+
+  /* ------------------------------------------------------- the two parties */
+
+  /*
+   * Who we invoice, and where the goods go.
+   *
+   * Both default to the customer the call is with, so a caller that sends
+   * neither gets exactly the behaviour every order written before this had:
+   * billed to them, delivered to them, `deliveryCustomerId` null.
+   *
+   * Resolved BEFORE validation and outside the transaction, because a party
+   * that does not exist or is out of scope must fail the save rather than roll
+   * one back — and because the credit term below is read from whoever is
+   * actually being billed.
+   */
+  let billingCustomer = customer;
+  if (input.billingCustomerId && input.billingCustomerId !== customer.id) {
+    const [biller] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, input.billingCustomerId));
+    if (!biller) return fieldError("billingCustomerId", "That billing party no longer exists.");
+    /*
+     * Scoped like any other write. Billing somebody else's account is exactly
+     * the move that would otherwise put an order — and its money — on a book
+     * the caller cannot see.
+     */
+    await assertCustomerInScope(biller);
+    /*
+     * A LEAD cannot be billed. It has never ordered, carries no credit term
+     * and no outstanding, and invoicing one silently turns a prospect into a
+     * debtor without anybody converting it.
+     */
+    if (biller.kind === "lead") {
+      return fieldError(
+        "billingCustomerId",
+        "That account has never ordered, so there is nothing to bill against. Convert it first.",
+      );
+    }
+    billingCustomer = biller;
+  }
+
+  /*
+   * The delivery party, where it is not the billing party.
+   *
+   * Naming the biller here is folded to null rather than refused: the two
+   * spellings of "they received it themselves" must not both reach the column,
+   * or one arrangement is stored two ways and every read has to know both.
+   */
+  let deliveryCustomerId: string | null = null;
+  if (input.deliveryCustomerId && input.deliveryCustomerId !== billingCustomer.id) {
+    const [shop] = await db
+      .select({ id: customers.id, status: customers.status })
+      .from(customers)
+      .where(eq(customers.id, input.deliveryCustomerId));
+    if (!shop) return fieldError("deliveryCustomerId", "That delivery party no longer exists.");
+    /*
+     * NOT scope-checked, and deliberately. A delivery party is an ADDRESS on
+     * somebody else's order — the shop a distributor's goods go to — and it
+     * routinely sits in another telecaller's book or in nobody's. Refusing it
+     * on scope would make the common case unrecordable, which is the state
+     * this field exists to end. Nothing about it moves money, and no figure on
+     * this order is read from it.
+     */
+    if (shop.status === "deactivated") {
+      return fieldError(
+        "deliveryCustomerId",
+        "That account is deactivated, so goods should not be sent there.",
+      );
+    }
+    deliveryCustomerId = shop.id;
+  }
 
   /* ------------------------------------------------------------ validation */
 
@@ -457,11 +564,20 @@ export async function saveInteraction(
       // one on the customer, or the configured default. Still recorded on the
       // order, so the bill raised against it inherits a due date nobody has to
       // remember or retype.
+      /*
+       * The term of whoever is BILLED, not of whoever was called. On an order
+       * delivered to a shop and invoiced to its distributor, the due date is
+       * the distributor's to meet — reading the shop's term here would put a
+       * date on the bill that nobody agreed with the person paying it.
+       */
       const creditDays =
-        customer.creditDays ?? config["customers.defaultCreditDays"];
+        billingCustomer.creditDays ?? config["customers.defaultCreditDays"];
       await tx.insert(orders).values({
         id: orderId,
-        customerId: customer.id,
+        customerId: billingCustomer.id,
+        // Null where the billing party received them, which is the ordinary
+        // case and every order written before this was asked.
+        deliveryCustomerId,
         userId: ctx.user.id,
         source: "crm",
         orderedAt: orderedAtTs,

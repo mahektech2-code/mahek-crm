@@ -394,7 +394,14 @@ bill already settled, price list changed.
   notification can be missed; a task on the list cannot.
 
 Codes: `credit_blocked` `credit_exceeded` `product_inactive` `price_changed`
-`bill_settled` `outstanding_stale` `duplicate` `validation` `not_permitted`.
+`bill_settled` `outstanding_stale` `delivery_party_unknown` `duplicate`
+`validation` `not_permitted`.
+
+`delivery_party_unknown` means the shop the goods were to be delivered to is no
+longer on MahekOne. It is deliberately not `validation`: the payload was
+correct when the salesman stood in the shop and has since stopped being so,
+which is the same shape as `outstanding_stale` and wants the same answer —
+sync and take it again — rather than one that reads as a bug in the app.
 
 ---
 

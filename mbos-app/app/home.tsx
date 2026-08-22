@@ -1,16 +1,16 @@
 import React from 'react';
-import { View, Text, Pressable, ScrollView } from 'react-native';
+import { View, Text, Pressable } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { color as C, HIT, radius, shadow, type, weight, tabular } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
-import { Bar, Card } from '../src/components/ui/primitives';
+import { Card } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { compactInr, inr, isoDate, plural } from '../src/lib/format';
-import { DASH_CARDS, DAY_AHEAD, PERIODS, SUGGESTIONS } from '../src/data/fixtures';
+import { DASH_CARDS, DAY_AHEAD } from '../src/data/fixtures';
 import { checkIn, checkOut, dayState, durationLabel, setOverrideReason, todayRow } from '../src/data/attendance';
-import { collectionDue, getCustomer } from '../src/data/customers';
+import { collectionDue } from '../src/data/customers';
 import { getConfig } from '../src/data/config';
 import { ordersToday } from '../src/data/orders';
 import { cashInHand } from '../src/data/payments';
@@ -88,14 +88,10 @@ export default function Home() {
   const userId = boot.session?.user.id ?? null;
   const set = useStore((s) => s.set);
   const notify = useStore((s) => s.notify);
-  const beginVisit = useStore((s) => s.beginVisit);
   const askConfirm = useStore((s) => s.askConfirm);
-  const dismissed = useStore((s) => s.dismissed);
-  const period = useStore((s) => s.period);
 
   const [day, setDay] = React.useState<Day>(EMPTY);
   const [starting, setStarting] = React.useState(false);
-  const [suggestions, setSuggestions] = React.useState<typeof SUGGESTIONS>([]);
 
   /* The clock is read once per mount and ticked, never during render. */
   const [now, setNow] = React.useState(() => Date.now());
@@ -139,19 +135,10 @@ export default function Home() {
         sessionCount: state.sessionCount,
       });
     });
-
-    /* A suggestion may only name a customer this handset actually has —
-       otherwise it offers a shop that is not in the book. */
-    void Promise.all(SUGGESTIONS.map((sug) => getCustomer(sug.custId))).then((rows) => {
-      setSuggestions(SUGGESTIONS.filter((_, i) => rows[i] != null));
-    });
   }, [userId]);
 
   useFocusEffect(load);
 
-  const per = PERIODS.find((p) => p.k === period) ?? PERIODS[0];
-  const pct = per.goal ? Math.round((per.done / per.goal) * 100) : 0;
-  const cards = suggestions.filter((c) => !dismissed.includes(c.id));
   const checkedIn = day.sessionCount > 0;
 
   const today = new Date(now);
@@ -372,64 +359,6 @@ export default function Home() {
         </Card>
       )}
 
-      {/* ---- worth doing next ---- */}
-      {cards.length ? (
-        <>
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginTop: 22, marginBottom: 10 }}>
-            <Text style={type.label}>Worth doing next</Text>
-            <Text style={{ fontSize: 12, color: C.muted }}>{plural(cards.length, 'suggestion')}</Text>
-          </View>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ marginHorizontal: -16 }}
-            contentContainerStyle={{ paddingHorizontal: 16, gap: 10, paddingBottom: 4 }}>
-            {cards.map((c) => (
-              <View
-                key={c.id}
-                style={{
-                  width: 290,
-                  backgroundColor: C.surface,
-                  borderWidth: 1,
-                  borderColor: C.hairline,
-                  borderLeftWidth: 3,
-                  borderLeftColor: c.tone === 'danger' ? C.danger : c.tone === 'amber' ? C.warn : C.primaryEdge,
-                  borderRadius: radius.xl,
-                  boxShadow: shadow.soft,
-                  padding: 14,
-                }}>
-                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(600)]}>{c.title}</Text>
-                    <Text style={[type.caption, { marginTop: 2 }]}>{c.why}</Text>
-                  </View>
-                  <Pressable
-                    onPress={() => set({ dismissed: [...dismissed, c.id] })}
-                    accessibilityLabel="Dismiss this suggestion"
-                    style={{ width: HIT, height: HIT, marginTop: -10, marginRight: -12, alignItems: 'center', justifyContent: 'center' }}>
-                    <Icon name="close" size={16} color={C.muted} />
-                  </Pressable>
-                </View>
-                <Pressable
-                  onPress={() => {
-                    set({ custId: c.custId });
-                    if (c.go === 'visit') {
-                      beginVisit(c.custId);
-                      router.push('/visit');
-                    } else {
-                      router.push(`/${c.go}?from=home`);
-                    }
-                  }}
-                  style={{ width: '100%', height: HIT, marginTop: 12, borderRadius: radius.md, borderWidth: 1, borderColor: C.primaryEdge, backgroundColor: C.primaryTint, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(600)]}>{c.cta}</Text>
-                </Pressable>
-              </View>
-            ))}
-          </ScrollView>
-        </>
-      ) : null}
-
       {/* ---- the six numbers ---- */}
       <Card padded={false} style={{ marginTop: 22, overflow: 'hidden' }}>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
@@ -462,45 +391,19 @@ export default function Home() {
         </View>
       </Card>
 
-      {/* ---- how the period is going ---- */}
+      {/* ---- how the period is going ----
+
+          The office computes targets and sends none, so this panel used to
+          render a fixture: ₹18,42,000 of ₹26,00,000, a progress bar and 71%,
+          with "These figures are not live yet" in grey underneath. A number
+          with a bar under it is read as fact at a glance and the caption is
+          not read at all — and this is the first screen after sign-in. It says
+          what it knows instead, which is nothing. */}
       <Card style={{ marginTop: 12, padding: 14 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: -4, marginBottom: 8 }}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ alignItems: 'center', gap: 4, paddingHorizontal: 4 }}>
-            {PERIODS.map((p) => {
-              const on = per.k === p.k;
-              return (
-                <Pressable
-                  key={p.k}
-                  onPress={() => set({ period: p.k })}
-                  style={{ minHeight: HIT, paddingHorizontal: 16, borderRadius: radius.pill, backgroundColor: on ? C.primaryTint : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={[{ fontSize: 13, color: on ? C.primaryDeep : C.muted }, weight(on ? 600 : 400)]}>{p.label}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-          <Text style={{ fontSize: 12, color: C.muted, paddingLeft: 8, paddingRight: 4 }}>{per.left}</Text>
-        </View>
-
-        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-          <Text style={[{ fontSize: 24, lineHeight: 30, letterSpacing: -0.48, color: C.ink }, weight(600), tabular]}>
-            {inr(per.done)}
-          </Text>
-          {per.goal > 0 ? <Text style={{ fontSize: 13, color: C.muted }}>{'of ' + inr(per.goal)}</Text> : null}
-        </View>
-
-        {per.goal > 0 ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 }}>
-            <Bar pct={pct} fill={pct >= 90 ? C.success : pct >= 60 ? C.primary : C.warn} />
-            <Text style={[{ fontSize: 14, color: C.ink }, weight(600), tabular]}>{pct + '%'}</Text>
-          </View>
-        ) : null}
-
-        {/* The office computes targets and has not sent any, so the panel says
-            so rather than presenting a fixture as this month's performance. */}
-        <Text style={[type.caption, { marginTop: 8 }]}>These figures are not live yet.</Text>
+        <Text style={type.label}>Your target</Text>
+        <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
+          The office has not set one. Today&rsquo;s orders, visits and collections are in the six figures above.
+        </Text>
       </Card>
     </AppFrame>
   );

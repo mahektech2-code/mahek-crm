@@ -18,6 +18,20 @@ const BASE =
   process.env.EXPO_PUBLIC_API_BASE ??
   'http://localhost:3000';
 
+/**
+ * A refusal MahekOne answered, with the reason it gave.
+ *
+ * `step` is the server's own vocabulary — `unknown_user`, `bad_password`,
+ * `inactive`, `no_app_access`, `device_bound`, `bootstrap_failed` — and null
+ * where the body carried none. An ordinary `Error` still means the request
+ * never got an answer, which is the distinction the sign-in screen turns on:
+ * one of them may fall back to the offline cache and the other may not.
+ */
+export class ApiError extends Error {
+  status = 0;
+  step: string | null = null;
+}
+
 const ACCESS_KEY = 'mbos.accessToken';
 const REFRESH_KEY = 'mbos.refreshToken';
 const DEVICE_KEY = 'mbos.deviceId';
@@ -91,8 +105,34 @@ async function request<T>(path: string, init: RequestInit & { auth?: boolean } =
   }
 
   if (!res.ok) {
+    /*
+     * A REFUSAL KEEPS ITS SHAPE.
+     *
+     * This used to `throw new Error(body.slice(0, 200))` — the whole JSON
+     * document flattened into a string — and the sign-in screen was left to
+     * work out what had happened by running a regex over the English inside
+     * it. MahekOne names the reason in `step`, one of six, each of which sends
+     * the person somewhere different; none of that survived the trip, so every
+     * refusal the regex did not recognise was treated as "no answer at all"
+     * and reported as a ten-digit mobile number not having ten digits.
+     *
+     * The status and the server's own words are carried on the error instead.
+     * Anything unparseable still throws, because a body we cannot read is a
+     * different thing from a refusal we can.
+     */
     const body = await res.text().catch(() => '');
-    throw new Error(body.slice(0, 200) || `MahekOne answered ${res.status}`);
+    let parsed: { step?: string; code?: string; error?: string } | null = null;
+    try {
+      parsed = JSON.parse(body) as { step?: string; code?: string; error?: string };
+    } catch {
+      parsed = null;
+    }
+    const err = new ApiError(
+      parsed?.error || body.slice(0, 200) || `MahekOne answered ${res.status}`,
+    );
+    err.status = res.status;
+    err.step = parsed?.step ?? parsed?.code ?? null;
+    throw err;
   }
 
   return res.json() as Promise<T>;

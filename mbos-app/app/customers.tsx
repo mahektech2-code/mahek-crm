@@ -9,7 +9,14 @@ import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
 import { inr, isoDate, plural, pretty } from '../src/lib/format';
 import { callNumber, openWhatsApp } from '../src/lib/messaging';
-import { customerStage, daysSince, listCustomers, type Customer } from '../src/data/customers';
+import {
+  addFieldShop,
+  billableCustomers,
+  customerStage,
+  daysSince,
+  listCustomers,
+  type Customer,
+} from '../src/data/customers';
 
 /**
  * The book. Search reaches the name, the owner, the city, the phone and the
@@ -32,6 +39,26 @@ export default function Customers() {
   const sheet = useStore((s) => s.sheet);
 
   const [rowMore, setRowMore] = React.useState<Customer | null>(null);
+
+  /* ------------------------------------- a shop that is not on the book yet
+   *
+   * He is standing in an outlet nobody has recorded, with an order his
+   * distributor will be invoiced for. Without somewhere to put it he either
+   * abandons the order or files it as though the distributor received the
+   * goods, and where the lorry actually went is lost.
+   *
+   * It hangs off the EMPTY SEARCH, because that is the moment he finds out —
+   * he types the name, nothing comes back, and the answer to "it is not here"
+   * should be in the same place as the question.
+   */
+  const [adding, setAdding] = React.useState(false);
+  const [shopName, setShopName] = React.useState('');
+  const [shopPhone, setShopPhone] = React.useState('');
+  const [shopCity, setShopCity] = React.useState('');
+  const [billers, setBillers] = React.useState<Customer[]>([]);
+  const [billerId, setBillerId] = React.useState<string | null>(null);
+  const [billerQ, setBillerQ] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
   const [rows, setRows] = React.useState<Customer[]>([]);
   const [today] = React.useState(() => isoDate(new Date()));
 
@@ -50,6 +77,55 @@ export default function Customers() {
       };
     }, [custQ]),
   );
+
+  /* Only while the sheet is open, and re-read as he narrows it: the book is a
+     territory, not six rows, so this is a query rather than a filter. */
+  React.useEffect(() => {
+    if (!adding) return;
+    let live = true;
+    void billableCustomers(billerQ).then((r) => {
+      if (live) setBillers(r);
+    });
+    return () => {
+      live = false;
+    };
+  }, [adding, billerQ]);
+
+  const openAdd = () => {
+    /* Seeded with what he already typed. He has just searched for the shop by
+       name; asking him to type it again is the sort of thing that gets a
+       feature left unused. */
+    setShopName(custQ.trim());
+    setShopPhone('');
+    setShopCity('');
+    setBillerId(null);
+    setBillerQ('');
+    setAdding(true);
+  };
+
+  const saveShop = async () => {
+    const biller = billers.find((b) => b.id === billerId);
+    if (!biller) return notify('Say who is billed for this shop.');
+    setSaving(true);
+    try {
+      const r = await addFieldShop({
+        name: shopName,
+        phone: shopPhone,
+        city: shopCity,
+        distributorCustomerId: biller.id,
+        distributorName: biller.name,
+      });
+      if (!r.ok) return notify(r.message);
+      setAdding(false);
+      notify('Shop added · queued, syncs when you have signal');
+      /* Straight into it, because he opened it to do something — take the
+         order he is holding. */
+      set({ custId: r.customerId, pTab: 0 });
+      router.push('/customer');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <AppFrame title="Customers" activeTab="customers" contentStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}>
@@ -84,6 +160,24 @@ export default function Customers() {
       </View>
 
       <Text style={[type.caption, { marginTop: 12 }]}>{plural(rows.length, 'customer') + ' · your territory'}</Text>
+
+      {/* Nothing matched. The one thing worth offering is the thing he is
+          about to need — and the sentence says which kind of shop this opens,
+          because a record we bill is the office's to create. */}
+      {rows.length === 0 ? (
+        <Card style={{ marginTop: 12, alignItems: 'center', paddingVertical: 28 }}>
+          <Text style={[{ fontSize: 15, color: C.ink, textAlign: 'center' }, weight(500)]}>
+            {custQ.trim() ? 'No shop matches that' : 'Nothing in your book yet'}
+          </Text>
+          <Text style={[type.caption, { marginTop: 4, textAlign: 'center', paddingHorizontal: 24 }]}>
+            If you are standing in a shop we deliver to on somebody else&apos;s bill, open it
+            here and take the order.
+          </Text>
+          <View style={{ marginTop: 14, alignSelf: 'stretch', paddingHorizontal: 24 }}>
+            <PrimaryButton label="Add a delivery shop" onPress={openAdd} />
+          </View>
+        </Card>
+      ) : null}
 
       <View style={{ gap: 12, marginTop: 8 }}>
         {rows.map((x) => {
@@ -243,6 +337,123 @@ export default function Customers() {
           </Pressable>
         ))}
       </BottomSheet>
+
+      {/* --------------------------------------- opening a shop from inside it
+          Four answers and no more. Every field here is one he can give without
+          leaving the counter he is standing at; credit, terms and health are
+          the office's to decide and the record arrives without them rather
+          than with a confident zero. */}
+      <BottomSheet open={adding} onClose={() => setAdding(false)} scroll>
+        <Text style={[{ fontSize: 15, color: C.ink, marginBottom: 2 }, weight(600)]}>
+          Add a delivery shop
+        </Text>
+        <Text style={[type.caption, { marginBottom: 12 }]}>
+          Goods go here; the bill goes to whoever you pick below.
+        </Text>
+
+        <Field label="Shop name" value={shopName} onChange={setShopName} placeholder="As it is written on the board" />
+        <Field
+          label="Phone"
+          value={shopPhone}
+          onChange={setShopPhone}
+          placeholder="10 digits"
+          keyboard="phone-pad"
+        />
+        <Field label="Town" value={shopCity} onChange={setShopCity} placeholder="Nashik" />
+
+        <Text style={[type.caption, { marginTop: 14, marginBottom: 6 }]}>WHO IS BILLED FOR IT</Text>
+        <TextInput
+          value={billerQ}
+          onChangeText={setBillerQ}
+          placeholder="Search your accounts"
+          placeholderTextColor={C.faint}
+          style={{
+            height: 44,
+            paddingHorizontal: 12,
+            borderWidth: 1,
+            borderColor: C.border,
+            borderRadius: radius.sm,
+            fontSize: 15,
+            color: C.ink,
+            backgroundColor: C.surface,
+          }}
+        />
+        <View style={{ gap: 6, marginTop: 8 }}>
+          {billers.slice(0, 6).map((b) => (
+            <Pressable
+              key={b.id}
+              onPress={() => setBillerId(b.id)}
+              style={{
+                borderWidth: 1,
+                borderColor: b.id === billerId ? C.primaryDeep : C.border,
+                borderRadius: radius.sm,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+              }}>
+              <Text style={[{ fontSize: 14, color: C.ink }, weight(b.id === billerId ? 500 : 400)]}>
+                {b.name}
+              </Text>
+              <Text style={type.caption}>{[b.contactPerson, b.city].filter(Boolean).join(' · ')}</Text>
+            </Pressable>
+          ))}
+          {billers.length === 0 ? (
+            <Text style={type.caption}>
+              {billerQ.trim() ? 'No account of yours matches that.' : 'You have no accounts to bill yet.'}
+            </Text>
+          ) : null}
+        </View>
+
+        <View style={{ marginTop: 16 }}>
+          <PrimaryButton
+            label={saving ? 'Adding…' : 'Add the shop'}
+            onPress={() => void saveShop()}
+          />
+        </View>
+      </BottomSheet>
     </AppFrame>
+  );
+}
+
+/**
+ * One labelled box.
+ *
+ * Local to this screen rather than a primitive: three fields is not a design
+ * system, and the app's `Input` is built for the taller, icon-bearing boxes
+ * the rest of the flows use.
+ */
+function Field({
+  label,
+  value,
+  onChange,
+  placeholder,
+  keyboard,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  keyboard?: 'phone-pad';
+}) {
+  return (
+    <View style={{ marginBottom: 10 }}>
+      <Text style={[type.caption, { marginBottom: 4 }]}>{label.toUpperCase()}</Text>
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        placeholder={placeholder}
+        placeholderTextColor={C.faint}
+        keyboardType={keyboard}
+        style={{
+          height: 44,
+          paddingHorizontal: 12,
+          borderWidth: 1,
+          borderColor: C.border,
+          borderRadius: radius.sm,
+          fontSize: 15,
+          color: C.ink,
+          backgroundColor: C.surface,
+        }}
+      />
+    </View>
   );
 }
