@@ -46,6 +46,8 @@ export type SettingCategory =
   | "mbos-leave"
   | "mbos-health"
   | "mbos-sync"
+  /** The handsets themselves: how many a person may be signed in on. */
+  | "mbos-devices"
   | "mbos-leads"
   | "mbos-tasks";
 
@@ -1870,6 +1872,17 @@ export const SETTINGS = [
     min: 5,
     max: 1440,
   },
+  /* ------------------------------------------------------------- handsets */
+  {
+    key: "mbos.devices.onePerPerson",
+    type: "boolean",
+    category: "mbos-devices",
+    label: "One handset per person",
+    description:
+      "On, somebody signed in on one phone is refused on a second until the first is released — brief §2.2, and the reason is that a field account is a person's own: two live handsets on one login means a day's visits, orders and cash-in-hand that nobody can attribute, and a phone that has quietly left the company still holding a book of customers. Off, the same login opens on as many handsets as it is typed into. Turn it off deliberately and for a reason — a salesman whose phone broke on a Tuesday, a shared handset between shifts — because nothing else in the app distinguishes the two devices afterwards. It does NOT let one person take over a handset registered to somebody else; that stays refused either way.",
+    default: true,
+  },
+
   {
     key: "mbos.orders.numberSeriesPrefix",
     type: "text",
@@ -2590,6 +2603,8 @@ export type Config = {
   "mbos.sync.retryBackoffSeconds": number[];
   "mbos.sync.maxItemsPerRequest": number;
   "mbos.sync.accessTokenMinutes": number;
+
+  "mbos.devices.onePerPerson": boolean;
 
   "mbos.leads.staleDays": number;
   "mbos.leads.archiveDays": number;
