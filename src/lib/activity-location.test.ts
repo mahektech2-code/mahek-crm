@@ -36,6 +36,9 @@ import {
   users,
 } from "@/db/schema";
 import { invalidateConfig, seedConfig, updateSettings } from "@/lib/config/store";
+import { setTestUser } from "@/lib/auth";
+import { releaseDevice } from "@/lib/actions/sales";
+import { auditLog, notifications as notificationsTable } from "@/db/schema";
 import { ingestSyncBatch } from "@/lib/actions/mbos";
 import {
   buildBootstrap,
@@ -725,5 +728,111 @@ describe("How many handsets one person may hold", () => {
       outcome.ok === false ? outcome.error : "",
       /registered to another employee/i,
     );
+  });
+});
+
+describe("Releasing a handset", () => {
+  /*
+   * The half that did not exist. `checkDeviceBinding` refused a second phone
+   * and told the salesman an admin would release the first; nothing anywhere
+   * released one, so the only route was a DELETE against production.
+   */
+  async function asOffice() {
+    const [office] = await db
+      .insert(users)
+      .values({
+        id: id("usr"),
+        name: "Vikram Rao",
+        email: `vikram-${randomUUID().slice(0, 6)}@test.local`,
+        phone: `98200${Math.floor(10000 + Math.random() * 89999)}`,
+        passwordHash: "x",
+        role: "manager",
+        initials: "VR",
+      })
+      .returning();
+    await db.insert(appAccess).values({ id: id("acc"), userId: office.id, app: "sales" });
+    setTestUser(office);
+    return office;
+  }
+
+  test("it frees the person to sign in on a new phone", async () => {
+    await asOffice();
+
+    const before = await checkDeviceBinding(salesman.id, "second-handset");
+    assert.equal(before.ok, false, "the rule was not on to begin with");
+
+    const result = await releaseDevice({
+      deviceId: "probe-device",
+      reason: "Phone broken, replaced with a company handset",
+    });
+    assert.equal(result.ok, true, result.ok ? "" : result.error);
+
+    const after = await checkDeviceBinding(salesman.id, "second-handset");
+    assert.equal(after.ok, true, "released the old handset and still refused the new one");
+  });
+
+  test("released, not deleted — the row and its reason stay", async () => {
+    await asOffice();
+    await releaseDevice({ deviceId: "probe-device", reason: "Left the company" });
+
+    const [row] = await db
+      .select()
+      .from(mbosDevices)
+      .where(eq(mbosDevices.deviceId, "probe-device"));
+    assert.ok(row, "the binding was deleted, so which phone he was on is gone");
+    assert.equal(row.active, false);
+    assert.equal(row.releaseReason, "Left the company");
+    assert.ok(row.releasedAt, "released with no date on it");
+  });
+
+  test("a reason is required by the action, not only by the form", async () => {
+    await asOffice();
+    const result = await releaseDevice({ deviceId: "probe-device", reason: "  " });
+    assert.equal(result.ok, false);
+
+    const [row] = await db
+      .select()
+      .from(mbosDevices)
+      .where(eq(mbosDevices.deviceId, "probe-device"));
+    assert.equal(row.active, true, "it was released anyway");
+  });
+
+  test("releasing twice is refused rather than silently repeated", async () => {
+    await asOffice();
+    await releaseDevice({ deviceId: "probe-device", reason: "Broken" });
+    const again = await releaseDevice({ deviceId: "probe-device", reason: "Broken again" });
+    assert.equal(again.ok, false, "the second release overwrote the first one's reason");
+  });
+
+  test("it is audited, and the salesman is told why", async () => {
+    const office = await asOffice();
+    await releaseDevice({ deviceId: "probe-device", reason: "Swapped at the depot" });
+
+    const audits = await db
+      .select()
+      .from(auditLog)
+      .where(eq(auditLog.action, "mbos.device.release"));
+    assert.equal(audits.length, 1, "a handset was released with nobody's name against it");
+    assert.equal(audits[0].actorId, office.id);
+
+    const told = await db
+      .select()
+      .from(notificationsTable)
+      .where(eq(notificationsTable.userId, salesman.id));
+    assert.equal(told.length, 1, "his phone stopped working and nothing told him why");
+    assert.match(told[0].body ?? "", /Swapped at the depot/);
+  });
+
+  test("somebody without the Sales Dashboard cannot release one", async () => {
+    // The salesman himself holds `field`, not `sales`.
+    setTestUser(salesman);
+    const result = await releaseDevice({ deviceId: "probe-device", reason: "Mine now" });
+    assert.equal(result.ok, false, "a salesman released his own binding");
+
+    const [row] = await db
+      .select()
+      .from(mbosDevices)
+      .where(eq(mbosDevices.deviceId, "probe-device"));
+    assert.equal(row.active, true);
   });
 });

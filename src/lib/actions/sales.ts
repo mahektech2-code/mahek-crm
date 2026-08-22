@@ -10,6 +10,7 @@ import {
   mbosApprovals,
   mbosCourses,
   mbosDeletions,
+  mbosDevices,
   mbosDocuments,
   mbosHolidays,
   mbosManagerTerritories,
@@ -894,6 +895,104 @@ export async function setManagerTerritories(input: {
       wanted.length
         ? `${manager.name} now covers ${wanted.join(", ")}.`
         : `${manager.name} now covers all of India.`,
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ═════════════════════════════════════════════════════════════ the handsets */
+
+/**
+ * Releasing a handset, which is the other half of one-device-per-person.
+ *
+ * The rule refused a second phone and told the salesman to "ask an admin to
+ * release the old one" — and there was nothing anywhere that released one. No
+ * screen, no action, no service: `mbos_devices` was written by sign-in and
+ * read by this console, and the only way to free somebody was
+ * `delete from mbos_devices` against production. A rule whose escape hatch
+ * exists only in its own error message is a rule people work around by sharing
+ * a login.
+ *
+ * **Released, not deleted.** `active = false` with the reason and the date is
+ * what `checkDeviceBinding` already reads as "this one no longer counts", and
+ * `loadPrincipal` already refuses a request from it with `device_released`. So
+ * the handset stops syncing on its very next call rather than at token expiry,
+ * and the row it leaves behind is the record of which phone that salesman was
+ * on until Tuesday. Deleting it would answer the immediate question and
+ * destroy the history, which is the trade `mbos_deletions` exists to avoid
+ * making anywhere else.
+ *
+ * **A reason is required by the action and not only by the form.** Somebody
+ * reads this months later asking why a salesman was signed out mid-week, and
+ * "released" on its own does not answer them.
+ */
+export async function releaseDevice(input: {
+  deviceId: string;
+  reason: string;
+}): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const reason = input.reason.trim();
+    if (reason.length < 3) {
+      return err(
+        "Say why this handset is being released — somebody reading the row in six months has only this sentence.",
+        "validation",
+      );
+    }
+
+    const [row] = await db
+      .select()
+      .from(mbosDevices)
+      .where(eq(mbosDevices.deviceId, input.deviceId))
+      .limit(1);
+    if (!row) return err("That handset is not registered to anybody.", "not_found");
+    if (!row.active) {
+      return err("That handset has already been released.", "validation");
+    }
+
+    const [owner] = await db
+      .select({ name: users.name })
+      .from(users)
+      .where(eq(users.id, row.userId))
+      .limit(1);
+
+    await db
+      .update(mbosDevices)
+      .set({
+        active: false,
+        releasedAt: new Date(),
+        releaseReason: reason,
+        updatedById: user.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(mbosDevices.id, row.id));
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.device.release",
+      entityType: "mbos_device",
+      entityId: row.id,
+      beforeState: { deviceId: row.deviceId, model: row.model, active: true } as never,
+      afterState: { active: false, releaseReason: reason } as never,
+    });
+
+    /* The salesman finds out from the handset — it stops syncing on the next
+       call — so he is told here as well, with the reason, rather than being
+       left to discover it in a market with a phone that has stopped working. */
+    await db.insert(notifications).values({
+      id: gen("ntf"),
+      userId: row.userId,
+      kind: "neutral",
+      title: "Your handset was released",
+      body: `${user.name} released the phone you were signed in on — ${reason}. Sign in again on the handset you are using now.`,
+    });
+
+    refresh();
+    return okVoid(
+      `${owner?.name ?? "That salesman"} can sign in on a new handset now.`,
     );
   } catch (e) {
     return fromThrown(e);
