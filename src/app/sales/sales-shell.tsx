@@ -145,17 +145,36 @@ export function SalesShell({
     <div className="flex h-screen min-w-[1100px] flex-col overflow-hidden bg-canvas">
       {/* ------------------------------------------------------------ header */}
       <header className="relative z-2 flex h-14 flex-none items-center gap-4 border-b border-line bg-surface px-6">
-        <Link
-          href="/sales"
-          className="flex flex-none items-center gap-2 no-underline hover:no-underline"
-        >
-          <span className="flex h-4 w-4 flex-none items-center justify-center rounded-[3px] bg-brand">
-            <span className="block h-1.5 w-1.5 rounded-[1px] bg-brand-lime" />
-          </span>
-          <span className="text-[15px] font-semibold whitespace-nowrap text-ink">
-            MBOS <span className="text-brand">MANAGER</span>
-          </span>
-        </Link>
+        {/*
+          THE SWITCHER SITS FIRST, BEFORE THIS APP'S OWN NAME.
+
+          It was over on the right, tucked between the audit bell and the
+          user's initials, which is where this app happened to put it and
+          nowhere else does: the CRM, Accounts, HRMS and the Admin Console all
+          open their header with it. The console says why in its own comment —
+          moving between apps is a platform affordance rather than something
+          each app decides to offer — and an affordance that moves depending on
+          which app you are standing in is one people stop reaching for.
+
+          Reading order is the argument too. Left to right, the header now says
+          which app you may go to, which app you are in, and then what is in it,
+          rather than opening with a name and hiding the way out beside the
+          sign-out button.
+        */}
+        <span className="flex flex-none items-center gap-2">
+          {switcher}
+          <Link
+            href="/sales"
+            className="flex flex-none items-center gap-2 no-underline hover:no-underline"
+          >
+            <span className="flex h-4 w-4 flex-none items-center justify-center rounded-[3px] bg-brand">
+              <span className="block h-1.5 w-1.5 rounded-[1px] bg-brand-lime" />
+            </span>
+            <span className="text-[15px] font-semibold whitespace-nowrap text-ink">
+              MBOS <span className="text-brand">MANAGER</span>
+            </span>
+          </Link>
+        </span>
 
         <span className="h-[22px] w-px flex-none bg-divider" />
         <span className="flex-none text-[13px] whitespace-nowrap text-muted">{teamLine}</span>
@@ -197,7 +216,6 @@ export function SalesShell({
         </Link>
 
         <span className="flex flex-none items-center gap-2">
-          {switcher}
           <span className="flex h-7 w-7 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]">
             {user.initials}
           </span>

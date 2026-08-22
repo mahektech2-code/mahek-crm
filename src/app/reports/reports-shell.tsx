@@ -48,15 +48,21 @@ export function ReportsShell({
     <div className="min-h-screen bg-canvas">
       <header className="border-b border-line bg-surface">
         <div className="flex items-center justify-between gap-4 px-6 pt-4">
-          <div className="flex items-baseline gap-3">
-            <span className="text-[15px] font-semibold text-ink">Reports</span>
-            <span className="text-[13px] text-muted">
-              New business, what it is worth, and who is still buying
+          {/* The switcher opens the header here too — see the note in
+              sales-shell.tsx. `items-center` on the outer row rather than the
+              inherited `items-baseline`, because a baseline shared between a
+              button and a line of text puts the button low. */}
+          <div className="flex min-w-0 items-center gap-3">
+            {switcher}
+            <span className="flex items-baseline gap-3">
+              <span className="text-[15px] font-semibold text-ink">Reports</span>
+              <span className="text-[13px] text-muted">
+                New business, what it is worth, and who is still buying
+              </span>
             </span>
           </div>
           <div className="flex items-center gap-2.5">
             {feedback}
-            {switcher}
             <span
               className="flex h-7 w-7 items-center justify-center rounded-full bg-divider text-[11px] font-medium text-body"
               title={user.name}
