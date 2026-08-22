@@ -52,7 +52,17 @@ export function Modal({
       <div
         onClick={(e) => e.stopPropagation()}
         style={{ width }}
-        className="max-h-[88vh] overflow-hidden rounded-[6px] bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+        /*
+         * `whitespace-normal` because a dialog inherits from wherever it was
+         * MOUNTED, not from where it appears. Opened from a button inside a
+         * table cell — which carries `whitespace-nowrap` so a row stays one
+         * line — every sentence in the dialog ran off the side and was clipped
+         * by the `overflow-hidden` beside it. It reads as prose that will not
+         * wrap, which is not a thing anybody thinks to look for in a modal.
+         * Normal is the CSS default, so nothing that works today can be
+         * relying on the opposite.
+         */
+        className="max-h-[88vh] overflow-hidden rounded-[6px] bg-surface whitespace-normal shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
       >
         <div className="border-b border-divider px-5 py-4 text-lg font-semibold text-ink">
           {title}

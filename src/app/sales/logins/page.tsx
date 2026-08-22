@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { stamp } from "@/lib/format";
 import { deviceBindings } from "@/lib/services/sales-service";
+import { ReleaseButton } from "./release-button";
 import {
   Banner,
   Cell,
@@ -40,7 +41,7 @@ export default async function Page() {
     <div className="p-6">
       <ScreenHeader
         title="Handsets and sign-in"
-        subtitle="One device per person. A second handset is refused until an admin releases the first — that is not a fault, it is what stops one salesman's visits being logged from somebody else's phone."
+        subtitle="One device per person, unless that is switched off in App preferences. A second handset is refused until somebody releases the first — that is not a fault, it is what stops one salesman's visits being logged from somebody else's phone."
       />
 
       <Banner
@@ -68,7 +69,7 @@ export default async function Page() {
         />
       ) : (
         <Table
-          minWidth={1140}
+          minWidth={1260}
           head={
             <>
               <HeadCell width={200}>Salesman</HeadCell>
@@ -76,7 +77,8 @@ export default async function Page() {
               <HeadCell width={130}>App</HeadCell>
               <HeadCell width={190}>Bound</HeadCell>
               <HeadCell width={190}>Last spoke</HeadCell>
-              <HeadCell>State</HeadCell>
+              <HeadCell width={210}>State</HeadCell>
+              <HeadCell>Handset</HeadCell>
             </>
           }
         >
@@ -111,7 +113,7 @@ export default async function Page() {
                   <span className="text-muted">—</span>
                 )}
               </Cell>
-              <Cell truncate={280} title={r.releaseReason ?? undefined}>
+              <Cell truncate={210} title={r.releaseReason ?? undefined}>
                 {!r.deviceId ? (
                   <Pill tone="warn">No handset</Pill>
                 ) : r.releasedAt ? (
@@ -127,6 +129,21 @@ export default async function Page() {
                   <Pill tone="success">Active</Pill>
                 ) : (
                   <Pill>Inactive</Pill>
+                )}
+              </Cell>
+              {/* Only a live binding can be released. A row that has already
+                  been released, or a salesman who has never signed in on a
+                  phone, has nothing to act on — and a disabled button on
+                  every second row is furniture rather than an offer. */}
+              <Cell>
+                {r.deviceId && r.deviceActive && !r.releasedAt ? (
+                  <ReleaseButton
+                    deviceId={r.deviceId}
+                    salesmanName={r.salesmanName}
+                    handset={r.model ?? r.platform ?? "the handset he is signed in on"}
+                  />
+                ) : (
+                  <span className="text-[12px] text-muted">—</span>
                 )}
               </Cell>
             </Row>
