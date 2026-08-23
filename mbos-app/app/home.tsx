@@ -19,6 +19,7 @@ import { followUpCounts, visitsToday } from '../src/data/visits';
 import { stopCounts } from '../src/data/journey';
 import { withinGeofence } from '../src/engines/geo';
 import { fixOf, getFix } from '../src/native/location';
+import { ensureLocationPermission } from '../src/native/permissions';
 import { takePhoto } from '../src/native/capture';
 
 /**
@@ -92,6 +93,20 @@ export default function Home() {
 
   const [day, setDay] = React.useState<Day>(EMPTY);
   const [starting, setStarting] = React.useState(false);
+
+  /*
+   * Location is asked for HERE, on the first open, and not at the check-in.
+   *
+   * The check-in is the worst moment to ask: he is outside a shop with the day
+   * waiting on him, and a system dialog lands on the button he just pressed.
+   * Tap the wrong one under that pressure and Android never asks again — the
+   * check-in records `denied` and nothing on the phone says why the office
+   * cannot see him. Asked once here, when nothing is riding on the answer.
+   * `ensureLocationPermission` is a no-op after the first time either way.
+   */
+  React.useEffect(() => {
+    void ensureLocationPermission();
+  }, []);
 
   /* The clock is read once per mount and ticked, never during render. */
   const [now, setNow] = React.useState(() => Date.now());
