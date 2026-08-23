@@ -66,7 +66,28 @@ jobs:
   prune:
     needs: test
     runs-on: ubuntu-latest
+    # HOUSEKEEPING MUST NOT BE ABLE TO STOP A DEPLOY.
+    #
+    # `build` needs this job, so the first time it failed for its own reasons —
+    # a bad download URL — it took the deploy with it and `build` and `deploy`
+    # were both skipped. That is worse than the quota it exists to prevent: the
+    # quota at least let the build run and fail with a message about storage.
+    # The rule was already written for the missing-secret case ("a warning,
+    # never a failed deploy") and simply had not been applied to the job.
+    continue-on-error: true
+    env:
+      # Read by the `if:` on the steps below — a secret cannot be tested in an
+      # `if` directly, so it is lifted here once.
+      HAVE_TOKEN: ${{ secrets.DO_API_TOKEN != '' && 'yes' || 'no' }}
     steps:
+      # A missing secret is a WARNING, never a failed deploy. Somebody who has
+      # not added it yet should still be able to ship; they will hit the quota
+      # eventually and this line is what tells them why.
+      - name: Say so if the registry cannot be pruned
+        if: env.HAVE_TOKEN != 'yes'
+        run: |
+          echo "::warning title=Registry not pruned::DO_API_TOKEN is not set, so old images were left in place. The free tier holds three or four of them and then pushes fail with 'denied: quota exceeded'. See DEPLOY.md."
+
       # `DOCR_TOKEN` cannot do this. It is a registry-scoped credential, which
       # is right for pushing and deliberate — see the note on the login step —
       # but the registry API cannot list or garbage-collect, and `doctl` wants
@@ -74,6 +95,7 @@ jobs:
       # to the pushing credential.
       - name: What production is running
         id: live
+        if: env.HAVE_TOKEN == 'yes'
         continue-on-error: true
         env:
           KEY: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -95,7 +117,20 @@ jobs:
           echo "live=${image##*:}" >> "$GITHUB_OUTPUT"
           echo "Production is on ${image##*:}"
 
+      # `doctl` is installed by DigitalOcean's own action rather than a URL
+      # assembled here. The URL this used to build —
+      # `/releases/latest/download/doctl-linux-amd64.tar.gz` — does not exist:
+      # doctl's assets carry the version in the filename, so GitHub answered
+      # with a 404 HTML page and `tar` said `not in gzip format`. A download
+      # that 404s into a decompressor is a class of mistake worth not owning.
+      - name: Install doctl
+        if: env.HAVE_TOKEN == 'yes'
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_API_TOKEN }}
+
       - name: Prune old images from the registry
+        if: env.HAVE_TOKEN == 'yes'
         env:
           DO_API_TOKEN: ${{ secrets.DO_API_TOKEN }}
           LIVE: ${{ steps.live.outputs.live }}
@@ -104,18 +139,6 @@ jobs:
           KEEP: "3"
         run: |
           set -euo pipefail
-
-          # A missing secret is a WARNING, never a failed deploy. Somebody who
-          # has not added it yet should still be able to ship; they will hit
-          # the quota eventually and this line is what tells them why.
-          if [ -z "${DO_API_TOKEN}" ]; then
-            echo "::warning title=Registry not pruned::DO_API_TOKEN is not set, so old images were left in place. The free tier holds three or four of them and then pushes fail with 'denied: quota exceeded'. See DEPLOY.md."
-            exit 0
-          fi
-
-          curl -sSL https://github.com/digitalocean/doctl/releases/latest/download/doctl-linux-amd64.tar.gz \
-            | tar xz -C /usr/local/bin doctl
-          doctl auth init --access-token "${DO_API_TOKEN}" >/dev/null
 
           # JSON, NOT `--format`.
           #
