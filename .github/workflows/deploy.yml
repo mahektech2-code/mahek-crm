@@ -72,12 +72,35 @@ jobs:
       # but the registry API cannot list or garbage-collect, and `doctl` wants
       # an account token. So this takes its own secret, and does NOT fall back
       # to the pushing credential.
+      - name: What production is running
+        id: live
+        continue-on-error: true
+        env:
+          KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: |
+          set -euo pipefail
+          # NEVER DELETE THE IMAGE THE DROPLET IS ON.
+          #
+          # "Keep the newest N" is not that rule. After a run of failed deploys
+          # — which is exactly when this job matters — the tag production is
+          # serving is older than the newest N, and pruning takes away the only
+          # thing `docker compose up` could pull if the box restarted. It very
+          # nearly happened by hand: prod sat on the 3rd newest tag with KEEP=3.
+          mkdir -p ~/.ssh
+          echo "${KEY}" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          echo "${HOSTS}" > ~/.ssh/known_hosts
+          image="$(ssh -o BatchMode=yes deploy@"${HOST}" 'grep "^IMAGE=" /opt/mahekone/.env' | head -1)"
+          echo "live=${image##*:}" >> "$GITHUB_OUTPUT"
+          echo "Production is on ${image##*:}"
+
       - name: Prune old images from the registry
         env:
           DO_API_TOKEN: ${{ secrets.DO_API_TOKEN }}
-          # Enough to roll back to, and few enough to fit. Each is ~130 MB
-          # against 500 MB, and `latest` shares its blobs with the newest tag
-          # so it costs nothing extra.
+          LIVE: ${{ steps.live.outputs.live }}
+          # Enough to roll back to and few enough to fit: ~130 MB each against
+          # 500 MB. `latest` shares its blobs with the newest tag, so it is free.
           KEEP: "3"
         run: |
           set -euo pipefail
@@ -94,73 +117,66 @@ jobs:
             | tar xz -C /usr/local/bin doctl
           doctl auth init --access-token "${DO_API_TOKEN}" >/dev/null
 
-          echo "Tags before:"
-          doctl registry repository list-tags app --format Tag,UpdatedAt || true
+          # JSON, NOT `--format`.
+          #
+          # `list-tags --format UpdatedAt,Tag --no-header` is accepted and then
+          # ignored: doctl prints all four columns WITH the header anyway. The
+          # first version of this job took the last field of each line, which is
+          # therefore the manifest digest and not the tag — so it would have
+          # asked the registry to delete tags named `sha256:…`, pruned nothing,
+          # and left the quota exactly where it was while reporting success.
+          # `-o json` is unambiguous and cannot drift like a column layout.
+          doctl registry repository list-tags app -o json > /tmp/tags.json
 
-          # THE TIMESTAMP LEADS THE LINE, AND THAT IS THE WHOLE POINT.
-          #
-          # This asked for `Tag,UpdatedAt` and sorted with `sort -k2 -r`, which
-          # is wrong in a way that reads as correct: doctl PADS its columns to
-          # align them, `-k2` means "field 2 to end of line", and sort does not
-          # skip leading blanks unless told to. So the key began with a run of
-          # spaces whose length varied with the tag's, and the list came back
-          # ordered by how long the tag name was. A newer image sorted below an
-          # older one and `latest` sorted to the very bottom — saved from
-          # deletion only by the awk filter below, which is luck rather than
-          # design. Left alone it would eventually have kept the oldest three
-          # images and deleted the one the droplet is running.
-          #
-          # Asking for `UpdatedAt,Tag` puts the timestamp first, where nothing
-          # pads in front of it, and a plain reverse sort on the whole line is
-          # then honest: the format is `2026-08-22 16:48:03 +0000 UTC`, which
-          # is lexically ordered for any two instants in the same zone.
-          #
-          # `latest` is still never a candidate — it points at whatever was
-          # pushed last, and deleting it leaves a fresh droplet nothing to pull.
-          OLD=""
-          while read -r tag; do
-            [ -n "${tag}" ] && OLD="${OLD}${tag} "
-          done < <(
-            doctl registry repository list-tags app \
-              --format UpdatedAt,Tag --no-header 2>/dev/null \
-              | sed 's/^[[:space:]]*//' \
-              | sort -r \
-              | awk '{ print $NF }' \
-              | awk '$1 != "latest"' \
-              | tail -n +$((KEEP + 1))
-          )
+          node -e '
+            const rows = require("/tmp/tags.json");
+            const keepCount = Number(process.env.KEEP);
+            const live = (process.env.LIVE || "").trim();
+            // A tag with no name is an untagged manifest — the garbage
+            // collection reaps those, there is nothing to delete by name.
+            const named = rows.filter(r => r.tag)
+              .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+            const protect = new Set(["latest"]);
+            if (live) protect.add(live);
+            const keep = new Set([
+              ...protect,
+              ...named.filter(r => !protect.has(r.tag)).slice(0, keepCount).map(r => r.tag),
+            ]);
+            const del = named.filter(r => !keep.has(r.tag)).map(r => r.tag);
+            console.error(`keeping: ${[...keep].join(", ")}`);
+            if (!live) console.error("::warning::Could not read what production is running, so only the newest tags are protected.");
+            process.stdout.write(del.join("\n"));
+          ' > /tmp/delete.txt
 
-          if [ -z "${OLD}" ]; then
-            echo "Nothing to prune — ${KEEP} or fewer images are stored."
+          if [ ! -s /tmp/delete.txt ]; then
+            echo "Nothing to prune."
           else
-            for tag in ${OLD}; do
-              echo "Deleting ${tag}"
+            echo "Deleting $(wc -l < /tmp/delete.txt) tag(s)."
+            while read -r tag; do
+              [ -z "${tag}" ] && continue
               doctl registry repository delete-tag app "${tag}" --force || true
-            done
+            done < /tmp/delete.txt
           fi
 
-          # Only one collection may run at a time, and one already running is
-          # an ordinary result of two deploys close together rather than a
-          # failure — the space it frees is the space this run wanted.
+          # Deleting a tag frees NOTHING on DigitalOcean until a collection
+          # runs. One already running is an ordinary result of two deploys
+          # close together rather than a failure.
           if ! doctl registry garbage-collection start --include-untagged-manifests --force; then
             echo "::notice::A garbage collection was already running; letting it finish."
           fi
 
-          # Space is not free until the collection is. Bounded, because a
-          # deploy must not hang on it: if it is still going after five
-          # minutes the push will either fit or fail with the same clear
-          # message it does today.
+          # Bounded, because a deploy must not hang on it: if it is still going
+          # after five minutes the push will either fit or fail with the same
+          # clear message it does today.
           for _ in $(seq 1 30); do
-            status="$(doctl registry garbage-collection get --format Status --no-header 2>/dev/null || echo none)"
+            status="$(doctl registry garbage-collection get -o json 2>/dev/null \
+              | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s)[0].status)}catch{console.log("none")}})')"
             case "${status}" in
-              *SUCCEEDED*|none|"") echo "Collection finished (${status:-none})."; break ;;
-              *FAILED*)             echo "::warning::Garbage collection failed; the push may still hit the quota."; break ;;
-              *)                    echo "Collecting… (${status})"; sleep 10 ;;
+              succeeded|none) echo "Collection finished (${status})."; break ;;
+              failed)         echo "::warning::Garbage collection failed; the push may still hit the quota."; break ;;
+              *)              echo "Collecting… (${status})"; sleep 10 ;;
             esac
           done
-
-          echo "Tags after:"
-          doctl registry repository list-tags app --format Tag,UpdatedAt || true
 
   build:
     needs: [test, prune]
