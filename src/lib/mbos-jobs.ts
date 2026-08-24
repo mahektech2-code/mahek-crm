@@ -5,7 +5,6 @@ import { db } from "@/db";
 import {
   customers,
   mbosApprovals,
-  mbosAttendanceDays,
   mbosLeads,
   mbosSamples,
   mbosTasks,
@@ -70,22 +69,75 @@ export async function closeOpenVisits(): Promise<Counted> {
   return { recordsAffected: rows.length, detail: `${rows.length} visits closed without a check-out` };
 }
 
-/** A day with a check-in and no check-out, flagged for regularisation. */
+/**
+ * A day with a check-in and no check-out — closed at the last thing they did.
+ *
+ * This used to set `autoCheckedOut` and nothing else, which flagged the day
+ * for regularisation and left `check_out_at` null for ever. Every query that
+ * asks "who is still out" reads that column, so a salesman who forgot to press
+ * the button on Tuesday was still out on Friday, and the Live map, the
+ * attendance screen and the day counts all believed it.
+ *
+ * **THE CLOSING TIME IS EVIDENCE, NEVER A GUESS.** It is the latest moment
+ * MahekOne can show he was working: his last reported position, the last
+ * activity he filed, or the last visit he closed. Picking an hour instead —
+ * six o'clock, or the end of the configured day — would be inventing
+ * attendance, and attendance is the one place in this app where an invented
+ * figure is least forgivable: somebody is paid against it.
+ *
+ * **A day with no evidence at all keeps its null**, and keeps the flag. That
+ * is a real state — checked in, did nothing the app saw, never checked out —
+ * and the honest answer is that we do not know when he stopped, not a
+ * plausible time that would be believed.
+ *
+ * `auto_checked_out` still marks every one of them, so no closed day is ever
+ * mistaken for one somebody pressed the button on, and the regularisation
+ * path is untouched.
+ */
 export async function markMissedCheckouts(): Promise<Counted> {
-  const rows = await db
-    .update(mbosAttendanceDays)
-    .set({ autoCheckedOut: true, updatedAt: new Date() })
-    .where(
-      and(
-        isNotNull(mbosAttendanceDays.checkInAt),
-        isNull(mbosAttendanceDays.checkOutAt),
-        eq(mbosAttendanceDays.autoCheckedOut, false),
-        lt(mbosAttendanceDays.day, TODAY),
-      ),
-    )
-    .returning({ id: mbosAttendanceDays.id });
+  /* Raw, because the closing time is the greatest of three subqueries and
+     Drizzle's builder cannot say that without three round trips. No JS Date
+     is bound anywhere here — every timestamp is a column or `now()`. */
+  const closed = await db.execute<{ id: string; closed: boolean }>(sql`
+    update mbos_attendance_days d
+       set check_out_at = ev.last_seen,
+           auto_checked_out = true,
+           updated_at = now()
+      from (
+        select a.id,
+               greatest(
+                 (select max(p.at) from mbos_positions p
+                   where p.user_id = a.user_id
+                     and (p.at at time zone ${APP_TIMEZONE})::date = a.day),
+                 (select max(l.captured_at) from mbos_activity_locations l
+                   where l.user_id = a.user_id
+                     and (l.captured_at at time zone ${APP_TIMEZONE})::date = a.day),
+                 (select max(coalesce(v.check_out_at, v.check_in_at)) from mbos_visits v
+                   where v.salesman_id = a.user_id
+                     and (v.check_in_at at time zone ${APP_TIMEZONE})::date = a.day)
+               ) as last_seen
+          from mbos_attendance_days a
+         where a.check_in_at is not null
+           and a.check_out_at is null
+           and a.auto_checked_out = false
+           and a.day < ${TODAY}
+      ) ev
+     where d.id = ev.id
+    returning d.id, (d.check_out_at is not null) as closed
+  `);
 
-  return { recordsAffected: rows.length, detail: `${rows.length} days missing a check-out` };
+  const withTime = closed.filter((r) => r.closed).length;
+  const blind = closed.length - withTime;
+
+  return {
+    recordsAffected: closed.length,
+    detail:
+      `${closed.length} days missing a check-out` +
+      (closed.length
+        ? ` — ${withTime} closed at the last thing they did` +
+          (blind ? `, ${blind} left open because nothing was recorded` : "")
+        : ""),
+  };
 }
 
 /**
