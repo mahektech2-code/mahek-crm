@@ -40,21 +40,33 @@ const STYLE = "https://tiles.openfreemap.org/styles/liberty";
 /** Enough that a single pin does not open zoomed to the rooftop. */
 const MAX_FIT_ZOOM = 15;
 
+/** A ring round whoever the team list has picked, drawn above everybody else. */
+function highlightMarker(el: HTMLDivElement, selected: boolean) {
+  el.style.boxShadow = selected
+    ? "0 0 0 3px #5223E0, 0 2px 8px rgba(22,22,22,0.4)"
+    : "0 1px 4px rgba(22,22,22,0.4)";
+  el.style.zIndex = selected ? "1" : "0";
+}
+
 export function StreetMap({
   rows,
   tracks,
   activity,
   staleAfterSeconds,
   view,
+  selectedId,
 }: {
   rows: LastKnown[];
   tracks: Map<string, TrackPoint[]>;
   activity: ActivityPoint[];
   staleAfterSeconds: number;
   view: "now" | "today";
+  /** Whoever is picked in the team list beside this — see the effect below. */
+  selectedId: string | null;
 }) {
   const host = React.useRef<HTMLDivElement | null>(null);
   const map = React.useRef<maplibregl.Map | null>(null);
+  const markers = React.useRef(new Map<string, HTMLDivElement>());
   const [failed, setFailed] = React.useState(false);
 
   const pinned = rows.filter((r) => r.lat != null && r.lng != null);
@@ -85,6 +97,7 @@ export function StreetMap({
      */
     let cancelled = false;
     let m: maplibregl.Map | null = null;
+    const markerMap = markers.current;
 
     const frame = requestAnimationFrame(() => {
       if (cancelled || !host.current) return;
@@ -191,7 +204,7 @@ export function StreetMap({
       for (const r of pinned) {
         const el = document.createElement("div");
         el.className =
-          "flex h-7 w-7 items-center justify-center rounded-full border-2 border-white text-[11px] font-semibold text-white shadow-[0_1px_4px_rgba(22,22,22,0.4)]";
+          "flex h-7 w-7 items-center justify-center rounded-full border-2 border-white text-[11px] font-semibold text-white shadow-[0_1px_4px_rgba(22,22,22,0.4)] transition-shadow";
         el.style.background = r.checkOutAt ? "#8A8F98" : r.seenAt ? "#5223E0" : "#C0392B";
         el.textContent = r.initials;
         new maplibregl.Marker({ element: el })
@@ -204,6 +217,7 @@ export function StreetMap({
             ),
           )
           .addTo(built);
+        markerMap.set(r.salesmanId, el);
       }
 
       /* FIT, never fill. One pin gets a sensible zoom instead of a rooftop. */
@@ -220,6 +234,7 @@ export function StreetMap({
       cancelAnimationFrame(frame);
       m?.remove();
       map.current = null;
+      markerMap.clear();
     };
     /*
      * BUILT ONCE, AND REMOUNTED WHEN THE DATA CHANGES.
@@ -234,6 +249,39 @@ export function StreetMap({
      */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /*
+   * Picking somebody in the team list moves the CAMERA on the map that
+   * already exists — it does not rebuild it. Rebuilding would refetch the
+   * style and every tile in view for one click, and it would throw away the
+   * animation that is the whole point of "point me at them". This is the
+   * imperative half of that: the map is a library instance behind a ref, and
+   * a ref changing is exactly what an effect is for.
+   *
+   * Deselecting gives the view back to `fitBounds` over every point being
+   * shown, which is the same call the map was built with — so leaving nobody
+   * selected always reads the same as never having selected anybody.
+   */
+  React.useEffect(() => {
+    const built = map.current;
+    if (!built) return;
+
+    for (const [id, el] of markers.current) highlightMarker(el, id === selectedId);
+
+    if (selectedId) {
+      const row = pinned.find((r) => r.salesmanId === selectedId);
+      if (row) built.flyTo({ center: [row.lng as number, row.lat as number], zoom: 16 });
+      return;
+    }
+
+    if (!points.length) return;
+    const box = points.reduce(
+      (b, p) => b.extend(p),
+      new maplibregl.LngLatBounds(points[0], points[0]),
+    );
+    built.fitBounds(box, { padding: 56, maxZoom: MAX_FIT_ZOOM });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   if (!hasAnything) {
     return (
