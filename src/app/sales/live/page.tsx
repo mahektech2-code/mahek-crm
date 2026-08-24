@@ -8,7 +8,8 @@ import {
 } from "@/lib/services/sales-service";
 import { Banner, ScreenHeader } from "../parts";
 import { plural } from "../words";
-import { MapCanvas, TeamList } from "./map-canvas";
+import { TeamList } from "./map-canvas";
+import { StreetMap } from "./street-map";
 
 export const metadata = { title: "Live map — Sales Dashboard — MahekOne" };
 
@@ -21,9 +22,11 @@ export const metadata = { title: "Live map — Sales Dashboard — MahekOne" };
  * to the other looks nothing like an afternoon spent in one place, and neither
  * is visible in a list of visits.
  *
- * **The map has no tiles and the design never asked for any.** What it draws is
- * the team's own bounding box, so a pin's place is its place relative to
- * everybody else — see `map-canvas.tsx`.
+ * **The map has streets under it now.** It was a bare grid, on the reasoning
+ * that tiles meant a key, a bill and sending the team's coordinates away.
+ * OpenFreeMap answers the first two — no key, no account, no limit — and the
+ * third was overstated: the pins are drawn from MahekOne's own data and a tile
+ * server is only ever asked for squares of map. See `street-map.tsx`.
  *
  * **A pin is only drawn where there is a fix.** Nobody is placed by arithmetic;
  * somebody with no position appears in the team list saying so and nowhere on
@@ -92,7 +95,10 @@ export default async function Page({
       ) : null}
 
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_clamp(280px,30%,360px)]">
-        <MapCanvas
+        {/* Keyed, so a change of day or view remounts the map rather than
+            asking an effect to rebuild it in place — see `street-map.tsx`. */}
+        <StreetMap
+          key={`${day}:${view}`}
           rows={rows}
           tracks={tracks}
           activity={activity}
@@ -109,9 +115,8 @@ export default async function Page({
         {out.length
           ? `${plural(out.length, "salesman", "salesmen")} out now. `
           : "Nobody is checked in at the moment. "}
-        There is no street map behind the pins: what they show is where everybody is relative to each
-        other, which is the question this screen is for — and drawing streets would mean sending
-        these coordinates to whoever supplied them.
+        The streets come from OpenFreeMap, which needs no key and sets no limit; the pins are
+        drawn here from MahekOne&rsquo;s own data, so no position is ever sent to it.
       </p>
     </div>
   );
