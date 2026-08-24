@@ -111,6 +111,16 @@ export function StreetMap({
       map.current = built;
 
       built.on("load", () => {
+      /* MapLibre's compact attribution starts EXPANDED, and stays that way
+         until the map is DRAGGED — that is the only event its minimiser
+         listens for, so nobody has yet triggered it on a map that has just
+         appeared. The style loading also re-adds the class once the real
+         source attributions are known, so stripping it earlier does not
+         hold — this has to run after `load`, once that has settled.
+         Clicking the icon still toggles normally afterwards, since that
+         handler manages the class itself. */
+      built.getContainer().querySelector(".maplibregl-ctrl-attrib")?.classList.remove("maplibregl-compact-show");
+
       /* The trail first, so pins and marks sit on top of it. */
       for (const [id, ps] of trails) {
         if (ps.length < 2) continue;
