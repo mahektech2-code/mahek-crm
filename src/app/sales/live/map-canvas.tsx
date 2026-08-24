@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import type { ActivityPoint, LastKnown, TrackPoint } from "@/lib/services/sales-service";
@@ -259,35 +261,62 @@ function Key({
  * canvas and the list is a salesman nobody notices is missing, which is the
  * opposite of what this screen is for. The dot repeats what the pin colour
  * says, because the row is read on its own as often as beside the map.
+ *
+ * **A row is a SELECT, not a link, when there is somewhere to point at.**
+ * Clicking a name used to navigate straight to their profile; what a manager
+ * actually reaches for here is "where is he", and that answer is the map two
+ * feet away, not a different page. Clicking the same name again — or picking
+ * somebody else — gives the map back to the whole team. Whoever has no fix
+ * has nothing for the map to point at, so their row stays informational
+ * rather than pretending a click would do something.
  */
-export function TeamList({ rows }: { rows: LastKnown[] }) {
+export function TeamList({
+  rows,
+  selectedId,
+  onSelect,
+}: {
+  rows: LastKnown[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
   return (
     <div className="overflow-hidden rounded-[6px] border border-line bg-surface">
       <div className="border-b border-divider px-4 py-3 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
         The team
       </div>
-      {rows.map((r) => (
-        <Link
-          key={r.salesmanId}
-          href={`/sales/people/${r.salesmanId}`}
-          className="flex w-full items-center gap-2.5 border-t border-[#F7F8FA] px-4 py-3 text-left no-underline first:border-t-0 hover:bg-canvas hover:no-underline"
-        >
-          <span className="flex size-7 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[11px] font-semibold text-[#5223E0]">
-            {r.initials}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="flex items-center gap-1.5">
-              <span
-                className="block size-2 flex-none rounded-full"
-                style={{ background: dotColour(r) }}
-              />
-              <span className="truncate text-sm font-medium text-ink">{r.salesmanName}</span>
+      {rows.map((r) => {
+        const hasFix = r.lat != null && r.lng != null;
+        const selected = selectedId === r.salesmanId;
+        return (
+          <button
+            key={r.salesmanId}
+            type="button"
+            disabled={!hasFix}
+            onClick={() => onSelect(r.salesmanId)}
+            title={hasFix ? `Show ${r.salesmanName} on the map` : undefined}
+            className={
+              "flex w-full items-center gap-2.5 border-t border-[#F7F8FA] px-4 py-3 text-left first:border-t-0 disabled:cursor-default " +
+              (hasFix ? "cursor-pointer hover:bg-canvas" : "") +
+              (selected ? " bg-brand-soft" : "")
+            }
+          >
+            <span className="flex size-7 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-[11px] font-semibold text-[#5223E0]">
+              {r.initials}
             </span>
-            <span className="mt-0.5 block truncate text-[12px] text-muted">{whereLine(r)}</span>
-            <span className="block text-[12px] text-muted">{seenLine(r)}</span>
-          </span>
-        </Link>
-      ))}
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-1.5">
+                <span
+                  className="block size-2 flex-none rounded-full"
+                  style={{ background: dotColour(r) }}
+                />
+                <span className="truncate text-sm font-medium text-ink">{r.salesmanName}</span>
+              </span>
+              <span className="mt-0.5 block truncate text-[12px] text-muted">{whereLine(r)}</span>
+              <span className="block text-[12px] text-muted">{seenLine(r)}</span>
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

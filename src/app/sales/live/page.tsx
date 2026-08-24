@@ -8,8 +8,7 @@ import {
 } from "@/lib/services/sales-service";
 import { Banner, ScreenHeader } from "../parts";
 import { plural } from "../words";
-import { TeamList } from "./map-canvas";
-import { StreetMap } from "./street-map";
+import { LivePanel } from "./live-panel";
 
 export const metadata = { title: "Live map — Sales Dashboard — MahekOne" };
 
@@ -94,19 +93,17 @@ export default async function Page({
         />
       ) : null}
 
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_clamp(280px,30%,360px)]">
-        {/* Keyed, so a change of day or view remounts the map rather than
-            asking an effect to rebuild it in place — see `street-map.tsx`. */}
-        <StreetMap
-          key={`${day}:${view}`}
-          rows={rows}
-          tracks={tracks}
-          activity={activity}
-          staleAfterSeconds={config["mbos.location.activityFixMaxAgeSeconds"]}
-          view={view}
-        />
-        <TeamList rows={rows} />
-      </div>
+      {/* Keyed, so a change of day or view remounts the map — and the
+          selection sitting above it — rather than asking an effect to
+          rebuild either in place. See `live-panel.tsx` and `street-map.tsx`. */}
+      <LivePanel
+        key={`${day}:${view}`}
+        rows={rows}
+        tracks={tracks}
+        activity={activity}
+        staleAfterSeconds={config["mbos.location.activityFixMaxAgeSeconds"]}
+        view={view}
+      />
 
       <p className="mt-3 max-w-[820px] text-[13px] text-pretty text-muted">
         {tracking
