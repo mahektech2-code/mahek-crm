@@ -867,6 +867,23 @@ export const getCustomer = cache(async function getCustomer(
       // or a manager choosing somebody, so it is the better answer where it
       // exists, and the sheet's name is what stands in when it does not.
       backOfficeAmName: BACK_OFFICE_AM_NAME_SQL,
+      // The same subquery `listCustomers` reads — the last call that produced
+      // a next step, and nothing else, or the record page and the customers
+      // list would disagree about the same customer's next call.
+      nextStep: sql<StoredNextStep | null>`(
+        select json_build_object(
+                 'kind', c.next_step_kind,
+                 'date', c.next_step_date::text,
+                 'reason', c.next_step_reason,
+                 'headline', c.next_step_headline,
+                 'detail', c.next_step_detail,
+                 'toldOn', to_char(c.started_at at time zone ${APP_TIMEZONE}, 'YYYY-MM-DD')
+               )
+          from calls c
+         where c.customer_id = customers.id and c.next_step_kind is not null
+         order by c.started_at desc, c.id desc
+         limit 1
+      )`,
     })
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
@@ -879,6 +896,7 @@ export const getCustomer = cache(async function getCustomer(
     salesAmName: rows[0].salesAmName,
     salesManagerName: rows[0].salesManagerName,
     backOfficeAmName: rows[0].backOfficeAmName,
+    nextStep: rows[0].nextStep ?? null,
   };
 });
 

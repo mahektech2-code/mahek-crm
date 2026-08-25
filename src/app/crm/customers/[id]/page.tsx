@@ -222,6 +222,9 @@ export default async function CustomerRecordPage({
         cycleDays: customer.cycleDays,
         cycleIsDefault: customer.cycleIsDefault,
         cycleConfidence: customer.cycleConfidence,
+        // The stored answer from the last call logged against them — see
+        // `NextCallCell` for why this is read rather than derived live.
+        nextStep: customer.nextStep,
         /*
          * Last order + the cycle. Computed here rather than stored: it is two
          * columns and an addition, and a stored copy would be one more thing

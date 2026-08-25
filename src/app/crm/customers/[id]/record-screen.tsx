@@ -29,6 +29,7 @@ import {
   type QuickNoteOption,
 } from "@/components/crm/call-panel";
 import { MessageHistory, type MessageEntry } from "./message-history";
+import { NextCallCell, type StoredNextStep } from "@/components/crm/next-call-cell";
 import { TIMELINE_KINDS, type TimelineKind } from "@/lib/timeline-kinds";
 import {
   createReminder,
@@ -166,6 +167,8 @@ export function RecordScreen({
     cycleConfidence?: number | null;
     /** Last order + the cycle. Null for a customer who has never ordered. */
     expectedOrderDate?: string | null;
+    /** What the screen told whoever logged the last call — see `NextCallCell`. */
+    nextStep: StoredNextStep | null;
     avgOrderValue: number;
     orders6m: number;
     paysInDays: number;
@@ -811,6 +814,9 @@ export function RecordScreen({
                     {customer.cycleConfidence}%)
                   </span>
                 ) : null}
+              </Figure>
+              <Figure label="Next call">
+                <NextCallCell step={customer.nextStep} today={today()} />
               </Figure>
               {customer.expectedOrderDate ? (
                 <Figure label="Expected order">
