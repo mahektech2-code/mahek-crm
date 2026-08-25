@@ -498,6 +498,13 @@
       "when": 1787500660000,
       "tag": "0070_customer_health_history",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1787500720000,
+      "tag": "0071_target_carried_forward",
+      "breakpoints": true
     }
   ]
 }

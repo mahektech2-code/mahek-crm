@@ -156,6 +156,10 @@ export async function saveSalesTarget(
             collectionTargetPaise: data.collectionTargetPaise,
             activityTarget: data.activityTarget,
             notes: data.notes ?? null,
+            // A real save is a decision, even one that reproduces last
+            // month's figures verbatim — so a target carried forward stops
+            // being one the moment a manager has actually looked at it.
+            carriedForward: false,
             updatedAt: new Date(),
             updatedById: ctx.user.id,
           })
