@@ -13,6 +13,8 @@ import {
   orders,
   paymentReceipts,
   payments,
+  salesTargetCategories,
+  salesTargets,
   sheetPartyRows,
   sheetTakenOrderRows,
   waMessages,
@@ -836,6 +838,81 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
       targetAmount: resolved.amount,
       isDefault: true,
     });
+    created++;
+  }
+
+  return created;
+}
+
+/**
+ * On the first of the month, a person's target starts as last month's.
+ *
+ * §21 of the brief leaves the DECISION with a manager; it does not ask them to
+ * retype the same five figures for nine people every month. Where somebody's
+ * target for the new period does not exist at all yet — a draft in progress
+ * or a real figure already saved for `period` is left exactly alone, because
+ * "not changed manually" means precisely that — the row is copied from their
+ * PUBLISHED target for the month before, bands included, and published again
+ * immediately: nothing about the commitment has moved, so there is nothing to
+ * hold back from them. A target that was only ever a draft is not copied,
+ * because a draft was never told to anybody and there is no commitment to
+ * continue. `carriedForward` marks the copy so the screen can say "still last
+ * month's number" rather than presenting it as something chosen this month —
+ * and the moment a manager saves a real change, `saveSalesTarget` clears it.
+ *
+ * Harmless to call on any day: it only ever creates a row where `period` has
+ * none, so a hand-triggered re-run at noon touches nothing already there.
+ */
+export async function copyForwardSalesTargets(forMonth?: string): Promise<number> {
+  const day = await today();
+  const period = forMonth ?? monthKey(day);
+  const previous = addMonths(period, -1);
+
+  const already = await db
+    .select({ userId: salesTargets.userId })
+    .from(salesTargets)
+    .where(eq(salesTargets.period, period));
+  const have = new Set(already.map((r) => r.userId));
+
+  const priorTargets = await db
+    .select()
+    .from(salesTargets)
+    .where(and(eq(salesTargets.period, previous), eq(salesTargets.status, "published")));
+
+  let created = 0;
+  for (const prior of priorTargets) {
+    if (have.has(prior.userId)) continue;
+
+    const targetId = id("stg");
+    await db.insert(salesTargets).values({
+      id: targetId,
+      userId: prior.userId,
+      period,
+      revenueTargetPaise: prior.revenueTargetPaise,
+      volumeTargetMl: prior.volumeTargetMl,
+      newCustomerTarget: prior.newCustomerTarget,
+      collectionTargetPaise: prior.collectionTargetPaise,
+      activityTarget: prior.activityTarget,
+      notes: prior.notes,
+      status: "published",
+      publishedAt: new Date(),
+      carriedForward: true,
+    });
+
+    const bands = await db
+      .select()
+      .from(salesTargetCategories)
+      .where(eq(salesTargetCategories.targetId, prior.id));
+    for (const band of bands) {
+      await db.insert(salesTargetCategories).values({
+        id: id("stc"),
+        targetId,
+        categoryId: band.categoryId,
+        minimumBp: band.minimumBp,
+        targetBp: band.targetBp,
+        stretchBp: band.stretchBp,
+      });
+    }
     created++;
   }
 

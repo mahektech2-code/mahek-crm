@@ -16,6 +16,7 @@ import { CRM_EVENT, callTimelineSummary, writeTimelineEvents } from "./timeline"
 import { getConfig } from "./config/store";
 import { money } from "./format";
 import {
+  copyForwardSalesTargets,
   recomputeAllBuyingCycles,
   recomputeAllFollowUpStates,
   recomputeAllOutstanding,
@@ -73,6 +74,7 @@ export type JobName =
   | "build-queues"
   | "link-delivery-parties"
   | "seed-targets"
+  | "copy-forward-sales-targets"
   | "recompute-performance"
   | "snapshot-customer-health"
   | "sweep-unconfirmed"
@@ -251,6 +253,15 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
       await run("seed-targets", async () => {
         const n = await seedMonthlyTargets();
         return { recordsAffected: n, detail: `${n} default targets seeded` };
+      }, triggeredById),
+    );
+
+    // Same idempotence: only a person with no target at all for the new
+    // period gets one, copied from last month's published figures.
+    results.push(
+      await run("copy-forward-sales-targets", async () => {
+        const n = await copyForwardSalesTargets();
+        return { recordsAffected: n, detail: `${n} sales targets carried forward` };
       }, triggeredById),
     );
   }
