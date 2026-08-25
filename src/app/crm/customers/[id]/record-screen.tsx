@@ -37,6 +37,16 @@ import {
 } from "@/lib/actions/crm";
 import { convertToThirdParty, revertThirdParty } from "@/lib/actions/third-party";
 import { ThirdPartyDialog } from "@/components/crm/third-party-dialog";
+import { updateAccountManagers } from "@/lib/actions/account-manager";
+import { assignSalesManager } from "@/lib/actions/sales-manager";
+import { SalesManagerDialog } from "@/components/crm/sales-manager-dialog";
+import {
+  SHEET_NAME_VALUE,
+  StaffDot,
+  openingSalesValue,
+  openingBackOfficeValue,
+  type Row as CustomerListRow,
+} from "@/components/customers/customers-screen";
 import {
   DeliveryRelations,
   type Relation,
@@ -92,6 +102,11 @@ export function RecordScreen({
   deliveryAddresses,
   distributorSuggestions,
   canClassify,
+  canReassign,
+  canAssignSalesManager,
+  backOfficePeople,
+  amReasons,
+  amSearchThreshold,
   timelineCursor,
   timelineMore,
   timelineCounts,
@@ -131,6 +146,22 @@ export function RecordScreen({
   distributorSuggestions: Array<{ id: string; name: string; orders: number }>;
   /** `customer.classify` — converting, and editing an arrangement. */
   canClassify: boolean;
+  /**
+   * `customer.reassign` — moving the sales and back office seats. Accounts'
+   * and admin's, deliberately: whose book an account is in decides whose
+   * targets it counts toward.
+   */
+  canReassign: boolean;
+  /**
+   * `customer.assignSalesManager` — a more generous answer than `canReassign`
+   * for a seat that drives no queue, no scope and no target.
+   */
+  canAssignSalesManager: boolean;
+  /** Accounts and current employees both — none of the three seats needs a login. */
+  backOfficePeople: Array<{ id: string; name: string; role?: string }>;
+  /** `people.amChangeReasons`, asked for whenever a manager changes. */
+  amReasons: string[];
+  amSearchThreshold: number;
   /** Where the first page of the timeline stopped. Null when it is all of it. */
   timelineCursor: { at: string; id: string } | null;
   timelineMore: boolean;
@@ -150,9 +181,16 @@ export function RecordScreen({
     kind: "lead" | "customer";
     leadSource: string | null;
     createdAt: string;
+    /** Raw ids, alongside the names — the account manager dialog needs both. */
+    ownerId: string | null;
+    salesAmId: string | null;
+    /** Whether a person has decided the sales seat — see `openingSalesValue`. */
+    amDecidedAt: Date | null;
     salesAmName: string | null;
     /** Who the salesperson answers to — a third seat, and a manager's to set. */
+    salesManagerId: string | null;
     salesManagerName: string | null;
+    backOfficeAmId: string | null;
     backOfficeAmName: string | null;
     status: string;
     slowPayer: boolean;
@@ -240,6 +278,8 @@ export function RecordScreen({
   const [remOpen, setRemOpen] = React.useState(false);
   const [cmpOpen, setCmpOpen] = React.useState(false);
   const [converting, setConverting] = React.useState(false);
+  const [amOpen, setAmOpen] = React.useState(false);
+  const [smOpen, setSmOpen] = React.useState(false);
 
   /*
    * THE TIMELINE IS A PAGE, and this holds the pages read so far.
@@ -881,7 +921,18 @@ export function RecordScreen({
           </Card>
 
           <Card className="p-5">
-            <SectionLabel>Account</SectionLabel>
+            <div className="flex items-center justify-between">
+              <SectionLabel>Account</SectionLabel>
+              {customer.kind === "customer" && canReassign ? (
+                <button
+                  type="button"
+                  onClick={() => setAmOpen(true)}
+                  className="cursor-pointer text-[12px] font-medium text-brand hover:underline"
+                >
+                  Edit sales / back office
+                </button>
+              ) : null}
+            </div>
             {/*
               A LABEL AND A VALUE, not a sentence.
               
@@ -917,15 +968,37 @@ export function RecordScreen({
                   {/* The three seats at ONE size, as the customers list draws
                       them: they are peers, and a hierarchy of type sizes down a
                       column claims an importance ranking that does not exist. */}
-                  <Fact
-                    label="Sales"
-                    value={customer.salesAmName ?? customer.ownerName}
-                  />
+                  {/*
+                    NO fallback to `ownerName` here. `SALES_AM_NAME_SQL`
+                    already carries that fallback — for an account nobody has
+                    decided about. Redoing it here would override the one
+                    case that fallback deliberately excludes: an account
+                    somebody has decided has no salesperson, where null means
+                    unassigned and re-showing the importer's name is the exact
+                    bug this screen exists to not have.
+                  */}
+                  <Fact label="Sales" value={customer.salesAmName} />
                   {/* Who the salesperson answers to. Named here rather than
                       left to the list, because this is the screen somebody is
                       on when they ask who to escalate an account to — and it
                       is the one seat of the three that is a manager's to set. */}
-                  <Fact label="Sales manager" value={customer.salesManagerName} />
+                  <dt className="text-muted whitespace-nowrap">Sales manager</dt>
+                  <dd className="m-0 flex min-w-0 items-center justify-between gap-2 break-words text-ink">
+                    <span>
+                      {customer.salesManagerName ?? (
+                        <span className="text-muted">-</span>
+                      )}
+                    </span>
+                    {canAssignSalesManager ? (
+                      <button
+                        type="button"
+                        onClick={() => setSmOpen(true)}
+                        className="cursor-pointer text-[12px] font-medium text-brand hover:underline"
+                      >
+                        Edit
+                      </button>
+                    ) : null}
+                  </dd>
                   <Fact label="Back office" value={customer.backOfficeAmName} />
                   <Fact
                     label="Buying cycle"
@@ -1025,6 +1098,47 @@ export function RecordScreen({
         }}
       />
 
+      <AccountManagerDialog
+        open={amOpen}
+        customer={customer}
+        people={backOfficePeople}
+        reasons={amReasons}
+        onClose={() => setAmOpen(false)}
+        onSaved={() => router.refresh()}
+      />
+
+      {smOpen ? (
+        <SalesManagerDialog
+          open
+          scope={{
+            kind: "ids",
+            ids: [customer.id],
+            accounts: [
+              { id: customer.id, name: customer.name, salesManagerName: customer.salesManagerName },
+            ],
+          }}
+          people={backOfficePeople}
+          reasons={amReasons}
+          searchThreshold={amSearchThreshold}
+          onClose={() => setSmOpen(false)}
+          onSubmit={async (change) => {
+            const result = await run(
+              assignSalesManager({
+                scope: { kind: "ids", customerIds: change.ids ?? [customer.id] },
+                target: change.target,
+                reasonCode: change.reasonCode,
+                note: change.note,
+                expectedCount: change.expectedCount,
+              }),
+            );
+            if (result.ok) {
+              setSmOpen(false);
+              router.refresh();
+            }
+          }}
+        />
+      ) : null}
+
       {calling ? (
         <CallPanel
           target={callTarget}
@@ -1071,6 +1185,236 @@ export function RecordScreen({
         }}
       />
     </div>
+  );
+}
+
+/**
+ * Moving the sales or back office seat, from the record itself.
+ *
+ * The list's "Edit details" dialog already does this correctly — same
+ * fields, same `updateAccountManagers` call, same unassign path — but a
+ * telecaller looking at one account has no reason to go and find it on a
+ * list of fifty-two. Same logic as that dialog's submit handler, deliberately
+ * NOT shared as a function: this only ever acts on one customer, and the
+ * list's diffing has to stay free to change for its own bulk-editing reasons
+ * without this screen moving underneath it.
+ */
+function AccountManagerDialog({
+  open,
+  customer,
+  people,
+  reasons,
+  onClose,
+  onSaved,
+}: {
+  open: boolean;
+  customer: {
+    id: string;
+    name: string;
+    kind: "lead" | "customer";
+    ownerId: string | null;
+    salesAmId: string | null;
+    amDecidedAt: Date | null;
+    salesAmName: string | null;
+    backOfficeAmId: string | null;
+    backOfficeAmName: string | null;
+  };
+  people: Array<{ id: string; name: string; role?: string }>;
+  reasons: string[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <AccountManagerDialogBody
+      key={customer.id}
+      customer={customer}
+      people={people}
+      reasons={reasons}
+      onClose={onClose}
+      onSaved={onSaved}
+    />
+  );
+}
+
+function AccountManagerDialogBody({
+  customer,
+  people,
+  reasons,
+  onClose,
+  onSaved,
+}: {
+  customer: {
+    id: string;
+    name: string;
+    kind: "lead" | "customer";
+    ownerId: string | null;
+    salesAmId: string | null;
+    amDecidedAt: Date | null;
+    salesAmName: string | null;
+    backOfficeAmId: string | null;
+    backOfficeAmName: string | null;
+  };
+  people: Array<{ id: string; name: string; role?: string }>;
+  reasons: string[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { run } = useToast();
+  const [busy, setBusy] = React.useState(false);
+
+  // A Partial<Row> built from the fields this screen actually has — the same
+  // shape `openingSalesValue`/`openingBackOfficeValue` already read on the
+  // customers list, so a sheet-only name resolves to the same picker entry
+  // (or the same "not on the staff list" sentinel) on both screens.
+  const rowLike: Partial<CustomerListRow> = {
+    ownerId: customer.ownerId,
+    salesAmId: customer.salesAmId,
+    amDecidedAt: customer.amDecidedAt,
+    salesAmName: customer.salesAmName,
+    backOfficeAmId: customer.backOfficeAmId,
+    backOfficeAmName: customer.backOfficeAmName,
+  };
+  const assignedBefore = openingSalesValue(customer.kind, rowLike, people);
+  const backOfficeBefore = openingBackOfficeValue(rowLike, people);
+
+  const [salesId, setSalesId] = React.useState(assignedBefore);
+  const [backOfficeId, setBackOfficeId] = React.useState(backOfficeBefore);
+  const [reasonCode, setReasonCode] = React.useState(reasons[0] ?? "");
+
+  const salesMoved = salesId !== SHEET_NAME_VALUE && salesId !== assignedBefore;
+  const backOfficeMoved =
+    backOfficeId !== SHEET_NAME_VALUE && backOfficeId !== backOfficeBefore;
+  const changed = salesMoved || backOfficeMoved;
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Account managers — ${customer.name}`}
+      width={480}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            disabled={busy || !changed || !reasonCode}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                const result = await run(
+                  updateAccountManagers({
+                    customerIds: [customer.id],
+                    ...(salesMoved
+                      ? salesId.startsWith("emp:")
+                        ? {
+                            salesEmployeeId: salesId.slice(4),
+                            sales: { reasonCode },
+                          }
+                        : { salesAmId: salesId || null, sales: { reasonCode } }
+                      : {}),
+                    ...(backOfficeMoved
+                      ? {
+                          backOffice: !backOfficeId
+                            ? ({ kind: "none" } as const)
+                            : backOfficeId.startsWith("emp:")
+                              ? ({
+                                  kind: "employee",
+                                  employeeId: backOfficeId.slice(4),
+                                } as const)
+                              : ({ kind: "user", userId: backOfficeId } as const),
+                          backOfficeReason: { reasonCode },
+                        }
+                      : {}),
+                  }),
+                );
+                if (result.ok) {
+                  onSaved();
+                  onClose();
+                }
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "Saving…" : "Save"}
+          </Button>
+        </>
+      }
+    >
+      <Field label="Account manager · sales" hint="Whose book this account is in.">
+        <span className="relative block">
+          {salesId ? <StaffDot gone={salesId === SHEET_NAME_VALUE} /> : null}
+          <Select
+            value={salesId}
+            onChange={(e) => setSalesId(e.target.value)}
+            disabled={busy}
+            className={cx("w-full", salesId ? "pl-6" : "")}
+          >
+            {salesId === SHEET_NAME_VALUE ? (
+              <option value={SHEET_NAME_VALUE}>{customer.salesAmName}</option>
+            ) : null}
+            <option value="">Unassigned</option>
+            {people.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </Select>
+        </span>
+        {salesId === SHEET_NAME_VALUE ? (
+          <span className="mt-1 block text-[12px] text-danger">
+            No longer on the staff list. Pick who has taken the book over.
+          </span>
+        ) : null}
+      </Field>
+      <Field
+        label="Account manager · back office"
+        hint="Dispatch, billing and paperwork for this account."
+        className="mt-3"
+      >
+        <span className="relative block">
+          {backOfficeId ? (
+            <StaffDot gone={backOfficeId === SHEET_NAME_VALUE} />
+          ) : null}
+          <Select
+            value={backOfficeId}
+            onChange={(e) => setBackOfficeId(e.target.value)}
+            disabled={busy}
+            className={cx("w-full", backOfficeId ? "pl-6" : "")}
+          >
+            {backOfficeId === SHEET_NAME_VALUE ? (
+              <option value={SHEET_NAME_VALUE}>{customer.backOfficeAmName}</option>
+            ) : null}
+            <option value="">Unassigned</option>
+            {people.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </Select>
+        </span>
+        {backOfficeId === SHEET_NAME_VALUE ? (
+          <span className="mt-1 block text-[12px] text-danger">
+            No longer on the staff list. Pick who is doing the paperwork now.
+          </span>
+        ) : null}
+      </Field>
+      {changed ? (
+        <Field label="Why this is changing" className="mt-3">
+          <Select
+            value={reasonCode}
+            onChange={(e) => setReasonCode(e.target.value)}
+            disabled={busy}
+          >
+            {reasons.map((r) => (
+              <option key={r}>{r}</option>
+            ))}
+          </Select>
+        </Field>
+      ) : null}
+    </Modal>
   );
 }
 

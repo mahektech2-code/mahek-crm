@@ -58,7 +58,7 @@ import {
   accountTypeLabel,
 } from "@/lib/account-types";
 
-type Row = {
+export type Row = {
   id: string;
   name: string;
   contactPerson: string;
@@ -71,6 +71,15 @@ type Row = {
    * of all 1075 records, while the sales AM is who actually holds each one.
    */
   salesAmId: string | null;
+  /**
+   * The mark that a person decided the sales seat, rather than the sheet
+   * still owning it. `openingSalesValue` reads it for the same reason
+   * `ASSIGNED_TO_SQL` and `SALES_AM_NAME_SQL` do — the fallback to the owner
+   * is for a seat nobody has set, not for one somebody has deliberately
+   * emptied, and every place that reads this seat has to draw that line the
+   * same way or an unassign looks like it silently reverted itself.
+   */
+  amDecidedAt: Date | null;
   ownerName: string | null;
   kind: "lead" | "customer";
   leadSource: string | null;
@@ -895,9 +904,17 @@ export function CustomersScreen({
                       <span className="text-muted">
                         {r.kind === "lead" ? "Lead owner: " : "Sales: "}
                       </span>
+                      {/*
+                        NO fallback to `ownerName` for a customer.
+                        `SALES_AM_NAME_SQL` already carries that fallback for
+                        an account nobody has decided about; redoing it here
+                        would override the case it deliberately excludes — an
+                        account somebody has decided has no salesperson, where
+                        null means unassigned rather than "ask the importer".
+                      */}
                       {r.kind === "lead"
                         ? (r.ownerName ?? "Unassigned")
-                        : (r.salesAmName ?? r.ownerName ?? "Unassigned")}
+                        : (r.salesAmName ?? "Unassigned")}
                     </span>
                     {/* A lead has no sales manager and no back office manager:
                         nobody runs a line over an account that has not ordered
@@ -1680,7 +1697,7 @@ const LEAD_SOURCES = [
  * as the value it is. It is never sent: it means "nothing was touched", and
  * the save path drops it rather than writing a string no column can hold.
  */
-const SHEET_NAME_VALUE = "__sheet__";
+export const SHEET_NAME_VALUE = "__sheet__";
 
 /**
  * Still here, or gone.
@@ -1699,7 +1716,7 @@ const SHEET_NAME_VALUE = "__sheet__";
  * Only the current holder carries one. Everybody the list offers is current
  * staff, so a mark against each of them would say the same thing forty times.
  */
-function StaffDot({ gone }: { gone: boolean }) {
+export function StaffDot({ gone }: { gone: boolean }) {
   return (
     <span
       aria-hidden
@@ -1739,14 +1756,25 @@ function findByName(
  * Used for the field AND for the baseline the save compares against, so
  * opening a form and saving it writes nothing.
  */
-function openingSalesValue(
+export function openingSalesValue(
   kind: "lead" | "customer",
   initial: Partial<Row> | undefined,
   people: Array<{ id: string; name: string }>,
 ): string {
+  /*
+   * DECIDED reads `salesAmId` exactly as it stands — same three-way branch as
+   * `ASSIGNED_TO_SQL`. Falling through to the owner here regardless of
+   * `amDecidedAt`, as this used to, meant a form reopened on an account
+   * somebody had just unassigned pre-selected the importer's account all over
+   * again: the save that emptied the seat looked, on the very next open, like
+   * it had never happened.
+   */
   const account =
-    (kind === "lead" ? initial?.ownerId : (initial?.salesAmId ?? initial?.ownerId)) ??
-    "";
+    (kind === "lead"
+      ? initial?.ownerId
+      : initial?.amDecidedAt
+        ? initial?.salesAmId
+        : (initial?.salesAmId ?? initial?.ownerId)) ?? "";
   const stated = initial?.salesAmName?.trim();
   if (!stated) return account;
   // The same person by two routes is one person: keep the account, which is
@@ -1757,7 +1785,7 @@ function openingSalesValue(
 }
 
 /** The same rule for the back office seat. */
-function openingBackOfficeValue(
+export function openingBackOfficeValue(
   initial: Partial<Row> | undefined,
   people: Array<{ id: string; name: string }>,
 ): string {

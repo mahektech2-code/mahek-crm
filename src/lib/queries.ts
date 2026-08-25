@@ -448,9 +448,24 @@ export type CustomerListPage = {
  * somebody choosing, so it is the better answer where it exists.
  * ------------------------------------------------------------------------- */
 
+/*
+ * `am_decided_at` is checked here for the same reason `ASSIGNED_TO_SQL` checks
+ * it: the fallback to the owner is for a seat NOBODY HAS SET, not for one
+ * somebody has deliberately emptied. Missing that check here — while
+ * `ASSIGNED_TO_SQL` already had it — meant unassigning the sales seat moved
+ * the account for scope, the queue and collections, while this column,
+ * reading straight through the empty `sales_am_id` and `sales_person_name` to
+ * `owner_id`, went on showing whoever ran the import. It looked exactly like
+ * the unassign had silently failed to save.
+ */
 export const SALES_AM_NAME_SQL = sql<string | null>`case
   when customers.kind = 'lead'
     then (select name from users u where u.id = customers.owner_id)
+  when customers.am_decided_at is not null
+    then coalesce(
+      customers.sales_person_name,
+      (select name from users u where u.id = customers.sales_am_id)
+    )
   else coalesce(
     customers.sales_person_name,
     (select name from users u where u.id = customers.sales_am_id),
