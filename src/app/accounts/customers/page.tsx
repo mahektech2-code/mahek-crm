@@ -128,6 +128,7 @@ export default async function Page({
         // Whose book it is, which is not the owner — the shared screen binds
         // its sales field to this.
         salesAmId: c.salesAmId,
+        amDecidedAt: c.amDecidedAt,
         ownerName: c.ownerName,
         kind: c.kind,
         leadSource: c.leadSource,

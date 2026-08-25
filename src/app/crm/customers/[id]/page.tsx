@@ -16,6 +16,7 @@ import {
   customerTimelineCounts,
   getCustomer,
   listAmChanges,
+  listBackOfficeCandidates,
   today,
 } from "@/lib/queries";
 import { getFollowUpDetail } from "@/lib/services/payment-service";
@@ -143,10 +144,14 @@ export default async function CustomerRecordPage({
       .then((r) => r[0]),
   ]);
 
-  const [quickNoteRows, productRows, amChanges] = await Promise.all([
+  const [quickNoteRows, productRows, amChanges, backOfficePeople] = await Promise.all([
     db.select().from(quickNotesTable).where(eq(quickNotesTable.active, true)),
     popularProducts(),
     listAmChanges(id),
+    // The same candidate list the customers list offers for all three seats —
+    // accounts and current employees both, since none of the three needs a
+    // login. See `listBackOfficeCandidates`.
+    listBackOfficeCandidates(),
   ]);
 
   /*
@@ -211,8 +216,17 @@ export default async function CustomerRecordPage({
         kind: customer.kind,
         leadSource: customer.leadSource,
         createdAt: calendarDate(customer.createdAt),
+        // The raw ids, alongside the names already read here — the account
+        // manager dialog needs both, the same way the customers list's edit
+        // form does: an id decides while there is one, a name decides where
+        // both sides are name-only.
+        ownerId: customer.ownerId,
+        salesAmId: customer.salesAmId,
+        amDecidedAt: customer.amDecidedAt,
         salesAmName: customer.salesAmName,
+        salesManagerId: customer.salesManagerId,
         salesManagerName: customer.salesManagerName,
+        backOfficeAmId: customer.backOfficeAmId,
         backOfficeAmName: customer.backOfficeAmName,
         status: customerStatusLabel(customer),
         slowPayer: customer.slowPayer,
@@ -257,6 +271,14 @@ export default async function CustomerRecordPage({
       // The same question the action asks, so a drawn control and a permitted
       // action cannot disagree. The action checks again regardless.
       canClassify={can(user.role, "customer.classify")}
+      canReassign={can(user.role, "customer.reassign")}
+      // A different question, and a more generous answer: the sales manager
+      // seat drives no queue, no scope and no target, so a manager may set it
+      // while the two beside it stay accounts' and admin's.
+      canAssignSalesManager={can(user.role, "customer.assignSalesManager")}
+      backOfficePeople={backOfficePeople}
+      amReasons={config["people.amChangeReasons"]}
+      amSearchThreshold={config["people.pickerSearchThreshold"]}
       daysSinceOrder={
         customer.lastOrderDate ? daysBetween(customer.lastOrderDate, day) : null
       }

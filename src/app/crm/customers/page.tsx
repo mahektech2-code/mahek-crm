@@ -120,6 +120,7 @@ export default async function CustomersPage({
         city: c.city,
         ownerId: c.ownerId,
         salesAmId: c.salesAmId,
+        amDecidedAt: c.amDecidedAt,
         ownerName: c.ownerName,
         kind: c.kind,
         leadSource: c.leadSource,
