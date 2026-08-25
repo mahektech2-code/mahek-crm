@@ -561,7 +561,7 @@ function TeamView({
 
       <div className="mb-4 grid grid-cols-[repeat(auto-fit,minmax(216px,1fr))] gap-4">
         <Card className="p-5">
-          <SectionLabel>Team calls yesterday</SectionLabel>
+          <SectionLabel>Team calls {spanWord}</SectionLabel>
           <div className="mt-2 text-[32px] leading-9 font-semibold text-ink">
             {activity.callsAttempted}
           </div>
@@ -576,7 +576,11 @@ function TeamView({
             {money(activity.ordersValue)}
           </div>
           <div className="mt-1.5 text-[13px]">
-            <PercentDelta today={activity.ordersValue} yesterday={yesterday.ordersValue} />
+            <PercentDelta
+              today={activity.ordersValue}
+              yesterday={yesterday.ordersValue}
+              suffix={deltaSuffix}
+            />
           </div>
         </Card>
         <Card className="p-5">
@@ -599,7 +603,7 @@ function TeamView({
 
       <Card className="overflow-hidden">
         <div className="border-b border-divider px-5 py-3.5 text-lg leading-6 font-semibold text-ink">
-          Telecaller comparison - yesterday
+          Telecaller comparison - {spanWord}
         </div>
         <div className="overflow-auto">
           <table>
@@ -795,20 +799,29 @@ function Delta({
  * Movement as a percentage rather than a count. Money moves in numbers too big
  * for "+₹1,54,200 vs yesterday" to mean anything at a glance.
  */
-function PercentDelta({ today, yesterday }: { today: number; yesterday: number }) {
+function PercentDelta({
+  today,
+  yesterday,
+  suffix = "the previous day",
+}: {
+  today: number;
+  yesterday: number;
+  /** "yesterday", "the previous 7 days" — what `yesterday` is a figure for. */
+  suffix?: string;
+}) {
   if (!yesterday) {
     return (
       <span className="text-muted">
-        {today ? "no figure for the previous day" : "nothing booked yet"}
+        {today ? `no figure for ${suffix}` : "nothing booked yet"}
       </span>
     );
   }
   const change = Math.round(((today - yesterday) / yesterday) * 100);
-  if (change === 0) return <span className="text-muted">level with the previous day</span>;
+  if (change === 0) return <span className="text-muted">level with {suffix}</span>;
   return (
     <span className={cx("font-medium", change > 0 ? "text-success" : "text-danger")}>
       {change > 0 ? "+" : "−"}
-      {Math.abs(change)}% vs previous day
+      {Math.abs(change)}% vs {suffix}
     </span>
   );
 }
