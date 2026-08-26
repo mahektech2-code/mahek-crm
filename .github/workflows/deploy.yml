@@ -201,8 +201,20 @@ jobs:
           # running, which is what the intermittent `401 Unauthorized` on push
           # actually was — a lock this step was supposed to wait out and never
           # did.
+          # `set -e` plus the pipe above means ANY non-zero from `doctl` —
+          # a dropped connection, a moment's rate limiting — ends the whole
+          # script right here, on its first bad poll, with the job still
+          # marked `continue-on-error: true` so nothing downstream notices.
+          # First real run of the fixed loop above hit exactly this: doctl
+          # failed on its third check and the loop never got the other 27
+          # tries. `|| echo '[{"status":"unknown"}]'` keeps the pipeline
+          # itself at exit 0 — a failed CALL is not evidence the collection
+          # finished, so it reads as `unknown` and falls into the same
+          # branch as `requested` or `deleting unreferenced blobs`: keep
+          # waiting, rather than either crashing out or reporting done.
           for _ in $(seq 1 30); do
-            status="$(doctl registry garbage-collection get-active -o json 2>/dev/null \
+            status="$( { doctl registry garbage-collection get-active -o json 2>/dev/null \
+                || echo '[{"status":"unknown"}]'; } \
               | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s)[0].status)}catch{console.log("none")}})')"
             case "${status}" in
               succeeded|none) echo "Collection finished (${status})."; break ;;
