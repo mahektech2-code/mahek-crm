@@ -505,6 +505,13 @@
       "when": 1787500720000,
       "tag": "0071_target_carried_forward",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1787500780000,
+      "tag": "0072_field_activity",
+      "breakpoints": true
     }
   ]
 }

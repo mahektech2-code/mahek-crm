@@ -51,6 +51,12 @@ import {
   employeeSheetId,
   syncEmployeeSheet,
 } from "./services/employee-sync-service";
+import {
+  fieldActivitySheetId,
+  FIELD_ACTIVITY_TAB,
+  syncFieldActivitySheet,
+} from "./services/field-activity-sync-service";
+import { projectFieldActivityTimeline } from "./services/field-activity-projection-service";
 
 /* ---------------------------------------------------------------------------
  * §7 Scheduled work.
@@ -87,6 +93,8 @@ export type JobName =
   | "sheet-reparse"
   | "hrms-sync"
   | "hrms-reparse"
+  | "field-activity-sync"
+  | "field-activity-project"
   | "sheet-payments"
   | "taken-order-sync"
   | "taken-order-reparse"
@@ -616,6 +624,10 @@ export async function runJob(
     case "hrms-sync":
     case "hrms-reparse":
       return [await runEmployeeSync(job, triggeredById)];
+    case "field-activity-sync":
+      return [await runFieldActivitySync(triggeredById)];
+    case "field-activity-project":
+      return [await runFieldActivityProjection(triggeredById)];
     default:
       throw new Error(`Unknown job "${job}".`);
   }
@@ -728,6 +740,55 @@ async function runEmployeeSync(
       return {
         recordsAffected: outcome.rowsCreated + outcome.rowsUpdated,
         detail: outcome.detail,
+      };
+    },
+    triggeredById,
+  );
+}
+
+/* ------------------------------------------------- field salesman activity
+ * The Activity tab of a defunct prior system — a ONE-TIME BACKFILL, not a
+ * cadence. `npm run jobs -- field-activity-sync` reads the live Google Sheet;
+ * the initial backfill instead runs `scripts/import-field-activity-csv.ts`
+ * directly against the local export, sharing this same staging/matching code
+ * through the sync service's own `reader` seam — a CSV path is not something
+ * the generic job-options CLI needs to grow a flag for.
+ *
+ * `field-activity-project` is separate from the sync on purpose: a batch is
+ * visible in the staging table before it is believed onto a customer's
+ * shared timeline, the same discipline `sheetSyncRuns.feedsCrm` states for
+ * the order sheet — here decided per row (a real matched customer) rather
+ * than per batch.
+ */
+async function runFieldActivitySync(triggeredById?: string): Promise<JobResult> {
+  return run(
+    "field-activity-sync",
+    async () => {
+      const outcome = await syncFieldActivitySheet({
+        spreadsheetId: fieldActivitySheetId(),
+        tabTitle: FIELD_ACTIVITY_TAB,
+        mode: "reconcile",
+        triggeredById,
+      });
+      return {
+        recordsAffected: outcome.rowsCreated + outcome.rowsUpdated,
+        detail: outcome.detail,
+      };
+    },
+    triggeredById,
+  );
+}
+
+async function runFieldActivityProjection(triggeredById?: string): Promise<JobResult> {
+  return run(
+    "field-activity-project",
+    async () => {
+      const result = await projectFieldActivityTimeline();
+      return {
+        recordsAffected: result.written,
+        detail:
+          `${result.written} timeline entries written from ${result.scanned} matched rows` +
+          (result.skipped ? `, ${result.skipped} already had one` : ""),
       };
     },
     triggeredById,
