@@ -36,6 +36,11 @@ export const ROLE_CONFLICTS: RoleConflict[] = [
     sentence:
       "Records payments as a telecaller and confirms them as accounts, so one person can report that money arrived and then be the one who says it did.",
   },
+  {
+    roles: ["telecaller", "accounts"],
+    sentence:
+      "Carries a sales target as a telecaller and sets targets as accounts, so one person could set their own number and then be measured against it.",
+  },
 ];
 
 /** The conflicts a set of hats produces. Empty for almost everybody. */

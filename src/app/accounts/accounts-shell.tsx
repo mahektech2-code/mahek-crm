@@ -140,6 +140,14 @@ export function AccountsShell({
          * can reach.
          */
         { href: "/accounts/customers", label: "Customers", icon: "ledger" },
+        /*
+         * Setting what each person is asked for in a month, and publishing it.
+         *
+         * Beside Customers rather than in Decisions: a target is not a queue
+         * item waiting on today's word, it is a standing responsibility the
+         * desk carries the way it carries who bills which account.
+         */
+        { href: "/accounts/targets", label: "Sales targets", icon: "target" },
       ],
     },
     {

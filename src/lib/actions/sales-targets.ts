@@ -16,17 +16,25 @@ import {
 import { requireCapability } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { money } from "@/lib/format";
-import { err, fieldErr, fromThrown, okVoid, type Result } from "@/lib/result";
+import { revisionsFor } from "@/lib/services/sales-target-service";
+import { err, fieldErr, fromThrown, ok, okVoid, type Result } from "@/lib/result";
 
 /* ---------------------------------------------------------------------------
  * Setting somebody's target, publishing it, and changing it afterwards.
  *
- * `target.set` guards all three. It is MANAGER-ONLY and always has been, which
- * is the right side of the line: a target is what somebody is appraised
- * against, and the whole point of the module is that a manager can set one. It
- * is deliberately NOT `customer.reassign` — that moves which accounts feed a
- * target and is accounts' and admin's, so no one person can both choose the
- * number and choose the book that fills it.
+ * `target.set` guards all of it. It was MANAGER-ONLY from the day this
+ * shipped — a target is what somebody is appraised against, and the module
+ * was built on the assumption that whoever runs the team's calling book is
+ * who sets it. It is now held by ACCOUNTS as well, because that assumption
+ * was not Mahek's own practice: the accounts desk is who actually assigns and
+ * manages targets here, the same way `order.approve` and `payment.confirm`
+ * already were. See `lib/access-control.ts` for the capability matrix and why
+ * it is an addition rather than a move — a manager coaching a shortfall still
+ * needs to act on it directly.
+ *
+ * It is deliberately NOT `customer.reassign` — that moves which accounts feed
+ * a target and is accounts' and admin's on its own reasoning, so no one
+ * person can both choose the number and choose the book that fills it.
  *
  * A SALESMAN CANNOT REACH ANY OF THIS. Not because the screen does not draw
  * the buttons — a server action is a URL — but because the capability is
@@ -156,6 +164,10 @@ export async function saveSalesTarget(
             collectionTargetPaise: data.collectionTargetPaise,
             activityTarget: data.activityTarget,
             notes: data.notes ?? null,
+            // A real save is a decision, even one that reproduces last
+            // month's figures verbatim — so a target carried forward stops
+            // being one the moment a manager has actually looked at it.
+            carriedForward: false,
             updatedAt: new Date(),
             updatedById: ctx.user.id,
           })
@@ -374,6 +386,50 @@ export async function publishSalesTarget(
     revalidatePath("/sales/performance");
     revalidatePath("/crm/performance");
     return okVoid("Published. They can see it now.");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ------------------------------------------------------------- revisions */
+
+export type TargetRevisionEntry = {
+  field: string;
+  from: string | null;
+  to: string | null;
+  reason: string;
+  reasonNote: string | null;
+  changedByName: string | null;
+  changedAt: Date;
+};
+
+/**
+ * What changed on a published target, newest first.
+ *
+ * `revisionsFor` has held this since the module shipped and nothing ever read
+ * it back — the count of changes was shown, never the changes themselves. A
+ * count says a target moved four times; it does not say whether that was a
+ * price revision applied evenly across the team or one person quietly asked
+ * for more every month, and that is exactly the question somebody deciding
+ * whether to revise it again is asking.
+ */
+export async function targetRevisionHistory(
+  targetId: string,
+): Promise<Result<TargetRevisionEntry[]>> {
+  try {
+    await requireCapability("target.set");
+    const rows = await revisionsFor(targetId);
+    return ok(
+      rows.map((r) => ({
+        field: r.field,
+        from: r.old_value,
+        to: r.new_value,
+        reason: r.reason,
+        reasonNote: r.reason_note,
+        changedByName: r.changed_by_name,
+        changedAt: r.changed_at,
+      })),
+    );
   } catch (e) {
     return fromThrown(e);
   }

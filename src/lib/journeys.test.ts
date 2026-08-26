@@ -7893,8 +7893,8 @@ describe("a person wears several hats", () => {
     assert.deepEqual(conflictsFor(["telecaller", "manager"]), []);
     assert.equal(
       conflictsFor(["telecaller", "accounts"]).length,
-      1,
-      "reporting money and confirming it is the same conflict one level down",
+      2,
+      "reporting money and confirming it is one conflict; carrying a target and setting one is a second, since accounts gained target.set",
     );
   });
 });

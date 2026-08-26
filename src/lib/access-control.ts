@@ -229,8 +229,6 @@ const MANAGER_ONLY: ReadonlySet<Capability> = new Set<Capability>([
    * them.
    */
   "customer.classify",
-  "target.set",
-  "target.shortfall",
   "complaint.resolve",
   "whatsapp.bulk",
   "whatsapp.template.write",
@@ -296,6 +294,32 @@ const ACCOUNTS_ONLY: ReadonlySet<Capability> = new Set<Capability>([
  */
 const ACCOUNTS_OR_MANAGER: ReadonlySet<Capability> = new Set<Capability>([
   "sheet.import",
+  /*
+   * Setting somebody's target, publishing it, revising it, and reading the
+   * coverage/customer shortfall behind it.
+   *
+   * This was manager-only from the day the module shipped, on the same
+   * reasoning that keeps `order.approve` and `customer.reassign` away from
+   * managers one level down: a target is a number somebody is measured
+   * against, and the module was built on the assumption that the person
+   * running the team's calling book is the one who sets it. Mahek's own
+   * practice is the opposite of that assumption — the accounts desk is who
+   * actually assigns and manages targets here — so the capability moved to
+   * where the decision is really made, the same way `sheet.import` did.
+   *
+   * It is ADDED to accounts rather than MOVED off managers: nothing about
+   * running a team stopped being a manager's job, and a manager coaching a
+   * shortfall still needs to be able to act on it without asking accounts to
+   * do it for them. Widening rather than narrowing is what kept `sheet.import`
+   * a manager capability too when accounts needed it, and the reasoning is the
+   * same reasoning here.
+   *
+   * Holding this alongside `order.approve` is a new hat combination worth
+   * naming: an accounts user who is ALSO a telecaller could now set their own
+   * target. See the telecaller+accounts entry in `lib/role-conflicts.ts`.
+   */
+  "target.set",
+  "target.shortfall",
 ]);
 
 /**

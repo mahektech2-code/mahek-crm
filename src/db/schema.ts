@@ -4773,6 +4773,16 @@ export const salesTargets = pgTable(
     publishedAt: timestamp("published_at", { withTimezone: true }),
     publishedById: text("published_by_id").references(() => users.id),
     notes: text("notes"),
+    /**
+     * Copied forward from last month's PUBLISHED target rather than typed by
+     * anybody this month. `copyForwardSalesTargets` sets it true on the row it
+     * creates, and any real save — a manager changing even one figure — clears
+     * it, because a target somebody has now looked at and decided on is no
+     * longer a carry-over of the old decision. It is what lets the screen say
+     * "still last month's number" rather than presenting a continued target as
+     * a fresh one somebody chose this month.
+     */
+    carriedForward: boolean("carried_forward").notNull().default(false),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

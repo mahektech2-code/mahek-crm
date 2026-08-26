@@ -2,6 +2,9 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Modal } from "@/components/ui/overlays";
+import { PersonPicker, type Person } from "@/components/crm/person-picker";
 import { money } from "@/lib/format";
 import {
   publishSalesTarget,
@@ -19,6 +22,25 @@ import {
   Table,
 } from "../parts";
 
+/** A row for somebody added by hand, before they have ever been saved. */
+function blankRow(person: Person): TargetRow {
+  return {
+    userId: person.id,
+    userName: person.name,
+    targetId: null,
+    status: null,
+    revenueTargetPaise: null,
+    volumeTargetMl: null,
+    newCustomerTarget: null,
+    collectionTargetPaise: null,
+    activityTarget: null,
+    publishedAt: null,
+    bands: [],
+    revisions: 0,
+    carriedForward: false,
+  };
+}
+
 /* ---------------------------------------------------------------------------
  * Setting the month.
  *
@@ -32,6 +54,8 @@ import {
 type Props = {
   period: string;
   rows: TargetRow[];
+  /** Everybody NOT already shown — a manager can add one by hand anyway. */
+  addable: Person[];
   categories: { id: string; name: string; isResidual: boolean }[];
   baselines: Record<string, Baseline>;
   baselineMonths: number;
@@ -68,24 +92,30 @@ const toCount = (v: string): number | null => {
 export function TargetsScreen({
   period,
   rows,
+  addable,
   categories,
   baselines,
   baselineMonths,
   revisionReasons,
 }: Props) {
+  const router = useRouter();
   const [editing, setEditing] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ tone: "info" | "danger"; text: string } | null>(
     null,
   );
+  const [manualRows, setManualRows] = useState<TargetRow[]>([]);
+  const [picking, setPicking] = useState(false);
+  const [pickedId, setPickedId] = useState<string | null>(null);
 
-  const published = rows.filter((r) => r.status === "published").length;
-  const unset = rows.filter((r) => !r.targetId).length;
+  const allRows = [...rows, ...manualRows];
+  const published = allRows.filter((r) => r.status === "published").length;
+  const unset = allRows.filter((r) => !r.targetId).length;
 
   return (
     <div className="p-6">
       <ScreenHeader
         title="Sales targets"
-        subtitle={`${monthName(period)} — what each person is being asked for. Nothing reaches anybody until it is published.`}
+        subtitle={`${monthName(period)} — what each person is being asked for. Nothing reaches anybody until it is published. The list is telecallers and field sales by default; add anybody else by hand.`}
         actions={
           <div className="flex items-center gap-1 text-[13px]">
             <Link
@@ -107,9 +137,49 @@ export function TargetsScreen({
             >
               See the month
             </Link>
+            {addable.length ? (
+              <button
+                type="button"
+                onClick={() => setPicking(true)}
+                className="ml-2 rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body hover:bg-canvas"
+              >
+                + Add someone
+              </button>
+            ) : null}
           </div>
         }
       />
+
+      <Modal
+        open={picking}
+        onClose={() => {
+          setPicking(false);
+          setPickedId(null);
+        }}
+        title="Add someone to this month's targets"
+        width={420}
+      >
+        <p className="mb-3 text-[13px] text-muted">
+          Not a telecaller or a field salesman on the calling book — everybody else who
+          might still need a number this month.
+        </p>
+        <PersonPicker
+          people={addable}
+          value={pickedId}
+          onChange={(id) => {
+            setPickedId(id);
+            const person = addable.find((p) => p.id === id);
+            if (!person) return;
+            setManualRows((prev) =>
+              prev.some((r) => r.userId === person.id) ? prev : [...prev, blankRow(person)],
+            );
+            setEditing(person.id);
+            setPicking(false);
+            setPickedId(null);
+          }}
+          label="Person"
+        />
+      </Modal>
 
       {banner ? (
         <Banner
@@ -122,12 +192,12 @@ export function TargetsScreen({
       {unset > 0 ? (
         <Banner
           tone="info"
-          title={`${unset} of ${rows.length} ${unset === 1 ? "person has" : "people have"} no target for ${monthName(period)}`}
+          title={`${unset} of ${allRows.length} ${unset === 1 ? "person has" : "people have"} no target for ${monthName(period)}`}
           body="Somebody with no target is not scored at all — they appear on the month with their figures and no percentage, which is honest but tells nobody whether it was a good month."
         />
       ) : null}
 
-      {rows.length === 0 ? (
+      {allRows.length === 0 ? (
         <Empty
           title="Nobody to set a target for"
           body="A target can be set for anybody who carries customers — a salesperson on the account, or the back office person where there is no salesperson."
@@ -149,7 +219,7 @@ export function TargetsScreen({
             </>
           }
         >
-          {rows.flatMap((r, i) => {
+          {allRows.flatMap((r, i) => {
             const base = baselines[r.userId];
             const line = (
               <Row key={r.userId} striped={i % 2 === 1}>
@@ -157,7 +227,9 @@ export function TargetsScreen({
                   <span className="font-medium text-ink">{r.userName}</span>
                 </Cell>
                 <Cell>
-                  {r.status === "published" ? (
+                  {r.status === "published" && r.carriedForward ? (
+                    <Pill tone="brand">Carried forward</Pill>
+                  ) : r.status === "published" ? (
                     <Pill tone="success">Published</Pill>
                   ) : r.status === "draft" ? (
                     <Pill tone="warn">Draft</Pill>
@@ -201,7 +273,15 @@ export function TargetsScreen({
                     revisionReasons={revisionReasons}
                     onDone={(message, tone) => {
                       setBanner({ tone, text: message });
-                      if (tone === "info") setEditing(null);
+                      if (tone === "info") {
+                        setEditing(null);
+                        // A person added by hand now has a real target row,
+                        // which the refreshed page will bring back through
+                        // `rows` — the hand-added placeholder would otherwise
+                        // sit beside it as a duplicate.
+                        setManualRows((prev) => prev.filter((m) => m.userId !== r.userId));
+                        router.refresh();
+                      }
                     }}
                   />
                 </td>
