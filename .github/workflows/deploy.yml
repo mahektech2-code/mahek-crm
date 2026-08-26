@@ -191,8 +191,18 @@ jobs:
           # Bounded, because a deploy must not hang on it: if it is still going
           # after five minutes the push will either fit or fail with the same
           # clear message it does today.
+          #
+          # `get-active`, not `get` — there is no `get`, and doctl's own error
+          # for an unknown subcommand went to stderr and was thrown away by the
+          # redirect below, so this printed "none" on its very first check,
+          # every time, whether a collection had just been started or not. The
+          # loop never once actually waited: it declared victory immediately
+          # and the build pushed straight into a collection that was still
+          # running, which is what the intermittent `401 Unauthorized` on push
+          # actually was — a lock this step was supposed to wait out and never
+          # did.
           for _ in $(seq 1 30); do
-            status="$(doctl registry garbage-collection get -o json 2>/dev/null \
+            status="$(doctl registry garbage-collection get-active -o json 2>/dev/null \
               | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s)[0].status)}catch{console.log("none")}})')"
             case "${status}" in
               succeeded|none) echo "Collection finished (${status})."; break ;;
