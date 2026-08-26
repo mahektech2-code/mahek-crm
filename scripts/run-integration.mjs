@@ -42,6 +42,7 @@ const files = [
   "src/lib/outstanding-import.test.ts",
   "src/lib/performance.test.ts",
   "src/lib/owner-dashboard.test.ts",
+  "src/lib/founder-dashboard.test.ts",
 ];
 
 let failed = 0;

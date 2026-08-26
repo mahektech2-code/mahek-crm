@@ -101,6 +101,20 @@ const accounts = (
   note,
 });
 
+const founder = (
+  slug: string,
+  label: string,
+  group: string,
+  note?: string,
+): AppModule => ({
+  key: `founder.${slug}`,
+  app: "founder",
+  label,
+  group,
+  href: `/founder/${slug}`,
+  note,
+});
+
 /**
  * Every module MahekOne has, in the order its app draws them.
  *
@@ -343,6 +357,39 @@ export const APP_MODULES: AppModule[] = [
     "Customer health",
     "The five",
     "Active, at risk, dormant and lost, and who moved between them. The list behind it names customers, their salesperson and what they owe.",
+  ),
+
+  /* --------------------------------------------------- the Founder Dashboard */
+  /*
+   * Five modules for one reason: whoever reads company revenue is not always
+   * whoever reads the roster, and `app_module_access` is what lets that be
+   * true without a second app. The overview is its own module too, so the
+   * headline can be given without the four screens behind it.
+   */
+  { key: "founder.overview", app: "founder", label: "Overview", group: "Company", href: "/founder", exact: true },
+  founder(
+    "team",
+    "Team performance",
+    "Company",
+    "Everybody scored — telecallers and the field team together, ranked. Withholding it leaves the overview's headline with nowhere to click.",
+  ),
+  founder(
+    "money",
+    "Money",
+    "Company",
+    "What is outstanding, what is waiting on a decision, and what has been collected.",
+  ),
+  founder(
+    "people",
+    "People",
+    "Company",
+    "Headcount, by office and department. Not attendance — see HRMS's own note on that.",
+  ),
+  founder(
+    "crm",
+    "CRM",
+    "Company",
+    "The order book's own five, with links into the Reports app for the full breakdown.",
   ),
 ];
 

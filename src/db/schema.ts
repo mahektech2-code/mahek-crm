@@ -454,6 +454,8 @@ export const appIdEnum = pgEnum("app_id", [
   "reports",
   "hrms",
   "admin",
+  /** Performance across every app, on one screen. Granted deliberately. */
+  "founder",
 ]);
 
 /* --------------------------------------------------------- §2 configuration */

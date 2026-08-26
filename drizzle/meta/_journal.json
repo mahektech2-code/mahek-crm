@@ -512,6 +512,13 @@
       "when": 1787500780000,
       "tag": "0072_field_activity",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1787500840000,
+      "tag": "0073_founder_dashboard_app",
+      "breakpoints": true
     }
   ]
 }

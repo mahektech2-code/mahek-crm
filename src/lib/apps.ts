@@ -15,6 +15,7 @@ export const APP_IDS = [
   "reports",
   "hrms",
   "admin",
+  "founder",
 ] as const;
 
 export type AppId = (typeof APP_IDS)[number];
@@ -123,6 +124,25 @@ export const APPS: AppDefinition[] = [
     initials: "AC",
     description: "Accounts, roles and app access for the whole team.",
     href: "/admin",
+    tone: "neutral",
+    built: true,
+  },
+  {
+    id: "founder",
+    /*
+     * Performance across every app, on one screen — a pure composition layer
+     * over what Reports, the Sales Dashboard, Accounts and HRMS already
+     * compute. No new derived numbers live here; this reads and rolls up.
+     *
+     * A standalone app rather than a tab on Reports, deliberately: Reports is
+     * the CRM's order-book economics, and this is meant as the founder's own
+     * front door onto the whole company, granted separately from it.
+     */
+    name: "Founder Dashboard",
+    initials: "FD",
+    description:
+      "Company revenue, the whole team scored, money owed and the roster — one screen.",
+    href: "/founder",
     tone: "neutral",
     built: true,
   },

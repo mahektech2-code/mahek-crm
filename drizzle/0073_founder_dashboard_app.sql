@@ -1,0 +1,18 @@
+-- The Founder Dashboard — performance across every app, on one screen.
+--
+-- The Reports app answers "how is the CRM's order book doing"; the Sales
+-- Dashboard answers it for the field team; Accounts and HRMS each answer for
+-- themselves. Nothing rolled all four up, so the one person who is supposed to
+-- see the whole company had to open four apps and hold the picture in his
+-- head. This app is a pure composition layer over what those four already
+-- compute — no new derived numbers, no new tables — read by whoever is
+-- granted it.
+--
+-- Nothing is granted here, and it cannot be: Postgres refuses to USE a value
+-- added to an enum until that transaction commits, and drizzle-kit applies
+-- every pending migration in ONE transaction — so a grant in the next
+-- migration file fails on any database that has not already been through this
+-- one. `npm run app:grant -- founder <email>` is the way in, same as the
+-- Sales Dashboard before it, and for the same reason: this carries the whole
+-- company's figures, and that is granted deliberately.
+ALTER TYPE "public"."app_id" ADD VALUE IF NOT EXISTS 'founder';
