@@ -246,7 +246,7 @@ src/
     accounts/              the Accounts app — today, order approvals, payments
                            to confirm, credit notes, record a payment,
                            outstanding, bills, customer account, on account,
-                           sheet import, audit
+                           sheet import, audit, sales targets
                            (was `orders/`; /orders still redirects here)
     people/ reports/ admin/
                            admin/access-section.tsx — the People section, which
@@ -2418,12 +2418,35 @@ that moved, and the person is notified. A draft is EDITED rather than revised:
 nothing has been promised to anybody, and logging every keystroke of
 target-setting buries the four changes that matter.
 
-**A salesman cannot reach any of it.** `target.set` is manager-only and is
-checked in the action on every path — a server action is a URL and a hidden
-button is not a permission. It is deliberately not the same capability as
-`customer.reassign`, which moves which accounts feed a target and stays
-accounts' and admin's, so no one person both chooses the number and chooses the
-book that fills it.
+**A salesman cannot reach any of it.** `target.set` is checked in the action on
+every path — a server action is a URL and a hidden button is not a permission.
+It is deliberately not the same capability as `customer.reassign`, which moves
+which accounts feed a target and stays accounts' and admin's, so no one person
+both chooses the number and chooses the book that fills it.
+
+**`target.set` is held by managers AND by accounts, and the second is where it
+actually gets used.** The module shipped manager-only, on the assumption that
+whoever runs the team's calling book is who sets its numbers — the same
+assumption behind keeping `order.approve` off managers, read the other way
+round. That assumption was not Mahek's own practice: the accounts desk is who
+assigns and manages targets here, so the capability sits in
+`ACCOUNTS_OR_MANAGER` beside `sheet.import` now, for the same reason —
+widening rather than moving, so a manager coaching a shortfall can still act on
+it without asking accounts to do it for them. The Accounts app's own Sales
+targets screen, at `/accounts/targets`, is not a second target system: it
+reads `targetableCandidates`, `mixCategories` and `baselineFor`, writes through
+`saveSalesTarget`/`publishSalesTarget`, and shows the same "Add someone" picker
+and "Carried forward" badge `/sales/targets` does — because accounts hold
+`apps: ["accounts"]` and are redirected out of the Sales Dashboard before they
+would ever reach the original screen, and a second door onto the same feature
+that quietly drew a different picture would be worse than no second door. It
+adds one thing that screen never had: a **revision history** drawer reading
+`revisionsFor`, which had sat in the service since the module shipped with
+nothing ever calling it. Holding `order.approve` and `target.set` together is a
+new hat combination worth naming on its own terms: an accounts user who is
+ALSO a telecaller could now set their own target, which is why
+`lib/role-conflicts.ts` carries a second telecaller+accounts entry for it,
+beside the one about reporting a payment and then confirming it.
 
 **The score is a CACHE, and not the same kind of column as
 `calls.next_step_*`.** `sales_performance` is rebuilt by
