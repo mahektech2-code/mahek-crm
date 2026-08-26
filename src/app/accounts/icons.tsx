@@ -17,6 +17,7 @@ export type AccountsIconName =
   | "ledger"
   | "onaccount"
   | "wallet"
+  | "target"
   | "import"
   | "audit"
   | "menu"
@@ -71,6 +72,13 @@ const PATHS: Record<AccountsIconName, React.ReactNode> = {
     <>
       <rect x="3" y="6" width="18" height="13" rx="2" />
       <path d="M3 10h18M16.5 14.5h1.5" />
+    </>
+  ),
+  target: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="4.5" />
+      <circle cx="12" cy="12" r="0.6" fill="currentColor" />
     </>
   ),
   import: (

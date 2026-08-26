@@ -185,6 +185,12 @@ export const APP_MODULES: AppModule[] = [
   accounts("payments", "Payments to confirm", "Decisions", "Confirming that money a telecaller reported actually arrived."),
   accounts("credits", "Credit notes", "Decisions"),
   accounts("customers", "Customers", "Accounts", "Where an account manager is changed. Accounts' and admin's alone."),
+  accounts(
+    "targets",
+    "Sales targets",
+    "Accounts",
+    "Setting what each person is asked for in a month, publishing it, and revising it with a reason. Accounts assign and manage targets here; a manager keeps the same screen in the Sales Dashboard and can act on a shortfall directly.",
+  ),
   accounts("record", "Record a payment", "Money"),
   accounts(
     "outstanding",
