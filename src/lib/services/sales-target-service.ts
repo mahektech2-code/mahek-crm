@@ -35,16 +35,29 @@ export type TargetRow = {
   }[];
   /** How many months of this target have been revised since publishing. */
   revisions: number;
+  /**
+   * True where this row was written by `copyForwardSalesTargets` and nobody
+   * has touched it since — last month's commitment, continuing rather than
+   * chosen for this month. A real save, of even one figure, clears it.
+   */
+  carriedForward: boolean;
 };
 
 /**
  * Everybody who could carry a target, and what they are carrying.
  *
- * "Could carry" is anybody an account is credited to — which by the fall-
- * through rule is every field salesman with a book AND every back office
- * person working accounts that have no salesman. Listing only the field team
- * would leave the telecallers who carry a third of the customer base with no
- * target and no way to be given one.
+ * "Could carry" used to mean anybody an account is credited to — every field
+ * salesman with a book AND every back office person working accounts that
+ * have no salesman. That fall-through reads `sales_am_id` and
+ * `back_office_am_id`, which an account manager or an accounts clerk can end
+ * up holding too, and a target screen with the whole company on it is not one
+ * a manager can read at a glance. The default list is now SALES ROLES only —
+ * `users.role = 'telecaller'`, which is what every telecaller and every field
+ * salesman is seeded as, manager/accounts/admin being separate roles — and
+ * still credited, so an account with no salesman still finds its back office
+ * carrier. Anybody who already HAS a target for the period is kept regardless
+ * of role: a target already given to somebody is a decision, and a role
+ * filter must not make it disappear from under them.
  */
 export async function targetableCandidates(period: string): Promise<TargetRow[]> {
   const rows = await db.execute<{
@@ -59,6 +72,7 @@ export async function targetableCandidates(period: string): Promise<TargetRow[]>
     activity_target: number | null;
     published_at: Date | null;
     revisions: number;
+    carried_forward: boolean | null;
   }>(sql`
     with credited as (
       select distinct ${creditedToSql("c")} as user_id
@@ -69,13 +83,17 @@ export async function targetableCandidates(period: string): Promise<TargetRow[]>
            t.id as target_id, t.status,
            t.revenue_target_paise, t.volume_target_ml, t.new_customer_target,
            t.collection_target_paise, t.activity_target, t.published_at,
+           t.carried_forward,
            (select count(*)::int from sales_target_revisions r
              where r.target_id = t.id) as revisions
       from users u
       left join sales_targets t on t.user_id = u.id and t.period = ${period}
      where u.active
-       and (u.id in (select user_id from credited where user_id is not null)
-            or t.id is not null)
+       and (
+         (u.role = 'telecaller'
+          and u.id in (select user_id from credited where user_id is not null))
+         or t.id is not null
+       )
      order by u.name
   `);
 
@@ -97,6 +115,7 @@ export async function targetableCandidates(period: string): Promise<TargetRow[]>
     publishedAt: r.published_at,
     bands: r.target_id ? (bands.get(r.target_id) ?? []) : [],
     revisions: Number(r.revisions ?? 0),
+    carriedForward: Boolean(r.carried_forward),
   }));
 }
 

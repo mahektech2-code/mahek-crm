@@ -199,6 +199,12 @@ export const APP_MODULES: AppModule[] = [
   accounts("payments", "Payments to confirm", "Decisions", "Confirming that money a telecaller reported actually arrived."),
   accounts("credits", "Credit notes", "Decisions"),
   accounts("customers", "Customers", "Accounts", "Where an account manager is changed. Accounts' and admin's alone."),
+  accounts(
+    "targets",
+    "Sales targets",
+    "Accounts",
+    "Setting what each person is asked for in a month, publishing it, and revising it with a reason. Accounts assign and manage targets here; a manager keeps the same screen in the Sales Dashboard and can act on a shortfall directly.",
+  ),
   accounts("record", "Record a payment", "Money"),
   accounts(
     "outstanding",
@@ -261,6 +267,12 @@ export const APP_MODULES: AppModule[] = [
     "Where each salesman walks. Withholding it leaves the handset's route screen empty, because nothing else writes a plan.",
   ),
   sales("visits", "Visits", "Field work", "Every visit logged, and which of them could not be verified."),
+  sales(
+    "activity-history",
+    "Activity history",
+    "Field work",
+    "Field salesman visits and calls from before this app existed, imported from a prior system's own log — including the shop names that still need matching to a real account.",
+  ),
   sales("leads", "Leads", "Field work", "Shops that are not on the book yet."),
 
   sales("orders", "Orders", "Commercial", "Orders taken in the field, and the ones over a credit limit."),

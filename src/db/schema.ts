@@ -3313,6 +3313,127 @@ export const sheetTakenOrderRows = pgTable(
   ],
 );
 
+/**
+ * The raw landing table for the Activity tab of a defunct prior system
+ * ("Mahek EMP 2.0") — a field salesman's visit/call log from before MBOS
+ * existed. One row per sheet row, keyed on the sheet's own Activity ID.
+ *
+ * This is a ONE-TIME BACKFILL, not a live mirror: nothing here feeds the
+ * buying cycle, the queue, `calls` or `mbos_visits` — those engines and that
+ * table are owned by the CRM and the live MBOS sync protocol respectively,
+ * and neither has a shape (verified GPS, NOT NULL customer/salesman ids)
+ * this free-text history can honestly claim. What DOES read a matched row is
+ * `timeline_events` — see `lib/field-activity-projection-service.ts` — which
+ * is how this reaches a salesman's phone and a customer's shared history
+ * without pretending to be either a live visit or a telecaller call.
+ */
+export const sheetFieldActivityRows = pgTable(
+  "sheet_field_activity_rows",
+  {
+    id: text("id").primaryKey(),
+    syncId: text("sync_id")
+      .notNull()
+      .references(() => sheetSyncRuns.id, { onDelete: "cascade" }),
+    /** 1-based row in the sheet, header included. */
+    rowNumber: integer("row_number").notNull(),
+
+    /** The sheet's own "Activity ID", e.g. 85E8E144. The idempotency key. */
+    activityId: text("activity_id").notNull(),
+
+    /** Every column as the sheet gave it. Never selected by a list query. */
+    raw: jsonb("raw").$type<Record<string, string>>().notNull(),
+    rowHash: text("row_hash").notNull(),
+
+    status: sheetRowStatusEnum("status").notNull().default("present"),
+    lastSeenSyncId: text("last_seen_sync_id"),
+
+    /* ------------------------------ matching ------------------------------
+     * Free text on both sides — the sheet named neither a MahekOne account
+     * nor a customer id. Nothing here guesses: a name with more than one
+     * close candidate is `ambiguous`, not silently resolved to whichever
+     * sorts first.
+     */
+    employeeName: text("employee_name"),
+    matchedSalesmanId: text("matched_salesman_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    salesmanMatchStatus: sheetMatchStatusEnum("salesman_match_status")
+      .notNull()
+      .default("pending"),
+
+    customerName: text("customer_name"),
+    matchedCustomerId: text("matched_customer_id").references(() => customers.id, {
+      onDelete: "set null",
+    }),
+    customerMatchStatus: sheetMatchStatusEnum("customer_match_status")
+      .notNull()
+      .default("pending"),
+    /** The candidates a match could not choose between, for manual review. */
+    matchNote: text("match_note"),
+
+    /*
+     * ------------------------------ the visit ------------------------------
+     * `visitDate` is nullable like every other best-effort column here — a
+     * row with an unreadable date still imports, with an issue naming why,
+     * rather than being dropped and losing the other eleven columns with it.
+     * Every real row in the data this ships against parses cleanly; this is
+     * defence for whatever the live sheet turns out to hold later.
+     */
+    visitDate: date("visit_date"),
+    /** The sheet's "Time Given" — minutes spent at the shop, not a clock time. */
+    durationMinutes: integer("duration_minutes"),
+    meetingNote: text("meeting_note"),
+    issueNote: text("issue_note"),
+    /** The sheet's "Remainder Date". Used on 7 of 32,928 rows — kept, not built on. */
+    reminderDate: date("reminder_date"),
+
+    /**
+     * The sheet's "Mood" column conflates two things: a real mood (Normal,
+     * Happy, Angry) and a "Stage 0..7" label from the old app's own customer
+     * pipeline, which has no relationship to this app's customer model.
+     * `moodRaw` keeps the cell verbatim; `mood` and `stageLabel` are a
+     * best-effort split of it, both nullable, neither guessed.
+     */
+    moodRaw: text("mood_raw"),
+    mood: text("mood"),
+    stageLabel: text("stage_label"),
+
+    /** "Visit" or "Call". */
+    meetingType: text("meeting_type"),
+    /** "Follow up", "New Lead", "Payment Collection", … — kept as the sheet spells it. */
+    meetingPurpose: text("meeting_purpose"),
+    /** Free-text address. No lat/lng in this data — never plotted on the Live map. */
+    location: text("location"),
+
+    /**
+     * Whether this row has produced its `timeline_events` entry. Belt and
+     * braces alongside that table's own natural-key `onConflictDoNothing`: a
+     * re-run of the projection should not have to re-derive its own counts
+     * from a DB-level no-op.
+     */
+    timelineEventWritten: boolean("timeline_event_written").notNull().default(false),
+
+    issues: jsonb("issues").$type<SheetRowIssue[]>().notNull().default([]),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sheet_field_activity_rows_activity_id").on(t.activityId),
+    index("sheet_field_activity_rows_sync_idx").on(t.syncId),
+    index("sheet_field_activity_rows_salesman_idx").on(t.matchedSalesmanId),
+    index("sheet_field_activity_rows_customer_idx").on(t.matchedCustomerId),
+    index("sheet_field_activity_rows_date_idx").on(t.visitDate, t.id),
+    /** Drives the exceptions review: unresolved customer names, cheaply. */
+    index("sheet_field_activity_rows_customer_match_idx").on(t.customerMatchStatus),
+    /** The projection's own worklist: matched rows not yet written. */
+    index("sheet_field_activity_rows_unprojected_idx").on(
+      t.customerMatchStatus,
+      t.timelineEventWritten,
+    ),
+  ],
+);
+
 /* ═══════════════════════════════════════════════════════ MBOS — field sales
  *
  * The Mahek Business Operating System's field app: a salesman's handset,
@@ -4654,6 +4775,16 @@ export const salesTargets = pgTable(
     publishedAt: timestamp("published_at", { withTimezone: true }),
     publishedById: text("published_by_id").references(() => users.id),
     notes: text("notes"),
+    /**
+     * Copied forward from last month's PUBLISHED target rather than typed by
+     * anybody this month. `copyForwardSalesTargets` sets it true on the row it
+     * creates, and any real save — a manager changing even one figure — clears
+     * it, because a target somebody has now looked at and decided on is no
+     * longer a carry-over of the old decision. It is what lets the screen say
+     * "still last month's number" rather than presenting a continued target as
+     * a fresh one somebody chose this month.
+     */
+    carriedForward: boolean("carried_forward").notNull().default(false),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

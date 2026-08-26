@@ -659,6 +659,141 @@ export async function visitsList(day: string): Promise<VisitRow[]> {
   `) as unknown as VisitRow[];
 }
 
+/* ═════════════════════════════════════ field activity backfill (historical) */
+
+export type FieldActivityRow = {
+  id: string;
+  visitDate: string | null;
+  salesmanId: string | null;
+  salesmanName: string | null;
+  employeeNameRaw: string | null;
+  customerId: string | null;
+  customerName: string | null;
+  customerNameRaw: string | null;
+  durationMinutes: number | null;
+  meetingType: string | null;
+  meetingPurpose: string | null;
+  meetingNote: string | null;
+  issueNote: string | null;
+  location: string | null;
+  customerMatchStatus: "pending" | "matched" | "ambiguous" | "unmatched";
+  matchNote: string | null;
+};
+
+export type FieldActivityFilter = {
+  from: string;
+  to: string;
+  salesmanId?: string;
+  matchStatus?: "matched" | "ambiguous" | "unmatched";
+};
+
+const FIELD_ACTIVITY_LIMIT = 200;
+
+/**
+ * A capped, filtered slice of the imported "Mahek EMP 2.0" activity history
+ * — a manager's read of the full staging table, not just the subset that
+ * resolved to a real customer. `timeline_events` (and through it the MBOS
+ * `timeline` pull channel) only ever gets the matched subset; a manager
+ * reviewing this backfill needs to see the rows that still need a customer
+ * resolved too, which is why this reads `sheet_field_activity_rows` directly.
+ */
+export async function fieldActivityHistory(
+  filter: FieldActivityFilter,
+): Promise<{ rows: FieldActivityRow[]; total: number; capped: boolean }> {
+  const scope = await managerScope();
+  const matchClause = filter.matchStatus
+    ? sql`and f.customer_match_status = ${filter.matchStatus}`
+    : sql``;
+  const salesmanClause = filter.salesmanId
+    ? sql`and f.matched_salesman_id = ${filter.salesmanId}`
+    : sql``;
+
+  const counted = await db.execute<{ n: number }>(sql`
+    select count(*)::int as n
+      from sheet_field_activity_rows f
+      left join users u on u.id = f.matched_salesman_id
+     where f.status = 'present'
+       and f.visit_date between ${filter.from}::date and ${filter.to}::date
+       ${onlyMine(scope, "u.id")}
+       ${matchClause}
+       ${salesmanClause}
+  `);
+  const total = counted[0]?.n ?? 0;
+
+  const rows = await db.execute<FieldActivityRow>(sql`
+    select f.id, f.visit_date as "visitDate",
+           f.matched_salesman_id as "salesmanId", u.name as "salesmanName",
+           f.employee_name as "employeeNameRaw",
+           f.matched_customer_id as "customerId", c.name as "customerName",
+           f.customer_name as "customerNameRaw",
+           f.duration_minutes as "durationMinutes",
+           f.meeting_type as "meetingType", f.meeting_purpose as "meetingPurpose",
+           f.meeting_note as "meetingNote", f.issue_note as "issueNote",
+           f.location, f.customer_match_status as "customerMatchStatus",
+           f.match_note as "matchNote"
+      from sheet_field_activity_rows f
+      left join users u on u.id = f.matched_salesman_id
+      left join customers c on c.id = f.matched_customer_id
+     where f.status = 'present'
+       and f.visit_date between ${filter.from}::date and ${filter.to}::date
+       ${onlyMine(scope, "u.id")}
+       ${matchClause}
+       ${salesmanClause}
+     order by f.visit_date desc nulls last, f.id desc
+     limit ${FIELD_ACTIVITY_LIMIT}
+  `) as unknown as FieldActivityRow[];
+
+  return { rows, total, capped: total > FIELD_ACTIVITY_LIMIT };
+}
+
+/** Distinct salesmen the imported activity actually resolved to, for a filter. */
+export async function fieldActivitySalesmen(): Promise<{ id: string; name: string }[]> {
+  const scope = await managerScope();
+  return db.execute<{ id: string; name: string }>(sql`
+    select distinct u.id, u.name
+      from sheet_field_activity_rows f
+      join users u on u.id = f.matched_salesman_id
+     where f.status = 'present'
+       ${onlyMine(scope, "u.id")}
+     order by u.name
+  `) as unknown as { id: string; name: string }[];
+}
+
+/**
+ * How many rows in range fall into each match status, over the WHOLE
+ * filtered set rather than the capped page — the same reason the customer
+ * timeline's filter pills read a `count(*)` instead of what happened to load.
+ */
+export async function fieldActivityMatchCounts(
+  filter: Omit<FieldActivityFilter, "matchStatus">,
+): Promise<{ all: number; matched: number; ambiguous: number; unmatched: number }> {
+  const scope = await managerScope();
+  const salesmanClause = filter.salesmanId
+    ? sql`and f.matched_salesman_id = ${filter.salesmanId}`
+    : sql``;
+
+  const rows = await db.execute<{ status: string; n: number }>(sql`
+    select f.customer_match_status as status, count(*)::int as n
+      from sheet_field_activity_rows f
+      left join users u on u.id = f.matched_salesman_id
+     where f.status = 'present'
+       and f.visit_date between ${filter.from}::date and ${filter.to}::date
+       ${onlyMine(scope, "u.id")}
+       ${salesmanClause}
+     group by f.customer_match_status
+  `);
+
+  const counts = { all: 0, matched: 0, ambiguous: 0, unmatched: 0 };
+  for (const r of rows) {
+    const n = Number(r.n);
+    counts.all += n;
+    if (r.status === "matched" || r.status === "ambiguous" || r.status === "unmatched") {
+      counts[r.status] = n;
+    }
+  }
+  return counts;
+}
+
 export type LeadRow = {
   id: string;
   name: string;
