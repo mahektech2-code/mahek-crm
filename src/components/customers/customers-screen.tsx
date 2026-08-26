@@ -25,6 +25,7 @@ import {
   RowMenu,
   SelectionBar,
 } from "@/components/ui/overlays";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { useToast } from "@/components/ui/toast";
 import { AccountManagerDialog } from "@/components/crm/account-manager-dialog";
 import { SalesManagerDialog } from "@/components/crm/sales-manager-dialog";
@@ -54,7 +55,6 @@ import { toCsv, downloadCsv } from "@/lib/csv";
 import {
   ACCOUNT_TYPE_FILTERS,
   ACCOUNT_TYPE_PARAM,
-  ALL_ACCOUNT_TYPES,
   accountTypeLabel,
 } from "@/lib/account-types";
 
@@ -126,30 +126,16 @@ const PER_PAGE = [25, 50, 100] as const;
  * The account type, its filter and its label — all from `lib/account-types`,
  * which is the one statement of them.
  *
- * The words were written out here AND in both list pages, which turn `?party=`
- * back into the control's own phrase so a filtered list draws the filter it
- * applied. Three copies of one vocabulary: renaming "Third parties" to
- * "Third-party customers" in this file alone would have left both pages
- * mapping the parameter to a phrase the control no longer offers, and the
- * control would quietly read "All types" on a list that was filtered.
- *
- * Aliased rather than renamed at every use: the names below read as this
- * screen's furniture, and the import is where the definition lives.
+ * `?party=` now carries the CODES `lib/account-types` defines (`yes`, `lead`,
+ * …) rather than the control's own words — the multi-select below is built
+ * `{ value, label }` pairs directly, so there is no longer a round trip
+ * through a phrase the URL has to be turned back into. `accountTypeParam`
+ * still validates what it is handed, and `TYPE_FILTERS`/`TYPE_PARAM` are what
+ * turn those codes into the words a person reads.
  */
-const ALL_TYPES = ALL_ACCOUNT_TYPES;
 const TYPE_FILTERS = ACCOUNT_TYPE_FILTERS;
 const TYPE_PARAM = ACCOUNT_TYPE_PARAM;
 const accountType = accountTypeLabel;
-
-/*
- * "All sales people", not "All sales managers" as it read for months. The
- * filter beside it now IS the sales manager, and two dropdowns claiming the
- * same word with different answers behind them is worse than either label on
- * its own.
- */
-const ALL_SALES = "All sales people";
-const ALL_SALES_MANAGERS = "All sales managers";
-const ALL_BACK_OFFICE = "All back office";
 
 const STATUSES = [
   "All statuses",
@@ -282,14 +268,32 @@ export function CustomersScreen({
   // state, which was fine while the browser held the whole book; the server
   // does the filtering now, so it has to be told — and a filtered list gains a
   // shareable link and a working back button for free.
-  const status = filters.status || STATUSES[0];
-  const salesAm = filters.salesAm || ALL_SALES;
-  const salesManager = filters.salesManager || ALL_SALES_MANAGERS;
-  const backOfficeAm = filters.backOfficeAm || ALL_BACK_OFFICE;
-  const accountTypeFilter = filters.accountType || ALL_TYPES;
+  //
+  // `,`-separated, empty meaning no filter — the multi-select's own wire
+  // format, and the one `customerFilterClause` reads on the way back down.
+  // There is no more "All statuses" sentinel value living in the URL: an
+  // empty string already means the same thing, so nothing has to compare
+  // against a magic word to find out whether a filter is active.
+  const status = filters.status || "";
+  const salesAm = filters.salesAm || "";
+  const salesManager = filters.salesManager || "";
+  const backOfficeAm = filters.backOfficeAm || "";
+  const accountTypeFilter = filters.accountType || "";
   const perPage = filters.perPage;
   const { page, pageCount, total, bookTotal } = pageInfo;
   const query = filters.query;
+
+  const asList = (v: string) => (v ? v.split(",").filter(Boolean) : []);
+  const statusOptions: { value: string; label: string }[] = STATUSES.slice(1).map(
+    (s) => ({ value: s, label: s }),
+  );
+  const salesAmOptions = amOptions.sales.map((n) => ({ value: n, label: n }));
+  const salesManagerOptions = amOptions.salesManager.map((n) => ({ value: n, label: n }));
+  const backOfficeOptions = amOptions.backOffice.map((n) => ({ value: n, label: n }));
+  const accountTypeOptions = TYPE_FILTERS.slice(1).map((word) => ({
+    value: TYPE_PARAM[word] ?? "",
+    label: word,
+  }));
 
   // The search box is the one control that cannot afford a round trip per
   // keystroke, so it holds its own text and navigates when typing settles.
@@ -358,28 +362,44 @@ export function CustomersScreen({
     selectedRows.length > 0 && selectedRows.every((r) => r.thirdParty);
   const from = (page - 1) * perPage;
 
+  // A comma-joined value said in words — one chip per FILTER, not one per
+  // value picked, so ticking three statuses reads as one chip naming three
+  // things rather than three chips saying the same word "Status" three times.
+  const describeMulti = (raw: string, options: { value: string; label: string }[]) => {
+    const vals = asList(raw);
+    if (!vals.length) return "";
+    const byValue = new Map(options.map((o) => [o.value, o.label]));
+    return vals.map((v) => byValue.get(v) ?? v).join(", ");
+  };
+
   const chips = [
-    status !== STATUSES[0]
-      ? { label: `Status: ${status}`, clear: () => navigate({ status: undefined }) }
-      : null,
-    salesAm !== ALL_SALES
-      ? { label: `Sales: ${salesAm}`, clear: () => navigate({ sales: undefined }) }
-      : null,
-    salesManager !== ALL_SALES_MANAGERS
+    status
       ? {
-          label: `Sales manager: ${salesManager}`,
+          label: `Status: ${describeMulti(status, statusOptions)}`,
+          clear: () => navigate({ status: undefined }),
+        }
+      : null,
+    salesAm
+      ? {
+          label: `Sales: ${describeMulti(salesAm, salesAmOptions)}`,
+          clear: () => navigate({ sales: undefined }),
+        }
+      : null,
+    salesManager
+      ? {
+          label: `Sales manager: ${describeMulti(salesManager, salesManagerOptions)}`,
           clear: () => navigate({ salesmanager: undefined }),
         }
       : null,
-    backOfficeAm !== ALL_BACK_OFFICE
+    backOfficeAm
       ? {
-          label: `Back office: ${backOfficeAm}`,
+          label: `Back office: ${describeMulti(backOfficeAm, backOfficeOptions)}`,
           clear: () => navigate({ backoffice: undefined }),
         }
       : null,
-    accountTypeFilter !== ALL_TYPES
+    accountTypeFilter
       ? {
-          label: `Type: ${accountTypeFilter}`,
+          label: `Type: ${describeMulti(accountTypeFilter, accountTypeOptions)}`,
           clear: () => navigate({ party: undefined }),
         }
       : null,
@@ -465,15 +485,19 @@ export function CustomersScreen({
         ]),
       ),
       [
-        status === STATUSES[0] ? null : status,
+        status ? `Status: ${describeMulti(status, statusOptions)}` : null,
         // The export names the filters it was taken under, so a file sent to
         // somebody says what it is a list of.
-        salesAm === ALL_SALES ? null : `Sales: ${salesAm}`,
-        salesManager === ALL_SALES_MANAGERS
-          ? null
-          : `Sales manager: ${salesManager}`,
-        backOfficeAm === ALL_BACK_OFFICE ? null : `Back office: ${backOfficeAm}`,
-        accountTypeFilter === ALL_TYPES ? null : accountTypeFilter,
+        salesAm ? `Sales: ${describeMulti(salesAm, salesAmOptions)}` : null,
+        salesManager
+          ? `Sales manager: ${describeMulti(salesManager, salesManagerOptions)}`
+          : null,
+        backOfficeAm
+          ? `Back office: ${describeMulti(backOfficeAm, backOfficeOptions)}`
+          : null,
+        accountTypeFilter
+          ? `Type: ${describeMulti(accountTypeFilter, accountTypeOptions)}`
+          : null,
         query || null,
       ],
     );
@@ -625,25 +649,21 @@ export function CustomersScreen({
             </button>
           ) : null}
         </div>
-        <Select
-          value={status}
-          onChange={(e) => navigate({ status: e.target.value === STATUSES[0] ? undefined : e.target.value })}
-          className="h-8"
-        >
-          {STATUSES.map((s) => (
-            <option key={s}>{s}</option>
-          ))}
-        </Select>
-        <Select
-          value={accountTypeFilter}
-          onChange={(e) => navigate({ party: TYPE_PARAM[e.target.value] })}
-          className="h-8"
+        <MultiSelect
+          label="Status"
+          placeholder="All statuses"
+          options={statusOptions}
+          selected={asList(status)}
+          onChange={(next) => navigate({ status: next.join(",") || undefined })}
+        />
+        <MultiSelect
+          label="Type"
+          placeholder="All types"
+          options={accountTypeOptions}
+          selected={asList(accountTypeFilter)}
+          onChange={(next) => navigate({ party: next.join(",") || undefined })}
           title="A direct customer bills with us. A third-party customer is a shop we deliver to and a distributor bills."
-        >
-          {TYPE_FILTERS.map((t) => (
-            <option key={t}>{t}</option>
-          ))}
-        </Select>
+        />
         {/*
           Two filters, because an account has two managers and "owner" was
           neither of them. The old one tested `owner_id`'s name while the
@@ -656,18 +676,13 @@ export function CustomersScreen({
           "Back Office Calling", "Marathwada", "Company Own" — and a dropdown
           built from `users` cannot reach a single one of those rows.
         */}
-        <Select
-          value={salesAm}
-          onChange={(e) =>
-            navigate({ sales: e.target.value === ALL_SALES ? undefined : e.target.value })
-          }
-          className="h-8"
-        >
-          <option>{ALL_SALES}</option>
-          {amOptions.sales.map((n) => (
-            <option key={n}>{n}</option>
-          ))}
-        </Select>
+        <MultiSelect
+          label="Sales AM"
+          placeholder="All sales people"
+          options={salesAmOptions}
+          selected={asList(salesAm)}
+          onChange={(next) => navigate({ sales: next.join(",") || undefined })}
+        />
         {/*
           The sales MANAGER, which is the filter a regional review starts from
           and the filter a handover starts from. Built from the same expression
@@ -675,35 +690,20 @@ export function CustomersScreen({
           `users` could not offer the people running a line who have never
           signed in, and this seat is full of them.
         */}
-        <Select
-          value={salesManager}
-          onChange={(e) =>
-            navigate({
-              salesmanager:
-                e.target.value === ALL_SALES_MANAGERS ? undefined : e.target.value,
-            })
-          }
-          className="h-8"
-        >
-          <option>{ALL_SALES_MANAGERS}</option>
-          {amOptions.salesManager.map((n) => (
-            <option key={n}>{n}</option>
-          ))}
-        </Select>
-        <Select
-          value={backOfficeAm}
-          onChange={(e) =>
-            navigate({
-              backoffice: e.target.value === ALL_BACK_OFFICE ? undefined : e.target.value,
-            })
-          }
-          className="h-8"
-        >
-          <option>{ALL_BACK_OFFICE}</option>
-          {amOptions.backOffice.map((n) => (
-            <option key={n}>{n}</option>
-          ))}
-        </Select>
+        <MultiSelect
+          label="Sales manager"
+          placeholder="All sales managers"
+          options={salesManagerOptions}
+          selected={asList(salesManager)}
+          onChange={(next) => navigate({ salesmanager: next.join(",") || undefined })}
+        />
+        <MultiSelect
+          label="Back office"
+          placeholder="All back office"
+          options={backOfficeOptions}
+          selected={asList(backOfficeAm)}
+          onChange={(next) => navigate({ backoffice: next.join(",") || undefined })}
+        />
         {chips.length ? (
           <button
             onClick={clearAll}
@@ -1142,7 +1142,7 @@ export function CustomersScreen({
            * Nothing is converted until a manager converts it, so the screen
            * says that, and points at the list it is done from.
            */
-          accountTypeFilter === "Third-party customers" && !query ? (
+          accountTypeFilter === "yes" && !query ? (
             <EmptyState
               title="No third-party customers yet"
               body={
@@ -1599,12 +1599,10 @@ export function CustomersScreen({
                    */
                   filters: {
                     query: query || undefined,
-                    status: status === STATUSES[0] ? undefined : status,
-                    salesAm: salesAm === ALL_SALES ? undefined : salesAm,
-                    salesManager:
-                      salesManager === ALL_SALES_MANAGERS ? undefined : salesManager,
-                    backOfficeAm:
-                      backOfficeAm === ALL_BACK_OFFICE ? undefined : backOfficeAm,
+                    status: status || undefined,
+                    salesAm: salesAm || undefined,
+                    salesManager: salesManager || undefined,
+                    backOfficeAm: backOfficeAm || undefined,
                   },
                   // The chips, which are already the filters said in words —
                   // one statement of what is on screen, not two that can drift.
@@ -1628,16 +1626,10 @@ export function CustomersScreen({
                         kind: "filters",
                         filters: {
                           query: query || undefined,
-                          status: status === STATUSES[0] ? undefined : status,
-                          salesAm: salesAm === ALL_SALES ? undefined : salesAm,
-                          salesManager:
-                            salesManager === ALL_SALES_MANAGERS
-                              ? undefined
-                              : salesManager,
-                          backOfficeAm:
-                            backOfficeAm === ALL_BACK_OFFICE
-                              ? undefined
-                              : backOfficeAm,
+                          status: status || undefined,
+                          salesAm: salesAm || undefined,
+                          salesManager: salesManager || undefined,
+                          backOfficeAm: backOfficeAm || undefined,
                         },
                       },
                 target: change.target,

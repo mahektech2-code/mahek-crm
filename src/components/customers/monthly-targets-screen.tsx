@@ -26,6 +26,23 @@ import { APP_TIMEZONE } from "@/lib/business-date";
 import { setTarget, setTargetsBulk } from "@/lib/actions/crm";
 import { money, moneyShort, pct, periodLabel } from "@/lib/format";
 
+/* ---------------------------------------------------------------------------
+ * Monthly targets — per customer, per month.
+ *
+ * SHARED between the CRM (`/crm/targets`) and Accounts
+ * (`/accounts/customer-targets`), the same way `CustomersScreen` is: one read
+ * (`listTargets`), one write (`setTarget`/`setTargetsBulk`), one shortfall
+ * engine, rendered from one component so the two doors can never disagree
+ * about what a customer's target is. `basePath` and `customerHrefTemplate`
+ * are the only things that differ between the two apps — everything else,
+ * including the business rules, is identical.
+ *
+ * `customerHrefTemplate` is a STRING, not a function: this is a client
+ * component, and a function prop from the server page that renders it cannot
+ * cross that boundary without being marked `"use server"`. A `{id}` token
+ * gets replaced with the real id instead.
+ * ------------------------------------------------------------------------- */
+
 type Row = {
   customerId: string;
   customerName: string;
@@ -58,21 +75,35 @@ type Shortfall = {
 
 type Tab = "targets" | "shortfall";
 
-export function TargetsScreen({
+export function MonthlyTargetsScreen({
+  app,
+  basePath,
+  customerHrefTemplate,
   scopeLabel,
-  isManager,
+  canSet,
   period,
   rows,
   shortfall,
 }: {
+  /** Only changes which extra row-menu link is offered — CRM has its own bills screen, Accounts folds everything into the customer's ledger. */
+  app: "crm" | "accounts";
+  /** e.g. `/crm/targets` or `/accounts/customer-targets` — the period switcher navigates here. */
+  basePath: string;
+  /** Where a customer's name and "Open customer record" lead, e.g. `/crm/customers/{id}`. */
+  customerHrefTemplate: string;
   scopeLabel: string;
-  isManager: boolean;
+  /** Whether THIS person holds `target.set`/`target.shortfall` — a manager or accounts, never a telecaller. */
+  canSet: boolean;
   period: string;
   rows: Row[];
   shortfall: Shortfall;
 }) {
   const router = useRouter();
   const { run } = useToast();
+  const customerHref = React.useCallback(
+    (customerId: string) => customerHrefTemplate.replace("{id}", customerId),
+    [customerHrefTemplate],
+  );
 
   const [tab, setTab] = React.useState<Tab>("targets");
   const [editing, setEditing] = React.useState<Row | null>(null);
@@ -122,7 +153,7 @@ export function TargetsScreen({
           <>
             <Select
               value={period}
-              onChange={(e) => router.push(`/crm/targets?period=${e.target.value}`)}
+              onChange={(e) => router.push(`${basePath}?period=${e.target.value}`)}
               className="h-9"
             >
               {recentPeriods().map((p) => (
@@ -133,8 +164,8 @@ export function TargetsScreen({
             </Select>
             <Button
               variant="primary"
-              disabled={!isManager}
-              title={isManager ? undefined : "Setting targets is a manager action"}
+              disabled={!canSet}
+              title={canSet ? undefined : "Setting targets is a manager or accounts action"}
               onClick={() => setBulkOpen(true)}
             >
               Set targets in bulk
@@ -234,7 +265,7 @@ export function TargetsScreen({
                     <Tr key={r.customerId} className="hover:bg-canvas">
                       <Td className="font-medium text-ink">
                         <Link
-                          href={`/crm/customers/${r.customerId}`}
+                          href={customerHref(r.customerId)}
                           className="no-underline hover:underline"
                         >
                           {r.name}
@@ -280,7 +311,7 @@ export function TargetsScreen({
                 <Tr key={r.customerId} className="hover:bg-canvas">
                   <Td className="font-medium text-ink">
                     <Link
-                      href={`/crm/customers/${r.customerId}`}
+                      href={customerHref(r.customerId)}
                       className="no-underline hover:underline"
                     >
                       {r.customerName}
@@ -316,17 +347,21 @@ export function TargetsScreen({
                           {
                             label: "Set target",
                             onSelect: () => setEditing(r),
-                            disabled: !isManager,
-                            title: isManager ? undefined : "Manager action",
+                            disabled: !canSet,
+                            title: canSet ? undefined : "Manager or accounts action",
                           },
                           {
-                            label: "Open customer record",
-                            onSelect: () => router.push(`/crm/customers/${r.customerId}`),
+                            label: app === "crm" ? "Open customer record" : "Open customer account",
+                            onSelect: () => router.push(customerHref(r.customerId)),
                           },
-                          {
-                            label: "See their bills",
-                            onSelect: () => router.push(`/crm/bills?customer=${r.customerId}`),
-                          },
+                          ...(app === "crm"
+                            ? [
+                                {
+                                  label: "See their bills",
+                                  onSelect: () => router.push(`/crm/bills?customer=${r.customerId}`),
+                                },
+                              ]
+                            : []),
                         ]}
                       />
                     </span>

@@ -7808,8 +7808,8 @@ describe("a person wears several hats", () => {
     const roles = await rolesFor(vikram);
     assert.deepEqual(roles.sort(), ["accounts", "manager", "telecaller"].sort());
 
-    // Held under EITHER hat is held. Classifying is a manager's, approving is
-    // accounts', and this person does both.
+    // Held under EITHER hat is held. Approving is accounts', config is a
+    // manager's, and this person does both.
     assert.equal(canAny(roles, "customer.classify"), true);
     assert.equal(canAny(roles, "order.approve"), true);
 
@@ -7820,8 +7820,11 @@ describe("a person wears several hats", () => {
      * clerk doing their job from the administrator reaching past a rule.
      */
     assert.equal(grantingRole(roles, "order.approve"), "accounts");
-    assert.equal(grantingRole(roles, "customer.classify"), "manager");
     assert.equal(grantingRole(roles, "config.write"), "manager");
+    // `customer.classify` is held under BOTH hats since it widened to
+    // accounts — the narrowest one that carries it still wins, and accounts
+    // is checked before manager in `ROLE_ORDER`.
+    assert.equal(grantingRole(roles, "customer.classify"), "accounts");
   });
 
   test("a grant with no hat of its own means the account's role", async () => {
@@ -7839,7 +7842,10 @@ describe("a person wears several hats", () => {
     const roles = await rolesFor(deepa);
     assert.deepEqual(roles, ["accounts"]);
     assert.equal(canAny(roles, "order.approve"), true);
-    assert.equal(canAny(roles, "customer.classify"), false, "an accounts clerk classified");
+    // `customer.classify` widened to accounts alongside `target.set` — an
+    // accounts clerk marking a converted shop is exactly the kind of account
+    // fact they already maintain when they change who bills a customer.
+    assert.equal(canAny(roles, "customer.classify"), true, "an accounts clerk did not classify");
   });
 
   test("the capability check refuses what no hat carries, and says which hats were worn", async () => {
@@ -8099,7 +8105,7 @@ describe("third-party customers and their distributors", () => {
     return makeCustomer(priya.id, { name, kind: "customer" });
   }
 
-  test("converting is a manager's, and it is checked in the action", async () => {
+  test("converting is not a telecaller's, and it is checked in the action", async () => {
     const shop = await makeCustomer(priya.id, { kind: "lead" });
     const distributor = await makeDistributor();
 

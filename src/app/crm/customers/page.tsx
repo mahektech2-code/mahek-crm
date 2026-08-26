@@ -10,10 +10,7 @@ import {
   today,
 } from "@/lib/queries";
 import { customerStatusLabel } from "@/lib/format";
-import {
-  accountTypeFilterLabel,
-  accountTypeParam,
-} from "@/lib/account-types";
+import { accountTypeParam } from "@/lib/account-types";
 import { CustomersScreen } from "@/components/customers/customers-screen";
 
 export const metadata = { title: "Customers - MahekOne CRM" };
@@ -99,9 +96,9 @@ export default async function CustomersPage({
         salesAm: one("sales") ?? "",
         salesManager: one("salesmanager") ?? "",
         backOfficeAm: one("backoffice") ?? "",
-        // The filter's own word for what `?party=` holds, so the control shows
-        // what was actually applied rather than resetting itself to "All".
-        accountType: accountTypeFilterLabel(one("party")),
+        // The validated codes straight through — `,`-separated for more than
+        // one. The screen turns codes back into the control's own words.
+        accountType: accountTypeParam(one("party")) ?? "",
         perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
       }}
       pageInfo={{
