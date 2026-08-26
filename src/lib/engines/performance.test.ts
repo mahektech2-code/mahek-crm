@@ -10,10 +10,12 @@ import {
   focusLines,
   forecast,
   mixCategoryScoreBp,
+  rankPerformance,
   ratingFor,
   scoreMix,
   weightedScore,
   type MixBand,
+  type PerformanceRankInput,
 } from "./performance";
 
 /* ============================== E10 — how a salesman is measured
@@ -470,5 +472,68 @@ describe("configuration is refused rather than silently obeyed", () => {
       "performance.ratingBands": [{ min: 60, label: "Good" }],
     };
     assert.ok(checkConsistency(bad).some((p) => p.includes("lowest rating band")));
+  });
+});
+
+describe("rankPerformance — the founder dashboard's company-wide roster", () => {
+  const reading = (over: Partial<PerformanceRankInput>): PerformanceRankInput => ({
+    userId: "u1",
+    userName: "A",
+    hasTarget: true,
+    totalBp: 9000,
+    revenuePaise: 100_000,
+    ...over,
+  });
+
+  test("best score first", () => {
+    const ranked = rankPerformance([
+      reading({ userId: "a", totalBp: 7000 }),
+      reading({ userId: "b", totalBp: 9500 }),
+      reading({ userId: "c", totalBp: 8000 }),
+    ]);
+    assert.deepEqual(
+      ranked.map((r) => r.userId),
+      ["b", "c", "a"],
+    );
+    assert.deepEqual(
+      ranked.map((r) => r.rank),
+      [1, 2, 3],
+    );
+  });
+
+  test("a tied score is broken by revenue", () => {
+    const ranked = rankPerformance([
+      reading({ userId: "low-revenue", totalBp: 9000, revenuePaise: 50_000 }),
+      reading({ userId: "high-revenue", totalBp: 9000, revenuePaise: 200_000 }),
+    ]);
+    assert.deepEqual(
+      ranked.map((r) => r.userId),
+      ["high-revenue", "low-revenue"],
+    );
+  });
+
+  test("a genuine tie on both shares a rank, and the next rank skips", () => {
+    const ranked = rankPerformance([
+      reading({ userId: "a", totalBp: 9000, revenuePaise: 100_000 }),
+      reading({ userId: "b", totalBp: 9000, revenuePaise: 100_000 }),
+      reading({ userId: "c", totalBp: 8000, revenuePaise: 100_000 }),
+    ]);
+    assert.deepEqual(
+      ranked.map((r) => r.rank),
+      [1, 1, 3],
+    );
+  });
+
+  test("nobody with a published target sorts last, unranked", () => {
+    const ranked = rankPerformance([
+      reading({ userId: "no-target", hasTarget: false, totalBp: 0, revenuePaise: 900_000 }),
+      reading({ userId: "has-target", totalBp: 6000 }),
+    ]);
+    assert.deepEqual(
+      ranked.map((r) => r.userId),
+      ["has-target", "no-target"],
+    );
+    assert.equal(ranked[0].rank, 1);
+    assert.equal(ranked[1].rank, null);
   });
 });

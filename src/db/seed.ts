@@ -171,7 +171,7 @@ const TEAM = [
     // things — he ran every screen in the product and still could not change
     // an account manager, because that capability is accounts-and-admin only.
     role: "admin" as const,
-    apps: ["crm", "accounts", "reports", "people", "hrms", "admin"],
+    apps: ["crm", "accounts", "reports", "people", "hrms", "admin", "founder"],
   },
   {
     name: "Mahesh Parab",

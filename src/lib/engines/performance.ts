@@ -571,6 +571,61 @@ export function focusLines(
   return lines.sort((a, b) => b.weight - a.weight);
 }
 
+/* -------------------------------------------------------------- ranking */
+
+export type PerformanceRankInput = {
+  userId: string;
+  userName: string;
+  hasTarget: boolean;
+  totalBp: Bp;
+  revenuePaise: number;
+};
+
+export type Ranked<T> = T & { rank: number | null };
+
+/**
+ * Everybody, ordered best first — for the Founder Dashboard's company-wide
+ * roster, which has no manager scoping it down to a size somebody can just
+ * read down the page in target order.
+ *
+ * Somebody with no published target has nothing to rank against and sorts to
+ * the bottom with `rank: null` rather than tying for last — a missing target
+ * is a different fact to a score of zero, and folding the two together would
+ * bury everybody who is actually failing under everybody nobody has asked
+ * anything of yet.
+ *
+ * A tie in the score itself is broken by revenue, in whole rupees terms —
+ * two people scoring 91.4 are not equally far ahead of target if one billed
+ * twice what the other did, and a rank that could not tell them apart would
+ * be worse than an arbitrary one.
+ */
+export function rankPerformance<T extends PerformanceRankInput>(
+  readings: readonly T[],
+): Ranked<T>[] {
+  const scored = readings.filter((r) => r.hasTarget);
+  const unscored = readings.filter((r) => !r.hasTarget);
+
+  const sorted = [...scored].sort(
+    (a, b) => b.totalBp - a.totalBp || b.revenuePaise - a.revenuePaise,
+  );
+
+  // Standard competition ranking (1, 2, 2, 4): a genuine tie shares a rank
+  // rather than being split by an ordering nobody asked for.
+  let rank = 0;
+  let lastBp: number | null = null;
+  let lastRevenue: number | null = null;
+  const rankedScored = sorted.map((r, i) => {
+    if (r.totalBp !== lastBp || r.revenuePaise !== lastRevenue) {
+      rank = i + 1;
+      lastBp = r.totalBp;
+      lastRevenue = r.revenuePaise;
+    }
+    return { ...r, rank };
+  });
+
+  return [...rankedScored, ...unscored.map((r) => ({ ...r, rank: null }))];
+}
+
 function gapSentence(key: ComponentKey, gap: number): string {
   switch (key) {
     case "revenue":

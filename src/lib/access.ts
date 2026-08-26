@@ -224,6 +224,14 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
       continue;
     }
 
+    // A pure rollup, like Reports and HRMS — nothing is decided here, so the
+    // badge stays at zero and the sentence says what the screen is rather
+    // than pretending to a queue.
+    if (app.id === "founder") {
+      out.push({ ...app, count: 0, status: "Company performance, one screen" });
+      continue;
+    }
+
     if (app.id !== "crm") {
       out.push({
         ...app,
