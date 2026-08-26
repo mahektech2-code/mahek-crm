@@ -21,7 +21,7 @@ import {
 } from "../engines/receipt-match";
 import { effectiveDueDate } from "../engines/escalation";
 import { billCreditDaysSql } from "../bill-terms";
-import { daysBetween } from "../business-date";
+import { addDays, daysBetween } from "../business-date";
 import {
   recomputeBillPaid,
   recomputeBillStatuses,
@@ -632,6 +632,132 @@ export async function pendingReceiptCount(): Promise<number> {
     .from(paymentReceipts)
     .where(inArray(paymentReceipts.status, ["reported", "held"]));
   return Number(row?.n ?? 0);
+}
+
+/* --------------------------------------------------------- payment history */
+
+export type PaymentHistoryRow = {
+  receiptId: string;
+  customerId: string;
+  customerName: string;
+  amount: number;
+  receivedAt: string;
+  createdAt: string;
+  mode: string;
+  reference: string | null;
+  note: string | null;
+  status: "reported" | "held" | "confirmed" | "rejected" | "reversed";
+  sentence: string;
+  lines: Array<{ billId: string | null; billNo: string | null; amount: number }>;
+
+  reportedByName: string | null;
+  heldByName: string | null;
+  holdReason: string | null;
+  confirmedByName: string | null;
+  /** Who last touched a rejected/reversed row — neither action has its own actor column. */
+  decidedByName: string | null;
+  rejectReason: string | null;
+};
+
+export const PAYMENT_HISTORY_LIMIT = 1000;
+
+/**
+ * Every payment recorded or decided on, whatever its status — "what did I
+ * (or we) do" rather than "what still needs a decision", which is the
+ * confirm queue's job (`pendingReceipts`) and stops the moment a receipt is
+ * decided.
+ *
+ * Windowed and capped the same way `listInteractions` is for CRM Call
+ * History: a wide-enough server read, with Today/This week/etc. filtering
+ * left to the screen. Accounts has no per-clerk scope (`scopeForUser`
+ * returns `{kind:"all"}` for the role), so there is nothing to narrow
+ * server-side beyond the window — a "mine" view is an actor filter over this
+ * same flat set, not a different query.
+ */
+export async function paymentHistory(days = 90): Promise<PaymentHistoryRow[]> {
+  await requireCapability("payment.record");
+  const day = await today();
+  const since = addDays(day, -days);
+
+  const rows = await db
+    .select({
+      receipt: paymentReceipts,
+      customerName: customers.name,
+      reportedByName: sql<string | null>`(
+        select u.name from users u where u.id = payment_receipts.reported_by_id
+      )`,
+      heldByName: sql<string | null>`(
+        select u.name from users u where u.id = payment_receipts.held_by_id
+      )`,
+      confirmedByName: sql<string | null>`(
+        select u.name from users u where u.id = payment_receipts.confirmed_by_id
+      )`,
+      decidedByName: sql<string | null>`(
+        select u.name from users u where u.id = payment_receipts.updated_by_id
+      )`,
+    })
+    .from(paymentReceipts)
+    .innerJoin(customers, eq(customers.id, paymentReceipts.customerId))
+    .where(gt(paymentReceipts.receivedAt, since))
+    .orderBy(desc(paymentReceipts.createdAt))
+    .limit(PAYMENT_HISTORY_LIMIT);
+
+  if (!rows.length) return [];
+
+  const lines = await db
+    .select({
+      receiptId: payments.receiptId,
+      billId: payments.billId,
+      billNo: bills.billNo,
+      amount: payments.amount,
+    })
+    .from(payments)
+    .leftJoin(bills, eq(bills.id, payments.billId))
+    .where(
+      inArray(
+        payments.receiptId,
+        rows.map((r) => r.receipt.id),
+      ),
+    );
+
+  const byReceipt = new Map<string, PaymentHistoryRow["lines"]>();
+  const allocatedByReceipt = new Map<string, number>();
+  for (const l of lines) {
+    const list = byReceipt.get(l.receiptId) ?? [];
+    list.push({ billId: l.billId, billNo: l.billNo, amount: Number(l.amount) });
+    byReceipt.set(l.receiptId, list);
+    if (l.billId) {
+      allocatedByReceipt.set(l.receiptId, (allocatedByReceipt.get(l.receiptId) ?? 0) + Number(l.amount));
+    }
+  }
+
+  return rows.map(({ receipt: r, ...rest }) => ({
+    receiptId: r.id,
+    customerId: r.customerId,
+    customerName: rest.customerName,
+    amount: Number(r.amount),
+    receivedAt: r.receivedAt,
+    createdAt: r.createdAt.toISOString(),
+    mode: r.mode,
+    reference: r.reference,
+    note: r.note,
+    status: r.status,
+    sentence: receiptStatusSentence({
+      mode: r.mode,
+      reference: r.reference,
+      amount: Number(r.amount),
+      allocated: allocatedByReceipt.get(r.id) ?? 0,
+      status: r.status,
+      rejectReason: r.rejectReason,
+    }),
+    lines: byReceipt.get(r.id) ?? [],
+    reportedByName: rest.reportedByName,
+    heldByName: rest.heldByName,
+    holdReason: r.holdReason,
+    confirmedByName: rest.confirmedByName,
+    decidedByName: rest.decidedByName,
+    rejectReason: r.rejectReason,
+  }));
 }
 
 /* ------------------------------------------------------------------- hold */
@@ -1530,6 +1656,42 @@ const NOT_ON_STATEMENT = sql`not (
  * `customers.outstanding` at the bottom. Anything still waiting on accounts is
  * reported separately rather than folded in.
  */
+/**
+ * The sentence a person reads for one receipt, whatever its status.
+ *
+ * Pulled out of `customerLedger` so `paymentHistory` can read the exact same
+ * wording — two independent copies of "on hold with accounts, being
+ * checked" is how the two screens drift apart within a release.
+ */
+export function receiptStatusSentence(r: {
+  mode: string;
+  reference: string | null;
+  amount: number;
+  /** What of `amount` actually landed on a bill; the rest is on account. */
+  allocated: number;
+  status: "reported" | "held" | "confirmed" | "rejected" | "reversed";
+  rejectReason: string | null;
+}): string {
+  const onAccount = r.amount - r.allocated;
+  // The projection writes "Not stated" as a mode, meaning the sheet never
+  // said how the money arrived. Printed raw it reads as a fault rather than
+  // as a fact about the record, so it is turned into a sentence here.
+  const parts = [r.mode === "Not stated" ? "Payment · method not recorded" : r.mode];
+  if (r.reference) parts.push(r.reference);
+  if (onAccount > 0) parts.push(`${rupees(onAccount)} on account`);
+  if (r.status === "reported") parts.push("waiting for accounts");
+  // Its own words: somebody in accounts HAS looked at this one and is
+  // checking it, which is a different thing to tell a customer asking why
+  // their balance has not moved.
+  if (r.status === "held") parts.push("on hold with accounts, being checked");
+  if (r.status === "rejected") parts.push(r.rejectReason ?? "rejected");
+  // Said in its own words. "Never arrived" would be wrong about a cheque
+  // that cleared and then bounced, and this is the document a customer
+  // disputes a balance against.
+  if (r.status === "reversed") parts.push(`reversed — ${r.rejectReason ?? "no reason recorded"}`);
+  return parts.join(" · ");
+}
+
 export async function customerLedger(
   customerId: string,
   range?: { from?: string; to?: string },
@@ -1600,23 +1762,14 @@ export async function customerLedger(
   }
 
   for (const { receipt: r, allocated } of receiptRows) {
-    const onAccount = Number(r.amount) - Number(allocated);
-    // The projection writes "Not stated" as a mode, meaning the sheet never
-    // said how the money arrived. Printed raw it reads as a fault rather than
-    // as a fact about the record, so it is turned into a sentence here.
-    const parts = [r.mode === "Not stated" ? "Payment · method not recorded" : r.mode];
-    if (r.reference) parts.push(r.reference);
-    if (onAccount > 0) parts.push(`${rupees(onAccount)} on account`);
-    if (r.status === "reported") parts.push("waiting for accounts");
-    // Its own words: somebody in accounts HAS looked at this one and is
-    // checking it, which is a different thing to tell a customer asking why
-    // their balance has not moved.
-    if (r.status === "held") parts.push("on hold with accounts, being checked");
-    if (r.status === "rejected") parts.push(r.rejectReason ?? "rejected");
-    // Said in its own words. "Never arrived" would be wrong about a cheque
-    // that cleared and then bounced, and this is the document a customer
-    // disputes a balance against.
-    if (r.status === "reversed") parts.push(`reversed — ${r.rejectReason ?? "no reason recorded"}`);
+    const detail = receiptStatusSentence({
+      mode: r.mode,
+      reference: r.reference,
+      amount: Number(r.amount),
+      allocated: Number(allocated),
+      status: r.status,
+      rejectReason: r.rejectReason,
+    });
     rows.push({
       at: r.receivedAt,
       sort: `${r.receivedAt}-1-${r.id}`,
@@ -1625,7 +1778,7 @@ export async function customerLedger(
       // rather than repeating the mode into it — "Not stated · Not stated"
       // across two columns looks like a broken row.
       ref: r.reference ?? (r.mode === "Not stated" ? "—" : r.mode),
-      detail: parts.join(" · "),
+      detail,
       debit: 0,
       // Only confirmed money comes off the balance. A reported receipt shows on
       // the statement as a line worth nothing yet, which is what it is.
