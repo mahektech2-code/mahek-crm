@@ -213,6 +213,12 @@ export const APP_MODULES: AppModule[] = [
   ),
   accounts("record", "Record a payment", "Money"),
   accounts(
+    "payment-history",
+    "Payment history",
+    "Money",
+    "Every payment recorded or decided on, across every customer — the record a busy day of collections is checked against.",
+  ),
+  accounts(
     "outstanding",
     "Outstanding",
     "Money",
