@@ -255,14 +255,45 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      # A rerun of an OLD failed run — the registry auth flaking, a stuck
+      # garbage collection, anything transient — builds and can still push the
+      # commit it was always going to push. Nothing stops it finishing AFTER a
+      # newer commit's own run has already deployed, and the swap below has no
+      # memory of what it last put in place: it would gladly overwrite a newer
+      # production with an older one, silently, the moment this run reaches
+      # it. `concurrency` above only cancels runs that overlap — it does
+      # nothing for two runs that are never in progress at the same time.
+      #
+      # So the run checks, right before it would touch anything, whether main
+      # has moved past the commit it built. If it has, a newer run either
+      # already deployed it or is doing so now, and this one has nothing left
+      # to contribute — it stops here rather than putting main's PAST back in
+      # front of main's PRESENT.
+      - name: Refuse to deploy a commit main has moved past
+        id: freshness
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest="$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)"
+          if [ "${latest}" != "${GITHUB_SHA}" ]; then
+            echo "::warning::main is now at ${latest:0:12}; this run built ${GITHUB_SHA:0:12} and deploying it would put an OLDER commit back in production. A newer run has already handled it — skipping."
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v7
+        if: steps.freshness.outputs.current == 'true'
       - uses: actions/setup-node@v7
+        if: steps.freshness.outputs.current == 'true'
         with:
           node-version: 24
           cache: npm
       - run: npm ci
+        if: steps.freshness.outputs.current == 'true'
 
       - name: Set up the SSH key
+        if: steps.freshness.outputs.current == 'true'
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
@@ -281,6 +312,7 @@ jobs:
       # destructive migration would need the reverse order and a release that
       # stops writing to the column first.
       - name: Migrate, through the tunnel
+        if: steps.freshness.outputs.current == 'true'
         env:
           PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
@@ -292,6 +324,7 @@ jobs:
 
       # ---------------------------------------------------------------- swap
       - name: Pull and restart
+        if: steps.freshness.outputs.current == 'true'
         run: |
           ssh deploy@${{ secrets.DROPLET_HOST }} bash -euo pipefail <<'EOF'
             cd ${{ env.APP_DIR }}
@@ -310,6 +343,7 @@ jobs:
       # An exit code from `docker compose up` says the container started, not
       # that the app works. This asks the running app.
       - name: Check it is actually serving
+        if: steps.freshness.outputs.current == 'true'
         run: |
           for i in $(seq 1 30); do
             code=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ secrets.DOMAIN }}/login" || true)
