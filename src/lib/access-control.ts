@@ -219,16 +219,6 @@ export type Capability = (typeof CAPABILITIES)[number];
 const MANAGER_ONLY: ReadonlySet<Capability> = new Set<Capability>([
   "customer.export",
   "customer.deactivate",
-  /*
-   * Marking an account as a shop we deliver to, or unmarking one.
-   *
-   * A manager's rather than accounts': it decides who gets CALLED, which is the
-   * work of the team a manager runs, and it moves no money and no ownership.
-   * That is what separates it from `customer.reassign` next door, which moves
-   * numbers between a manager's own people and is deliberately kept away from
-   * them.
-   */
-  "customer.classify",
   "complaint.resolve",
   "whatsapp.bulk",
   "whatsapp.template.write",
@@ -320,6 +310,21 @@ const ACCOUNTS_OR_MANAGER: ReadonlySet<Capability> = new Set<Capability>([
    */
   "target.set",
   "target.shortfall",
+  /*
+   * Marking an account as a shop we deliver to, or unmarking one — the same
+   * action that reverts a third-party account back to reading as a plain
+   * lead again, since only a lead is ever converted in the first place.
+   *
+   * Manager-only from the day it shipped, on the reasoning that it decides
+   * who gets CALLED, which is the work of the team a manager runs — and that
+   * reasoning does not go away here, it just stops being the WHOLE reasoning.
+   * A converted shop is also who bills it (`customer_distributors`), which is
+   * exactly the kind of account fact accounts already maintain when they
+   * change who a customer's account manager is. Added rather than moved, for
+   * the same reason `target.set` was: a manager coaching a telecaller through
+   * which shops are worth marking still needs to be able to do it themselves.
+   */
+  "customer.classify",
 ]);
 
 /**

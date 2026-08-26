@@ -62,13 +62,6 @@ export const ACCOUNT_TYPE_PARAM: Record<string, string | undefined> = {
   "Third party, nobody billing": "nodistributor",
 };
 
-/** And back again, so a filtered list draws the filter it actually applied. */
-export function accountTypeFilterLabel(param: string | undefined): string {
-  if (!param) return "";
-  const found = Object.entries(ACCOUNT_TYPE_PARAM).find(([, v]) => v === param);
-  return found ? found[0] : "";
-}
-
 /** The values `?party=` may carry. Anything else is no filter at all. */
 export type AccountTypeParam =
   | "yes"
@@ -78,18 +71,27 @@ export type AccountTypeParam =
   | "customer"
   | "nodistributor";
 
-export function accountTypeParam(
-  raw: string | undefined,
-): AccountTypeParam | undefined {
-  const allowed = [
-    "yes",
-    "no",
-    "delivered",
-    "lead",
-    "customer",
-    "nodistributor",
-  ] as const;
-  return allowed.includes(raw as AccountTypeParam)
-    ? (raw as AccountTypeParam)
-    : undefined;
+const ACCOUNT_TYPE_CODES = new Set<string>([
+  "yes",
+  "no",
+  "delivered",
+  "lead",
+  "customer",
+  "nodistributor",
+]);
+
+/**
+ * `,`-separated CODES (never the control's words — those never leave the
+ * screen). More than one is "any of these" — `customerFilterClause` ORs the
+ * per-code clauses together. An unrecognised code is dropped rather than
+ * carried through: `?party=nonsense` reaching the query as a value that
+ * matches nothing would read as a lost book, not as a typo.
+ */
+export function accountTypeParam(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const codes = raw
+    .split(",")
+    .map((v) => v.trim())
+    .filter((v) => ACCOUNT_TYPE_CODES.has(v));
+  return codes.length ? codes.join(",") : undefined;
 }

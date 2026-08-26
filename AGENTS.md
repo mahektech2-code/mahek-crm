@@ -246,7 +246,7 @@ src/
     accounts/              the Accounts app — today, order approvals, payments
                            to confirm, credit notes, record a payment,
                            outstanding, bills, customer account, on account,
-                           sheet import, audit, sales targets
+                           sheet import, audit, sales targets, customer targets
                            (was `orders/`; /orders still redirects here)
     people/ reports/ admin/
                            admin/access-section.tsx — the People section, which
@@ -274,6 +274,10 @@ src/
     feedback/              the other end of it — where the person who reported
                            something reads the reply and answers back
   components/
+    customers/customers-screen.tsx
+                           the customer list, shared by the CRM and Accounts
+    customers/monthly-targets-screen.tsx
+                           the per-customer target screen, shared the same way
     feedback/              the thread, rendered the same for both sides
     ui/                    primitives + modal + overlays + toasts +
                            attachment-strip
@@ -560,7 +564,24 @@ contradiction — the option is absent from its row menu and its record, and
 direction is offered on anything carrying the mark: a shop that starts buying
 from us is a good day, and undoing must never be harder than doing. Reverting
 KEEPS the links — who used to bill this shop is a fact about it, and deleting
-them would destroy the only record of how it was served.
+them would destroy the only record of how it was served. Reverting is also the
+nearest thing MahekOne has to "converting a customer back to a lead" — nothing
+does that literally, because a lead's entire definition is an account that has
+never ordered, and a real customer's order history would make the label false
+the moment it was applied.
+
+**`customer.classify` is held by managers AND by accounts.** Manager-only from
+the day it shipped, on the reasoning that marking a shop decides who gets
+CALLED, which is a manager's team's work — and that reasoning did not go away,
+it stopped being the whole reasoning. A converted shop is also who bills it,
+which is exactly the kind of account fact accounts already maintain when they
+change a customer's account manager, so the capability sits in
+`ACCOUNTS_OR_MANAGER` now, added rather than moved for the same reason
+`target.set` was: a manager coaching a telecaller through which shops are
+worth marking still needs to act on it directly. It reaches the Accounts
+customer list for free — `canClassify` was already threaded through the
+shared `CustomersScreen` component both apps render, so widening the
+capability is the whole change.
 
 **A distributor is an unmarked DIRECT CUSTOMER.** Somebody has to be holding
 the invoice at the end of the chain, and a shop we deliver to is not holding
@@ -2447,6 +2468,26 @@ new hat combination worth naming on its own terms: an accounts user who is
 ALSO a telecaller could now set their own target, which is why
 `lib/role-conflicts.ts` carries a second telecaller+accounts entry for it,
 beside the one about reporting a payment and then confirming it.
+
+**A person's target and a customer's are two different grains, and they stay
+two different screens.** `/accounts/customer-targets` reaches the CRM's own
+Monthly Targets — `listTargets`, `setTarget`, `setTargetsBulk`,
+`shortfallAnalysis` in `lib/services/worklist-services.ts` — the same way
+`/accounts/targets` reaches the Sales Dashboard's: one door added for
+accounts, nothing rebuilt. `MonthlyTargetsScreen` moved to
+`src/components/customers/`, the same shared home `CustomersScreen` already
+has, and takes `app`/`basePath`/`customerHrefTemplate` so the two doors differ only in
+where their links lead — Accounts has no customer detail page, so a customer's
+name leads to their ledger statement instead, and "See their bills" folds into
+that same link rather than pointing at a screen accounts cannot reach. Folding
+this into the Sales targets screen as a third tab was the obvious shortcut and
+the wrong one: a target set on a PERSON and a target set on a CUSTOMER are
+different questions, and one screen answering both from tabs would say which
+tab was answering which question and nothing else. The screen's own gating
+moved with it — it read `isManager(user)` to decide who may set a target,
+which was correct while `target.set` was manager-only and silently wrong the
+moment it widened; both doors now check `can(user.role, "target.set")`
+instead, the capability itself rather than a role that used to imply it.
 
 **The score is a CACHE, and not the same kind of column as
 `calls.next_step_*`.** `sales_performance` is rebuilt by

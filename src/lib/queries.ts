@@ -372,7 +372,11 @@ const STATUS_LABEL_SQL = sql<string>`
 
 export type CustomerListFilters = {
   query?: string;
-  /** A label from customerStatusLabel, or absent for all of them. */
+  /**
+   * A label from customerStatusLabel, or absent for all of them. `,`-separated
+   * for more than one — every multi-value field here is, so `customerFilterClause`
+   * has one place (`inList`) that turns any of them into an `in (…)`.
+   */
   status?: string;
   /** A NAME, matched against what the column shows — see the two SQL consts. */
   salesAm?: string;
@@ -383,15 +387,10 @@ export type CustomerListFilters = {
    * "yes" for accounts marked as shops we deliver to, "no" for the rest, and
    * "delivered" for the ones the sheet shows receiving goods — whether or not
    * anybody has marked them yet. The third is the one that makes the marking
-   * screen usable: it is the evidence, not the decision.
+   * screen usable: it is the evidence, not the decision. `,`-separated for more
+   * than one, validated by `accountTypeParam` before it ever reaches here.
    */
-  thirdParty?:
-    | "yes"
-    | "no"
-    | "delivered"
-    | "lead"
-    | "customer"
-    | "nodistributor";
+  thirdParty?: string;
   page?: number;
   perPage?: number;
 };
@@ -586,52 +585,94 @@ export async function customerFilterClause(
       or customers.city ilike ${like}
     )`);
   }
-  if (filters.status) where.push(sql`${STATUS_LABEL_SQL} = ${filters.status}`);
+  if (filters.status) where.push(inList(STATUS_LABEL_SQL, filters.status));
   // The same expressions the column renders, so a name picked here always
   // matches the rows showing that name.
   if (filters.salesAm) {
-    where.push(sql`${SALES_AM_NAME_SQL} = ${filters.salesAm}`);
+    where.push(inList(SALES_AM_NAME_SQL, filters.salesAm));
   }
   if (filters.salesManager) {
-    where.push(sql`${SALES_MANAGER_NAME_SQL} = ${filters.salesManager}`);
+    where.push(inList(SALES_MANAGER_NAME_SQL, filters.salesManager));
   }
   if (filters.backOfficeAm) {
-    where.push(sql`${BACK_OFFICE_AM_NAME_SQL} = ${filters.backOfficeAm}`);
+    where.push(inList(BACK_OFFICE_AM_NAME_SQL, filters.backOfficeAm));
   }
-  if (filters.thirdParty === "yes") where.push(sql`customers.third_party`);
-  if (filters.thirdParty === "no") where.push(sql`not customers.third_party`);
-  // A marked account is not offered as a lead or a direct customer, because
-  // the mark is the more specific answer to the same question. Reading the
-  // kind alone would put every marked shop back in the list the filter exists
-  // to take it out of.
-  if (filters.thirdParty === "lead") {
-    where.push(sql`customers.kind = 'lead' and not customers.third_party`);
-  }
-  if (filters.thirdParty === "customer") {
-    where.push(sql`customers.kind = 'customer' and not customers.third_party`);
-  }
-  if (filters.thirdParty === "nodistributor") {
-    /*
-     * Converted, and nobody recorded as billing them. It should be empty —
-     * `convertToThirdParty` writes the mark and the arrangement in one
-     * transaction — and what fills it is the accounts marked before that was
-     * true. A row nobody can account for is worse than one that says why it is
-     * there, so it is a filter rather than a report nobody opens.
-     */
-    where.push(sql`customers.third_party and not exists (
-      select 1 from customer_distributors d where d.customer_id = customers.id
-    )`);
-  }
-  if (filters.thirdParty === "delivered") {
-    // Goods actually went here, on somebody else's bill. `customers.id` spelled
-    // out: Drizzle renders the column reference bare, and a bare `id` inside a
-    // correlated subquery binds to the INNER table and matches every row.
-    where.push(sql`exists (
-      select 1 from orders o where o.delivery_customer_id = customers.id
-    )`);
+  if (filters.thirdParty) {
+    // Several of these are structurally different queries, not different
+    // values of one column — "lead" excludes the mark, "delivered" is an
+    // `exists` over orders — so a multi-select here is an OR of whichever
+    // per-value clauses were picked, built from the same one-value function
+    // every caller passing a single value already used.
+    const picked = splitMulti(filters.thirdParty).map(thirdPartyClause);
+    if (picked.length === 1) where.push(picked[0]);
+    else if (picked.length > 1) where.push(sql`(${or(...picked)})`);
   }
 
   return where.length ? and(...where) : undefined;
+}
+
+/** `,`-separated in the URL and in every filter field — one split, one place. */
+function splitMulti(value: string): string[] {
+  return value
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+/**
+ * One value becomes `= x`; more than one becomes `in (x, y, …)`. Built by
+ * hand rather than with Drizzle's `inArray` because `expr` here is a raw
+ * computed `sql<T>` fragment — a label or a resolved name — never a real
+ * column `inArray` could bind to.
+ */
+function inList(expr: SQL, commaSeparated: string): SQL {
+  const values = splitMulti(commaSeparated);
+  if (values.length <= 1) return sql`${expr} = ${values[0] ?? commaSeparated}`;
+  return sql`${expr} in (${sql.join(
+    values.map((v) => sql`${v}`),
+    sql`, `,
+  )})`;
+}
+
+/** One account-type filter's own clause — the value `customerFilterClause` used to inline directly. */
+function thirdPartyClause(value: string): SQL {
+  switch (value) {
+    case "yes":
+      return sql`customers.third_party`;
+    case "no":
+      return sql`not customers.third_party`;
+    // A marked account is not offered as a lead or a direct customer, because
+    // the mark is the more specific answer to the same question. Reading the
+    // kind alone would put every marked shop back in the list the filter
+    // exists to take it out of.
+    case "lead":
+      return sql`customers.kind = 'lead' and not customers.third_party`;
+    case "customer":
+      return sql`customers.kind = 'customer' and not customers.third_party`;
+    case "nodistributor":
+      /*
+       * Converted, and nobody recorded as billing them. It should be empty —
+       * `convertToThirdParty` writes the mark and the arrangement in one
+       * transaction — and what fills it is the accounts marked before that
+       * was true. A row nobody can account for is worse than one that says
+       * why it is there, so it is a filter rather than a report nobody opens.
+       */
+      return sql`customers.third_party and not exists (
+        select 1 from customer_distributors d where d.customer_id = customers.id
+      )`;
+    case "delivered":
+      // Goods actually went here, on somebody else's bill. `customers.id`
+      // spelled out: Drizzle renders the column reference bare, and a bare
+      // `id` inside a correlated subquery binds to the INNER table and
+      // matches every row.
+      return sql`exists (
+        select 1 from orders o where o.delivery_customer_id = customers.id
+      )`;
+    default:
+      // An unrecognised value matches nothing rather than everything — the
+      // safe direction for a filter nobody asked for.
+      return sql`false`;
+  }
 }
 
 export async function listCustomersPage(

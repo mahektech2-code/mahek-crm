@@ -148,6 +148,12 @@ export function AccountsShell({
          * desk carries the way it carries who bills which account.
          */
         { href: "/accounts/targets", label: "Sales targets", icon: "target" },
+        /*
+         * A rupee quota per customer, not a person's KPI — the same rule
+         * that keeps Monthly Targets its own module in the CRM rather than a
+         * tab bolted onto Sales targets.
+         */
+        { href: "/accounts/customer-targets", label: "Customer targets", icon: "target" },
       ],
     },
     {

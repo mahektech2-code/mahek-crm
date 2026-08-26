@@ -205,6 +205,12 @@ export const APP_MODULES: AppModule[] = [
     "Accounts",
     "Setting what each person is asked for in a month, publishing it, and revising it with a reason. Accounts assign and manage targets here; a manager keeps the same screen in the Sales Dashboard and can act on a shortfall directly.",
   ),
+  accounts(
+    "customer-targets",
+    "Customer targets",
+    "Accounts",
+    "A rupee quota per customer per month — the same screen the CRM's own Monthly Targets reaches, from a second door. Where a person's target asks what they should sell overall, this asks what one account should buy.",
+  ),
   accounts("record", "Record a payment", "Money"),
   accounts(
     "outstanding",
