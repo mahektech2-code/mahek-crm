@@ -247,6 +247,12 @@ export const APP_MODULES: AppModule[] = [
     "Where each salesman walks. Withholding it leaves the handset's route screen empty, because nothing else writes a plan.",
   ),
   sales("visits", "Visits", "Field work", "Every visit logged, and which of them could not be verified."),
+  sales(
+    "activity-history",
+    "Activity history",
+    "Field work",
+    "Field salesman visits and calls from before this app existed, imported from a prior system's own log — including the shop names that still need matching to a real account.",
+  ),
   sales("leads", "Leads", "Field work", "Shops that are not on the book yet."),
 
   sales("orders", "Orders", "Commercial", "Orders taken in the field, and the ones over a credit limit."),

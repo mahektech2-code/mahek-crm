@@ -66,6 +66,7 @@ const NAV: Array<{ label: string; items: Item[] }> = [
       { href: "/sales/tasks", label: "Tasks", icon: "task" },
       { href: "/sales/journeys", label: "Journey planning", icon: "route" },
       { href: "/sales/visits", label: "Visits", icon: "visit" },
+      { href: "/sales/activity-history", label: "Activity history", icon: "clock" },
       { href: "/sales/leads", label: "Leads", icon: "spark" },
     ],
   },
