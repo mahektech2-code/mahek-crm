@@ -9,6 +9,11 @@ import { Inter_600SemiBold } from '@expo-google-fonts/inter/600SemiBold';
 import { color } from '../src/theme/tokens';
 import { BootProvider } from '../src/state/boot';
 import { animationFor, durationFor, ROUTE_MOTION, useReduceMotion } from '../src/components/ui/motion';
+/* Side-effect only: registers the trail's background task. The OS can launch
+   the app headless, with no screen ever mounted, purely to deliver a location
+   and run it — so this has to load on every bundle start, not on the first
+   screen that happens to import it. See `sync/trail.ts`. */
+import '../src/sync/trail';
 
 /* Called in global scope and deliberately not awaited — that is what its own
    documentation asks for, and awaiting it inside a hook races the first paint. */
