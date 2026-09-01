@@ -243,8 +243,8 @@ export const SETTINGS = [
     category: "queue",
     label: "Show payment calls in the Call Log",
     description:
-      "Customers the collections cadence says are due a payment call appear at the top of the calling list rather than only on the payment screen. The collections engine still decides WHEN — this only decides whether the call log shows what it decided, so a telecaller works one list instead of two.",
-    default: true,
+      "Customers the collections cadence says are due a payment call appear at the top of the calling list rather than only on the payment screen. The collections engine still decides WHEN — this only decides whether the call log shows what it decided. Off by default: a payment call is collections' own worklist, at /crm/payments, and folding it into the Call Log put it in front of telecallers who cannot act on it.",
+    default: false,
   },
   {
     key: "queue.showOrderStatus",
