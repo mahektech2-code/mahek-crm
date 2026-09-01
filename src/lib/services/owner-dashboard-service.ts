@@ -71,20 +71,30 @@ export type OwnerFilters = {
  * a manager granted it must not quietly see the whole company through it —
  * every other list in this product narrows the same way, and a reporting
  * screen that does not is a way around the narrowing rather than a report.
+ *
+ * `unscoped` is for the one caller that is not a signed-in request at all:
+ * the nightly snapshot. `resolveScope()` reads the session cookie, which does
+ * not exist in a cron context — calling it there does not narrow to "nobody
+ * in particular", it THROWS, which used to abort the rest of the nightly job
+ * silently, every night, with nothing after this step in the sequence (the
+ * performance recompute, the target seeding) ever running. A cron job has no
+ * "whoever happened to sign in" to narrow to, so it asks for the whole book
+ * by name instead of discovering it has no session.
  */
 export async function ownerFilterClause(
   filters: OwnerFilters,
   alias = "c",
+  opts: { unscoped?: boolean } = {},
 ): Promise<SQL> {
-  const ctx = await resolveScope();
   const parts: SQL[] = [sql`true`];
+
+  const ids = opts.unscoped ? null : scopedUserIds((await resolveScope()).scope);
 
   // `scopedToUsers` is written against the literal table name `customers`, so
   // it is only usable where the alias IS that. Everything here aliases to `c`,
   // so the same rule is re-expressed rather than borrowed — and it is the ONE
   // place in this file that happens, with the clause below kept in step by
   // hand rather than by hope.
-  const ids = scopedUserIds(ctx.scope);
   if (ids) {
     const list = sql.join(
       ids.map((i: string) => sql`${i}`),
@@ -362,9 +372,10 @@ export type BandedCustomer = {
 export async function bandedCustomers(
   today: BusinessDate,
   filters: OwnerFilters,
+  opts: { unscoped?: boolean } = {},
 ): Promise<{ banded: BandedCustomer[]; neverOrdered: number; defaultCycle: number }> {
   const config = await getConfig();
-  const where = await ownerFilterClause(filters);
+  const where = await ownerFilterClause(filters, "c", opts);
 
   const rows = await db.execute<{
     id: string;
@@ -492,9 +503,10 @@ export async function snapshotCustomerHealth(
   today: BusinessDate,
 ): Promise<{ customers: number; period: string }> {
   const period = monthKey(today);
-  // No filters: the snapshot is the whole book. Narrowing it would make the
-  // history depend on who happened to run the job.
-  const { banded } = await bandedCustomers(today, {});
+  // No filters, and unscoped: the snapshot is the whole book. Narrowing it
+  // would make the history depend on who happened to run the job — and there
+  // is no signed-in "who" at all, this runs from the nightly cron.
+  const { banded } = await bandedCustomers(today, {}, { unscoped: true });
 
   for (const c of banded) {
     await db.execute(sql`

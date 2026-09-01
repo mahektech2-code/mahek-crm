@@ -19,6 +19,7 @@ import { sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { complaints, customers, orders, paymentReceipts, users } from "@/db/schema";
+import { endOfMonth } from "@/lib/business-date";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
@@ -41,8 +42,17 @@ let TODAY: string;
 let admin: typeof users.$inferSelect;
 let rahul: typeof users.$inferSelect;
 
-/** A window wide enough that "created today" always lands inside it. */
-const thisMonth = () => ({ from: `${TODAY.slice(0, 7)}-01`, to: TODAY });
+/**
+ * A window wide enough that "created today" always lands inside it.
+ *
+ * `to` is the LAST day of the month, not `TODAY` — several tests below build
+ * order dates as a fixed day of the month (`at(20)`, for instance) rather
+ * than relative to today, on the assumption that today is late enough in the
+ * month for that day to have already happened. Bounding the window at
+ * `TODAY` instead made every one of those orders read as not-yet-placed on
+ * the 1st of a month, which is exactly when this suite ran and failed.
+ */
+const thisMonth = () => ({ from: `${TODAY.slice(0, 7)}-01`, to: endOfMonth(TODAY.slice(0, 7)) });
 
 async function makeUser(name: string, role: "telecaller" | "admin") {
   const [row] = await db
