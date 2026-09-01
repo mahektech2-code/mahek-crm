@@ -14,7 +14,7 @@
  * Needs mahekone_test, which `npm run test:db` creates from the committed
  * migrations. The harness truncates between tests.
  */
-import { after, before, beforeEach, describe, test } from "node:test";
+import { after, before, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
