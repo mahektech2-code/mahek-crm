@@ -437,6 +437,11 @@ export function QueueScreen({
                 >
                   <Link
                     href={`/crm/customers/${h.customerId}`}
+                    // Every held-back row is visible at once when this panel
+                    // is open, so the default prefetch renders every one of
+                    // their customer pages on the one shared vCPU this app
+                    // runs on. Nobody opens most of them.
+                    prefetch={false}
                     className="w-[260px] text-sm text-body"
                   >
                     {h.name}
@@ -478,6 +483,12 @@ export function QueueScreen({
                   <Link
                     href={`/crm/customers/${r.customerId}`}
                     onClick={(e) => e.stopPropagation()}
+                    // Every row on the list is visible at once, so the
+                    // default prefetch renders every customer's page on the
+                    // one shared vCPU this app runs on — a burst of full
+                    // server renders on every visit to the Call Log, for
+                    // pages almost nobody clicks into from here.
+                    prefetch={false}
                     className="shrink-0 text-sm font-medium text-ink no-underline hover:underline"
                   >
                     {r.name}
