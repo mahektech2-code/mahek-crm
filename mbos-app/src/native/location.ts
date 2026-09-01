@@ -114,3 +114,14 @@ const LAST_FIX = 'lastFix';
 function remember(fix: Fix): void {
   void setKv(LAST_FIX, JSON.stringify(fix)).catch(() => {});
 }
+
+/**
+ * The same remembering, for a fix that did not come through `getFix()` —
+ * the background trail task, which gets its points pushed by the OS rather
+ * than asking the radio itself. Exported rather than folded into `getFix()`
+ * because a background fix has no accuracy threshold to compare against and
+ * no permission to ask for; it already has both, settled, from the OS.
+ */
+export function rememberFix(fix: Fix): void {
+  remember(fix);
+}
