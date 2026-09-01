@@ -79,7 +79,7 @@ export type CallTarget = {
     | "ad_hoc";
   queuePosition?: number;
   name: string;
-  contactPerson: string;
+  contactPerson: string | null;
   phone: string;
   city: string;
   ownerName: string | null;

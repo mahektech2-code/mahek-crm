@@ -175,7 +175,7 @@ export function RecordScreen({
   customer: {
     id: string;
     name: string;
-    contactPerson: string;
+    contactPerson: string | null;
     phone: string;
     city: string;
     ownerName: string | null;
@@ -425,7 +425,7 @@ export function RecordScreen({
          * the owner is only the answer for a LEAD, which is what
          * `ASSIGNED_TO_SQL` reads for one.
          */
-        subtitle={`${customer.contactPerson} · ${phoneDisplay(customer.phone)} · ${customer.city} · ${
+        subtitle={`${customer.contactPerson ?? "No contact person"} · ${phoneDisplay(customer.phone)} · ${customer.city} · ${
           customer.kind === "lead"
             ? `Lead owner ${customer.ownerName ?? "unassigned"}`
             : `Sales ${customer.salesAmName ?? "unassigned"} · Sales manager ${customer.salesManagerName ?? "unassigned"} · Back office ${customer.backOfficeAmName ?? "unassigned"}`

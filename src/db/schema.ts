@@ -714,7 +714,12 @@ export const customers = pgTable(
     /* identity and contact */
     externalCode: text("external_code"),
     name: text("name").notNull(),
-    contactPerson: text("contact_person").notNull(),
+    /**
+     * Not every account has a single named contact — a shop counter often
+     * does not — so this is no longer required to save the record. Business
+     * name and phone still are: those are what a bill and a call need.
+     */
+    contactPerson: text("contact_person"),
     phone: text("phone").notNull(),
     whatsappPhone: text("whatsapp_phone"),
     whatsappDest: destKindEnum("whatsapp_dest").notNull().default("personal"),
