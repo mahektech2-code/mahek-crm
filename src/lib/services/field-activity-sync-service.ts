@@ -29,25 +29,26 @@ import {
 
 /* ---------------------------------------------------------------------------
  * Pulling the Activity tab of a defunct prior system ("Mahek EMP 2.0") into
- * `sheet_field_activity_rows` — a one-time historical backfill, built on the
- * same machinery every other sheet import here uses.
+ * `sheet_field_activity_rows` — built on the same staging/hash/reconcile
+ * machinery every other sheet import here uses.
  *
  * ONE ROW PER SHEET ROW, keyed on the sheet's own Activity ID — closer in
  * shape to the order sheet's per-line rows than to the employee master's
- * one-row-per-person. RECONCILE is the only mode this ships with: a full
- * compare is what correctly marks a row `withdrawn` and catches an edit, and
- * this is a hand-triggered backfill rather than a cadence, so the cost of a
- * full compare every run is not something anybody pays repeatedly.
+ * one-row-per-person. It takes the order sheet's OWN append/reconcile split
+ * rather than HRMS's always-reconcile: this tab is tens of thousands of rows,
+ * so a full compare on every tick would spend API quota reading rows an
+ * append pass would never have missed. `field-activity-append` runs the
+ * watermark-only pass often; the reconcile mode — the only mode this
+ * started with, while the tab was still a hand-triggered backfill — is now
+ * the once-a-day pass that catches an edited or withdrawn row.
  *
- * The live Google Sheet is not reachable yet (see the sync run's own
- * `spreadsheetId`/`tabTitle` — they are best-effort until confirmed against
- * the real tab). `reader` lets the initial backfill run against a CSV
- * export instead, sharing every line of parsing, matching and staging with
- * whatever later reads the real sheet.
+ * The service account was confirmed to hold Viewer on the live sheet on
+ * 2026-09-01; before that, `reader` let the initial backfill run against a
+ * CSV export instead (`scripts/import-field-activity-csv.ts`), sharing every
+ * line of parsing, matching and staging with the live sheet read now.
  * ------------------------------------------------------------------------- */
 
 export const FIELD_ACTIVITY_SOURCE = "field_activity";
-/** Best-effort until the live sheet is reachable and this is confirmed. */
 export const FIELD_ACTIVITY_TAB = "Activity";
 export const FIELD_ACTIVITY_SPREADSHEET_ID = "1lo03cZH6LFAr5lWYm-U1wEzh9MvNqZT9R4ZBU_Vqfi4";
 
