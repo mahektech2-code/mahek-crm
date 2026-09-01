@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { addDays } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
+import { shortDateWithYear } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import {
   activityPointsForDay,
@@ -46,6 +48,7 @@ export default async function Page({
   const now = await today();
   const day = /^\d{4}-\d{2}-\d{2}$/.test(params.day ?? "") ? params.day! : now;
   const view = params.view === "today" ? "today" : "now";
+  const isToday = day === now;
 
   const [rows, config] = await Promise.all([lastKnownPositions(day), getConfig()]);
   const tracking = config["mbos.location.trackWhileWorking"];
@@ -67,14 +70,59 @@ export default async function Page({
       <ScreenHeader
         title="Live map"
         subtitle={
-          view === "now"
-            ? "Where everyone is right now. Tracking runs only while a salesman is checked in, so a missing pin usually means an unstarted day."
-            : "Every position each salesman has reported today, in the order it arrived, with the work marked along it. The shape of a day says more than a count of visits does."
+          isToday
+            ? view === "now"
+              ? "Where everyone is right now. Tracking runs only while a salesman is checked in, so a missing pin usually means an unstarted day."
+              : "Every position each salesman has reported today, in the order it arrived, with the work marked along it. The shape of a day says more than a count of visits does."
+            : view === "now"
+              ? `Each salesman's last reported position on ${shortDateWithYear(day, now)}. A missing pin means no fix was ever recorded that day.`
+              : `Every position each salesman reported on ${shortDateWithYear(day, now)}, in the order it arrived, with the work marked along it.`
         }
         actions={
-          <div className="flex flex-none gap-2">
-            <Mode day={day} view={view} mine="now" label="Where they are now" />
-            <Mode day={day} view={view} mine="today" label="Everywhere they went today" />
+          <div className="flex flex-none items-center gap-2">
+            {/* A day, not a month — see the comment on `Mode` for why this is a
+                link and bookmarks, the same reasoning `/sales/targets` already
+                uses for its own prev/next. Tomorrow is never offered: nothing
+                has reported a position yet that has not happened. */}
+            <Link
+              href={`/sales/live?day=${addDays(day, -1)}&view=${view}`}
+              className="inline-flex h-8 items-center rounded-[4px] border border-line bg-surface px-2.5 text-body no-underline hover:bg-canvas hover:no-underline"
+              title="The day before"
+            >
+              ←
+            </Link>
+            <span className="px-1 text-[13px] whitespace-nowrap text-muted">
+              {isToday ? "Today" : shortDateWithYear(day, now)}
+            </span>
+            {isToday ? (
+              <span
+                className="inline-flex h-8 w-8 items-center justify-center text-line"
+                aria-hidden
+                title="Nothing has been reported for tomorrow yet"
+              >
+                →
+              </span>
+            ) : (
+              <Link
+                href={`/sales/live?day=${addDays(day, 1)}&view=${view}`}
+                className="inline-flex h-8 items-center rounded-[4px] border border-line bg-surface px-2.5 text-body no-underline hover:bg-canvas hover:no-underline"
+                title="The day after"
+              >
+                →
+              </Link>
+            )}
+            <Mode
+              day={day}
+              view={view}
+              mine="now"
+              label={isToday ? "Where they are now" : "Last position that day"}
+            />
+            <Mode
+              day={day}
+              view={view}
+              mine="today"
+              label={isToday ? "Everywhere they went today" : "Everywhere they went"}
+            />
           </div>
         }
       />
@@ -88,7 +136,11 @@ export default async function Page({
       ) : noSignal.length ? (
         <Banner
           tone="danger"
-          title={`${plural(noSignal.length, "salesman", "salesmen")} with no GPS signal`}
+          title={
+            isToday
+              ? `${plural(noSignal.length, "salesman", "salesmen")} with no GPS signal`
+              : `${plural(noSignal.length, "salesman", "salesmen")} with no GPS signal that day`
+          }
           body="Tracking only runs while they are checked in, so this usually means the day was never started."
         />
       ) : null}
@@ -109,9 +161,11 @@ export default async function Page({
         {tracking
           ? `A handset reports its position about every ${everyMinutes} minutes while the day is open, and stops at the check-out. `
           : ""}
-        {out.length
-          ? `${plural(out.length, "salesman", "salesmen")} out now. `
-          : "Nobody is checked in at the moment. "}
+        {isToday
+          ? out.length
+            ? `${plural(out.length, "salesman", "salesmen")} out now. `
+            : "Nobody is checked in at the moment. "
+          : ""}
         The streets come from OpenFreeMap, which needs no key and sets no limit; the pins are
         drawn here from MahekOne&rsquo;s own data, so no position is ever sent to it.
       </p>

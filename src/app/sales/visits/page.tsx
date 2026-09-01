@@ -192,6 +192,40 @@ export default async function Page({
                     {v.unverifiedReason ?? v.deviationReason}
                   </span>
                 ) : null}
+                {v.checkInLat != null || v.checkOutLat != null ? (
+                  <span className="mt-0.5 flex gap-2.5 text-[12px]">
+                    {v.checkInLat != null && v.checkInLng != null ? (
+                      <a
+                        href={`https://www.google.com/maps?q=${v.checkInLat},${v.checkInLng}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-brand no-underline hover:underline"
+                        title={
+                          v.checkInAccuracyM != null
+                            ? `Accurate to about ${v.checkInAccuracyM} m`
+                            : "Accuracy was not reported"
+                        }
+                      >
+                        Check-in ↗
+                      </a>
+                    ) : null}
+                    {v.checkOutLat != null && v.checkOutLng != null ? (
+                      <a
+                        href={`https://www.google.com/maps?q=${v.checkOutLat},${v.checkOutLng}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-brand no-underline hover:underline"
+                        title={
+                          v.checkOutAccuracyM != null
+                            ? `Accurate to about ${v.checkOutAccuracyM} m`
+                            : "Accuracy was not reported"
+                        }
+                      >
+                        Check-out ↗
+                      </a>
+                    ) : null}
+                  </span>
+                ) : null}
               </Cell>
             </Row>
           ))}

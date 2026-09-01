@@ -624,6 +624,14 @@ export type VisitRow = {
   notes: string | null;
   transcript: string | null;
   orderValuePaise: number;
+  /** Where the check-in and check-out actually landed — for a manager who
+   * wants to see the point itself rather than read the mismatch sentence. */
+  checkInLat: number | null;
+  checkInLng: number | null;
+  checkInAccuracyM: number | null;
+  checkOutLat: number | null;
+  checkOutLng: number | null;
+  checkOutAccuracyM: number | null;
 };
 
 /**
@@ -648,7 +656,11 @@ export async function visitsList(day: string): Promise<VisitRow[]> {
            (case when v.shop_photo_id is not null then 1 else 0 end
             + case when v.cust_photo_id is not null then 1 else 0 end)::int as "photos",
            coalesce((select o.total_amount from orders o where o.id = v.linked_order_id), 0)
-             as "orderValuePaise"
+             as "orderValuePaise",
+           v.check_in_lat as "checkInLat", v.check_in_lng as "checkInLng",
+           v.check_in_accuracy_m as "checkInAccuracyM",
+           v.check_out_lat as "checkOutLat", v.check_out_lng as "checkOutLng",
+           v.check_out_accuracy_m as "checkOutAccuracyM"
       from mbos_visits v
       join users u on u.id = v.salesman_id
       join customers c on c.id = v.customer_id
