@@ -648,6 +648,7 @@ export async function listTargets(period?: string) {
       )`,
       target: monthlyTargets.targetAmount,
       isDefault: monthlyTargets.isDefault,
+      carriedForward: monthlyTargets.carriedForward,
       achieved: sql<number>`coalesce((
         select sum(o.total_amount) from ${orders} o
          where o.customer_id = customers.id
@@ -685,16 +686,19 @@ export async function listTargets(period?: string) {
     // Every active customer ends up with a figure — no blanks on the screen.
     const resolved =
       r.target !== null
-        ? { amount: r.target, isDefault: r.isDefault ?? true }
-        : resolveTarget(
-            {
-              manualAmount: null,
-              trailingAchievement: [],
-              customerSince: r.customer.customerSince,
-              month: `${key}-01`,
-            },
-            config,
-          );
+        ? { amount: r.target, isDefault: r.isDefault ?? true, carriedForward: r.carriedForward ?? false }
+        : {
+            ...resolveTarget(
+              {
+                manualAmount: null,
+                trailingAchievement: [],
+                customerSince: r.customer.customerSince,
+                month: `${key}-01`,
+              },
+              config,
+            ),
+            carriedForward: false,
+          };
     const achieved = Number(r.achieved ?? 0);
     return {
       customerId: r.customer.id,
@@ -707,6 +711,7 @@ export async function listTargets(period?: string) {
       gap: Math.max(0, resolved.amount - achieved),
       percent: resolved.amount ? Math.round((achieved / resolved.amount) * 100) : 0,
       isDefault: resolved.isDefault,
+      carriedForward: resolved.carriedForward,
     };
   });
 }
@@ -736,6 +741,7 @@ export async function setTarget(
       month,
       targetAmount: amount,
       isDefault: false,
+      carriedForward: false,
       setById: ctx.user.id,
       createdById: ctx.user.id,
       updatedById: ctx.user.id,
@@ -745,6 +751,10 @@ export async function setTarget(
       set: {
         targetAmount: amount,
         isDefault: false,
+        // A real save is a decision, even one that reproduces a carried
+        // figure verbatim — so a carried target stops being one the moment a
+        // manager has actually looked at it and confirmed it.
+        carriedForward: false,
         setById: ctx.user.id,
         updatedAt: new Date(),
         updatedById: ctx.user.id,

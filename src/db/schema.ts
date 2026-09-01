@@ -2071,6 +2071,15 @@ export const monthlyTargets = pgTable(
     targetAmount: bigint("target_amount", { mode: "number" }).notNull(),
     /** The interface badges auto-applied defaults distinctly. */
     isDefault: boolean("is_default").notNull().default(true),
+    /**
+     * Copied forward from last month's MANUAL target rather than typed this
+     * month, or recomputed from trailing sales. `seedMonthlyTargets` sets it
+     * true on the row it carries forward, and `setTarget` clears it the
+     * moment a manager actually saves a real change — the same pattern as
+     * `sales_targets.carried_forward`. A carried target is never a default:
+     * it is still somebody's decision, just not one made for this month.
+     */
+    carriedForward: boolean("carried_forward").notNull().default(false),
     setById: text("set_by_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
