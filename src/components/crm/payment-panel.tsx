@@ -17,6 +17,7 @@ import { useToast } from "@/components/ui/toast";
 import { NextStepDialog } from "@/components/crm/next-step-dialog";
 import type { NextStep } from "@/lib/engines/next-step";
 import {
+  holdOtherReasonsUntilReminder,
   logPaymentFollowUpAction,
   queueMessage,
   confirmMessageSent,
@@ -74,6 +75,10 @@ export function PaymentPanel(props: {
    */
   const [logged, setLogged] = React.useState<LoggedFollowUp | null>(null);
   const [stepOpen, setStepOpen] = React.useState(false);
+  // Bumped on every save — see the same field on CallPanel. NextStepDialog
+  // is one long-lived instance here too, so its "holding..." state needs a
+  // key that changes with each save rather than surviving into the next.
+  const [logSeq, setLogSeq] = React.useState(0);
 
   function dismiss(advance: boolean) {
     setStepOpen(false);
@@ -93,12 +98,14 @@ export function PaymentPanel(props: {
           onLogged={(entry) => {
             setLogged(entry);
             setStepOpen(true);
+            setLogSeq((n) => n + 1);
           }}
         />
       ) : null}
 
       {logged ? (
         <NextStepDialog
+          key={logSeq}
           open={stepOpen}
           savedLabel={logged.label}
           step={logged.step}
@@ -106,6 +113,9 @@ export function PaymentPanel(props: {
           defaultNext={logged.wantsNext}
           onNext={() => dismiss(true)}
           onStay={() => dismiss(false)}
+          onHold={async (reminderId) => {
+            await holdOtherReasonsUntilReminder(reminderId);
+          }}
         />
       ) : null}
     </>

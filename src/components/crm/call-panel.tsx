@@ -16,7 +16,10 @@ import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { NextStepDialog } from "@/components/crm/next-step-dialog";
-import { saveInteractionAction } from "@/lib/actions/crm";
+import {
+  holdOtherReasonsUntilReminder,
+  saveInteractionAction,
+} from "@/lib/actions/crm";
 import type { NextStep } from "@/lib/engines/next-step";
 import {
   OUTCOMES_BY_TYPE,
@@ -248,6 +251,7 @@ export type CustomerInfo = {
     totalOrderCount: number;
   }>;
   productHistorySource: "external" | "crm";
+  pendingHold: { headline: string; detail: string; reminderId: string; dueDate: string } | null;
 };
 
 const TYPES: Array<{
@@ -378,6 +382,11 @@ export function CallPanel(props: CallPanelProps) {
   const router = useRouter();
   const [logged, setLogged] = React.useState<LoggedCall | null>(null);
   const [nextStepOpen, setNextStepOpen] = React.useState(false);
+  // Bumped on every save. The dialog is one long-lived instance reused
+  // across calls, so its own "holding..." state needs a key that changes
+  // with it — otherwise a hold confirmation from one customer's call would
+  // still be showing on the next one's.
+  const [logSeq, setLogSeq] = React.useState(0);
 
   function dismiss(advance: boolean) {
     setNextStepOpen(false);
@@ -396,12 +405,14 @@ export function CallPanel(props: CallPanelProps) {
           onLogged={(call) => {
             setLogged(call);
             setNextStepOpen(true);
+            setLogSeq((n) => n + 1);
           }}
         />
       ) : null}
 
       {logged ? (
         <NextStepDialog
+          key={logSeq}
           open={nextStepOpen}
           savedLabel={logged.label}
           step={logged.step}
@@ -409,6 +420,9 @@ export function CallPanel(props: CallPanelProps) {
           defaultNext={logged.wantsNext}
           onNext={logged.canAdvance ? () => dismiss(true) : null}
           onStay={() => dismiss(false)}
+          onHold={async (reminderId) => {
+            await holdOtherReasonsUntilReminder(reminderId);
+          }}
         />
       ) : null}
     </>
@@ -1171,6 +1185,18 @@ function CallPanelForm({
             </Badge>
           ) : null}
         </div>
+
+        {/*
+         * This customer is ALREADY in the state the post-save dialog's hold
+         * action exists for — a pending reminder standing behind an earlier
+         * reason — read live rather than waiting for a new call to surface
+         * it. The same offer, the same action, just a second place it can
+         * be taken from: a telecaller opening this record has not yet
+         * logged anything and should not have to, just to resolve it.
+         */}
+        {info?.pendingHold ? (
+          <PendingHoldBanner hold={info.pendingHold} />
+        ) : null}
 
         {/* --------------------------------------- information | the form */}
         {queueComplete ? (
@@ -2449,6 +2475,49 @@ function outcomeTone(outcome: string | null) {
     default:
       return "neutral" as const;
   }
+}
+
+/**
+ * The same conflict the post-save dialog offers to hold, surfaced before
+ * anything new is logged. `CallPanelForm` is keyed on the customer, so this
+ * component remounts — and its local state resets cleanly — every time a
+ * different customer is opened; no extra key needed here.
+ */
+function PendingHoldBanner({
+  hold,
+}: {
+  hold: NonNullable<CustomerInfo["pendingHold"]>;
+}) {
+  const [holding, setHolding] = React.useState(false);
+  const [held, setHeld] = React.useState(false);
+
+  if (held) return null;
+
+  return (
+    <div className="border-b border-warn-line bg-warn-soft px-6 py-2.5 text-[13px] text-warn-ink">
+      <div className="flex items-center justify-between gap-3">
+        <span>
+          <span className="font-medium">{hold.headline}.</span> {hold.detail}
+        </span>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={holding}
+          onClick={async () => {
+            setHolding(true);
+            try {
+              await holdOtherReasonsUntilReminder(hold.reminderId);
+              setHeld(true);
+            } finally {
+              setHolding(false);
+            }
+          }}
+        >
+          {holding ? "Holding…" : `Hold other calls until ${shortDate(hold.dueDate)}`}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 /** One figure in the header strip. */

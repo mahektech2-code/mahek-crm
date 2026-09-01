@@ -36,6 +36,8 @@ import {
   onOrAfterWorkingDay,
 } from "../business-date";
 import { err, ok, okVoid, type Result } from "../result";
+import { shortDateWithYear } from "../format";
+import { nextStepForCustomer } from "./queue-service";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -62,6 +64,16 @@ export type ReminderRow = {
   displayStatus: "overdue" | "due_today" | "upcoming" | "completed" | "dismissed";
   overdueDays: number;
   rescheduledOften: boolean;
+  holdOtherReasonsUntilDue: boolean;
+  /**
+   * True where this reminder is the promise standing between the customer
+   * and an earlier reason the system would otherwise surface — the same
+   * live read `nextStepForCustomer` gives the confirmation dialog, so a
+   * review pass here and the dialog can never disagree about which
+   * reminders are worth holding. Only ever true for a future, pending
+   * reminder: an overdue or due-today one already IS the answer.
+   */
+  hasConflictToday: boolean;
 };
 
 export async function listReminders(view?: ReminderView): Promise<ReminderRow[]> {
@@ -81,6 +93,25 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
     .innerJoin(users, eq(users.id, reminders.assignedUserId))
     .where(ids ? inArray(reminders.assignedUserId, ids) : undefined)
     .orderBy(asc(reminders.dueDate));
+
+  // Only a FUTURE pending reminder can be the thing standing between a
+  // customer and an earlier reason — an overdue or due-today one is already
+  // the answer, so there is nothing behind it to hold back from. Checked
+  // through the exact same `nextStepForCustomer` the confirmation dialog
+  // reads, never a second copy of the comparison.
+  const candidates = rows.filter(
+    ({ reminder: r }) => r.status === "pending" && r.dueDate > day,
+  );
+  const conflicts = new Set(
+    (
+      await Promise.all(
+        candidates.map(async ({ reminder: r }) => {
+          const step = await nextStepForCustomer(r.customerId);
+          return step?.promise?.reminderId === r.id ? r.id : null;
+        }),
+      )
+    ).filter((id): id is string => id !== null),
+  );
 
   const mapped = rows.map(({ reminder: r, customerName, assignedUserName }) => {
     const overdueDays = Math.max(0, daysBetween(r.dueDate, day));
@@ -110,6 +141,8 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
       overdueDays,
       rescheduledOften:
         r.rescheduleCount >= config["reminders.rescheduleWarningCount"],
+      holdOtherReasonsUntilDue: r.holdOtherReasonsUntilDue,
+      hasConflictToday: conflicts.has(r.id),
     } satisfies ReminderRow;
   });
 
@@ -253,6 +286,44 @@ export async function rescheduleReminder(
     .where(eq(reminders.id, reminderId));
 
   return okVoid(`Moved to ${due}`);
+}
+
+/**
+ * A telecaller's own decision that this promise covers what the system would
+ * otherwise ask about — see `holdWindow` in `lib/engines/queue.ts` for what
+ * it actually does. Offered beside the promise sentence, never inferred.
+ */
+export async function holdOtherReasonsUntilReminder(
+  reminderId: string,
+): Promise<Result> {
+  const ctx = await resolveScope();
+  const day = await today();
+
+  const [existing] = await db.select().from(reminders).where(eq(reminders.id, reminderId));
+  if (!existing) return err("That reminder no longer exists.", "not_found");
+  if (existing.status !== "pending") {
+    return err("That reminder is no longer pending.", "validation");
+  }
+  if (existing.dueDate <= day) {
+    return err(
+      "That reminder is due today or already overdue, so there is nothing to hold until.",
+      "validation",
+    );
+  }
+  if (existing.holdOtherReasonsUntilDue) {
+    return okVoid(`Already holding until ${shortDateWithYear(existing.dueDate, day)}`);
+  }
+
+  await db
+    .update(reminders)
+    .set({
+      holdOtherReasonsUntilDue: true,
+      updatedAt: new Date(),
+      updatedById: ctx.user.id,
+    })
+    .where(eq(reminders.id, reminderId));
+
+  return okVoid(`Holding other calls until ${shortDateWithYear(existing.dueDate, day)}`);
 }
 
 /** Carrying forward always lands on a working day. */

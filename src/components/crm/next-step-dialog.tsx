@@ -1,9 +1,11 @@
 "use client";
 
+import * as React from "react";
 import { Modal } from "@/components/ui/modal";
 import { Badge, Button } from "@/components/ui/primitives";
 import type { NextStep } from "@/lib/engines/next-step";
 import { NEXT_STEP_LABELS } from "@/lib/next-step-labels";
+import { shortDate } from "@/lib/format";
 
 /* ---------------------------------------------------------------------------
  * "Saved — and here is what happens next."
@@ -32,6 +34,7 @@ export function NextStepDialog({
   defaultNext,
   onNext,
   onStay,
+  onHold,
 }: {
   open: boolean;
   /** What was just logged, in the words the outcome list uses. */
@@ -44,9 +47,19 @@ export function NextStepDialog({
   /** Null on screens with no queue to advance through. */
   onNext: (() => void) | null;
   onStay: () => void;
+  /**
+   * Set the hold on `step.promise`'s reminder. Null wherever there is no
+   * promise to hold, or the caller has nowhere to send the action — the
+   * button only ever appears when this AND `step.promise` are both present.
+   */
+  onHold?: ((reminderId: string) => Promise<void>) | null;
 }) {
   const stops = step ? step.kind === "decide" || step.kind === "none" : false;
   const tone = step ? TONE[step.kind] : null;
+  const [holding, setHolding] = React.useState(false);
+  const [held, setHeld] = React.useState(false);
+
+  const promise = step?.promise ?? null;
 
   return (
     <Modal
@@ -92,6 +105,41 @@ export function NextStepDialog({
           </p>
 
           <p className="text-sm leading-relaxed text-body">{step.detail}</p>
+
+          {/*
+           * The system said one date, the customer another — this is where
+           * a telecaller resolves it. Offered only where there IS a
+           * conflict (a live `promise` on the step): once held, or once the
+           * promise date IS the answer, there is nothing left to offer.
+           */}
+          {promise && onHold ? (
+            <div>
+              {held ? (
+                <p className="text-sm font-medium text-success">
+                  Holding until {shortDate(promise.dueDate)} ✓
+                </p>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={holding}
+                  onClick={async () => {
+                    setHolding(true);
+                    try {
+                      await onHold(promise.reminderId);
+                      setHeld(true);
+                    } finally {
+                      setHolding(false);
+                    }
+                  }}
+                >
+                  {holding
+                    ? "Holding…"
+                    : `Hold other calls until ${shortDate(promise.dueDate)}`}
+                </Button>
+              )}
+            </div>
+          ) : null}
 
           {/*
            * "Not today" and "on the 20th" are two different facts, and a

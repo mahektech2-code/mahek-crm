@@ -63,7 +63,7 @@ describe("E10 next step", () => {
         // Ordered today, so nothing of their own competes for three weeks.
         lastOrderDate: TODAY,
         cycleDays: 30,
-        reminders: [{ id: "r1", dueDate: due, note: "Ring back Friday" }],
+        reminders: [{ id: "r1", dueDate: due, note: "Ring back Friday", holdOtherReasonsUntilDue: false }],
       }),
     );
 
@@ -82,7 +82,7 @@ describe("E10 next step", () => {
         calledToday: true,
         lastOrderDate: addDays(TODAY, -25), // past the day-21 stock check
         cycleDays: 30,
-        reminders: [{ id: "r1", dueDate: due, note: "Ring back" }],
+        reminders: [{ id: "r1", dueDate: due, note: "Ring back", holdOtherReasonsUntilDue: false }],
       }),
     );
 
@@ -268,7 +268,7 @@ describe("E10 next step", () => {
     const step = ask(
       candidate({
         reminders: [
-          { id: "rem_1", dueDate: addDays(TODAY, 3), note: "asked for Thursday" },
+          { id: "rem_1", dueDate: addDays(TODAY, 3), note: "asked for Thursday", holdOtherReasonsUntilDue: false },
         ],
       }),
     );
@@ -276,5 +276,84 @@ describe("E10 next step", () => {
     assert.equal(step.kind, "booked");
     assert.match(step.headline, /^Comes back to your Call Log /);
     assert.match(step.detail, /Call them back/);
+    // The promise already IS the answer — nothing left to offer a hold on.
+    assert.equal(step.promise, null);
+  });
+
+  test("a scheduled reason plus a later promise reads as two full sentences", () => {
+    // The reason ("... they are due to reorder") carries no trailing period —
+    // it is normally read as a standalone phrase — so appending the promise
+    // sentence with only a space ran the two together with no separator: "due
+    // to reorder You have also promised...". A telecaller reading this on a
+    // call needs a full stop there, not a run-on.
+    const step = ask(
+      candidate({
+        calledToday: true,
+        lastOrderDate: addDays(TODAY, -30),
+        cycleDays: 30,
+        reminders: [
+          {
+            id: "rem_1",
+            dueDate: addDays(TODAY, 2),
+            note: "Call After Stock Confirmation",
+            holdOtherReasonsUntilDue: false,
+          },
+        ],
+      }),
+    );
+
+    assert.equal(step.kind, "scheduled");
+    assert.match(step.detail, /due to reorder\. You have also promised/);
+    assert.doesNotMatch(step.detail, /reorder You have also/);
+    // Structured, not just folded into the sentence — this is what the
+    // "hold other calls" action reads to know which reminder to hold.
+    assert.deepEqual(step.promise, {
+      reminderId: "rem_1",
+      dueDate: addDays(TODAY, 2),
+      note: "Call After Stock Confirmation",
+    });
+  });
+
+  test("a promise appended to an already-punctuated detail does not double the period", () => {
+    const step = ask(
+      candidate({
+        lastAnsweredOutcome: "no_answer",
+        noAnswerCount: 999, // exhausts the ladder -> "unreachable", detail ends in "."
+        lastNoAnswerAt: TODAY,
+        reminders: [
+          { id: "rem_1", dueDate: addDays(TODAY, 5), note: "try the landline", holdOtherReasonsUntilDue: false },
+        ],
+      }),
+    );
+
+    assert.doesNotMatch(step.detail, /\.\./);
+    assert.match(step.detail, /leave them\. You have also promised/);
+  });
+
+  test("once a reminder is held, the day search skips straight to it and answers booked", () => {
+    // Independently overdue for a reorder — without the hold this resolves
+    // to "scheduled, tomorrow" exactly like NEW RANG RAJ did. With it, the
+    // day-by-day search finds nothing to say until the promise's own date.
+    const dueDate = addDays(TODAY, 3);
+    const step = ask(
+      candidate({
+        calledToday: true,
+        lastOrderDate: addDays(TODAY, -32),
+        cycleDays: 30,
+        reminders: [
+          {
+            id: "rem_1",
+            dueDate,
+            note: "Call after stock confirmation",
+            holdOtherReasonsUntilDue: true,
+          },
+        ],
+      }),
+    );
+
+    assert.equal(step.kind, "booked");
+    assert.equal(step.date, dueDate);
+    // Already the answer — nothing left for a hold action to offer.
+    assert.equal(step.promise, null);
   });
 });

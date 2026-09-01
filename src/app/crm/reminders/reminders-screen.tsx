@@ -22,6 +22,7 @@ import {
   cancelReminder,
   completeReminder,
   createReminder,
+  holdOtherReasonsUntilReminder,
   rescheduleReminder,
 } from "@/lib/actions/crm";
 import { addDays, ageLabel, shortDate, today } from "@/lib/format";
@@ -230,6 +231,21 @@ export function RemindersScreen({
                     ? ` · moved ${r.rescheduleCount} times`
                     : ""}
                 </div>
+                {/*
+                 * The same conflict the confirmation dialog offers to hold,
+                 * read the same live way — see `hasConflictToday` on
+                 * `listReminders`. A manager working this list needs to see
+                 * it without opening every customer.
+                 */}
+                {r.holdOtherReasonsUntilDue ? (
+                  <Badge tone="success" className="mt-1.5">
+                    Holding other calls until this date
+                  </Badge>
+                ) : r.hasConflictToday ? (
+                  <Badge tone="warn" className="mt-1.5">
+                    An earlier reason would call this customer sooner
+                  </Badge>
+                ) : null}
               </div>
 
               {r.status === "pending" ? (
@@ -246,6 +262,17 @@ export function RemindersScreen({
                   </Button>
                   <RowMenu
                     items={[
+                      ...(r.hasConflictToday && !r.holdOtherReasonsUntilDue
+                        ? [
+                            {
+                              label: `Hold other calls until ${shortDate(r.dueDate)}`,
+                              onSelect: async () => {
+                                await run(holdOtherReasonsUntilReminder(r.id));
+                                router.refresh();
+                              },
+                            },
+                          ]
+                        : []),
                       {
                         label: "Reschedule",
                         onSelect: () => setRescheduling(r),
