@@ -780,12 +780,22 @@ export async function recomputeLastContact(customerId: string): Promise<void> {
 
 /* ------------------------------------------------------- E5 target seeding */
 
-/** On the first of the month, seed a default target for anyone without one. */
+/**
+ * On the first of the month, a customer's target starts as last month's —
+ * IF a manager actually set one. A default is this month's guess at what
+ * somebody will buy, computed fresh below from trailing sales; carrying a
+ * guess forward as though it were a decision is how a customer ends up with
+ * a target nobody actually asked for. Only a target set BY HAND carries, the
+ * same rule `copyForwardSalesTargets` applies to a person's own target —
+ * and only where nothing has been asked for `period` yet, so a target
+ * already typed or already carried this month is left alone.
+ */
 export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
   const config = await getConfig();
   const day = await today();
   const period = forMonth ?? monthKey(day);
   const [year, month] = period.split("-").map(Number);
+  const [prevYear, prevMonth] = addMonths(period, -1).split("-").map(Number);
 
   const active = await db
     .select()
@@ -798,9 +808,36 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
     .where(and(eq(monthlyTargets.year, year), eq(monthlyTargets.month, month)));
   const have = new Set(existing.map((e) => e.customerId));
 
+  const priorManual = await db
+    .select({ customerId: monthlyTargets.customerId, targetAmount: monthlyTargets.targetAmount })
+    .from(monthlyTargets)
+    .where(
+      and(
+        eq(monthlyTargets.year, prevYear),
+        eq(monthlyTargets.month, prevMonth),
+        eq(monthlyTargets.isDefault, false),
+      ),
+    );
+  const carryFrom = new Map(priorManual.map((r) => [r.customerId, r.targetAmount]));
+
   let created = 0;
   for (const c of active) {
     if (have.has(c.id)) continue;
+
+    const carried = carryFrom.get(c.id);
+    if (carried !== undefined) {
+      await db.insert(monthlyTargets).values({
+        id: id("tgt"),
+        customerId: c.id,
+        year,
+        month,
+        targetAmount: carried,
+        isDefault: false,
+        carriedForward: true,
+      });
+      created++;
+      continue;
+    }
 
     const trailing: number[] = [];
     for (let i = 1; i <= config["targets.trailingMonths"]; i++) {

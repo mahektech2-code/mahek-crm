@@ -40,6 +40,7 @@ const files = [
   "src/lib/feedback.test.ts",
   "src/lib/activity-location.test.ts",
   "src/lib/outstanding-import.test.ts",
+  "src/lib/monthly-targets.test.ts",
   "src/lib/performance.test.ts",
   "src/lib/owner-dashboard.test.ts",
   "src/lib/founder-dashboard.test.ts",

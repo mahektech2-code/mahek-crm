@@ -52,6 +52,7 @@ type Row = {
   gap: number;
   percent: number;
   isDefault: boolean;
+  carriedForward: boolean;
   cycleDays: number;
   contactsThisMonth: number;
 };
@@ -320,6 +321,12 @@ export function MonthlyTargetsScreen({
                       <span className="ml-2">
                         <Badge tone="muted">Default</Badge>
                       </span>
+                    ) : r.carriedForward ? (
+                      <span className="ml-2">
+                        <Badge tone="brand" title="Set by hand last month, continuing unchanged">
+                          Carried forward
+                        </Badge>
+                      </span>
                     ) : null}
                   </Td>
                   <Td align="right">{money(r.target)}</Td>
@@ -490,7 +497,9 @@ function SetTargetModalBody({ row, period, onClose, onSubmit }: SetTargetProps) 
         hint={
           row?.isDefault
             ? "This customer is currently on the auto-applied default. Saving replaces it with a real number."
-            : undefined
+            : row?.carriedForward
+              ? "Carried forward from last month, unchanged. Saving fixes this month's own number."
+              : undefined
         }
       >
         <MoneyInput value={amount} onChange={(e) => setAmount(e.target.value)} />
