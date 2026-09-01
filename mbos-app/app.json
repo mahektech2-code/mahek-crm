@@ -35,9 +35,14 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "MahekOne records where a visit, an order or a payment was taken, and follows your route only while your day is open. It stops when you check out."
+          "locationWhenInUsePermission": "MahekOne records where a visit, an order or a payment was taken, and follows your route only while your day is open. It stops when you check out.",
+          "locationAlwaysAndWhenInUsePermission": "MahekOne follows your route while your day is open, including with the screen off — a call between two shops should not leave a gap in the map. It stops the moment you check out.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
-      ]
+      ],
+      "expo-task-manager"
     ],
     "scheme": "mbos",
     "backgroundColor": "#F7F8FA"

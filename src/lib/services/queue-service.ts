@@ -42,7 +42,7 @@ import {
  * Carried through from the candidate scan so opening a panel costs nothing.
  */
 export type QueueRow = QueueResult["entries"][number] & {
-  contactPerson: string;
+  contactPerson: string | null;
   phone: string;
   city: string;
   ownerName: string | null;

@@ -531,7 +531,14 @@
       "idx": 75,
       "version": "7",
       "when": 1787500960000,
-      "tag": "0075_payment_due_off_call_log",
+      "tag": "0075_contact_person_optional",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1787501020000,
+      "tag": "0076_payment_due_off_call_log",
       "breakpoints": true
     }
   ]

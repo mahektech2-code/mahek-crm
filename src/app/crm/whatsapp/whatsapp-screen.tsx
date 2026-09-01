@@ -46,7 +46,7 @@ import { money, phoneDisplay, stamp } from "@/lib/format";
 type Customer = {
   id: string;
   name: string;
-  contactPerson: string;
+  contactPerson: string | null;
   phone: string;
   city: string;
   outstanding: number;
