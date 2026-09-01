@@ -553,7 +553,7 @@ const customerSchema = z.object({
     .string()
     .trim()
     .min(2, "Enter the business name as it appears on the bill."),
-  contactPerson: z.string().trim().min(2, "Enter the contact person."),
+  contactPerson: z.string().trim().optional(),
   phone: z
     .string()
     .trim()
@@ -599,7 +599,7 @@ export async function createCustomer(
     await db.insert(customers).values({
       id: customerId,
       name: parsed.data.name,
-      contactPerson: parsed.data.contactPerson,
+      contactPerson: parsed.data.contactPerson || null,
       phone: parsed.data.phone,
       city: parsed.data.city,
       // Adding from this screen creates a LEAD. Nobody is a customer until
@@ -676,8 +676,8 @@ export async function updateCustomer(
       .update(customers)
       .set({
         ...(parsed.data.name ? { name: parsed.data.name } : {}),
-        ...(parsed.data.contactPerson
-          ? { contactPerson: parsed.data.contactPerson }
+        ...(parsed.data.contactPerson !== undefined
+          ? { contactPerson: parsed.data.contactPerson || null }
           : {}),
         ...(parsed.data.phone ? { phone: parsed.data.phone } : {}),
         ...(parsed.data.city ? { city: parsed.data.city } : {}),

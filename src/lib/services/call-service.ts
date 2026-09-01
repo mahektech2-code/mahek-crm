@@ -117,7 +117,7 @@ export async function handoverSummary(customerId: string): Promise<Handover | nu
 
   const text = [
     `*Handover - ${customer.name}*`,
-    `${customer.contactPerson} · ${customer.phone}`,
+    `${customer.contactPerson ?? "No contact person"} · ${customer.phone}`,
     "",
     "Last three interactions:",
     ...history.map((h) => `· ${h.at.slice(0, 10)} ${h.summary}: ${h.detail ?? "no note"}`),

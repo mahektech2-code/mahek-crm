@@ -753,7 +753,7 @@ export async function stageOneBatch(): Promise<BatchCandidates> {
 export type FollowUpPanelData = {
   customerId: string;
   name: string;
-  contactPerson: string;
+  contactPerson: string | null;
   phone: string;
   city: string;
   ownerName: string | null;

@@ -7,7 +7,7 @@ import { money, shortDate } from "./format";
 
 export type MergeSource = {
   name: string;
-  contactPerson: string;
+  contactPerson: string | null;
   city: string;
   phone: string;
   outstanding: number;
@@ -35,7 +35,7 @@ export type MergeField = (typeof MERGE_FIELDS)[number];
 export function mergeValues(source: MergeSource): Record<string, string> {
   return {
     customer: source.name,
-    contact: source.contactPerson,
+    contact: source.contactPerson ?? "",
     city: source.city,
     outstanding: money(source.outstanding),
     last_order_date: source.lastOrderDate ? shortDate(source.lastOrderDate) : "",

@@ -95,7 +95,7 @@ async function mergeValuesFor(customerId: string): Promise<MergeValues> {
 
   return {
     customer: c.name,
-    contact: c.contactPerson,
+    contact: c.contactPerson ?? "",
     city: c.city,
     phone: c.phone,
     outstanding: c.outstanding ? money(c.outstanding) : "",

@@ -32,7 +32,7 @@ type Reason = { kind: string; label: string; weight: number };
 type Row = {
   customerId: string;
   name: string;
-  contactPerson: string;
+  contactPerson: string | null;
   phone: string;
   score: number;
   /** Every reason the customer qualified, strongest first. */

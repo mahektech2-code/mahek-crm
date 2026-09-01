@@ -28,7 +28,7 @@ export type PendingOrder = {
   customerId: string;
   customerName: string;
   customerCity: string;
-  contactPerson: string;
+  contactPerson: string | null;
   phone: string;
   /** What accounts are actually checking: can this customer take more credit. */
   outstanding: number;
