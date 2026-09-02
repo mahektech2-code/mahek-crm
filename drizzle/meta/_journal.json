@@ -575,6 +575,13 @@
       "when": 1787501320000,
       "tag": "0081_field_customer_pins",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1787501380000,
+      "tag": "0082_sales_manager_decided_at",
+      "breakpoints": true
     }
   ]
 }

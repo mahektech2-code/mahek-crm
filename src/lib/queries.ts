@@ -14,7 +14,6 @@ import {
   complaints,
   customerAmChanges,
   customers,
-  employeeReporting,
   employees,
   helpArticles,
   notifications,
@@ -27,6 +26,7 @@ import { getScope } from "./scope";
 import { today as businessToday } from "./recompute";
 import { daysBetween, monthKey, type DateRange } from "./business-date";
 import { eodMetricsFor, eodMetricsForRange } from "./services/eod-service";
+import { managerNameByEmployeeName } from "./services/org-service";
 
 /* ---------------------------------------------------------------------------
  * Reads for the screens. Every one resolves scope, so a missed check cannot
@@ -320,31 +320,18 @@ export async function listBackOfficeCandidates(): Promise<
  * never wrote, and this is not a source anything downstream may read.
  */
 export async function salesManagerSuggestions(): Promise<Record<string, string>> {
-  const [employeeRows, links] = await Promise.all([
-    db
-      .select({ id: employees.id, name: employees.name })
-      .from(employees)
-      .where(eq(employees.status, "active")),
-    db
-      .select({ employeeId: employeeReporting.employeeId, managerId: employeeReporting.managerId })
-      .from(employeeReporting),
-  ]);
-  if (!links.length) return {};
+  const managerNameOf = await managerNameByEmployeeName();
+  if (!managerNameOf.size) return {};
 
   const candidates = await listBackOfficeCandidates();
   const candidateIdByName = new Map(candidates.map((c) => [c.name.trim().toLowerCase(), c.id]));
-  const employeeNameById = new Map(employeeRows.map((e) => [e.id, e.name]));
 
   const suggestions: Record<string, string> = {};
-  for (const link of links) {
-    const personName = employeeNameById.get(link.employeeId);
-    const managerName = employeeNameById.get(link.managerId);
-    if (!personName || !managerName) continue; // a leaver on either end
-    const personCandidateId = candidateIdByName.get(personName.trim().toLowerCase());
+  for (const candidate of candidates) {
+    const managerName = managerNameOf.get(candidate.name.trim().toLowerCase());
+    if (!managerName) continue;
     const managerCandidateId = candidateIdByName.get(managerName.trim().toLowerCase());
-    if (personCandidateId && managerCandidateId) {
-      suggestions[personCandidateId] = managerCandidateId;
-    }
+    if (managerCandidateId) suggestions[candidate.id] = managerCandidateId;
   }
   return suggestions;
 }

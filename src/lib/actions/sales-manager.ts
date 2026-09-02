@@ -63,16 +63,6 @@ const chunked = <T,>(xs: T[]): T[][] => {
   return out;
 };
 
-/**
- * What was left alone, said in the same breath as what moved.
- *
- * A count smaller than the one on the screen, with nothing explaining the
- * difference, reads as a transfer that half failed.
- */
-const leadNote = (leads: number) =>
-  leads
-    ? ` · ${leads} lead${leads === 1 ? "" : "s"} left alone — a lead answers to its owner`
-    : "";
 
 const schema = z.object({
   /**
@@ -261,32 +251,15 @@ export async function assignSalesManager(
     }
 
     /*
-     * A LEAD has no seat for this to sit above.
-     *
-     * The sales manager is who the SALESPERSON answers to, and a lead has no
-     * salesperson — it has an owner, which is a different column and a
-     * different fact. That is why the list draws no sales manager line on a
-     * lead and the record page names none: writing one would store something
-     * no screen can show, which is the state that ends with somebody insisting
-     * they set it and nobody able to find it.
-     *
-     * They are counted and said out loud rather than dropped on the floor. A
-     * filtered transfer over a mixed book is the ordinary case — "everything
-     * Rahul had" catches his prospects too — and a message that reported a
-     * smaller number than the screen promised, with no explanation, reads as a
-     * transfer that half failed.
+     * A lead has a seat for this to sit above too — its OWNER, not a
+     * salesperson it does not have. That used to be the reason a lead was
+     * refused here outright: the list drew no sales manager line on one and
+     * the record page named none, so writing one stored something no screen
+     * could show. Both now draw it — the row card and the add/edit form treat
+     * "who the owner answers to" as worth recording before a lead has ever
+     * ordered — so the seat is eligible on a lead exactly as it is on a
+     * customer, and this action no longer excludes it.
      */
-    const leads = rows.filter((r) => r.kind === "lead").length;
-    const eligible = rows.filter((r) => r.kind !== "lead");
-
-    if (!eligible.length) {
-      return err(
-        leads
-          ? "Those are all leads. A lead answers to its owner and has no salesperson for a sales manager to sit above."
-          : "Nothing matches those filters.",
-        "validation",
-      );
-    }
 
     /*
      * A no-op writes nothing at all — no column, no history row, no
@@ -298,16 +271,14 @@ export async function assignSalesManager(
      * name-only, because employee-to-employee is null → null on the id and a
      * real change of person.
      */
-    const moving = eligible.filter((r) =>
+    const moving = rows.filter((r) =>
       r.salesManagerId !== null || toUserId !== null
         ? r.salesManagerId !== toUserId
         : (r.salesManagerPersonName ?? null) !== toName,
     );
 
     if (!moving.length) {
-      return okVoid(
-        `Nothing to change — they already have that sales manager${leadNote(leads)}`,
-      );
+      return okVoid("Nothing to change — they already have that sales manager");
     }
 
     const now = new Date();
@@ -320,6 +291,14 @@ export async function assignSalesManager(
           .set({
             salesManagerId: toUserId,
             salesManagerPersonName: toName,
+            // A person just decided this, same as `amDecidedAt` for the
+            // other two seats — see `recomputeSalesManagers` in recompute.ts,
+            // the nightly pass that keeps everybody ELSE's sales manager in
+            // step with the org chart. Without this mark, tonight's run
+            // would read the change this action just made as nobody having
+            // decided anything and quietly restate whatever the org chart
+            // says instead — the same trap `am_decided_at` exists to avoid.
+            salesManagerDecidedAt: now,
             updatedAt: now,
             updatedById: ctx.user.id,
           })
@@ -443,7 +422,7 @@ export async function assignSalesManager(
     return okVoid(
       (toName
         ? `Sales manager set to ${toName} on ${plural(moving.length)}`
-        : `Sales manager cleared on ${plural(moving.length)}`) + leadNote(leads),
+        : `Sales manager cleared on ${plural(moving.length)}`),
     );
   } catch (e) {
     return fromThrown(e);

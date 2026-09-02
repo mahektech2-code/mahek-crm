@@ -821,7 +821,8 @@ export const customers = pgTable(
      */
     salesPersonName: text("sales_person_name"),
     /**
-     * Who the SALESPERSON answers to.
+     * Who the SALESPERSON answers to — the OWNER, on a lead that has no
+     * salesperson yet.
      *
      * A third seat, and a different question to the two beside it. Sales is
      * who sells to this account; back office is who raises its paperwork; this
@@ -829,30 +830,45 @@ export const customers = pgTable(
      * a region's book with, and the person whose departure moves a hundred
      * accounts at once.
      *
-     * It drives NOTHING. `ASSIGNED_TO_SQL` does not read it, no queue is
-     * dated from it, no target counts against it and no scope narrows by it.
-     * That is exactly why it is a manager's to set while `customer.reassign`
-     * stays accounts' and admin's: moving a sales manager moves no numbers
-     * between anybody's people, so the conflict that keeps the sales seat out
-     * of a manager's hands does not exist here.
+     * It drives NOTHING outside itself. `ASSIGNED_TO_SQL` does not read it, no
+     * queue is dated from it, no target counts against it and no scope
+     * narrows by it — moving a sales manager moves no numbers between
+     * anybody's people, which is exactly why it is a manager's to set while
+     * `customer.reassign` stays accounts' and admin's.
      *
-     * There is no `sales_manager_decided_at` beside it, and there must not be
-     * one. `am_decided_at` exists because the sheet keeps restating the sales
-     * and back office seats on every pass; the customer master carries no
-     * sales manager at all, so there is no source to hold off — and a mark
-     * that guards nothing is a mark somebody later reads as meaning something.
+     * IT USED TO HAVE NO SOURCE TO RESTATE IT, and `sales_manager_decided_at`
+     * did not exist for exactly that reason: nothing outside MahekOne stated
+     * a sales manager, so there was nothing for a decided mark to hold off.
+     * The org chart (`employee_reporting`) changed that — it is a real record
+     * of who a salesperson reports to, kept inside MahekOne itself, and
+     * `recomputeSalesManagers()` reads it nightly for every customer this
+     * column has not been decided about, exactly the way `recomputeSalesPeople`
+     * already reads the sheet for `salesPersonName`. The decided mark is what
+     * makes that safe: a person's own pick has to survive the next org-chart
+     * change the same way a reassignment has to survive the next sheet sync.
      */
     salesManagerId: text("sales_manager_id").references(() => users.id),
     /**
      * The same seat as a NAME, for somebody with no MahekOne login.
      *
-     * The mirror of `backOfficeName` and for the same reason: several of the
-     * people running a sales line here have never signed in, and refusing to
-     * record them would mean the true answer could not be written down at all.
-     * Unlike `salesPersonName` this is NOT a cache of the sheet — nothing
-     * rebuilds it, because nothing outside MahekOne states it.
+     * The mirror of `backOfficeName`, and unlike it this one CAN be rebuilt:
+     * `recomputeSalesManagers()` writes it from the org chart precisely when
+     * the matched employee has no `users` account to give an id to, the same
+     * "id first, name where there is none" rule `backOfficeName` already
+     * follows.
      */
     salesManagerPersonName: text("sales_manager_person_name"),
+    /**
+     * When a PERSON decided this seat, as opposed to `recomputeSalesManagers`
+     * last restating it from the org chart. The same job `am_decided_at` does
+     * for the sales and back office seats: a null here is not "unassigned",
+     * it is "nobody has ever overridden the org chart's own answer" — and it
+     * is what the nightly recompute checks before touching the column, so a
+     * manager's own choice is never quietly reverted by the next org-chart
+     * change the way an unmarked reassignment used to be reverted by the
+     * sheet. Set by `assignSalesManager` on every write, clear otherwise.
+     */
+    salesManagerDecidedAt: timestamp("sales_manager_decided_at", { withTimezone: true }),
     /** Dispatch, billing and paperwork. Null on leads, and may be unassigned. */
     backOfficeAmId: text("back_office_am_id").references(() => users.id),
     /**

@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { orderCountsSql } from "./order-status";
-import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   bills,
@@ -17,9 +17,11 @@ import {
   salesTargets,
   sheetPartyRows,
   sheetTakenOrderRows,
+  users,
   waMessages,
 } from "@/db/schema";
 import { getConfig } from "./config/store";
+import { managerNameByEmployeeName } from "./services/org-service";
 import type { Config } from "./config/registry";
 import { buyingCycle } from "./engines/buying-cycle";
 import {
@@ -1022,6 +1024,78 @@ export async function recomputeSalesPeople(): Promise<number> {
     await db
       .update(customers)
       .set({ salesPersonName: next })
+      .where(eq(customers.id, c.id));
+    changed++;
+  }
+  return changed;
+}
+
+/**
+ * The third seat, kept in step with the org chart — every customer whose
+ * sales manager NOBODY HAS DECIDED, which is `recomputeSalesPeople`'s own
+ * rule read for a different column: this rewrites every undecided customer
+ * on every pass, including back to null, because a salesperson removed from
+ * the org chart must not go on being displayed by a cache nobody clears.
+ *
+ * A LEAD is resolved through its OWNER, a customer through its salesperson —
+ * `salesPersonName` first, the linked account second, the same fallback
+ * `SALES_AM_NAME_SQL` already uses. Both are matched to the org chart by
+ * NAME, through `managerNameByEmployeeName()`, because nothing links a
+ * `users` account back to the employee record it may have come from.
+ *
+ * `sales_manager_decided_at` is what makes this safe to run nightly: a
+ * customer a person has ever set this on is skipped entirely, so their own
+ * pick survives every future org-chart change the same way a reassignment
+ * survives the sheet sync.
+ */
+export async function recomputeSalesManagers(): Promise<number> {
+  const managerNameOf = await managerNameByEmployeeName();
+
+  // Nothing on the org chart yet is not the same as nobody having a sales
+  // manager. A pass with an empty map would blank every undecided customer's
+  // seat rather than leave it as it was.
+  if (!managerNameOf.size) return 0;
+
+  const [rows, activeUsers] = await Promise.all([
+    db
+      .select({
+        id: customers.id,
+        kind: customers.kind,
+        salesPersonName: customers.salesPersonName,
+        salesAmId: customers.salesAmId,
+        ownerId: customers.ownerId,
+        salesManagerId: customers.salesManagerId,
+        salesManagerPersonName: customers.salesManagerPersonName,
+      })
+      .from(customers)
+      .where(isNull(customers.salesManagerDecidedAt)),
+    db.select({ id: users.id, name: users.name }).from(users).where(eq(users.active, true)),
+  ]);
+
+  if (!rows.length) return 0;
+
+  const userNameById = new Map(activeUsers.map((u) => [u.id, u.name]));
+  const userIdByName = new Map(activeUsers.map((u) => [u.name.trim().toLowerCase(), u.id]));
+
+  let changed = 0;
+  for (const c of rows) {
+    const assignedName =
+      c.kind === "lead"
+        ? (c.ownerId ? (userNameById.get(c.ownerId) ?? null) : null)
+        : (c.salesPersonName ?? (c.salesAmId ? (userNameById.get(c.salesAmId) ?? null) : null));
+
+    const managerName = assignedName
+      ? (managerNameOf.get(assignedName.trim().toLowerCase()) ?? null)
+      : null;
+
+    const nextId = managerName ? (userIdByName.get(managerName.trim().toLowerCase()) ?? null) : null;
+    const nextName = managerName && !nextId ? managerName : null;
+
+    if (nextId === c.salesManagerId && nextName === c.salesManagerPersonName) continue;
+
+    await db
+      .update(customers)
+      .set({ salesManagerId: nextId, salesManagerPersonName: nextName })
       .where(eq(customers.id, c.id));
     changed++;
   }

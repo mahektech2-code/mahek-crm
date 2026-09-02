@@ -40,6 +40,7 @@ import {
   sheetPartyRows,
   sheetSyncRuns,
   customerAmChanges,
+  employeeReporting,
   employees,
   notifications,
   syncConflicts,
@@ -68,6 +69,7 @@ import {
   recomputeBillStatuses,
   recomputeAllBillPaid,
   recomputeSalesPeople,
+  recomputeSalesManagers,
 } from "@/lib/recompute";
 import { addDays } from "@/lib/business-date";
 import { updateAccountManagers } from "@/lib/actions/account-manager";
@@ -7645,6 +7647,10 @@ describe("The sales manager is a third seat, and a manager's to set", () => {
       .where(eq(customers.id, customer.id));
     assert.equal(row.salesManagerId, rakesh.id);
     assert.equal(row.salesManagerPersonName, rakesh.name);
+    assert.ok(
+      row.salesManagerDecidedAt,
+      "a person just decided this — the nightly org-chart recompute has to know to leave it alone",
+    );
   });
 
   /**
@@ -7798,13 +7804,12 @@ describe("The sales manager is a third seat, and a manager's to set", () => {
   });
 
   /**
-   * A lead answers to its OWNER and has no salesperson, so there is no seat
-   * for this one to sit above. Writing it anyway would store something no
-   * screen shows — the list draws no sales manager line on a lead and the
-   * record page names none — which ends with somebody insisting they set it
-   * and nobody able to find it.
+   * A lead answers to its OWNER, which is a seat this can sit above exactly
+   * as it sits above a customer's salesperson — worth recording before a
+   * lead has ever ordered, which is why the row card and the add/edit form
+   * both draw this line on a lead too.
    */
-  test("a lead is left alone, counted, and said out loud", async () => {
+  test("a lead gets a sales manager exactly as a customer does", async () => {
     await makeCustomer(priya.id, { name: "Real Customer" });
     await makeCustomer(priya.id, {
       name: "Just A Lead",
@@ -7820,17 +7825,12 @@ describe("The sales manager is a third seat, and a manager's to set", () => {
       expectedCount: 2,
     });
     assert.equal(done.ok, true, done.ok ? "" : done.error);
-    assert.match(
-      done.ok ? (done.message ?? "") : "",
-      /lead/i,
-      "a count smaller than the screen promised has to say why",
-    );
 
     const [lead] = await db
       .select()
       .from(customers)
       .where(eq(customers.name, "Just A Lead"));
-    assert.equal(lead.salesManagerId, null, "a lead has no seat for this to sit above");
+    assert.equal(lead.salesManagerId, rakesh.id, "a lead's owner has a seat for this to sit above too");
     const [customer] = await db
       .select()
       .from(customers)
@@ -7857,6 +7857,90 @@ describe("The sales manager is a third seat, and a manager's to set", () => {
       .from(customerAmChanges)
       .where(eq(customerAmChanges.customerId, customer.id));
     assert.equal(history.length, 0, "a no-op must not tell anybody their book grew");
+  });
+});
+
+describe("the sales manager seat, kept in step with the org chart", () => {
+  /** One `employee_reporting` link. */
+  async function reportsTo(employeeId: string, managerId: string) {
+    await db.insert(employeeReporting).values({ id: id("er"), employeeId, managerId });
+  }
+
+  test("resolves by id where the manager has an account, by name where they do not", async () => {
+    // "Priya" (linked-account salesperson) reports to "Manager", who has both
+    // an employee row and a real account — the id-resolution path.
+    const salespersonWithAccount = await makeEmployee("Priya", "active");
+    const bossWithAccount = await makeEmployee(manager.name, "active");
+    await reportsTo(salespersonWithAccount.id, bossWithAccount.id);
+
+    // "Bharat Singh" (sheet-name salesperson) reports to somebody with no
+    // MahekOne account at all — the name-only path.
+    const salespersonNameOnly = await makeEmployee("Bharat Singh", "active");
+    const bossNameOnly = await makeEmployee("Sales State Head", "active");
+    await reportsTo(salespersonNameOnly.id, bossNameOnly.id);
+
+    const viaAccount = await makeCustomer(priya.id, {
+      salesAmId: priya.id,
+      salesPersonName: null,
+    });
+    const viaSheetName = await makeCustomer(priya.id, {
+      salesAmId: null,
+      salesPersonName: "Bharat Singh",
+    });
+
+    const n = await recomputeSalesManagers();
+    assert.equal(n, 2);
+
+    const [a] = await db.select().from(customers).where(eq(customers.id, viaAccount.id));
+    assert.equal(a.salesManagerId, manager.id, "the manager's own account was matched by name");
+    assert.equal(a.salesManagerPersonName, null);
+
+    const [b] = await db.select().from(customers).where(eq(customers.id, viaSheetName.id));
+    assert.equal(b.salesManagerId, null, "no account is named \"Sales State Head\"");
+    assert.equal(b.salesManagerPersonName, "Sales State Head");
+  });
+
+  test("a decided sales manager survives the recompute, even when the org chart disagrees", async () => {
+    const salesperson = await makeEmployee("Priya", "active");
+    const orgChartBoss = await makeEmployee("Org Chart Boss", "active");
+    await reportsTo(salesperson.id, orgChartBoss.id);
+
+    const customer = await makeCustomer(priya.id, { salesAmId: priya.id });
+
+    setTestUser(manager);
+    const decided = await assignSalesManager({
+      scope: { kind: "ids", customerIds: [customer.id] },
+      target: { kind: "user", userId: rakesh.id },
+      reasonCode: "Salesperson left",
+    });
+    assert.equal(decided.ok, true, decided.ok ? "" : decided.error);
+
+    const n = await recomputeSalesManagers();
+    assert.equal(n, 0, "a decided customer is not even counted as touched");
+
+    const [row] = await db.select().from(customers).where(eq(customers.id, customer.id));
+    assert.equal(
+      row.salesManagerId,
+      rakesh.id,
+      "a person's own pick outranks the org chart, exactly as a reassignment outranks the sheet",
+    );
+  });
+
+  test("a lead's owner resolves through the org chart the same way a customer's salesperson does", async () => {
+    const owner = await makeEmployee("Priya", "active");
+    const boss = await makeEmployee("Lead Line Manager", "active");
+    await reportsTo(owner.id, boss.id);
+
+    const lead = await makeCustomer(priya.id, {
+      kind: "lead",
+      salesAmId: null,
+    });
+
+    const n = await recomputeSalesManagers();
+    assert.equal(n, 1);
+
+    const [row] = await db.select().from(customers).where(eq(customers.id, lead.id));
+    assert.equal(row.salesManagerPersonName, "Lead Line Manager");
   });
 });
 
