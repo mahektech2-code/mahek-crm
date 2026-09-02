@@ -36,11 +36,11 @@ type Message =
  * first use that the panel does not work.
  */
 const CHIPS = [
-  "Who is behind on visits this month?",
-  "Which salesman has collected the most?",
+  "Who is behind on target and by how much?",
   "Who has not checked in today?",
-  "Where are we against planned stops?",
-  "Who brought in the most new customers?",
+  "How much cash is the team holding?",
+  "How are we doing against the visit plan?",
+  "What should I look at first this morning?",
 ];
 
 export function AskPanel() {
@@ -131,7 +131,8 @@ function Drawer({ onClose }: { onClose: () => void }) {
           <div>
             <div className="text-lg font-semibold text-ink">Ask about the team</div>
             <div className="mt-0.5 text-[13px] text-muted">
-              Reads this month&apos;s visits, orders, collections and attendance.
+              Reads today&apos;s attendance and today&apos;s and this month&apos;s visits,
+              orders, targets, approvals, cash, leads, bills, leave and expenses.
             </div>
           </div>
           <button
