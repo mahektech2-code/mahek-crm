@@ -2,7 +2,8 @@ import Link from "next/link";
 import { stamp } from "@/lib/format";
 import { fieldTeam, knownRegions, managers } from "@/lib/services/sales-service";
 import { Managers } from "./managers";
-import { Cell, Empty, HeadCell, Pill, Row, ScreenHeader, Table, plural } from "../parts";
+import { Cell, Empty, HeadCell, Pill, Row, ScreenHeader, Table } from "../parts";
+import { plural } from "../words";
 
 export const metadata = { title: "The team — Sales Dashboard — MahekOne" };
 
