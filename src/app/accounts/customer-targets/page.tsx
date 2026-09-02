@@ -1,12 +1,8 @@
 import { can, requireCapability } from "@/lib/access-control";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { requireUser } from "@/lib/auth";
-import { currentPeriod } from "@/lib/queries";
-import {
-  listTargetOwnerOptions,
-  listTargetsPage,
-  shortfallAnalysis,
-} from "@/lib/services/worklist-services";
+import { currentPeriod, listAmFilterOptions } from "@/lib/queries";
+import { listTargetsPage, shortfallAnalysis } from "@/lib/services/worklist-services";
 import { MonthlyTargetsScreen } from "@/components/customers/monthly-targets-screen";
 
 export const metadata = { title: "Customer targets — Accounts — MahekOne" };
@@ -55,16 +51,17 @@ export default async function Page({
 
   const canSet = can(user.role, "target.set");
   const perPage = Number(one("per") ?? 25);
-  const [page, ownerOptions] = await Promise.all([
+  const [page, amOptions] = await Promise.all([
     listTargetsPage(activePeriod, {
       query: one("q"),
       status: one("status"),
-      owner: one("owner"),
-      basis: one("basis"),
+      salesAm: one("sales"),
+      salesManager: one("salesmanager"),
+      backOfficeAm: one("backoffice"),
       page: Number(one("page") ?? 1) || 1,
       perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
     }),
-    listTargetOwnerOptions(),
+    listAmFilterOptions(),
   ]);
   const shortfall = can(user.role, "target.shortfall")
     ? await shortfallAnalysis(activePeriod)
@@ -83,8 +80,9 @@ export default async function Page({
       filters={{
         query: one("q") ?? "",
         status: one("status") ?? "",
-        owner: one("owner") ?? "",
-        basis: one("basis") ?? "",
+        salesAm: one("sales") ?? "",
+        salesManager: one("salesmanager") ?? "",
+        backOfficeAm: one("backoffice") ?? "",
         perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
       }}
       pageInfo={{
@@ -94,7 +92,7 @@ export default async function Page({
         bookTotal: page.bookTotal,
       }}
       totals={page.totals}
-      ownerOptions={ownerOptions}
+      amOptions={amOptions}
     />
   );
 }

@@ -1,12 +1,8 @@
 import { requireUser } from "@/lib/auth";
 import { can } from "@/lib/access-control";
 import { getScope, scopeLabel } from "@/lib/scope";
-import { currentPeriod } from "@/lib/queries";
-import {
-  listTargetOwnerOptions,
-  listTargetsPage,
-  shortfallAnalysis,
-} from "@/lib/services/worklist-services";
+import { currentPeriod, listAmFilterOptions } from "@/lib/queries";
+import { listTargetsPage, shortfallAnalysis } from "@/lib/services/worklist-services";
 import { MonthlyTargetsScreen } from "@/components/customers/monthly-targets-screen";
 
 export const metadata = { title: "Monthly targets - MahekOne CRM" };
@@ -34,16 +30,19 @@ export default async function TargetsPage({
 
   const canSet = can(user.role, "target.set");
   const perPage = Number(one("per") ?? 25);
-  const [page, ownerOptions] = await Promise.all([
+  const [page, amOptions] = await Promise.all([
     listTargetsPage(activePeriod, {
       query: one("q"),
       status: one("status"),
-      owner: one("owner"),
-      basis: one("basis"),
+      salesAm: one("sales"),
+      salesManager: one("salesmanager"),
+      backOfficeAm: one("backoffice"),
       page: Number(one("page") ?? 1) || 1,
       perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
     }),
-    listTargetOwnerOptions(),
+    // The SAME names the Customers filter offers — read from the columns
+    // the sheet actually fills, most of whom have no MahekOne account.
+    listAmFilterOptions(),
   ]);
   // Coverage gap or customer gap — a manager-or-accounts read, so a
   // telecaller simply does not get the section rather than getting an error.
@@ -64,8 +63,9 @@ export default async function TargetsPage({
       filters={{
         query: one("q") ?? "",
         status: one("status") ?? "",
-        owner: one("owner") ?? "",
-        basis: one("basis") ?? "",
+        salesAm: one("sales") ?? "",
+        salesManager: one("salesmanager") ?? "",
+        backOfficeAm: one("backoffice") ?? "",
         perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
       }}
       pageInfo={{
@@ -75,7 +75,7 @@ export default async function TargetsPage({
         bookTotal: page.bookTotal,
       }}
       totals={page.totals}
-      ownerOptions={ownerOptions}
+      amOptions={amOptions}
     />
   );
 }
