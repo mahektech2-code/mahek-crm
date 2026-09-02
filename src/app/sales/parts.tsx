@@ -1,7 +1,10 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { cx } from "@/components/ui/primitives";
+import { Modal } from "@/components/ui/overlays";
+import { SalesIcon } from "./icons";
 
 /* ---------------------------------------------------------------------------
  * The pieces every Sales Dashboard screen is built from.
@@ -177,7 +180,7 @@ export function Table({
 }) {
   return (
     <div className="min-w-0 overflow-auto rounded-[6px] border border-line bg-surface">
-      <table style={{ minWidth }} className="w-full border-collapse">
+      <table style={{ minWidth }} className="w-full table-fixed border-collapse">
         <thead>
           <tr>{head}</tr>
         </thead>
@@ -215,6 +218,7 @@ export function Cell({
   colSpan,
   truncate,
   title,
+  onClick,
   children,
 }: {
   align?: "left" | "right";
@@ -222,6 +226,9 @@ export function Cell({
   colSpan?: number;
   truncate?: number;
   title?: string;
+  /** For a cell that holds its own interactive control (a `RowMenu`, say) on
+   * a row that is itself clickable — stops the row's own click firing too. */
+  onClick?: (e: React.MouseEvent) => void;
   children?: React.ReactNode;
 }) {
   return (
@@ -229,6 +236,7 @@ export function Cell({
       colSpan={colSpan}
       title={title ?? (truncate && typeof children === "string" ? children : undefined)}
       style={truncate ? { maxWidth: truncate, width: truncate } : undefined}
+      onClick={onClick}
       className={cx(
         "px-4 py-2.5 align-middle text-sm whitespace-nowrap text-body",
         align === "right" ? "text-right tabular-nums" : "text-left",
@@ -292,6 +300,133 @@ export function Pill({
     >
       {children}
     </span>
+  );
+}
+
+/**
+ * The `···` row menu, from the design's own `this.rowMenu(id, items)` — one
+ * popover pattern, reused on every table here (Performance, Journeys, Visits,
+ * Leads, Territory) rather than a fourth or fifth copy of the same
+ * open-state-plus-outside-click code.
+ */
+export type RowMenuItem = {
+  label: string;
+  /**
+   * Exactly one of these. `href` is a plain navigation — the common case for
+   * a menu built by a SERVER component, which cannot hand a client-side
+   * closure to `run` (a Server Component may not pass a function prop to a
+   * Client Component). `run` is for a screen that already has client-side
+   * state to act on.
+   */
+  href?: string;
+  run?: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+  /** Shown on hover — a disabled item has to say why. */
+  title?: string;
+};
+
+export function RowMenu({ items }: { items: RowMenuItem[] }) {
+  const [open, setOpen] = React.useState(false);
+  /* Fixed to the viewport, positioned from the trigger's own measured
+   * rect — not `absolute` inside the row. Every table here sits in an
+   * `overflow-auto` wrapper for horizontal scroll, and this menu's trigger is
+   * usually the LAST column: an absolutely-positioned popover anchored to it
+   * gets clipped by that same overflow the moment the table is wider than the
+   * screen, which is the ordinary case, not the edge one. */
+  const [pos, setPos] = React.useState<{ top: number; right: number } | null>(null);
+  const triggerRef = React.useRef<HTMLSpanElement>(null);
+  const menuRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    function onClick(e: MouseEvent) {
+      if (
+        menuRef.current?.contains(e.target as Node) ||
+        triggerRef.current?.contains(e.target as Node)
+      ) {
+        return;
+      }
+      setOpen(false);
+    }
+    function onScroll() {
+      setOpen(false);
+    }
+    document.addEventListener("mousedown", onClick);
+    // Any scroll (the table's own horizontal one included) invalidates the
+    // measured position — closing is simpler and more honest than a menu
+    // that has drifted off its trigger.
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [open]);
+
+  function toggle(e: React.MouseEvent) {
+    e.stopPropagation();
+    setOpen((wasOpen) => {
+      if (!wasOpen && triggerRef.current) {
+        const r = triggerRef.current.getBoundingClientRect();
+        setPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+      }
+      return !wasOpen;
+    });
+  }
+
+  return (
+    <>
+      <span
+        ref={triggerRef}
+        onClick={toggle}
+        title="Actions"
+        className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
+      >
+        <SalesIcon name="dots" size={16} />
+      </span>
+      {open && pos ? (
+        <div
+          ref={menuRef}
+          onClick={(e) => e.stopPropagation()}
+          style={{ position: "fixed", top: pos.top, right: pos.right }}
+          className="z-50 w-[200px] rounded-[6px] border border-line bg-surface py-1 text-left shadow-lg"
+        >
+          {items.map((it, i) => {
+            const itemClass = cx(
+              "block w-full cursor-pointer px-3 py-2 text-left text-[13px] no-underline disabled:cursor-not-allowed disabled:opacity-45 hover:no-underline",
+              it.danger ? "text-danger hover:bg-danger-soft" : "text-body hover:bg-canvas",
+            );
+            if (it.href) {
+              return it.disabled ? (
+                <span key={i} title={it.title} className={cx(itemClass, "cursor-not-allowed opacity-45")}>
+                  {it.label}
+                </span>
+              ) : (
+                <Link key={i} href={it.href} title={it.title} className={itemClass} onClick={() => setOpen(false)}>
+                  {it.label}
+                </Link>
+              );
+            }
+            return (
+              <button
+                key={i}
+                type="button"
+                disabled={it.disabled}
+                title={it.title}
+                onClick={() => {
+                  if (it.disabled || !it.run) return;
+                  setOpen(false);
+                  it.run();
+                }}
+                className={itemClass}
+              >
+                {it.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -382,6 +517,81 @@ export function Button({
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * A destructive one-liner, confirmed with a REQUIRED reason — the design's
+ * own `askReason(...)`. State (the typed reason, busy, error) stays with the
+ * caller, the same way `approvals-screen.tsx` and `leads-screen.tsx` already
+ * own their modal state; this only renders the shared shape.
+ */
+export function ReasonModal({
+  open,
+  title,
+  subject,
+  subjectDetail,
+  fieldLabel,
+  reason,
+  onReasonChange,
+  confirmLabel,
+  danger = true,
+  busy,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  title: string;
+  subject?: React.ReactNode;
+  subjectDetail?: React.ReactNode;
+  fieldLabel: string;
+  reason: string;
+  onReasonChange: (value: string) => void;
+  confirmLabel: string;
+  danger?: boolean;
+  busy?: boolean;
+  error?: string | null;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal open={open} onClose={onClose} title={title} width={460}>
+      {open ? (
+        <>
+          {subject ? (
+            <div className="mb-3 rounded-[6px] border border-line bg-canvas px-3 py-2.5 text-[13px]">
+              <div className="font-medium text-ink">{subject}</div>
+              {subjectDetail ? <div className="text-muted">{subjectDetail}</div> : null}
+            </div>
+          ) : null}
+          <label className="block">
+            <span className="mb-1 block text-[13px] font-medium text-ink">{fieldLabel}</span>
+            <textarea
+              value={reason}
+              onChange={(e) => onReasonChange(e.target.value)}
+              rows={3}
+              autoFocus
+              className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none focus:border-brand"
+            />
+          </label>
+          {error ? <p className="mt-2 text-[13px] text-danger">{error}</p> : null}
+          <div className="mt-4 flex justify-end gap-2">
+            <Button tone="quiet" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              tone={danger ? "danger" : "primary"}
+              disabled={busy || !reason.trim()}
+              title={!reason.trim() ? "Say why — this is what a manager reads later." : undefined}
+              onClick={onConfirm}
+            >
+              {busy ? "Saving…" : confirmLabel}
+            </Button>
+          </div>
+        </>
+      ) : null}
+    </Modal>
   );
 }
 

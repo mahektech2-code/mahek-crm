@@ -36,6 +36,7 @@ import { writeTimelineEvent, type TimelineWriter } from "../timeline";
 import { scopedToUsers} from "../access-control";
 import { getConfig } from "../config/store";
 import { financialYearOf } from "../financial-year";
+import { metresBetween } from "../geo";
 import { today, recomputeOutstanding, recomputeLastContact } from "../recompute";
 import { allocate, type AllocatableBill } from "../engines/allocation";
 import { computeHealth, type HealthFacts } from "../engines/health";
@@ -824,23 +825,6 @@ const visitSchema = z.object({
   nextFollowUpDate: z.string().nullish(),
 });
 
-/** Metres between two fixes. Enough precision for "is this the same street". */
-function metresBetween(
-  aLat: number,
-  aLng: number,
-  bLat: number,
-  bLng: number,
-): number {
-  const R = 6_371_000;
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(bLat - aLat);
-  const dLng = toRad(bLng - aLng);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
-}
-
 async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
   const parsed = visitSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
@@ -860,6 +844,10 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   let verified = false;
   let locationMismatch = false;
   let unverifiedReason: string | null = null;
+  /* Kept whatever the outcome — a manager screen used to have nowhere to
+   * read this number, only the sentence it got folded into for a mismatch,
+   * and never at all for a visit that verified cleanly. */
+  let distanceFromShopM: number | null = null;
 
   const accuracy = p.checkInAccuracyM ?? null;
   if (p.checkInLat == null || p.checkInLng == null) {
@@ -875,6 +863,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       customer.gpsLat,
       customer.gpsLng,
     );
+    distanceFromShopM = Math.round(distance);
     if (distance > config["mbos.location.visitMismatchM"]) {
       locationMismatch = true;
       unverifiedReason = `The check-in was ${Math.round(distance)} m from ${customer.name}'s own pin.`;
@@ -927,6 +916,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
         locationMismatch,
         verified,
         unverifiedReason,
+        distanceFromShopM,
         clientCreatedAt: new Date(item.clientCreatedAt),
         createdById: principal.user.id,
         updatedById: principal.user.id,
