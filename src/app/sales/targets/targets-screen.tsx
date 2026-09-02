@@ -330,19 +330,37 @@ function Editor({
   );
   const [reason, setReason] = useState("");
   const [reasonNote, setReasonNote] = useState("");
+  // Only the categories this target already carries — not every active one.
+  // A book with two categories and a book with eight both start from what is
+  // actually theirs; "Add category" is how either grows, never a wall of
+  // rows to skip past for the categories that do not apply here.
   const [bands, setBands] = useState(() =>
-    categories.map((c) => {
-      const existing = row.bands.find((b) => b.categoryId === c.id);
+    row.bands.map((existing) => {
+      const cat = categories.find((c) => c.id === existing.categoryId);
       return {
-        categoryId: c.id,
-        name: c.name,
-        isResidual: c.isResidual,
-        minimum: existing ? String(existing.minimumBp / 100) : "",
-        target: existing ? String(existing.targetBp / 100) : "",
-        stretch: existing ? String(existing.stretchBp / 100) : "",
+        categoryId: existing.categoryId,
+        name: existing.name,
+        isResidual: cat?.isResidual ?? false,
+        minimum: String(existing.minimumBp / 100),
+        target: String(existing.targetBp / 100),
+        stretch: String(existing.stretchBp / 100),
       };
     }),
   );
+  const available = categories.filter((c) => !bands.some((b) => b.categoryId === c.id));
+
+  function addCategory(categoryId: string) {
+    const cat = categories.find((c) => c.id === categoryId);
+    if (!cat) return;
+    setBands([
+      ...bands,
+      { categoryId: cat.id, name: cat.name, isResidual: cat.isResidual, minimum: "", target: "", stretch: "" },
+    ]);
+  }
+
+  function removeCategory(categoryId: string) {
+    setBands(bands.filter((b) => b.categoryId !== categoryId));
+  }
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -445,11 +463,11 @@ function Editor({
       <p className="mb-3 max-w-[720px] text-[12px] text-muted">
         Three numbers rather than one, because a book selling into furniture and one
         selling into automotive cannot be held to the same 30%. Below the minimum a
-        category falls away to nothing; stretch is exceptional. Leave a row empty to
-        leave that category out of the score.
+        category falls away to nothing; stretch is exceptional. Add only the
+        categories that matter for this person — one, two, or all of them.
       </p>
 
-      <div className="mb-4 overflow-x-auto">
+      <div className="mb-2 overflow-x-auto">
         <table className="text-[13px]">
           <thead>
             <tr className="text-[11px] tracking-[0.04em] text-muted uppercase">
@@ -457,9 +475,18 @@ function Editor({
               <th className="px-2 py-1 text-right font-medium">Minimum %</th>
               <th className="px-2 py-1 text-right font-medium">Target %</th>
               <th className="px-2 py-1 text-right font-medium">Stretch %</th>
+              <th className="px-2 py-1 text-right font-medium">{""}</th>
             </tr>
           </thead>
           <tbody>
+            {bands.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-2 py-2 text-[13px] text-muted">
+                  No categories added yet. Product mix is left out of this target&rsquo;s
+                  score until at least one is added below.
+                </td>
+              </tr>
+            ) : null}
             {bands.map((b, i) => (
               <tr key={b.categoryId}>
                 <td className="px-2 py-1 text-body">
@@ -487,25 +514,58 @@ function Editor({
                     />
                   </td>
                 ))}
+                <td className="px-2 py-1 text-right">
+                  <button
+                    type="button"
+                    onClick={() => removeCategory(b.categoryId)}
+                    title={`Remove ${b.name} from this target`}
+                    className="rounded-[4px] px-1.5 py-0.5 text-[12px] text-muted hover:bg-canvas hover:text-danger"
+                  >
+                    Remove
+                  </button>
+                </td>
               </tr>
             ))}
-            <tr>
-              <td className="px-2 pt-2 text-[12px] text-muted">Targets total</td>
-              <td />
-              <td
-                className={
-                  shareTotal > 100
-                    ? "px-2 pt-2 text-right text-[12px] font-medium text-danger tabular-nums"
-                    : "px-2 pt-2 text-right text-[12px] text-muted tabular-nums"
-                }
-              >
-                {shareTotal.toFixed(1)}%
-              </td>
-              <td />
-            </tr>
+            {bands.length > 0 ? (
+              <tr>
+                <td className="px-2 pt-2 text-[12px] text-muted">Targets total</td>
+                <td />
+                <td
+                  className={
+                    shareTotal > 100
+                      ? "px-2 pt-2 text-right text-[12px] font-medium text-danger tabular-nums"
+                      : "px-2 pt-2 text-right text-[12px] text-muted tabular-nums"
+                  }
+                >
+                  {shareTotal.toFixed(1)}%
+                </td>
+                <td />
+                <td />
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
+
+      {available.length > 0 ? (
+        <div className="mb-4">
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) addCategory(e.target.value);
+            }}
+            className="rounded-[4px] border border-line bg-surface px-2 py-1 text-[13px]"
+          >
+            <option value="">+ Add category…</option>
+            {available.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+                {c.isResidual ? " (everything else)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
 
       {isPublished ? (
         <div className="mb-4 max-w-[620px] rounded-[6px] border border-warn-edge bg-warn-soft px-4 py-3">
