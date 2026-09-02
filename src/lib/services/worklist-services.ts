@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -38,7 +38,7 @@ import {
 import { err, ok, okVoid, type Result } from "../result";
 import { shortDateWithYear } from "../format";
 import { nextStepForCustomer } from "./queue-service";
-import { inList, splitMulti } from "../queries";
+import { customerFilterClause, type CustomerListFilters } from "../queries";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -808,14 +808,17 @@ function targetAchievedSql(year: number, month: number) {
   ), 0)`;
 }
 
-export type TargetListFilters = {
-  query?: string;
-  /** `,`-separated: "behind" and/or "on_track". */
-  status?: string;
-  /** Account manager names, `,`-separated — the same strings the column shows. */
-  owner?: string;
-  /** `,`-separated: "default" and/or "set" (a real figure, carried forward or not). */
-  basis?: string;
+/**
+ * The customer-list filters, and only those — the Targets tab's filter bar
+ * is deliberately the same four controls the Customers list offers
+ * (status, sales people, sales managers, back office), read the same way,
+ * so a name picked here always means what it means there. `thirdParty` is
+ * left out: an account's kind is not a question this screen asks.
+ */
+export type TargetListFilters = Pick<
+  CustomerListFilters,
+  "query" | "status" | "salesAm" | "salesManager" | "backOfficeAm"
+> & {
   page?: number;
   perPage?: number;
 };
@@ -884,36 +887,27 @@ export async function targetFilterClause(
   const isDefaultExpr = sql<boolean>`coalesce(${monthlyTargets.isDefault}, true)`;
   const gapExpr = sql<number>`greatest(0, ${targetExpr} - ${achievedExpr})`;
 
-  const where: SQL[] = [
-    // A customer who has gone quiet still carries a target — only
-    // deactivation removes them, same as `listTargets`.
-    ne(customers.status, "deactivated"),
-  ];
-  if (scoped) where.push(scoped);
+  // The SAME clause the Customers list runs for the same four filters —
+  // `customerFilterClause` already carries scope, so this is the whole
+  // WHERE except the one rule that is this screen's own.
+  const customerClause = await customerFilterClause({
+    query: filters.query,
+    status: filters.status,
+    salesAm: filters.salesAm,
+    salesManager: filters.salesManager,
+    backOfficeAm: filters.backOfficeAm,
+  });
 
-  const q = filters.query?.trim();
-  if (q) where.push(sql`customers.name ilike ${"%" + q + "%"}`);
-
-  if (filters.owner) where.push(inList(TARGET_OWNER_NAME_SQL, filters.owner));
-
-  if (filters.basis) {
-    const picked = splitMulti(filters.basis).map((v) =>
-      v === "default" ? sql`${isDefaultExpr}` : sql`not ${isDefaultExpr}`,
-    );
-    if (picked.length === 1) where.push(picked[0]);
-    else if (picked.length > 1) where.push(sql`(${or(...picked)})`);
-  }
-
-  if (filters.status) {
-    const picked = splitMulti(filters.status).map((v) =>
-      v === "behind" ? sql`${gapExpr} > 0` : sql`${gapExpr} = 0`,
-    );
-    if (picked.length === 1) where.push(picked[0]);
-    else if (picked.length > 1) where.push(sql`(${or(...picked)})`);
-  }
+  // A customer who has gone quiet still carries a target — that is the gap
+  // the month has to explain — so only deactivation removes them, same as
+  // `listTargets`. "Deactivated" is deliberately absent from the Status
+  // filter's own options for exactly this reason: offering it here would
+  // be a filter that always returns nothing.
+  const notDeactivated = ne(customers.status, "deactivated");
+  const clause = customerClause ? and(notDeactivated, customerClause) : notDeactivated;
 
   return {
-    clause: and(...where),
+    clause,
     joinTarget: and(
       eq(monthlyTargets.customerId, customers.id),
       eq(monthlyTargets.year, year),
@@ -1071,21 +1065,6 @@ export async function listTargetsPage(
  * expression the column renders, not from `users`, because most of these
  * people (the sheet's own salespeople) have no MahekOne account.
  */
-export async function listTargetOwnerOptions(): Promise<string[]> {
-  const ctx = await resolveScope();
-  const ids = scopedUserIds(ctx.scope);
-  const scoped = scopedToUsers(ids);
-  const trimmed = sql<string>`nullif(btrim(${TARGET_OWNER_NAME_SQL}), '')`;
-
-  const rows = await db
-    .selectDistinct({ name: trimmed })
-    .from(customers)
-    .where(
-      and(ne(customers.status, "deactivated"), scoped, sql`${trimmed} is not null`),
-    );
-  return rows.map((r) => r.name).sort((a, b) => a.localeCompare(b));
-}
-
 export async function setTarget(
   customerId: string,
   amount: number,

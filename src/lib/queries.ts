@@ -360,7 +360,7 @@ export type CustomerRow = typeof customers.$inferSelect & {
  * outranks slow payer, because it is the one that says stop and think), then
  * never-ordered, then slow payer.
  */
-const STATUS_LABEL_SQL = sql<string>`
+export const STATUS_LABEL_SQL = sql<string>`
   case
     when customers.status = 'deactivated' then 'Deactivated'
     when customers.status = 'inactive'    then 'Inactive'

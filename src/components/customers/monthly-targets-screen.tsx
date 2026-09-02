@@ -31,14 +31,18 @@ import { money, moneyShort, pct, periodLabel } from "@/lib/format";
 
 const PER_PAGE = [25, 50, 100] as const;
 
+/**
+ * The same words `customerStatusLabel` and `STATUS_LABEL_SQL` produce on
+ * the Customers list — with one deliberate omission. "Deactivated" is not
+ * offered: a deactivated customer never reaches this table at all (see
+ * `targetFilterClause`), so it would be a filter that always finds
+ * nothing.
+ */
 const STATUS_OPTIONS = [
-  { value: "behind", label: "Behind target" },
-  { value: "on_track", label: "On or above target" },
-];
-
-const BASIS_OPTIONS = [
-  { value: "default", label: "On the auto-applied default" },
-  { value: "set", label: "A real figure" },
+  { value: "Active", label: "Active" },
+  { value: "Slow payer", label: "Slow payer" },
+  { value: "Inactive", label: "Inactive" },
+  { value: "New", label: "New" },
 ];
 
 /* ---------------------------------------------------------------------------
@@ -103,7 +107,7 @@ export function MonthlyTargetsScreen({
   filters,
   pageInfo,
   totals,
-  ownerOptions,
+  amOptions,
 }: {
   /** Only changes which extra row-menu link is offered — CRM has its own bills screen, Accounts folds everything into the customer's ledger. */
   app: "crm" | "accounts";
@@ -118,11 +122,13 @@ export function MonthlyTargetsScreen({
   /** Already filtered, counted and sliced by Postgres — this is one page. */
   rows: Row[];
   shortfall: Shortfall;
+  /** The same four filters the Customers list offers, read the same way. */
   filters: {
     query: string;
     status: string;
-    owner: string;
-    basis: string;
+    salesAm: string;
+    salesManager: string;
+    backOfficeAm: string;
     perPage: number;
   };
   pageInfo: { page: number; pageCount: number; total: number; bookTotal: number };
@@ -135,8 +141,8 @@ export function MonthlyTargetsScreen({
     behind: number;
     maxGap: number;
   };
-  /** Account manager names the filter can offer — read from the same column it filters. */
-  ownerOptions: string[];
+  /** The names each of the three seat filters can offer — `listAmFilterOptions`. */
+  amOptions: { sales: string[]; salesManager: string[]; backOffice: string[] };
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -171,7 +177,9 @@ export function MonthlyTargetsScreen({
   const searchTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const asList = (v: string) => (v ? v.split(",").filter(Boolean) : []);
-  const ownerOptionList = ownerOptions.map((o) => ({ value: o, label: o }));
+  const salesAmOptions = amOptions.sales.map((n) => ({ value: n, label: n }));
+  const salesManagerOptions = amOptions.salesManager.map((n) => ({ value: n, label: n }));
+  const backOfficeOptions = amOptions.backOffice.map((n) => ({ value: n, label: n }));
 
   const { page, pageCount, total } = pageInfo;
   const perPage = filters.perPage;
@@ -196,16 +204,22 @@ export function MonthlyTargetsScreen({
           clear: () => navigate({ status: undefined }),
         }
       : null,
-    filters.owner
+    filters.salesAm
       ? {
-          label: `Account manager: ${describeMulti(filters.owner, ownerOptionList)}`,
-          clear: () => navigate({ owner: undefined }),
+          label: `Sales: ${describeMulti(filters.salesAm, salesAmOptions)}`,
+          clear: () => navigate({ sales: undefined }),
         }
       : null,
-    filters.basis
+    filters.salesManager
       ? {
-          label: `Basis: ${describeMulti(filters.basis, BASIS_OPTIONS)}`,
-          clear: () => navigate({ basis: undefined }),
+          label: `Sales manager: ${describeMulti(filters.salesManager, salesManagerOptions)}`,
+          clear: () => navigate({ salesmanager: undefined }),
+        }
+      : null,
+    filters.backOfficeAm
+      ? {
+          label: `Back office: ${describeMulti(filters.backOfficeAm, backOfficeOptions)}`,
+          clear: () => navigate({ backoffice: undefined }),
         }
       : null,
     filters.query
@@ -221,7 +235,13 @@ export function MonthlyTargetsScreen({
 
   function clearAll() {
     setDraft("");
-    navigate({ q: undefined, status: undefined, owner: undefined, basis: undefined });
+    navigate({
+      q: undefined,
+      status: undefined,
+      sales: undefined,
+      salesmanager: undefined,
+      backoffice: undefined,
+    });
   }
 
   // The engine classifies the shortfall — the screen only lays it out. The
@@ -449,18 +469,25 @@ export function MonthlyTargetsScreen({
               onChange={(next) => navigate({ status: next.join(",") || undefined })}
             />
             <MultiSelect
-              label="Account manager"
-              placeholder="Everyone"
-              options={ownerOptionList}
-              selected={asList(filters.owner)}
-              onChange={(next) => navigate({ owner: next.join(",") || undefined })}
+              label="Sales people"
+              placeholder="All sales people"
+              options={salesAmOptions}
+              selected={asList(filters.salesAm)}
+              onChange={(next) => navigate({ sales: next.join(",") || undefined })}
             />
             <MultiSelect
-              label="Basis"
-              placeholder="Any basis"
-              options={BASIS_OPTIONS}
-              selected={asList(filters.basis)}
-              onChange={(next) => navigate({ basis: next.join(",") || undefined })}
+              label="Sales managers"
+              placeholder="All sales managers"
+              options={salesManagerOptions}
+              selected={asList(filters.salesManager)}
+              onChange={(next) => navigate({ salesmanager: next.join(",") || undefined })}
+            />
+            <MultiSelect
+              label="Back office"
+              placeholder="All back office"
+              options={backOfficeOptions}
+              selected={asList(filters.backOfficeAm)}
+              onChange={(next) => navigate({ backoffice: next.join(",") || undefined })}
             />
             {chips.length ? (
               <Button variant="ghost" size="sm" onClick={clearAll}>
@@ -655,7 +682,9 @@ export function MonthlyTargetsScreen({
       <BulkTargetModal
         open={bulkOpen}
         count={total}
-        hasFilters={Boolean(filters.query || filters.status || filters.owner || filters.basis)}
+        hasFilters={Boolean(
+          filters.query || filters.status || filters.salesAm || filters.salesManager || filters.backOfficeAm,
+        )}
         onClose={() => setBulkOpen(false)}
         onSubmit={async (mode, value, onlyDefaults) => {
           const result = await run(
@@ -663,8 +692,9 @@ export function MonthlyTargetsScreen({
               filters: {
                 query: filters.query || undefined,
                 status: filters.status || undefined,
-                owner: filters.owner || undefined,
-                basis: filters.basis || undefined,
+                salesAm: filters.salesAm || undefined,
+                salesManager: filters.salesManager || undefined,
+                backOfficeAm: filters.backOfficeAm || undefined,
               },
               onlyDefault: onlyDefaults,
               mode,
