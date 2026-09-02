@@ -27,6 +27,7 @@ import {
   sendPasswordResetFor,
   setUserActive,
 } from "@/lib/actions/people";
+import { mintImpersonationLink } from "@/lib/actions/impersonation";
 import type { AccessRow, Candidate } from "@/lib/services/access-service";
 import { useAdmin } from "./store";
 
@@ -82,10 +83,13 @@ const ALL_OF = (app: AppId) => modulesForApp(app).map((m) => m.key);
 export function AccessSection({
   rows,
   onOpenUser,
+  isAdmin,
 }: {
   rows: AccessRow[];
   /** The account's own record — deactivation, identity, notes still live there. */
   onOpenUser: (id: string) => void;
+  /** Whether the signed-in viewer holds the `admin` role — see PersonMenu. */
+  isAdmin: boolean;
 }) {
   const router = useRouter();
   const { push } = useToast();
@@ -99,6 +103,12 @@ export function AccessSection({
   const [managing, setManaging] = React.useState<AccessRow | null>(null);
   /** Turning the sign-in itself off, or back on. */
   const [switching, setSwitching] = React.useState<AccessRow | null>(null);
+  /** A just-minted sign-in link, shown once so it can be copied. */
+  const [linkFor, setLinkFor] = React.useState<{
+    name: string;
+    url: string;
+    expiresInMinutes: number;
+  } | null>(null);
 
   const say = (r: { ok: boolean; message?: string; error?: string }) => {
     push(r.ok ? (r.message ?? "Saved.") : (r.error ?? "That did not work."));
@@ -226,9 +236,11 @@ export function AccessSection({
                         <PersonMenu
                           row={r}
                           say={say}
+                          isAdmin={isAdmin}
                           onManage={() => setManaging(r)}
                           onSwitch={() => setSwitching(r)}
                           onOpen={() => onOpenUser(r.userId)}
+                          onGotLink={setLinkFor}
                         />
                       </span>
                     </Td>
@@ -314,6 +326,55 @@ export function AccessSection({
         ) : null}
       </Modal>
 
+      {/*
+        A sign-in link, shown once. It is never mailed or stored anywhere
+        this screen can show it again — it exists exactly once, here, for
+        the admin to copy themselves.
+      */}
+      <Modal
+        open={!!linkFor}
+        onClose={() => setLinkFor(null)}
+        title={linkFor ? `Sign-in link for ${linkFor.name}` : ""}
+        footer={
+          <Button variant="secondary" onClick={() => setLinkFor(null)}>
+            Close
+          </Button>
+        }
+      >
+        {linkFor ? (
+          <div className="text-sm leading-[21px] text-body">
+            <p>
+              Works once, and expires in {linkFor.expiresInMinutes} minutes.
+              Opening it signs that browser out of whatever account it
+              currently holds and into {linkFor.name}&rsquo;s — their own
+              password and sessions elsewhere are untouched.
+            </p>
+            <div className="mt-3 flex items-center gap-2">
+              <input
+                readOnly
+                value={linkFor.url}
+                onFocus={(e) => e.currentTarget.select()}
+                className="h-9 min-w-0 flex-1 rounded-[4px] border border-line bg-canvas px-2.5 text-[13px] text-ink"
+              />
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(linkFor.url);
+                    push("Link copied");
+                  } catch {
+                    push("The browser blocked the clipboard.", "error");
+                  }
+                }}
+              >
+                Copy
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
       {/* Managing somebody already on the list: straight to the apps. Keyed on
           the person, so the draft is initial state on a fresh mount rather than
           something an effect has to reset. */}
@@ -381,15 +442,20 @@ function PersonCells({ row, onOpen }: { row: AccessRow; onOpen: () => void }) {
 function PersonMenu({
   row,
   say,
+  isAdmin,
   onManage,
   onSwitch,
   onOpen,
+  onGotLink,
 }: {
   row: AccessRow;
   say: (r: { ok: boolean; message?: string; error?: string }) => void;
+  /** Only an admin may sign in as somebody else — see `mintImpersonationLink`. */
+  isAdmin: boolean;
   onManage: () => void;
   onSwitch: () => void;
   onOpen: () => void;
+  onGotLink: (link: { name: string; url: string; expiresInMinutes: number }) => void;
 }) {
   return (
     <RowMenu
@@ -414,6 +480,22 @@ function PersonMenu({
           label: "End every session",
           onSelect: () => void endSessionsFor(row.userId).then(say),
         },
+        ...(isAdmin
+          ? [
+              {
+                label: "Get a sign-in link",
+                disabled: !row.active,
+                title: row.active
+                  ? "Opens a one-time link that signs in as this person, with no password"
+                  : "This account cannot sign in",
+                onSelect: () =>
+                  void mintImpersonationLink(row.userId).then((r) => {
+                    if (r.ok) onGotLink({ name: row.name, ...r.data });
+                    else say(r);
+                  }),
+              },
+            ]
+          : []),
       ]}
     />
   );
