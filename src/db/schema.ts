@@ -680,6 +680,39 @@ export const passwordResets = pgTable(
   ],
 );
 
+/**
+ * Sign-in-as-somebody links. Same shape as `password_resets` and the same
+ * reason: only the SHA-256 of the token is stored, a link works once and
+ * expires quickly, and `createdById` is who to hold responsible — an admin
+ * minted this one, whoever holds the URL can spend it, and the row keeps
+ * both facts. Never the account's own password; this bypasses it entirely,
+ * which is exactly why generating one is restricted to admins and every use
+ * is written to `audit_log` under the admin's id, not the person signed
+ * into afterwards.
+ */
+export const impersonationTokens = pgTable(
+  "impersonation_tokens",
+  {
+    id: text("id").primaryKey(),
+    /** Who the link signs in as. */
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** The admin who minted it. */
+    createdById: text("created_by_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("impersonation_tokens_token_key").on(t.tokenHash),
+    index("impersonation_tokens_user_idx").on(t.userId),
+  ],
+);
+
 /* -------------------------------------------------------------- §3.3 customer */
 
 /** A record is one or the other, and the difference decides what is shown. */

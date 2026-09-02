@@ -360,7 +360,7 @@ export function ComplaintsScreen({
               <div className="text-lg font-semibold text-ink">
                 <Link
                   href={`/crm/customers/${current.customerId}`}
-                  className="no-underline hover:underline"
+                  className="no-underline"
                 >
                   {current.customerName}
                 </Link>

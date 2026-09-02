@@ -124,7 +124,7 @@ export function RequestsScreen({ rows, today }: { rows: Row[]; today: string }) 
                     <Td>
                       <Link
                         href={`/crm/customers/${r.customerId}`}
-                        className="font-medium text-ink hover:underline"
+                        className="font-medium text-ink"
                       >
                         {r.customerName}
                       </Link>

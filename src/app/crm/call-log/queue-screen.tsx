@@ -479,7 +479,7 @@ export function QueueScreen({
                     // server renders on every visit to the Call Log, for
                     // pages almost nobody clicks into from here.
                     prefetch={false}
-                    className="shrink-0 text-sm font-medium text-ink no-underline hover:underline"
+                    className="shrink-0 text-sm font-medium text-ink no-underline"
                   >
                     {r.name}
                   </Link>

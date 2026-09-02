@@ -167,7 +167,7 @@ export function ApprovalsScreen({
                 <Cell truncate={170}>
                   <Link
                     href={`/sales/people/${p.requestedById}`}
-                    className="font-medium text-ink no-underline hover:underline"
+                    className="font-medium text-ink no-underline"
                   >
                     {p.requestedByName}
                   </Link>
@@ -194,7 +194,7 @@ export function ApprovalsScreen({
                     <Link
                       href="/accounts/approvals"
                       title="An order over the credit limit is accounts' decision, not the sales desk's — the person chasing the target does not sign off the orders that hit it."
-                      className="text-[13px] text-[#5223E0] no-underline hover:underline"
+                      className="text-[13px] text-[#5223E0] no-underline"
                     >
                       Accounts decide this →
                     </Link>

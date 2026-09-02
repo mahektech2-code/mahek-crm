@@ -334,7 +334,7 @@ export function HistoryScreen({
                   <Td>
                     <Link
                       href={`/crm/customers/${r.customerId}`}
-                      className="no-underline hover:underline"
+                      className="no-underline"
                     >
                       {r.customerName}
                     </Link>

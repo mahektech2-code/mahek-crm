@@ -120,7 +120,7 @@ export default async function Page({
               <Cell truncate={190}>
                 <Link
                   href={`/sales/people/${l.salesmanId}`}
-                  className="font-medium text-ink no-underline hover:underline"
+                  className="font-medium text-ink no-underline"
                 >
                   {l.salesmanName}
                 </Link>

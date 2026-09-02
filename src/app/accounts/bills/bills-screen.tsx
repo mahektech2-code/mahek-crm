@@ -226,7 +226,7 @@ export function BillsScreen({
                   <Cell truncate={230}>
                     <Link
                       href={`/accounts/ledger?customer=${r.customerId}`}
-                      className="text-ink no-underline hover:text-brand hover:underline"
+                      className="text-ink no-underline hover:text-brand"
                     >
                       {r.customerName}
                     </Link>

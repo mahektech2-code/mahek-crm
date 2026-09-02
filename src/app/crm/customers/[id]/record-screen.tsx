@@ -933,7 +933,7 @@ export function RecordScreen({
                 <button
                   type="button"
                   onClick={() => setAmOpen(true)}
-                  className="cursor-pointer text-[12px] font-medium text-brand hover:underline"
+                  className="cursor-pointer text-[12px] font-medium text-brand hover:text-brand-hover"
                 >
                   Edit sales / back office
                 </button>
@@ -980,7 +980,7 @@ export function RecordScreen({
                         <button
                           type="button"
                           onClick={() => setSmOpen(true)}
-                          className="cursor-pointer text-[12px] font-medium text-brand hover:underline"
+                          className="cursor-pointer text-[12px] font-medium text-brand hover:text-brand-hover"
                         >
                           Edit
                         </button>

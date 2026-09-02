@@ -88,7 +88,7 @@ export function OnAccountScreen({
                         onClick={() =>
                           router.push(`/accounts/ledger?customer=${h.customerId}`)
                         }
-                        className="cursor-pointer border-none bg-transparent p-0 text-sm font-medium text-ink hover:underline"
+                        className="cursor-pointer border-none bg-transparent p-0 text-sm font-medium text-ink hover:text-brand"
                       >
                         {h.customerName}
                       </button>

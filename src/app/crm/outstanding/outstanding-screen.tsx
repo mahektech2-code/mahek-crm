@@ -386,13 +386,13 @@ function BillBreakdown({ row }: { row: OutstandingCustomer }) {
         <span className="flex gap-3">
           <Link
             href={`/crm/customers/${row.customerId}`}
-            className="text-[13px] text-brand no-underline hover:underline"
+            className="text-[13px] text-brand no-underline"
           >
             Customer record →
           </Link>
           <Link
             href={`/crm/whatsapp?customer=${row.customerId}`}
-            className="text-[13px] text-brand no-underline hover:underline"
+            className="text-[13px] text-brand no-underline"
           >
             Send a reminder →
           </Link>

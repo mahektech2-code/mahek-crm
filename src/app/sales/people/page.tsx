@@ -57,7 +57,7 @@ export default async function Page() {
               <Cell truncate={220}>
                 <Link
                   href={`/sales/people/${t.id}`}
-                  className="font-medium text-ink no-underline hover:underline"
+                  className="font-medium text-ink no-underline"
                 >
                   {t.name}
                 </Link>
@@ -99,7 +99,7 @@ export default async function Page() {
               <Cell align="right">
                 <Link
                   href={`/sales/journeys?salesman=${t.id}`}
-                  className="text-[13px] text-[#5223E0] no-underline hover:underline"
+                  className="text-[13px] text-[#5223E0] no-underline"
                 >
                   Plan a route
                 </Link>
