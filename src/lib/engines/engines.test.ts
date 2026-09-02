@@ -2782,7 +2782,7 @@ describe("what gets called first", () => {
       ],
     });
 
-    const { entries } = buildQueue([c], TODAY, C);
+    const { entries } = buildQueue([c], TODAY, CP);
     assert.equal(entries.length, 1, "money owed is never held by a scheduling decision");
     assert.equal(entries[0].reasons[0].kind, "paymentOverdue");
   });
