@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
 import { APPS, webApps } from "@/lib/apps";
@@ -105,13 +106,14 @@ export default async function LoginPage({
             Welcome back
           </h1>
           <p className="mt-1 text-[15px] leading-[23px] text-muted">
-            Sign in to pick up where you left off. One sign-in opens every app
-            on your account.
+            Enter your work number and we&rsquo;ll send you a code. One
+            sign-in opens every app on your account.
           </p>
 
           {justReset ? (
             <div className="mt-4 rounded-[4px] border border-success-soft border-l-[3px] border-l-success bg-success-soft px-3 py-2.5 text-sm text-ink">
-              Your password is set. Sign in with the new one.
+              The field app&rsquo;s password is set. Signing in here still
+              only needs your work number and a code.
             </div>
           ) : null}
 
@@ -127,6 +129,16 @@ export default async function LoginPage({
           <p className="mt-3 text-center text-[13px] leading-5 text-muted">
             You see only the tools your role uses. No account?{" "}
             <span className="font-medium text-ink">Ask your manager.</span>
+          </p>
+          <p className="mt-2 text-center text-[13px] leading-5 text-muted">
+            Setting up the field salesman app?{" "}
+            <Link
+              href="/login/forgot"
+              className="font-medium text-brand no-underline hover:underline"
+            >
+              Manage its password
+            </Link>
+            .
           </p>
         </div>
       </div>

@@ -67,10 +67,10 @@ export function ForgotForm() {
   return (
     <div>
       <h1 className="text-[22px] leading-7 font-semibold text-ink">
-        Forgot your password?
+        Forgot your field app password?
       </h1>
       <p className="mt-1.5 text-sm leading-[21px] text-muted">
-        We will email you a link to set a new one.
+        We will email you a link to set a new one for the MBOS handset app.
       </p>
 
       <form

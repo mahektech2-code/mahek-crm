@@ -96,7 +96,7 @@ export function UserDetail({
             title={user.status === "Deactivated" ? "This account cannot sign in at all" : undefined}
             onClick={() => void run(sendPasswordResetFor(user.id))}
           >
-            Send a reset link
+            Send a field-app password link
           </Button>
           <Button
             variant="ghost"

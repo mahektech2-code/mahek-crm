@@ -1,5 +1,12 @@
 import { getConfig } from "@/lib/config/store";
-import { catalogueRows } from "@/lib/services/sales-service";
+import { today } from "@/lib/recompute";
+import {
+  catalogueRows,
+  priceListEntries,
+  priceTagOptions,
+  schemeEntries,
+} from "@/lib/services/sales-service";
+import { RatesAndSchemes } from "./rates-schemes";
 import {
   Banner,
   Cell,
@@ -20,14 +27,18 @@ export const metadata = { title: "Catalogue & rates — Sales Dashboard — Mahe
 /**
  * What the app offers, and at what rate.
  *
- * Except that there are no rates, and this screen says so rather than showing
- * three columns of zeroes. The design has Retail / Dealer / Distributor;
- * MahekOne's product master carries no prices at all, `products.priceSource`
- * reads `unset`, and `canValueOrders()` answers no. Reaching for the packing
- * cost because it is the only number on the row would put believable wrong
- * figures on a rate card that salesmen quote from.
+ * **Two different "no price" gaps, and only one of them is fixed here.** The
+ * product master carries no prices at all — `products.priceSource` reads
+ * `unset` and `canValueOrders()` answers no — and that is the CRM's own
+ * order-valuation switch, deliberately untouched by this screen; flipping it
+ * is "somebody's deliberate act" per the schema comment on `mbosPriceList`,
+ * not a side effect of filling a rate list. What IS fixed here is
+ * `mbos_price_list` itself, further down: the table the MBOS handset's own
+ * order form reads a rate from, keyed by price tag rather than by product
+ * master pricing. A dealer rate set below reaches every phone on the next
+ * sync whether or not the CRM's own switch is ever flipped.
  *
- * What IS here is the catalogue as it actually exists: four levels, of which
+ * Above that is the catalogue as it actually exists: four levels, of which
  * only the bottom can be ordered, with the formulation shown as a subtitle —
  * one liquid sells as Nano, Astar Nano and M5x4, and a salesman told "M5x4"
  * must find it or conclude we do not stock it.
@@ -40,9 +51,13 @@ export default async function Page({
   const params = await searchParams;
   const search = (params.q ?? "").trim();
 
-  const [rows, config] = await Promise.all([
+  const [rows, config, rates, schemes, priceTags, day] = await Promise.all([
     catalogueRows(search || undefined),
     getConfig(),
+    priceListEntries(),
+    schemeEntries(),
+    priceTagOptions(),
+    today(),
   ]);
 
   const priceSource = config["products.priceSource"];
@@ -59,8 +74,8 @@ export default async function Page({
       {priceSource === "unset" ? (
         <Banner
           tone="warn"
-          title="There are no rates to show"
-          body="The product master carries no prices, and the price source setting reads “unset” — so every order is captured with quantities and no value, and this screen has nothing to put in a rate column. Deriving one from the packing cost would put a believable wrong figure on a card people quote from. Set products.priceSource once a price list exists."
+          title="The CRM's own order value is still unset"
+          body="products.priceSource reads “unset”, so a CRM-side order still carries quantities and no computed value in that separate system — deriving one from the packing cost would put a believable wrong figure on a card people quote from. This does not affect the field team: the Rates section below is mbos_price_list, a different table the MBOS order form reads from directly, and it works whether or not this switch is ever flipped."
         />
       ) : null}
 
@@ -161,6 +176,14 @@ export default async function Page({
           </p>
         </>
       )}
+
+      <RatesAndSchemes
+        rates={rates}
+        schemes={schemes}
+        priceTags={priceTags}
+        products={active.map((p) => ({ id: p.id, name: p.name }))}
+        todayIso={day}
+      />
     </div>
   );
 }

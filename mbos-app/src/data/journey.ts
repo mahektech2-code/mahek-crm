@@ -72,6 +72,20 @@ export async function stopCounts(planDate = today()): Promise<{ total: number; d
   return { total: row?.total ?? 0, done: row?.done ?? 0 };
 }
 
+/**
+ * The same rollup as `stopCounts`, for a whole window of past days at once —
+ * one query rather than one per row on a screen that lists a fortnight of
+ * them.
+ */
+export async function stopCountsSince(from: string): Promise<Record<string, { total: number; done: number }>> {
+  const rows = await all<{ planDate: string; total: number; done: number }>(
+    `SELECT planDate, COUNT(*) AS total, SUM(CASE WHEN status = 'visited' THEN 1 ELSE 0 END) AS done
+       FROM journey_stops WHERE planDate >= ? AND planDate < ? GROUP BY planDate`,
+    [from, today()],
+  );
+  return Object.fromEntries(rows.map((r) => [r.planDate, { total: r.total, done: r.done }]));
+}
+
 
 /* ══════════════════════════════════════════════════════ the days themselves */
 

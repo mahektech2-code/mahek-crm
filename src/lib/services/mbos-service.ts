@@ -423,6 +423,8 @@ export type BootstrapPayload = {
   leads: unknown[];
   timeline: unknown[];
   leaveBalances: unknown[];
+  /** This year's and last's. See `holidaysFor` for why only `universal` ones bind. */
+  holidays: unknown[];
   documents: unknown[];
   courses: unknown[];
   notifications: unknown[];
@@ -436,11 +438,26 @@ export type BootstrapPayload = {
    * unconditionally.
    */
   performance: unknown[];
+  /** This month's and last's. See `salaryFor` — read-only, nothing here writes it. */
+  salary: unknown[];
   config: Record<string, unknown>;
 };
 
 /** How many timeline events per customer the snapshot carries. */
 const TIMELINE_PER_CUSTOMER = 50;
+
+/**
+ * How far back the journey channels reach.
+ *
+ * Both the stops and the days themselves used to filter `plan_date >= today`,
+ * on both bootstrap and every delta pass since — deliberately, but it left
+ * the handset with no way to show a salesman his own recent history: what
+ * was planned for last Tuesday, and what he actually did with it, was gone
+ * the moment the day ended. Fifteen days back is a fortnight either side of
+ * today, matching the fifteen-to-twenty-day forward window a manager plans
+ * in one sitting.
+ */
+const PLAN_HISTORY_DAYS = 15;
 
 export async function buildBootstrap(
   principal: MbosPrincipal,
@@ -448,7 +465,12 @@ export async function buildBootstrap(
   const now = new Date();
   const ids = await customerIdsInScope(principal);
   const day = await today();
-  const tomorrow = addDays(day, 1);
+  /* A fortnight either side of today, matching `PLAN_HISTORY_DAYS` and the
+     manager's own MAX_PLAN_DAYS (31) forward cap — so a fresh sign-in shows
+     the whole relevant window immediately rather than waiting for it to
+     trickle in through the delta over the following days. */
+  const planFrom = addDays(day, -PLAN_HISTORY_DAYS);
+  const planTo = addDays(day, 31);
 
   const [
     customerRows,
@@ -461,15 +483,17 @@ export async function buildBootstrap(
     leadRows,
     timelineRows,
     leaveRows,
+    holidayRows,
     documentRows,
     courseRows,
     notificationRows,
     performanceRows,
+    salaryRows,
     config,
   ] = await Promise.all([
     customersForDevice(ids),
     activeCatalogue(),
-    journeyStops(principal.user.id, [day, tomorrow]),
+    journeyStops(principal.user.id, planFrom, planTo),
     priceListRows(),
     schemeRows(null),
     openTasks(principal.user.id),
@@ -477,11 +501,13 @@ export async function buildBootstrap(
     openLeads(principal.user.id),
     recentTimeline(ids, TIMELINE_PER_CUSTOMER),
     leaveBalances(principal.user.id, Number(day.slice(0, 4))),
+    holidaysFor(),
     visibleDocuments(principal.role, ids),
     coursesFor(principal.user.id),
     unreadNotifications(principal.user.id),
     // The epoch, so the cache's own `computed_at` gate lets everything through.
     performanceFor(principal.user.id, new Date(0).toISOString()),
+    salaryFor(principal.user.id),
     mbosConfigPayload(),
   ]);
 
@@ -507,10 +533,12 @@ export async function buildBootstrap(
     leads: leadRows,
     timeline: timelineRows,
     leaveBalances: leaveRows,
+    holidays: holidayRows,
     documents: documentRows,
     courses: courseRows,
     notifications: notificationRows,
     performance: performanceRows,
+    salary: salaryRows,
     config,
   };
 }
@@ -555,6 +583,8 @@ async function customersForDevice(ids: string[]) {
            c.whatsapp_phone as "whatsappPhone", c.alt_phone as "altPhone",
            c.address, c.city, c.region, c.area, c.beat,
            c.territory_region as "territoryRegion", c.dealer_code as "dealerCode",
+           -- what mbos_price_list is keyed on for this account
+           c.price_tag as "priceTag",
            c.kind, c.status, c.gstin,
            c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
            c.gps_accuracy_m as "gpsAccuracyM", c.gps_captured_at as "gpsCapturedAt",
@@ -627,7 +657,7 @@ async function activeCatalogue() {
  * joins each stop to the customer it names for everything it shows, and a
  * second copy of the shop's area on the stop is a second thing to keep true.
  */
-async function journeyStops(userId: string, days: string[]) {
+async function journeyStops(userId: string, fromDate: string, toDate: string) {
   const rows = await db.execute<{ planDate: string } & Record<string, unknown>>(sql`
     select s.id,
            p.plan_date::text as "planDate",
@@ -650,7 +680,8 @@ async function journeyStops(userId: string, days: string[]) {
       from mbos_journey_stops s
       join mbos_journey_plans p on p.id = s.plan_id
      where p.user_id = ${userId}
-       and p.plan_date::text in ${sql`(${sql.join(days.map((d) => sql`${d}`), sql`, `)})`}
+       and p.plan_date >= ${fromDate}::date
+       and p.plan_date <= ${toDate}::date
      order by p.plan_date asc, s.sequence asc
   `);
   return rows;
@@ -813,6 +844,93 @@ async function coursesFor(userId: string, since?: string | null) {
      where c.active = true
        ${since ? sql`and (c.updated_at > ${since} or p.updated_at > ${since})` : sql``}
      order by c.mandatory desc, c.due_date asc nulls last, c.title asc
+  `);
+}
+
+/**
+ * The calendar, so attendance can tell a real day off from a missed check-in.
+ *
+ * The whole year rather than a window: a holiday calendar is a few dozen rows
+ * and there is no cheap way to bound "which ones matter" without a client
+ * telling us its own working-day horizon, which is exactly the kind of
+ * two-projections-that-disagree this codebase keeps getting bitten by.
+ *
+ * `scope` is free text on the server (see the schema comment) and the handset
+ * has no reliable way to match it against a salesman's own territory, so only
+ * a NULL-scope (everywhere) row is sent as `universal: true` — the one signal
+ * the attendance engine may act on automatically. A regionally-scoped holiday
+ * still goes down, `universal: false`, so it can be shown in a list, but
+ * nothing here pretends to know it applies to any one salesman.
+ */
+async function holidaysFor(since?: string | null) {
+  return db.execute<Record<string, unknown>>(sql`
+    select h.id, h.on_date::text as "onDate", h.name, h.scope,
+           (h.scope is null) as "universal",
+           h.updated_at as "updatedAt"
+      from mbos_holidays h
+     where extract(year from h.on_date) >= extract(year from (now() at time zone ${APP_TIMEZONE})) - 1
+       ${since ? sql`and h.updated_at > ${since}` : sql``}
+     order by h.on_date asc
+     limit 500
+  `);
+}
+
+/**
+ * His own pay, this month and last — the channel `app/salary.tsx` on the
+ * handset was built to read and never had.
+ *
+ * A per-user narrowing of `payForPeriod` (the web Sales Dashboard's team-wide
+ * version), not a second implementation of it — same columns, same
+ * employee-record join by email-then-mobile, same "no incentive column"
+ * shape AGENTS.md already settled: MahekOne sets no monthly target for a
+ * field salesman, so a number computed from one would be an invention on the
+ * one screen where a wrong figure is least forgivable.
+ *
+ * Two periods, current and previous, for the same reason `performanceFor`
+ * sends two: on the 2nd of a month the one somebody actually cares about is
+ * still last month's, and a handset showing one two-day-old empty month
+ * reads as a broken screen rather than an early one.
+ */
+async function salaryFor(userId: string): Promise<Record<string, unknown>[]> {
+  return db.execute<Record<string, unknown>>(sql`
+    with periods as (
+      select date_trunc('month', (now() at time zone ${APP_TIMEZONE}))::date as "from",
+             (date_trunc('month', (now() at time zone ${APP_TIMEZONE})) + interval '1 month')::date as "to"
+      union all
+      select date_trunc('month', (now() at time zone ${APP_TIMEZONE}) - interval '1 month')::date,
+             date_trunc('month', (now() at time zone ${APP_TIMEZONE}))::date
+    )
+    select p."from"::text as period,
+           e.employee_code as "employeeCode",
+           e.status_raw as "employeeStatus",
+           e.net_salary_paise as "netSalaryPaise",
+           e.conveyance_paise as "conveyancePaise",
+           e.other_salary_paise as "otherSalaryPaise",
+           e.pf_esic_applicable as "pfEsicApplicable",
+           e.date_of_joining::text as "dateOfJoining",
+
+           (select count(*)::int from mbos_attendance_days d
+             where d.user_id = ${userId} and d.check_in_at is not null
+               and d.day >= p."from" and d.day < p."to") as "daysWorked",
+           (select count(*)::int from mbos_attendance_days d
+             where d.user_id = ${userId} and d.status = 'on_leave'
+               and d.day >= p."from" and d.day < p."to") as "daysOnLeave",
+
+           coalesce((select sum(coalesce(ap.approved_amount_paise, ex.amount_paise))
+                       from mbos_expenses ex
+                       join mbos_approvals ap
+                         on ap.subject_id = ex.id and ap.type = 'expense_claim'
+                      where ex.user_id = ${userId}
+                        and ap.state in ('approved', 'partially_approved')
+                        and ex.expense_date >= p."from" and ex.expense_date < p."to"), 0)
+             as "reimbursedPaise"
+
+      from periods p
+      left join users u on u.id = ${userId}
+      left join employees e
+             on lower(e.email) = lower(u.email)
+             or (e.company_mobile is not null and e.company_mobile = u.phone)
+     order by p."from" desc
   `);
 }
 
@@ -1001,10 +1119,12 @@ export async function buildPull(
       tasks: [],
       planDays: [],
       leaveBalances: [],
+      holidays: [],
       priceList: [],
       schemes: [],
       documents: [],
       courses: [],
+      salary: [],
       deletions: [],
     };
   }
@@ -1037,10 +1157,12 @@ export async function buildPull(
     approvalRows,
     planDayRows,
     leaveBalanceRows,
+    holidayRows,
     priceRows,
     schemeChanges,
     documentChanges,
     courseChanges,
+    salaryRows,
     deletionRows,
     taskChanges,
   ] = await Promise.all([
@@ -1048,6 +1170,7 @@ export async function buildPull(
         ? db.execute<Record<string, unknown>>(sql`
             select c.id, c.name, c.contact_person as "contactPerson", c.phone,
                    c.address, c.city, c.area, c.beat, c.status,
+                   c.price_tag as "priceTag",
                    c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
                    c.credit_limit_paise as "creditLimitPaise",
                    c.credit_blocked as "creditBlocked",
@@ -1144,7 +1267,7 @@ export async function buildPull(
           from mbos_journey_stops s
           join mbos_journey_plans p on p.id = s.plan_id
          where p.user_id = ${principal.user.id}
-           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date
+           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}
            and (s.updated_at > ${sinceIso} or p.updated_at > ${sinceIso})
          order by p.plan_date asc, s.sequence asc
          limit 500
@@ -1192,7 +1315,7 @@ export async function buildPull(
           from mbos_journey_plans p
           left join users m on m.id = p.proposed_by_id
          where p.user_id = ${principal.user.id}
-           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date
+           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}
            and p.updated_at > ${sinceIso}
          order by p.plan_date asc
          limit 200
@@ -1217,6 +1340,8 @@ export async function buildPull(
          order by b.leave_type asc
       `),
 
+      holidaysFor(sinceIso),
+
       /* What the customer pays.
        *
        * Sent whole on every pass rather than as a delta, because the handset
@@ -1233,6 +1358,11 @@ export async function buildPull(
        * at sign-in cannot arrive an hour later through the delta. */
       visibleDocuments(principal.role, ids, sinceIso),
       coursesFor(principal.user.id, sinceIso),
+
+      /* Not `since`-gated — see `salaryFor`. Two small rows, one join each,
+         cheap enough to send on every pass rather than track a change time
+         nothing here otherwise needs. */
+      salaryFor(principal.user.id),
 
       deletionsSince(principal.user.id, sinceIso),
 
@@ -1251,6 +1381,7 @@ export async function buildPull(
     approvals: approvalRows as unknown[],
     planDays: planDayRows as unknown[],
     leaveBalances: leaveBalanceRows as unknown[],
+    holidays: holidayRows as unknown[],
     priceList: priceRows as unknown[],
     schemes: schemeChanges as unknown[],
     documents: documentChanges as unknown[],
@@ -1258,5 +1389,6 @@ export async function buildPull(
     deletions: deletionRows,
     performance: await performanceFor(principal.user.id, sinceIso),
     tasks: taskChanges as unknown[],
+    salary: salaryRows as unknown[],
   };
 }

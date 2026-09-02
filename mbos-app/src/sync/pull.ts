@@ -30,10 +30,12 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertConfig(pull.config, now);
     touched += await upsertNotifications(pull.notifications);
     touched += await upsertLeaveBalances(pull.leaveBalances, now);
+    touched += await upsertHolidays(pull.holidays, now);
     touched += await upsertDocuments(pull.documents, now);
     touched += await upsertCourses(pull.courses, now);
     touched += await upsertPerformance(pull.performance, now);
     touched += await upsertTasks(pull.tasks, now);
+    touched += await upsertSalary(pull.salary, now);
     touched += await applyApprovals(pull.approvals);
     touched += await applyDeletions(pull.deletions);
   });
@@ -152,6 +154,10 @@ function upsertLeaveBalances(rows: unknown[] | undefined, now: number) {
   return upsert('leave_balances', 'kind', rows, { lastSyncedAt: now });
 }
 
+function upsertHolidays(rows: unknown[] | undefined, now: number) {
+  return upsert('holidays', 'id', rows, { lastSyncedAt: now });
+}
+
 /*
  * Keyed on the PERIOD, so a rebuilt month replaces itself rather than stacking.
  * The office recomputes this hourly and the same period comes down again and
@@ -160,6 +166,10 @@ function upsertLeaveBalances(rows: unknown[] | undefined, now: number) {
  */
 function upsertPerformance(rows: unknown[] | undefined, now: number) {
   return upsert('performance', 'period', rows, { lastSyncedAt: now });
+}
+
+function upsertSalary(rows: unknown[] | undefined, now: number) {
+  return upsert('salary', 'period', rows, { lastSyncedAt: now });
 }
 
 function upsertDocuments(rows: unknown[] | undefined, now: number) {
@@ -290,6 +300,9 @@ async function applyApprovals(rows: unknown[] | undefined): Promise<number> {
       await run('UPDATE leave_requests SET state = ? WHERE id = ?', [state, a.subjectId]);
     } else if (a.subjectType === 'sample') {
       await run('UPDATE samples SET state = ? WHERE id = ?', [a.state === 'approved' ? 'Approved' : 'Requested', a.subjectId]);
+    } else if (a.subjectType === 'tour') {
+      const state = a.state === 'approved' ? 'Approved' : a.state === 'rejected' ? 'Rejected' : 'Pending';
+      await run('UPDATE tours SET state = ?, decisionNote = ? WHERE id = ?', [state, a.decisionNote ?? null, a.subjectId]);
     }
   }
   return rows.length;
@@ -301,7 +314,7 @@ async function applyApprovals(rows: unknown[] | undefined): Promise<number> {
  * Only ever reference data. Nothing the salesman authored is deleted by a
  * sync — not a rejected order, not a visit that lost a conflict.
  */
-const DELETABLE = new Set(['customers', 'products', 'timeline_events', 'journey_stops', 'documents', 'courses', 'notifications', 'schemes']);
+const DELETABLE = new Set(['customers', 'products', 'timeline_events', 'journey_stops', 'documents', 'courses', 'notifications', 'schemes', 'holidays']);
 
 async function applyDeletions(deletions: { entity: string; ids: string[] }[] | undefined): Promise<number> {
   if (!deletions?.length) return 0;

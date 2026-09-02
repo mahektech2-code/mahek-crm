@@ -254,6 +254,10 @@ export async function projectParties(
         ...(party.creditDays !== null
           ? { creditTermDays: party.creditDays, creditDays: party.creditDays }
           : {}),
+        // The sheet is simply right about which tier an account pays at, the
+        // same as a phone number or a credit term — there is no in-app
+        // decision to protect, unlike the AM columns above.
+        ...(party.tagPricelist?.trim() ? { priceTag: party.tagPricelist.trim() } : {}),
         ...(party.area ? { city: party.area } : {}),
         ...(party.state ? { region: party.state } : {}),
         ...(party.counterType ? { leadSource: party.counterType } : {}),
@@ -316,6 +320,7 @@ export async function projectParties(
         gstin: party.gstNumber,
         creditTermDays: party.creditDays ?? 30,
         creditDays: party.creditDays,
+        priceTag: party.tagPricelist?.trim() || null,
         customerSince: party.sinceDate,
         ownerId: options.leadOwnerId ?? null,
       });

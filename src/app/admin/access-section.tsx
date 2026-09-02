@@ -473,7 +473,7 @@ function PersonMenu({
         },
         { label: "Open their record", onSelect: onOpen },
         {
-          label: "Send a password reset link",
+          label: "Send a field-app password link",
           onSelect: () => void sendPasswordResetFor(row.userId).then(say),
         },
         {

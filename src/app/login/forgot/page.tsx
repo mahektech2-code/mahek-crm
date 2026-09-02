@@ -21,13 +21,15 @@ export default async function ForgotPasswordPage() {
           </p>
         }
       >
-        <BrandPanelHeading eyebrow="Account access">
-          Reset your password without waiting on anyone.
+        <BrandPanelHeading eyebrow="Field salesman app">
+          Reset your field app password without waiting on anyone.
         </BrandPanelHeading>
         <p className="animate-rise mt-3.5 text-[15px] leading-6 text-balance text-white/70 [animation-delay:80ms]">
-          Enter the work email your account was created with and we send a link
-          to set a new password. Nobody - not even your manager - can see or
-          send you an existing one.
+          This is the password the MBOS handset app pairs with — signing in
+          here on the web only ever needs a code sent to your phone. Enter the
+          work email your account was created with and we send a link to set a
+          new one. Nobody - not even your manager - can see or send you an
+          existing one.
         </p>
       </BrandPanel>
 
