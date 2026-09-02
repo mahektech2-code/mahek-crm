@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -11,6 +11,7 @@ import {
   finishedGoods,
   productAliases,
   productBrands,
+  productCategories,
   productFormulations,
   products,
 } from "@/db/schema";
@@ -244,6 +245,7 @@ const levels = {
   formulation: productFormulations,
   brand: productBrands,
   good: finishedGoods,
+  category: productCategories,
 } as const;
 
 export async function renameLevel(
@@ -291,6 +293,15 @@ export async function setLevelActive(
     const table = levels[level];
     const [before] = await db.select().from(table).where(eq(table.id, rowId));
     if (!before) return fail("No such row.", "not_found");
+    // The residual catches every product nobody has classified — retiring it
+    // would silently drop that catch-all out of every mix-target screen,
+    // which reads categories `where active` (see `mixCategories()`).
+    if (!active && "isResidual" in before && before.isResidual) {
+      return fail(
+        "The residual category catches everything unclassified — it cannot be retired.",
+        "rule_violation",
+      );
+    }
 
     await db
       .update(table)
@@ -322,6 +333,100 @@ export async function setFormulationNotes(
     await audit(user.id, "catalogue.formulationNotes", rowId, null, { notes });
     refresh();
     return ok(undefined, "Saved.");
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "That did not save.");
+  }
+}
+
+/* ------------------------------------------------------------- categories */
+
+/**
+ * A new mix category — a row, not a fourth string typed into a screen. It
+ * sorts after whatever already exists and before the residual, which stays
+ * pinned last at `display_order` 99 by the seed data
+ * (`drizzle/0069_salesman_targets.sql`). Classifying formulations into it is
+ * separate work, done from the catalogue's Duplicates-style screens.
+ */
+export async function createCategory(name: string): Promise<Result<{ id: string; name: string }>> {
+  try {
+    const user = await actor();
+    const clean = canonicalName(name);
+    if (clean.length < 2) return fail("A name needs at least two characters.");
+
+    const [{ next }] = await db
+      .select({
+        next: sql<number>`coalesce(max(${productCategories.displayOrder}), 0) + 1`,
+      })
+      .from(productCategories)
+      .where(eq(productCategories.isResidual, false));
+
+    const id = newId("pcat");
+    await db.insert(productCategories).values({
+      id,
+      name: clean,
+      slug: matchKey(clean),
+      isResidual: false,
+      active: true,
+      displayOrder: next,
+    });
+    await audit(user.id, "catalogue.categoryCreated", id, null, { name: clean });
+    refresh();
+    return ok({ id, name: clean }, `"${clean}" is now a mix category.`);
+  } catch (e) {
+    const message = e instanceof Error && /slug/.test(e.message)
+      ? "Another category already answers to that name."
+      : e instanceof Error
+        ? e.message
+        : "That did not save.";
+    return fail(message);
+  }
+}
+
+/**
+ * Moves a category up or down against its neighbours. The residual never
+ * takes part — it sorts last by convention, not by position in this list.
+ */
+export async function moveCategory(
+  categoryId: string,
+  direction: "up" | "down",
+): Promise<Result<undefined>> {
+  try {
+    const user = await actor();
+    const rows = await db
+      .select({ id: productCategories.id, displayOrder: productCategories.displayOrder })
+      .from(productCategories)
+      .where(eq(productCategories.isResidual, false))
+      .orderBy(asc(productCategories.displayOrder), asc(productCategories.name));
+
+    const index = rows.findIndex((r) => r.id === categoryId);
+    if (index === -1) return fail("That category cannot be reordered.", "not_found");
+
+    const neighborIndex = direction === "up" ? index - 1 : index + 1;
+    if (neighborIndex < 0 || neighborIndex >= rows.length) {
+      return fail(direction === "up" ? "Already first." : "Already last.");
+    }
+
+    const row = rows[index];
+    const neighbor = rows[neighborIndex];
+    await db.transaction(async (tx) => {
+      await tx
+        .update(productCategories)
+        .set({ displayOrder: neighbor.displayOrder, updatedAt: new Date() })
+        .where(eq(productCategories.id, row.id));
+      await tx
+        .update(productCategories)
+        .set({ displayOrder: row.displayOrder, updatedAt: new Date() })
+        .where(eq(productCategories.id, neighbor.id));
+    });
+    await audit(
+      user.id,
+      "catalogue.categoryOrder",
+      row.id,
+      { displayOrder: row.displayOrder },
+      { displayOrder: neighbor.displayOrder },
+    );
+    refresh();
+    return ok(undefined, "Reordered.");
   } catch (e) {
     return fail(e instanceof Error ? e.message : "That did not save.");
   }

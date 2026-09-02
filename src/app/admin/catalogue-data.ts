@@ -1,6 +1,7 @@
 import type {
   catalogueSummary,
   listAliases,
+  listCategories,
   listDuplicates,
   listExceptions,
   listHierarchy,
@@ -25,6 +26,7 @@ export type CatalogueData = {
   page: number;
   pages: number;
   hierarchy: Unwrap<typeof listHierarchy>;
+  categories: Unwrap<typeof listCategories>;
   duplicates: Unwrap<typeof listDuplicates>;
   exceptions: Unwrap<typeof listExceptions>;
   aliases: Unwrap<typeof listAliases>;

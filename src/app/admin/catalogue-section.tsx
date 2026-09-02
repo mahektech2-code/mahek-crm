@@ -22,6 +22,8 @@ import { describeQuantity } from "@/lib/catalogue";
 import {
   addAlias,
   chooseCanonicalId,
+  createCategory,
+  moveCategory,
   nameHeldRow,
   removeAlias,
   renameLevel,
@@ -50,6 +52,7 @@ export const CATALOGUE_TABS = [
   { slug: "skus", label: "All SKUs" },
   { slug: "goods", label: "Finished goods" },
   { slug: "brands", label: "Brands & formulations" },
+  { slug: "categories", label: "Categories" },
   { slug: "duplicates", label: "Duplicates" },
   { slug: "exceptions", label: "Held & excluded" },
   { slug: "import", label: "Import" },
@@ -146,6 +149,9 @@ export function CatalogueSection({
       {slug === "skus" ? <SkuTab data={data} canWrite={canWrite} refresh={refresh} /> : null}
       {slug === "goods" ? <GoodsTab data={data} canWrite={canWrite} refresh={refresh} /> : null}
       {slug === "brands" ? <BrandsTab data={data} canWrite={canWrite} refresh={refresh} /> : null}
+      {slug === "categories" ? (
+        <CategoriesTab data={data} canWrite={canWrite} refresh={refresh} />
+      ) : null}
       {slug === "duplicates" ? <DuplicatesTab data={data} canWrite={canWrite} refresh={refresh} /> : null}
       {slug === "exceptions" ? <ExceptionsTab data={data} canWrite={canWrite} refresh={refresh} /> : null}
       {slug === "import" ? <ImportTab data={data} canWrite={canWrite} refresh={refresh} /> : null}
@@ -874,6 +880,242 @@ function LevelRow({
         </span>
       </Td>
     </Tr>
+  );
+}
+
+/* ------------------------------------------------------------- categories */
+
+function CategoriesTab({
+  data,
+  canWrite,
+  refresh,
+}: {
+  data: CatalogueData;
+  canWrite: boolean;
+  refresh: () => void;
+}) {
+  const [adding, setAdding] = React.useState(false);
+  // The residual sorts last by convention, not by a position in this list —
+  // it never takes part in "move up" / "move down".
+  const orderable = data.categories.filter((c) => !c.isResidual);
+
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader
+        title="Mix categories"
+        hint="What a sales target's product mix is measured against — rows, not a fixed list in a screen, so a new one can be added the day it becomes strategic. The residual catches every formulation nobody has classified yet, and always sorts last."
+        action={
+          <Button
+            variant="secondary"
+            disabled={!canWrite}
+            title={canWrite ? undefined : "Configuration is changed by a manager."}
+            onClick={() => setAdding(true)}
+          >
+            Add category
+          </Button>
+        }
+      />
+      <div className="overflow-x-auto" style={{ ["--rowh" as string]: "40px" }}>
+        <table className="w-full border-collapse">
+          <thead>
+            <tr>
+              <Th className={pinnedHead("left")}>Category</Th>
+              <Th align="right">Formulations classified</Th>
+              <Th align="right">Order</Th>
+              <Th className={pinnedHead("right")} align="right">
+                {""}
+              </Th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.categories.map((c, i) => {
+              const position = orderable.findIndex((r) => r.id === c.id);
+              return (
+                <CategoryRow
+                  key={c.id}
+                  index={i}
+                  category={c}
+                  isFirst={position <= 0}
+                  isLast={position === orderable.length - 1}
+                  canWrite={canWrite}
+                  refresh={refresh}
+                />
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {adding ? <AddCategoryModal onClose={() => setAdding(false)} refresh={refresh} /> : null}
+    </Card>
+  );
+}
+
+/** One mix category — renamable and reorderable, retirable unless it is the residual. */
+function CategoryRow({
+  index,
+  category,
+  isFirst,
+  isLast,
+  canWrite,
+  refresh,
+}: {
+  index: number;
+  category: CatalogueData["categories"][number];
+  isFirst: boolean;
+  isLast: boolean;
+  canWrite: boolean;
+  refresh: () => void;
+}) {
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState(category.name);
+  const { busy, run } = useAction(refresh);
+
+  return (
+    <Tr>
+      <Td className={pinnedCell("left", index)}>
+        {editing ? (
+          <Input
+            value={draft}
+            autoFocus
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={async (e) => {
+              if (e.key === "Escape") setEditing(false);
+              if (e.key === "Enter") {
+                const r = await run(() => renameLevel("category", category.id, draft));
+                if (r.ok) setEditing(false);
+              }
+            }}
+          />
+        ) : (
+          <span className="flex items-center gap-2">
+            <span
+              className={cx(
+                "font-medium",
+                category.active ? "text-ink" : "text-muted line-through",
+              )}
+            >
+              {category.name}
+            </span>
+            {category.isResidual ? <Badge tone="neutral">Residual</Badge> : null}
+          </span>
+        )}
+      </Td>
+      <Td align="right">{category.formulations}</Td>
+      <Td align="right">
+        {category.isResidual ? (
+          <span className="text-[13px] text-muted">sorts last</span>
+        ) : (
+          <span className="inline-flex gap-0.5">
+            <Button
+              variant="ghost"
+              disabled={!canWrite || busy || isFirst}
+              title={isFirst ? "Already first." : undefined}
+              onClick={() => run(() => moveCategory(category.id, "up"))}
+            >
+              ↑
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={!canWrite || busy || isLast}
+              title={isLast ? "Already last." : undefined}
+              onClick={() => run(() => moveCategory(category.id, "down"))}
+            >
+              ↓
+            </Button>
+          </span>
+        )}
+      </Td>
+      <Td className={pinnedCell("right", index)} align="right">
+        <span className="flex items-center justify-end gap-1">
+          {editing ? (
+            <>
+              <Button
+                variant="ghost"
+                disabled={busy}
+                onClick={async () => {
+                  const r = await run(() => renameLevel("category", category.id, draft));
+                  if (r.ok) setEditing(false);
+                }}
+              >
+                Save
+              </Button>
+              <Button variant="ghost" onClick={() => setEditing(false)}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                variant="ghost"
+                disabled={!canWrite}
+                title={canWrite ? undefined : "Configuration is changed by a manager."}
+                onClick={() => {
+                  setDraft(category.name);
+                  setEditing(true);
+                }}
+              >
+                Rename
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={!canWrite || busy || (category.isResidual && category.active)}
+                title={
+                  category.isResidual && category.active
+                    ? "The residual catches everything unclassified — it cannot be retired."
+                    : canWrite
+                      ? undefined
+                      : "Configuration is changed by a manager."
+                }
+                onClick={() => run(() => setLevelActive("category", category.id, !category.active))}
+              >
+                {category.active ? "Retire" : "Restore"}
+              </Button>
+            </>
+          )}
+        </span>
+      </Td>
+    </Tr>
+  );
+}
+
+function AddCategoryModal({ onClose, refresh }: { onClose: () => void; refresh: () => void }) {
+  const [name, setName] = React.useState("");
+  const { busy, run } = useAction(refresh);
+
+  const save = async () => {
+    const r = await run(() => createCategory(name));
+    if (r.ok) onClose();
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={420}
+      title="Add category"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={busy || name.trim().length < 2} onClick={save}>
+            Add
+          </Button>
+        </>
+      }
+    >
+      <Field label="Name">
+        <Input
+          value={name}
+          autoFocus
+          placeholder="e.g. Epoxy"
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && name.trim().length >= 2) save();
+          }}
+        />
+      </Field>
+    </Modal>
   );
 }
 
