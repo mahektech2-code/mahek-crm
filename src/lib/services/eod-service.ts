@@ -221,7 +221,15 @@ export async function eodPreflightFor(userId: string, day: BusinessDate) {
     : { canFinalise: false as const, blocking: result.blocking, message: result.message };
 }
 
-export async function teamEod(day: BusinessDate) {
+/**
+ * The team roll-up over any span — `range` of one day is what the default
+ * "today" view passes, so this is unchanged for that case and simply widens
+ * for the others. `aggregateTeamEod` still takes a single `BusinessDate` for
+ * its own paste-ready message, which is why `range.to` is what it gets: the
+ * table of rows and totals this returns is correct over any span, and the
+ * screen only offers that message where `range` really is one day.
+ */
+export async function teamEod(range: DateRange) {
   await requireCapability("team.report");
   const ctx = await resolveScope();
   const ids = scopedUserIds(ctx.scope);
@@ -234,11 +242,11 @@ export async function teamEod(day: BusinessDate) {
   const rows = await Promise.all(
     team.map(async (u) => ({
       userName: u.name,
-      ...(await eodMetricsFor(u.id, day)),
+      ...(await eodMetricsForRange(u.id, range)),
     })),
   );
 
-  return aggregateTeamEod(day, rows);
+  return aggregateTeamEod(range.to, rows);
 }
 
 export async function storedEodReport(userId: string, day: BusinessDate) {

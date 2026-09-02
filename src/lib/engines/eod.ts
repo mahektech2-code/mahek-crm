@@ -102,7 +102,7 @@ export function formatDate(date: BusinessDate): string {
  * normal day reads as a single figure and the split shows up exactly when it
  * means something — that some of today's work is still sitting with accounts.
  */
-function describeOrders(input: EodInput): string {
+function describeOrders(input: Omit<EodInput, "userName" | "date">): string {
   const value = formatMoney(input.ordersValue);
   if (input.ordersCaptured === input.ordersCount) {
     return `${input.ordersCount} · ${value}`;
@@ -111,7 +111,7 @@ function describeOrders(input: EodInput): string {
 }
 
 /** The same fact in the message's own punctuation, which is not the table's. */
-function describeOrdersForMessage(input: EodInput): string {
+function describeOrdersForMessage(input: Omit<EodInput, "userName" | "date">): string {
   const value = formatMoney(input.ordersValue);
   if (input.ordersCaptured === input.ordersCount) {
     return `${input.ordersCount} (${value})`;
@@ -119,12 +119,22 @@ function describeOrdersForMessage(input: EodInput): string {
   return `${input.ordersCaptured} taken · ${input.ordersCount} approved (${value})`;
 }
 
-export function aggregateEod(input: EodInput): EodReport {
+/**
+ * The table half of a report — every figure but the paste-ready message —
+ * pulled out on its own because it is also what a period OTHER than a single
+ * day needs. `aggregateEod` calls this for "today"; a screen showing "last 7
+ * days" or a custom range calls it directly on `eodMetricsForRange`'s output,
+ * which carries the same fields minus `userName` and `date` — a range has
+ * neither a single person's name attached here nor one date to print.
+ */
+export function eodLines(
+  input: Omit<EodInput, "userName" | "date">,
+): Array<{ label: string; value: string }> {
   const percent = input.targetAmount
     ? Math.round((input.targetAchieved / input.targetAmount) * 100)
     : 0;
 
-  const lines = [
+  return [
     { label: "Customers called from the queue", value: String(input.queueWorked) },
     { label: "Calls attempted", value: String(input.callsAttempted) },
     { label: "Connected", value: String(input.callsConnected) },
@@ -145,6 +155,14 @@ export function aggregateEod(input: EodInput): EodReport {
       value: `${formatMoney(input.targetAchieved)} of ${formatMoney(input.targetAmount)} (${percent}%)`,
     },
   ];
+}
+
+export function aggregateEod(input: EodInput): EodReport {
+  const percent = input.targetAmount
+    ? Math.round((input.targetAchieved / input.targetAmount) * 100)
+    : 0;
+
+  const lines = eodLines(input);
 
   // Short lines, a middot as the only separator, asterisks for the one bold
   // line. Nothing that WhatsApp renders badly, and no table characters.

@@ -592,6 +592,84 @@ export function sameRangeLastYear(range: DateRange): DateRange {
   };
 }
 
+/* ------------------------------------------------------------ eod periods */
+
+/**
+ * A THIRD vocabulary, deliberately not a widening of either of the other two.
+ * `DashboardPeriod` is today/yesterday/week/month, built for a calling day
+ * still in progress; `ReportPeriod` is the owner's quarters and year-to-date.
+ * The EOD report is neither audience: a telecaller or their manager wants
+ * "how did yesterday go", "how did the last week go" (a rolling window, asked
+ * on every day of it — not just Mondays, which is what `DashboardPeriod`'s
+ * calendar `week` would give), and "how did last month go" as a CLOSED month
+ * rather than month-to-date, plus a custom range for anything else. Widening
+ * either existing enum to fit this would put "last quarter" beside a
+ * telecaller's own day, or "yesterday" beside an owner's quarters.
+ */
+export type EodPeriod = "today" | "yesterday" | "last7" | "month" | "last-month" | "custom";
+
+export const EOD_PERIODS: EodPeriod[] = [
+  "today",
+  "yesterday",
+  "last7",
+  "month",
+  "last-month",
+  "custom",
+];
+
+export function isEodPeriod(v: string | undefined): v is EodPeriod {
+  return !!v && (EOD_PERIODS as string[]).includes(v);
+}
+
+export const EOD_PERIOD_LABELS: Record<EodPeriod, string> = {
+  today: "Today",
+  yesterday: "Yesterday",
+  last7: "Last 7 days",
+  month: "This month",
+  "last-month": "Last month",
+  custom: "Custom range",
+};
+
+/**
+ * The span an EOD period covers.
+ *
+ * `today` and `month` run up to today, never past it — the same rule
+ * `periodRange` and `reportRange` both follow, for the same reason: a span
+ * that ran to a future end date would be mostly days that have not happened.
+ * `last-month` is CLOSED, so it runs to its real end. `last7` is a ROLLING
+ * seven days — today and the six before it — deliberately not the calendar
+ * `week` `periodRange` means: "how was my last week" is a question asked on
+ * every day of the week, not one that reads thin on a Monday.
+ */
+export function eodPeriodRange(
+  day: BusinessDate,
+  period: EodPeriod,
+  config: WorkingDayConfig,
+  custom?: Partial<DateRange>,
+): DateRange {
+  switch (period) {
+    case "today":
+      return { from: day, to: day };
+    case "yesterday": {
+      const previous = previousWorkingDay(day, config);
+      return { from: previous, to: previous };
+    }
+    case "last7":
+      return { from: addDays(day, -6), to: day };
+    case "month":
+      return { from: startOfMonth(day), to: day };
+    case "last-month": {
+      const key = addMonths(monthKey(day), -1);
+      return { from: `${key}-01`, to: endOfMonth(key) };
+    }
+    case "custom":
+      // A half-given custom range is the day itself rather than an error: the
+      // screen is a set of URL parameters and somebody will arrive with one
+      // of the two.
+      return { from: custom?.from ?? day, to: custom?.to ?? day };
+  }
+}
+
 /**
  * Shift a date by whole months, keeping the day of the month.
  *
