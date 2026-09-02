@@ -324,8 +324,8 @@ describe("E2 queue builder", () => {
       lastContactDate: addDays(TODAY, -40),
       // one reminder overdue, one due today
       reminders: [
-        { id: "r1", dueDate: addDays(TODAY, -2), note: "Call back" },
-        { id: "r2", dueDate: TODAY, note: "Send the rate list" },
+        { id: "r1", dueDate: addDays(TODAY, -2), note: "Call back", holdOtherReasonsUntilDue: false },
+        { id: "r2", dueDate: TODAY, note: "Send the rate list", holdOtherReasonsUntilDue: false },
       ],
     });
     const { entries } = buildQueue([c], TODAY, C);
@@ -344,8 +344,8 @@ describe("E2 queue builder", () => {
     const c = candidate({
       lastContactDate: addDays(TODAY, -40),
       reminders: [
-        { id: "r1", dueDate: addDays(TODAY, -2), note: "Call back" },
-        { id: "r2", dueDate: addDays(TODAY, -5), note: "Chase the rate list" },
+        { id: "r1", dueDate: addDays(TODAY, -2), note: "Call back", holdOtherReasonsUntilDue: false },
+        { id: "r2", dueDate: addDays(TODAY, -5), note: "Chase the rate list", holdOtherReasonsUntilDue: false },
       ],
     });
     const { entries } = buildQueue([c], TODAY, C);
@@ -427,7 +427,7 @@ describe("E2 queue builder", () => {
     const c = candidate({
       lastContactDate: addDays(TODAY, -40),
       lastConfirmedWhatsappDate: addDays(TODAY, -1),
-      reminders: [{ id: "r1", dueDate: TODAY, note: "Call back after 3" }],
+      reminders: [{ id: "r1", dueDate: TODAY, note: "Call back after 3", holdOtherReasonsUntilDue: false }],
     });
     const r = buildQueue([c], TODAY, C);
     assert.equal(r.entries.length, 1);
@@ -441,7 +441,7 @@ describe("E2 queue builder", () => {
     const c = candidate({
       lastContactDate: addDays(TODAY, -40),
       calledToday: true,
-      reminders: [{ id: "r1", dueDate: TODAY, note: "Call back after 3" }],
+      reminders: [{ id: "r1", dueDate: TODAY, note: "Call back after 3", holdOtherReasonsUntilDue: false }],
     });
     const r = buildQueue([c], TODAY, C);
     assert.equal(r.entries.length, 0);
@@ -745,7 +745,7 @@ describe("E2 queue builder", () => {
     const c = candidate({
       lastOrderDate: addDays(TODAY, -1),
       cycleDays: 8,
-      reminders: [{ id: "r1", dueDate: TODAY, note: "Send the rate list" }],
+      reminders: [{ id: "r1", dueDate: TODAY, note: "Send the rate list", holdOtherReasonsUntilDue: false }],
     });
     const r = buildQueue([c], TODAY, C);
     assert.equal(r.entries.length, 1);
@@ -925,7 +925,7 @@ describe("E2 queue builder", () => {
       const c = candidate({
         typicalOrderPaise: 20_000_00,
         cycleConfidence: 10,
-        reminders: [{ id: "r1", dueDate: TODAY, note: "Call back" }],
+        reminders: [{ id: "r1", dueDate: TODAY, note: "Call back", holdOtherReasonsUntilDue: false }],
       });
       const { entries } = buildQueue([c], TODAY, C);
       assert.equal(entries[0].callValue, 20_000_00);
@@ -937,7 +937,7 @@ describe("E2 queue builder", () => {
       const promise = candidate({
         customerId: "promise",
         typicalOrderPaise: 1_00,
-        reminders: [{ id: "r1", dueDate: TODAY, note: "Call back" }],
+        reminders: [{ id: "r1", dueDate: TODAY, note: "Call back", holdOtherReasonsUntilDue: false }],
       });
       const huge = candidate({
         customerId: "huge",
@@ -1144,7 +1144,7 @@ describe("E2 queue builder", () => {
       cycleDays: 22,
       lastAnsweredOutcome: "no_order",
       lastAnsweredDate: addDays(TODAY, -1),
-      reminders: [{ id: "r1", dueDate: TODAY, note: "They said call today" }],
+      reminders: [{ id: "r1", dueDate: TODAY, note: "They said call today", holdOtherReasonsUntilDue: false }],
     });
     assert.equal(buildQueue([c], TODAY, C).entries.length, 1);
   });
@@ -1214,7 +1214,7 @@ describe("E2 queue builder", () => {
   test("ranking puts an overdue reminder above an overdue order", () => {
     const reminder = candidate({
       customerId: "reminder",
-      reminders: [{ id: "r", dueDate: addDays(TODAY, -1), note: "n" }],
+      reminders: [{ id: "r", dueDate: addDays(TODAY, -1), note: "n", holdOtherReasonsUntilDue: false }],
     });
     const order = candidate({
       customerId: "order",
@@ -2731,6 +2731,84 @@ describe("what gets called first", () => {
       "a customer one cycle late ranked no higher than one who stopped",
     );
   });
+
+  test("a held reminder silences the order-due reason until its own date", () => {
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -32),
+      cycleDays: 30,
+      reminders: [
+        {
+          id: "rem_1",
+          dueDate: addDays(TODAY, 3),
+          note: "Call after stock confirmation",
+          holdOtherReasonsUntilDue: true,
+        },
+      ],
+    });
+
+    const { entries, suppressed } = buildQueue([c], TODAY, C);
+    assert.equal(entries.length, 0, "the order-due reason should be held");
+    assert.equal(suppressed.length, 1);
+    assert.match(suppressed[0].reason, /Holding other calls until/);
+    assert.match(suppressed[0].reason, /Call after stock confirmation/);
+  });
+
+  test("on the reminder's own due date, the hold stops applying and it surfaces as booked", () => {
+    const dueDate = addDays(TODAY, 3);
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -32),
+      cycleDays: 30,
+      reminders: [
+        { id: "rem_1", dueDate, note: "Call after stock confirmation", holdOtherReasonsUntilDue: true },
+      ],
+    });
+
+    const { entries } = buildQueue([c], dueDate, C);
+    assert.equal(entries.length, 1, "the promise itself is the answer now");
+    assert.equal(entries[0].reasons[0].kind, "reminderDueToday");
+  });
+
+  test("a held reminder does not silence an overdue payment", () => {
+    const c = candidate({
+      lastOrderDate: null,
+      paymentCallDue: { totalOverdue: 5_000_00, daysOverdue: 10 },
+      reminders: [
+        {
+          id: "rem_1",
+          dueDate: addDays(TODAY, 3),
+          note: "Call about the stock",
+          holdOtherReasonsUntilDue: true,
+        },
+      ],
+    });
+
+    const { entries } = buildQueue([c], TODAY, CP);
+    assert.equal(entries.length, 1, "money owed is never held by a scheduling decision");
+    assert.equal(entries[0].reasons[0].kind, "paymentOverdue");
+  });
+
+  test("a held reminder does not silence a customer who has gone quiet for good", () => {
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -220),
+      cycleDays: 22,
+      reminders: [
+        {
+          id: "rem_1",
+          dueDate: addDays(TODAY, 3),
+          note: "Call to check in",
+          holdOtherReasonsUntilDue: true,
+        },
+      ],
+    });
+
+    const { entries } = buildQueue([c], TODAY, C);
+    assert.equal(
+      entries.length,
+      1,
+      "a churn signal this strong should not be silenced by an unrelated promise",
+    );
+    assert.equal(entries[0].reasons[0].kind, "orderLongOverdue");
+  });
 });
 
 /* ---------------------------------------------------------------------------
@@ -2772,7 +2850,7 @@ describe("a shop we only deliver to", () => {
       customerId: "shop",
       lastOrderDate: null,
       thirdParty: true,
-      reminders: [{ id: "r1", dueDate: TODAY, note: "Ring back about the damaged tin" }],
+      reminders: [{ id: "r1", dueDate: TODAY, note: "Ring back about the damaged tin", holdOtherReasonsUntilDue: false }],
     });
     assert.equal(buildQueue([shop], TODAY, C).entries.length, 1);
   });

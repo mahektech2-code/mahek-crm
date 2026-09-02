@@ -48,6 +48,16 @@ export type NextStep = {
    * 20th" are two different facts and a telecaller asks both.
    */
   heldToday: string | null;
+  /**
+   * The promise `withPromise` folded into `detail`, structured rather than
+   * left for the UI to parse back out of a sentence. Present only where a
+   * promise was actually appended — never where the promise already IS the
+   * answer (`kind === "booked"` on this exact date), since there is nothing
+   * to hold there beyond what is already true. This is what the "hold other
+   * calls until then" action reads: it needs the reminder's id, not its
+   * English.
+   */
+  promise: { reminderId: string; dueDate: BusinessDate; note: string } | null;
 };
 
 export type NextStepInput = {
@@ -128,6 +138,7 @@ export function nextStep(
       detail:
         "This customer is marked do not contact, so nothing will bring them back to your Call Log.",
       heldToday: null,
+      promise: null,
     };
   }
 
@@ -139,6 +150,7 @@ export function nextStep(
     headline: "Nothing scheduled",
     detail: `Nothing brings this customer back to your Call Log in the next ${horizonDays} days. They will appear when something changes — an order falls due, or somebody sets a reminder.`,
     heldToday,
+    promise: null,
   };
 }
 
@@ -198,9 +210,19 @@ function withPromise(
   // Already the answer. Saying it twice reads as two different callbacks.
   if (step.kind === "booked" && step.date === promise.dueDate) return step;
 
+  // `dated()` leaves detail without a full stop — it is normally read as a
+  // standalone phrase — while the "unreachable" and do-not-contact details
+  // already end in one. Adding a fixed period here would double up on those;
+  // adding none runs the two sentences together with no separator at all,
+  // which is what a telecaller was actually shown: "...due to reorder You
+  // have also promised...", no capital-less "you", no full stop in sight.
+  const needsFullStop = !/[.!?]$/.test(step.detail.trim());
   return {
     ...step,
-    detail: `${step.detail} You have also promised them a callback on ${dayLabel(promise.dueDate)} — ${promise.note}.`,
+    detail:
+      `${step.detail}${needsFullStop ? "." : ""} You have also promised ` +
+      `them a callback on ${dayLabel(promise.dueDate)} — ${promise.note}.`,
+    promise: { reminderId: promise.id, dueDate: promise.dueDate, note: promise.note },
   };
 }
 
@@ -221,7 +243,7 @@ function describe(
   daysAway: number,
   heldToday: string | null,
 ): NextStep {
-  const base = { date: day, daysAway, reasonKind: kind, heldToday };
+  const base = { date: day, daysAway, reasonKind: kind, heldToday, promise: null };
 
   /*
    * The headline is the SAME sentence for every dated reason, and it names the

@@ -547,6 +547,13 @@
       "when": 1787501080000,
       "tag": "0077_collection_target_percent",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1787501140000,
+      "tag": "0078_reminder_hold",
+      "breakpoints": true
     }
   ]
 }

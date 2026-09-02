@@ -330,6 +330,7 @@ export async function logPaymentFollowUp(
                 headline: prior.headline,
                 detail: prior.detail,
                 heldToday: prior.heldToday,
+                promise: null,
               }
             : null,
       },

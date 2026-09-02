@@ -230,6 +230,9 @@ function storedNextStep(row: {
     headline: row.nextStepHeadline,
     detail: row.nextStepDetail ?? "",
     heldToday: row.nextStepHeldToday,
+    // Never stored — the hold action only makes sense against a LIVE
+    // promise, not one replayed from a past call's six stored columns.
+    promise: null,
   };
 }
 

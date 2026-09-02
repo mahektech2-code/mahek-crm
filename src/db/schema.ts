@@ -1832,6 +1832,17 @@ export const reminders = pgTable(
     status: reminderStatusEnum("status").notNull().default("pending"),
     systemGenerated: boolean("system_generated").notNull().default(false),
     rescheduleCount: integer("reschedule_count").notNull().default(0),
+    /**
+     * A telecaller's own decision, same family as `amDecidedAt` and
+     * `paymentDecidedAt`: while this reminder is pending and its due date is
+     * still ahead, the queue holds off order/cycle reasons that would
+     * otherwise put the customer back on a Call Log before the promised
+     * date. Never inferred — set only through the hold action offered
+     * alongside the promise itself.
+     */
+    holdOtherReasonsUntilDue: boolean("hold_other_reasons_until_due")
+      .notNull()
+      .default(false),
     closedAt: timestamp("closed_at", { withTimezone: true }),
     closedById: text("closed_by_id").references(() => users.id),
     closureNote: text("closure_note"),
@@ -3332,11 +3343,13 @@ export const sheetTakenOrderRows = pgTable(
  * ("Mahek EMP 2.0") — a field salesman's visit/call log from before MBOS
  * existed. One row per sheet row, keyed on the sheet's own Activity ID.
  *
- * This is a ONE-TIME BACKFILL, not a live mirror: nothing here feeds the
- * buying cycle, the queue, `calls` or `mbos_visits` — those engines and that
- * table are owned by the CRM and the live MBOS sync protocol respectively,
- * and neither has a shape (verified GPS, NOT NULL customer/salesman ids)
- * this free-text history can honestly claim. What DOES read a matched row is
+ * It started as a one-time backfill and is a live mirror now that the
+ * service account can reach the sheet, but nothing here feeds the buying
+ * cycle, the queue, `calls` or `mbos_visits` regardless — those engines and
+ * that table are owned by the CRM and the live MBOS sync protocol
+ * respectively, and neither has a shape (verified GPS, NOT NULL
+ * customer/salesman ids) this free-text history can honestly claim. What
+ * DOES read a matched row is
  * `timeline_events` — see `lib/field-activity-projection-service.ts` — which
  * is how this reaches a salesman's phone and a customer's shared history
  * without pretending to be either a live visit or a telecaller call.

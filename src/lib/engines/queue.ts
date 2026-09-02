@@ -50,7 +50,13 @@ export type QueueCandidate = {
   createdDate: BusinessDate;
 
   /** Pending reminders assigned to the requesting user. */
-  reminders: Array<{ id: string; dueDate: BusinessDate; note: string }>;
+  reminders: Array<{
+    id: string;
+    dueDate: BusinessDate;
+    note: string;
+    /** A telecaller's own decision — see `holdWindow`. */
+    holdOtherReasonsUntilDue: boolean;
+  }>;
 
   /** Set only on CONFIRMED send. A copied-but-unconfirmed message is never here. */
   lastConfirmedWhatsappDate: BusinessDate | null;
@@ -237,16 +243,24 @@ export function buildQueue(
     // with a reminder or a check-in against them still sees the call they are
     // actually making rather than one about an order.
     const quiet = quietWindow(c, today, config, hasReminderReason);
-    const reasons = quiet ? all.filter((r) => !isOrderChasing(r.kind)) : all;
+
+    // A held reminder is a wider, deliberate version of the same idea: not
+    // "the order was just placed" but "a telecaller decided this promise
+    // covers it, hold everything order/cycle-shaped until then." Money and
+    // do-not-contact are never in the stripped set — see `isHoldableReason`.
+    const hold = holdWindow(c, today);
+
+    let reasons = quiet ? all.filter((r) => !isOrderChasing(r.kind)) : all;
+    if (hold) reasons = reasons.filter((r) => !isHoldableReason(r.kind));
 
     if (!reasons.length) {
-      // Nothing but order chasing, and the window says not yet. Shown rather
-      // than dropped: a customer late by their own cycle would otherwise
-      // vanish with no explanation.
+      // Nothing left but a reason the window or the hold says not yet.
+      // Shown rather than dropped: a customer late by their own cycle would
+      // otherwise vanish with no explanation.
       suppressed.push({
         customerId: c.customerId,
         name: c.name,
-        reason: quiet!,
+        reason: quiet ?? hold!,
       });
       continue;
     }
@@ -743,6 +757,26 @@ function isOrderChasing(kind: QueueReasonKind): boolean {
 }
 
 /**
+ * The reasons a telecaller's hold can silence — order chasing plus the
+ * check-in and prospect cadences, which `isOrderChasing` deliberately
+ * leaves out (that predicate is scoped to the no-order cooldown alone).
+ * Never `orderLongOverdue`: a customer that far gone is a churn signal
+ * stronger than an ordinary reorder ask, and a scheduling decision made
+ * about one promise should not be able to silence it. Never
+ * `paymentOverdue`, `unreachable` or the reminder's own
+ * `reminderDueToday`/`reminderOverdue` either — money, reachability and the
+ * hold's own answer are not things a hold can hide from itself.
+ */
+function isHoldableReason(kind: QueueReasonKind): boolean {
+  return (
+    isOrderChasing(kind) ||
+    kind === "checkInDue" ||
+    kind === "checkInOverdue" ||
+    kind === "prospect"
+  );
+}
+
+/**
  * Why order chasing is held back today, or null if it is not.
  *
  * A customer who ordered days ago is serving themselves and a call asking for
@@ -784,6 +818,29 @@ function quietWindow(
   // takes a measured cycle — so `cycleDays` is never the guessed default by the
   // time a telecaller reads it.
   return `Orders every ${c.cycleDays} days · ordered ${sinceOrder === 0 ? "today" : `${sinceOrder} day${sinceOrder === 1 ? "" : "s"} ago`} - no order chased for ${left} more day${left === 1 ? "" : "s"}`;
+}
+
+/**
+ * Why a telecaller's own hold is silencing order/cycle reasons today, or
+ * null if none is active.
+ *
+ * Unlike `quietWindow`, this is never inferred from dates alone — it exists
+ * only because a reminder carries `holdOtherReasonsUntilDue`, set through
+ * the hold action offered beside the promise sentence. The hold stops
+ * mattering the moment its own due date arrives: at that point the reminder
+ * itself becomes the reason (`reminderDueToday`), which is the whole point —
+ * the promise IS the answer from then on, not a second thing competing
+ * with it.
+ *
+ * Only the EARLIEST held reminder is named when more than one exists,
+ * matching `withPromise` in `next-step.ts`, which reads the same ordering.
+ */
+function holdWindow(c: QueueCandidate, today: BusinessDate): string | null {
+  const held = c.reminders
+    .filter((r) => r.holdOtherReasonsUntilDue && r.dueDate > today)
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0];
+  if (!held) return null;
+  return `Holding other calls until your promised callback on ${shortDateWithYear(held.dueDate, today)} - ${held.note}`;
 }
 
 /** The stored outcome, as a sentence a telecaller reads. */

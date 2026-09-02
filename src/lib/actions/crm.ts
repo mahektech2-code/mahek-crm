@@ -49,6 +49,7 @@ import {
   completeReminder as completeReminderService,
   createReminder as createReminderService,
   dismissReminder,
+  holdOtherReasonsUntilReminder as holdOtherReasonsUntilReminderService,
   recordWatchOutcome,
   rescheduleReminder as rescheduleReminderService,
   resolveComplaint as resolveComplaintService,
@@ -374,6 +375,18 @@ export async function rescheduleReminder(
 ): Promise<Result> {
   try {
     const r = await rescheduleReminderService(reminderId, dueDate, note);
+    refreshAll();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function holdOtherReasonsUntilReminder(
+  reminderId: string,
+): Promise<Result> {
+  try {
+    const r = await holdOtherReasonsUntilReminderService(reminderId);
     refreshAll();
     return r;
   } catch (e) {

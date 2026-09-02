@@ -6,6 +6,7 @@ import { bills, calls, customers, orders } from "@/db/schema";
 import { assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
 import { customerProducts, type FrequentProduct } from "./product-service";
+import { nextStepForCustomer } from "./queue-service";
 import { today } from "../recompute";
 import {
   addDays,
@@ -97,6 +98,14 @@ export type CustomerInformation = {
   /** Which system produced the product history, so the screen can say so. */
   productHistorySource: "external" | "crm";
   productHistorySyncedAt: string | null;
+  /**
+   * Set only where a pending reminder is standing behind an earlier reason
+   * the system would otherwise surface first — see `NextStep["promise"]`.
+   * This is the SAME live read the post-save confirmation dialog uses, so a
+   * conflict already showing here and a hold offered there can never
+   * disagree about what the promise actually is.
+   */
+  pendingHold: { headline: string; detail: string; reminderId: string; dueDate: string } | null;
 };
 
 /**
@@ -296,6 +305,28 @@ export async function customerInformation(
   const allProducts = await customerProducts(customerId, { limit: 0 });
   const frequent = allProducts.slice(0, config2["products.frequentCount"]);
 
+  /*
+   * Whether this customer is ALREADY in the state that prompted the hold
+   * action: a pending reminder standing behind an earlier reason. Read
+   * before any new call is logged, so the offer to hold reaches a customer
+   * whose conflict predates this feature, not only a freshly-made promise.
+   * Failing to work it out must not fail the rest of the tab.
+   */
+  let pendingHold: CustomerInformation["pendingHold"] = null;
+  try {
+    const step = await nextStepForCustomer(customerId);
+    if (step?.promise) {
+      pendingHold = {
+        headline: step.headline,
+        detail: step.detail,
+        reminderId: step.promise.reminderId,
+        dueDate: step.promise.dueDate,
+      };
+    }
+  } catch {
+    pendingHold = null;
+  }
+
   return {
     kind: customer.kind,
     lead: isLead
@@ -330,5 +361,6 @@ export async function customerInformation(
     frequentProducts: frequent,
     productHistorySource: "crm",
     productHistorySyncedAt: null,
+    pendingHold,
   };
 }

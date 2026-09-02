@@ -93,6 +93,7 @@ export type JobName =
   | "sheet-reparse"
   | "hrms-sync"
   | "hrms-reparse"
+  | "field-activity-append"
   | "field-activity-sync"
   | "field-activity-project"
   | "sheet-payments"
@@ -624,8 +625,10 @@ export async function runJob(
     case "hrms-sync":
     case "hrms-reparse":
       return [await runEmployeeSync(job, triggeredById)];
+    case "field-activity-append":
+      return [await runFieldActivitySync(triggeredById, "append")];
     case "field-activity-sync":
-      return [await runFieldActivitySync(triggeredById)];
+      return [await runFieldActivitySync(triggeredById, "reconcile")];
     case "field-activity-project":
       return [await runFieldActivityProjection(triggeredById)];
     default:
@@ -747,12 +750,16 @@ async function runEmployeeSync(
 }
 
 /* ------------------------------------------------- field salesman activity
- * The Activity tab of a defunct prior system — a ONE-TIME BACKFILL, not a
- * cadence. `npm run jobs -- field-activity-sync` reads the live Google Sheet;
- * the initial backfill instead runs `scripts/import-field-activity-csv.ts`
- * directly against the local export, sharing this same staging/matching code
- * through the sync service's own `reader` seam — a CSV path is not something
- * the generic job-options CLI needs to grow a flag for.
+ * The Activity tab of a defunct prior system ("Mahek EMP 2.0") — reachable
+ * live once the service account was confirmed to hold Viewer on it, so this
+ * is a cadence now, on the same append/reconcile split the order sheet uses:
+ * `field-activity-append` every few minutes, cheap, watermark-only;
+ * `field-activity-sync` (reconcile) once a day, a full hash-compare that
+ * catches an edited or withdrawn row — a 33,000-row tab read on every tick
+ * would cost API quota for nothing an append run would ever see change. The
+ * one-time backfill (`scripts/import-field-activity-csv.ts`) that seeded this
+ * table before live access existed shares the same staging/matching code
+ * through the sync service's own `reader` seam.
  *
  * `field-activity-project` is separate from the sync on purpose: a batch is
  * visible in the staging table before it is believed onto a customer's
@@ -760,14 +767,17 @@ async function runEmployeeSync(
  * the order sheet — here decided per row (a real matched customer) rather
  * than per batch.
  */
-async function runFieldActivitySync(triggeredById?: string): Promise<JobResult> {
+async function runFieldActivitySync(
+  triggeredById: string | undefined,
+  mode: SyncMode,
+): Promise<JobResult> {
   return run(
-    "field-activity-sync",
+    mode === "append" ? "field-activity-append" : "field-activity-sync",
     async () => {
       const outcome = await syncFieldActivitySheet({
         spreadsheetId: fieldActivitySheetId(),
         tabTitle: FIELD_ACTIVITY_TAB,
-        mode: "reconcile",
+        mode,
         triggeredById,
       });
       return {

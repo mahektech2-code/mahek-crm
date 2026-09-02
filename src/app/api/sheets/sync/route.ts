@@ -36,6 +36,13 @@ import { SyncAlreadyRunningError } from "@/lib/services/sheet-sync-core";
  *   ?mode=team        gives the back office team logins and hands each of them
  *                     the accounts the master says they work. Takes &password=
  *                     for the accounts it creates — never for existing ones.
+ *   ?mode=field-activity            the Activity tab of the OTHER workbook
+ *                     ("Mahek EMP 2.0"), watermark-only. Cheap, every few
+ *                     minutes, same reasoning as ?mode=append.
+ *   ?mode=field-activity-reconcile  the whole Activity tab, hash-compared —
+ *                     tens of thousands of rows, so once a day rather than
+ *                     every tick, the same trade the order sheet makes.
+ *   ?mode=field-activity-project    matched rows onto the shared timeline.
  *
  * `reparse` is deliberately NOT reachable here. It re-reads stored rows after
  * somebody corrects a parsing rule, which is a decision a person makes with a
@@ -67,6 +74,9 @@ const JOBS: Record<string, JobName> = {
   parties: "party-sync",
   project: "project-sheet",
   team: "provision-team",
+  "field-activity": "field-activity-append",
+  "field-activity-reconcile": "field-activity-sync",
+  "field-activity-project": "field-activity-project",
   // The derived values: buying cycles, the inactive watch, follow-up stages,
   // slow payers, bill statuses, today's queue snapshot.
   nightly: "nightly",

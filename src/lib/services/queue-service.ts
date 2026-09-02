@@ -257,6 +257,7 @@ async function queueInputs(
       customerId: reminders.customerId,
       dueDate: reminders.dueDate,
       note: reminders.note,
+      holdOtherReasonsUntilDue: reminders.holdOtherReasonsUntilDue,
     })
     .from(reminders)
     .where(
@@ -269,7 +270,12 @@ async function queueInputs(
   const remindersByCustomer = new Map<string, QueueCandidate["reminders"]>();
   for (const r of reminderRows) {
     const list = remindersByCustomer.get(r.customerId) ?? [];
-    list.push({ id: r.id, dueDate: r.dueDate, note: r.note });
+    list.push({
+      id: r.id,
+      dueDate: r.dueDate,
+      note: r.note,
+      holdOtherReasonsUntilDue: r.holdOtherReasonsUntilDue,
+    });
     remindersByCustomer.set(r.customerId, list);
   }
 

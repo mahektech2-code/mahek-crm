@@ -1814,6 +1814,24 @@ half-hourly script it is logged and the cycle carries on: the request reached
 the deployment and the job runs to completion server-side, so only the answer
 is lost, and the next tick's 409 guard stops a second pass climbing on top.
 
+**A backfill becomes a cadence the day the source stops being defunct.** The
+field salesman activity history — the Activity tab of "Mahek EMP 2.0", a
+prior system — shipped as a one-time CSV import because the live sheet was
+not reachable from the app's service account at the time. Once
+`mahekone@mahekone.iam.gserviceaccount.com` was confirmed to hold Viewer on
+it, the same staging/hash/reconcile code the CSV backfill used became a live
+sync, on the order sheet's OWN append/reconcile split rather than one full
+compare per tick — the tab is tens of thousands of rows, so `?mode=
+field-activity` (watermark-only) runs every few minutes and `?mode=
+field-activity-reconcile` (full hash-compare, catches an edited or withdrawn
+row) runs once a day. It is a SEPARATE spreadsheet from the order workbook,
+so it cannot share `sheet-sync-trigger.gs` — an Apps Script trigger belongs
+to the document it is bound to — and has its own,
+`scripts/field-activity-sync-trigger.gs`, installed the same way in that
+workbook. `?mode=field-activity-project` writes matched rows onto
+`timeline_events`, which is how this reaches a customer's shared history and
+a salesman's phone.
+
 **A flag that is silently discarded is worse than one that is rejected.**
 `npm run jobs -- project-sheet --bills` used to run the projection with no
 options whatsoever: the argument was read into argv, dropped before `runJob`,
