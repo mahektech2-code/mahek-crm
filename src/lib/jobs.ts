@@ -22,6 +22,7 @@ import {
   recomputeAllOutstanding,
   recomputeBillStatuses,
   recomputeInactivity,
+  recomputeSalesManagers,
   recomputeSlowPayers,
   seedMonthlyTargets,
   today,
@@ -79,6 +80,7 @@ export type JobName =
   | "hourly"
   | "day-boundary"
   | "recompute-cycles"
+  | "recompute-sales-managers"
   | "recompute-inactivity"
   | "recompute-followups"
   | "recompute-slow-payers"
@@ -175,6 +177,19 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
     await run("recompute-cycles", async () => {
       const n = await recomputeAllBuyingCycles();
       return { recordsAffected: n, detail: `${n} customers` };
+    }, triggeredById),
+  );
+
+  /*
+   * The sales manager seat, kept in step with the org chart — for every
+   * customer nobody has ever decided this on. A person's own pick, made
+   * through `assignSalesManager`, is off limits here exactly the way a
+   * reassignment is off limits to `recomputeSalesPeople` above it.
+   */
+  results.push(
+    await run("recompute-sales-managers", async () => {
+      const n = await recomputeSalesManagers();
+      return { recordsAffected: n, detail: `${n} customers updated` };
     }, triggeredById),
   );
 
@@ -627,6 +642,23 @@ export async function runJob(
                 `${r.linked} orders linked to a delivery party, ${r.cleared} cleared` +
                 `; ${r.unresolved} names match no record, ${r.ambiguous} match more than one`,
             };
+          },
+          triggeredById,
+        ),
+      ];
+    case "recompute-sales-managers":
+      /*
+       * Hand-triggerable on its own, not only bundled in the nightly — the
+       * same reasoning `hrms-reparse` and `field-activity-sync` already get:
+       * a manager added to the org chart today should not have to wait for
+       * tonight's pass before the accounts under them pick it up.
+       */
+      return [
+        await run(
+          "recompute-sales-managers",
+          async () => {
+            const n = await recomputeSalesManagers();
+            return { recordsAffected: n, detail: `${n} customers updated` };
           },
           triggeredById,
         ),
