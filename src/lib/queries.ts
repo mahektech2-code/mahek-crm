@@ -612,7 +612,7 @@ export async function customerFilterClause(
 }
 
 /** `,`-separated in the URL and in every filter field — one split, one place. */
-function splitMulti(value: string): string[] {
+export function splitMulti(value: string): string[] {
   return value
     .split(",")
     .map((v) => v.trim())
@@ -625,7 +625,7 @@ function splitMulti(value: string): string[] {
  * computed `sql<T>` fragment — a label or a resolved name — never a real
  * column `inArray` could bind to.
  */
-function inList(expr: SQL, commaSeparated: string): SQL {
+export function inList(expr: SQL, commaSeparated: string): SQL {
   const values = splitMulti(commaSeparated);
   if (values.length <= 1) return sql`${expr} = ${values[0] ?? commaSeparated}`;
   return sql`${expr} in (${sql.join(

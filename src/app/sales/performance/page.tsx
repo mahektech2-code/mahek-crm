@@ -1,6 +1,7 @@
 import Link from "next/link";
+import { MonthNav } from "@/components/ui/month-nav";
+import { monthName } from "@/components/ui/month";
 import { money, moneyShort } from "@/lib/format";
-import { APP_TIMEZONE } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
 import { BP } from "@/lib/engines/performance";
 import {
@@ -79,24 +80,12 @@ export default async function Page({
         actions={
           <div className="flex items-center gap-1 text-[13px]">
             <Link
-              href={`/sales/performance?month=${shiftMonth(month, -1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              ←
-            </Link>
-            <span className="px-2 text-muted">{monthName(month)}</span>
-            <Link
-              href={`/sales/performance?month=${shiftMonth(month, 1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              →
-            </Link>
-            <Link
               href={`/sales/targets?period=${month}`}
-              className="ml-2 rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
+              className="mr-2 rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
             >
-              Set targets
+              ← Back to targets
             </Link>
+            <MonthNav month={month} basePath="/sales/performance" />
           </div>
         }
       />
@@ -321,17 +310,3 @@ function ratingTone(bp: number): "success" | "brand" | "warn" | "danger" {
   return "danger";
 }
 
-function shiftMonth(month: string, by: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const at = new Date(Date.UTC(y, m - 1 + by, 1));
-  return `${at.getUTCFullYear()}-${String(at.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-function monthName(month: string): string {
-  const [y, m] = month.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-GB", {
-    month: "long",
-    year: "numeric",
-    timeZone: APP_TIMEZONE,
-  }).format(new Date(Date.UTC(y, m - 1, 15)));
-}

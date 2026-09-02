@@ -538,7 +538,21 @@
       "idx": 76,
       "version": "7",
       "when": 1787501020000,
-      "tag": "0076_reminder_hold",
+      "tag": "0076_payment_due_off_call_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1787501080000,
+      "tag": "0077_collection_target_percent",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1787501140000,
+      "tag": "0078_reminder_hold",
       "breakpoints": true
     }
   ]

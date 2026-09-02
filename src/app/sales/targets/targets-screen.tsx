@@ -4,6 +4,8 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
+import { MonthNav } from "@/components/ui/month-nav";
+import { monthName } from "@/components/ui/month";
 import { PersonPicker, type Person } from "@/components/crm/person-picker";
 import { money } from "@/lib/format";
 import {
@@ -32,7 +34,7 @@ function blankRow(person: Person): TargetRow {
     revenueTargetPaise: null,
     volumeTargetMl: null,
     newCustomerTarget: null,
-    collectionTargetPaise: null,
+    collectionTargetBp: null,
     activityTarget: null,
     publishedAt: null,
     bands: [],
@@ -82,6 +84,15 @@ const toMl = (litres: string): number | null => {
 const toLitres = (ml: number | null): string =>
   ml === null ? "" : String(Math.round(ml / 1000));
 
+/** Whole percent on the screen, basis points in the database. */
+const toBp = (percent: string): number | null => {
+  const t = percent.trim();
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n * 100) : null;
+};
+const toPercent = (bp: number | null): string => (bp === null ? "" : String(Math.round(bp / 100)));
+
 const toCount = (v: string): number | null => {
   const t = v.trim();
   if (!t) return null;
@@ -110,6 +121,7 @@ export function TargetsScreen({
   const allRows = [...rows, ...manualRows];
   const published = allRows.filter((r) => r.status === "published").length;
   const unset = allRows.filter((r) => !r.targetId).length;
+  const editingRow = allRows.find((r) => r.userId === editing) ?? null;
 
   return (
     <div className="p-6">
@@ -118,19 +130,7 @@ export function TargetsScreen({
         subtitle={`${monthName(period)} — what each person is being asked for. Nothing reaches anybody until it is published. The list is telecallers and field sales by default; add anybody else by hand.`}
         actions={
           <div className="flex items-center gap-1 text-[13px]">
-            <Link
-              href={`/sales/targets?period=${shiftMonth(period, -1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              ←
-            </Link>
-            <span className="px-2 text-muted">{monthName(period)}</span>
-            <Link
-              href={`/sales/targets?period=${shiftMonth(period, 1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              →
-            </Link>
+            <MonthNav month={period} basePath="/sales/targets" paramName="period" />
             <Link
               href={`/sales/performance?month=${period}`}
               className="ml-2 rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
@@ -219,9 +219,9 @@ export function TargetsScreen({
             </>
           }
         >
-          {allRows.flatMap((r, i) => {
+          {allRows.map((r, i) => {
             const base = baselines[r.userId];
-            const line = (
+            return (
               <Row key={r.userId} striped={i % 2 === 1}>
                 <Cell truncate={170}>
                   <span className="font-medium text-ink">{r.userName}</span>
@@ -242,7 +242,9 @@ export function TargetsScreen({
                   {orDash(r.volumeTargetMl, (v) => `${Math.round(v / 1000).toLocaleString("en-IN")} L`)}
                 </Cell>
                 <Cell align="right">{orDash(r.newCustomerTarget, String)}</Cell>
-                <Cell align="right">{orDash(r.collectionTargetPaise, money)}</Cell>
+                <Cell align="right">
+                  {orDash(r.collectionTargetBp, (bp) => `${(bp / 100).toFixed(0)}%`)}
+                </Cell>
                 <Cell align="right">{orDash(r.activityTarget, String)}</Cell>
                 <Cell truncate={200}>
                   <Growth target={r.revenueTargetPaise} baseline={base} months={baselineMonths} />
@@ -250,46 +252,41 @@ export function TargetsScreen({
                 <Cell>
                   <button
                     type="button"
-                    onClick={() => setEditing(editing === r.userId ? null : r.userId)}
+                    onClick={() => setEditing(r.userId)}
                     className="rounded-[4px] border border-line bg-surface px-2.5 py-1 text-[12px] text-body hover:bg-canvas"
                   >
-                    {editing === r.userId ? "Close" : r.targetId ? "Change" : "Set"}
+                    {r.targetId ? "Change" : "Set"}
                   </button>
                 </Cell>
               </Row>
             );
-
-            if (editing !== r.userId) return [line];
-            return [
-              line,
-              <tr key={`${r.userId}-edit`}>
-                <td colSpan={9} className="border-b border-line bg-canvas p-0">
-                  <Editor
-                    key={`${r.userId}-${period}`}
-                    row={r}
-                    period={period}
-                    baseline={base}
-                    categories={categories}
-                    revisionReasons={revisionReasons}
-                    onDone={(message, tone) => {
-                      setBanner({ tone, text: message });
-                      if (tone === "info") {
-                        setEditing(null);
-                        // A person added by hand now has a real target row,
-                        // which the refreshed page will bring back through
-                        // `rows` — the hand-added placeholder would otherwise
-                        // sit beside it as a duplicate.
-                        setManualRows((prev) => prev.filter((m) => m.userId !== r.userId));
-                        router.refresh();
-                      }
-                    }}
-                  />
-                </td>
-              </tr>,
-            ];
           })}
         </Table>
       )}
+
+      {editingRow ? (
+        <Editor
+          key={`${editingRow.userId}-${period}`}
+          row={editingRow}
+          period={period}
+          baseline={baselines[editingRow.userId]}
+          categories={categories}
+          revisionReasons={revisionReasons}
+          onClose={() => setEditing(null)}
+          onDone={(message, tone) => {
+            setBanner({ tone, text: message });
+            if (tone === "info") {
+              setEditing(null);
+              // A person added by hand now has a real target row, which the
+              // refreshed page will bring back through `rows` — the
+              // hand-added placeholder would otherwise sit beside it as a
+              // duplicate.
+              setManualRows((prev) => prev.filter((m) => m.userId !== editingRow.userId));
+              router.refresh();
+            }
+          }}
+        />
+      ) : null}
 
       <p className="mt-3 max-w-[860px] text-[13px] text-pretty text-muted">
         A revenue target and a volume target are both set, and the second is the point:
@@ -310,6 +307,7 @@ function Editor({
   baseline,
   categories,
   revisionReasons,
+  onClose,
   onDone,
 }: {
   row: TargetRow;
@@ -317,6 +315,7 @@ function Editor({
   baseline: Baseline | undefined;
   categories: { id: string; name: string; isResidual: boolean }[];
   revisionReasons: string[];
+  onClose: () => void;
   onDone: (message: string, tone: "info" | "danger") => void;
 }) {
   const [revenue, setRevenue] = useState(toRupees(row.revenueTargetPaise));
@@ -324,25 +323,43 @@ function Editor({
   const [newCustomers, setNewCustomers] = useState(
     row.newCustomerTarget === null ? "" : String(row.newCustomerTarget),
   );
-  const [collection, setCollection] = useState(toRupees(row.collectionTargetPaise));
+  const [collection, setCollection] = useState(toPercent(row.collectionTargetBp));
   const [activity, setActivity] = useState(
     row.activityTarget === null ? "" : String(row.activityTarget),
   );
   const [reason, setReason] = useState("");
   const [reasonNote, setReasonNote] = useState("");
+  // Only the categories this target already carries — not every active one.
+  // A book with two categories and a book with eight both start from what is
+  // actually theirs; "Add category" is how either grows, never a wall of
+  // rows to skip past for the categories that do not apply here.
   const [bands, setBands] = useState(() =>
-    categories.map((c) => {
-      const existing = row.bands.find((b) => b.categoryId === c.id);
+    row.bands.map((existing) => {
+      const cat = categories.find((c) => c.id === existing.categoryId);
       return {
-        categoryId: c.id,
-        name: c.name,
-        isResidual: c.isResidual,
-        minimum: existing ? String(existing.minimumBp / 100) : "",
-        target: existing ? String(existing.targetBp / 100) : "",
-        stretch: existing ? String(existing.stretchBp / 100) : "",
+        categoryId: existing.categoryId,
+        name: existing.name,
+        isResidual: cat?.isResidual ?? false,
+        minimum: String(existing.minimumBp / 100),
+        target: String(existing.targetBp / 100),
+        stretch: String(existing.stretchBp / 100),
       };
     }),
   );
+  const available = categories.filter((c) => !bands.some((b) => b.categoryId === c.id));
+
+  function addCategory(categoryId: string) {
+    const cat = categories.find((c) => c.id === categoryId);
+    if (!cat) return;
+    setBands([
+      ...bands,
+      { categoryId: cat.id, name: cat.name, isResidual: cat.isResidual, minimum: "", target: "", stretch: "" },
+    ]);
+  }
+
+  function removeCategory(categoryId: string) {
+    setBands(bands.filter((b) => b.categoryId !== categoryId));
+  }
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -359,7 +376,7 @@ function Editor({
         revenueTargetPaise: toPaise(revenue),
         volumeTargetMl: toMl(volume),
         newCustomerTarget: toCount(newCustomers),
-        collectionTargetPaise: toPaise(collection),
+        collectionTargetBp: toBp(collection),
         activityTarget: toCount(activity),
         notes: null,
         bands: filled.map((b) => ({
@@ -394,7 +411,46 @@ function Editor({
   }
 
   return (
-    <div className="px-5 py-4">
+    <Modal
+      open
+      onClose={onClose}
+      title={`${row.targetId ? "Change target" : "Set target"} · ${row.userName}`}
+      width={640}
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-[4px] border border-line bg-surface px-3 py-1.5 text-[13px] text-body hover:bg-canvas"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => save(false)}
+            className="rounded-[4px] border border-line bg-surface px-3 py-1.5 text-[13px] text-body hover:bg-canvas disabled:opacity-50"
+          >
+            {isPublished ? "Save the change" : "Save as draft"}
+          </button>
+          {!isPublished ? (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => save(true)}
+              className="rounded-[4px] bg-brand px-3 py-1.5 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
+            >
+              Save and publish
+            </button>
+          ) : null}
+          <span className="text-[12px] text-muted">
+            {isPublished
+              ? "Already visible to them."
+              : "A draft is invisible to them until it is published."}
+          </span>
+        </>
+      }
+    >
       <div className="mb-4 flex flex-wrap gap-x-8 gap-y-4">
         <Field
           label="Revenue target"
@@ -426,16 +482,16 @@ function Editor({
         />
         <Field
           label="Collection target"
-          suffix="₹"
+          suffix="%"
           value={collection}
           onChange={setCollection}
-          hint={baseline ? `${money(baseline.collectionPaise)} a month` : undefined}
+          hint="of what is already overdue at the start of the month"
         />
         <Field
-          label="Visits and calls"
+          label="Tasks target"
           value={activity}
           onChange={setActivity}
-          hint="calls logged plus visits made"
+          hint="tasks marked done"
         />
       </div>
 
@@ -445,11 +501,11 @@ function Editor({
       <p className="mb-3 max-w-[720px] text-[12px] text-muted">
         Three numbers rather than one, because a book selling into furniture and one
         selling into automotive cannot be held to the same 30%. Below the minimum a
-        category falls away to nothing; stretch is exceptional. Leave a row empty to
-        leave that category out of the score.
+        category falls away to nothing; stretch is exceptional. Add only the
+        categories that matter for this person — one, two, or all of them.
       </p>
 
-      <div className="mb-4 overflow-x-auto">
+      <div className="mb-2 overflow-x-auto">
         <table className="text-[13px]">
           <thead>
             <tr className="text-[11px] tracking-[0.04em] text-muted uppercase">
@@ -457,9 +513,18 @@ function Editor({
               <th className="px-2 py-1 text-right font-medium">Minimum %</th>
               <th className="px-2 py-1 text-right font-medium">Target %</th>
               <th className="px-2 py-1 text-right font-medium">Stretch %</th>
+              <th className="px-2 py-1 text-right font-medium">{""}</th>
             </tr>
           </thead>
           <tbody>
+            {bands.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-2 py-2 text-[13px] text-muted">
+                  No categories added yet. Product mix is left out of this target&rsquo;s
+                  score until at least one is added below.
+                </td>
+              </tr>
+            ) : null}
             {bands.map((b, i) => (
               <tr key={b.categoryId}>
                 <td className="px-2 py-1 text-body">
@@ -487,25 +552,58 @@ function Editor({
                     />
                   </td>
                 ))}
+                <td className="px-2 py-1 text-right">
+                  <button
+                    type="button"
+                    onClick={() => removeCategory(b.categoryId)}
+                    title={`Remove ${b.name} from this target`}
+                    className="rounded-[4px] px-1.5 py-0.5 text-[12px] text-muted hover:bg-canvas hover:text-danger"
+                  >
+                    Remove
+                  </button>
+                </td>
               </tr>
             ))}
-            <tr>
-              <td className="px-2 pt-2 text-[12px] text-muted">Targets total</td>
-              <td />
-              <td
-                className={
-                  shareTotal > 100
-                    ? "px-2 pt-2 text-right text-[12px] font-medium text-danger tabular-nums"
-                    : "px-2 pt-2 text-right text-[12px] text-muted tabular-nums"
-                }
-              >
-                {shareTotal.toFixed(1)}%
-              </td>
-              <td />
-            </tr>
+            {bands.length > 0 ? (
+              <tr>
+                <td className="px-2 pt-2 text-[12px] text-muted">Targets total</td>
+                <td />
+                <td
+                  className={
+                    shareTotal > 100
+                      ? "px-2 pt-2 text-right text-[12px] font-medium text-danger tabular-nums"
+                      : "px-2 pt-2 text-right text-[12px] text-muted tabular-nums"
+                  }
+                >
+                  {shareTotal.toFixed(1)}%
+                </td>
+                <td />
+                <td />
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
+
+      {available.length > 0 ? (
+        <div className="mb-4">
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) addCategory(e.target.value);
+            }}
+            className="rounded-[4px] border border-line bg-surface px-2 py-1 text-[13px]"
+          >
+            <option value="">+ Add category…</option>
+            {available.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+                {c.isResidual ? " (everything else)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
 
       {isPublished ? (
         <div className="mb-4 max-w-[620px] rounded-[6px] border border-warn-edge bg-warn-soft px-4 py-3">
@@ -542,33 +640,7 @@ function Editor({
       {error ? (
         <p className="mb-3 max-w-[620px] text-[13px] text-danger">{error}</p>
       ) : null}
-
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => save(false)}
-          className="rounded-[4px] border border-line bg-surface px-3 py-1.5 text-[13px] text-body hover:bg-canvas disabled:opacity-50"
-        >
-          {isPublished ? "Save the change" : "Save as draft"}
-        </button>
-        {!isPublished ? (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => save(true)}
-            className="rounded-[4px] bg-brand px-3 py-1.5 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
-          >
-            Save and publish
-          </button>
-        ) : null}
-        <span className="text-[12px] text-muted">
-          {isPublished
-            ? "Already visible to them."
-            : "A draft is invisible to them until it is published."}
-        </span>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -658,17 +730,3 @@ function orDash(v: number | null, render: (n: number) => string) {
   );
 }
 
-function shiftMonth(month: string, by: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const at = new Date(Date.UTC(y, m - 1 + by, 1));
-  return `${at.getUTCFullYear()}-${String(at.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-function monthName(month: string): string {
-  const [y, m] = month.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-GB", {
-    month: "long",
-    year: "numeric",
-    timeZone: "Asia/Kolkata",
-  }).format(new Date(Date.UTC(y, m - 1, 15)));
-}

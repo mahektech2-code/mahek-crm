@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -38,6 +38,7 @@ import {
 import { err, ok, okVoid, type Result } from "../result";
 import { shortDateWithYear } from "../format";
 import { nextStepForCustomer } from "./queue-service";
+import { inList, splitMulti } from "../queries";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -785,6 +786,304 @@ export async function listTargets(period?: string) {
       carriedForward: resolved.carriedForward,
     };
   });
+}
+
+/**
+ * Who the "Account manager" column names, in SQL — the exact expression
+ * `listTargets` resolves in JavaScript, kept as one fragment so the filter
+ * offering a name and the column showing it can never disagree about it.
+ */
+const TARGET_OWNER_NAME_SQL = sql<string | null>`coalesce(
+  nullif(customers.sales_person_name, ''),
+  (select name from users u where u.id = ${ASSIGNED_TO_SQL})
+)`;
+
+function targetAchievedSql(year: number, month: number) {
+  return sql<number>`coalesce((
+    select sum(o.total_amount) from ${orders} o
+     where o.customer_id = customers.id
+       and o.status in ('captured','confirmed','dispatched')
+       and extract(year from o.ordered_at) = ${year}
+       and extract(month from o.ordered_at) = ${month}
+  ), 0)`;
+}
+
+export type TargetListFilters = {
+  query?: string;
+  /** `,`-separated: "behind" and/or "on_track". */
+  status?: string;
+  /** Account manager names, `,`-separated — the same strings the column shows. */
+  owner?: string;
+  /** `,`-separated: "default" and/or "set" (a real figure, carried forward or not). */
+  basis?: string;
+  page?: number;
+  perPage?: number;
+};
+
+export type TargetListRow = Awaited<ReturnType<typeof listTargets>>[number];
+
+export type TargetListPage = {
+  rows: TargetListRow[];
+  /** Matching the filters. */
+  total: number;
+  /** In the whole scoped book, before any filter. */
+  bookTotal: number;
+  page: number;
+  pageCount: number;
+  /** Over the FILTERED set, not the page — the tiles describe the search. */
+  totals: {
+    target: number;
+    achieved: number;
+    gap: number;
+    defaults: number;
+    behind: number;
+    maxGap: number;
+  };
+};
+
+/**
+ * One page of the monthly targets list, filtered and counted in the
+ * database — the same reason `listCustomersPage` exists rather than the
+ * customers screen holding the whole book. A manager's team is usually a
+ * few hundred customers; sending all of them to show twenty-five is the
+ * same waste the customers list stopped doing.
+ *
+ * `listTargets` above stays as it is: `shortfallAnalysis` reads the whole
+ * scoped book to classify a coverage gap from a customer gap, and that
+ * classification has to stand independent of whatever the Targets tab's
+ * filters happen to be set to.
+ *
+ * TARGET AND ACHIEVED, FOR FILTERING, ARE THE STORED FIGURES — `target`
+ * falls back to 0 rather than running `resolveTarget`'s trailing-average
+ * default in SQL. In steady state this is exactly the same number: the
+ * nightly seed gives every active customer a row before anybody opens this
+ * screen. The gap is a customer created since the seed last ran, which
+ * reads as "on target" here until the next one — the safe direction, and
+ * the same gap `listTargets` already had before pagination existed.
+ */
+/**
+ * What a set of target-screen filters MEANS, as one clause — scope, period
+ * and all. Exported because "set targets in bulk" is a write against
+ * whatever the screen is showing, the same reasoning `customerFilterClause`
+ * documents for account reassignment: the honest way to act on "everyone
+ * these filters match" is to run the SAME clause the list ran, not a second
+ * reading of the same four filters that can drift from it.
+ */
+export async function targetFilterClause(
+  period: string | undefined,
+  filters: TargetListFilters = {},
+) {
+  const ctx = await resolveScope();
+  const scoped = scopedToUsers(scopedUserIds(ctx.scope));
+  const day = await today();
+  const key = period ?? monthKey(day);
+  const [year, month] = key.split("-").map(Number);
+
+  const achievedExpr = targetAchievedSql(year, month);
+  const targetExpr = sql<number>`coalesce(${monthlyTargets.targetAmount}, 0)`;
+  const isDefaultExpr = sql<boolean>`coalesce(${monthlyTargets.isDefault}, true)`;
+  const gapExpr = sql<number>`greatest(0, ${targetExpr} - ${achievedExpr})`;
+
+  const where: SQL[] = [
+    // A customer who has gone quiet still carries a target — only
+    // deactivation removes them, same as `listTargets`.
+    ne(customers.status, "deactivated"),
+  ];
+  if (scoped) where.push(scoped);
+
+  const q = filters.query?.trim();
+  if (q) where.push(sql`customers.name ilike ${"%" + q + "%"}`);
+
+  if (filters.owner) where.push(inList(TARGET_OWNER_NAME_SQL, filters.owner));
+
+  if (filters.basis) {
+    const picked = splitMulti(filters.basis).map((v) =>
+      v === "default" ? sql`${isDefaultExpr}` : sql`not ${isDefaultExpr}`,
+    );
+    if (picked.length === 1) where.push(picked[0]);
+    else if (picked.length > 1) where.push(sql`(${or(...picked)})`);
+  }
+
+  if (filters.status) {
+    const picked = splitMulti(filters.status).map((v) =>
+      v === "behind" ? sql`${gapExpr} > 0` : sql`${gapExpr} = 0`,
+    );
+    if (picked.length === 1) where.push(picked[0]);
+    else if (picked.length > 1) where.push(sql`(${or(...picked)})`);
+  }
+
+  return {
+    clause: and(...where),
+    joinTarget: and(
+      eq(monthlyTargets.customerId, customers.id),
+      eq(monthlyTargets.year, year),
+      eq(monthlyTargets.month, month),
+    ),
+    scoped,
+    isDefaultExpr,
+    targetExpr,
+    achievedExpr,
+    gapExpr,
+    year,
+    month,
+    key,
+  };
+}
+
+/**
+ * Every customer id the current filters match, unpaginated — what "set
+ * targets in bulk" acts on. `onlyDefault` narrows further to rows still on
+ * the auto-applied default, which is itself just another turn of the same
+ * clause rather than a client-side filter over one page of rows.
+ */
+export async function resolveTargetCustomerIds(
+  period: string | undefined,
+  filters: TargetListFilters,
+  onlyDefault: boolean,
+): Promise<string[]> {
+  const { clause, joinTarget, isDefaultExpr } = await targetFilterClause(period, filters);
+  const rows = await db
+    .select({ id: customers.id })
+    .from(customers)
+    .leftJoin(monthlyTargets, joinTarget)
+    .where(onlyDefault ? and(clause, isDefaultExpr) : clause);
+  return rows.map((r) => r.id);
+}
+
+export async function listTargetsPage(
+  period: string | undefined,
+  filters: TargetListFilters = {},
+): Promise<TargetListPage> {
+  const config = await getConfig();
+  const perPage = Math.min(Math.max(filters.perPage ?? 25, 1), 200);
+  const {
+    clause,
+    joinTarget,
+    scoped,
+    isDefaultExpr,
+    targetExpr,
+    achievedExpr,
+    gapExpr,
+    year,
+    month,
+    key,
+  } = await targetFilterClause(period, filters);
+
+  const [agg] = await db
+    .select({
+      total: sql<number>`count(*)::int`,
+      target: sql<number>`coalesce(sum(${targetExpr}), 0)::bigint`,
+      achieved: sql<number>`coalesce(sum(${achievedExpr}), 0)::bigint`,
+      defaults: sql<number>`count(*) filter (where ${isDefaultExpr})::int`,
+      behind: sql<number>`count(*) filter (where ${gapExpr} > 0)::int`,
+      maxGap: sql<number>`coalesce(max(${gapExpr}), 0)::bigint`,
+    })
+    .from(customers)
+    .leftJoin(monthlyTargets, joinTarget)
+    .where(clause);
+
+  const [book] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(customers)
+    .where(and(ne(customers.status, "deactivated"), scoped));
+
+  const total = Number(agg?.total ?? 0);
+  const pageCount = Math.max(1, Math.ceil(total / perPage));
+  const page = Math.min(Math.max(filters.page ?? 1, 1), pageCount);
+
+  const rows = await db
+    .select({
+      customer: customers,
+      ownerName: TARGET_OWNER_NAME_SQL,
+      target: monthlyTargets.targetAmount,
+      isDefault: monthlyTargets.isDefault,
+      carriedForward: monthlyTargets.carriedForward,
+      achieved: achievedExpr,
+      contactsThisMonth: sql<number>`(
+        select count(*)::int from calls c
+         where c.customer_id = customers.id
+           and extract(year from c.started_at) = ${year}
+           and extract(month from c.started_at) = ${month}
+      )`,
+    })
+    .from(customers)
+    .leftJoin(monthlyTargets, joinTarget)
+    .where(clause)
+    .orderBy(asc(customers.name))
+    .limit(perPage)
+    .offset((page - 1) * perPage);
+
+  const shaped = rows.map((r) => {
+    const resolved =
+      r.target !== null
+        ? {
+            amount: r.target,
+            isDefault: r.isDefault ?? true,
+            carriedForward: r.carriedForward ?? false,
+          }
+        : {
+            ...resolveTarget(
+              {
+                manualAmount: null,
+                trailingAchievement: [],
+                customerSince: r.customer.customerSince,
+                month: `${key}-01`,
+              },
+              config,
+            ),
+            carriedForward: false,
+          };
+    const achieved = Number(r.achieved ?? 0);
+    return {
+      customerId: r.customer.id,
+      customerName: r.customer.name,
+      ownerName: r.ownerName,
+      cycleDays: r.customer.cycleDays,
+      contactsThisMonth: Number(r.contactsThisMonth ?? 0),
+      target: resolved.amount,
+      achieved,
+      gap: Math.max(0, resolved.amount - achieved),
+      percent: resolved.amount ? Math.round((achieved / resolved.amount) * 100) : 0,
+      isDefault: resolved.isDefault,
+      carriedForward: resolved.carriedForward,
+    };
+  });
+
+  return {
+    rows: shaped,
+    total,
+    bookTotal: Number(book?.n ?? 0),
+    page,
+    pageCount,
+    totals: {
+      target: Number(agg?.target ?? 0),
+      achieved: Number(agg?.achieved ?? 0),
+      gap: Math.max(0, Number(agg?.target ?? 0) - Number(agg?.achieved ?? 0)),
+      defaults: Number(agg?.defaults ?? 0),
+      behind: Number(agg?.behind ?? 0),
+      maxGap: Number(agg?.maxGap ?? 0),
+    },
+  };
+}
+
+/**
+ * The names the "Account manager" filter can offer — read from the same
+ * expression the column renders, not from `users`, because most of these
+ * people (the sheet's own salespeople) have no MahekOne account.
+ */
+export async function listTargetOwnerOptions(): Promise<string[]> {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  const scoped = scopedToUsers(ids);
+  const trimmed = sql<string>`nullif(btrim(${TARGET_OWNER_NAME_SQL}), '')`;
+
+  const rows = await db
+    .selectDistinct({ name: trimmed })
+    .from(customers)
+    .where(
+      and(ne(customers.status, "deactivated"), scoped, sql`${trimmed} is not null`),
+    );
+  return rows.map((r) => r.name).sort((a, b) => a.localeCompare(b));
 }
 
 export async function setTarget(

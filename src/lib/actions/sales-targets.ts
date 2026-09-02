@@ -58,6 +58,14 @@ const periodSchema = z
  */
 const figure = z.number().int().min(0).nullable();
 
+/**
+ * A percentage target, in basis points — the same convention the mix bands
+ * already use. Collection is measured against what was ALREADY overdue at
+ * the start of the month, not a rupee figure typed in: the target is what
+ * share of that pre-existing debt should be collected.
+ */
+const percent = z.number().int().min(0).max(10_000).nullable();
+
 const bandSchema = z
   .object({
     categoryId: z.string().min(1),
@@ -75,7 +83,7 @@ const saveSchema = z.object({
   revenueTargetPaise: figure,
   volumeTargetMl: figure,
   newCustomerTarget: figure,
-  collectionTargetPaise: figure,
+  collectionTargetBp: percent,
   activityTarget: figure,
   notes: z.string().max(2000).nullable().optional(),
   bands: z.array(bandSchema).max(20),
@@ -161,7 +169,7 @@ export async function saveSalesTarget(
             revenueTargetPaise: data.revenueTargetPaise,
             volumeTargetMl: data.volumeTargetMl,
             newCustomerTarget: data.newCustomerTarget,
-            collectionTargetPaise: data.collectionTargetPaise,
+            collectionTargetBp: data.collectionTargetBp,
             activityTarget: data.activityTarget,
             notes: data.notes ?? null,
             // A real save is a decision, even one that reproduces last
@@ -180,7 +188,7 @@ export async function saveSalesTarget(
           revenueTargetPaise: data.revenueTargetPaise,
           volumeTargetMl: data.volumeTargetMl,
           newCustomerTarget: data.newCustomerTarget,
-          collectionTargetPaise: data.collectionTargetPaise,
+          collectionTargetBp: data.collectionTargetBp,
           activityTarget: data.activityTarget,
           notes: data.notes ?? null,
           createdById: ctx.user.id,
@@ -270,6 +278,7 @@ function diffOf(existing: Existing, next: SaveTargetInput): Change[] {
   const litres = (v: number | null) =>
     v === null ? "not set" : `${Math.round(v / 1000).toLocaleString("en-IN")} L`;
   const count = (v: number | null) => (v === null ? "not set" : String(v));
+  const percentOf = (v: number | null) => (v === null ? "not set" : `${(v / 100).toFixed(0)}%`);
 
   const fields: [string, string, string, string][] = [
     [
@@ -288,8 +297,8 @@ function diffOf(existing: Existing, next: SaveTargetInput): Change[] {
     [
       "collection",
       "Collection",
-      rupees(existing.collectionTargetPaise),
-      rupees(next.collectionTargetPaise),
+      percentOf(existing.collectionTargetBp),
+      percentOf(next.collectionTargetBp),
     ],
     ["activity", "Activity", count(existing.activityTarget), count(next.activityTarget)],
   ];
@@ -343,7 +352,7 @@ export async function publishSalesTarget(
       target.revenueTargetPaise,
       target.volumeTargetMl,
       target.newCustomerTarget,
-      target.collectionTargetPaise,
+      target.collectionTargetBp,
       target.activityTarget,
     ].filter((v) => v !== null);
     if (!asked.length) {

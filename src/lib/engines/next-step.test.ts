@@ -54,6 +54,16 @@ function candidate(over: Partial<QueueCandidate> = {}): QueueCandidate {
 const ask = (c: QueueCandidate, paymentNextCallOn: string | null = null) =>
   nextStep({ candidate: c, paymentNextCallOn }, TODAY, C, NOW);
 
+// `queue.includePaymentDue` defaults off, so a payment call must still be
+// dated correctly for anywhere that reads the reason with it explicitly on.
+const askWithPaymentDue = (c: QueueCandidate, paymentNextCallOn: string | null = null) =>
+  nextStep(
+    { candidate: c, paymentNextCallOn },
+    TODAY,
+    { ...C, "queue.includePaymentDue": true },
+    NOW,
+  );
+
 describe("E10 next step", () => {
   test("a callback the customer asked for is BOOKED, on its own date", () => {
     const due = addDays(TODAY, 4);
@@ -175,7 +185,7 @@ describe("E10 next step", () => {
     // fires on every future day, so every customer with a debt would be told
     // "chase them tomorrow" for the rest of the year.
     const opens = addDays(TODAY, 3);
-    const step = ask(
+    const step = askWithPaymentDue(
       candidate({
         calledToday: true,
         paymentCallDue: { totalOverdue: 5_000_00, daysOverdue: 20 },

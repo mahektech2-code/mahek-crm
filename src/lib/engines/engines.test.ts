@@ -50,6 +50,12 @@ import {
 const C = defaultConfig();
 const TODAY = "2026-08-03"; // a Monday
 
+// `queue.includePaymentDue` defaults off — a payment call is collections' own
+// worklist, not the Call Log's. These tests are about the paymentOverdue
+// reason itself, so they opt back in explicitly rather than relying on the
+// app-wide default.
+const CP = { ...C, "queue.includePaymentDue": true };
+
 /* ============================================================ configuration */
 
 describe("configuration", () => {
@@ -868,7 +874,7 @@ describe("E2 queue builder", () => {
         paymentCallDue: { daysOverdue: 20, totalOverdue: 80_000_00 },
       });
 
-      const { entries } = buildQueue([small, large], TODAY, C);
+      const { entries } = buildQueue([small, large], TODAY, CP);
       assert.deepEqual(
         entries.map((e) => e.customerId),
         ["large-debt", "small-debt"],
@@ -2571,7 +2577,7 @@ describe("payment calls on the call log", () => {
       cycleDays: 22,
       paymentCallDue: { totalOverdue: 4_500_00, daysOverdue: 21 },
     });
-    const r = buildQueue([c], TODAY, C);
+    const r = buildQueue([c], TODAY, CP);
     assert.equal(r.entries[0].reasons[0].kind, "paymentOverdue");
     assert.match(r.entries[0].reasons[0].label, /₹4,500/);
     // And it is ONE row for the customer, not two.
@@ -2652,7 +2658,7 @@ describe("what gets called first", () => {
      * showed anything wrong.
      */
     const partial = {
-      ...C,
+      ...CP,
       "queue.tierWeights": {
         orderDue: 70,
         orderOverdueFullCycle: 80,

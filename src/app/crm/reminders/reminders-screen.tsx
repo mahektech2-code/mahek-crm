@@ -220,6 +220,10 @@ export function RemindersScreen({
                 <div className="mt-1 text-[13px] text-muted">
                   <Link
                     href={`/crm/customers/${r.customerId}`}
+                    // Every row on the list is visible at once, so the
+                    // default prefetch renders every customer's page on the
+                    // one shared vCPU this app runs on.
+                    prefetch={false}
                     className="no-underline hover:underline"
                   >
                     {r.customerName}
