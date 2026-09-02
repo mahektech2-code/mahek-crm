@@ -404,19 +404,38 @@ function TargetEditorModalBody({
   );
   const [reason, setReason] = React.useState("");
   const [reasonNote, setReasonNote] = React.useState("");
+  // Only the categories this target already carries — not every active one.
+  // A book with two categories and a book with eight both start from what is
+  // actually theirs; "Add category" is how either grows, never a wall of
+  // rows to skip past for the categories that do not apply here.
   const [bands, setBands] = React.useState<Band[]>(() =>
-    categories.map((c) => {
-      const existing = row.bands.find((b) => b.categoryId === c.id);
+    row.bands.map((existing) => {
+      const cat = categories.find((c) => c.id === existing.categoryId);
       return {
-        categoryId: c.id,
-        name: c.name,
-        isResidual: c.isResidual,
-        minimum: existing ? String(existing.minimumBp / 100) : "",
-        target: existing ? String(existing.targetBp / 100) : "",
-        stretch: existing ? String(existing.stretchBp / 100) : "",
+        categoryId: existing.categoryId,
+        name: existing.name,
+        isResidual: cat?.isResidual ?? false,
+        minimum: String(existing.minimumBp / 100),
+        target: String(existing.targetBp / 100),
+        stretch: String(existing.stretchBp / 100),
       };
     }),
   );
+  const available = categories.filter((c) => !bands.some((b) => b.categoryId === c.id));
+
+  function addCategory(categoryId: string) {
+    const cat = categories.find((c) => c.id === categoryId);
+    if (!cat) return;
+    setBands([
+      ...bands,
+      { categoryId: cat.id, name: cat.name, isResidual: cat.isResidual, minimum: "", target: "", stretch: "" },
+    ]);
+  }
+
+  function removeCategory(categoryId: string) {
+    setBands(bands.filter((b) => b.categoryId !== categoryId));
+  }
+
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
 
@@ -538,10 +557,10 @@ function TargetEditorModalBody({
       <p className="mt-1 mb-3 text-[12px] text-muted">
         Three numbers rather than one, because a book selling into furniture and one selling into
         automotive cannot be held to the same 30%. Below the minimum a category falls away to
-        nothing; stretch is exceptional. Leave a row empty to leave that category out of the
-        score.
+        nothing; stretch is exceptional. Add only the categories that matter for this person —
+        one, two, or all of them.
       </p>
-      <div className="mb-4 overflow-x-auto rounded-[4px] border border-line">
+      <div className="mb-2 overflow-x-auto rounded-[4px] border border-line">
         <table className="w-full text-[13px]">
           <thead>
             <tr className="border-b border-line bg-canvas text-[11px] tracking-[0.04em] text-muted uppercase">
@@ -549,9 +568,18 @@ function TargetEditorModalBody({
               <th className="px-2.5 py-1.5 text-right font-medium">Minimum %</th>
               <th className="px-2.5 py-1.5 text-right font-medium">Target %</th>
               <th className="px-2.5 py-1.5 text-right font-medium">Stretch %</th>
+              <th className="px-2.5 py-1.5 text-right font-medium">{""}</th>
             </tr>
           </thead>
           <tbody>
+            {bands.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-2.5 py-2 text-[13px] text-muted">
+                  No categories added yet. Product mix is left out of this target&rsquo;s score
+                  until at least one is added below.
+                </td>
+              </tr>
+            ) : null}
             {bands.map((b, i) => (
               <tr key={b.categoryId} className="border-b border-divider last:border-0">
                 <td className="px-2.5 py-1.5 text-body">
@@ -579,24 +607,56 @@ function TargetEditorModalBody({
                     />
                   </td>
                 ))}
+                <td className="px-2.5 py-1.5 text-right">
+                  <button
+                    type="button"
+                    onClick={() => removeCategory(b.categoryId)}
+                    title={`Remove ${b.name} from this target`}
+                    className="rounded-[4px] px-1.5 py-0.5 text-[12px] text-muted hover:bg-canvas hover:text-danger"
+                  >
+                    Remove
+                  </button>
+                </td>
               </tr>
             ))}
-            <tr>
-              <td className="px-2.5 pt-2 pb-1.5 text-[12px] text-muted">Targets total</td>
-              <td />
-              <td
-                className={cx(
-                  "px-2.5 pt-2 pb-1.5 text-right text-[12px] tabular-nums",
-                  shareTotal > 100 ? "font-medium text-danger" : "text-muted",
-                )}
-              >
-                {shareTotal.toFixed(1)}%
-              </td>
-              <td />
-            </tr>
+            {bands.length > 0 ? (
+              <tr>
+                <td className="px-2.5 pt-2 pb-1.5 text-[12px] text-muted">Targets total</td>
+                <td />
+                <td
+                  className={cx(
+                    "px-2.5 pt-2 pb-1.5 text-right text-[12px] tabular-nums",
+                    shareTotal > 100 ? "font-medium text-danger" : "text-muted",
+                  )}
+                >
+                  {shareTotal.toFixed(1)}%
+                </td>
+                <td />
+                <td />
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
+
+      {available.length > 0 ? (
+        <div className="mb-4">
+          <Select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) addCategory(e.target.value);
+            }}
+          >
+            <option value="">+ Add category…</option>
+            {available.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+                {c.isResidual ? " (everything else)" : ""}
+              </option>
+            ))}
+          </Select>
+        </div>
+      ) : null}
 
       {isPublished ? (
         <div className="mb-4 rounded-[6px] border border-warn-edge bg-warn-soft px-3.5 py-3">
