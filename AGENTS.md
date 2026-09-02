@@ -79,7 +79,7 @@ Sign in with the email **or** the work number.
 | `suresh@mahek.in` | 9820011004 | telecaller | CRM | straight into the CRM |
 | `neha@mahek.in` | 9820011005 | telecaller | CRM, Reports | the launcher |
 | `vikram@mahek.in` | 9820011006 | manager | CRM, Accounts, Reports, People, HRMS, Admin | the launcher |
-| `mahesh@mahek.in` | 9820011007 | field salesman | Salesman App | straight into that app |
+| `mahesh@mahek.in` | 9820011007 | field salesman | Salesman App | signs in on the web to `/apps`, which says there is nothing for him there — his app is MBOS, the mobile handset, not a browser |
 | `deepa@mahek.in` | 9820011008 | accounts | Accounts | straight into order approvals |
 
 ## How sign-in works
@@ -97,6 +97,19 @@ Where you land depends on what you can open:
 `app_access` is a row per user per app. It is checked in each app's layout, not
 just used to hide launcher tiles — a bookmarked `/accounts` must not open for
 somebody who was never given it.
+
+**One app on that list opens no browser tab at all.** `field` is MBOS, the
+handset a field salesman signs into over its own API — granting it is granting
+mobile access and nothing else. It stayed a real `APPS` entry (so `app_access`
+has an id to grant and the Admin Console has something to tick) with a genuine
+web route behind it, `/field`, that only ever showed "not built yet" — because
+every other app on this list follows "grant it, get a launcher tile, screens
+arrive later," and `field` was given the same treatment on the assumption its
+turn would come. It will not: there is no web screen coming, ever, so the tile
+was not a preview of anything. `mobileOnly: true` on its `AppDefinition` and
+`webApps()` — one function, read by the launcher, every switcher and the
+straight-into-it redirect above — leave it out of all of them, so granting it
+gives a phone a way in and gives the browser nothing to show for it.
 
 **An app is not the smallest thing that can be granted.** `app_module_access`
 narrows a grant to particular screens, and a module is a destination in an
@@ -238,8 +251,9 @@ src/
   app/
     login/                 the global sign-in
       forgot/  reset/      ask for a reset link, and spend it
-    apps/                  the launcher, 1–9 opens an app
-    field/                 placeholder shell for an app not built yet
+    apps/                  the launcher, 1–9 opens an app — `field` is never
+                           one of the 1–9: it is `mobileOnly` in lib/apps.ts,
+                           MBOS's own handset, and has no route here at all
     reports/               the Reports app — the owner's five KPIs, and the
                            three screens behind them: leads & conversion,
                            bill size & frequency, customer health

@@ -14,7 +14,7 @@ import {
   verifyPassword,
 } from "@/lib/auth";
 import { listUserApps, recordSignIn, recordSignOut } from "@/lib/access";
-import { getApp, APP_IDS, type AppId } from "@/lib/apps";
+import { APP_IDS, webApps, type AppId } from "@/lib/apps";
 import { randomUUID } from "node:crypto";
 import { auditLog } from "@/db/schema";
 import {
@@ -121,9 +121,11 @@ export async function signIn(
     // dropping them on an empty screen.
     redirect("/apps");
   }
-  // One app is not a choice — go straight there.
-  if (apps.length === 1) {
-    redirect(getApp(apps[0])?.href ?? "/apps");
+  // One WEB app is not a choice — go straight there. A mobile-only app
+  // (`field`) never counts: see `page.tsx`'s own version of this rule.
+  const web = webApps(apps);
+  if (web.length === 1) {
+    redirect(web[0].href);
   }
   redirect("/apps");
 }

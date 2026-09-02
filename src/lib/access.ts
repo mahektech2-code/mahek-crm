@@ -8,7 +8,7 @@ import {
   attendance,
   type User,
 } from "@/db/schema";
-import { APPS, type AppDefinition, type AppId } from "./apps";
+import { APPS, webApps, type AppDefinition, type AppId } from "./apps";
 import {
   getModule,
   moduleAllowed,
@@ -121,7 +121,7 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
 
   const out: LauncherApp[] = [];
 
-  for (const app of APPS.filter((a) => ids.includes(a.id))) {
+  for (const app of webApps(ids)) {
     /*
      * Accounts hold three queues, not one. The tile counted orders alone,
      * which was honest about its own sentence and silently wrong about the
@@ -271,7 +271,7 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
 }
 
 export function lockedApps(ids: AppId[]): AppDefinition[] {
-  return APPS.filter((a) => !ids.includes(a.id));
+  return APPS.filter((a) => !ids.includes(a.id) && !a.mobileOnly);
 }
 
 /* ------------------------------------------------------- the sign-in log */

@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
-import { getApp, APPS } from "@/lib/apps";
+import { APPS, webApps } from "@/lib/apps";
 import {
   BrandPanel,
   BrandPanelHeading,
@@ -38,7 +38,8 @@ export default async function LoginPage({
   const user = await getCurrentUser();
   if (user) {
     const apps = await listUserApps(user.id);
-    redirect(apps.length === 1 ? (getApp(apps[0])?.href ?? "/apps") : "/apps");
+    const web = webApps(apps);
+    redirect(web.length === 1 ? web[0].href : "/apps");
   }
 
   return (

@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { listUserApps, listUserModules } from "@/lib/access";
-import { APPS, getApp } from "@/lib/apps";
+import { getApp, webApps } from "@/lib/apps";
 import { AppSwitcher } from "@/components/shell/app-switcher";
 import { Wordmark } from "@/components/shell/wordmark";
 import { SignOutButton } from "@/components/shell/sign-out-button";
@@ -50,7 +50,7 @@ export default async function HrmsLayout({
         <header className="flex h-14 flex-none items-center gap-3 border-b border-line bg-surface px-4">
           {apps.length > 1 ? (
             <AppSwitcher
-              apps={APPS.filter((a) => apps.includes(a.id))}
+              apps={webApps(apps)}
               current="hrms"
             />
           ) : null}
