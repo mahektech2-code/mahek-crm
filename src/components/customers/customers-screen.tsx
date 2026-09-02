@@ -789,6 +789,10 @@ export function CustomersScreen({
                   <Td className="font-medium text-ink">
                     <Link
                       href={recordHref(r.id)}
+                      // Every row on the page is visible at once, so the
+                      // default prefetch renders every customer's page on
+                      // the one shared vCPU this app runs on.
+                      prefetch={false}
                       className="no-underline hover:underline"
                     >
                       {r.name}

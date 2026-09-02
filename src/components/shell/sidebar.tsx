@@ -55,6 +55,12 @@ export function Sidebar({
                 <Link
                   key={item.href}
                   href={item.href}
+                  // The sidebar is on every screen and every item is always
+                  // in view, so the default prefetch fires a full render of
+                  // every destination on every navigation. On the one shared
+                  // vCPU this app runs on, that self-inflicted burst is what
+                  // was delaying the page actually being waited for.
+                  prefetch={false}
                   title={collapsed ? item.label : undefined}
                   className={cx(
                     "mb-0.5 flex h-9 items-center gap-2.5 rounded-[4px] px-2.5 text-sm no-underline hover:no-underline",
