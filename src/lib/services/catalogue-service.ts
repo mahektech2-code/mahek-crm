@@ -6,6 +6,7 @@ import {
   finishedGoods,
   productAliases,
   productBrands,
+  productCategories,
   productFormulations,
   products,
 } from "@/db/schema";
@@ -164,6 +165,31 @@ export async function listHierarchy() {
       .orderBy(asc(finishedGoods.displayOrder), asc(finishedGoods.name)),
   ]);
   return { formulations: forms, brands, goods };
+}
+
+/**
+ * Every mix category, active and retired alike — this is management, not the
+ * `where active` list a target is set against (`mixCategories()` in
+ * `sales-target-service.ts`). The residual sorts last by its own
+ * `display_order` of 99; nothing here special-cases it, the seed data does.
+ */
+export async function listCategories() {
+  return db
+    .select({
+      id: productCategories.id,
+      name: productCategories.name,
+      isResidual: productCategories.isResidual,
+      active: productCategories.active,
+      displayOrder: productCategories.displayOrder,
+      // What classifying INTO this category has actually done — a category
+      // nobody has assigned a formulation to is real but empty, worth seeing
+      // rather than guessing at from the name alone.
+      formulations: sql<number>`(
+        select count(*)::int from product_formulations f where f.category_id = ${productCategories.id}
+      )`,
+    })
+    .from(productCategories)
+    .orderBy(asc(productCategories.displayOrder), asc(productCategories.name));
 }
 
 /** The SKUs still waiting on somebody to choose which legacy ID is real. */

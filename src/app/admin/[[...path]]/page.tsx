@@ -9,6 +9,7 @@ import { crmSchema, schemaFields, toConsole } from "@/lib/config/schema-contract
 import {
   catalogueSummary,
   listAliases,
+  listCategories,
   listDuplicates,
   listExceptions,
   listHierarchy,
@@ -98,20 +99,22 @@ export default async function Page({
   const PER_PAGE = 50;
   const status = one("status") ?? "all";
 
-  const [summary, skuPage, hierarchy, duplicates, exceptions, aliases] = await Promise.all([
-    catalogueSummary(),
-    listSkus({
-      query: one("q"),
-      formulationId: one("formulation"),
-      status: status as "all" | "ok" | "needs_canonical_id" | "inactive",
-      limit: PER_PAGE,
-      offset: (page - 1) * PER_PAGE,
-    }),
-    listHierarchy(),
-    listDuplicates(),
-    listExceptions(),
-    listAliases(),
-  ]);
+  const [summary, skuPage, hierarchy, categories, duplicates, exceptions, aliases] =
+    await Promise.all([
+      catalogueSummary(),
+      listSkus({
+        query: one("q"),
+        formulationId: one("formulation"),
+        status: status as "all" | "ok" | "needs_canonical_id" | "inactive",
+        limit: PER_PAGE,
+        offset: (page - 1) * PER_PAGE,
+      }),
+      listHierarchy(),
+      listCategories(),
+      listDuplicates(),
+      listExceptions(),
+      listAliases(),
+    ]);
 
   // The imported order sheet. Read here rather than in the client component so
   // the section arrives rendered, like every other section in this console.
@@ -236,6 +239,7 @@ export default async function Page({
         page,
         pages: Math.max(1, Math.ceil(skuPage.total / PER_PAGE)),
         hierarchy,
+        categories,
         duplicates,
         exceptions,
         aliases,
