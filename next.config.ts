@@ -27,6 +27,22 @@ const nextConfig: NextConfig = {
    */
   outputFileTracingRoot: process.cwd(),
 
+  /*
+   * Version-skew protection: without it, a browser tab left open across a
+   * deploy submits a form whose Server Action id belonged to the OLD build,
+   * and Next answers with a raw "Server Action ... was not found on the
+   * server" toast rather than anything a telecaller mid-call can make sense
+   * of. With a deployment id set, Next compares the client's against the
+   * server's on every navigation and forces a full reload on a mismatch —
+   * so the tab catches up before it can hit the error at all.
+   *
+   * Set from `NEXT_DEPLOYMENT_ID`, which the Dockerfile bakes in at build
+   * time as the same commit sha the image is tagged with — see the ARG
+   * there. Undefined in local dev, where there is no deploy to skew against
+   * and the feature is simply off.
+   */
+  deploymentId: process.env.NEXT_DEPLOYMENT_ID,
+
   async redirects() {
     return [
       /*
