@@ -106,7 +106,7 @@ export default async function Page() {
               <span key={p.id} className="block">
                 <Link
                   href={`/sales/people/${p.id}`}
-                  className="block text-[13px] font-medium text-ink no-underline hover:underline"
+                  className="block text-[13px] font-medium text-ink no-underline"
                 >
                   {p.name}
                 </Link>
@@ -156,7 +156,7 @@ export default async function Page() {
                 {r.salesmanId ? (
                   <Link
                     href={`/sales/people/${r.salesmanId}`}
-                    className="no-underline hover:underline"
+                    className="no-underline"
                   >
                     {r.salesmanName}
                   </Link>

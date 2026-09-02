@@ -272,7 +272,7 @@ export function LedgerScreen({
           {from || to ? (
             <button
               onClick={() => router.push(`/accounts/ledger?customer=${ledger.customerId}`)}
-              className="h-9.5 cursor-pointer border-none bg-transparent px-2 text-sm font-medium text-brand hover:underline"
+              className="h-9.5 cursor-pointer border-none bg-transparent px-2 text-sm font-medium text-brand hover:text-brand-hover"
             >
               Clear
             </button>

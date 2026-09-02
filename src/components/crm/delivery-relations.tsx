@@ -135,7 +135,7 @@ export function DeliveryRelations({
                 <div className="text-sm text-ink">
                   <Link
                     href={`/crm/customers/${r.customerId}`}
-                    className="text-ink no-underline hover:underline"
+                    className="text-ink no-underline"
                   >
                     {r.name}
                   </Link>

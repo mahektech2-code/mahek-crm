@@ -546,7 +546,7 @@ function PaymentBody({
           <button
             type="button"
             onClick={() => onAlloc(alloc ? null : { mode: "auto" })}
-            className="cursor-pointer border-none bg-transparent p-0 text-[13px] text-brand hover:underline"
+            className="cursor-pointer border-none bg-transparent p-0 text-[13px] text-brand hover:text-brand-hover"
           >
             {alloc ? "Leave it as reported" : "Put it somewhere else"}
           </button>

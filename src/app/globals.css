@@ -95,7 +95,6 @@
   }
   a:hover {
     color: var(--color-brand-hover);
-    text-decoration: underline;
   }
 
   :focus-visible {

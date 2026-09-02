@@ -48,7 +48,7 @@ export default async function MyFeedbackPage() {
         <span className="flex-1" />
         <Link
           href="/apps"
-          className="text-[13px] font-medium text-brand hover:underline"
+          className="text-[13px] font-medium text-brand"
         >
           Back to your apps
         </Link>

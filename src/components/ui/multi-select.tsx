@@ -188,7 +188,7 @@ export function MultiSelect({
                   <button
                     type="button"
                     onClick={() => onChange([])}
-                    className="cursor-pointer text-[12px] text-muted hover:text-body hover:underline"
+                    className="cursor-pointer text-[12px] text-muted hover:text-body"
                   >
                     Clear ({selected.length})
                   </button>

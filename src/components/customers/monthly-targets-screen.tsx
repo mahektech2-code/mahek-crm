@@ -397,7 +397,7 @@ export function MonthlyTargetsScreen({
                       <Td className="font-medium text-ink">
                         <Link
                           href={customerHref(r.customerId)}
-                          className="no-underline hover:underline"
+                          className="no-underline"
                         >
                           {r.name}
                         </Link>
@@ -529,7 +529,7 @@ export function MonthlyTargetsScreen({
                   <Td className="font-medium text-ink">
                     <Link
                       href={customerHref(r.customerId)}
-                      className="no-underline hover:underline"
+                      className="no-underline"
                     >
                       {r.customerName}
                     </Link>

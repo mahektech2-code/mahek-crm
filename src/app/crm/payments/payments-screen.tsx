@@ -441,7 +441,7 @@ export function PaymentsScreen({
                   <div className="flex min-w-0 items-center gap-2.5">
                     <Link
                       href={`/crm/customers/${r.customerId}`}
-                      className="truncate text-sm font-medium text-ink no-underline hover:underline"
+                      className="truncate text-sm font-medium text-ink no-underline"
                     >
                       {r.name}
                     </Link>
