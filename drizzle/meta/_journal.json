@@ -566,7 +566,21 @@
       "idx": 80,
       "version": "7",
       "when": 1787501260000,
-      "tag": "0080_sales_manager_decided_at",
+      "tag": "0080_impersonation_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1787501320000,
+      "tag": "0081_field_customer_pins",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1787501380000,
+      "tag": "0082_sales_manager_decided_at",
       "breakpoints": true
     }
   ]

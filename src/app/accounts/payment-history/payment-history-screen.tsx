@@ -292,7 +292,7 @@ export function PaymentHistoryScreen({
                   <Cell truncate={200}>
                     <Link
                       href={`/accounts/ledger?customer=${r.customerId}`}
-                      className="no-underline hover:underline"
+                      className="no-underline"
                     >
                       {r.customerName}
                     </Link>

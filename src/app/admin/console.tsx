@@ -602,6 +602,7 @@ function ConsoleShell({
                   errors={errors}
                   onDraft={(key, value) => setDrafts((d) => ({ ...d, [key]: value }))}
                   isPlatformAdmin={isPlatformAdmin}
+                  isAdmin={me.role === "admin"}
                   collections={crm.collections}
                   catalogue={catalogue}
                   access={access}
@@ -750,6 +751,7 @@ function SectionBody({
   errors,
   onDraft,
   isPlatformAdmin,
+  isAdmin,
   collections,
   catalogue,
   access,
@@ -773,6 +775,8 @@ function SectionBody({
   errors: React.ComponentProps<typeof SettingsSection>["errors"];
   onDraft: (key: string, value: unknown) => void;
   isPlatformAdmin: boolean;
+  /** Holds the `admin` ROLE — not merely granted the Admin Console app. See AccessSection. */
+  isAdmin: boolean;
   collections: Record<string, Collection>;
   catalogue: CatalogueData;
   access: AccessRow[];
@@ -877,7 +881,7 @@ function SectionBody({
   // moved to Overview, where the rest of the platform's own answers already
   // live — this section answers who can open what, and nothing else.
   if (section === "people") {
-    return <AccessSection rows={access} onOpenUser={onOpenUser} />;
+    return <AccessSection rows={access} onOpenUser={onOpenUser} isAdmin={isAdmin} />;
   }
   if (section === "apps") {
     if (tabIndex === 0) return <RegistryTab data={platform} />;

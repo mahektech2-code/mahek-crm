@@ -30,6 +30,18 @@ export type AppDefinition = {
   tone: "primary" | "neutral";
   /** False until the app itself exists — the launcher says so plainly. */
   built: boolean;
+  /**
+   * True for exactly one entry: `field`, MBOS's own handset. Granting it
+   * gives somebody a sign-in to the mobile app and nothing else — there is
+   * no web screen behind it and there is never going to be one, which is a
+   * different fact from `built: false`. Every list that draws a person's WEB
+   * navigation — the launcher, the switcher, the locked-apps strip — has to
+   * leave this app out, or granting mobile access puts a dead "coming soon"
+   * tile in front of a browser. It stays a real, grantable entry in `APPS`
+   * for everything that is NOT web navigation: the access screen still needs
+   * to offer it, and `app_access` still needs the id.
+   */
+  mobileOnly?: boolean;
 };
 
 export const APPS: AppDefinition[] = [
@@ -47,11 +59,16 @@ export const APPS: AppDefinition[] = [
     id: "field",
     name: "Salesman App",
     initials: "SA",
+    // MBOS itself, not a screen on this site — see `mobileOnly` on the type.
+    // Granting this app is granting a sign-in to the phone app, full stop.
     description:
-      "Visit requests, route for the day and outcomes from the field.",
+      "The mobile app a field salesman signs into. Granting it gives mobile access only — there is no web screen for it.",
     href: "/field",
     tone: "neutral",
-    built: false,
+    // The mobile app is real and shipped; `built` here is about the web,
+    // which this app deliberately has none of.
+    built: true,
+    mobileOnly: true,
   },
   {
     id: "sales",
@@ -231,6 +248,17 @@ export function validateAppEndpoint(value: string): string | null {
 
 export function getApp(id: string): AppDefinition | undefined {
   return APPS.find((a) => a.id === id);
+}
+
+/**
+ * The held apps that belong in a WEB list — the launcher grid, the header
+ * switcher, the "not on your account" strip. One function rather than each
+ * of those filtering `APPS` by hand, because that is exactly how a mobile-only
+ * app like `field` ends up drawn as a browser tile in one of them and not the
+ * others: the exclusion has to live in one place to be certain it is everywhere.
+ */
+export function webApps(ids: readonly AppId[]): AppDefinition[] {
+  return APPS.filter((a) => ids.includes(a.id) && !a.mobileOnly);
 }
 
 /** "MAHEK CRM" for the CRM, "MAHEK OM" and so on for the rest. */

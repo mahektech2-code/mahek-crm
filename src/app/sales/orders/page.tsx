@@ -149,7 +149,7 @@ export default async function Page({
                   {o.salesmanId ? (
                     <Link
                       href={`/sales/people/${o.salesmanId}`}
-                      className="no-underline hover:underline"
+                      className="no-underline"
                     >
                       {o.salesmanName}
                     </Link>

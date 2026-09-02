@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { isManager, requireUser } from "@/lib/auth";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { navForModules } from "@/components/shell/nav";
-import { APPS } from "@/lib/apps";
+import { webApps } from "@/lib/apps";
 import { getScope } from "@/lib/scope";
 import { crmBadgeCounts, customerStatusRequestCount, listNotifications } from "@/lib/queries";
 import { AppShell } from "@/components/shell/app-shell";
@@ -40,7 +40,7 @@ export default async function AppLayout({
       scope={scope}
       notifications={notifications}
       badges={badges}
-      apps={APPS.filter((a) => apps.includes(a.id))}
+      apps={webApps(apps)}
       // The role goes in too, because `managerOnly` is the second filter:
       // an ungranted module is a HELD module, so role is the only thing that
       // keeps an approval queue away from the people it answers.

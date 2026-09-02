@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { listUserApps, listUserModules } from "@/lib/access";
-import { APPS } from "@/lib/apps";
+import { webApps } from "@/lib/apps";
 import { AppSwitcher } from "@/components/shell/app-switcher";
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import { ToastProvider } from "@/components/ui/toast";
@@ -40,7 +40,7 @@ export default async function ReportsLayout({
         allowed={modules.map((m) => m.href)}
         switcher={
           apps.length > 1 ? (
-            <AppSwitcher apps={APPS.filter((a) => apps.includes(a.id))} current="reports" />
+            <AppSwitcher apps={webApps(apps)} current="reports" />
           ) : null
         }
         feedback={<FeedbackButton />}

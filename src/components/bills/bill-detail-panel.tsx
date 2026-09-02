@@ -118,7 +118,7 @@ function Detail({
         <span className="text-[13px] text-muted">
           <Link
             href={customerHref(detail.customerId)}
-            className="no-underline hover:underline"
+            className="no-underline"
           >
             {detail.customerName}
           </Link>

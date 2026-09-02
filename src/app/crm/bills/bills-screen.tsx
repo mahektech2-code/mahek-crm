@@ -420,7 +420,7 @@ export function BillsScreen({
                   <Td>
                     <Link
                       href={`/crm/customers/${r.customerId}`}
-                      className="no-underline hover:underline"
+                      className="no-underline"
                     >
                       {r.customerName}
                     </Link>

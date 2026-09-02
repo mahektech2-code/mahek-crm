@@ -172,7 +172,7 @@ export default async function Page({
                 <Cell>{r.visitDate ?? <span className="text-muted">—</span>}</Cell>
                 <Cell truncate={170} title={r.employeeNameRaw ?? undefined}>
                   {r.salesmanId ? (
-                    <Link href={`/sales/people/${r.salesmanId}`} className="no-underline hover:underline">
+                    <Link href={`/sales/people/${r.salesmanId}`} className="no-underline">
                       {r.salesmanName}
                     </Link>
                   ) : (
@@ -181,7 +181,7 @@ export default async function Page({
                 </Cell>
                 <Cell truncate={220} title={r.customerNameRaw ?? undefined}>
                   {r.customerId ? (
-                    <Link href={`/crm/customers/${r.customerId}`} className="no-underline hover:underline">
+                    <Link href={`/crm/customers/${r.customerId}`} className="no-underline">
                       {r.customerName}
                     </Link>
                   ) : (

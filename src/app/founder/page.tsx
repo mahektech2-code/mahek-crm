@@ -96,7 +96,7 @@ export default async function Page({
             {priceRisk.length === 1
               ? `${priceRisk[0].userName} is at target on revenue but not on volume this month.`
               : `${priceRisk.length} people are at target on revenue but not on volume this month.`}{" "}
-            <Link href="/founder/team" className="font-medium text-brand no-underline hover:underline">
+            <Link href="/founder/team" className="font-medium text-brand no-underline">
               See the team
             </Link>
           </span>

@@ -330,7 +330,7 @@ function PaymentForm({
         </span>
         <button
           onClick={onBack}
-          className="h-8 flex-none cursor-pointer border-none bg-transparent px-3 text-sm font-medium text-brand hover:underline"
+          className="h-8 flex-none cursor-pointer border-none bg-transparent px-3 text-sm font-medium text-brand hover:text-brand-hover"
         >
           Someone else
         </button>
@@ -610,7 +610,7 @@ function PaymentForm({
               {allocation === "settle" && selected.length && settleTotal !== amount ? (
                 <button
                   onClick={() => setAmountText(String(Math.round(settleTotal / 100)))}
-                  className="mt-1 cursor-pointer border-none bg-transparent p-0 text-[13px] font-medium text-brand hover:underline"
+                  className="mt-1 cursor-pointer border-none bg-transparent p-0 text-[13px] font-medium text-brand hover:text-brand-hover"
                 >
                   Use {money(settleTotal)} — what those bills come to
                 </button>
@@ -889,7 +889,7 @@ function MatchPanel({
       <button
         type="button"
         onClick={onDismiss}
-        className="mt-2.5 cursor-pointer border-none bg-transparent p-0 text-[13px] font-medium text-muted hover:text-body hover:underline"
+        className="mt-2.5 cursor-pointer border-none bg-transparent p-0 text-[13px] font-medium text-muted hover:text-body"
       >
         {matches.length === 1
           ? "No — this is a different payment"
