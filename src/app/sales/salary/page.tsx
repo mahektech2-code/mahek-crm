@@ -1,6 +1,7 @@
 import Link from "next/link";
+import { MonthNav } from "@/components/ui/month-nav";
 import { money, shortDate } from "@/lib/format";
-import { APP_TIMEZONE, endOfMonth } from "@/lib/business-date";
+import { endOfMonth } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
 import { payForPeriod } from "@/lib/services/sales-service";
 import {
@@ -69,19 +70,7 @@ export default async function Page({
         subtitle="What each salesman is paid, read from the employee master that HR maintains. Nothing here writes a figure — a correction is made in the HR workbook, and the next sync brings it."
         actions={
           <div className="flex items-center gap-1 text-[13px]">
-            <Link
-              href={`/sales/salary?month=${shiftMonth(month, -1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              ←
-            </Link>
-            <span className="px-2 text-muted">{monthName(month)}</span>
-            <Link
-              href={`/sales/salary?month=${shiftMonth(month, 1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              →
-            </Link>
+            <MonthNav month={month} hrefFor={(m) => `/sales/salary?month=${m}`} />
           </div>
         }
       />
@@ -216,18 +205,4 @@ export default async function Page({
   );
 }
 
-function shiftMonth(month: string, by: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const at = new Date(Date.UTC(y, m - 1 + by, 1));
-  return `${at.getUTCFullYear()}-${String(at.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-function monthName(month: string): string {
-  const [y, m] = month.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-GB", {
-    month: "long",
-    year: "numeric",
-    timeZone: APP_TIMEZONE,
-  }).format(new Date(Date.UTC(y, m - 1, 15)));
-}
 

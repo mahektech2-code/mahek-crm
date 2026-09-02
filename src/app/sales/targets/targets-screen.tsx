@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
+import { MonthNav, monthName } from "@/components/ui/month-nav";
 import { PersonPicker, type Person } from "@/components/crm/person-picker";
 import { money } from "@/lib/format";
 import {
@@ -110,6 +111,7 @@ export function TargetsScreen({
   const allRows = [...rows, ...manualRows];
   const published = allRows.filter((r) => r.status === "published").length;
   const unset = allRows.filter((r) => !r.targetId).length;
+  const editingRow = allRows.find((r) => r.userId === editing) ?? null;
 
   return (
     <div className="p-6">
@@ -118,19 +120,7 @@ export function TargetsScreen({
         subtitle={`${monthName(period)} — what each person is being asked for. Nothing reaches anybody until it is published. The list is telecallers and field sales by default; add anybody else by hand.`}
         actions={
           <div className="flex items-center gap-1 text-[13px]">
-            <Link
-              href={`/sales/targets?period=${shiftMonth(period, -1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              ←
-            </Link>
-            <span className="px-2 text-muted">{monthName(period)}</span>
-            <Link
-              href={`/sales/targets?period=${shiftMonth(period, 1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              →
-            </Link>
+            <MonthNav month={period} hrefFor={(m) => `/sales/targets?period=${m}`} />
             <Link
               href={`/sales/performance?month=${period}`}
               className="ml-2 rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
@@ -219,9 +209,9 @@ export function TargetsScreen({
             </>
           }
         >
-          {allRows.flatMap((r, i) => {
+          {allRows.map((r, i) => {
             const base = baselines[r.userId];
-            const line = (
+            return (
               <Row key={r.userId} striped={i % 2 === 1}>
                 <Cell truncate={170}>
                   <span className="font-medium text-ink">{r.userName}</span>
@@ -250,46 +240,41 @@ export function TargetsScreen({
                 <Cell>
                   <button
                     type="button"
-                    onClick={() => setEditing(editing === r.userId ? null : r.userId)}
+                    onClick={() => setEditing(r.userId)}
                     className="rounded-[4px] border border-line bg-surface px-2.5 py-1 text-[12px] text-body hover:bg-canvas"
                   >
-                    {editing === r.userId ? "Close" : r.targetId ? "Change" : "Set"}
+                    {r.targetId ? "Change" : "Set"}
                   </button>
                 </Cell>
               </Row>
             );
-
-            if (editing !== r.userId) return [line];
-            return [
-              line,
-              <tr key={`${r.userId}-edit`}>
-                <td colSpan={9} className="border-b border-line bg-canvas p-0">
-                  <Editor
-                    key={`${r.userId}-${period}`}
-                    row={r}
-                    period={period}
-                    baseline={base}
-                    categories={categories}
-                    revisionReasons={revisionReasons}
-                    onDone={(message, tone) => {
-                      setBanner({ tone, text: message });
-                      if (tone === "info") {
-                        setEditing(null);
-                        // A person added by hand now has a real target row,
-                        // which the refreshed page will bring back through
-                        // `rows` — the hand-added placeholder would otherwise
-                        // sit beside it as a duplicate.
-                        setManualRows((prev) => prev.filter((m) => m.userId !== r.userId));
-                        router.refresh();
-                      }
-                    }}
-                  />
-                </td>
-              </tr>,
-            ];
           })}
         </Table>
       )}
+
+      {editingRow ? (
+        <Editor
+          key={`${editingRow.userId}-${period}`}
+          row={editingRow}
+          period={period}
+          baseline={baselines[editingRow.userId]}
+          categories={categories}
+          revisionReasons={revisionReasons}
+          onClose={() => setEditing(null)}
+          onDone={(message, tone) => {
+            setBanner({ tone, text: message });
+            if (tone === "info") {
+              setEditing(null);
+              // A person added by hand now has a real target row, which the
+              // refreshed page will bring back through `rows` — the
+              // hand-added placeholder would otherwise sit beside it as a
+              // duplicate.
+              setManualRows((prev) => prev.filter((m) => m.userId !== editingRow.userId));
+              router.refresh();
+            }
+          }}
+        />
+      ) : null}
 
       <p className="mt-3 max-w-[860px] text-[13px] text-pretty text-muted">
         A revenue target and a volume target are both set, and the second is the point:
@@ -310,6 +295,7 @@ function Editor({
   baseline,
   categories,
   revisionReasons,
+  onClose,
   onDone,
 }: {
   row: TargetRow;
@@ -317,6 +303,7 @@ function Editor({
   baseline: Baseline | undefined;
   categories: { id: string; name: string; isResidual: boolean }[];
   revisionReasons: string[];
+  onClose: () => void;
   onDone: (message: string, tone: "info" | "danger") => void;
 }) {
   const [revenue, setRevenue] = useState(toRupees(row.revenueTargetPaise));
@@ -412,7 +399,46 @@ function Editor({
   }
 
   return (
-    <div className="px-5 py-4">
+    <Modal
+      open
+      onClose={onClose}
+      title={`${row.targetId ? "Change target" : "Set target"} · ${row.userName}`}
+      width={640}
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-[4px] border border-line bg-surface px-3 py-1.5 text-[13px] text-body hover:bg-canvas"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => save(false)}
+            className="rounded-[4px] border border-line bg-surface px-3 py-1.5 text-[13px] text-body hover:bg-canvas disabled:opacity-50"
+          >
+            {isPublished ? "Save the change" : "Save as draft"}
+          </button>
+          {!isPublished ? (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => save(true)}
+              className="rounded-[4px] bg-brand px-3 py-1.5 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
+            >
+              Save and publish
+            </button>
+          ) : null}
+          <span className="text-[12px] text-muted">
+            {isPublished
+              ? "Already visible to them."
+              : "A draft is invisible to them until it is published."}
+          </span>
+        </>
+      }
+    >
       <div className="mb-4 flex flex-wrap gap-x-8 gap-y-4">
         <Field
           label="Revenue target"
@@ -602,33 +628,7 @@ function Editor({
       {error ? (
         <p className="mb-3 max-w-[620px] text-[13px] text-danger">{error}</p>
       ) : null}
-
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => save(false)}
-          className="rounded-[4px] border border-line bg-surface px-3 py-1.5 text-[13px] text-body hover:bg-canvas disabled:opacity-50"
-        >
-          {isPublished ? "Save the change" : "Save as draft"}
-        </button>
-        {!isPublished ? (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => save(true)}
-            className="rounded-[4px] bg-brand px-3 py-1.5 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
-          >
-            Save and publish
-          </button>
-        ) : null}
-        <span className="text-[12px] text-muted">
-          {isPublished
-            ? "Already visible to them."
-            : "A draft is invisible to them until it is published."}
-        </span>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -718,17 +718,3 @@ function orDash(v: number | null, render: (n: number) => string) {
   );
 }
 
-function shiftMonth(month: string, by: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const at = new Date(Date.UTC(y, m - 1 + by, 1));
-  return `${at.getUTCFullYear()}-${String(at.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-function monthName(month: string): string {
-  const [y, m] = month.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-GB", {
-    month: "long",
-    year: "numeric",
-    timeZone: "Asia/Kolkata",
-  }).format(new Date(Date.UTC(y, m - 1, 15)));
-}
