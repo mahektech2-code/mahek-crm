@@ -2,35 +2,18 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { APP_TIMEZONE } from "@/lib/business-date";
+import { shiftMonth, monthName } from "./month";
 
 /* ---------------------------------------------------------------------------
- * The month header — arrows, a name, and now a picker to jump to one that
- * isn't a step away.
+ * The month picker — arrows plus a native month input to jump further.
  *
- * `shiftMonth`/`monthName` and the arrow-pair markup were identical, by-hand
- * copies in five files (Sales Targets, Sales Performance, Founder Team, Sales
- * Salary, CRM Performance). One component, not five, so a fix here reaches
- * every screen at once instead of four of them.
+ * `shiftMonth`/`monthName` live in `./month.ts`, deliberately not here: this
+ * file is `"use client"`, and every export of a `"use client"` module —
+ * including a plain, non-component function — becomes a client reference to
+ * the bundler. A Server Component that imported them from here and called
+ * them directly (not as JSX) crashed at request time; see `month.ts`'s own
+ * comment.
  * ------------------------------------------------------------------------- */
-
-export function shiftMonth(month: string, by: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const at = new Date(Date.UTC(y, m - 1 + by, 1));
-  return `${at.getUTCFullYear()}-${String(at.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-export function monthName(month: string): string {
-  const [y, m] = month.split("-").map(Number);
-  // Day 15, not day 1 — the middle of the month formatted in APP_TIMEZONE
-  // cannot fall into a neighbouring month no matter which zone the process
-  // itself is running in.
-  return new Intl.DateTimeFormat("en-GB", {
-    month: "long",
-    year: "numeric",
-    timeZone: APP_TIMEZONE,
-  }).format(new Date(Date.UTC(y, m - 1, 15)));
-}
 
 export function MonthNav({
   month,

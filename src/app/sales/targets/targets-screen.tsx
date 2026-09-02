@@ -4,7 +4,8 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
-import { MonthNav, monthName } from "@/components/ui/month-nav";
+import { MonthNav } from "@/components/ui/month-nav";
+import { monthName } from "@/components/ui/month";
 import { PersonPicker, type Person } from "@/components/crm/person-picker";
 import { money } from "@/lib/format";
 import {

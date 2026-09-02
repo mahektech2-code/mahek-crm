@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { MonthNav, monthName } from "@/components/ui/month-nav";
+import { MonthNav } from "@/components/ui/month-nav";
+import { monthName } from "@/components/ui/month";
 import { money, moneyShort } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { BP } from "@/lib/engines/performance";

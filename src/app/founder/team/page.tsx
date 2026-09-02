@@ -2,7 +2,8 @@ import { money, moneyShort } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { BP } from "@/lib/engines/performance";
 import { Badge, Card, PageHeader, Th, Td, Tr } from "@/components/ui/primitives";
-import { MonthNav, monthName } from "@/components/ui/month-nav";
+import { MonthNav } from "@/components/ui/month-nav";
+import { monthName } from "@/components/ui/month";
 import { founderTeamPerformance } from "@/lib/services/founder-dashboard-service";
 
 export const metadata = { title: "Team performance - Founder Dashboard - MahekOne" };
