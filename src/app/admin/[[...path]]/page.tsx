@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireUser, isManager } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
-import { APPS } from "@/lib/apps";
+import { webApps } from "@/lib/apps";
 import { can } from "@/lib/access-control";
 import { getConfig, configWarnings } from "@/lib/config/store";
 import { listCollections } from "@/lib/config/entity-collections";
@@ -185,7 +185,7 @@ export default async function Page({
 
   return (
     <AdminConsole
-      apps={APPS.filter((a) => apps.includes(a.id))}
+      apps={webApps(apps)}
       isPlatformAdmin={isPlatformAdmin}
       initial={{ section, tab }}
       people={people}
