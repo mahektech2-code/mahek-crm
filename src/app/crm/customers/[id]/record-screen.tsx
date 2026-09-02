@@ -957,69 +957,82 @@ export function RecordScreen({
               <Fact label="Area" value={customer.area} />
               <Fact label="Territory" value={customer.territoryRegion} />
               <Fact label="Dealer code" value={customer.dealerCode} />
-              {customer.kind === "lead" ? (
-                <>
-                  <Fact label="Lead since" value={shortDate(customer.createdAt)} />
-                  <Fact label="Source" value={customer.leadSource} />
-                  <Fact label="Owner" value={customer.ownerName} />
-                </>
-              ) : (
-                <>
-                  <Fact
-                    label="Customer since"
-                    value={
-                      customer.customerSince ? shortDate(customer.customerSince) : null
-                    }
-                  />
-                  {/* The three seats at ONE size, as the customers list draws
-                      them: they are peers, and a hierarchy of type sizes down a
-                      column claims an importance ranking that does not exist. */}
-                  {/*
-                    NO fallback to `ownerName` here. `SALES_AM_NAME_SQL`
-                    already carries that fallback — for an account nobody has
-                    decided about. Redoing it here would override the one
-                    case that fallback deliberately excludes: an account
-                    somebody has decided has no salesperson, where null means
-                    unassigned and re-showing the importer's name is the exact
-                    bug this screen exists to not have.
-                  */}
-                  <Fact label="Sales" value={customer.salesAmName} />
-                  {/* Who the salesperson answers to. Named here rather than
-                      left to the list, because this is the screen somebody is
-                      on when they ask who to escalate an account to — and it
-                      is the one seat of the three that is a manager's to set. */}
-                  <dt className="text-muted whitespace-nowrap">Sales manager</dt>
-                  <dd className="m-0 flex min-w-0 items-center justify-between gap-2 break-words text-ink">
-                    <span>
-                      {customer.salesManagerName ?? (
-                        <span className="text-muted">-</span>
-                      )}
-                    </span>
-                    {canAssignSalesManager ? (
-                      <button
-                        type="button"
-                        onClick={() => setSmOpen(true)}
-                        className="cursor-pointer text-[12px] font-medium text-brand hover:underline"
-                      >
-                        Edit
-                      </button>
-                    ) : null}
-                  </dd>
-                  <Fact label="Back office" value={customer.backOfficeAmName} />
-                  <Fact
-                    label="Buying cycle"
-                    value={
-                      customer.cycleIsDefault
-                        ? `${customer.cycleDays} days (default)`
-                        : `${customer.cycleDays} days${
-                            customer.cycleConfidence === null
-                              ? ""
-                              : ` · ${customer.cycleConfidence}% confident`
-                          }`
-                    }
-                  />
-                </>
-              )}
+              {(() => {
+                /*
+                 * Who the salesperson (or, on a lead, the owner) answers to.
+                 * Named here rather than left to the list, because this is
+                 * the screen somebody is on when they ask who to escalate an
+                 * account to — and it is the one seat of the three that is a
+                 * manager's to set. Shared between both branches below: a
+                 * lead is worth knowing this about before it has ordered,
+                 * which is not true of back office paperwork.
+                 */
+                const salesManagerFact = (
+                  <React.Fragment key="sales-manager">
+                    <dt className="text-muted whitespace-nowrap">Sales manager</dt>
+                    <dd className="m-0 flex min-w-0 items-center justify-between gap-2 break-words text-ink">
+                      <span>
+                        {customer.salesManagerName ?? (
+                          <span className="text-muted">-</span>
+                        )}
+                      </span>
+                      {canAssignSalesManager ? (
+                        <button
+                          type="button"
+                          onClick={() => setSmOpen(true)}
+                          className="cursor-pointer text-[12px] font-medium text-brand hover:underline"
+                        >
+                          Edit
+                        </button>
+                      ) : null}
+                    </dd>
+                  </React.Fragment>
+                );
+                return customer.kind === "lead" ? (
+                  <>
+                    <Fact label="Lead since" value={shortDate(customer.createdAt)} />
+                    <Fact label="Source" value={customer.leadSource} />
+                    <Fact label="Owner" value={customer.ownerName} />
+                    {salesManagerFact}
+                  </>
+                ) : (
+                  <>
+                    <Fact
+                      label="Customer since"
+                      value={
+                        customer.customerSince ? shortDate(customer.customerSince) : null
+                      }
+                    />
+                    {/* The three seats at ONE size, as the customers list draws
+                        them: they are peers, and a hierarchy of type sizes down a
+                        column claims an importance ranking that does not exist. */}
+                    {/*
+                      NO fallback to `ownerName` here. `SALES_AM_NAME_SQL`
+                      already carries that fallback — for an account nobody has
+                      decided about. Redoing it here would override the one
+                      case that fallback deliberately excludes: an account
+                      somebody has decided has no salesperson, where null means
+                      unassigned and re-showing the importer's name is the exact
+                      bug this screen exists to not have.
+                    */}
+                    <Fact label="Sales" value={customer.salesAmName} />
+                    {salesManagerFact}
+                    <Fact label="Back office" value={customer.backOfficeAmName} />
+                    <Fact
+                      label="Buying cycle"
+                      value={
+                        customer.cycleIsDefault
+                          ? `${customer.cycleDays} days (default)`
+                          : `${customer.cycleDays} days${
+                              customer.cycleConfidence === null
+                                ? ""
+                                : ` · ${customer.cycleConfidence}% confident`
+                            }`
+                      }
+                    />
+                  </>
+                );
+              })()}
               {/*
                 WHAT THIS ACCOUNT IS, said once and in full — this is the one
                 screen with room for it. The list badge answers the same

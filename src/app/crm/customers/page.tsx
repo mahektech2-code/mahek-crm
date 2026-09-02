@@ -7,6 +7,7 @@ import {
   listAssignableUsers,
   listBackOfficeCandidates,
   listCustomersPage,
+  salesManagerSuggestions,
   today,
 } from "@/lib/queries";
 import { customerStatusLabel } from "@/lib/format";
@@ -44,29 +45,32 @@ export default async function CustomersPage({
   const day = await today();
 
   const perPage = Number(one("per") ?? 25);
-  const [page, team, config, backOfficePeople, amOptions] = await Promise.all([
-    listCustomersPage({
-      query: one("q"),
-      status: one("status"),
-      salesAm: one("sales"),
-      salesManager: one("salesmanager"),
-      backOfficeAm: one("backoffice"),
-      // "yes" / "no" / "delivered" — the third is the evidence filter, and the
-      // one the conversion work is actually done from. Validated rather than
-      // cast: `?party=nonsense` is a typed value the query would carry into a
-      // clause that matches nothing, and an empty list reads as a lost book.
-      thirdParty: accountTypeParam(one("party")),
-      page: Number(one("page") ?? 1) || 1,
-      perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
-    }),
-    // The staff list, NOT the reader's scope — see `listAssignableUsers`.
-    // Built from `listTeam()` this offered an admin on My book exactly one
-    // person: themselves.
-    listAssignableUsers(),
-    getConfig(),
-    listBackOfficeCandidates(),
-    listAmFilterOptions(),
-  ]);
+  const [page, team, config, backOfficePeople, amOptions, salesManagerSuggested] =
+    await Promise.all([
+      listCustomersPage({
+        query: one("q"),
+        status: one("status"),
+        salesAm: one("sales"),
+        salesManager: one("salesmanager"),
+        backOfficeAm: one("backoffice"),
+        // "yes" / "no" / "delivered" — the third is the evidence filter, and
+        // the one the conversion work is actually done from. Validated rather
+        // than cast: `?party=nonsense` is a typed value the query would carry
+        // into a clause that matches nothing, and an empty list reads as a
+        // lost book.
+        thirdParty: accountTypeParam(one("party")),
+        page: Number(one("page") ?? 1) || 1,
+        perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
+      }),
+      // The staff list, NOT the reader's scope — see `listAssignableUsers`.
+      // Built from `listTeam()` this offered an admin on My book exactly one
+      // person: themselves.
+      listAssignableUsers(),
+      getConfig(),
+      listBackOfficeCandidates(),
+      listAmFilterOptions(),
+      salesManagerSuggestions(),
+    ]);
 
   return (
     <CustomersScreen
@@ -90,6 +94,7 @@ export default async function CustomersPage({
       // The same list — this seat needs no login either, and several of the
       // people running a sales line here have never signed in.
       salesManagerPeople={backOfficePeople}
+      salesManagerSuggestions={salesManagerSuggested}
       filters={{
         query: one("q") ?? "",
         status: one("status") ?? "",
@@ -117,6 +122,7 @@ export default async function CustomersPage({
         city: c.city,
         ownerId: c.ownerId,
         salesAmId: c.salesAmId,
+        salesManagerId: c.salesManagerId,
         amDecidedAt: c.amDecidedAt,
         ownerName: c.ownerName,
         kind: c.kind,
