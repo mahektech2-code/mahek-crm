@@ -54,6 +54,8 @@ import {
   resolveComplaint as resolveComplaintService,
   setTarget as setTargetService,
   setTargetsBulk as setTargetsBulkService,
+  resolveTargetCustomerIds,
+  type TargetListFilters,
 } from "@/lib/services/worklist-services";
 import {
   actionReply as actionReplyService,
@@ -1304,7 +1306,14 @@ export async function setTarget(
 }
 
 export async function setTargetsBulk(input: {
-  customerIds: string[];
+  /**
+   * The screen's own filters, resolved to customer ids HERE rather than sent
+   * as a ticked list — the honest way to act on "everyone these filters
+   * match" is to run the same clause the list ran, not a client-side reading
+   * of one page of it. See `targetFilterClause`.
+   */
+  filters: TargetListFilters;
+  onlyDefault: boolean;
   mode: "amount" | "uplift";
   value: string;
   period?: string;
@@ -1317,8 +1326,13 @@ export async function setTargetsBulk(input: {
     if (value === null || !Number.isFinite(value)) {
       return err("Enter a number.", "validation");
     }
+    const customerIds = await resolveTargetCustomerIds(
+      input.period,
+      input.filters,
+      input.onlyDefault,
+    );
     const r = await setTargetsBulkService(
-      input.customerIds,
+      customerIds,
       input.mode,
       value,
       input.period,
