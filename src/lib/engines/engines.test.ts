@@ -2568,6 +2568,37 @@ describe("an order already placed", () => {
     // It ranks below everything else: it is not a call asking for an order.
     assert.notEqual(r.entries[0].reasons[0].kind, "orderStatus");
   });
+
+  test("an order taken today does not earn a status call tomorrow", () => {
+    // Bombay Paints: an order taken this morning, still pending approval.
+    // Nothing about its status can have changed a day later, and the quiet
+    // window that already holds off "ask for another order" has to hold off
+    // "check on this one" too, or the customer is called about the same
+    // fact twice in two days.
+    const c = candidate({
+      lastOrderDate: TODAY,
+      cycleDays: 22,
+      openOrderStatus: "waiting for accounts to approve",
+    });
+    const r = buildQueue([c], TODAY, C);
+    assert.equal(r.entries.length, 0, "nothing left to call about");
+    assert.equal(r.suppressed.length, 1);
+    assert.match(r.suppressed[0].reason, /no order chased/);
+  });
+
+  test("a status call returns once the quiet window itself ends", () => {
+    // Fifteen days on (the default `queue.quietDaysAfterOrder`, uncapped here
+    // since the cycle is longer), the order is STILL sitting unresolved — now
+    // genuinely worth a check-in rather than a guess about what changed.
+    const c = candidate({
+      lastOrderDate: addDays(TODAY, -15),
+      cycleDays: 22,
+      openOrderStatus: "waiting for accounts to approve",
+    });
+    const r = buildQueue([c], TODAY, C);
+    const kinds = r.entries[0]?.reasons.map((x) => x.kind) ?? [];
+    assert.ok(kinds.includes("orderStatus"));
+  });
 });
 
 describe("payment calls on the call log", () => {
