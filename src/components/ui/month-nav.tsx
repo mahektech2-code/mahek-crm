@@ -2,16 +2,22 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { shiftMonth, monthName } from "./month";
+import { shiftMonth } from "./month";
 
 /* ---------------------------------------------------------------------------
  * The month picker — arrows plus a native month input to jump further.
  *
- * `shiftMonth`/`monthName` live in `./month.ts`, deliberately not here: this
- * file is `"use client"`, and every export of a `"use client"` module —
- * including a plain, non-component function — becomes a client reference to
- * the bundler. A Server Component that imported them from here and called
- * them directly (not as JSX) crashed at request time; see `month.ts`'s own
+ * The native input is the only place the month is shown: an early version
+ * also printed it as plain text beside the input, and a browser draws its
+ * own value into a month input regardless, so the same month read twice in
+ * a row six pixels apart — which looks like the picker forgot what it was
+ * showing rather than like two ways to move through the same one.
+ *
+ * `shiftMonth` lives in `./month.ts`, deliberately not here: this file is
+ * `"use client"`, and every export of a `"use client"` module — including a
+ * plain, non-component function — becomes a client reference to the
+ * bundler. A Server Component that imported it from here and called it
+ * directly (not as JSX) crashed at request time; see `month.ts`'s own
  * comment.
  * ------------------------------------------------------------------------- */
 
@@ -42,7 +48,6 @@ export function MonthNav({
       >
         ←
       </Link>
-      <span className="px-2 text-muted">{monthName(month)}</span>
       <input
         type="month"
         value={month}

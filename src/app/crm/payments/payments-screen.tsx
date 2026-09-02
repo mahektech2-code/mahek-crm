@@ -347,7 +347,7 @@ export function PaymentsScreen({
         <button
           onClick={() => setMonthEnd((m) => !m)}
           className={cx(
-            "h-8 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+            "h-8 flex-none cursor-pointer rounded-[4px] border px-2.5 text-[13px] whitespace-nowrap",
             monthEnd
               ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
               : "border-line bg-surface text-body hover:bg-canvas",
@@ -362,7 +362,7 @@ export function PaymentsScreen({
               setSlowOnly(false);
               setMonthEnd(false);
             }}
-            className="h-8 cursor-pointer px-2.5 text-sm text-brand"
+            className="h-8 flex-none cursor-pointer px-2.5 text-sm whitespace-nowrap text-brand"
           >
             Clear all
           </button>
