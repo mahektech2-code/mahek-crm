@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { money } from "@/lib/format";
-import { fieldTeam, gpsGap, territory } from "@/lib/services/sales-service";
+import { fieldTeam, gpsGap, prospectPins, shopPins, territory } from "@/lib/services/sales-service";
 import {
   Banner,
   Cell,
@@ -15,6 +15,7 @@ import {
 import {
   plural,
 } from "../words";
+import { ShopMap } from "./shop-map";
 
 export const metadata = { title: "Territory — Sales Dashboard — MahekOne" };
 
@@ -32,7 +33,13 @@ export const metadata = { title: "Territory — Sales Dashboard — MahekOne" };
  * what turns that into a decision somebody can take.
  */
 export default async function Page() {
-  const [rows, gap, team] = await Promise.all([territory(), gpsGap(), fieldTeam()]);
+  const [rows, gap, team, shopMapPins, prospectMapPins] = await Promise.all([
+    territory(),
+    gpsGap(),
+    fieldTeam(),
+    shopPins(),
+    prospectPins(),
+  ]);
 
   const unassigned = rows.filter((r) => !r.salesmanId);
   const regions = new Set(rows.map((r) => r.region ?? "—"));
@@ -122,6 +129,13 @@ export default async function Page() {
           </div>
         </section>
       ) : null}
+
+      <div className="mb-4">
+        <div className="mb-2.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+          Where they are
+        </div>
+        <ShopMap shops={shopMapPins} prospects={prospectMapPins} />
+      </div>
 
       {rows.length === 0 ? (
         <Empty

@@ -3461,6 +3461,102 @@ export const sheetFieldActivityRows = pgTable(
   ],
 );
 
+/**
+ * One row per pin from a third-party field-tracking app the salesmen used to
+ * drop a shop's location before MBOS existed — a one-time CSV export, not a
+ * live sheet, so this carries none of `sheet_sync_runs`' watermark machinery.
+ * There is no ID column in the source, so `rowHash` (the whole raw row) is
+ * the only natural key: re-importing an unchanged export is a no-op, and a
+ * pin that moved on a later export lands as a second row rather than an
+ * update, which is accepted rather than solved.
+ *
+ * No phone number anywhere in the source, so a row here can never become a
+ * `customers` row (`phone` is `NOT NULL`) or an `mbos_leads` row (`mobile` is
+ * mandatory in the form the handset sync enforces). What it CAN do is confirm
+ * a shop MahekOne already knows about — `customers.gps_lat`/`gps_lng` exist
+ * and are normally filled "by standing in it" on an MBOS visit, but the
+ * handset app is not built yet, so almost nothing has ever set them. Where
+ * `customerMatchStatus` is `matched`, this is exactly that fact, from a
+ * different app.
+ *
+ * `gpsAppliedAt` is separate from the match: matching only decides WHICH
+ * customer, and is safe to redo on every import; applying WRITES onto that
+ * customer's row and must happen at most once, and must never overwrite a
+ * real MBOS fix — the write itself is guarded by `gps_lat is null`, and this
+ * column is what tells a re-run it already happened.
+ */
+export const fieldCustomerPins = pgTable(
+  "field_customer_pins",
+  {
+    id: text("id").primaryKey(),
+    rowHash: text("row_hash").notNull(),
+
+    /** Every column as the export gave it. Never selected by a list query. */
+    raw: jsonb("raw").$type<Record<string, string>>().notNull(),
+
+    name: text("name").notNull(),
+    printAs: text("print_as"),
+    locationText: text("location_text"),
+    /** Salesman-drawn beat/region name, free text, not normalised here. */
+    territory: text("territory"),
+    /**
+     * The source app's "Industry" cell, kept verbatim — it conflates a real
+     * trade category with a lead-pipeline/payment-rating label ("Interested
+     * Customer", "Class A (Fast Payment High Sales)"). Split only at render
+     * time, in `lib/field-customer-pin-labels.ts` — a stored enum is not a
+     * label.
+     */
+    industryLabel: text("industry_label"),
+    /** Geocoded from the coordinate by the source app, not typed by anybody. */
+    address: text("address"),
+
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+
+    sourceAddedByName: text("source_added_by_name"),
+    sourceAddedAt: timestamp("source_added_at", { withTimezone: true }),
+    sourceUpdatedByName: text("source_updated_by_name"),
+    sourceUpdatedAt: timestamp("source_updated_at", { withTimezone: true }),
+
+    /* ------------------------------ matching ------------------------------
+     * Free text on both sides, same discipline as `sheet_field_activity_rows`:
+     * more than one close candidate is `ambiguous`, never auto-picked.
+     */
+    addedByUserId: text("added_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    addedByMatchStatus: sheetMatchStatusEnum("added_by_match_status")
+      .notNull()
+      .default("pending"),
+
+    matchedCustomerId: text("matched_customer_id").references(() => customers.id, {
+      onDelete: "set null",
+    }),
+    customerMatchStatus: sheetMatchStatusEnum("customer_match_status")
+      .notNull()
+      .default("pending"),
+    /** The candidates a match could not choose between, for manual review. */
+    matchNote: text("match_note"),
+
+    /** Null until the apply step has written this pin onto its customer. */
+    gpsAppliedAt: timestamp("gps_applied_at", { withTimezone: true }),
+
+    issues: jsonb("issues").$type<SheetRowIssue[]>().notNull().default([]),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("field_customer_pins_row_hash_idx").on(t.rowHash),
+    index("field_customer_pins_customer_idx").on(t.matchedCustomerId),
+    /** Drives the exceptions review: unresolved shop names, cheaply. */
+    index("field_customer_pins_customer_match_idx").on(t.customerMatchStatus),
+    index("field_customer_pins_added_by_idx").on(t.addedByUserId),
+    /** The apply step's own worklist: matched pins not yet written. */
+    index("field_customer_pins_unapplied_idx").on(t.customerMatchStatus, t.gpsAppliedAt),
+  ],
+);
+
 /* ═══════════════════════════════════════════════════════ MBOS — field sales
  *
  * The Mahek Business Operating System's field app: a salesman's handset,
