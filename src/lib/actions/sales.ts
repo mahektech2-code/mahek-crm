@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  appAccess,
   auditLog,
   customers,
   mbosApprovals,
@@ -13,10 +14,12 @@ import {
   mbosDevices,
   mbosDocuments,
   mbosHolidays,
+  mbosLeads,
   mbosManagerTerritories,
   mbosJourneyPlans,
   mbosJourneyStops,
   mbosTasks,
+  mbosVisits,
   notifications,
   users,
 } from "@/db/schema";
@@ -74,6 +77,8 @@ function refresh() {
     revalidatePath("/sales/documents");
     revalidatePath("/sales/knowledge");
     revalidatePath("/sales/tasks");
+    revalidatePath("/sales/leads");
+    revalidatePath("/sales/visits");
     revalidatePath("/apps");
   } catch {
     /* no request context — nothing cached to invalidate */
@@ -1001,6 +1006,352 @@ export async function releaseDevice(input: {
     return fromThrown(e);
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════ the leads */
+
+/**
+ * Every write the Leads screen makes.
+ *
+ * A lead has one owner, `assignedToUserId`, and none of the third-seat or
+ * sales-AM machinery a customer carries — it has never ordered, so there is
+ * no book to protect from a conflict of interest, only a prospect somebody is
+ * or is not working. Reassigning it is therefore this app's own call, checked
+ * the same way as everything else here: holding the Sales Dashboard.
+ */
+
+async function requireLead(leadId: string) {
+  const [lead] = await db.select().from(mbosLeads).where(eq(mbosLeads.id, leadId)).limit(1);
+  return lead ?? null;
+}
+
+/** A lead's name, for a message somebody reads on a phone. */
+function leadLabel(lead: { name: string; companyName: string | null }) {
+  return lead.companyName ? `${lead.name} (${lead.companyName})` : lead.name;
+}
+
+/**
+ * Moving a lead to somebody else.
+ *
+ * Both sides are told, the same rule a customer's account manager change
+ * follows: work has landed on the new owner's list without them asking for
+ * it, and the person who lost it would otherwise find out by noticing it is
+ * gone. `salesmanId` has to hold the `field` app — a lead assigned to
+ * somebody with no handset is a lead nobody will ever see again.
+ */
+export async function reassignLead(input: {
+  leadId: string;
+  salesmanId: string;
+}): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const lead = await requireLead(input.leadId);
+    if (!lead) return err("That lead is no longer here.", "not_found");
+    if (lead.archived) {
+      return err(
+        "That lead is archived. Restore it before moving it to somebody else.",
+        "validation",
+      );
+    }
+    if (lead.assignedToUserId === input.salesmanId) {
+      return ok(undefined, "Already theirs.");
+    }
+
+    const [salesman] = await db
+      .select({ id: users.id, name: users.name, active: users.active })
+      .from(users)
+      .innerJoin(
+        appAccess,
+        and(eq(appAccess.userId, users.id), eq(appAccess.app, "field")),
+      )
+      .where(eq(users.id, input.salesmanId))
+      .limit(1);
+    if (!salesman) {
+      return err(
+        "That person does not hold the Salesman App, so a lead cannot be put on their handset.",
+        "validation",
+      );
+    }
+    if (!salesman.active) {
+      return err(`${salesman.name}'s account is closed.`, "validation");
+    }
+
+    const [previousOwner] = lead.assignedToUserId
+      ? await db
+          .select({ id: users.id, name: users.name })
+          .from(users)
+          .where(eq(users.id, lead.assignedToUserId))
+          .limit(1)
+      : [];
+
+    await db
+      .update(mbosLeads)
+      .set({ assignedToUserId: input.salesmanId, updatedAt: new Date(), updatedById: user.id })
+      .where(eq(mbosLeads.id, input.leadId));
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.lead.reassign",
+      entityType: "mbos_lead",
+      entityId: input.leadId,
+      beforeState: { assignedToUserId: lead.assignedToUserId ?? null } as never,
+      afterState: { assignedToUserId: input.salesmanId } as never,
+    });
+
+    await tell(
+      input.salesmanId,
+      `${leadLabel(lead)} is now yours`,
+      `${user.name} assigned you this lead${lead.city ? ` in ${lead.city}` : ""}. It is on your handset at the next sync.`,
+    );
+    if (previousOwner) {
+      await tell(
+        previousOwner.id,
+        `${leadLabel(lead)} was moved`,
+        `${user.name} reassigned it to ${salesman.name}.`,
+      );
+    }
+
+    refresh();
+    return okVoid(`${leadLabel(lead)} reassigned to ${salesman.name}.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Nudging whoever owns a lead, without waiting for the next 1:1.
+ *
+ * This is a message, not a decision — nothing on the lead changes, so there
+ * is nothing to make a partial-vs-whole distinction over and no audit
+ * before/after worth recording beyond the fact that it was sent.
+ */
+export async function chaseLeadOwner(input: {
+  leadId: string;
+  note?: string;
+}): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const lead = await requireLead(input.leadId);
+    if (!lead) return err("That lead is no longer here.", "not_found");
+    if (lead.archived) {
+      return err("That lead is archived, so there is nobody actively working it.", "validation");
+    }
+    if (!lead.assignedToUserId) {
+      return err("Nobody is working this lead yet — reassign it first.", "validation");
+    }
+
+    const note = input.note?.trim();
+    await tell(
+      lead.assignedToUserId,
+      `Chase — ${leadLabel(lead)}`,
+      note || `${user.name} asked you to follow up on ${leadLabel(lead)}.`,
+    );
+
+    refresh();
+    return okVoid(`Nudged. It reaches their handset on the next sync.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Filing a lead out of the way.
+ *
+ * A manual override of what the nightly sweep does on its own, so it is
+ * reversible the same way: `archived` is a flag, never a delete, and
+ * {@link restoreLead} is the way back. A reason IS required, per the design's
+ * own `askReason(...)` on this exact action — the owner's copy of this lead
+ * is about to stop being chased, and a manager who cannot say why in a
+ * sentence is usually acting on a hunch rather than a decision.
+ */
+export async function archiveLead(input: { leadId: string; reason: string }): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const reason = input.reason.trim();
+    if (!reason) {
+      return err("Say why — this is what a manager reads later.", "validation");
+    }
+
+    const lead = await requireLead(input.leadId);
+    if (!lead) return err("That lead is no longer here.", "not_found");
+    if (lead.archived) return ok(undefined, "Already archived.");
+
+    await db
+      .update(mbosLeads)
+      .set({
+        archived: true,
+        archivedAt: new Date(),
+        updatedAt: new Date(),
+        updatedById: user.id,
+      })
+      .where(eq(mbosLeads.id, input.leadId));
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.lead.archive",
+      entityType: "mbos_lead",
+      entityId: input.leadId,
+      beforeState: { archived: false } as never,
+      afterState: { archived: true, reason } as never,
+    });
+
+    /* A lead vanishing off the working list with no explanation is exactly
+     * the failure this whole app is built to avoid — the owner is told why,
+     * not just that it happened. */
+    if (lead.assignedToUserId) {
+      await tell(
+        lead.assignedToUserId,
+        `${leadLabel(lead)} was archived`,
+        `${user.name} filed it away — ${reason}`,
+      );
+    }
+
+    refresh();
+    return okVoid(`${leadLabel(lead)} archived.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** The way back. */
+export async function restoreLead(input: { leadId: string }): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const lead = await requireLead(input.leadId);
+    if (!lead) return err("That lead is no longer here.", "not_found");
+    if (!lead.archived) return ok(undefined, "Not archived.");
+
+    await db
+      .update(mbosLeads)
+      .set({
+        archived: false,
+        archivedAt: null,
+        updatedAt: new Date(),
+        updatedById: user.id,
+      })
+      .where(eq(mbosLeads.id, input.leadId));
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.lead.restore",
+      entityType: "mbos_lead",
+      entityId: input.leadId,
+      beforeState: { archived: true } as never,
+      afterState: { archived: false } as never,
+    });
+
+    refresh();
+    return okVoid(`${leadLabel(lead)} restored.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════ the visits */
+
+/**
+ * A manager standing behind a visit the phone could not verify.
+ *
+ * Nothing about the visit's own record changes except this — the check-in
+ * fix, the distance, the reason it read as a mismatch are all left exactly as
+ * the handset reported them, because that is the honest account of what the
+ * phone measured. `verified` only ever meant "the phone could confirm this
+ * from where it was standing," never "this visit is real" — a wrong shop pin
+ * or a poor fix says nothing about whether the salesman was there, and a
+ * manager who knows better is allowed to say so.
+ */
+export async function acceptVisit(input: { visitId: string }): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const [visit] = await db
+      .select({
+        id: mbosVisits.id,
+        verified: mbosVisits.verified,
+        salesmanId: mbosVisits.salesmanId,
+      })
+      .from(mbosVisits)
+      .where(eq(mbosVisits.id, input.visitId))
+      .limit(1);
+    if (!visit) return err("That visit is no longer here.", "not_found");
+    if (visit.verified) return ok(undefined, "Already verified.");
+
+    await db
+      .update(mbosVisits)
+      .set({
+        verified: true,
+        acceptedAt: new Date(),
+        acceptedById: user.id,
+        updatedById: user.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(mbosVisits.id, input.visitId));
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.visit.accept",
+      entityType: "mbos_visit",
+      entityId: input.visitId,
+      beforeState: { verified: false } as never,
+      afterState: { verified: true, acceptedById: user.id } as never,
+    });
+
+    refresh();
+    return okVoid("Accepted — marked verified.");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Asking the salesman about a visit, rather than taking the phone's word for
+ * it either way. A required reason, same as archiving a lead: the question
+ * has to be a question, not a bare summons.
+ */
+export async function askAboutVisit(input: {
+  visitId: string;
+  question: string;
+}): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const question = input.question.trim();
+    if (!question) {
+      return err("Say what you want to ask.", "validation");
+    }
+
+    const [visit] = await db
+      .select({ id: mbosVisits.id, salesmanId: mbosVisits.salesmanId })
+      .from(mbosVisits)
+      .where(eq(mbosVisits.id, input.visitId))
+      .limit(1);
+    if (!visit) return err("That visit is no longer here.", "not_found");
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.visit.ask",
+      entityType: "mbos_visit",
+      entityId: input.visitId,
+      afterState: { question } as never,
+    });
+
+    await tell(visit.salesmanId, "A question about a visit", `${user.name} asked: ${question}`);
+
+    refresh();
+    return okVoid("Asked. It reaches their handset on the next sync.");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 
 /* ════════════════════════════════════════════════════════════ the settings */
 

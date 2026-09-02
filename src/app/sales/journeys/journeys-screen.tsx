@@ -7,7 +7,7 @@ import { addDays } from "@/lib/business-date";
 import { answerRefusal, proposeJourneyDays, saveJourneyPeriod } from "@/lib/actions/sales";
 import type { BookCustomer, JourneyPlan, Salesman } from "@/lib/services/sales-service";
 import { SalesIcon } from "../icons";
-import { Banner, Button, Empty, Pill, ScreenHeader } from "../parts";
+import { Banner, Button, Empty, Pill } from "../parts";
 import { plural } from "../words";
 
 /**
@@ -206,12 +206,7 @@ export function JourneysScreen({
   );
 
   return (
-    <div className="p-6">
-      <ScreenHeader
-        title="Journey planning"
-        subtitle="You propose a city; he answers. Only the salesman picks the customers, because he is the one who knows whether that market is open on a Wednesday — the route is built from what he picks."
-      />
-
+    <>
       {/* ------------------------------------------------------- the controls */}
       <div className="mb-4 flex flex-wrap items-end gap-3 rounded-[6px] border border-line bg-surface px-4 py-3">
         <label className="block">
@@ -392,7 +387,7 @@ export function JourneysScreen({
           </section>
         </>
       )}
-    </div>
+    </>
   );
 }
 

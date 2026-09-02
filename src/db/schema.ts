@@ -3997,6 +3997,19 @@ export const mbosVisits = pgTable(
     verified: boolean("verified").notNull().default(false),
     /** The sentence a manager reads: poor fix, no customer pin, too far. */
     unverifiedReason: text("unverified_reason"),
+    /**
+     * Metres between the check-in fix and the shop's own pin, whatever the
+     * outcome. `handleVisit` already computes this to decide `verified` and
+     * `locationMismatch`, and used to discard the number once it had folded
+     * it into `unverifiedReason`'s sentence — so a manager screen could only
+     * ever show that distance as PROSE, and only for the visits that failed
+     * verification. Null wherever there was nothing to check against (no
+     * fix, poor accuracy, no shop pin) — see `unverifiedReason` for why.
+     */
+    distanceFromShopM: integer("distance_from_shop_m"),
+    /** A manager overriding a mismatch — the visit still happened. */
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    acceptedById: text("accepted_by_id"),
   },
   (t) => [
     index("mbos_visits_customer_idx").on(t.customerId, t.checkInAt.desc()),

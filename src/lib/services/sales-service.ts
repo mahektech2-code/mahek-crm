@@ -618,6 +618,10 @@ export type VisitRow = {
   verified: boolean;
   locationMismatch: boolean;
   unverifiedReason: string | null;
+  /** Metres from the shop's own pin, kept whatever the outcome. Null where
+   * there was nothing to check against — see `unverifiedReason`. */
+  distanceFromShopM: number | null;
+  acceptedAt: Date | null;
   wasPlanned: boolean;
   deviationReason: string | null;
   photos: number;
@@ -651,6 +655,8 @@ export async function visitsList(day: string): Promise<VisitRow[]> {
            v.outcome::text as outcome, v.verified,
            v.location_mismatch as "locationMismatch",
            v.unverified_reason as "unverifiedReason",
+           v.distance_from_shop_m as "distanceFromShopM",
+           v.accepted_at as "acceptedAt",
            v.was_planned as "wasPlanned", v.deviation_reason as "deviationReason",
            v.notes, v.transcript,
            (case when v.shop_photo_id is not null then 1 else 0 end
@@ -812,6 +818,7 @@ export type LeadRow = {
   companyName: string | null;
   mobile: string | null;
   city: string | null;
+  area: string | null;
   source: string;
   estimatedPotentialPaise: number | null;
   stage: string;
@@ -822,13 +829,32 @@ export type LeadRow = {
   lastActivityDate: string | null;
   /** Days since anything happened. What "stale" is measured from. */
   quietDays: number;
+  /** Days since the lead was raised. */
+  ageDays: number;
+  notes: string | null;
+  hasGps: boolean;
+  createdAt: Date;
+  archived: boolean;
+  archivedAt: Date | null;
+  lostReason: string | null;
+  /** Set on conversion. The lead is not deleted — it is where the account began. */
+  convertedCustomerId: string | null;
+  convertedAt: Date | null;
+  /**
+   * The linked customer's real derived facts, read where a lead has become
+   * one. Null on everything else — a lead that has never ordered is in NO
+   * health band, and inventing one here would be the exact mistake §owner
+   * dashboard's health bands were written to avoid.
+   */
+  customerHealthScore: number | null;
+  customerStatus: string | null;
+  customerLastOrderDate: string | null;
+  customerCycleDays: number | null;
+  customerOutstandingPaise: number | null;
 };
 
-/** Prospects each salesman is working, and how long since anybody touched one. */
-export async function leadsList(day: string): Promise<LeadRow[]> {
-  const scope = await managerScope();
-  return db.execute<LeadRow>(sql`
-    select l.id, l.name, l.company_name as "companyName", l.mobile, l.city,
+const LEAD_ROW_SELECT = sql`
+    select l.id, l.name, l.company_name as "companyName", l.mobile, l.city, l.area,
            l.source::text as source,
            l.estimated_potential_paise as "estimatedPotentialPaise",
            l.stage::text as stage,
@@ -836,14 +862,73 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
            u.name as "salesmanName", u.initials,
            l.next_follow_up_date::text as "nextFollowUpDate",
            l.last_activity_date::text as "lastActivityDate",
-           coalesce(${day}::date - l.last_activity_date, 0)::int as "quietDays"
+           l.notes,
+           (l.gps_lat is not null and l.gps_lng is not null) as "hasGps",
+           l.server_created_at as "createdAt",
+           l.archived,
+           l.archived_at as "archivedAt",
+           l.lost_reason as "lostReason",
+           l.converted_customer_id as "convertedCustomerId",
+           l.converted_at as "convertedAt",
+           c2.health_score as "customerHealthScore",
+           c2.status::text as "customerStatus",
+           c2.last_order_date::text as "customerLastOrderDate",
+           c2.cycle_days as "customerCycleDays",
+           c2.outstanding as "customerOutstandingPaise"
+`;
+
+/** Prospects each salesman is working, and how long since anybody touched one. */
+export async function leadsList(day: string): Promise<LeadRow[]> {
+  const scope = await managerScope();
+  return db.execute<LeadRow>(sql`
+    ${LEAD_ROW_SELECT},
+           coalesce(${day}::date - l.last_activity_date, 0)::int as "quietDays",
+           (${day}::date - (l.server_created_at ${IST_DAY})::date)::int as "ageDays"
       from mbos_leads l
       left join users u on u.id = l.assigned_to_user_id
+      left join customers c2 on c2.id = l.converted_customer_id
      where l.archived = false
        ${onlyMine(scope, "l.assigned_to_user_id")}
      order by l.next_follow_up_date asc nulls last, l.last_activity_date asc nulls last
      limit 400
   `) as unknown as LeadRow[];
+}
+
+/**
+ * Leads a manager has filed out of the way, newest first.
+ *
+ * Archiving here is a manual override of what the nightly sweep would
+ * otherwise do on its own — a manager saying "I have looked at this and it
+ * is not worth chasing right now" — and it stays reachable and reversible for
+ * exactly the same reason the sweep never deletes: a shop that said no in
+ * March is who somebody wants to find in September.
+ */
+export async function archivedLeadsList(day: string): Promise<LeadRow[]> {
+  const scope = await managerScope();
+  return db.execute<LeadRow>(sql`
+    ${LEAD_ROW_SELECT},
+           coalesce(${day}::date - l.last_activity_date, 0)::int as "quietDays",
+           (${day}::date - (l.server_created_at ${IST_DAY})::date)::int as "ageDays"
+      from mbos_leads l
+      left join users u on u.id = l.assigned_to_user_id
+      left join customers c2 on c2.id = l.converted_customer_id
+     where l.archived = true
+       ${onlyMine(scope, "l.assigned_to_user_id")}
+     order by l.archived_at desc nulls last
+     limit 400
+  `) as unknown as LeadRow[];
+}
+
+/** How many leads are filed away, for the link that leads there. */
+export async function archivedLeadsCount(): Promise<number> {
+  const scope = await managerScope();
+  const rows = await db.execute<{ n: number }>(sql`
+    select count(*)::int as n
+      from mbos_leads l
+     where l.archived = true
+       ${onlyMine(scope, "l.assigned_to_user_id")}
+  `);
+  return Number(rows[0]?.n ?? 0);
 }
 
 /* ═══════════════════════════════════════════════════════════════ commercial */
@@ -1556,6 +1641,78 @@ export async function territory(): Promise<TerritoryRow[]> {
   `) as unknown as TerritoryRow[];
 }
 
+export type TeamRegionRow = {
+  salesmanId: string;
+  salesmanName: string;
+  initials: string;
+  active: boolean;
+  /** The region most of this salesman's own book sits in. Null where they
+   * cover no active customers yet. */
+  region: string | null;
+  cities: string[];
+  shopCount: number;
+  checkedInToday: boolean;
+  onLeaveToday: boolean;
+  reportsToId: string | null;
+  reportsToName: string | null;
+};
+
+/**
+ * The field team, each person's own region, and who they report to —
+ * everything the Territory screen groups by.
+ *
+ * A salesman has no region of his own in this schema, only a book of
+ * customers that each carry one; `region` here is the one his book has the
+ * MOST of, which is the honest answer to "where does this person work"
+ * without inventing a field nothing else in MahekOne has. `reportsToId` is
+ * the general reporting line every user carries (`access-control.ts` already
+ * reads it for scope), not something built for this screen.
+ */
+export async function teamByRegion(day: string): Promise<TeamRegionRow[]> {
+  const scope = await managerScope();
+  return db.execute<TeamRegionRow>(sql`
+    with counts as (
+      select coalesce(c.sales_am_id, c.owner_id) as salesman_id,
+             c.territory_region as region,
+             count(*) as n
+        from customers c
+       where c.status = 'active' and c.kind = 'customer'
+         and coalesce(c.sales_am_id, c.owner_id) is not null
+       group by coalesce(c.sales_am_id, c.owner_id), c.territory_region
+    ),
+    top_region as (
+      select distinct on (salesman_id) salesman_id, region
+        from counts
+       order by salesman_id, n desc nulls last
+    ),
+    book as (
+      select coalesce(c.sales_am_id, c.owner_id) as salesman_id,
+             coalesce(array_agg(distinct c.city order by c.city), '{}') as cities,
+             count(*)::int as shop_count
+        from customers c
+       where c.status = 'active' and c.kind = 'customer'
+       group by coalesce(c.sales_am_id, c.owner_id)
+    )
+    select u.id as "salesmanId", u.name as "salesmanName", u.initials, u.active,
+           tr.region,
+           coalesce(b.cities, '{}') as cities,
+           coalesce(b.shop_count, 0) as "shopCount",
+           (d.check_in_at is not null) as "checkedInToday",
+           (d.status = 'on_leave') as "onLeaveToday",
+           u.reports_to_id as "reportsToId",
+           m.name as "reportsToName"
+      from users u
+      join app_access a on a.user_id = u.id and a.app = 'field'
+      left join top_region tr on tr.salesman_id = u.id
+      left join book b on b.salesman_id = u.id
+      left join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date
+      left join users m on m.id = u.reports_to_id
+     where u.active
+       ${onlyMine(scope, "u.id")}
+     order by u.name asc
+  `) as unknown as TeamRegionRow[];
+}
+
 export type PerformanceRow = {
   salesmanId: string;
   salesmanName: string;
@@ -1801,6 +1958,8 @@ export type PlanStop = {
   status: string;
   skipReason: string | null;
   hasGps: boolean;
+  gpsLat: number | null;
+  gpsLng: number | null;
   outstandingPaise: number;
   lastVisitDate: string | null;
 };
@@ -1872,6 +2031,7 @@ export async function journeyPlansBetween(
            s.sequence, s.planned_at as "plannedAt",
            s.status::text as status, s.skip_reason as "skipReason",
            (c.gps_lat is not null and c.gps_lng is not null) as "hasGps",
+           c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
            coalesce(c.outstanding, 0) as "outstandingPaise",
            c.last_visit_date::text as "lastVisitDate"
       from mbos_journey_stops s
