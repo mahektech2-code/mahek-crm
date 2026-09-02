@@ -1,6 +1,6 @@
 import "server-only";
 import { money } from "@/lib/format";
-import { addDays, periodRange } from "@/lib/business-date";
+import { addDays, calendarDate, periodRange } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import {
@@ -225,7 +225,7 @@ export async function teamBrief(): Promise<TeamBrief> {
           (a) =>
             `- ${a.type} from ${a.requestedByName}: ${a.summary}${
               a.amountPaise != null ? ` (${rupees(a.amountPaise)})` : ""
-            }${a.customerName ? ` — ${a.customerName}` : ""}, waiting since ${a.requestedAt.toISOString().slice(0, 10)}`,
+            }${a.customerName ? ` — ${a.customerName}` : ""}, waiting since ${calendarDate(a.requestedAt)}`,
           "waiting",
         )
       : ["- nothing waiting"]),
