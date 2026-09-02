@@ -7,7 +7,9 @@ import {
   calendarDaysBetween,
   dayBoundaryWindow,
   daysBetween,
+  eodPeriodRange,
   isDashboardPeriod,
+  isEodPeriod,
   periodRange,
   previousRange,
   rangeBoundaryWindow,
@@ -216,5 +218,80 @@ describe("the spans the dashboard reads over", () => {
     assert.equal(isDashboardPeriod("month"), true);
     assert.equal(isDashboardPeriod("fortnight"), false);
     assert.equal(isDashboardPeriod(undefined), false);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * The EOD report's own six spans — a third vocabulary, not a widening of
+ * either of the other two.
+ * ------------------------------------------------------------------------- */
+
+describe("the spans the EOD report reads over", () => {
+  const WEDNESDAY = "2026-08-12";
+  const MONDAY = "2026-08-10";
+
+  test("today and yesterday are one day each, and yesterday is the previous WORKING day", () => {
+    assert.deepEqual(eodPeriodRange(WEDNESDAY, "today", WORKING_DAY), {
+      from: WEDNESDAY,
+      to: WEDNESDAY,
+    });
+    // A Sunday nobody worked would read as a collapse every Monday morning —
+    // the same reasoning `periodRange`'s "yesterday" follows.
+    assert.deepEqual(eodPeriodRange(MONDAY, "yesterday", WORKING_DAY), {
+      from: "2026-08-08",
+      to: "2026-08-08",
+    });
+  });
+
+  test("last 7 days is a ROLLING window, not the calendar week", () => {
+    // Today plus the six before it — never thin on a Monday the way a
+    // calendar week-to-date would be.
+    assert.deepEqual(eodPeriodRange(WEDNESDAY, "last7", WORKING_DAY), {
+      from: "2026-08-06",
+      to: WEDNESDAY,
+    });
+    assert.deepEqual(eodPeriodRange(MONDAY, "last7", WORKING_DAY), {
+      from: "2026-08-04",
+      to: MONDAY,
+    });
+  });
+
+  test("this month runs from the first to today, never past it", () => {
+    assert.deepEqual(eodPeriodRange(WEDNESDAY, "month", WORKING_DAY), {
+      from: "2026-08-01",
+      to: WEDNESDAY,
+    });
+  });
+
+  test("last month is CLOSED — it runs to its real end, not to today", () => {
+    assert.deepEqual(eodPeriodRange(WEDNESDAY, "last-month", WORKING_DAY), {
+      from: "2026-07-01",
+      to: "2026-07-31",
+    });
+  });
+
+  test("a custom range is read straight from what is given", () => {
+    assert.deepEqual(
+      eodPeriodRange(WEDNESDAY, "custom", WORKING_DAY, { from: "2026-08-01", to: "2026-08-05" }),
+      { from: "2026-08-01", to: "2026-08-05" },
+    );
+  });
+
+  test("a half-given custom range falls back to today rather than erroring", () => {
+    assert.deepEqual(eodPeriodRange(WEDNESDAY, "custom", WORKING_DAY), {
+      from: WEDNESDAY,
+      to: WEDNESDAY,
+    });
+    assert.deepEqual(
+      eodPeriodRange(WEDNESDAY, "custom", WORKING_DAY, { from: "2026-08-01" }),
+      { from: "2026-08-01", to: WEDNESDAY },
+    );
+  });
+
+  test("only the six known spans are accepted from a URL", () => {
+    assert.equal(isEodPeriod("last7"), true);
+    assert.equal(isEodPeriod("last-month"), true);
+    assert.equal(isEodPeriod("week"), false, "the dashboard's calendar week is not one of these");
+    assert.equal(isEodPeriod(undefined), false);
   });
 });

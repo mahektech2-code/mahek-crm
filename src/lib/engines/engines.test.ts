@@ -33,7 +33,7 @@ import {
 } from "./payment-followup";
 import { evaluateInactivity, watchAge } from "./inactivity";
 import { resolveTarget, classifyShortfall } from "./targets";
-import { aggregateEod, eodPreflight, formatMoney } from "./eod";
+import { aggregateEod, eodLines, eodPreflight, formatMoney } from "./eod";
 import { parseJobArgs } from "../job-args";
 import { parseReceivables, parseTallyDate, parseAmountPaise } from "../receivables-parse";
 import {
@@ -1853,6 +1853,15 @@ describe("E6 EOD aggregator", () => {
       { id: "r", customerName: "X", note: "n", dueDate: TODAY },
     ]) as { message: string };
     assert.match(one.message, /^1 reminder due today is still open/);
+  });
+
+  test("eodLines is the same table aggregateEod builds, and needs no name or date to run", () => {
+    // The extraction that lets a period other than a single day — a range
+    // with no single person's name or date attached — reuse the same table.
+    // Typed as exactly what a range carries, proving the split left no
+    // hidden dependency on either field.
+    const rangeInput: Omit<typeof input, "userName" | "date"> = input;
+    assert.deepEqual(eodLines(rangeInput), aggregateEod(input).lines);
   });
 });
 

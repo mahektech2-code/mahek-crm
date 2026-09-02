@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import {
   Badge,
   Button,
@@ -16,7 +16,8 @@ import {
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import { carryReminderForward, completeReminder, submitEod } from "@/lib/actions/crm";
-import { ageLabel, longDate, money, moneyShort, stamp } from "@/lib/format";
+import { ageLabel, longDate, money, moneyShort, shortDate, stamp } from "@/lib/format";
+import { EOD_PERIODS, EOD_PERIOD_LABELS, type EodPeriod } from "@/lib/business-date";
 
 type Due = {
   id: string;
@@ -26,9 +27,16 @@ type Due = {
   overdueDays: number;
 };
 
+/** "12 Aug 2026" for one day, "12 Aug – 18 Aug 2026" for a span. */
+function rangeLabel(from: string, to: string): string {
+  return from === to ? longDate(from) : `${shortDate(from)} – ${longDate(to)}`;
+}
+
 export function EodScreen({
   scopeLabel,
-  day,
+  period,
+  rangeFrom,
+  rangeTo,
   isManager,
   lines,
   message,
@@ -39,10 +47,13 @@ export function EodScreen({
   teamMessage,
 }: {
   scopeLabel: string;
-  day: string;
+  period: EodPeriod;
+  rangeFrom: string;
+  rangeTo: string;
   isManager: boolean;
   lines: Array<{ k: string; v: string }>;
-  message: string;
+  /** Only for "today" — a range has no single WhatsApp message to paste. */
+  message: string | null;
   dueReminders: Due[];
   /** The engine's own wording for why the report is blocked. */
   blockingMessage: string;
@@ -63,15 +74,20 @@ export function EodScreen({
   const [view, setView] = React.useState<"mine" | "team">("mine");
   const [busy, setBusy] = React.useState(false);
 
-  const blocked = dueReminders.length > 0;
+  const isToday = period === "today";
+  // Reminders due today block finalising TODAY's report — that gate is real
+  // whatever period happens to be on screen, but it is only shown alongside
+  // the Submit button, which only exists for today.
+  const blocked = isToday && dueReminders.length > 0;
 
   return (
     <div className="max-w-[1440px] px-6 pt-6 pb-10">
       <PageHeader
         title="EOD report"
-        subtitle={`${scopeLabel} · generated from today's activity · ${longDate(day)}`}
+        subtitle={`${scopeLabel} · ${isToday ? "generated from today's activity" : "derived from the activity logged"} · ${rangeLabel(rangeFrom, rangeTo)}`}
         actions={
           <>
+            <PeriodPicker period={period} from={rangeFrom} to={rangeTo} />
             {isManager ? (
               <div className="flex overflow-hidden rounded-[4px] border border-line bg-surface">
                 {(["mine", "team"] as const).map((v) => (
@@ -90,30 +106,32 @@ export function EodScreen({
                 ))}
               </div>
             ) : null}
-            <Button
-              variant="primary"
-              disabled={busy || blocked}
-              title={
-                blocked
-                  ? "Close or carry forward the reminders due today first"
-                  : submittedAt
-                    ? "Submitting again replaces today's report"
-                    : undefined
-              }
-              onClick={async () => {
-                setBusy(true);
-                // `finally`: `run` re-throws, and a telecaller at the end of
-                // the day must be able to press this again.
-                try {
-                  const result = await run(submitEod(message));
-                  if (result.ok) router.refresh();
-                } finally {
-                  setBusy(false);
+            {isToday ? (
+              <Button
+                variant="primary"
+                disabled={busy || blocked}
+                title={
+                  blocked
+                    ? "Close or carry forward the reminders due today first"
+                    : submittedAt
+                      ? "Submitting again replaces today's report"
+                      : undefined
                 }
-              }}
-            >
-              {submittedAt ? "Resubmit EOD" : "Submit EOD"}
-            </Button>
+                onClick={async () => {
+                  setBusy(true);
+                  // `finally`: `run` re-throws, and a telecaller at the end
+                  // of the day must be able to press this again.
+                  try {
+                    const result = await run(submitEod(message ?? ""));
+                    if (result.ok) router.refresh();
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                {submittedAt ? "Resubmit EOD" : "Submit EOD"}
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -174,7 +192,13 @@ export function EodScreen({
       <div className="grid grid-cols-[minmax(0,1fr)_clamp(380px,34%,520px)] items-start gap-4">
         <Card>
           <CardHeader
-            title={view === "mine" ? "Today's numbers" : "Team roll-up"}
+            title={
+              view === "mine"
+                ? isToday
+                  ? "Today's numbers"
+                  : `${EOD_PERIOD_LABELS[period]} — numbers`
+                : "Team roll-up"
+            }
             hint={
               view === "mine"
                 ? "Derived from what you logged - a thin report means thin logging, not a thin day"
@@ -271,35 +295,122 @@ export function EodScreen({
           )}
         </Card>
 
-        <Card>
-          <div className="flex items-center justify-between border-b border-divider px-5 py-3.5">
-            <span className="text-lg font-semibold text-ink">WhatsApp message</span>
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(message);
-                  push("Message copied");
-                } catch {
-                  push("The browser blocked the clipboard.", "error");
-                }
-              }}
-            >
-              <Icon name="copy" size={14} strokeWidth={1.8} />
-              Copy message
-            </Button>
-          </div>
-          <div className="bg-canvas p-5">
-            <pre className="m-0 rounded-[6px] border border-line bg-surface p-4 font-mono text-[13px] leading-5 whitespace-pre-wrap text-ink">
-              {message}
-            </pre>
-            <p className="mt-2.5 text-[13px] text-muted">
-              Asterisks render as bold in WhatsApp. Paste straight into the team group.
-            </p>
-          </div>
-        </Card>
+        {isToday && message ? (
+          <Card>
+            <div className="flex items-center justify-between border-b border-divider px-5 py-3.5">
+              <span className="text-lg font-semibold text-ink">WhatsApp message</span>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(message);
+                    push("Message copied");
+                  } catch {
+                    push("The browser blocked the clipboard.", "error");
+                  }
+                }}
+              >
+                <Icon name="copy" size={14} strokeWidth={1.8} />
+                Copy message
+              </Button>
+            </div>
+            <div className="bg-canvas p-5">
+              <pre className="m-0 rounded-[6px] border border-line bg-surface p-4 font-mono text-[13px] leading-5 whitespace-pre-wrap text-ink">
+                {message}
+              </pre>
+              <p className="mt-2.5 text-[13px] text-muted">
+                Asterisks render as bold in WhatsApp. Paste straight into the team group.
+              </p>
+            </div>
+          </Card>
+        ) : (
+          <Card>
+            <div className="border-b border-divider px-5 py-3.5">
+              <span className="text-lg font-semibold text-ink">Historical view</span>
+            </div>
+            <div className="px-5 py-5">
+              <p className="text-[13px] text-muted">
+                {EOD_PERIOD_LABELS[period]} is a read-only look back — there is no single
+                day&rsquo;s WhatsApp message to paste, and nothing to submit. Switch the
+                period to Today to submit or resubmit today&rsquo;s report.
+              </p>
+            </div>
+          </Card>
+        )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Today / Yesterday / Last 7 days / This month / Last month / Custom range.
+ *
+ * Lives in the URL rather than in component state — the same reasoning
+ * `reports/filters.tsx` follows: a filtered view can be sent to somebody, and
+ * the back button works. `from`/`to` are only sent when the period is
+ * `custom`; carrying them for every period would leave a stray `from=` in the
+ * address bar after switching back to Today.
+ */
+function PeriodPicker({
+  period,
+  from,
+  to,
+}: {
+  period: EodPeriod;
+  from: string;
+  to: string;
+}) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const [pending, start] = React.useTransition();
+
+  const set = (patch: Record<string, string | null>) => {
+    const next = new URLSearchParams(params.toString());
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null || v === "") next.delete(k);
+      else next.set(k, v);
+    }
+    start(() => router.push(`${pathname}?${next.toString()}`));
+  };
+
+  return (
+    <div className={cx("flex items-center gap-2", pending && "opacity-60")}>
+      <select
+        value={period}
+        onChange={(e) =>
+          set(
+            e.target.value === "custom"
+              ? { period: e.target.value, from, to }
+              : { period: e.target.value, from: null, to: null },
+          )
+        }
+        className="h-9 rounded-[4px] border border-line bg-surface px-2.5 text-sm"
+      >
+        {EOD_PERIODS.map((p) => (
+          <option key={p} value={p}>
+            {EOD_PERIOD_LABELS[p]}
+          </option>
+        ))}
+      </select>
+      {period === "custom" ? (
+        <>
+          <input
+            type="date"
+            value={from}
+            onChange={(e) => set({ period: "custom", from: e.target.value })}
+            className="h-9 rounded-[4px] border border-line bg-surface px-2 text-sm"
+          />
+          <span className="text-sm text-muted">–</span>
+          <input
+            type="date"
+            value={to}
+            onChange={(e) => set({ period: "custom", to: e.target.value })}
+            className="h-9 rounded-[4px] border border-line bg-surface px-2 text-sm"
+          />
+        </>
+      ) : null}
     </div>
   );
 }
