@@ -4782,7 +4782,15 @@ export const salesTargets = pgTable(
      */
     volumeTargetMl: bigint("volume_target_ml", { mode: "number" }),
     newCustomerTarget: integer("new_customer_target"),
-    collectionTargetPaise: bigint("collection_target_paise", { mode: "number" }),
+    /**
+     * Basis points of what was ALREADY overdue at the start of the month, not
+     * a rupee figure — collection is measured against debt that already
+     * existed, never against money that only became due during the month.
+     * `collection_target_paise` is the retired column: a target set before
+     * this shipped is not reinterpreted, it simply stops scoring anything,
+     * the same way any other unset component does.
+     */
+    collectionTargetBp: integer("collection_target_bp"),
     activityTarget: integer("activity_target"),
 
     status: salesTargetStatusEnum("status").notNull().default("draft"),

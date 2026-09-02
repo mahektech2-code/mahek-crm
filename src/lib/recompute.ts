@@ -928,7 +928,7 @@ export async function copyForwardSalesTargets(forMonth?: string): Promise<number
       revenueTargetPaise: prior.revenueTargetPaise,
       volumeTargetMl: prior.volumeTargetMl,
       newCustomerTarget: prior.newCustomerTarget,
-      collectionTargetPaise: prior.collectionTargetPaise,
+      collectionTargetBp: prior.collectionTargetBp,
       activityTarget: prior.activityTarget,
       notes: prior.notes,
       status: "published",

@@ -32,7 +32,7 @@ function blankRow(person: Person): TargetRow {
     revenueTargetPaise: null,
     volumeTargetMl: null,
     newCustomerTarget: null,
-    collectionTargetPaise: null,
+    collectionTargetBp: null,
     activityTarget: null,
     publishedAt: null,
     bands: [],
@@ -81,6 +81,15 @@ const toMl = (litres: string): number | null => {
 };
 const toLitres = (ml: number | null): string =>
   ml === null ? "" : String(Math.round(ml / 1000));
+
+/** Whole percent on the screen, basis points in the database. */
+const toBp = (percent: string): number | null => {
+  const t = percent.trim();
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n * 100) : null;
+};
+const toPercent = (bp: number | null): string => (bp === null ? "" : String(Math.round(bp / 100)));
 
 const toCount = (v: string): number | null => {
   const t = v.trim();
@@ -242,7 +251,9 @@ export function TargetsScreen({
                   {orDash(r.volumeTargetMl, (v) => `${Math.round(v / 1000).toLocaleString("en-IN")} L`)}
                 </Cell>
                 <Cell align="right">{orDash(r.newCustomerTarget, String)}</Cell>
-                <Cell align="right">{orDash(r.collectionTargetPaise, money)}</Cell>
+                <Cell align="right">
+                  {orDash(r.collectionTargetBp, (bp) => `${(bp / 100).toFixed(0)}%`)}
+                </Cell>
                 <Cell align="right">{orDash(r.activityTarget, String)}</Cell>
                 <Cell truncate={200}>
                   <Growth target={r.revenueTargetPaise} baseline={base} months={baselineMonths} />
@@ -324,7 +335,7 @@ function Editor({
   const [newCustomers, setNewCustomers] = useState(
     row.newCustomerTarget === null ? "" : String(row.newCustomerTarget),
   );
-  const [collection, setCollection] = useState(toRupees(row.collectionTargetPaise));
+  const [collection, setCollection] = useState(toPercent(row.collectionTargetBp));
   const [activity, setActivity] = useState(
     row.activityTarget === null ? "" : String(row.activityTarget),
   );
@@ -377,7 +388,7 @@ function Editor({
         revenueTargetPaise: toPaise(revenue),
         volumeTargetMl: toMl(volume),
         newCustomerTarget: toCount(newCustomers),
-        collectionTargetPaise: toPaise(collection),
+        collectionTargetBp: toBp(collection),
         activityTarget: toCount(activity),
         notes: null,
         bands: filled.map((b) => ({
@@ -444,16 +455,16 @@ function Editor({
         />
         <Field
           label="Collection target"
-          suffix="₹"
+          suffix="%"
           value={collection}
           onChange={setCollection}
-          hint={baseline ? `${money(baseline.collectionPaise)} a month` : undefined}
+          hint="of what is already overdue at the start of the month"
         />
         <Field
-          label="Visits and calls"
+          label="Tasks target"
           value={activity}
           onChange={setActivity}
-          hint="calls logged plus visits made"
+          hint="tasks marked done"
         />
       </div>
 

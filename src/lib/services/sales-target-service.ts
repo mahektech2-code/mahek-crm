@@ -23,7 +23,8 @@ export type TargetRow = {
   revenueTargetPaise: number | null;
   volumeTargetMl: number | null;
   newCustomerTarget: number | null;
-  collectionTargetPaise: number | null;
+  /** Basis points of what was already overdue at the start of the month. */
+  collectionTargetBp: number | null;
   activityTarget: number | null;
   publishedAt: Date | null;
   bands: {
@@ -68,7 +69,7 @@ export async function targetableCandidates(period: string): Promise<TargetRow[]>
     revenue_target_paise: string | null;
     volume_target_ml: string | null;
     new_customer_target: number | null;
-    collection_target_paise: string | null;
+    collection_target_bp: number | null;
     activity_target: number | null;
     published_at: Date | null;
     revisions: number;
@@ -82,7 +83,7 @@ export async function targetableCandidates(period: string): Promise<TargetRow[]>
     select u.id as user_id, u.name as user_name,
            t.id as target_id, t.status,
            t.revenue_target_paise, t.volume_target_ml, t.new_customer_target,
-           t.collection_target_paise, t.activity_target, t.published_at,
+           t.collection_target_bp, t.activity_target, t.published_at,
            t.carried_forward,
            (select count(*)::int from sales_target_revisions r
              where r.target_id = t.id) as revisions
@@ -109,8 +110,7 @@ export async function targetableCandidates(period: string): Promise<TargetRow[]>
     revenueTargetPaise: r.revenue_target_paise === null ? null : Number(r.revenue_target_paise),
     volumeTargetMl: r.volume_target_ml === null ? null : Number(r.volume_target_ml),
     newCustomerTarget: r.new_customer_target,
-    collectionTargetPaise:
-      r.collection_target_paise === null ? null : Number(r.collection_target_paise),
+    collectionTargetBp: r.collection_target_bp,
     activityTarget: r.activity_target,
     publishedAt: r.published_at,
     bands: r.target_id ? (bands.get(r.target_id) ?? []) : [],
