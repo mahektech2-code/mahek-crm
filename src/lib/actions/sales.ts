@@ -16,6 +16,7 @@ import {
   mbosManagerTerritories,
   mbosJourneyPlans,
   mbosJourneyStops,
+  mbosTasks,
   notifications,
   users,
 } from "@/db/schema";
@@ -23,6 +24,7 @@ import { requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
 import { updateSettings } from "@/lib/config/store";
 import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
+import { fieldBook } from "@/lib/services/sales-service";
 import type { DocumentCategory } from "@/lib/mbos/library-labels";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
 
@@ -71,6 +73,7 @@ function refresh() {
     revalidatePath("/sales/people");
     revalidatePath("/sales/documents");
     revalidatePath("/sales/knowledge");
+    revalidatePath("/sales/tasks");
     revalidatePath("/apps");
   } catch {
     /* no request context — nothing cached to invalidate */
@@ -1386,6 +1389,221 @@ export async function uploadPublishFile(form: FormData): Promise<Result<{ id: st
     });
     if (!created.ok) return created;
     return ok({ id: created.data.id, filename: file.name });
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════ task allocation */
+
+/**
+ * What a filter would match, before anybody commits to it.
+ *
+ * `fieldBook` is a plain read function, not a server action — this is the
+ * thinnest possible wrapper, so the count a manager reviews here and the
+ * count `bulkAssignTask` re-derives at save time come from the exact same
+ * query and cannot drift.
+ */
+export async function previewTaskTargets(filter: {
+  salesmanId?: string;
+  beat?: string;
+  missingGpsOnly?: boolean;
+  search?: string;
+}): Promise<Result<{ count: number; names: string[]; unassigned: number }>> {
+  try {
+    await requireSales();
+    const matches = await fieldBook(filter);
+    return ok({
+      count: matches.length,
+      names: matches.slice(0, 8).map((c) => c.name),
+      unassigned: matches.filter((c) => !c.salesmanId).length,
+    });
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Assigning a task, on the web, to somebody who reads it on a handset.
+ *
+ * `mbos_tasks` already existed — it is how a rejected order raises "ring back
+ * about it" for the salesman who took it — but nothing let a MANAGER write one
+ * for somebody else. This is that, and it is deliberately Sales Dashboard's
+ * own action: `requireSales()`, the same as everything else in this file, not
+ * a new capability. Reaching the handset needs `buildPull`'s own `tasks`
+ * channel, added alongside this — a task minted here and never pulled would
+ * be a manager's word that never left the office.
+ */
+
+const TASK_PRIORITIES = ["low", "medium", "high"] as const;
+type TaskPriority = (typeof TASK_PRIORITIES)[number];
+
+function validTask(title: string, dueDate: string, priority: string | undefined): string | null {
+  if (title.trim().length < 3) {
+    return "A task needs a real title — enough that whoever is assigned it knows what to do.";
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
+    return "Pick a date it is due by.";
+  }
+  if (priority !== undefined && !TASK_PRIORITIES.includes(priority as TaskPriority)) {
+    return "That is not a priority this app knows.";
+  }
+  return null;
+}
+
+/** One task, for one person. */
+export async function createTask(input: {
+  assignedToUserId: string;
+  title: string;
+  description?: string;
+  customerId?: string | null;
+  priority?: TaskPriority;
+  dueDate: string;
+}): Promise<Result<{ taskId: string }>> {
+  try {
+    const user = await requireSales();
+    const title = input.title.trim();
+    const problem = validTask(title, input.dueDate, input.priority);
+    if (problem) return err(problem, "validation");
+
+    const [assignee] = await db
+      .select({ name: users.name })
+      .from(users)
+      .where(eq(users.id, input.assignedToUserId));
+    if (!assignee) return err("No such person.", "not_found");
+
+    const taskId = gen("mbos_task");
+    await db.insert(mbosTasks).values({
+      id: taskId,
+      title,
+      description: input.description?.trim() || null,
+      assignedToUserId: input.assignedToUserId,
+      assignedByUserId: user.id,
+      priority: input.priority ?? "medium",
+      dueDate: input.dueDate,
+      customerId: input.customerId ?? null,
+      status: "open",
+      createdById: user.id,
+      updatedById: user.id,
+    });
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.task.created",
+      entityType: "mbos_task",
+      entityId: taskId,
+      beforeState: null as never,
+      afterState: { title, assignedToUserId: input.assignedToUserId, dueDate: input.dueDate } as never,
+    });
+
+    await tell(
+      input.assignedToUserId,
+      "A task was assigned to you",
+      `${user.name}: ${title} — due ${input.dueDate}`,
+    );
+
+    refresh();
+    return ok({ taskId }, `Assigned to ${assignee.name}.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * The same task, to whoever carries every shop a filter matches.
+ *
+ * The pattern `assignSalesManager` already uses for moving accounts in bulk:
+ * `expectedCount` is what was reviewed on screen, the filter is re-run here
+ * rather than trusted from the client, and a mismatch is refused rather than
+ * silently acting on a different set than the one somebody looked at.
+ * `fieldBook` is the SAME read the review list itself would page through, so
+ * the count cannot drift between the two.
+ *
+ * One task per matching shop, addressed to whoever actually carries it — a
+ * shop with nobody assigned is counted and skipped rather than silently
+ * dropped or given to nobody.
+ */
+export async function bulkAssignTask(input: {
+  filter: {
+    salesmanId?: string;
+    beat?: string;
+    missingGpsOnly?: boolean;
+    search?: string;
+  };
+  expectedCount: number;
+  title: string;
+  description?: string;
+  priority?: TaskPriority;
+  dueDate: string;
+}): Promise<Result<{ created: number; skipped: number }>> {
+  try {
+    const user = await requireSales();
+    const title = input.title.trim();
+    const problem = validTask(title, input.dueDate, input.priority);
+    if (problem) return err(problem, "validation");
+
+    const matches = await fieldBook(input.filter);
+    if (matches.length !== input.expectedCount) {
+      return err(
+        `This would now create ${matches.length} tasks, not the ${input.expectedCount} you reviewed. Open the list again and check what changed.`,
+        "conflict",
+      );
+    }
+    if (!matches.length) {
+      return err("Nothing matches this filter.", "validation");
+    }
+
+    let created = 0;
+    let skipped = 0;
+    const byAssignee = new Map<string, number>();
+    for (const c of matches) {
+      if (!c.salesmanId) {
+        skipped += 1;
+        continue;
+      }
+      await db.insert(mbosTasks).values({
+        id: gen("mbos_task"),
+        title,
+        description: input.description?.trim() || null,
+        assignedToUserId: c.salesmanId,
+        assignedByUserId: user.id,
+        priority: input.priority ?? "medium",
+        dueDate: input.dueDate,
+        customerId: c.id,
+        status: "open",
+        createdById: user.id,
+        updatedById: user.id,
+      });
+      created += 1;
+      byAssignee.set(c.salesmanId, (byAssignee.get(c.salesmanId) ?? 0) + 1);
+    }
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.task.bulkCreated",
+      entityType: "mbos_task",
+      entityId: null,
+      beforeState: null as never,
+      afterState: { title, dueDate: input.dueDate, created, skipped, filter: input.filter } as never,
+    });
+
+    for (const [assigneeId, count] of byAssignee) {
+      await tell(
+        assigneeId,
+        count === 1 ? "A task was assigned to you" : `${count} tasks were assigned to you`,
+        `${user.name}: "${title}" — due ${input.dueDate}`,
+      );
+    }
+
+    refresh();
+    return ok(
+      { created, skipped },
+      skipped
+        ? `${plural(created, "task")} created. ${skipped} ${skipped === 1 ? "shop has" : "shops have"} nobody to assign to and ${skipped === 1 ? "was" : "were"} skipped.`
+        : `${plural(created, "task")} created.`,
+    );
   } catch (e) {
     return fromThrown(e);
   }

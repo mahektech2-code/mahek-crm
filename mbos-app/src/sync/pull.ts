@@ -33,6 +33,7 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertDocuments(pull.documents, now);
     touched += await upsertCourses(pull.courses, now);
     touched += await upsertPerformance(pull.performance, now);
+    touched += await upsertTasks(pull.tasks, now);
     touched += await applyApprovals(pull.approvals);
     touched += await applyDeletions(pull.deletions);
   });
@@ -178,6 +179,79 @@ async function upsertConfig(config: Record<string, unknown> | undefined, now: nu
     );
   }
   return Object.keys(config).length;
+}
+
+/**
+ * A task the office raised or reassigned, coming down.
+ *
+ * The columns are not the same word on both ends — see `lib/wire.ts`'s own
+ * account of why a mapping like this has to be a function and not a payload
+ * literal. `assignedToUserId`/`assignedByUserId` become `assigneeId`/
+ * `assignerId`; `snoozedTo`/`snoozeReason` fold into the one JSON history
+ * column this table already keeps; `escalatedAt` becomes the boolean this
+ * table already has. `in_progress` is not a bucket this app's screens draw,
+ * so it reads as `open` rather than a status nothing knows how to show.
+ *
+ * `clientCreatedAt: 0` / `deviceId: 'server'` mark a row that never touched a
+ * device — the same convention `applyApprovals` below already uses. Like
+ * every other channel in this file, a pull overwrites what is here: an
+ * outbox write still in flight for this same task is not lost, because the
+ * outbox is what resends it and wins the next round trip.
+ */
+async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<number> {
+  if (!rows?.length) return 0;
+  const { localPriority } = await import('../lib/wire');
+  for (const raw of rows) {
+    const t = raw as {
+      id: string;
+      title: string;
+      description?: string | null;
+      assignedToUserId: string;
+      assignedByUserId?: string | null;
+      priority: string;
+      dueDate: string;
+      customerId?: string | null;
+      status: string;
+      completionNote?: string | null;
+      completionPhotoId?: string | null;
+      snoozedTo?: string | null;
+      snoozeReason?: string | null;
+      escalatedAt?: string | null;
+    };
+    const status = t.status === 'in_progress' ? 'open' : t.status;
+    const snoozeHistory = t.snoozedTo
+      ? JSON.stringify([{ at: now, to: t.snoozedTo, reason: t.snoozeReason ?? '' }])
+      : null;
+    await run(
+      `INSERT INTO tasks (id, title, description, assigneeId, assignerId, priority, dueDate,
+                          customerId, status, completionNote, completionPhotoId, snoozeHistory,
+                          escalated, clientCreatedAt, serverCreatedAt, deviceId, syncState)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'server', 'synced')
+       ON CONFLICT(id) DO UPDATE SET
+         title = excluded.title, description = excluded.description,
+         priority = excluded.priority, dueDate = excluded.dueDate, customerId = excluded.customerId,
+         status = excluded.status, completionNote = excluded.completionNote,
+         completionPhotoId = excluded.completionPhotoId, escalated = excluded.escalated,
+         syncState = 'synced'`,
+      [
+        t.id,
+        t.title,
+        t.description ?? null,
+        t.assignedToUserId,
+        t.assignedByUserId ?? null,
+        localPriority(t.priority),
+        t.dueDate,
+        t.customerId ?? null,
+        status,
+        t.completionNote ?? null,
+        t.completionPhotoId ?? null,
+        snoozeHistory,
+        t.escalatedAt ? 1 : 0,
+        now,
+      ],
+    );
+  }
+  return rows.length;
 }
 
 /**
