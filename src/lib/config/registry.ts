@@ -36,6 +36,8 @@ export type SettingCategory =
   | "voice"
   /** Who accounts answer to, and how the screens that change that behave. */
   | "people"
+  /** The sign-in code sent to a work number, and its provider. */
+  | "auth"
   /* ---- MBOS, the field sales app. Same rule: no threshold is a constant. ---- */
   | "mbos-location"
   | "mbos-orders"
@@ -243,8 +245,8 @@ export const SETTINGS = [
     category: "queue",
     label: "Show payment calls in the Call Log",
     description:
-      "Customers the collections cadence says are due a payment call appear at the top of the calling list rather than only on the payment screen. The collections engine still decides WHEN — this only decides whether the call log shows what it decided, so a telecaller works one list instead of two.",
-    default: true,
+      "Customers the collections cadence says are due a payment call appear at the top of the calling list rather than only on the payment screen. The collections engine still decides WHEN — this only decides whether the call log shows what it decided. Off by default: a payment call is collections' own worklist, at /crm/payments, and folding it into the Call Log put it in front of telecallers who cannot act on it.",
+    default: false,
   },
   {
     key: "queue.showOrderStatus",
@@ -653,6 +655,129 @@ export const SETTINGS = [
     default: 10,
     min: 3,
     max: 100,
+  },
+  /* -------------------------------------------------------------- sign-in */
+  /*
+   * There is no password on the web. A work number and a code sent to it is
+   * the whole credential, so these thresholds are the security of the login
+   * screen itself and none of them may be a constant.
+   */
+  {
+    key: "auth.otp.codeLength",
+    type: "integer",
+    category: "auth",
+    label: "Code length",
+    description: "Digits in a sign-in code. Six is the ordinary length for an SMS/WhatsApp OTP — short enough to read off a notification, long enough that guessing it is not a real attack within the attempt limit below.",
+    default: 6,
+    min: 4,
+    max: 8,
+  },
+  {
+    key: "auth.otp.ttlMinutes",
+    type: "integer",
+    category: "auth",
+    label: "Code lifetime",
+    description: "Minutes a code stays live after it is sent. Long enough for a message to actually arrive and be typed back; short enough that a code somebody glimpsed on a shared phone is useless an hour later.",
+    default: 10,
+    min: 1,
+    max: 60,
+  },
+  {
+    key: "auth.otp.maxVerifyAttempts",
+    type: "integer",
+    category: "auth",
+    label: "Wrong-code attempts before a code is dead",
+    description: "How many wrong guesses one sent code tolerates before it stops working, whether or not it has expired yet. Without a limit, a six-digit code sent once is a million guesses away from anybody with the time.",
+    default: 5,
+    min: 1,
+    max: 20,
+  },
+  {
+    key: "auth.otp.resendCooldownSeconds",
+    type: "integer",
+    category: "auth",
+    label: "Wait before another code",
+    description: "Seconds somebody must wait after one code before the screen will send another. Stops a slow network turning “Resend” into three SMS credits spent on one login.",
+    default: 30,
+    min: 10,
+    max: 300,
+  },
+  {
+    key: "auth.otp.maxRequestsPerWindow",
+    type: "integer",
+    category: "auth",
+    label: "Codes allowed per window",
+    description: "How many codes one account may be sent inside the window below. This is the guard against a number being used to run up an SMS bill rather than to sign in — the resend cooldown alone only slows that down.",
+    default: 5,
+    min: 1,
+    max: 50,
+  },
+  {
+    key: "auth.otp.requestWindowMinutes",
+    type: "integer",
+    category: "auth",
+    label: "Request window",
+    description: "The window the request limit above counts against, in minutes.",
+    default: 60,
+    min: 5,
+    max: 1440,
+  },
+  {
+    key: "auth.otp.defaultChannel",
+    type: "text",
+    category: "auth",
+    label: "Default delivery channel",
+    description: "Which channel the login screen offers first. Both are always offered — this only decides which one somebody sees without having to choose.",
+    default: "sms",
+    options: ["sms", "whatsapp"],
+  },
+  {
+    key: "auth.otp.smsSenderId",
+    type: "text",
+    category: "auth",
+    label: "SMS sender ID",
+    description: "The six-character DLT-registered sender ID an SMS OTP is sent from. Set once the MSG91 account and its DLT entity are approved — until then SMS delivery cannot go out for real, and the code is written to the server log instead.",
+    default: "",
+  },
+  {
+    key: "auth.otp.smsTemplateId",
+    type: "text",
+    category: "auth",
+    label: "SMS DLT template ID",
+    description: "The DLT-approved template ID the OTP message is sent under. Indian carriers silently drop commercial SMS sent outside a registered template, so this has to name a real one before SMS delivery can work.",
+    default: "",
+  },
+  {
+    key: "auth.otp.whatsappTemplateName",
+    type: "text",
+    category: "auth",
+    label: "WhatsApp template name",
+    description: "The Meta-approved WhatsApp template the OTP is sent through. WhatsApp Business API refuses a free-form message to somebody who has not messaged first, so an OTP has to ride a template.",
+    default: "",
+  },
+  {
+    key: "auth.otp.whatsappTemplateNamespace",
+    type: "text",
+    category: "auth",
+    label: "WhatsApp template namespace",
+    description: "The namespace Meta assigned the WhatsApp Business account the template lives in, alongside the template name above.",
+    default: "",
+  },
+  {
+    key: "auth.otp.whatsappTemplateLanguage",
+    type: "text",
+    category: "auth",
+    label: "WhatsApp template language code",
+    description: "The language the WhatsApp template was approved in, e.g. \"en\". Sending the wrong code is refused by Meta rather than sent in the wrong language.",
+    default: "en",
+  },
+  {
+    key: "auth.otp.whatsappIntegratedNumber",
+    type: "text",
+    category: "auth",
+    label: "WhatsApp business number",
+    description: "The WhatsApp Business number MSG91 has integrated for this account, in international format with no leading +. A code cannot go out over WhatsApp without one.",
+    default: "",
   },
   {
     key: "payments.modes",
@@ -1566,6 +1691,17 @@ export const SETTINGS = [
     min: 60,
     max: 86_400,
   },
+  {
+    key: "mbos.sync.quietHours",
+    type: "integer",
+    category: "mbos-sync",
+    label: "How long a handset may go unheard before it is called quiet",
+    description:
+      "Hours since a device last spoke to MahekOne. This only changes what the Sync health screen highlights, never what any handset does — a salesman whose phone has had no signal for a morning is not the same as one whose phone has stopped syncing, and this is where a manager draws that line.",
+    default: 24,
+    min: 1,
+    max: 168,
+  },
 
   /* ------------------------------------------------------------ ordering */
   {
@@ -2470,6 +2606,21 @@ export type Config = {
   "people.amChangeReasons": string[];
   "people.companyName": string;
   "people.pickerSearchThreshold": number;
+
+  "auth.otp.codeLength": number;
+  "auth.otp.ttlMinutes": number;
+  "auth.otp.maxVerifyAttempts": number;
+  "auth.otp.resendCooldownSeconds": number;
+  "auth.otp.maxRequestsPerWindow": number;
+  "auth.otp.requestWindowMinutes": number;
+  "auth.otp.defaultChannel": "sms" | "whatsapp";
+  "auth.otp.smsSenderId": string;
+  "auth.otp.smsTemplateId": string;
+  "auth.otp.whatsappTemplateName": string;
+  "auth.otp.whatsappTemplateNamespace": string;
+  "auth.otp.whatsappTemplateLanguage": string;
+  "auth.otp.whatsappIntegratedNumber": string;
+
   "payments.modes": string[];
   "payments.referenceRequiredModes": string[];
   "payments.confirmationAgeWarningHours": number;
@@ -2566,6 +2717,7 @@ export type Config = {
   "mbos.location.trackEveryMinutes": number;
   "mbos.location.logActivityLocation": boolean;
   "mbos.location.activityFixMaxAgeSeconds": number;
+  "mbos.sync.quietHours": number;
 
   "mbos.orders.approvalThresholdPaise": number;
   "mbos.orders.secondTierThresholdPaise": number;

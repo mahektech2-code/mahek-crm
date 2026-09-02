@@ -20,7 +20,7 @@
  *   conflict.
  */
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 10;
 
 /**
  * Every statement is idempotent, and migrations are applied in order by
@@ -729,20 +729,118 @@ export const MIGRATIONS: string[][] = [
      */
     `ALTER TABLE orders ADD COLUMN deliveryCustomerId TEXT;`,
   ],
+
+  /* ---- v7 · a calendar the attendance engine can actually read ---------- */
+  [
+    /*
+     * Why attendance ran `isWorkingDay: true` on every single day: there was
+     * nothing here to say otherwise. The office has maintained a real holiday
+     * calendar for a while — it just never reached the phone.
+     *
+     * `universal` is the server's own judgement, not this table's: a holiday
+     * with a free-text `scope` ("Nagpur East and Nagpur West") cannot be
+     * matched against a salesman's own territory on this side, so only a
+     * `universal` row (the server sent `scope: null`) is safe for the
+     * attendance engine to act on automatically. A scoped one is still stored
+     * and still listed, it just does not flip a day to Weekly Off on its own.
+     */
+    `CREATE TABLE IF NOT EXISTS holidays (
+      id TEXT PRIMARY KEY,
+      onDate TEXT NOT NULL,
+      name TEXT NOT NULL,
+      scope TEXT,
+      universal INTEGER NOT NULL DEFAULT 0,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+    `CREATE INDEX IF NOT EXISTS holidays_date_idx ON holidays(onDate);`,
+  ],
+
+  /* ---- v8 · the join price_list was always missing ---------------------- */
+  [
+    /*
+     * price_list is keyed on priceTag + productId — see `upsertPriceList` —
+     * and until now no local column said which tag a given customer pays at.
+     * The rate existed, the tag existed, and nothing joined them, so the
+     * order form had a price list it could never actually look anything up
+     * in.
+     */
+    `ALTER TABLE customers ADD COLUMN priceTag TEXT;`,
+    /*
+     * The server's own scheme row has always carried a description
+     * (`schemeRows()` selects it) and this table never had anywhere to put
+     * one — so the generic upsert in `sync/pull.ts` would have failed on
+     * "no such column: description" the moment any scheme actually had one.
+     * Nothing caught it before now because nothing had ever populated
+     * `mbos_schemes` with a description to pull.
+     */
+    `ALTER TABLE schemes ADD COLUMN description TEXT;`,
+  ],
+
+  /* ---- v9 · a door onto mbos_tours, which had none ----------------------- */
+  [
+    /*
+     * `mbos_tours` existed server-side with a real approval type
+     * (`mbosApprovalTypeEnum` has carried "tour" since the enum was written)
+     * and zero code anywhere ever created one. This is that door: asking to
+     * work away from the usual beat for several days, the same shape as
+     * `leave_requests` and gated by the same generic approval channel.
+     */
+    `CREATE TABLE IF NOT EXISTS tours (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      startDate TEXT NOT NULL,
+      endDate TEXT NOT NULL,
+      cities TEXT NOT NULL DEFAULT '[]',
+      purpose TEXT,
+      estimatedCostPaise INTEGER,
+      notes TEXT,
+      state TEXT NOT NULL DEFAULT 'Pending',
+      decisionNote TEXT,
+      clientCreatedAt INTEGER NOT NULL,
+      serverCreatedAt INTEGER,
+      deviceId TEXT NOT NULL,
+      syncState TEXT NOT NULL DEFAULT 'local',
+      syncMessage TEXT
+    );`,
+  ],
+
+  /* ---- v10 · the salary channel the salary screen never had -------------- */
+  [
+    /*
+     * `app/salary.tsx` used to render a fully invented payslip and was
+     * rewritten to a stub admitting no channel carried real figures. This is
+     * that channel arriving — same shape as `performance`, keyed by period,
+     * replaced wholesale by the generic upsert on every pull.
+     */
+    `CREATE TABLE IF NOT EXISTS salary (
+      period TEXT PRIMARY KEY,
+      employeeCode TEXT,
+      employeeStatus TEXT,
+      netSalaryPaise INTEGER,
+      conveyancePaise INTEGER,
+      otherSalaryPaise INTEGER,
+      pfEsicApplicable INTEGER,
+      dateOfJoining TEXT,
+      daysWorked INTEGER,
+      daysOnLeave INTEGER,
+      reimbursedPaise INTEGER,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+  ],
 ];
 
 /** Tables holding work the salesman authored. A sync never deletes from these. */
 export const OWNED_TABLES = [
   'visits', 'orders', 'order_lines', 'payments', 'attendance_days', 'tasks',
-  'leads', 'samples', 'complaints', 'expenses', 'leave_requests',
+  'leads', 'samples', 'complaints', 'expenses', 'leave_requests', 'tours',
   'competitor_records', 'approvals',
 ] as const;
 
 /** Tables replaced wholesale by a pull. Safe to clear on sign-out. */
 export const REFERENCE_TABLES = [
   'customers', 'products', 'price_list', 'schemes', 'timeline_events',
-  'journey_stops', 'leave_balances', 'documents', 'courses', 'notifications',
-  'performance',
+  'journey_stops', 'leave_balances', 'holidays', 'documents', 'courses',
+  'notifications', 'performance', 'salary',
   /*
    * `journey_days` is here, and it is the awkward one.
    *

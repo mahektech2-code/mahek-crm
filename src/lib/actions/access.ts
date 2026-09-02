@@ -277,7 +277,13 @@ export async function setAccess(
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
       return fieldErr("email", "That does not look like an email address.");
     }
-    if (phone && !/^[6-9]\d{9}$/.test(phone)) {
+    // The web has no password any more — a work number and a code sent to it
+    // is the whole credential, so an account with no number is one nobody can
+    // ever sign into.
+    if (!phone) {
+      return fieldErr("phone", "A work number is required — it's how they sign in.");
+    }
+    if (!/^[6-9]\d{9}$/.test(phone)) {
       return fieldErr("phone", "A work number is ten digits, starting 6 to 9.");
     }
 
@@ -289,7 +295,7 @@ export async function setAccess(
     if (clash.some((c) => c.email === email)) {
       return fieldErr("email", "An account already uses that email.");
     }
-    if (phone && clash.some((c) => c.phone === phone)) {
+    if (clash.some((c) => c.phone === phone)) {
       return fieldErr("phone", "An account already uses that work number.");
     }
 
@@ -298,13 +304,14 @@ export async function setAccess(
     created = true;
 
     /*
-     * A password nobody knows, and a link that lets them choose one.
+     * A password nobody knows.
      *
-     * Typing a password into this dialog would mean somebody reading it out
-     * over a phone, and it would be the password on an account that opens
-     * salaries. The account is created unusable on purpose and the reset link
-     * is what makes it usable — the same single-use, thirty-minute machinery
-     * `/login/forgot` uses, reached the other way round.
+     * The web needs none — a code sent to the work number above is what makes
+     * the account usable, immediately. This hash exists only in case the same
+     * account is ever paired with MBOS, the field salesman handset app, which
+     * still authenticates the old way over its own API and cannot be changed
+     * from here. Typing a real one into this dialog would mean somebody
+     * reading it out over a phone, so it stays one nobody knows.
      */
     const passwordHash = await hashPassword(randomUUID() + randomUUID());
     const apps = [...wanted.keys()];
@@ -334,7 +341,7 @@ export async function setAccess(
       }
     });
 
-    resetLinkSent = await mailResetLink(userId, employee.name, email, me.name);
+    resetLinkSent = await mailResetLink(userId, employee.name, email, phone, me.name);
 
     await audit(
       me.id,
@@ -348,9 +355,11 @@ export async function setAccess(
 
     return ok(
       { userId, created, resetLinkSent, granted: apps, revoked: [], changed: [] },
-      resetLinkSent
-        ? `${personName} can now open ${describe(apps)}. A link to set their password has been emailed to them.`
-        : `${personName} can now open ${describe(apps)}. No mail is configured on this deployment, so the password link went to the server log instead of to them.`,
+      `${personName} can now open ${describe(apps)} — sign-in is a code sent to ${phone}. ${
+        resetLinkSent
+          ? "A link to set a field-app password has also been emailed to them, in case they are ever paired with MBOS."
+          : "No mail is configured on this deployment, so that field-app password link went to the server log instead of to them."
+      }`,
     );
   }
 
@@ -543,6 +552,7 @@ async function mailResetLink(
   userId: string,
   name: string,
   email: string,
+  phone: string,
   actorName: string,
 ): Promise<boolean> {
   const token = newResetToken();
@@ -565,12 +575,15 @@ async function mailResetLink(
     text: [
       `Hello ${name.split(" ")[0]},`,
       "",
-      `${actorName} has set you up on MahekOne. Your sign-in is ${email}.`,
-      `Open this link to choose a password — it works once and expires in ${RESET_TTL_MINUTES} minutes:`,
+      `${actorName} has set you up on MahekOne. To sign in on the web, open`,
+      `MahekOne and enter your work number, ${phone} — we send a code to it,`,
+      "no password needed.",
+      "",
+      "The link below is only for the MBOS field salesman app, which pairs",
+      "with a password rather than a code. Skip it unless you use that app:",
+      `Open this link to choose one — it works once and expires in ${RESET_TTL_MINUTES} minutes:`,
       "",
       `${await appOrigin()}/login/reset?token=${token}`,
-      "",
-      "If the link has expired by the time you read this, use Forgot password on the sign-in screen.",
     ].join("\n"),
   });
 

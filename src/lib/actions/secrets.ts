@@ -130,4 +130,5 @@ export async function clearSecretAction(name: string): Promise<Result> {
 const LABELS: Record<SecretName, string> = {
   "sarvam.apiKey": "The Sarvam key",
   "openai.apiKey": "The OpenAI key",
+  "msg91.authKey": "The MSG91 key",
 };

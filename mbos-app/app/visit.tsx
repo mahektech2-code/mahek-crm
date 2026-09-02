@@ -12,7 +12,7 @@ import { isoDate, pretty } from '../src/lib/format';
 import { elapsedLabel, FOLLOW_ON, visitChecks, visitVerdict } from '../src/lib/visit';
 import { COMPLAINT_CATEGORIES, OUTCOMES } from '../src/data/fixtures';
 import { getConfig } from '../src/data/config';
-import { saveVisit } from '../src/data/visits';
+import { previousVisitNote, saveVisit, type PreviousNote } from '../src/data/visits';
 import { logComplaint, requestSample } from '../src/data/requests';
 import { starterProducts } from '../src/data/customers';
 import { todayStops } from '../src/data/journey';
@@ -68,6 +68,7 @@ export default function Visit() {
   const [products, setProducts] = React.useState<Product[]>([]);
   const [stopId, setStopId] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+  const [lastTime, setLastTime] = React.useState<PreviousNote | null>(null);
 
   /* Thresholds, never constants: the dwell floor and the distance that counts
      as a mismatch are both a manager's to move. */
@@ -106,6 +107,19 @@ export default function Visit() {
       /* A stop on today's plan makes this a planned visit and gets marked
          visited when the save lands. */
       setStopId(stops.find((s) => s.customerId === custId && s.status === 'planned')?.id ?? null);
+    });
+    return () => {
+      live = false;
+    };
+  }, [custId]);
+
+  /* What he said last time, read back before this call rather than found
+     afterwards on the timeline. See `data/visits.ts`. */
+  React.useEffect(() => {
+    let live = true;
+    if (!custId) return;
+    void previousVisitNote(custId).then((row) => {
+      if (live) setLastTime(row);
     });
     return () => {
       live = false;
@@ -273,6 +287,34 @@ export default function Visit() {
           </View>
         </View>
       }>
+      {/* ---- what was said last time ----
+          Shown before the call, not found after it on the timeline. "Will
+          pay" typed in a hurry three weeks ago reads exactly like a
+          sentence that never named a date — the whole reason a note is
+          worth reading back rather than trusted from memory. */}
+      {lastTime ? (
+        <View
+          style={{
+            borderWidth: 1,
+            borderColor: C.hairline,
+            backgroundColor: C.wash,
+            borderRadius: radius.xl,
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            marginBottom: 12,
+          }}>
+          <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+            <Text style={type.label}>Last time — {pretty(isoDate(new Date(lastTime.checkInAt)))}</Text>
+            {lastTime.outcome ? (
+              <Text style={[type.caption, { color: C.body }]}>{lastTime.outcome}</Text>
+            ) : null}
+          </View>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.ink, marginTop: 4 }} numberOfLines={3}>
+            {lastTime.note}
+          </Text>
+        </View>
+      ) : null}
+
       {/* ---- where you are ---- */}
       <View
         style={{

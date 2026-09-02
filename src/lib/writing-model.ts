@@ -52,16 +52,25 @@ export async function write({
   prompt,
   openaiModel,
   timeoutMs = 60_000,
+  providers = ["openai", "sarvam"],
 }: {
   system: string;
   prompt: string;
   /** The OpenAI model to use where OpenAI serves. Configuration. */
   openaiModel: string;
   timeoutMs?: number;
+  /**
+   * Which accounts this call may use, in order. Defaults to both — OpenAI
+   * first, Sarvam as the fallback that keeps dictation writing on a key that
+   * is already there. A caller that has been told to use one account only
+   * passes `["openai"]`, and a permanent refusal is then reported rather than
+   * silently answered by the other provider.
+   */
+  providers?: WritingProvider[];
 }): Promise<WritingOutcome> {
   const [openaiKey, sarvamKey] = await Promise.all([
-    readSecret("openai.apiKey"),
-    readSecret("sarvam.apiKey"),
+    providers.includes("openai") ? readSecret("openai.apiKey") : null,
+    providers.includes("sarvam") ? readSecret("sarvam.apiKey") : null,
   ]);
 
   const attempts: Array<{ provider: WritingProvider; key: string; model: string }> = [];

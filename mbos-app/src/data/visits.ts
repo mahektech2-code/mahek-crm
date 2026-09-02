@@ -247,6 +247,26 @@ export async function recentVisits(customerId: string) {
   return all('SELECT * FROM visits WHERE customerId = ? ORDER BY checkInAt DESC LIMIT 20', [customerId]);
 }
 
+export type PreviousNote = { checkInAt: number; note: string; outcome: string | null };
+
+/**
+ * What was said last time, read back BEFORE the next call rather than found
+ * afterwards by scrolling the timeline.
+ *
+ * "Will pay" typed in a hurry three weeks ago reads exactly like a sentence
+ * that never named a date — which is the whole reason the note exists at
+ * all. A salesman about to walk into the same shop should not have to
+ * remember to go and look for it.
+ */
+export async function previousVisitNote(customerId: string): Promise<PreviousNote | null> {
+  return one<PreviousNote>(
+    `SELECT checkInAt, notes AS note, outcome FROM visits
+      WHERE customerId = ? AND notes IS NOT NULL AND trim(notes) <> ''
+      ORDER BY checkInAt DESC LIMIT 1`,
+    [customerId],
+  );
+}
+
 /**
  * A visit saved without a check-out is left open and closed at the day
  * boundary, flagged. Guessing an end time would put a duration on the record

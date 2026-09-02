@@ -2586,28 +2586,33 @@ a position for it is a record of somewhere a salesman stood while something
 failed — noise on every screen, and one more row held about a person for no
 reason.
 
-**The Live map has no tiles under it, and the design never asked for any.** It
-is pins on a grid: an equirectangular projection of the team's own bounding box,
-so a pin's place is its place relative to everybody else — who is out east, who
-is bunched together, who is nowhere near their beat. Streets would mean sending
-the coordinates of Mahek's salesmen to whoever supplies them, on every render,
-plus a key and a bill, to answer a question nobody was asking. Two views, because
-they answer two questions: where they are NOW is the morning one, and everywhere
-they went TODAY is the evening one.
+**The Live map has streets under it now, and it started with none.** The
+original reasoning was that tiles meant sending Mahek's salesmen's coordinates
+to whoever supplies them, on every render, plus a key and a bill, to answer a
+question nobody was asking — so it shipped as pins on a bare equirectangular
+projection of the team's own bounding box instead. OpenFreeMap
+(`street-map.tsx`) answers two of those three objections outright: no key, no
+account, no bill, and no usage limit. The privacy one survives in a smaller
+form — the viewport centres on the team, which is a real signal — but the
+pins themselves are drawn from MahekOne's own data and never leave it; a tile
+server is only ever asked for squares of map. Two views, because they answer
+two questions: where they are NOW is the morning one, and everywhere they went
+TODAY is the evening one.
 
-**The projection FITS, it does not fill.** One scale for both axes and the
-remainder as margin — stretching the box to the canvas draws a six-kilometre
-walk north and a five-hundred-metre step east as a square, and quietly makes
-every day look like the same day. That is also why the canvas has a fixed
-aspect ratio rather than the design's fixed height: the fit has to be computed
-on the server, where the rendered width is not known. Longitude is squeezed by
-cos(latitude) or a Nagpur day comes out a fifth too wide, and one `project`
-answers for both a pin and a point on a trail so the two cannot drift apart.
+**The renderer is MapLibre and the supplier is a URL.** `STYLE` in
+`street-map.tsx` is the one line that names OpenFreeMap; if it stops, or its
+coverage of a beat turns out to be thin, swapping the supplier is an edit to
+that constant rather than a rewrite. The map's own Mercator projection and
+`fitBounds` replaced the hand-rolled equirectangular one — the FIT-not-FILL
+rule survives the change: one pin gets `MAX_FIT_ZOOM` instead of a rooftop, and
+every point on the screen, trail and activity marks included, is folded into
+the same bounds so a six-kilometre walk and a five-hundred-metre one are never
+drawn at the same scale by accident.
 
 **A pin is only drawn where there is a fix.** The design mock spaces salesmen
 out arithmetically, which is fine in a picture of a screen and a lie on a real
 one. Somebody with no position today is in the team list saying exactly that and
-nowhere on the canvas — inventing a spot for them is the one thing a map of
+nowhere on the map — inventing a spot for them is the one thing a map of
 where people are must not do. The list reads the newest of the trail, the
 check-in and each visit, so somebody whose tracking is off still appears.
 

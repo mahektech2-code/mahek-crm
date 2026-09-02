@@ -519,6 +519,55 @@
       "when": 1787500840000,
       "tag": "0073_founder_dashboard_app",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1787500900000,
+      "tag": "0074_monthly_target_carried_forward",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1787500960000,
+      "tag": "0075_otp_login",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1787501020000,
+      "tag": "0076_contact_person_optional",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1787501080000,
+      "tag": "0077_payment_due_off_call_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1787501140000,
+      "tag": "0078_customer_price_tag",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1787501200000,
+      "tag": "0079_visit_distance",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1787501260000,
+      "tag": "0080_mbos_push_token",
+      "breakpoints": true
     }
   ]
 }

@@ -37,6 +37,12 @@
         {
           "locationWhenInUsePermission": "MahekOne records where a visit, an order or a payment was taken, and follows your route only while your day is open. It stops when you check out."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#5223E0"
+        }
       ]
     ],
     "scheme": "mbos",

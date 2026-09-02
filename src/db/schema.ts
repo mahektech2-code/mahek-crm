@@ -48,6 +48,9 @@ export const roleEnum = pgEnum("role", [
   "admin",
 ]);
 
+/** How a login code reached somebody's phone. */
+export const otpChannelEnum = pgEnum("otp_channel", ["sms", "whatsapp"]);
+
 export const customerStatusEnum = pgEnum("customer_status", [
   "active",
   "inactive",
@@ -680,6 +683,37 @@ export const passwordResets = pgTable(
   ],
 );
 
+/**
+ * Sign-in codes. There is no password on the web any more — a work number and
+ * a code sent to it is the whole credential, so this table is what `users`'
+ * `password_hash` used to be for the login screen. It stays a hash for the
+ * same reason a reset token is one: a copy of this table must not be a bag of
+ * working codes.
+ *
+ * A row is never deleted, only consumed or left to expire — `attempts` is the
+ * guard against somebody trying every four-digit… no, six-digit guess against
+ * one still-live code, and `consumedAt` is what stops the same code being
+ * replayed a second time. Rate limiting reads this table directly (how many
+ * rows a user has in the last N minutes) rather than a second counter, because
+ * a second counter is a second thing that can drift from what actually sent.
+ */
+export const otpCodes = pgTable(
+  "otp_codes",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    codeHash: text("code_hash").notNull(),
+    channel: otpChannelEnum("channel").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    attempts: integer("attempts").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("otp_codes_user_created_idx").on(t.userId, t.createdAt)],
+);
+
 /* -------------------------------------------------------------- §3.3 customer */
 
 /** A record is one or the other, and the difference decides what is shown. */
@@ -714,7 +748,12 @@ export const customers = pgTable(
     /* identity and contact */
     externalCode: text("external_code"),
     name: text("name").notNull(),
-    contactPerson: text("contact_person").notNull(),
+    /**
+     * Not every account has a single named contact — a shop counter often
+     * does not — so this is no longer required to save the record. Business
+     * name and phone still are: those are what a bill and a call need.
+     */
+    contactPerson: text("contact_person"),
     phone: text("phone").notNull(),
     whatsappPhone: text("whatsapp_phone"),
     whatsappDest: destKindEnum("whatsapp_dest").notNull().default("personal"),
@@ -987,6 +1026,15 @@ export const customers = pgTable(
     visitFrequencyDays: integer("visit_frequency_days"),
     /** The code the trade knows them by, searched on the customer list. */
     dealerCode: text("dealer_code"),
+    /**
+     * The tier `mbos_price_list` is keyed on — "DEALER", "DISTRIBUTOR" —
+     * mirrored from `sheet_party_rows.tagPricelist` by the SAME name-matched
+     * projection that already fills phone, WhatsApp and the sales rep link.
+     * Without this a price list keyed on the tag has no way to reach a
+     * particular customer's order: the tag exists on the sheet, the rate
+     * exists on the list, and nothing joined the two until this column did.
+     */
+    priceTag: text("price_tag"),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -2071,6 +2119,15 @@ export const monthlyTargets = pgTable(
     targetAmount: bigint("target_amount", { mode: "number" }).notNull(),
     /** The interface badges auto-applied defaults distinctly. */
     isDefault: boolean("is_default").notNull().default(true),
+    /**
+     * Copied forward from last month's MANUAL target rather than typed this
+     * month, or recomputed from trailing sales. `seedMonthlyTargets` sets it
+     * true on the row it carries forward, and `setTarget` clears it the
+     * moment a manager actually saves a real change — the same pattern as
+     * `sales_targets.carried_forward`. A carried target is never a default:
+     * it is still somebody's decision, just not one made for this month.
+     */
+    carriedForward: boolean("carried_forward").notNull().default(false),
     setById: text("set_by_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -3572,6 +3629,14 @@ export const mbosDevices = pgTable(
     /** Why it was released, where somebody said. */
     releasedAt: timestamp("released_at", { withTimezone: true }),
     releaseReason: text("release_reason"),
+    /**
+     * Expo's own push token for this install — not APNs/FCM directly.
+     * Requested on the handset after notification permission is granted, and
+     * re-sent whenever Expo rotates it, which is why this is set from its own
+     * endpoint rather than only at sign-in: the token is not known yet at
+     * login time, and can change without a new sign-in.
+     */
+    pushToken: text("push_token"),
   },
   (t) => [
     uniqueIndex("mbos_devices_device_key").on(t.deviceId),
@@ -3825,6 +3890,19 @@ export const mbosVisits = pgTable(
     verified: boolean("verified").notNull().default(false),
     /** The sentence a manager reads: poor fix, no customer pin, too far. */
     unverifiedReason: text("unverified_reason"),
+    /**
+     * Metres between the check-in fix and the shop's own pin, whatever the
+     * outcome. `handleVisit` already computes this to decide `verified` and
+     * `locationMismatch`, and used to discard the number once it had folded
+     * it into `unverifiedReason`'s sentence — so a manager screen could only
+     * ever show that distance as PROSE, and only for the visits that failed
+     * verification. Null wherever there was nothing to check against (no
+     * fix, poor accuracy, no shop pin) — see `unverifiedReason` for why.
+     */
+    distanceFromShopM: integer("distance_from_shop_m"),
+    /** A manager overriding a mismatch — the visit still happened. */
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    acceptedById: text("accepted_by_id"),
   },
   (t) => [
     index("mbos_visits_customer_idx").on(t.customerId, t.checkInAt.desc()),

@@ -15,6 +15,7 @@ import {
   MetricRow,
   Pill,
   Row,
+  RowMenu,
   ScreenHeader,
   Table,
 } from "../parts";
@@ -148,7 +149,7 @@ export default async function Page({
       ) : (
         <>
           <Table
-            minWidth={1240}
+            minWidth={1284}
             head={
               <>
                 <HeadCell width={170}>Person</HeadCell>
@@ -161,6 +162,7 @@ export default async function Page({
                 <HeadCell align="right" width={110}>Collection</HeadCell>
                 <HeadCell align="right" width={100}>Activity</HeadCell>
                 <HeadCell width={180}>Wants attention</HeadCell>
+                <HeadCell width={44} />
               </>
             }
           >
@@ -236,6 +238,15 @@ export default async function Page({
                     ) : (
                       <span className="text-muted">—</span>
                     )}
+                  </Cell>
+                  <Cell align="right">
+                    <RowMenu
+                      items={[
+                        { label: "Open their record", href: `/sales/people/${r.userId}` },
+                        { label: "Set their target", href: `/sales/targets?period=${month}` },
+                        { label: "Assign a task", href: "/sales/tasks" },
+                      ]}
+                    />
                   </Cell>
                 </Row>
               );

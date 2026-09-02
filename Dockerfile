@@ -25,6 +25,15 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# Which commit this image is, baked in as Next's own version-skew guard —
+# see `deploymentId` in next.config.ts. Passed by the workflow as the same
+# sha the image is tagged with, so a browser tab left open across a deploy
+# gets a full reload instead of a Server Action failing with "was not found
+# on the server": the client compares this against what the new server
+# reports and reloads itself rather than surfacing the mismatch as an error.
+ARG GIT_SHA
+ENV NEXT_DEPLOYMENT_ID=${GIT_SHA}
+
 # The build must not reach for a database. `npm run build` used to run
 # `db:deploy` and `catalogue:deploy` first, which worked on Vercel because the
 # build ran next to the database; here it runs on a GitHub runner with no route

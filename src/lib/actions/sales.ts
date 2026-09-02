@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  appAccess,
   auditLog,
   customers,
   mbosApprovals,
@@ -13,9 +14,15 @@ import {
   mbosDevices,
   mbosDocuments,
   mbosHolidays,
+  mbosLeads,
+  mbosLeaveBalances,
+  mbosLeaveRequests,
   mbosManagerTerritories,
   mbosJourneyPlans,
   mbosJourneyStops,
+  mbosPriceList,
+  mbosSchemes,
+  mbosVisits,
   notifications,
   users,
 } from "@/db/schema";
@@ -23,6 +30,8 @@ import { requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
 import { updateSettings } from "@/lib/config/store";
 import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
+import { sendExpoPush } from "@/lib/mbos/push";
+import { managerScope, onlyMine } from "@/lib/services/sales-service";
 import type { DocumentCategory } from "@/lib/mbos/library-labels";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
 
@@ -71,6 +80,10 @@ function refresh() {
     revalidatePath("/sales/people");
     revalidatePath("/sales/documents");
     revalidatePath("/sales/knowledge");
+    revalidatePath("/sales/leads");
+    revalidatePath("/sales/visits");
+    revalidatePath("/sales/catalogue");
+    revalidatePath("/sales/notify");
     revalidatePath("/apps");
   } catch {
     /* no request context — nothing cached to invalidate */
@@ -90,6 +103,15 @@ async function tell(userId: string, title: string, body: string) {
     .insert(notifications)
     .values({ id: gen("ntf"), userId, title, body, kind: "info" })
     .catch(() => {});
+
+  /* Best-effort, and never on the critical path — the row above is the
+     record, this is a courtesy for whoever is not staring at the app when
+     it lands. A push failure must not be able to fail a decision. */
+  const devices = await db
+    .select({ pushToken: mbosDevices.pushToken })
+    .from(mbosDevices)
+    .where(and(eq(mbosDevices.userId, userId), eq(mbosDevices.active, true)));
+  await sendExpoPush(devices.map((d) => d.pushToken), title, body).catch(() => {});
 }
 
 /* ══════════════════════════════════════════════════════════ the decisions */
@@ -183,6 +205,49 @@ export async function decideApproval(input: {
         // land on a row the first one has already decided.
         and(eq(mbosApprovals.id, input.approvalId), eq(mbosApprovals.state, "pending")),
       );
+
+    /* The one place `mbos_leave_balances.used_days` moves. Not on the request
+     * itself — a request has no state of its own, it is derived entirely
+     * from its approval — so the balance has to be debited from here, the
+     * single place a leave request actually becomes decided. A missing
+     * balance row is not skipped: it is created at zero entitlement, so the
+     * debit is recorded honestly even before anybody has seeded what a
+     * person is entitled to for the year. */
+    if (approval.type === "leave" && input.decision === "approved") {
+      const [leave] = await db
+        .select({
+          leaveType: mbosLeaveRequests.leaveType,
+          days: mbosLeaveRequests.days,
+          fromDate: mbosLeaveRequests.fromDate,
+        })
+        .from(mbosLeaveRequests)
+        .where(eq(mbosLeaveRequests.id, approval.subjectId))
+        .limit(1);
+
+      if (leave) {
+        const year = new Date(leave.fromDate).getUTCFullYear();
+        await db
+          .insert(mbosLeaveBalances)
+          .values({
+            id: gen("mbos_lbal"),
+            userId: approval.requestedByUserId,
+            year,
+            leaveType: leave.leaveType,
+            entitledDays: 0,
+            usedDays: leave.days,
+            createdById: user.id,
+            updatedById: user.id,
+          })
+          .onConflictDoUpdate({
+            target: [mbosLeaveBalances.userId, mbosLeaveBalances.year, mbosLeaveBalances.leaveType],
+            set: {
+              usedDays: sql`${mbosLeaveBalances.usedDays} + ${leave.days}`,
+              updatedAt: new Date(),
+              updatedById: user.id,
+            },
+          });
+      }
+    }
 
     await db.insert(auditLog).values({
       id: gen("aud"),
@@ -797,6 +862,10 @@ export async function removeHoliday(id: string): Promise<Result> {
     if (!row) return err("That day is no longer on the calendar.", "not_found");
 
     await db.delete(mbosHolidays).where(eq(mbosHolidays.id, id));
+    /* Reference data, gone. Without a tombstone the deleted row simply has no
+       `updated_at` for the delta to notice, and every phone that already
+       pulled it keeps treating that date as a day off for good. */
+    await tombstone("holidays", id, "Holiday removed");
 
     await db.insert(auditLog).values({
       id: gen("aud"),
@@ -809,6 +878,313 @@ export async function removeHoliday(id: string): Promise<Result> {
 
     refresh();
     return okVoid(`${row.name} removed.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ═══════════════════════════════════════════════════ telling the field */
+
+/**
+ * A notification the office writes by hand, rather than one the system
+ * derives.
+ *
+ * Everything else in `notifications` is produced by an event — an approval
+ * decided, a request answered — with `tell()` above as the one place that
+ * happens. This is the exception, and deliberately narrow: a manager saying
+ * something to their own team, or the whole field, that nothing in the
+ * system already says on its own. It rides the same channel and the same
+ * push a decision does, because a salesman's phone should not have to learn
+ * two different things mean the same kind of ping.
+ */
+export async function sendFieldNotification(input: {
+  audience: "all" | "ids";
+  userIds?: string[];
+  title: string;
+  body: string;
+}): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const title = input.title.trim();
+    const body = input.body.trim();
+    if (!title) return err("Give it a title — that is what shows first.", "validation");
+    if (!body) return err("Say what you actually mean. A title alone is a notification about nothing.", "validation");
+
+    const scope = await managerScope();
+    const targets =
+      input.audience === "ids"
+        ? await (async () => {
+            const ids = (input.userIds ?? []).filter(Boolean);
+            if (!ids.length) return [];
+            const rows = await db
+              .select({ id: users.id })
+              .from(users)
+              .innerJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, "field")))
+              .where(and(inArray(users.id, ids), eq(users.active, true)));
+            return rows.map((r) => r.id);
+          })()
+        : await (async () => {
+            const mine = (col: string) => onlyMine(scope, col);
+            const rows = await db.execute<{ id: string }>(sql`
+              select u.id
+                from users u
+                join app_access a on a.user_id = u.id and a.app = 'field'
+               where u.active ${mine("u.id")}
+            `);
+            return rows.map((r) => r.id);
+          })();
+
+    if (!targets.length) {
+      return err(
+        input.audience === "ids"
+          ? "Nobody was picked, or none of them hold the field app anymore."
+          : "There is nobody in your team holding the field app to send this to.",
+        "validation",
+      );
+    }
+
+    await db.insert(notifications).values(
+      targets.map((id) => ({ id: gen("ntf"), userId: id, title, body, kind: "info" as const })),
+    );
+
+    const devices = await db
+      .select({ pushToken: mbosDevices.pushToken })
+      .from(mbosDevices)
+      .where(and(inArray(mbosDevices.userId, targets), eq(mbosDevices.active, true)));
+    await sendExpoPush(devices.map((d) => d.pushToken), title, body).catch(() => {});
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.notification.send",
+      entityType: "notification_broadcast",
+      entityId: gen("bcast"),
+      afterState: { title, body, audience: input.audience, recipientCount: targets.length } as never,
+    });
+
+    refresh();
+    return okVoid(`Sent to ${plural(targets.length, "person", "people")}.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ═══════════════════════════════════════════════ what a customer pays */
+
+/**
+ * Setting a rate.
+ *
+ * Keyed on the PRICE TAG, not the customer — see the schema comment on
+ * `mbosPriceList`: every dealer on the "DEALER" tag gets the dealer rate, so
+ * a row here is one line for the whole tier rather than one per account.
+ *
+ * **A superseded rate is dated out, never deleted.** An order taken last
+ * month priced against last month's rate is a fact about last month; deleting
+ * the row would make that order's own value unexplainable later. So an
+ * existing OPEN-ENDED row for the same tag and product is closed the day
+ * before the new one starts, and the new row is inserted beside it — the
+ * handset's own pull already reads only what is in force today, so nothing
+ * downstream has to know two rows exist.
+ *
+ * This does NOT flip `products.priceSource` to `"pricelist"` — that switch is
+ * the CRM's own order-valuation path, a separate decision by design (see the
+ * schema comment: "a half-populated price list is worse than none, and
+ * switching the source has to be somebody's deliberate act"). This screen
+ * only fills the table the handset's own order form reads from.
+ */
+export async function setPriceListRate(input: {
+  customerPriceTag: string;
+  productId: string;
+  ratePaise: number;
+  validFrom?: string;
+}): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const tag = input.customerPriceTag.trim();
+    if (!tag) return err("A rate needs a price tag — DEALER, DISTRIBUTOR, and so on.", "validation");
+    if (!input.productId) return err("Pick a product.", "validation");
+    if (!Number.isFinite(input.ratePaise) || input.ratePaise <= 0) {
+      return err("The rate has to be a positive amount.", "validation");
+    }
+    const validFrom = input.validFrom || new Date().toISOString().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(validFrom)) return err("That is not a date.", "validation");
+
+    await db.transaction(async (tx) => {
+      const [superseded] = await tx
+        .select({ id: mbosPriceList.id })
+        .from(mbosPriceList)
+        .where(
+          and(
+            eq(mbosPriceList.customerPriceTag, tag),
+            eq(mbosPriceList.productId, input.productId),
+            sql`${mbosPriceList.validTo} is null`,
+          ),
+        )
+        .limit(1);
+
+      if (superseded) {
+        await tx
+          .update(mbosPriceList)
+          .set({ validTo: sql`${validFrom}::date - 1`, updatedById: user.id, updatedAt: new Date() })
+          .where(eq(mbosPriceList.id, superseded.id));
+      }
+
+      await tx.insert(mbosPriceList).values({
+        id: gen("mbos_price"),
+        customerPriceTag: tag,
+        productId: input.productId,
+        ratePaise: input.ratePaise,
+        validFrom,
+        createdById: user.id,
+        updatedById: user.id,
+      });
+    });
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.priceList.set",
+      entityType: "mbos_price_list",
+      entityId: `${tag}:${input.productId}`,
+      afterState: { customerPriceTag: tag, productId: input.productId, ratePaise: input.ratePaise, validFrom } as never,
+    });
+
+    refresh();
+    return okVoid("Rate saved. It reaches every handset on that tag on the next sync.");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Withdrawing a rate without deleting it — the row stays for what it once explained. */
+export async function endPriceListRate(id: string): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const [row] = await db.select().from(mbosPriceList).where(eq(mbosPriceList.id, id)).limit(1);
+    if (!row) return err("That rate is no longer on the list.", "not_found");
+    if (row.validTo) return err("That rate has already been withdrawn.", "validation");
+
+    await db
+      .update(mbosPriceList)
+      .set({ validTo: sql`current_date`, updatedById: user.id, updatedAt: new Date() })
+      .where(eq(mbosPriceList.id, id));
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.priceList.end",
+      entityType: "mbos_price_list",
+      entityId: id,
+      beforeState: { customerPriceTag: row.customerPriceTag, productId: row.productId, ratePaise: row.ratePaise } as never,
+    });
+
+    refresh();
+    return okVoid("Withdrawn. It drops off every handset on the next sync.");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * A promotion, as data.
+ *
+ * `eligibility` and `benefit` are JSON exactly as the handset's own scheme
+ * engine (`mbos-app/src/engines/schemes.ts`) reads them. Nothing here
+ * interprets either, the same way `mbos-service.ts` ships them down unread:
+ * expressing a scheme as a rule engine's input is what lets one be added for
+ * a festival without a deploy.
+ *
+ * **The two columns carry five fields between them, not two.** `benefit` is
+ * exactly a `SchemeBenefit` — `{"kind":"free_quantity","perCans":10,
+ * "freeCans":1}`, `{"kind":"percent_discount","percent":5}` or
+ * `{"kind":"flat_discount","amountPaise":50000}`. `eligibility` carries
+ * everything else the engine needs and this table has no column for:
+ * `{"level":"line","priority":0,"stackable":false,"when":{"field":"skuId",
+ * "op":"eq","value":"prod_xyz"}}` — `when` is the actual predicate
+ * (`Predicate` in the same file), `level` is `"line"` or `"order"`, and a
+ * missing `when` is read on the handset as `{"any":[]}`, which never
+ * matches — a blank predicate fails CLOSED rather than discounting
+ * everything nobody asked it to.
+ */
+export async function addScheme(input: {
+  name: string;
+  description?: string;
+  eligibility: Record<string, unknown>;
+  benefit: Record<string, unknown>;
+  validFrom?: string;
+  validTo?: string;
+}): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const name = input.name.trim();
+    if (!name) return err("A scheme needs a name — it is what a salesman sees on the order form.", "validation");
+
+    const id = gen("mbos_scheme");
+    await db.insert(mbosSchemes).values({
+      id,
+      name,
+      description: input.description?.trim() || null,
+      eligibility: input.eligibility,
+      benefit: input.benefit,
+      validFrom: input.validFrom || null,
+      validTo: input.validTo || null,
+      createdById: user.id,
+      updatedById: user.id,
+    });
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.scheme.add",
+      entityType: "mbos_scheme",
+      entityId: id,
+      afterState: { name, eligibility: input.eligibility, benefit: input.benefit } as never,
+    });
+
+    refresh();
+    return okVoid(`${name} added. It reaches every handset on the next sync.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Withdrawing a scheme.
+ *
+ * `active = false` takes it off the handsets that have not pulled it yet;
+ * the tombstone is what tells a handset that ALREADY has it to take it down —
+ * a scheme, unlike the price list, is upserted rather than replaced wholesale
+ * on the phone, so without this a withdrawn scheme stays offered for ever on
+ * any handset that already saw it.
+ */
+export async function withdrawScheme(id: string): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const [row] = await db.select().from(mbosSchemes).where(eq(mbosSchemes.id, id)).limit(1);
+    if (!row) return err("That scheme is no longer on the list.", "not_found");
+
+    await db
+      .update(mbosSchemes)
+      .set({ active: false, updatedById: user.id, updatedAt: new Date() })
+      .where(eq(mbosSchemes.id, id));
+    await tombstone("schemes", id, "Scheme withdrawn");
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.scheme.withdraw",
+      entityType: "mbos_scheme",
+      entityId: id,
+      beforeState: { name: row.name } as never,
+    });
+
+    refresh();
+    return okVoid(`${row.name} withdrawn.`);
   } catch (e) {
     return fromThrown(e);
   }
@@ -994,6 +1370,351 @@ export async function releaseDevice(input: {
     return okVoid(
       `${owner?.name ?? "That salesman"} can sign in on a new handset now.`,
     );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════ the leads */
+
+/**
+ * Every write the Leads screen makes.
+ *
+ * A lead has one owner, `assignedToUserId`, and none of the third-seat or
+ * sales-AM machinery a customer carries — it has never ordered, so there is
+ * no book to protect from a conflict of interest, only a prospect somebody is
+ * or is not working. Reassigning it is therefore this app's own call, checked
+ * the same way as everything else here: holding the Sales Dashboard.
+ */
+
+async function requireLead(leadId: string) {
+  const [lead] = await db.select().from(mbosLeads).where(eq(mbosLeads.id, leadId)).limit(1);
+  return lead ?? null;
+}
+
+/** A lead's name, for a message somebody reads on a phone. */
+function leadLabel(lead: { name: string; companyName: string | null }) {
+  return lead.companyName ? `${lead.name} (${lead.companyName})` : lead.name;
+}
+
+/**
+ * Moving a lead to somebody else.
+ *
+ * Both sides are told, the same rule a customer's account manager change
+ * follows: work has landed on the new owner's list without them asking for
+ * it, and the person who lost it would otherwise find out by noticing it is
+ * gone. `salesmanId` has to hold the `field` app — a lead assigned to
+ * somebody with no handset is a lead nobody will ever see again.
+ */
+export async function reassignLead(input: {
+  leadId: string;
+  salesmanId: string;
+}): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const lead = await requireLead(input.leadId);
+    if (!lead) return err("That lead is no longer here.", "not_found");
+    if (lead.archived) {
+      return err(
+        "That lead is archived. Restore it before moving it to somebody else.",
+        "validation",
+      );
+    }
+    if (lead.assignedToUserId === input.salesmanId) {
+      return ok(undefined, "Already theirs.");
+    }
+
+    const [salesman] = await db
+      .select({ id: users.id, name: users.name, active: users.active })
+      .from(users)
+      .innerJoin(
+        appAccess,
+        and(eq(appAccess.userId, users.id), eq(appAccess.app, "field")),
+      )
+      .where(eq(users.id, input.salesmanId))
+      .limit(1);
+    if (!salesman) {
+      return err(
+        "That person does not hold the Salesman App, so a lead cannot be put on their handset.",
+        "validation",
+      );
+    }
+    if (!salesman.active) {
+      return err(`${salesman.name}'s account is closed.`, "validation");
+    }
+
+    const [previousOwner] = lead.assignedToUserId
+      ? await db
+          .select({ id: users.id, name: users.name })
+          .from(users)
+          .where(eq(users.id, lead.assignedToUserId))
+          .limit(1)
+      : [];
+
+    await db
+      .update(mbosLeads)
+      .set({ assignedToUserId: input.salesmanId, updatedAt: new Date(), updatedById: user.id })
+      .where(eq(mbosLeads.id, input.leadId));
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.lead.reassign",
+      entityType: "mbos_lead",
+      entityId: input.leadId,
+      beforeState: { assignedToUserId: lead.assignedToUserId ?? null } as never,
+      afterState: { assignedToUserId: input.salesmanId } as never,
+    });
+
+    await tell(
+      input.salesmanId,
+      `${leadLabel(lead)} is now yours`,
+      `${user.name} assigned you this lead${lead.city ? ` in ${lead.city}` : ""}. It is on your handset at the next sync.`,
+    );
+    if (previousOwner) {
+      await tell(
+        previousOwner.id,
+        `${leadLabel(lead)} was moved`,
+        `${user.name} reassigned it to ${salesman.name}.`,
+      );
+    }
+
+    refresh();
+    return okVoid(`${leadLabel(lead)} reassigned to ${salesman.name}.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Nudging whoever owns a lead, without waiting for the next 1:1.
+ *
+ * This is a message, not a decision — nothing on the lead changes, so there
+ * is nothing to make a partial-vs-whole distinction over and no audit
+ * before/after worth recording beyond the fact that it was sent.
+ */
+export async function chaseLeadOwner(input: {
+  leadId: string;
+  note?: string;
+}): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const lead = await requireLead(input.leadId);
+    if (!lead) return err("That lead is no longer here.", "not_found");
+    if (lead.archived) {
+      return err("That lead is archived, so there is nobody actively working it.", "validation");
+    }
+    if (!lead.assignedToUserId) {
+      return err("Nobody is working this lead yet — reassign it first.", "validation");
+    }
+
+    const note = input.note?.trim();
+    await tell(
+      lead.assignedToUserId,
+      `Chase — ${leadLabel(lead)}`,
+      note || `${user.name} asked you to follow up on ${leadLabel(lead)}.`,
+    );
+
+    refresh();
+    return okVoid(`Nudged. It reaches their handset on the next sync.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Filing a lead out of the way.
+ *
+ * A manual override of what the nightly sweep does on its own, so it is
+ * reversible the same way: `archived` is a flag, never a delete, and
+ * {@link restoreLead} is the way back. A reason IS required, per the design's
+ * own `askReason(...)` on this exact action — the owner's copy of this lead
+ * is about to stop being chased, and a manager who cannot say why in a
+ * sentence is usually acting on a hunch rather than a decision.
+ */
+export async function archiveLead(input: { leadId: string; reason: string }): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const reason = input.reason.trim();
+    if (!reason) {
+      return err("Say why — this is what a manager reads later.", "validation");
+    }
+
+    const lead = await requireLead(input.leadId);
+    if (!lead) return err("That lead is no longer here.", "not_found");
+    if (lead.archived) return ok(undefined, "Already archived.");
+
+    await db
+      .update(mbosLeads)
+      .set({
+        archived: true,
+        archivedAt: new Date(),
+        updatedAt: new Date(),
+        updatedById: user.id,
+      })
+      .where(eq(mbosLeads.id, input.leadId));
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.lead.archive",
+      entityType: "mbos_lead",
+      entityId: input.leadId,
+      beforeState: { archived: false } as never,
+      afterState: { archived: true, reason } as never,
+    });
+
+    /* A lead vanishing off the working list with no explanation is exactly
+     * the failure this whole app is built to avoid — the owner is told why,
+     * not just that it happened. */
+    if (lead.assignedToUserId) {
+      await tell(
+        lead.assignedToUserId,
+        `${leadLabel(lead)} was archived`,
+        `${user.name} filed it away — ${reason}`,
+      );
+    }
+
+    refresh();
+    return okVoid(`${leadLabel(lead)} archived.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** The way back. */
+export async function restoreLead(input: { leadId: string }): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const lead = await requireLead(input.leadId);
+    if (!lead) return err("That lead is no longer here.", "not_found");
+    if (!lead.archived) return ok(undefined, "Not archived.");
+
+    await db
+      .update(mbosLeads)
+      .set({
+        archived: false,
+        archivedAt: null,
+        updatedAt: new Date(),
+        updatedById: user.id,
+      })
+      .where(eq(mbosLeads.id, input.leadId));
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.lead.restore",
+      entityType: "mbos_lead",
+      entityId: input.leadId,
+      beforeState: { archived: true } as never,
+      afterState: { archived: false } as never,
+    });
+
+    refresh();
+    return okVoid(`${leadLabel(lead)} restored.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════ the visits */
+
+/**
+ * A manager standing behind a visit the phone could not verify.
+ *
+ * Nothing about the visit's own record changes except this — the check-in
+ * fix, the distance, the reason it read as a mismatch are all left exactly as
+ * the handset reported them, because that is the honest account of what the
+ * phone measured. `verified` only ever meant "the phone could confirm this
+ * from where it was standing," never "this visit is real" — a wrong shop pin
+ * or a poor fix says nothing about whether the salesman was there, and a
+ * manager who knows better is allowed to say so.
+ */
+export async function acceptVisit(input: { visitId: string }): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const [visit] = await db
+      .select({
+        id: mbosVisits.id,
+        verified: mbosVisits.verified,
+        salesmanId: mbosVisits.salesmanId,
+      })
+      .from(mbosVisits)
+      .where(eq(mbosVisits.id, input.visitId))
+      .limit(1);
+    if (!visit) return err("That visit is no longer here.", "not_found");
+    if (visit.verified) return ok(undefined, "Already verified.");
+
+    await db
+      .update(mbosVisits)
+      .set({
+        verified: true,
+        acceptedAt: new Date(),
+        acceptedById: user.id,
+        updatedById: user.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(mbosVisits.id, input.visitId));
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.visit.accept",
+      entityType: "mbos_visit",
+      entityId: input.visitId,
+      beforeState: { verified: false } as never,
+      afterState: { verified: true, acceptedById: user.id } as never,
+    });
+
+    refresh();
+    return okVoid("Accepted — marked verified.");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Asking the salesman about a visit, rather than taking the phone's word for
+ * it either way. A required reason, same as archiving a lead: the question
+ * has to be a question, not a bare summons.
+ */
+export async function askAboutVisit(input: {
+  visitId: string;
+  question: string;
+}): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const question = input.question.trim();
+    if (!question) {
+      return err("Say what you want to ask.", "validation");
+    }
+
+    const [visit] = await db
+      .select({ id: mbosVisits.id, salesmanId: mbosVisits.salesmanId })
+      .from(mbosVisits)
+      .where(eq(mbosVisits.id, input.visitId))
+      .limit(1);
+    if (!visit) return err("That visit is no longer here.", "not_found");
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.visit.ask",
+      entityType: "mbos_visit",
+      entityId: input.visitId,
+      afterState: { question } as never,
+    });
+
+    await tell(visit.salesmanId, "A question about a visit", `${user.name} asked: ${question}`);
+
+    refresh();
+    return okVoid("Asked. It reaches their handset on the next sync.");
   } catch (e) {
     return fromThrown(e);
   }

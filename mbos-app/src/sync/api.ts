@@ -210,9 +210,16 @@ export type PullPayload = {
   documents?: unknown[];
   courses?: unknown[];
   leaveBalances?: unknown[];
+  /**
+   * `{ id, onDate, name, scope, universal, updatedAt }`. Only `universal`
+   * rows bind the attendance engine automatically — see `data/attendance.ts`.
+   */
+  holidays?: unknown[];
   approvals?: unknown[];
   /** His own month, scored by the office. Reference only — nothing here writes it. */
   performance?: unknown[];
+  /** His own pay, current month and last. Reference only, same as performance. */
+  salary?: unknown[];
   /**
    * `{ mediaId, transcript }` per voice note the office has written out. It is
    * what releases the recording here — see `sync/media.ts`.
@@ -334,5 +341,13 @@ export async function postPositions(
   return request('/api/mbos/positions', {
     method: 'POST',
     body: JSON.stringify({ positions, deviceId: await deviceId() }),
+  });
+}
+
+/** Where Expo should push to, for this device. `null` clears it — see push.ts. */
+export async function registerPushToken(pushToken: string | null): Promise<{ ok: boolean }> {
+  return request('/api/mbos/push-token', {
+    method: 'POST',
+    body: JSON.stringify({ pushToken }),
   });
 }

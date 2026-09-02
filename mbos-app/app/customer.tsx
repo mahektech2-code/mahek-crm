@@ -3,10 +3,10 @@ import { View, Text, Pressable, ScrollView } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { color as C, HIT, radius, type, weight, tabular, type BadgeTone } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
-import { Badge, Card, HealthPill } from '../src/components/ui/primitives';
+import { Badge, Card, HealthPill, Input, PrimaryButton } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
-import { competitorRecords, customerTimeline, type TimelineEvent } from '../src/data/customers';
+import { competitorRecords, customerTimeline, recordCompetitor, type TimelineEvent } from '../src/data/customers';
 import { inr, isoDate, pretty } from '../src/lib/format';
 import { callNumber, openWhatsApp } from '../src/lib/messaging';
 
@@ -70,8 +70,20 @@ export default function CustomerRecord() {
 
   const [events, setEvents] = React.useState<TimelineEvent[]>([]);
   const [competitors, setCompetitors] = React.useState<Awaited<ReturnType<typeof competitorRecords>>>([]);
+  const [compForm, setCompForm] = React.useState(false);
+  const [comp, setComp] = React.useState({ name: '', rate: '', note: '', credit: '', delivery: '', strengths: '', weaknesses: '' });
+  const [compBusy, setCompBusy] = React.useState(false);
 
   const id = c?.id ?? null;
+
+  const reload = React.useCallback(() => {
+    if (!id) return;
+    void Promise.all([customerTimeline(id, tlFilter), competitorRecords(id)]).then(([t, k]) => {
+      setEvents(t);
+      setCompetitors(k);
+    });
+  }, [id, tlFilter]);
+
   useFocusEffect(
     React.useCallback(() => {
       let live = true;
@@ -86,6 +98,28 @@ export default function CustomerRecord() {
       };
     }, [id, tlFilter]),
   );
+
+  const saveCompetitor = async () => {
+    if (!id) return;
+    if (!comp.name.trim()) return notify('A name is enough to start — who is it?');
+    setCompBusy(true);
+    const rateRupees = Number(comp.rate.replace(/[^\d]/g, ''));
+    await recordCompetitor({
+      customerId: id,
+      competitorName: comp.name.trim(),
+      ratePaise: rateRupees > 0 ? rateRupees * 100 : null,
+      rateNote: comp.note.trim() || null,
+      creditTerms: comp.credit.trim() || null,
+      delivery: comp.delivery.trim() || null,
+      strengths: comp.strengths.trim() || null,
+      weaknesses: comp.weaknesses.trim() || null,
+    });
+    setCompBusy(false);
+    setComp({ name: '', rate: '', note: '', credit: '', delivery: '', strengths: '', weaknesses: '' });
+    setCompForm(false);
+    notify('Noted · ' + comp.name.trim());
+    reload();
+  };
 
   /* A record that has not arrived on this handset yet is said plainly rather
      than rendered as somebody else's figures under a blank name. */
@@ -295,11 +329,58 @@ export default function CustomerRecord() {
         {/* ---- competitors ---- */}
         {pTab === 5 ? (
           <View>
-            <Pressable
-              onPress={() => notify('Name and rate is enough — the rest is optional')}
-              style={{ width: '100%', height: 52, borderRadius: radius.sm, borderWidth: 1, borderStyle: 'dashed', borderColor: C.faint, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={[{ fontSize: 15, color: C.primary }, weight(500)]}>+ Add what you heard</Text>
-            </Pressable>
+            {!compForm ? (
+              <Pressable
+                onPress={() => setCompForm(true)}
+                style={{ width: '100%', height: 52, borderRadius: radius.sm, borderWidth: 1, borderStyle: 'dashed', borderColor: C.faint, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={[{ fontSize: 15, color: C.primary }, weight(500)]}>+ Add what you heard</Text>
+              </Pressable>
+            ) : (
+              <Card style={{ gap: 10 }}>
+                <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>What you heard</Text>
+                <Input
+                  value={comp.name}
+                  onChangeText={(v) => setComp((s) => ({ ...s, name: v }))}
+                  placeholder="Competitor's name"
+                />
+                <Input
+                  value={comp.rate}
+                  onChangeText={(v) => setComp((s) => ({ ...s, rate: v.replace(/[^0-9]/g, '') }))}
+                  keyboardType="number-pad"
+                  placeholder="Rate quoted, ₹ (optional)"
+                />
+                <Input
+                  value={comp.note}
+                  onChangeText={(v) => setComp((s) => ({ ...s, note: v }))}
+                  placeholder="Which product, and any note on the rate"
+                />
+                <Input
+                  value={comp.credit}
+                  onChangeText={(v) => setComp((s) => ({ ...s, credit: v }))}
+                  placeholder="Credit terms they offer (optional)"
+                />
+                <Input
+                  value={comp.strengths}
+                  onChangeText={(v) => setComp((s) => ({ ...s, strengths: v }))}
+                  placeholder="What they are doing well (optional)"
+                />
+                <Input
+                  value={comp.weaknesses}
+                  onChangeText={(v) => setComp((s) => ({ ...s, weaknesses: v }))}
+                  placeholder="Where we can win (optional)"
+                />
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                  <Pressable
+                    onPress={() => setCompForm(false)}
+                    style={{ flex: 1, height: 48, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ fontSize: 15, color: C.muted }}>Cancel</Text>
+                  </Pressable>
+                  <View style={{ flex: 1 }}>
+                    <PrimaryButton label={compBusy ? 'Saving…' : 'Save'} onPress={saveCompetitor} disabled={compBusy} />
+                  </View>
+                </View>
+              </Card>
+            )}
             <Text style={[type.caption, { marginTop: 10 }]}>
               Fill this in from the conversation — a name and a rate is enough to be useful.
             </Text>

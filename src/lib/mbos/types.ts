@@ -53,6 +53,18 @@ export const SYNC_ENTITY_TYPES = [
   "attendance",
   "customer",
   "leave",
+  /**
+   * Asking to work away from the usual beat for several days — a station
+   * visit, a distant market. Goes through the same generic approval channel
+   * as leave and an expense, gated by `mbosApprovalTypeEnum`'s `"tour"`.
+   */
+  "tour",
+  /**
+   * What was heard about a competitor at a shop — captured on the handset
+   * since the app shipped, and never queued: `mbos_competitor_records` had
+   * a table and a read query and no write path anywhere.
+   */
+  "competitor",
   "approval",
   /**
    * The salesman's answer to a proposed day: agreed, or refused with a reason
@@ -213,6 +225,13 @@ export type PullDelta = {
    */
   leaveBalances: unknown[];
   /**
+   * `{ id, onDate, name, scope, universal, updatedAt }`. Only `universal`
+   * rows (scope was null on the server) bind the local attendance engine —
+   * a regionally-scoped one is shown but not auto-applied, since the
+   * handset has no reliable way to match free-text scope to its own beat.
+   */
+  holidays: unknown[];
+  /**
    * Requests this salesman made and what the office decided about them. The
    * handset has applied this channel since it was written and the server never
    * sent one, so every approval a salesman asked for read Pending for ever —
@@ -231,6 +250,13 @@ export type PullDelta = {
    * credit limit and the outstanding balance already follow.
    */
   performance: unknown[];
+  /**
+   * `{ period, employeeCode, employeeStatus, netSalaryPaise, conveyancePaise,
+   * otherSalaryPaise, pfEsicApplicable, dateOfJoining, daysWorked,
+   * daysOnLeave, reimbursedPaise }`, current month and last. Read-only, the
+   * same as `performance` — this app writes no pay figure anywhere.
+   */
+  salary: unknown[];
 };
 
 export type SyncResponse = {

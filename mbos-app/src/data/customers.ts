@@ -1,6 +1,6 @@
 import { all, newId, one } from '../db';
 import { enqueue } from '../sync/queue';
-import { insertLocal } from './write';
+import { insertAndQueue, insertLocal, stamp } from './write';
 
 /**
  * Reading the book.
@@ -44,6 +44,8 @@ export type Customer = {
   thirdParty: number;
   /** JSON: who invoices this shop instead. `[]` on a direct customer. */
   distributors: string | null;
+  /** The tier `price_list` is keyed on for this account — "DEALER", and so on. */
+  priceTag: string | null;
   /** When this row was last refreshed from MahekOne. Shown wherever a
    *  decision hangs on the figures — credit limit and outstanding above all. */
   lastSyncedAt: number;
@@ -159,6 +161,45 @@ export async function competitorRecords(customerId: string) {
   }>('SELECT * FROM competitor_records WHERE customerId = ? ORDER BY capturedAt DESC', [customerId]);
 }
 
+/**
+ * Writing down what was heard.
+ *
+ * The button above this used to toast "Name and rate is enough" and write
+ * nothing — the form the salesman filled in went nowhere. This is the write
+ * path that button was always missing.
+ */
+export async function recordCompetitor(args: {
+  customerId: string;
+  visitId?: string | null;
+  competitorName: string;
+  ratePaise: number | null;
+  rateNote?: string | null;
+  creditTerms?: string | null;
+  delivery?: string | null;
+  strengths?: string | null;
+  weaknesses?: string | null;
+}): Promise<string> {
+  const base = await stamp('competitor');
+  return insertAndQueue({
+    table: 'competitor_records',
+    entityType: 'competitor',
+    dependsOn: args.visitId ? [args.visitId] : [],
+    row: {
+      ...base,
+      customerId: args.customerId,
+      visitId: args.visitId ?? null,
+      competitorName: args.competitorName,
+      ratePaise: args.ratePaise,
+      rateNote: args.rateNote ?? null,
+      creditTerms: args.creditTerms ?? null,
+      delivery: args.delivery ?? null,
+      strengths: args.strengths ?? null,
+      weaknesses: args.weaknesses ?? null,
+      capturedAt: Date.now(),
+    },
+  });
+}
+
 /** Products this customer has actually bought, most-ordered first. */
 export async function frequentProducts(customerId: string, limit = 6) {
   return all<{ id: string; name: string; packSize: string | null; cansPerBox: number | null; sellingPricePaise: number | null; n: number }>(
@@ -181,6 +222,21 @@ export async function searchProducts(query: string, limit = 20) {
       WHERE active = 1 AND (lower(name) LIKE ? OR lower(COALESCE(formulation,'')) LIKE ? OR lower(COALESCE(brand,'')) LIKE ?)
       ORDER BY name LIMIT ?`,
     [like, like, like, limit],
+  );
+}
+
+/**
+ * Full product records for a set of ids, for "reorder the last order" —
+ * `order_lines` keeps only a name and a quantity, never the packing a fresh
+ * line needs to derive boxes and litres from.
+ */
+export async function productsByIds(ids: string[]) {
+  if (!ids.length) return [];
+  const marks = ids.map(() => '?').join(',');
+  return all<{ id: string; name: string; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null; formulation: string | null; brand: string | null }>(
+    // Retired since the last order is not re-offered silently.
+    `SELECT * FROM products WHERE active = 1 AND id IN (${marks})`,
+    ids,
   );
 }
 

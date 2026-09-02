@@ -7,6 +7,7 @@ import { autoCloseMissedCheckouts } from '../data/attendance';
 import { closeOpenVisits } from '../data/visits';
 import { escalateOverdue } from '../data/tasks';
 import { getConfig } from '../data/config';
+import { registerForPush } from '../native/push';
 
 /**
  * Starting up.
@@ -48,6 +49,7 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
       if (existing) {
         startBackgroundSync();
         void runDayBoundaryWork(existing.user.id);
+        void registerForPush();
       }
     })();
 
@@ -63,8 +65,12 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
       session,
       setSession: (s) => {
         setSession(s);
-        if (s) startBackgroundSync();
-        else stopBackgroundSync();
+        if (s) {
+          startBackgroundSync();
+          void registerForPush();
+        } else {
+          stopBackgroundSync();
+        }
       },
     }),
     [ready, session],

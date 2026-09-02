@@ -218,6 +218,71 @@ export async function applyForLeave(args: {
   return { ok: true, id, unpaidSentence: after.unpaidSentence || null };
 }
 
+/* --------------------------------------------------------------- tours */
+
+export type Tour = {
+  id: string; userId: string; startDate: string; endDate: string;
+  cities: string; purpose: string | null; estimatedCostPaise: number | null;
+  notes: string | null; state: string; decisionNote: string | null; syncState: string;
+};
+
+export async function listTours(): Promise<Tour[]> {
+  return all<Tour>('SELECT * FROM tours ORDER BY startDate DESC');
+}
+
+/**
+ * Asking to work away from the usual beat for several days.
+ *
+ * The same shape as `applyForLeave` one level up: the record is written
+ * first, pending, and `raiseApproval` is the separate item that actually
+ * asks the office to decide it — the sync dispatcher refuses to let a
+ * handset approve its own request, so the two have to stay two writes.
+ */
+export async function requestTour(args: {
+  userId: string;
+  startDate: string;
+  endDate: string;
+  cities: string[];
+  purpose: string;
+  estimatedCostPaise: number | null;
+  notes?: string;
+}): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
+  if (args.endDate < args.startDate) {
+    return { ok: false, message: 'That tour ends before it starts.' };
+  }
+
+  const base = await stamp('tour');
+  const id = await insertAndQueue({
+    table: 'tours',
+    entityType: 'tour',
+    // Paperwork, done wherever he happens to be sitting — see `journey.ts`'s
+    // `answer()` for the same reasoning on agreeing a proposed day.
+    location: false,
+    row: {
+      ...base,
+      userId: args.userId,
+      startDate: args.startDate,
+      endDate: args.endDate,
+      cities: JSON.stringify(args.cities),
+      purpose: args.purpose,
+      estimatedCostPaise: args.estimatedCostPaise,
+      notes: args.notes ?? null,
+      state: 'Pending',
+    },
+    payloadExtras: { cities: args.cities },
+  });
+
+  await raiseApproval({
+    type: 'tour',
+    subjectType: 'tour',
+    subjectId: id,
+    reason: args.purpose,
+    deviceId: base.deviceId,
+  });
+
+  return { ok: true, id };
+}
+
 export async function withdrawLeave(id: string): Promise<void> {
   await updateAndQueue({ table: 'leave_requests', entityType: 'leave', id, patch: { state: 'Withdrawn' } });
 }

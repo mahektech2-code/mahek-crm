@@ -1,65 +1,69 @@
 import Link from "next/link";
-import { money } from "@/lib/format";
-import { fieldTeam, gpsGap, territory } from "@/lib/services/sales-service";
-import {
-  Banner,
-  Cell,
-  Empty,
-  HeadCell,
-  MetricRow,
-  Pill,
-  Row,
-  ScreenHeader,
-  Table,
-} from "../parts";
-import {
-  plural,
-} from "../words";
+import { cx } from "@/components/ui/primitives";
+import { today } from "@/lib/recompute";
+import { gpsGap, teamByRegion } from "@/lib/services/sales-service";
+import { Banner, MetricRow, Pill, ScreenHeader } from "../parts";
+import { plural } from "../words";
 
 export const metadata = { title: "Territory — Sales Dashboard — MahekOne" };
 
+const NO_REGION = "No region set";
+
 /**
- * Which regions, cities and beats belong to whom.
+ * Which regions each salesman covers, and who they report to.
  *
- * Grouped rather than listed. A territory screen answers "who covers Nagpur"
- * and "how much of the book has nobody", and a thousand customer rows answers
- * neither — the customer list is a click away on each salesman's own record.
- *
- * The GPS column is the one that costs something. Route optimisation, the
- * geofence check and the "were you actually there" verdict all read a
- * coordinate and all answer "cannot tell" without one — silently, and in the
- * safe direction, which is exactly why nobody notices. A count per beat is
- * what turns that into a decision somebody can take.
+ * From `MBOS Manager Console.dc.html`'s Territory screen: cards grouped by
+ * where each person works, with a reporting-lines section above them. The
+ * design groups by "state" with a direct salesman→manager card — this schema
+ * has neither a `state` field (only `region`/`city`/`beat` on `customers`)
+ * nor a per-territory manager assignment, so the card is built from what IS
+ * real: `region` (a salesman has none of his own, only a book of customers
+ * that each carry one — this is the region the MOST of his book sits in) and
+ * `users.reports_to_id`, the same general reporting line
+ * `access-control.ts` already reads for scope. Nothing here is invented to
+ * fill the design's shape; the shape is adapted to what the data actually
+ * says.
  */
 export default async function Page() {
-  const [rows, gap, team] = await Promise.all([territory(), gpsGap(), fieldTeam()]);
+  const day = await today();
+  const [team, gap] = await Promise.all([teamByRegion(day), gpsGap()]);
 
-  const unassigned = rows.filter((r) => !r.salesmanId);
-  const regions = new Set(rows.map((r) => r.region ?? "—"));
-  const cities = new Set(rows.map((r) => r.city));
-  const shops = rows.reduce((n, r) => n + r.shops, 0);
-
-  /* Who covers what, because that is the question the screen is opened with. */
-  const byPerson = new Map<string, { name: string; id: string; cities: Set<string>; shops: number }>();
-  for (const r of rows) {
-    if (!r.salesmanId) continue;
-    const at = byPerson.get(r.salesmanId) ?? {
-      name: r.salesmanName ?? "—",
-      id: r.salesmanId,
-      cities: new Set<string>(),
-      shops: 0,
-    };
-    at.cities.add(r.city);
-    at.shops += r.shops;
-    byPerson.set(r.salesmanId, at);
+  const byRegion = new Map<string, typeof team>();
+  for (const t of team) {
+    const key = t.region ?? NO_REGION;
+    const at = byRegion.get(key) ?? [];
+    at.push(t);
+    byRegion.set(key, at);
   }
-  const covering = team.filter((t) => t.active && !byPerson.has(t.id));
+  const regions = [...byRegion.entries()].sort((a, b) => {
+    if (a[0] === NO_REGION) return 1;
+    if (b[0] === NO_REGION) return -1;
+    return b[1].length - a[1].length || a[0].localeCompare(b[0]);
+  });
+
+  const allCities = new Set(team.flatMap((t) => t.cities));
+  const covered = team.filter((t) => t.shopCount > 0);
+  const cityCounts = covered.map((t) => t.cities.length);
+
+  const byManager = new Map<string, { name: string; regions: Set<string>; count: number }>();
+  for (const t of team) {
+    if (!t.reportsToId) continue;
+    const at = byManager.get(t.reportsToId) ?? {
+      name: t.reportsToName ?? "—",
+      regions: new Set<string>(),
+      count: 0,
+    };
+    at.count += 1;
+    if (t.region) at.regions.add(t.region);
+    byManager.set(t.reportsToId, at);
+  }
+  const managers = [...byManager.values()].sort((a, b) => b.count - a.count);
 
   return (
     <div className="p-6">
       <ScreenHeader
         title="Territory"
-        subtitle="Which regions, cities and beats belong to whom. Whose book a shop is in decides who is credited for its orders and whose figures it counts toward, so this is the map behind every other number in the console."
+        subtitle="Which regions each salesman covers, and who they report to."
       />
 
       {gap.missing > 0 ? (
@@ -70,52 +74,37 @@ export default async function Page() {
         />
       ) : null}
 
-      {covering.length ? (
-        <Banner
-          tone="warn"
-          title={`${plural(covering.length, "salesman", "salesmen")} ${covering.length === 1 ? "covers" : "cover"} nothing`}
-          body={`${covering.map((c) => c.name).join(", ")} — no shop names them as its sales account manager, so their handset opens on an empty book.`}
-        />
-      ) : null}
-
       <MetricRow
         metrics={[
-          { label: "Shops", value: String(shops) },
-          { label: "Cities", value: String(cities.size) },
-          { label: "Regions", value: String(regions.size) },
+          { label: "Regions covered", value: String(regions.filter(([r]) => r !== NO_REGION).length) },
+          { label: "Cities allocated", value: String(allCities.size) },
           {
-            label: "In nobody's book",
-            value: String(unassigned.reduce((n, r) => n + r.shops, 0)),
-            tone: unassigned.length ? "warn" : undefined,
+            label: "Salesmen",
+            value: String(team.length),
+            sub: managers.length ? `Across ${plural(managers.length, "reporting line")}` : undefined,
           },
           {
-            label: "Without a pin",
-            value: String(gap.missing),
-            tone: gap.missing ? "warn" : undefined,
+            label: "Cities per salesman",
+            value: cityCounts.length ? `${Math.min(...cityCounts)}–${Math.max(...cityCounts)}` : "—",
+            sub: "Set per person, not per region",
           },
         ]}
       />
 
-      {byPerson.size ? (
+      {managers.length ? (
         <section className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-4">
-          <div className="mb-2.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-            Who covers what
+          <div className="mb-3 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+            Reporting lines
           </div>
-          <div className="flex flex-wrap gap-x-8 gap-y-3">
-            {[...byPerson.values()].map((p) => (
-              <span key={p.id} className="block">
-                <Link
-                  href={`/sales/people/${p.id}`}
-                  className="block text-[13px] font-medium text-ink no-underline hover:underline"
-                >
-                  {p.name}
-                </Link>
-                <span className="block text-lg font-semibold text-ink tabular-nums">
-                  {p.shops}
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {managers.map((m) => (
+              <span key={m.name} className="block min-w-0">
+                <span className="block text-[15px] font-medium text-ink">{m.name}</span>
+                <span className="mt-0.5 block text-[13px] text-muted">
+                  {plural(m.count, "salesman", "salesmen")}
                 </span>
-                <span className="block text-[12px] text-muted">
-                  {[...p.cities].slice(0, 3).join(", ")}
-                  {p.cities.size > 3 ? ` +${p.cities.size - 3}` : ""}
+                <span className="block text-[13px] text-muted">
+                  {m.regions.size ? [...m.regions].join(" · ") : "No region yet"}
                 </span>
               </span>
             ))}
@@ -123,70 +112,71 @@ export default async function Page() {
         </section>
       ) : null}
 
-      {rows.length === 0 ? (
-        <Empty
-          title="No territory to show"
-          body="A territory is built from the customer records — their region, city and beat, and whose book they are in. Nothing has been imported or assigned yet."
-        />
+      {regions.length === 0 ? (
+        <div className="rounded-[6px] border border-line bg-surface px-6 py-14 text-center">
+          <div className="text-lg font-semibold text-ink">Nobody holds the Salesman App</div>
+          <p className="mx-auto mt-1.5 max-w-[480px] text-[15px] text-pretty text-muted">
+            Territory is built from who holds the `field` app and the customers named against
+            them. Grant it on the Access screen in the Admin Console.
+          </p>
+        </div>
       ) : (
-        <Table
-          minWidth={1080}
-          head={
-            <>
-              <HeadCell width={180}>Region</HeadCell>
-              <HeadCell width={200}>City</HeadCell>
-              <HeadCell width={220}>Beat</HeadCell>
-              <HeadCell width={190}>Salesman</HeadCell>
-              <HeadCell align="right" width={100}>Shops</HeadCell>
-              <HeadCell width={140}>Pins</HeadCell>
-              <HeadCell align="right" width={150}>Owing</HeadCell>
-            </>
-          }
-        >
-          {rows.map((r, i) => (
-            <Row key={`${r.region}:${r.city}:${r.beat}:${r.salesmanId}`} striped={i % 2 === 1}>
-              <Cell truncate={180}>
-                {r.region ?? <span className="text-muted">Not set</span>}
-              </Cell>
-              <Cell truncate={200}>{r.city}</Cell>
-              <Cell truncate={220}>
-                {r.beat ?? <span className="text-muted">No beat</span>}
-              </Cell>
-              <Cell truncate={190}>
-                {r.salesmanId ? (
-                  <Link
-                    href={`/sales/people/${r.salesmanId}`}
-                    className="no-underline hover:underline"
+        <div style={{ columns: "340px", columnGap: "16px" }}>
+          {regions.map(([region, men]) => (
+            <div
+              key={region}
+              className="mb-4 overflow-hidden rounded-[6px] border border-line bg-surface"
+              style={{ breakInside: "avoid" }}
+            >
+              <div className="border-b border-divider px-4 py-3.5">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-[17px] font-semibold text-ink">{region}</span>
+                </div>
+                <div className="mt-0.5 text-[13px] text-muted">
+                  {plural(men.length, "salesman", "salesmen")} ·{" "}
+                  {plural(new Set(men.flatMap((m) => m.cities)).size, "city", "cities")}
+                </div>
+              </div>
+              {men.map((p) => (
+                <Link
+                  key={p.salesmanId}
+                  href={`/sales/people/${p.salesmanId}`}
+                  className="flex items-center gap-3 border-t border-divider px-4 py-3 no-underline first:border-t-0 hover:bg-canvas hover:no-underline"
+                >
+                  <span
+                    className={cx(
+                      "flex h-7 w-7 flex-none items-center justify-center rounded-full text-[11px] font-semibold",
+                      p.checkedInToday ? "bg-brand-soft text-[#5223E0]" : "bg-divider text-muted",
+                    )}
                   >
-                    {r.salesmanName}
-                  </Link>
-                ) : (
-                  <span className="text-warn-ink">Nobody</span>
-                )}
-              </Cell>
-              <Cell align="right">{r.shops}</Cell>
-              <Cell>
-                {r.withGps === r.shops ? (
-                  <Pill tone="success">All</Pill>
-                ) : r.withGps === 0 ? (
-                  <Pill tone="warn">None</Pill>
-                ) : (
-                  <span className="text-[13px] tabular-nums">
-                    {r.withGps} of {r.shops}
+                    {p.initials}
                   </span>
-                )}
-              </Cell>
-              <Cell align="right">
-                {Number(r.outstandingPaise) ? (
-                  money(r.outstandingPaise)
-                ) : (
-                  <span className="text-muted">—</span>
-                )}
-              </Cell>
-            </Row>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-ink">{p.salesmanName}</span>
+                      <Pill tone={p.onLeaveToday ? "neutral" : p.checkedInToday ? "success" : "danger"}>
+                        {p.onLeaveToday ? "On leave" : p.checkedInToday ? "In the field" : "Not started"}
+                      </Pill>
+                    </span>
+                    <span className="mt-0.5 block truncate text-[12px] text-muted">
+                      {p.cities.length ? p.cities.join(" · ") : "No customers named yet"}
+                    </span>
+                  </span>
+                  <span className="flex-none text-[12px] text-muted">
+                    {plural(p.cities.length, "city", "cities")}
+                  </span>
+                </Link>
+              ))}
+            </div>
           ))}
-        </Table>
+        </div>
       )}
+
+      <p className="mt-4 max-w-[660px] text-[13px] leading-[19px] text-muted">
+        A region is where most of a salesman&rsquo;s own book sits, not a territory assigned to
+        them directly — a shop moved to a new sales account manager moves the count here on the
+        next sync, without anybody redrawing a map.
+      </p>
     </div>
   );
 }

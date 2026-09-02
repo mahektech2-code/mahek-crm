@@ -4,7 +4,7 @@ import { insertLocal, stamp } from './write';
 import { getConfig } from './config';
 import { assessOrder } from '../engines/credit';
 import { canValueOrders, derivedQuantities, lineValuePaise, type PriceSource } from '../engines/order';
-import { applySchemes } from '../engines/schemes';
+import { applySchemes, type Predicate, type Scheme } from '../engines/schemes';
 import { isoDate } from '../lib/format';
 
 /**
@@ -61,6 +61,41 @@ export type OrderAssessment = {
  * the delivery party here would assess an order against a blank account and
  * wave everything through.
  */
+/**
+ * A stored scheme row, into the shape `applySchemes` actually reads.
+ *
+ * The server table has exactly two JSON columns — `eligibility` and
+ * `benefit` — and the engine wants five fields (`level`, `when`, `benefit`,
+ * `priority`, `stackable`). `benefit` maps straight across; the other four
+ * live inside `eligibility`, which is `{ level?, priority?, stackable?,
+ * when }`. This used to spread both columns flat onto one object instead of
+ * nesting them, so `when` was always `undefined` and `matches()` would throw
+ * the first time a real scheme existed to test it against — dormant only
+ * because `mbos_schemes` had always been empty.
+ *
+ * A scheme with no `when` at all fails CLOSED (`{ any: [] }`, never
+ * eligible) rather than open — an empty predicate reading as "matches
+ * everything" would hand out a discount nobody asked for the moment
+ * somebody left the field blank.
+ */
+function parseScheme(row: { id: string; name: string; eligibility: string; benefit: string }): Scheme {
+  const elig = JSON.parse(row.eligibility) as {
+    level?: 'line' | 'order';
+    priority?: number;
+    stackable?: boolean;
+    when?: Predicate;
+  };
+  return {
+    id: row.id,
+    name: row.name,
+    level: elig.level ?? 'line',
+    priority: elig.priority ?? 0,
+    stackable: elig.stackable ?? false,
+    when: elig.when ?? { any: [] },
+    benefit: JSON.parse(row.benefit),
+  };
+}
+
 export async function assessCart(billingCustomerId: string, lines: CartLine[]): Promise<OrderAssessment> {
   const customer = await one<{
     creditBlocked: number; creditBlockReason: string | null;
@@ -92,9 +127,7 @@ export async function assessCart(billingCustomerId: string, lines: CartLine[]): 
   const schemeResult = applySchemes(
     priced.map((p) => ({ skuId: p.line.productId, cans: p.cans, valuePaise: p.valuePaise })),
     customer?.customerType ?? null,
-    schemes.map((s) => JSON.parse(s.benefit).level
-      ? { id: s.id, name: s.name, ...JSON.parse(s.eligibility), ...JSON.parse(s.benefit) }
-      : { id: s.id, name: s.name, ...JSON.parse(s.eligibility), ...JSON.parse(s.benefit) }),
+    schemes.map((s) => parseScheme(s)),
   );
   for (const schemed of schemeResult.lines) {
     const target = priced.find((p) => p.line.productId === schemed.line.skuId);

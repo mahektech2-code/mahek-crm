@@ -61,7 +61,7 @@ import {
 export type Row = {
   id: string;
   name: string;
-  contactPerson: string;
+  contactPerson: string | null;
   phone: string;
   city: string;
   ownerId: string | null;
@@ -1926,7 +1926,7 @@ function CustomerFormBody({
             placeholder="As it appears on the bill"
           />
         </Field>
-        <Field label="Contact person · required">
+        <Field label="Contact person">
           <Input
             value={values.contactPerson ?? ""}
             onChange={set("contactPerson")}

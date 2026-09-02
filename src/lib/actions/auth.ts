@@ -1,21 +1,20 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, desc, eq, gt, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { appAccess, passwordResets, sessions, users } from "@/db/schema";
+import { appAccess, otpCodes, passwordResets, sessions, users } from "@/db/schema";
 import {
   createSession,
   destroySession,
   getCurrentUser,
   hashPassword,
   requireManager,
-  verifyPassword,
 } from "@/lib/auth";
 import { listUserApps, recordSignIn, recordSignOut } from "@/lib/access";
-import { getApp, APP_IDS, type AppId } from "@/lib/apps";
-import { randomUUID } from "node:crypto";
+import { getApp, type AppId } from "@/lib/apps";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { auditLog } from "@/db/schema";
 import {
   err as fail,
@@ -31,6 +30,9 @@ import {
   newResetToken,
   RESET_TTL_MINUTES,
 } from "@/lib/password-reset";
+import { getConfig } from "@/lib/config/store";
+import { hashOtpCode, maskPhone, newOtpCode, normalisePhone } from "@/lib/otp";
+import { sendOtpCode, type OtpChannel } from "@/lib/otp-provider";
 
 const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -50,59 +52,154 @@ async function audit(
     afterState: detail ? ({ detail } as never) : null,
   });
 }
-import { initialsOf } from "@/lib/format";
 
 /* ---------------------------------------------------------------------------
- * One sign-in for all of MahekOne. Where it lands you depends on what you can
- * open: one app goes straight in, several go to the launcher.
+ * One sign-in for all of MahekOne, and no password on the web any more — a
+ * work number and a code sent to it is the whole credential. Where it lands
+ * you depends on what you can open: one app goes straight in, several go to
+ * the launcher.
+ *
+ * `users.password_hash` still exists and is untouched: MBOS, the field
+ * salesman handset app, pairs with it over its own API and that contract
+ * cannot change from here — see AGENTS.md. This file only changes how a
+ * BROWSER signs in.
  * ------------------------------------------------------------------------- */
 
-const credentials = z.object({
-  identifier: z
-    .string()
-    .trim()
-    .min(1, "Enter your work number or email address."),
-  password: z.string().min(1, "Enter your password."),
+export type OtpStep = { phone: string; masked: string; channel: OtpChannel };
+
+const phoneRequest = z.object({
+  phone: z.string().trim().min(1, "Enter your work number."),
+  channel: z.enum(["sms", "whatsapp"]),
+});
+
+/**
+ * Same response whether or not the number has an account, for the same
+ * reason `requestPasswordReset` never says: this form must not become a way
+ * to find out who else works here.
+ */
+const SENT_MESSAGE = "If that number has an account, a code is on its way.";
+
+export async function requestOtp(
+  _prev: ActionResult<OtpStep> | null,
+  formData: FormData,
+): Promise<ActionResult<OtpStep>> {
+  const parsed = phoneRequest.safeParse({
+    phone: formData.get("phone"),
+    channel: formData.get("channel"),
+  });
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+
+  const phone = normalisePhone(parsed.data.phone);
+  if (!phone) return fail("Enter a valid 10-digit work number.");
+  const { channel } = parsed.data;
+  const step: OtpStep = { phone, masked: maskPhone(phone), channel };
+
+  const [user] = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
+  if (!user || !user.active) return ok2(step, SENT_MESSAGE);
+
+  const config = await getConfig();
+  const windowStart = new Date(
+    Date.now() - config["auth.otp.requestWindowMinutes"] * 60_000,
+  );
+  const recent = await db
+    .select({ createdAt: otpCodes.createdAt })
+    .from(otpCodes)
+    .where(and(eq(otpCodes.userId, user.id), gt(otpCodes.createdAt, windowStart)))
+    .orderBy(desc(otpCodes.createdAt));
+
+  if (recent.length >= config["auth.otp.maxRequestsPerWindow"]) {
+    return fail(
+      `Too many codes requested for this number. Try again in ${config["auth.otp.requestWindowMinutes"]} minutes.`,
+    );
+  }
+  const secondsSinceLast = recent[0]
+    ? (Date.now() - recent[0].createdAt.getTime()) / 1000
+    : Infinity;
+  if (secondsSinceLast < config["auth.otp.resendCooldownSeconds"]) {
+    const wait = Math.ceil(config["auth.otp.resendCooldownSeconds"] - secondsSinceLast);
+    return fail(`Wait ${wait}s before requesting another code.`);
+  }
+
+  const code = newOtpCode(config["auth.otp.codeLength"]);
+  await db.insert(otpCodes).values({
+    id: newId("otp"),
+    userId: user.id,
+    codeHash: hashOtpCode(code),
+    channel,
+    expiresAt: new Date(Date.now() + config["auth.otp.ttlMinutes"] * 60_000),
+  });
+
+  const outcome = await sendOtpCode(phone, channel, code);
+  return ok2(
+    step,
+    SENT_MESSAGE,
+    outcome.delivered
+      ? undefined
+      : [
+          outcome.reason === "not_configured"
+            ? "No SMS/WhatsApp provider is configured, so the code was written to the server log instead of sent."
+            : `The code could not be sent: ${outcome.reason === "not_ready" || outcome.reason === "failed" ? outcome.detail : "unknown error"}`,
+        ],
+  );
+}
+
+const otpVerification = z.object({
+  phone: z.string().trim().min(1),
+  code: z.string().trim().min(1, "Enter the code you were sent."),
   remember: z.boolean().default(true),
 });
 
-/** Telecallers know their phone number; office staff know their email. */
-function normalise(identifier: string) {
-  const digits = identifier.replace(/\D/g, "");
-  return {
-    email: identifier.toLowerCase(),
-    phone: digits.length >= 10 ? digits.slice(-10) : null,
-  };
-}
+const WRONG_CODE = "That code was not right, or it has expired. Request a new one.";
 
-export async function signIn(
+export async function verifyOtp(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
-  const parsed = credentials.safeParse({
-    identifier: formData.get("identifier"),
-    password: formData.get("password"),
+  const parsed = otpVerification.safeParse({
+    phone: formData.get("phone"),
+    code: formData.get("code"),
     remember: formData.get("remember") === "on",
   });
-  if (!parsed.success) {
-    return fail(parsed.error.issues[0].message);
-  }
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
 
-  const { email, phone } = normalise(parsed.data.identifier);
+  const phone = normalisePhone(parsed.data.phone);
+  if (!phone) return fail(WRONG_CODE);
 
-  const [user] = await db
+  const [user] = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
+  if (!user || !user.active) return fail(WRONG_CODE);
+
+  const config = await getConfig();
+  const [row] = await db
     .select()
-    .from(users)
-    .where(phone ? or(eq(users.email, email), eq(users.phone, phone)) : eq(users.email, email))
+    .from(otpCodes)
+    .where(
+      and(
+        eq(otpCodes.userId, user.id),
+        isNull(otpCodes.consumedAt),
+        gt(otpCodes.expiresAt, new Date()),
+      ),
+    )
+    .orderBy(desc(otpCodes.createdAt))
     .limit(1);
 
-  // Same message either way — never reveal which half was wrong.
-  const wrong =
-    "That did not match an account. Check the spelling, or ask your manager to reset it.";
-  if (!user || !user.active) return fail(wrong);
-  if (!(await verifyPassword(parsed.data.password, user.passwordHash))) {
-    return fail(wrong);
+  if (!row || row.attempts >= config["auth.otp.maxVerifyAttempts"]) {
+    return fail(WRONG_CODE);
   }
+
+  const submitted = Buffer.from(hashOtpCode(parsed.data.code.replace(/\D/g, "")), "hex");
+  const stored = Buffer.from(row.codeHash, "hex");
+  const matches =
+    submitted.length === stored.length && timingSafeEqual(submitted, stored);
+
+  if (!matches) {
+    await db
+      .update(otpCodes)
+      .set({ attempts: row.attempts + 1 })
+      .where(eq(otpCodes.id, row.id));
+    return fail(WRONG_CODE);
+  }
+
+  await db.update(otpCodes).set({ consumedAt: new Date() }).where(eq(otpCodes.id, row.id));
 
   await createSession(user.id, parsed.data.remember);
   await recordSignIn(user.id, newId("att"));
@@ -276,73 +373,6 @@ export async function resetPassword(
 }
 
 /* ------------------------------------------------------------- accounts */
-
-const newUser = z.object({
-  name: z.string().trim().min(2, "Enter the person's full name."),
-  email: z.string().trim().toLowerCase().email("Enter a valid email address."),
-  phone: z
-    .string()
-    .trim()
-    .optional()
-    .transform((v) => (v ? v.replace(/\D/g, "").slice(-10) : undefined)),
-  password: z.string().min(8, "Passwords must be at least 8 characters."),
-  role: z.enum(["telecaller", "manager"]),
-  apps: z.array(z.enum(APP_IDS)).min(1, "Give them at least one app."),
-});
-
-/** Managers create accounts — there is no self-signup on an internal tool. */
-export async function createTeamMember(
-  _prev: ActionResult | null,
-  formData: FormData,
-): Promise<ActionResult> {
-  let manager;
-  try {
-    manager = await requireManager();
-  } catch {
-    return fail("Only a manager can add team members.");
-  }
-
-  const parsed = newUser.safeParse({
-    name: formData.get("name"),
-    email: formData.get("email"),
-    phone: formData.get("phone"),
-    password: formData.get("password"),
-    role: formData.get("role"),
-    apps: formData.getAll("apps"),
-  });
-  if (!parsed.success) return fail(parsed.error.issues[0].message);
-
-  const existing = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.email, parsed.data.email))
-    .limit(1);
-  if (existing.length) return fail("Somebody already uses that email address.");
-
-  const id = newId("usr");
-  await db.transaction(async (tx) => {
-    await tx.insert(users).values({
-      id,
-      name: parsed.data.name,
-      email: parsed.data.email,
-      phone: parsed.data.phone || null,
-      passwordHash: await hashPassword(parsed.data.password),
-      role: parsed.data.role,
-      initials: initialsOf(parsed.data.name),
-    });
-    await tx.insert(appAccess).values(
-      parsed.data.apps.map((app) => ({
-        id: newId("acc"),
-        userId: id,
-        app,
-        grantedById: manager.id,
-      })),
-    );
-  });
-
-  await audit(manager, "create", "user", id, parsed.data.name);
-  return ok(`${parsed.data.name} can now sign in.`);
-}
 
 export async function setAppAccess(
   userId: string,
