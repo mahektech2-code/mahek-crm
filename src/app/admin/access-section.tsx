@@ -338,7 +338,7 @@ function PersonCells({ row, onOpen }: { row: AccessRow; onOpen: () => void }) {
       <Td className="align-top font-medium text-ink">
         <button
           onClick={onOpen}
-          className="cursor-pointer border-0 bg-transparent p-0 text-sm font-medium text-ink underline-offset-2 hover:underline"
+          className="cursor-pointer border-0 bg-transparent p-0 text-sm font-medium text-ink hover:text-brand"
         >
           {row.name}
         </button>
@@ -956,7 +956,7 @@ function AppBlock({
         {on && !whole ? (
           <button
             onClick={() => onChange(all)}
-            className="cursor-pointer border-0 bg-transparent p-0 text-[11px] font-medium text-[#5223E0] underline-offset-2 hover:underline"
+            className="cursor-pointer border-0 bg-transparent p-0 text-[11px] font-medium text-brand-hover hover:text-brand"
           >
             all
           </button>

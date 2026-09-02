@@ -146,7 +146,7 @@ export default async function Page({
               <Cell truncate={170}>
                 <Link
                   href={`/sales/people/${v.salesmanId}`}
-                  className="no-underline hover:underline"
+                  className="no-underline"
                 >
                   {v.salesmanName}
                 </Link>
@@ -199,7 +199,7 @@ export default async function Page({
                         href={`https://www.google.com/maps?q=${v.checkInLat},${v.checkInLng}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-brand no-underline hover:underline"
+                        className="text-brand no-underline"
                         title={
                           v.checkInAccuracyM != null
                             ? `Accurate to about ${v.checkInAccuracyM} m`
@@ -214,7 +214,7 @@ export default async function Page({
                         href={`https://www.google.com/maps?q=${v.checkOutLat},${v.checkOutLng}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-brand no-underline hover:underline"
+                        className="text-brand no-underline"
                         title={
                           v.checkOutAccuracyM != null
                             ? `Accurate to about ${v.checkOutAccuracyM} m`

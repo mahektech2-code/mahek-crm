@@ -391,7 +391,7 @@ function BillBreakdown({ row }: { row: OutstandingCustomer }) {
         </div>
         <Link
           href={`/accounts/ledger?customer=${row.customerId}`}
-          className="text-[13px] text-brand no-underline hover:underline"
+          className="text-[13px] text-brand no-underline"
         >
           Open the full account →
         </Link>

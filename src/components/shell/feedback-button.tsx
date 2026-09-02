@@ -152,7 +152,7 @@ function FeedbackForm({ onDone }: { onDone: () => void }) {
               It goes to whoever looks after MahekOne. You will get a
               notification here when somebody answers it — including if the
               answer is no. The whole conversation is under{" "}
-              <Link href="/feedback" className="text-brand hover:underline">
+              <Link href="/feedback" className="text-brand">
                 Your feedback
               </Link>
               , and you can add to it there.
@@ -272,7 +272,7 @@ function FeedbackForm({ onDone }: { onDone: () => void }) {
         {mine && mine.total ? (
           <Link
             href="/feedback"
-            className="mr-auto text-[13px] font-medium text-brand hover:underline"
+            className="mr-auto text-[13px] font-medium text-brand"
           >
             Your {mine.total} report{mine.total === 1 ? "" : "s"}
             {mine.unreadReplies

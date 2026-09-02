@@ -208,7 +208,7 @@ export function TodayScreen({
               <h2 className="text-lg leading-6 font-semibold text-ink">Decided today</h2>
               <Link
                 href="/accounts/audit"
-                className="flex-none text-[13px] font-medium text-brand no-underline hover:underline"
+                className="flex-none text-[13px] font-medium text-brand no-underline"
               >
                 Full log
               </Link>

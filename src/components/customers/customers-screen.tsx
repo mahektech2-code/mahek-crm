@@ -803,7 +803,7 @@ export function CustomersScreen({
                       // default prefetch renders every customer's page on
                       // the one shared vCPU this app runs on.
                       prefetch={false}
-                      className="no-underline hover:underline"
+                      className="no-underline"
                     >
                       {r.name}
                     </Link>

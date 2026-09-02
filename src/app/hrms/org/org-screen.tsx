@@ -131,7 +131,7 @@ export function OrgScreen({
               </span>
               <Link
                 href={`/hrms/org?view=${view}${includeLeavers ? "" : "&leavers=1"}`}
-                className="text-[13px] font-medium text-brand hover:underline"
+                className="text-[13px] font-medium text-brand"
               >
                 {includeLeavers ? "Hide people who have left" : "Include people who have left"}
               </Link>
@@ -401,7 +401,7 @@ function ManagerDialog({
               type="button"
               disabled={busy}
               onClick={() => onSave(null)}
-              className="cursor-pointer border-none bg-transparent p-0 text-[13px] font-medium text-danger hover:underline disabled:cursor-not-allowed"
+              className="cursor-pointer border-none bg-transparent p-0 text-[13px] font-medium text-danger hover:bg-danger-soft disabled:cursor-not-allowed"
             >
               Remove the reporting line
             </button>

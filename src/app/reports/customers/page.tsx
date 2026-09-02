@@ -242,7 +242,7 @@ export default async function Page({
                     <Td>
                       <Link
                         href={`/crm/customers/${c.customerId}`}
-                        className="font-medium text-ink no-underline hover:underline"
+                        className="font-medium text-ink no-underline"
                       >
                         {c.name}
                       </Link>
