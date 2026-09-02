@@ -62,7 +62,6 @@ type Filter =
   | "checkins"
   | "leads"
   | "inactive"
-  | "payments"
   | "retry";
 
 /** The same set as `Filter`, in a form a URL parameter can be checked against. */
@@ -74,7 +73,6 @@ const FILTERS: Filter[] = [
   "checkins",
   "leads",
   "inactive",
-  "payments",
   "retry",
 ];
 
@@ -100,7 +98,6 @@ const REASON_TONE: Record<string, "danger" | "warn" | "brand" | "neutral"> = {
 const REMINDER_KINDS = ["reminderOverdue", "reminderDueToday"];
 const ORDER_KINDS = ["orderOverdueFullCycle", "orderDue", "routineCall"];
 const CHECKIN_KINDS = ["checkInOverdue", "checkInDue"];
-const PAYMENT_KINDS = ["paymentOverdue"];
 const RETRY_KINDS = ["noAnswerRetry", "unreachable"];
 
 export function QueueScreen({
@@ -193,8 +190,6 @@ export function QueueScreen({
         return rows.filter((r) => r.hasComplaint);
       case "reminders":
         return rows.filter((r) => hasAny(r, REMINDER_KINDS));
-      case "payments":
-        return rows.filter((r) => hasAny(r, PAYMENT_KINDS));
       case "retry":
         return rows.filter((r) => hasAny(r, RETRY_KINDS));
       case "checkins":
@@ -357,11 +352,6 @@ export function QueueScreen({
           onChange={setFilter}
           options={[
             { key: "all", label: "To work", count: rows.length },
-            {
-              key: "payments",
-              label: "Payment due",
-              count: rows.filter((r) => hasAny(r, PAYMENT_KINDS)).length,
-            },
             {
               key: "reminders",
               label: "Reminder due",
