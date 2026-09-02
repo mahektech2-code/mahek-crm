@@ -90,6 +90,7 @@ export type Row = {
    * two beside it stay accounts' and admin's.
    */
   salesManagerName: string | null;
+  salesManagerId: string | null;
   backOfficeAmId: string | null;
   backOfficeAmName: string | null;
   status: string;
@@ -159,6 +160,7 @@ export function CustomersScreen({
   team,
   backOfficePeople,
   salesManagerPeople,
+  salesManagerSuggestions,
   rows,
   filters,
   pageInfo,
@@ -215,6 +217,14 @@ export function CustomersScreen({
    * day one of the two lists narrows, only one of them narrows.
    */
   salesManagerPeople: Array<{ id: string; name: string; role?: string }>;
+  /**
+   * Candidate id -> suggested sales manager's own candidate id, from the org
+   * chart (`employee_reporting`). A SUGGESTION only — it fills the field in
+   * the add/edit form when a Salesman or Lead owner is picked and nothing has
+   * answered the sales manager question yet, and is never read anywhere
+   * else. See `salesManagerSuggestions()` in `lib/queries.ts`.
+   */
+  salesManagerSuggestions: Record<string, string>;
   rows: Row[];
   filters: {
     query: string;
@@ -920,16 +930,19 @@ export function CustomersScreen({
                         ? (r.ownerName ?? "Unassigned")
                         : (r.salesAmName ?? "Unassigned")}
                     </span>
-                    {/* A lead has no sales manager and no back office manager:
-                        nobody runs a line over an account that has not ordered
-                        and nobody raises paperwork for one. It carries where it
-                        came from instead, on the one line it has room for. */}
-                    {r.kind === "lead" ? null : (
-                      <span className="block text-sm text-body">
-                        <span className="text-muted">Sales manager: </span>
-                        {r.salesManagerName ?? "Unassigned"}
-                      </span>
-                    )}
+                    {/*
+                      A lead has no BACK OFFICE manager — nobody raises
+                      paperwork for an account that has not ordered, which is
+                      why the line below reads "Source" for one instead. Sales
+                      manager is different: who a lead's owner answers to is
+                      worth recording before it converts, which is why leads
+                      get this line and the "Add lead"/edit form both offer it
+                      too.
+                    */}
+                    <span className="block text-sm text-body">
+                      <span className="text-muted">Sales manager: </span>
+                      {r.salesManagerName ?? "Unassigned"}
+                    </span>
                     <span className="block text-sm text-body">
                       <span className="text-muted">
                         {r.kind === "lead" ? "Source: " : "Back office: "}
@@ -1374,13 +1387,33 @@ export function CustomersScreen({
         open={addOpen}
         title="Add lead"
         people={backOfficePeople}
+        salesManagerPeople={salesManagerPeople}
+        salesManagerSuggestions={salesManagerSuggestions}
         kind="lead"
         canReassign={canReassign}
+        canAssignSalesManager={canAssignSalesManager}
         amReasons={amReasons}
         onClose={() => setAddOpen(false)}
         onSubmit={async (values) => {
           const result = await run(createCustomer(values));
-          if (result.ok) {
+          if (result.ok && result.data) {
+            // A brand new record has no "before" to move FROM, so this is a
+            // plain assignment rather than a reassignment — no history row,
+            // no notification of a change, because nothing changed; it was
+            // simply set. Best-effort: a lead is still created even where
+            // this fails, and the seat can always be set from the edit form.
+            const salesManagerPicked = String(values.salesManagerId ?? "");
+            if (salesManagerPicked && salesManagerPicked !== SHEET_NAME_VALUE) {
+              await run(
+                assignSalesManager({
+                  scope: { kind: "ids", customerIds: [result.data.id] },
+                  target: salesManagerPicked.startsWith("emp:")
+                    ? { kind: "employee", employeeId: salesManagerPicked.slice(4) }
+                    : { kind: "user", userId: salesManagerPicked },
+                  reasonCode: String(values.amReasonCode ?? amReasons[0] ?? ""),
+                }),
+              );
+            }
             setAddOpen(false);
             router.refresh();
           }
@@ -1392,8 +1425,11 @@ export function CustomersScreen({
         open={Boolean(editing)}
         title={`Edit ${editing?.name ?? ""}`}
         people={backOfficePeople}
+        salesManagerPeople={salesManagerPeople}
+        salesManagerSuggestions={salesManagerSuggestions}
         kind={editing?.kind ?? "customer"}
         canReassign={canReassign}
+        canAssignSalesManager={canAssignSalesManager}
         amReasons={amReasons}
         initial={editing ?? undefined}
         onClose={() => setEditing(null)}
@@ -1485,12 +1521,40 @@ export function CustomersScreen({
             if (!moved.ok) return false;
           }
 
+          /*
+           * The sales manager seat is its OWN action and its own capability
+           * — see `sales-manager.ts` on why folding it into
+           * `updateAccountManagers` would be wrong — so it is a separate call
+           * rather than a third branch above. Still gone first, for the same
+           * reason: a refusal here must not leave the ordinary fields half
+           * saved underneath it.
+           */
+          const salesManagerPicked = String(values.salesManagerId ?? "");
+          const salesManagerMoved =
+            salesManagerPicked !== SHEET_NAME_VALUE &&
+            salesManagerPicked !== openingSalesManagerValue(editing, salesManagerPeople);
+          if (salesManagerMoved) {
+            const smResult = await run(
+              assignSalesManager({
+                scope: { kind: "ids", customerIds: [editing.id] },
+                target: !salesManagerPicked
+                  ? { kind: "none" }
+                  : salesManagerPicked.startsWith("emp:")
+                    ? { kind: "employee", employeeId: salesManagerPicked.slice(4) }
+                    : { kind: "user", userId: salesManagerPicked },
+                reasonCode: String(values.amReasonCode ?? ""),
+              }),
+            );
+            if (!smResult.ok) return false;
+          }
+
           // The manager columns and the reason are never sent as ordinary
           // fields, whether or not they moved — `updateCustomer` has no
           // business writing them.
           const rest = Object.fromEntries(
             Object.entries(values).filter(
-              ([k]) => !["assignedId", "backOfficeAmId", "amReasonCode"].includes(k),
+              ([k]) =>
+                !["assignedId", "backOfficeAmId", "salesManagerId", "amReasonCode"].includes(k),
             ),
           );
           const result = await run(updateCustomer(editing.id, rest));
@@ -1791,6 +1855,21 @@ export function openingBackOfficeValue(
   return findByName(people, stated)?.id ?? SHEET_NAME_VALUE;
 }
 
+/**
+ * The same rule for the sales manager seat. Unlike the two above there is no
+ * fallback to anything else: a customer with no sales manager has no sales
+ * manager, and nothing outside MahekOne states one to fall through to.
+ */
+export function openingSalesManagerValue(
+  initial: Partial<Row> | undefined,
+  people: Array<{ id: string; name: string }>,
+): string {
+  if (initial?.salesManagerId) return initial.salesManagerId;
+  const stated = initial?.salesManagerName?.trim();
+  if (!stated) return "";
+  return findByName(people, stated)?.id ?? SHEET_NAME_VALUE;
+}
+
 type CustomerFormProps = {
   open: boolean;
   title: string;
@@ -1806,6 +1885,17 @@ type CustomerFormProps = {
    * no login and the seat could not name them at all.
    */
   people: Array<{ id: string; name: string; role?: string }>;
+  /**
+   * Who may hold the sales manager seat — the same list as `people`, since
+   * this seat needs no login either.
+   */
+  salesManagerPeople: Array<{ id: string; name: string; role?: string }>;
+  /**
+   * Candidate id -> suggested sales manager's own candidate id, from the org
+   * chart. Only ever fills the field when it is blank on open — see
+   * `openingSalesManagerValue` and the field's own onChange.
+   */
+  salesManagerSuggestions: Record<string, string>;
   /** A new record is a lead. An existing one is whatever it already is. */
   kind: "lead" | "customer";
   /**
@@ -1814,6 +1904,13 @@ type CustomerFormProps = {
    * is in decides whose targets it counts toward.
    */
   canReassign: boolean;
+  /**
+   * Whether this person may set the sales manager seat. A different, more
+   * generous question to `canReassign` — this seat drives no queue, no scope
+   * and no target, so a manager may set it while the two beside it stay
+   * accounts' and admin's.
+   */
+  canAssignSalesManager: boolean;
   /** `people.amChangeReasons`, asked for whenever a manager changes. */
   amReasons: string[];
   initial?: Partial<Row>;
@@ -1831,8 +1928,11 @@ function CustomerFormBody({
   open,
   title,
   people,
+  salesManagerPeople,
+  salesManagerSuggestions,
   kind,
   canReassign,
+  canAssignSalesManager,
   amReasons,
   initial,
   onClose,
@@ -1873,9 +1973,27 @@ function CustomerFormBody({
      * freeze a column against the sheet.
      */
     backOfficeAmId: openingBackOfficeValue(initial, people),
+    // The org chart's own suggestion is applied below, on open, exactly once
+    // — see the effect beneath this. Starting from the STORED value here (not
+    // the suggestion) means an account with no sales manager on file, and no
+    // suggestion either, opens genuinely blank rather than something that
+    // merely looks blank.
+    salesManagerId: openingSalesManagerValue(initial, salesManagerPeople),
     // Only sent when a manager actually changed — see below.
     amReasonCode: amReasons[0] ?? "",
   });
+
+  /*
+   * Whether the sales manager field has been answered — by the person who
+   * opened this form, or by a suggestion filled in for them. Once true, a
+   * later change to the Salesman must not silently overwrite whatever is
+   * sitting in the field: a manual override two edits back is still a
+   * decision, and the suggestion is only ever for a field nobody has
+   * answered yet.
+   */
+  const [salesManagerAnswered, setSalesManagerAnswered] = React.useState(
+    () => openingSalesManagerValue(initial, salesManagerPeople) !== "",
+  );
 
   const set =
     (k: string) =>
@@ -1893,6 +2011,10 @@ function CustomerFormBody({
       values.assignedId !== openingSalesValue(kind, initial, people)) ||
     (values.backOfficeAmId !== SHEET_NAME_VALUE &&
       values.backOfficeAmId !== openingBackOfficeValue(initial, people));
+
+  const salesManagerChanged =
+    values.salesManagerId !== SHEET_NAME_VALUE &&
+    values.salesManagerId !== openingSalesManagerValue(initial, salesManagerPeople);
 
   return (
     <Modal
@@ -1978,7 +2100,26 @@ function CustomerFormBody({
             ) : null}
             <Select
               value={values.assignedId ?? ""}
-              onChange={set("assignedId")}
+              onChange={(e) => {
+                const nextAssignedId = e.target.value;
+                setValues((v) => {
+                  /*
+                   * The org chart's suggestion for WHOEVER is picked, applied
+                   * only while the sales manager field is still unanswered.
+                   * Once a person has answered it — by picking one themselves,
+                   * or by a suggestion already having filled it in — a later
+                   * change here must not quietly overwrite it a second time.
+                   */
+                  const suggested = salesManagerSuggestions[nextAssignedId];
+                  return {
+                    ...v,
+                    assignedId: nextAssignedId,
+                    ...(!salesManagerAnswered && suggested
+                      ? { salesManagerId: suggested }
+                      : {}),
+                  };
+                });
+              }}
               disabled={!canReassign}
               className={cx("w-full", values.assignedId ? "pl-6" : "")}
             >
@@ -2001,43 +2142,103 @@ function CustomerFormBody({
             </span>
           ) : null}
         </Field>
+        {/*
+          The third seat — who the salesperson answers to. It drives no queue,
+          no scope and no target, which is why a manager may set it here while
+          the seat above stays accounts' and admin's (`canReassign`) and this
+          one asks `canAssignSalesManager` instead.
+
+          Suggested from the org chart the moment a Salesman or Lead owner is
+          picked, and always overridable — see the onChange above and
+          `salesManagerAnswered`. A lead gets this field too: it is the one
+          thing about a lead's line management worth recording before it has
+          ordered, which back office is not.
+        */}
         <Field
-          label="Account manager · back office"
+          label="Sales manager"
           hint={
-            canReassign
-              ? "Dispatch, billing and paperwork for this account."
-              : "Only accounts or an admin can move an account."
+            canAssignSalesManager
+              ? "Who the salesperson answers to. Suggested from the org chart when they're on it — always yours to change."
+              : "Only a manager or admin can set this."
           }
         >
           <span className="relative block">
-            {values.backOfficeAmId ? (
-              <StaffDot gone={values.backOfficeAmId === SHEET_NAME_VALUE} />
+            {values.salesManagerId ? (
+              <StaffDot gone={values.salesManagerId === SHEET_NAME_VALUE} />
             ) : null}
             <Select
-              value={values.backOfficeAmId ?? ""}
-              onChange={set("backOfficeAmId")}
-              disabled={!canReassign}
-              className={cx("w-full", values.backOfficeAmId ? "pl-6" : "")}
+              value={values.salesManagerId ?? ""}
+              onChange={(e) => {
+                setSalesManagerAnswered(true);
+                set("salesManagerId")(e);
+              }}
+              disabled={!canAssignSalesManager}
+              className={cx("w-full", values.salesManagerId ? "pl-6" : "")}
             >
-              {values.backOfficeAmId === SHEET_NAME_VALUE ? (
+              {values.salesManagerId === SHEET_NAME_VALUE ? (
                 <option value={SHEET_NAME_VALUE}>
-                  {initial?.backOfficeAmName}
+                  {initial?.salesManagerName}
                 </option>
               ) : null}
               <option value="">Unassigned</option>
-              {people.map((t) => (
+              {salesManagerPeople.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
                 </option>
               ))}
             </Select>
           </span>
-          {values.backOfficeAmId === SHEET_NAME_VALUE ? (
+          {values.salesManagerId === SHEET_NAME_VALUE ? (
             <span className="mt-1 block text-[12px] text-danger">
-              No longer on the staff list. Pick who is doing the paperwork now.
+              No longer on the staff list. Pick who has taken this over.
             </span>
           ) : null}
         </Field>
+        {/*
+          Back office is dispatch, billing and paperwork — nobody raises
+          either for an account that has not ordered, so a lead does not get
+          this field. The row card already draws this same line; the form is
+          brought in line with it here rather than left to disagree.
+        */}
+        {isLead ? null : (
+          <Field
+            label="Account manager · back office"
+            hint={
+              canReassign
+                ? "Dispatch, billing and paperwork for this account."
+                : "Only accounts or an admin can move an account."
+            }
+          >
+            <span className="relative block">
+              {values.backOfficeAmId ? (
+                <StaffDot gone={values.backOfficeAmId === SHEET_NAME_VALUE} />
+              ) : null}
+              <Select
+                value={values.backOfficeAmId ?? ""}
+                onChange={set("backOfficeAmId")}
+                disabled={!canReassign}
+                className={cx("w-full", values.backOfficeAmId ? "pl-6" : "")}
+              >
+                {values.backOfficeAmId === SHEET_NAME_VALUE ? (
+                  <option value={SHEET_NAME_VALUE}>
+                    {initial?.backOfficeAmName}
+                  </option>
+                ) : null}
+                <option value="">Unassigned</option>
+                {people.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
+            </span>
+            {values.backOfficeAmId === SHEET_NAME_VALUE ? (
+              <span className="mt-1 block text-[12px] text-danger">
+                No longer on the staff list. Pick who is doing the paperwork now.
+              </span>
+            ) : null}
+          </Field>
+        )}
 
         {/*
           Where a lead came from is READ ONLY. It is set once, when the record
@@ -2106,7 +2307,7 @@ function CustomerFormBody({
           phone-number correction is noise in the history that the real moves
           then hide in. It appears when there is something to explain.
         */}
-        {amChanged ? (
+        {amChanged || salesManagerChanged ? (
           <Field
             label="Why is the account manager changing · required"
             className="col-span-2"

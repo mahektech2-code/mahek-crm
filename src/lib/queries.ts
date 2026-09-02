@@ -14,6 +14,7 @@ import {
   complaints,
   customerAmChanges,
   customers,
+  employeeReporting,
   employees,
   helpArticles,
   notifications,
@@ -296,6 +297,56 @@ export async function listBackOfficeCandidates(): Promise<
       .filter((e) => !takenNames.has(e.name.trim().toLowerCase()))
       .map((e) => ({ id: `emp:${e.id}`, name: e.name, role: "employee" })),
   ];
+}
+
+/**
+ * Who a Salesman or Lead owner's OWN manager suggests as the Sales manager,
+ * keyed on the same candidate id `listBackOfficeCandidates` returns —
+ * `listBackOfficeCandidates()[i].id` in, `listBackOfficeCandidates()[i].id`
+ * or undefined out — so a form can set one field's value straight from the
+ * other's without inventing a second id space.
+ *
+ * The org chart (`employee_reporting`) is keyed on EMPLOYEES, and a
+ * candidate here may be a `users` account with no employee id stored against
+ * it at all — nothing links the two directly, because creating an account
+ * from HRMS never wrote one back. So each end is matched by NAME, the same
+ * convention `openingSalesValue` already uses to reconcile a stored name
+ * against the picker's own list. A name matched on neither end resolves to
+ * nothing rather than a guess: an unrecognised manager is a blank field, not
+ * a wrong one.
+ *
+ * This is a SUGGESTION only. It only ever fills a field nobody has answered
+ * yet — `salesManagerId` still means whatever a person chose or the sheet
+ * never wrote, and this is not a source anything downstream may read.
+ */
+export async function salesManagerSuggestions(): Promise<Record<string, string>> {
+  const [employeeRows, links] = await Promise.all([
+    db
+      .select({ id: employees.id, name: employees.name })
+      .from(employees)
+      .where(eq(employees.status, "active")),
+    db
+      .select({ employeeId: employeeReporting.employeeId, managerId: employeeReporting.managerId })
+      .from(employeeReporting),
+  ]);
+  if (!links.length) return {};
+
+  const candidates = await listBackOfficeCandidates();
+  const candidateIdByName = new Map(candidates.map((c) => [c.name.trim().toLowerCase(), c.id]));
+  const employeeNameById = new Map(employeeRows.map((e) => [e.id, e.name]));
+
+  const suggestions: Record<string, string> = {};
+  for (const link of links) {
+    const personName = employeeNameById.get(link.employeeId);
+    const managerName = employeeNameById.get(link.managerId);
+    if (!personName || !managerName) continue; // a leaver on either end
+    const personCandidateId = candidateIdByName.get(personName.trim().toLowerCase());
+    const managerCandidateId = candidateIdByName.get(managerName.trim().toLowerCase());
+    if (personCandidateId && managerCandidateId) {
+      suggestions[personCandidateId] = managerCandidateId;
+    }
+  }
+  return suggestions;
 }
 
 /* ------------------------------------------------------------- customers */
