@@ -30,7 +30,7 @@ export default async function Page({
         subtitle="Revenue, litres, product mix, new customers, collection and activity, scored out of 100 — the same reading each app's own screen shows."
         actions={
           <div className="flex items-center gap-1 text-[13px]">
-            <MonthNav month={month} hrefFor={(m) => `/founder/team?month=${m}`} />
+            <MonthNav month={month} basePath="/founder/team" />
           </div>
         }
       />

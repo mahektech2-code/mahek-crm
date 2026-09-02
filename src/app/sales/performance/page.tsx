@@ -84,7 +84,7 @@ export default async function Page({
             >
               ← Back to targets
             </Link>
-            <MonthNav month={month} hrefFor={(m) => `/sales/performance?month=${m}`} />
+            <MonthNav month={month} basePath="/sales/performance" />
           </div>
         }
       />

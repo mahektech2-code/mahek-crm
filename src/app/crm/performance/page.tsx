@@ -69,7 +69,7 @@ export default async function Page({
         subtitle={`${monthName(period)} — ${reading.workingDaysElapsed} of ${reading.workingDaysTotal} working days gone`}
         actions={
           <div className="flex items-center gap-1 text-[13px]">
-            <MonthNav month={period} hrefFor={(m) => `/crm/performance?period=${m}`} />
+            <MonthNav month={period} basePath="/crm/performance" paramName="period" />
           </div>
         }
       />

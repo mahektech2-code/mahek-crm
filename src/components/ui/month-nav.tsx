@@ -34,13 +34,22 @@ export function monthName(month: string): string {
 
 export function MonthNav({
   month,
-  hrefFor,
+  basePath,
+  paramName = "month",
 }: {
   month: string;
-  /** Builds the URL for an arbitrary `YYYY-MM` — the caller owns its own param name. */
-  hrefFor: (month: string) => string;
+  /** The page's own path — the query string is built from `paramName`. */
+  basePath: string;
+  /** Whatever the caller's own `searchParams` key is — "period" or "month". */
+  paramName?: string;
 }) {
   const router = useRouter();
+  // A plain string pair, not a closure — most of these five callers are
+  // Server Components, and a function prop cannot cross into a Client
+  // Component: React has no way to serialize it. Every page rendered this
+  // fine locally and in isolation and then threw at request time in
+  // production, which is exactly the shape of bug a type check cannot see.
+  const hrefFor = (m: string) => `${basePath}?${paramName}=${m}`;
 
   return (
     <div className="flex items-center gap-1 text-[13px]">
