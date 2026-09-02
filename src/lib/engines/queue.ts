@@ -242,6 +242,16 @@ export function buildQueue(
     // are stripped rather than the whole customer suppressed, so a telecaller
     // with a reminder or a check-in against them still sees the call they are
     // actually making rather than one about an order.
+    //
+    // `orderStatus` is stripped here too, though it does not ask for another
+    // order the way the other three do — it still names THIS order, taken
+    // inside the window, and nothing about its approval status changes in the
+    // day or two right after it was placed. Without this a customer who
+    // ordered this morning came back tomorrow asking to be told "still
+    // waiting for accounts", which is the quiet window's own fact read back to
+    // them as a reason to call. Once the window ends the order may well still
+    // be unresolved and worth a real check-in — this only holds it back for as
+    // long as the order is fresh. See `isOrderChasing`.
     const quiet = quietWindow(c, today, config, hasReminderReason);
 
     // A held reminder is a wider, deliberate version of the same idea: not
@@ -747,12 +757,18 @@ function formatPaise(paise: number): string {
   return `₹${Math.round(paise / 100).toLocaleString("en-IN")}`;
 }
 
-/** The order-chasing reasons — the ones the quiet window holds back. */
+/**
+ * The reasons the quiet window holds back — chasing for another order, and
+ * checking in on the one just placed. `orderStatus` sits alongside the three
+ * chasing reasons for that second half: it does not ask for a sale, but it
+ * names the same order the window is already being quiet about.
+ */
 function isOrderChasing(kind: QueueReasonKind): boolean {
   return (
     kind === "orderDue" ||
     kind === "routineCall" ||
-    kind === "orderOverdueFullCycle"
+    kind === "orderOverdueFullCycle" ||
+    kind === "orderStatus"
   );
 }
 
