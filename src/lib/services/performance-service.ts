@@ -10,6 +10,7 @@ import { getConfig } from "@/lib/config/store";
 import { APP_TIMEZONE, addDays, endOfMonth, isWorkingDay } from "@/lib/business-date";
 import type { BusinessDate } from "@/lib/business-date";
 import { matchKey } from "@/lib/catalogue";
+import { billCreditDaysSql } from "@/lib/bill-terms";
 import { creditedToSql } from "@/lib/sales-attribution";
 import { orderCountsSql } from "@/lib/order-status";
 import {
@@ -141,7 +142,10 @@ export type PersonActuals = {
   /** Line value whose product name resolved to nothing in the catalogue. */
   unmatchedPaise: number;
   newCustomers: number;
+  /** Confirmed money collected against bills that were ALREADY overdue at the start of the month. */
   collectionPaise: number;
+  /** What that money is a share of — the book's overdue balance at month start. */
+  overdueAtStartPaise: number;
   activity: number;
 };
 
@@ -162,6 +166,7 @@ function emptyActuals(userId: string): PersonActuals {
     unmatchedPaise: 0,
     newCustomers: 0,
     collectionPaise: 0,
+    overdueAtStartPaise: 0,
     activity: 0,
   };
 }
@@ -193,6 +198,7 @@ export async function actualsForPeriod(
 ): Promise<Map<string, PersonActuals>> {
   const { from, to } = monthWindow(period);
   const catalogue = await loadCatalogue();
+  const config = await getConfig();
   const people = new Map<string, PersonActuals>();
   const forUser = (id: string) => {
     const existing = people.get(id);
@@ -349,67 +355,93 @@ export async function actualsForPeriod(
     forUser(row.user_id).newCustomers = Number(row.n);
   }
 
-  /* ---- collection: money accounts have CONFIRMED, never money claimed ---- */
+  /* ---- collection: share of what was ALREADY overdue at the start of the month, actually collected ---- */
   /*
-   * `reported` and `held` receipts move no money anywhere else in this product
-   * and they move none here. A collection target met with payments nobody has
-   * found in the bank would be a target met on a telecaller's word.
+   * Not "money collected" — money collected against a debt that predates the
+   * month. A bill that goes overdue on the 15th and gets paid on the 20th is
+   * ordinary business, not the collections target's business; this component
+   * exists to measure whether OLD debt is being worked down.
+   *
+   * `overdue_bills` is a snapshot at the start of the window: the effective
+   * due date (`billCreditDaysSql`, same fallback `effectiveDueDate` uses —
+   * the bill's own date, then the order's credit term, then the customer's)
+   * has to fall before the window opens, and the balance is reconstructed as
+   * of that moment from confirmed allocations received before it — `bills.
+   * paid_amount` is CURRENT and cannot answer "as of the 1st". `unstated`
+   * bills are excluded, same as `outstandingTotals()`.
+   *
+   * `reported` and `held` receipts move no money anywhere else in this
+   * product and they move none here either. A credit note is not money
+   * collected either — see the comment this replaced.
    */
-  const collections = await db.execute<{ user_id: string | null; total: string }>(sql`
-    select ${creditedToSql("c")} as user_id, coalesce(sum(r.amount), 0) as total
-      from payment_receipts r
-      join customers c on c.id = r.customer_id
-     where r.status = 'confirmed'
-       -- A CREDIT NOTE IS NOT MONEY COLLECTED.
-       --
-       -- issueCreditNote settles a bill by writing a confirmed receipt with
-       -- mode 'Adjustment', which is the right way to close the bill and the
-       -- wrong thing to credit somebody with collecting: nothing reached the
-       -- bank. AGENTS.md says as much about the mode list -- "neither is money
-       -- arriving" -- and the collection component was counting both.
-       -- Identified by the idempotency key the issuer writes, which is the
-       -- only mark that separates a credit note from a genuine adjustment
-       -- somebody recorded by hand.
-       and coalesce(r.idempotency_key, '') not like 'creditnote:%'
-       and r.received_at >= ${sql.raw(`'${from}'::date`)}
-       and r.received_at <= ${sql.raw(`'${to}'::date`)}
+  const overdueRows = await db.execute<{
+    user_id: string | null;
+    overdue: string;
+    collected: string;
+  }>(sql`
+    with overdue_bills as (
+      select bills.id, bills.customer_id,
+             bills.amount - coalesce((
+               select sum(p.amount) from payments p
+               join payment_receipts r on r.id = p.receipt_id
+              where p.bill_id = bills.id
+                and r.status = 'confirmed'
+                and r.received_at < ${windowStart}
+             ), 0) as balance_at_start
+        from bills
+       where bills.payment_position <> 'unstated'
+         and coalesce(
+               bills.due_date,
+               bills.bill_date + (coalesce(${billCreditDaysSql}, ${config["bills.defaultCreditDays"]}) || ' days')::interval
+             ) < ${windowStart}
+    ),
+    overdue as (
+      select id, customer_id, balance_at_start
+        from overdue_bills
+       where balance_at_start > 0
+    )
+    select ${creditedToSql("c")} as user_id,
+           sum(o.balance_at_start) as overdue,
+           coalesce(sum(collected.amt), 0) as collected
+      from overdue o
+      join customers c on c.id = o.customer_id
+      left join lateral (
+        select sum(p.amount) as amt
+          from payments p
+          join payment_receipts r on r.id = p.receipt_id
+         where p.bill_id = o.id
+           and r.status = 'confirmed'
+           and coalesce(r.idempotency_key, '') not like 'creditnote:%'
+           and r.received_at >= ${windowStart}
+           and r.received_at <= ${windowEnd}
+      ) collected on true
      group by 1
   `);
-  for (const row of collections) {
+  for (const row of overdueRows) {
     if (!row.user_id) continue;
-    forUser(row.user_id).collectionPaise = Number(row.total ?? 0);
+    const actuals = forUser(row.user_id);
+    actuals.overdueAtStartPaise = Number(row.overdue ?? 0);
+    actuals.collectionPaise = Number(row.collected ?? 0);
   }
 
-  /* ---- activity: calls logged in the CRM and visits made in the field ---- */
+  /* ---- activity: tasks completed, not visits made ---- */
   /*
-   * Both, because the module measures one person who may do either. A
-   * telecaller carrying the accounts nobody sells to in person does their
-   * activity on the phone, and a field salesman does it at a doorway; counting
-   * only one of them would score half the team at zero.
+   * A task is an action item with somebody's name and a date on it —
+   * assigned by a manager or raised by the system — and it is a different
+   * thing to measure than a doorway visit or a logged call: this component
+   * asks whether the things somebody was actually asked to do got done.
    *
-   * Attributed to whoever DID it, not to whose book the customer is in — this
-   * is the one component that measures the act rather than the account.
+   * Attributed to whoever the task was assigned TO, not whoever created it —
+   * this is the one component that measures the act rather than the account.
+   * Any task marked done in the window counts, whenever its due date was;
+   * lateness is a different question to whether it happened at all.
    */
   const activity = await db.execute<{ user_id: string | null; n: number }>(sql`
-    select user_id, sum(n)::int as n from (
-      select k.user_id, count(*)::int as n
-        from calls k
-       where k.created_at >= ${windowStart} and k.created_at <= ${windowEnd}
-       group by 1
-      union all
-      -- The SERVER's clock, not the handset's. A visit carries two timestamps
-      -- and the schema is explicit about which to read: client_created_at is
-      -- what the phone said and its owner can set that, so anything anybody is
-      -- paid on reads server_created_at. An activity target is exactly that --
-      -- believing the handset would let somebody backdate a fortnight of
-      -- visits into a month they had missed.
-      select v.created_by_id as user_id, count(*)::int as n
-        from mbos_visits v
-       where v.server_created_at >= ${windowStart}
-         and v.server_created_at <= ${windowEnd}
-       group by 1
-    ) t
-     where user_id is not null
+    select assigned_to_user_id as user_id, count(*)::int as n
+      from mbos_tasks
+     where status = 'done'
+       and completed_at >= ${windowStart}
+       and completed_at <= ${windowEnd}
      group by 1
   `);
   for (const row of activity) {
@@ -517,7 +549,7 @@ type TargetRow = {
   revenue_target_paise: string | null;
   volume_target_ml: string | null;
   new_customer_target: number | null;
-  collection_target_paise: string | null;
+  collection_target_bp: number | null;
   activity_target: number | null;
 };
 
@@ -544,7 +576,7 @@ export async function readingsForPeriod(
     db.execute<TargetRow>(sql`
       select t.id, t.user_id, u.name as user_name,
              t.revenue_target_paise, t.volume_target_ml,
-             t.new_customer_target, t.collection_target_paise, t.activity_target
+             t.new_customer_target, t.collection_target_bp, t.activity_target
         from sales_targets t
         join users u on u.id = t.user_id
        where t.period = ${period}
@@ -593,9 +625,17 @@ export async function readingsForPeriod(
         target: num(target?.new_customer_target),
       },
       {
+        // The target is a PERCENTAGE of what was already overdue at the
+        // start of the month, not a rupee figure — so it is converted to an
+        // implied rupee target here, against this person's own overdue
+        // book, and scored the same way every other rupee-vs-rupee
+        // component is. Where nothing was overdue, the implied target is
+        // zero, which `achievementBp` already treats as "not asked" and
+        // drops from the score — a book with no old debt has nothing to be
+        // measured on here, not a failing score.
         key: "collection",
         actual: a.collectionPaise,
-        target: num(target?.collection_target_paise),
+        target: Math.round((a.overdueAtStartPaise * num(target?.collection_target_bp)) / 10_000),
       },
       { key: "activity", actual: a.activity, target: num(target?.activity_target) },
     ];

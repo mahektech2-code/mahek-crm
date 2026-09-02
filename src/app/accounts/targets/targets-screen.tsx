@@ -43,7 +43,7 @@ function blankRow(person: Person): TargetRow {
     revenueTargetPaise: null,
     volumeTargetMl: null,
     newCustomerTarget: null,
-    collectionTargetPaise: null,
+    collectionTargetBp: null,
     activityTarget: null,
     publishedAt: null,
     bands: [],
@@ -228,7 +228,9 @@ export function TargetsScreen({
                       {orDash(r.volumeTargetMl, (v) => `${Math.round(v / 1000).toLocaleString("en-IN")} L`)}
                     </Td>
                     <Td align="right">{orDash(r.newCustomerTarget, String)}</Td>
-                    <Td align="right">{orDash(r.collectionTargetPaise, money)}</Td>
+                    <Td align="right">
+                      {orDash(r.collectionTargetBp, (bp) => `${(bp / 100).toFixed(0)}%`)}
+                    </Td>
                     <Td align="right">{orDash(r.activityTarget, String)}</Td>
                     <Td>
                       <Growth target={r.revenueTargetPaise} baseline={base} months={baselineMonths} />
@@ -322,6 +324,15 @@ const toMl = (litres: string): number | null => {
 const toLitres = (ml: number | null): string =>
   ml === null ? "" : String(Math.round(ml / 1000));
 
+/** Whole percent on the screen, basis points in the database. */
+const toBp = (percent: string): number | null => {
+  const t = percent.trim();
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n * 100) : null;
+};
+const toPercent = (bp: number | null): string => (bp === null ? "" : String(Math.round(bp / 100)));
+
 const toCount = (v: string): number | null => {
   const t = v.trim();
   if (!t) return null;
@@ -398,7 +409,7 @@ function TargetEditorModalBody({
   const [newCustomers, setNewCustomers] = React.useState(
     row.newCustomerTarget === null ? "" : String(row.newCustomerTarget),
   );
-  const [collection, setCollection] = React.useState(toRupees(row.collectionTargetPaise));
+  const [collection, setCollection] = React.useState(toPercent(row.collectionTargetBp));
   const [activity, setActivity] = React.useState(
     row.activityTarget === null ? "" : String(row.activityTarget),
   );
@@ -454,7 +465,7 @@ function TargetEditorModalBody({
           revenueTargetPaise: toPaise(revenue),
           volumeTargetMl: toMl(volume),
           newCustomerTarget: toCount(newCustomers),
-          collectionTargetPaise: toPaise(collection),
+          collectionTargetBp: toBp(collection),
           activityTarget: toCount(activity),
           notes: null,
           bands: filled.map((b) => ({
@@ -536,12 +547,12 @@ function TargetEditorModalBody({
           <Input inputMode="numeric" value={newCustomers} onChange={(e) => setNewCustomers(e.target.value)} placeholder="not asked" />
         </Field>
         <Field
-          label="Collection target"
-          hint={baseline ? `${money(baseline.collectionPaise)} a month` : undefined}
+          label="Collection target (%)"
+          hint="of what is already overdue at the start of the month"
         >
-          <MoneyInput value={collection} onChange={(e) => setCollection(e.target.value)} placeholder="not asked" />
+          <Input inputMode="numeric" value={collection} onChange={(e) => setCollection(e.target.value)} placeholder="not asked" />
         </Field>
-        <Field label="Visits and calls" hint="calls logged plus visits made">
+        <Field label="Tasks target" hint="tasks marked done">
           <Input inputMode="numeric" value={activity} onChange={(e) => setActivity(e.target.value)} placeholder="not asked" />
         </Field>
         <div className="flex items-end">
