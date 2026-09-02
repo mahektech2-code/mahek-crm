@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -18,10 +18,12 @@ import {
 import {
   ASSIGNED_TO_SQL,
   assertCustomerInScope,
+  BACK_OFFICE_SQL,
   requireCapability,
   resolveScope,
   scopedToUsers,
   scopedUserIds,
+  type RequestScope,
 } from "../access-control";
 import { getConfig } from "../config/store";
 import { classifyShortfall, resolveTarget } from "../engines/targets";
@@ -705,9 +707,44 @@ export async function recordWatchOutcome(
 
 /* ================================================================ targets */
 
+/**
+ * Who may see a customer's target, on THIS screen.
+ *
+ * `scopedToUsers` already reads two of the three seats — `ASSIGNED_TO_SQL`
+ * (sales, falling back to a lead's owner) and `BACK_OFFICE_SQL` — but never
+ * `sales_manager_id`, because that seat is documented everywhere else as
+ * driving no queue, no scope and no target. It still has to drive visibility
+ * HERE: a sales manager reviewing the month has no other way to find the
+ * accounts they are named on.
+ *
+ * A MANAGER or ADMIN keeps exactly what `scopedToUsers` already gives them —
+ * their reports-to team, or the whole company — untouched. That mechanism
+ * already serves them a wider book than any one seat would, and widening it
+ * further here would let a manager who also happens to be somebody's named
+ * sales manager see a different set on this screen than on every other one.
+ *
+ * Everybody else — a telecaller or an accounts user, whichever of the three
+ * seats they hold on a given account — sees exactly the accounts they hold a
+ * seat on, and nothing wider. This REPLACES `scopedToUsers` for them rather
+ * than adding to it: accounts today get `scope.kind === "all"`, the whole
+ * book, because the approval queue they actually work is nobody's book — but
+ * a target is not an approval queue, and "every account in the company" is
+ * not an answer to "which targets are mine to review."
+ */
+function targetVisibilityClause(ctx: RequestScope) {
+  if (ctx.role === "manager" || ctx.role === "admin") {
+    return scopedToUsers(scopedUserIds(ctx.scope));
+  }
+  return or(
+    inArray(ASSIGNED_TO_SQL, [ctx.user.id]),
+    inArray(BACK_OFFICE_SQL, [ctx.user.id]),
+    eq(customers.salesManagerId, ctx.user.id),
+  );
+}
+
 export async function listTargets(period?: string) {
   const ctx = await resolveScope();
-  const ids = scopedUserIds(ctx.scope);
+  const visibility = targetVisibilityClause(ctx);
   const config = await getConfig();
   const day = await today();
   const key = period ?? monthKey(day);
@@ -754,7 +791,7 @@ export async function listTargets(period?: string) {
         // A customer who has gone quiet still carries a target — that is the
         // gap the month has to explain. Only deactivation removes them.
         ne(customers.status, "deactivated"),
-        scopedToUsers(ids),
+        visibility,
       ),
     )
     .orderBy(asc(customers.name));
