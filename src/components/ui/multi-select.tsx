@@ -94,14 +94,23 @@ export function MultiSelect({
       if (panelRef.current?.contains(target)) return;
       close();
     };
-    document.addEventListener("mousedown", onDown);
     // Capture, because the scroll that matters is a Card's, not the window's,
-    // and a scroll event on an inner element does not bubble.
-    window.addEventListener("scroll", close, true);
+    // and a scroll event on an inner element does not bubble — but capture
+    // also sees the panel's OWN option list scrolling, since a captured
+    // listener sits on the path to every target, panel included. Without the
+    // check below, scrolling the list closed the dropdown before you could
+    // read past the first page of options — the "scroll" that matters is
+    // outside the panel, never inside it.
+    const onScroll = (e: Event) => {
+      if (panelRef.current?.contains(e.target as Node)) return;
+      close();
+    };
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", close);
     return () => {
       document.removeEventListener("mousedown", onDown);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", close);
     };
   }, [open, close]);
