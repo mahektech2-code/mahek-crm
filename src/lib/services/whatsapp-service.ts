@@ -7,6 +7,7 @@ import {
   auditLog,
   bills,
   customers,
+  followUpAttempts,
   waMessages,
   waReplies,
   waRuns,
@@ -18,6 +19,7 @@ import {
   resolveScope,
   scopedUserIds, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
+import { longDate } from "../format";
 import { recomputeLastContact, today } from "../recompute";
 import { err, ok, okVoid, type Result } from "../result";
 import { effectiveDueDate } from "../engines/escalation";
@@ -39,7 +41,21 @@ const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
 export const MERGE_FIELDS = [
   "customer", "contact", "city", "phone", "outstanding",
-  "last_order_date", "last_order_value", "bill_no", "bill_due", "owner",
+  "last_order_date", "last_order_value", "bill_no", "bill_due",
+  /**
+   * Every stated, unpaid bill on one line each — "9 Jul 2026 - MMI/25-26/859
+   * - ₹59,086" — not only the oldest. A statement that names one bill when
+   * four are overdue reads as though the other three do not exist.
+   */
+  "bills_list",
+  /** Today, for a statement's own dateline — "As on 1 Sep 2026". */
+  "as_of",
+  /**
+   * The latest DATED promise, whatever it was about. Worth naming after its
+   * own date passes — that is exactly when it becomes a broken promise.
+   */
+  "promised_amount", "promised_date",
+  "owner",
 ] as const;
 
 export type MergeValues = Record<string, string>;
@@ -93,6 +109,27 @@ async function mergeValuesFor(customerId: string): Promise<MergeValues> {
       )[0]?.name
     : undefined;
 
+  // Every row this customer's outstanding is actually made of, oldest first —
+  // the statement's own list, not just the one bill the other fields name.
+  const billsList = billRows
+    .map(
+      ({ bill: b }) =>
+        `${longDate(b.billDate)} - ${b.billNo} - ${money(b.amount - b.paidAmount)}`,
+    )
+    .join("\n");
+
+  const [lastPromise] = await db
+    .select({ amount: followUpAttempts.promisedAmount, date: followUpAttempts.promisedDate })
+    .from(followUpAttempts)
+    .where(
+      and(
+        eq(followUpAttempts.customerId, customerId),
+        sql`${followUpAttempts.promisedDate} is not null`,
+      ),
+    )
+    .orderBy(desc(followUpAttempts.attemptedAt))
+    .limit(1);
+
   return {
     customer: c.name,
     contact: c.contactPerson ?? "",
@@ -103,17 +140,23 @@ async function mergeValuesFor(customerId: string): Promise<MergeValues> {
     last_order_value: c.lastOrderValue ? money(c.lastOrderValue) : "",
     bill_no: oldest?.billNo ?? "",
     bill_due: oldest
-      ? effectiveDueDate(
-          {
-            id: oldest.id, billNo: oldest.billNo, billDate: oldest.billDate,
-            dueDate: oldest.dueDate,
-            creditDays: oldestCreditDays === null ? null : Number(oldestCreditDays),
-            amount: oldest.amount,
-            paid: oldest.paidAmount, disputed: oldest.disputed,
-          },
-          config,
+      ? longDate(
+          effectiveDueDate(
+            {
+              id: oldest.id, billNo: oldest.billNo, billDate: oldest.billDate,
+              dueDate: oldest.dueDate,
+              creditDays: oldestCreditDays === null ? null : Number(oldestCreditDays),
+              amount: oldest.amount,
+              paid: oldest.paidAmount, disputed: oldest.disputed,
+            },
+            config,
+          ),
         )
       : "",
+    bills_list: billsList,
+    as_of: longDate(await today()),
+    promised_amount: lastPromise?.amount ? money(lastPromise.amount) : "",
+    promised_date: lastPromise?.date ? longDate(lastPromise.date) : "",
     owner: ownerName ?? "",
   };
 }

@@ -327,18 +327,57 @@ const TEMPLATES = [
     body: "Namaste {{contact}} ji,\n\nA gentle reminder that {{outstanding}} is pending against {{customer}}.\n\nOldest bill {{bill_no}} was due on {{bill_due}}.\n\nKindly arrange the payment at your convenience.\n\n- {{owner}}, Mahek Marketing India",
   },
   {
+    // Every overdue bill, not only the oldest one — at stage 2 the account is
+    // genuinely overdue, and a customer with three unpaid bills needs to see
+    // all three rather than guess at the other two from a single number.
     name: "Payment reminder · stage 2",
     category: "payment_reminder" as const,
     stage: 2,
     appliesTo: "personal" as const,
-    body: "Namaste {{contact}} ji,\n\n{{outstanding}} is now overdue against {{customer}}.\n\nBill {{bill_no}} was due on {{bill_due}}. Please confirm a date by which we can expect the payment.\n\n- {{owner}}, Mahek Marketing India",
+    body: "Namaste {{contact}} ji,\n\n{{outstanding}} is now overdue against {{customer}}.\n\n{{bills_list}}\n\nPlease confirm a date by which we can expect the payment.\n\n- {{owner}}, Mahek Marketing India",
   },
   {
     name: "Payment reminder · stage 3",
     category: "payment_reminder" as const,
     stage: 3,
     appliesTo: "personal" as const,
-    body: "Namaste {{contact}} ji,\n\nDespite earlier reminders, {{outstanding}} remains unpaid against {{customer}}.\n\nWe would like to settle this before further supplies. Please call us today.\n\n- {{owner}}, Mahek Marketing India",
+    body: "Namaste {{contact}} ji,\n\nDespite earlier reminders, {{outstanding}} remains unpaid against {{customer}}.\n\n{{bills_list}}\n\nWe would like to settle this before further supplies. Please call us today.\n\n- {{owner}}, Mahek Marketing India",
+  },
+  {
+    // The full statement — every stated overdue bill, dated as on today. What
+    // accounts sends when a customer needs the whole picture rather than a
+    // one-line nudge, and the shape of the message this team was already
+    // sending by hand before this screen could build it for them.
+    name: "Outstanding statement",
+    category: "payment_reminder" as const,
+    stage: null,
+    appliesTo: "personal" as const,
+    body: "*OUTSTANDING OF {{customer}}*\nAs on {{as_of}}\n\nDear Sir/Madam,\n\nYour following bills are due for payment. We request you to take immediate steps for settling the overdue bills and oblige.\n\n{{bills_list}}\n\nTotal Amount {{outstanding}} is overdue for payment.\n\nPlease ignore if already paid.\n\nWith regards\nCustomer Relationship Manager\nFor Mahek Marketing India,\n{{owner}}",
+  },
+  {
+    // Proactive, before the bill is even overdue — {{bill_due}} can be a
+    // future date, since the oldest open bill is not always a late one.
+    name: "Pre-due reminder",
+    category: "payment_reminder" as const,
+    stage: null,
+    appliesTo: "personal" as const,
+    body: "Namaste {{contact}} ji,\n\nThis is a reminder that bill {{bill_no}} for {{customer}} is due on {{bill_due}}.\n\nKindly plan the payment so it reaches us on time.\n\n- {{owner}}, Mahek Marketing India",
+  },
+  {
+    // The date has passed and the money has not arrived — the one message in
+    // this set that is not about a bill at all, but about a broken promise.
+    name: "Broken promise follow-up",
+    category: "payment_reminder" as const,
+    stage: null,
+    appliesTo: "personal" as const,
+    body: "Namaste {{contact}} ji,\n\nYou had told us {{promised_amount}} would reach us by {{promised_date}} against {{customer}}, and we have not yet received it.\n\nKindly let us know a revised date, or arrange the payment today.\n\n- {{owner}}, Mahek Marketing India",
+  },
+  {
+    name: "Payment received - thank you",
+    category: "other" as const,
+    stage: null,
+    appliesTo: "personal" as const,
+    body: "Namaste {{contact}} ji,\n\nThank you - we have received your payment towards {{customer}}'s account.\n\nBalance outstanding, if any: {{outstanding}}.\n\n- {{owner}}, Mahek Marketing India",
   },
   {
     name: "Reorder nudge",
