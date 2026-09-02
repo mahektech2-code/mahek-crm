@@ -658,7 +658,10 @@ async function journeyStops(userId: string, days: string[]) {
 
 async function openTasks(userId: string) {
   return db.execute<Record<string, unknown>>(sql`
-    select t.id, t.title, t.description, t.priority, t.due_date::text as "dueDate",
+    select t.id, t.title, t.description,
+           t.assigned_to_user_id as "assignedToUserId",
+           t.assigned_by_user_id as "assignedByUserId",
+           t.priority, t.due_date::text as "dueDate",
            t.customer_id as "customerId", t.status,
            t.snoozed_to::text as "snoozedTo", t.snooze_reason as "snoozeReason",
            t.source_type as "sourceType", t.source_id as "sourceId",
@@ -667,6 +670,33 @@ async function openTasks(userId: string) {
      where t.assigned_to_user_id = ${userId}
        and t.status in ('open', 'in_progress')
      order by t.due_date asc nulls last
+  `);
+}
+
+/**
+ * A task assigned or changed since the last pull.
+ *
+ * Every status, not only open ones — a task the office just cancelled, or
+ * marked done on somebody's behalf, has to reach the handset the same way a
+ * newly-assigned one does. Sent only on a real cursor: the empty-since branch
+ * of `buildPull` answers nothing for every channel, tasks included, because
+ * the FIRST pull is bootstrap's job.
+ */
+async function tasksSince(userId: string, sinceIso: string) {
+  return db.execute<Record<string, unknown>>(sql`
+    select t.id, t.title, t.description,
+           t.assigned_to_user_id as "assignedToUserId",
+           t.assigned_by_user_id as "assignedByUserId",
+           t.priority, t.due_date::text as "dueDate",
+           t.customer_id as "customerId", t.status,
+           t.snoozed_to::text as "snoozedTo", t.snooze_reason as "snoozeReason",
+           t.source_type as "sourceType", t.source_id as "sourceId",
+           t.updated_at as "updatedAt"
+      from mbos_tasks t
+     where t.assigned_to_user_id = ${userId}
+       and t.updated_at > ${sinceIso}
+     order by t.updated_at asc
+     limit 500
   `);
 }
 
@@ -968,6 +998,7 @@ export async function buildPull(
       journeyStops: [],
       approvals: [],
       performance: [],
+      tasks: [],
       planDays: [],
       leaveBalances: [],
       priceList: [],
@@ -1011,6 +1042,7 @@ export async function buildPull(
     documentChanges,
     courseChanges,
     deletionRows,
+    taskChanges,
   ] = await Promise.all([
       idList
         ? db.execute<Record<string, unknown>>(sql`
@@ -1203,6 +1235,8 @@ export async function buildPull(
       coursesFor(principal.user.id, sinceIso),
 
       deletionsSince(principal.user.id, sinceIso),
+
+      tasksSince(principal.user.id, sinceIso),
     ]);
 
   return {
@@ -1223,5 +1257,6 @@ export async function buildPull(
     courses: courseChanges as unknown[],
     deletions: deletionRows,
     performance: await performanceFor(principal.user.id, sinceIso),
+    tasks: taskChanges as unknown[],
   };
 }

@@ -231,6 +231,15 @@ export type PullDelta = {
    * credit limit and the outstanding balance already follow.
    */
   performance: unknown[];
+  /**
+   * A task the office raised or reassigned, coming down on every pass and not
+   * only at sign-in — the same reasoning `journeyStops` already carries: a
+   * task a manager assigns this afternoon has to reach the handset without
+   * the salesman signing out and back in. Every status, not only open ones,
+   * so a task the office cancelled or completed on somebody's behalf reaches
+   * the handset the same way a new one does.
+   */
+  tasks: unknown[];
 };
 
 export type SyncResponse = {

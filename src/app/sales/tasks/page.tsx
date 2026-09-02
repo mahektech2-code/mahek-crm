@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { shortDate, stamp } from "@/lib/format";
 import { today } from "@/lib/recompute";
-import { tasksList } from "@/lib/services/sales-service";
+import { fieldTeam, tasksList } from "@/lib/services/sales-service";
+import { AssignTask } from "./assign-task";
 import {
   Cell,
   Empty,
@@ -39,7 +40,7 @@ export default async function Page({
 }) {
   const params = await searchParams;
   const day = await today();
-  const all = await tasksList(day);
+  const [all, salesmen] = await Promise.all([tasksList(day), fieldTeam()]);
 
   const show = ["all", "overdue", "open", "done"].includes(params.show ?? "")
     ? params.show!
@@ -59,6 +60,7 @@ export default async function Page({
       <ScreenHeader
         title="Tasks"
         subtitle="What you have asked each salesman to do. A task raised by the office and a task the app raised itself both land here — a rejected order raises one automatically, because the salesman stood in the shop and said it was placed."
+        actions={<AssignTask salesmen={salesmen.filter((s) => s.active)} />}
       />
 
       <MetricRow

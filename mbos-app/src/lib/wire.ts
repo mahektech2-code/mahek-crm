@@ -99,6 +99,22 @@ export function wirePriority(priority: string | undefined): string {
   return PRIORITIES[(priority ?? 'Normal').toLowerCase()] ?? 'medium';
 }
 
+/**
+ * The other direction — a task the OFFICE raised, coming down. `medium`
+ * becomes `Normal`, not `Medium`: the design never had a `Medium`, and a
+ * value it does not recognise is a task that renders with nothing in its
+ * priority chip rather than one that reads oddly.
+ */
+const LOCAL_PRIORITIES: Record<string, string> = {
+  low: 'Low',
+  medium: 'Normal',
+  high: 'High',
+};
+
+export function localPriority(priority: string | undefined): string {
+  return LOCAL_PRIORITIES[(priority ?? 'medium').toLowerCase()] ?? 'Normal';
+}
+
 /* -------------------------------------------------------------- complaints */
 
 /**

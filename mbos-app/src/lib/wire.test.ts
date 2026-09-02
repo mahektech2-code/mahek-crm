@@ -1,7 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { wireComplaintCategory, wireNotes, wireOutcome, wirePriority, wireStage } from '../lib/wire';
+import {
+  localPriority,
+  wireComplaintCategory,
+  wireNotes,
+  wireOutcome,
+  wirePriority,
+  wireStage,
+} from '../lib/wire';
 
 /**
  * The vocabularies that differ between this app and MahekOne — PROTOCOL.md §4.1.
@@ -80,6 +87,17 @@ test('a priority nobody knows still lands in the middle rather than being refuse
   /* The task is the point; where it sits in a sorted list is not worth losing
      it over. */
   assert.equal(wirePriority('Blocker'), 'medium');
+});
+
+test('medium comes back as Normal, not Medium — the design never had that word', () => {
+  assert.equal(localPriority('low'), 'Low');
+  assert.equal(localPriority('medium'), 'Normal');
+  assert.equal(localPriority('high'), 'High');
+  assert.equal(localPriority(undefined), 'Normal');
+});
+
+test('a priority the office invents lands in the middle here too', () => {
+  assert.equal(localPriority('urgent'), 'Normal');
 });
 
 test('an unrecognised complaint category becomes `other`, never a refusal', () => {
