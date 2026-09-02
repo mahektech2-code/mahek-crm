@@ -1,5 +1,6 @@
 import { requireUser } from "@/lib/auth";
-import { MonthNav, monthName } from "@/components/ui/month-nav";
+import { MonthNav } from "@/components/ui/month-nav";
+import { monthName } from "@/components/ui/month";
 import { money } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { BP, focusLines } from "@/lib/engines/performance";
@@ -69,7 +70,7 @@ export default async function Page({
         subtitle={`${monthName(period)} — ${reading.workingDaysElapsed} of ${reading.workingDaysTotal} working days gone`}
         actions={
           <div className="flex items-center gap-1 text-[13px]">
-            <MonthNav month={period} hrefFor={(m) => `/crm/performance?period=${m}`} />
+            <MonthNav month={period} basePath="/crm/performance" paramName="period" />
           </div>
         }
       />

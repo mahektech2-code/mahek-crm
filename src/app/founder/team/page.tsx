@@ -2,7 +2,8 @@ import { money, moneyShort } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { BP } from "@/lib/engines/performance";
 import { Badge, Card, PageHeader, Th, Td, Tr } from "@/components/ui/primitives";
-import { MonthNav, monthName } from "@/components/ui/month-nav";
+import { MonthNav } from "@/components/ui/month-nav";
+import { monthName } from "@/components/ui/month";
 import { founderTeamPerformance } from "@/lib/services/founder-dashboard-service";
 
 export const metadata = { title: "Team performance - Founder Dashboard - MahekOne" };
@@ -30,7 +31,7 @@ export default async function Page({
         subtitle="Revenue, litres, product mix, new customers, collection and activity, scored out of 100 — the same reading each app's own screen shows."
         actions={
           <div className="flex items-center gap-1 text-[13px]">
-            <MonthNav month={month} hrefFor={(m) => `/founder/team?month=${m}`} />
+            <MonthNav month={month} basePath="/founder/team" />
           </div>
         }
       />

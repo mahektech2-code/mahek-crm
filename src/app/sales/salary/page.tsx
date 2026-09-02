@@ -70,7 +70,7 @@ export default async function Page({
         subtitle="What each salesman is paid, read from the employee master that HR maintains. Nothing here writes a figure — a correction is made in the HR workbook, and the next sync brings it."
         actions={
           <div className="flex items-center gap-1 text-[13px]">
-            <MonthNav month={month} hrefFor={(m) => `/sales/salary?month=${m}`} />
+            <MonthNav month={month} basePath="/sales/salary" />
           </div>
         }
       />
