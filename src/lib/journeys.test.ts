@@ -172,6 +172,7 @@ import {
   completeReminder,
   listInactiveWatch,
   listReminders,
+  listTargets,
   recordWatchOutcome,
   setTarget,
 } from "@/lib/services/worklist-services";
@@ -1373,6 +1374,87 @@ describe("Journey 6 - a telecaller sees their own book and nothing else", () => 
       target.isDefault,
       false,
       "a hand-set target is no longer a default",
+    );
+  });
+});
+
+describe("who may see a customer's target", () => {
+  test("a salesman, their sales manager and back office each see the accounts they hold a seat on, and nothing else", async () => {
+    const owner = await makeUser("Book Owner", "telecaller");
+    const salesman = await makeUser("Field Salesman", "telecaller");
+    const salesManagerUser = await makeUser("Line Manager", "telecaller");
+    const backOfficeUser = await makeUser("Paperwork Clerk", "accounts");
+
+    const theirs = await makeCustomer(owner.id, {
+      salesAmId: salesman.id,
+      salesManagerId: salesManagerUser.id,
+      backOfficeAmId: backOfficeUser.id,
+    });
+    // Holds no seat for anybody above — the negative case each of them
+    // is checked against.
+    const stranger = await makeCustomer(owner.id, { salesAmId: owner.id });
+
+    setTestUser(salesman);
+    const salesmanRows = await listTargets();
+    assert.ok(
+      salesmanRows.some((r) => r.customerId === theirs.id),
+      "the salesman sees the account they sell to",
+    );
+    assert.equal(
+      salesmanRows.some((r) => r.customerId === stranger.id),
+      false,
+      "and nothing they hold no seat on",
+    );
+
+    // The seat that drives no queue, no scope and no target anywhere else in
+    // this product still has to drive visibility here — a sales manager has
+    // no other way to find the accounts they are named on.
+    setTestUser(salesManagerUser);
+    const managerRows = await listTargets();
+    assert.ok(
+      managerRows.some((r) => r.customerId === theirs.id),
+      "the sales manager sees the account they are named on",
+    );
+    assert.equal(
+      managerRows.some((r) => r.customerId === stranger.id),
+      false,
+      "the sales manager seat does not widen to the whole book",
+    );
+
+    // An accounts user reading this screen used to get `scope.kind === "all"`
+    // — the whole company — because the approval queue they actually work is
+    // nobody's book. A target is not an approval queue.
+    setTestUser(backOfficeUser);
+    const backOfficeRows = await listTargets();
+    assert.ok(
+      backOfficeRows.some((r) => r.customerId === theirs.id),
+      "back office sees the account they raise paperwork for",
+    );
+    assert.equal(
+      backOfficeRows.some((r) => r.customerId === stranger.id),
+      false,
+      "an accounts user is no longer shown the whole book on this screen",
+    );
+  });
+
+  test("a manager keeps their reports-to team, untouched by any of the three seats", async () => {
+    const unrelatedManager = await makeUser("Unrelated Manager", "manager");
+    const owner = await makeUser("Book Owner", "telecaller");
+    const salesman = await makeUser("Field Salesman", "telecaller");
+    // Named on the account by seat, but reports to nobody this manager
+    // manages — the fixture that would matter if seats leaked into a
+    // manager's view the way they do for everybody else.
+    const namedElsewhere = await makeCustomer(owner.id, {
+      salesAmId: salesman.id,
+      salesManagerId: unrelatedManager.id,
+    });
+
+    setTestUser(unrelatedManager);
+    const rows = await listTargets();
+    assert.equal(
+      rows.some((r) => r.customerId === namedElsewhere.id),
+      false,
+      "a manager's view is their reports-to team, not the accounts they happen to be named sales manager on",
     );
   });
 });
