@@ -483,7 +483,7 @@ function PersonMenu({
         ...(isAdmin
           ? [
               {
-                label: "Get a sign-in link",
+                label: `Login as ${row.name.split(" ")[0]}`,
                 disabled: !row.active,
                 title: row.active
                   ? "Opens a one-time link that signs in as this person, with no password"
