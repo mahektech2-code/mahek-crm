@@ -1,7 +1,6 @@
-import Link from "next/link";
 import { requireUser } from "@/lib/auth";
+import { MonthNav, monthName } from "@/components/ui/month-nav";
 import { money } from "@/lib/format";
-import { APP_TIMEZONE } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
 import { BP, focusLines } from "@/lib/engines/performance";
 import { readingsForPeriod } from "@/lib/services/performance-service";
@@ -70,18 +69,7 @@ export default async function Page({
         subtitle={`${monthName(period)} — ${reading.workingDaysElapsed} of ${reading.workingDaysTotal} working days gone`}
         actions={
           <div className="flex items-center gap-1 text-[13px]">
-            <Link
-              href={`/crm/performance?period=${shiftMonth(period, -1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              ←
-            </Link>
-            <Link
-              href={`/crm/performance?period=${shiftMonth(period, 1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              →
-            </Link>
+            <MonthNav month={period} hrefFor={(m) => `/crm/performance?period=${m}`} />
           </div>
         }
       />
@@ -292,17 +280,3 @@ function litres(ml: number): string {
   return `${Math.round(ml / 1000).toLocaleString("en-IN")} L`;
 }
 
-function shiftMonth(month: string, by: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const at = new Date(Date.UTC(y, m - 1 + by, 1));
-  return `${at.getUTCFullYear()}-${String(at.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-function monthName(month: string): string {
-  const [y, m] = month.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-GB", {
-    month: "long",
-    year: "numeric",
-    timeZone: APP_TIMEZONE,
-  }).format(new Date(Date.UTC(y, m - 1, 15)));
-}

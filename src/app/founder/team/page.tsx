@@ -1,9 +1,8 @@
-import Link from "next/link";
 import { money, moneyShort } from "@/lib/format";
 import { today } from "@/lib/recompute";
-import { APP_TIMEZONE } from "@/lib/business-date";
 import { BP } from "@/lib/engines/performance";
 import { Badge, Card, PageHeader, Th, Td, Tr } from "@/components/ui/primitives";
+import { MonthNav, monthName } from "@/components/ui/month-nav";
 import { founderTeamPerformance } from "@/lib/services/founder-dashboard-service";
 
 export const metadata = { title: "Team performance - Founder Dashboard - MahekOne" };
@@ -31,19 +30,7 @@ export default async function Page({
         subtitle="Revenue, litres, product mix, new customers, collection and activity, scored out of 100 — the same reading each app's own screen shows."
         actions={
           <div className="flex items-center gap-1 text-[13px]">
-            <Link
-              href={`/founder/team?month=${shiftMonth(month, -1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              ←
-            </Link>
-            <span className="px-2 text-muted">{monthName(month)}</span>
-            <Link
-              href={`/founder/team?month=${shiftMonth(month, 1)}`}
-              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              →
-            </Link>
+            <MonthNav month={month} hrefFor={(m) => `/founder/team?month=${m}`} />
           </div>
         }
       />
@@ -201,17 +188,3 @@ function ratingTone(bp: number): "success" | "brand" | "warn" | "danger" {
   return "danger";
 }
 
-function shiftMonth(month: string, by: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const at = new Date(Date.UTC(y, m - 1 + by, 1));
-  return `${at.getUTCFullYear()}-${String(at.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-function monthName(month: string): string {
-  const [y, m] = month.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-GB", {
-    month: "long",
-    year: "numeric",
-    timeZone: APP_TIMEZONE,
-  }).format(new Date(Date.UTC(y, m - 1, 15)));
-}
