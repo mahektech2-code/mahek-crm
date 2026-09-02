@@ -4,7 +4,8 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
-import { MonthNav, monthName } from "@/components/ui/month-nav";
+import { MonthNav } from "@/components/ui/month-nav";
+import { monthName } from "@/components/ui/month";
 import { PersonPicker, type Person } from "@/components/crm/person-picker";
 import { money } from "@/lib/format";
 import {
@@ -129,7 +130,7 @@ export function TargetsScreen({
         subtitle={`${monthName(period)} — what each person is being asked for. Nothing reaches anybody until it is published. The list is telecallers and field sales by default; add anybody else by hand.`}
         actions={
           <div className="flex items-center gap-1 text-[13px]">
-            <MonthNav month={period} hrefFor={(m) => `/sales/targets?period=${m}`} />
+            <MonthNav month={period} basePath="/sales/targets" paramName="period" />
             <Link
               href={`/sales/performance?month=${period}`}
               className="ml-2 rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"

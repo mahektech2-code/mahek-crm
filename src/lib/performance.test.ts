@@ -18,9 +18,11 @@ import { sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
+  bills,
   customers,
   finishedGoods,
   orders,
+  payments,
   paymentReceipts,
   productBrands,
   productFormulations,
@@ -53,6 +55,14 @@ const dayIn = (n: number) => `${PERIOD}-${String(n).padStart(2, "0")}`;
 const at = (n: number, time = "09:00:00") =>
   new Date(`${dayIn(n)}T${time}+05:30`);
 
+/** A date safely before the period opens, so a bill dated here is already overdue by the time the window starts. */
+const beforePeriod = (daysBefore: number) =>
+  new Date(
+    new Date(`${PERIOD}-01T00:00:00+05:30`).getTime() - daysBefore * 86_400_000,
+  )
+    .toISOString()
+    .slice(0, 10);
+
 async function makeUser(name: string, role: "telecaller" | "manager") {
   const [row] = await db
     .insert(users)
@@ -83,6 +93,41 @@ async function makeCustomer(over: Partial<typeof customers.$inferInsert> = {}) {
     })
     .returning();
   return row;
+}
+
+/** A bill dated well before the period, already overdue by the time it opens. */
+async function makeBill(customerId: string, over: Partial<typeof bills.$inferInsert> = {}) {
+  const [row] = await db
+    .insert(bills)
+    .values({
+      id: id("bil"),
+      customerId,
+      billNo: id("bno"),
+      billDate: beforePeriod(60),
+      dueDate: beforePeriod(45),
+      amount: 90_000_00,
+      ...over,
+    })
+    .returning();
+  return row;
+}
+
+/** One receipt's allocation to a bill — what the collection query actually sums. */
+async function makePayment(
+  receiptId: string,
+  customerId: string,
+  billId: string | null,
+  amount: number,
+  paidAt: string,
+) {
+  await db.insert(payments).values({
+    id: id("pay"),
+    receiptId,
+    billId,
+    customerId,
+    amount,
+    paidAt,
+  });
 }
 
 /**
@@ -427,31 +472,65 @@ describe("new customers", () => {
 });
 
 describe("collection", () => {
-  test("only money accounts have CONFIRMED counts", async () => {
+  /** A receipt against a bill, with the allocation the query actually sums. */
+  async function payAgainst(
+    customerId: string,
+    billId: string | null,
+    status: "confirmed" | "reported" | "held",
+    amount: number,
+  ) {
+    const rid = id("rcp");
+    await db.insert(paymentReceipts).values({
+      id: rid,
+      customerId,
+      amount,
+      mode: "neft",
+      status,
+      receivedAt: dayIn(12),
+      reportedById: rahul.id,
+      // Not null on the table: every route to a receipt is idempotent, so a
+      // retried sync writes the same row rather than a second payment.
+      idempotencyKey: id("idem"),
+    });
+    await makePayment(rid, customerId, billId, amount, dayIn(12));
+  }
+
+  test("only CONFIRMED money against a bill already overdue counts", async () => {
     const c = await makeCustomer({ salesAmId: rahul.id });
-    const receipt = (status: "confirmed" | "reported" | "held", amount: number) =>
-      db.insert(paymentReceipts).values({
-        id: id("rcp"),
-        customerId: c.id,
-        amount,
-        mode: "neft",
-        status,
-        receivedAt: dayIn(12),
-        reportedById: rahul.id,
-        // Not null on the table: every route to a receipt is idempotent, so a
-        // retried sync writes the same row rather than a second payment.
-        idempotencyKey: id("idem"),
-      });
-    await receipt("confirmed", 90_000_00);
-    await receipt("reported", 50_000_00);
-    await receipt("held", 30_000_00);
+    const bill = await makeBill(c.id, { amount: 90_000_00 });
+
+    await payAgainst(c.id, bill.id, "confirmed", 90_000_00);
+    await payAgainst(c.id, bill.id, "reported", 50_000_00);
+    await payAgainst(c.id, bill.id, "held", 30_000_00);
 
     const a = (await actualsForPeriod(PERIOD)).get(rahul.id)!;
+    assert.equal(
+      a.overdueAtStartPaise,
+      90_000_00,
+      "the whole bill was outstanding before the window opened",
+    );
     assert.equal(
       a.collectionPaise,
       90_000_00,
       "a claim is not money the business has seen",
     );
+  });
+
+  test("money against a bill that is not yet due does not count", async () => {
+    // The whole point of the component: a bill due later this month is
+    // ordinary business, not old debt being worked down.
+    const c = await makeCustomer({ salesAmId: rahul.id });
+    const bill = await makeBill(c.id, {
+      amount: 40_000_00,
+      billDate: dayIn(1),
+      dueDate: dayIn(20),
+    });
+
+    await payAgainst(c.id, bill.id, "confirmed", 40_000_00);
+
+    const a = (await actualsForPeriod(PERIOD)).get(rahul.id);
+    assert.equal(a?.overdueAtStartPaise ?? 0, 0, "nothing was overdue at the start");
+    assert.equal(a?.collectionPaise ?? 0, 0, "paid on time is not this component's business");
   });
 });
 
@@ -464,18 +543,19 @@ describe("the reading", () => {
       revenue: number;
       volumeMl: number;
       newCustomers: number;
-      collection: number;
+      /** Basis points of what is overdue at the start of the month. */
+      collectionBp: number;
       activity: number;
     }> = {},
   ) {
     const targetId = id("stg");
     await db.execute(sql`
       insert into sales_targets (id, user_id, period, revenue_target_paise,
-        volume_target_ml, new_customer_target, collection_target_paise,
+        volume_target_ml, new_customer_target, collection_target_bp,
         activity_target, status, published_at)
       values (${targetId}, ${userId}, ${PERIOD},
         ${over.revenue ?? 1_300_000_00}, ${over.volumeMl ?? 10_000_000},
-        ${over.newCustomers ?? 3}, ${over.collection ?? 1_000_000_00},
+        ${over.newCustomers ?? 3}, ${over.collectionBp ?? 8000},
         ${over.activity ?? 100}, 'published', now())
     `);
     for (const [cat, min, tgt, str] of [
