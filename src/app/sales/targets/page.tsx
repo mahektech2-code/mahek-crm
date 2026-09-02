@@ -4,6 +4,7 @@ import { listAssignableUsers } from "@/lib/queries";
 import { today } from "@/lib/recompute";
 import {
   baselineFor,
+  existingCustomerTargetTotals,
   mixCategories,
   targetableCandidates,
 } from "@/lib/services/sales-target-service";
@@ -33,10 +34,11 @@ export default async function Page({
     : now.slice(0, 7);
 
   const config = await getConfig();
-  const [rows, categories, everyone] = await Promise.all([
+  const [rows, categories, everyone, existingCustomerTargets] = await Promise.all([
     targetableCandidates(period),
     mixCategories(),
     listAssignableUsers(),
+    existingCustomerTargetTotals(period),
   ]);
 
   // Anybody a manager could add by hand, beyond the sales roles the list
@@ -76,6 +78,7 @@ export default async function Page({
       baselines={baselines}
       baselineMonths={months}
       revisionReasons={config["performance.revisionReasons"]}
+      existingCustomerTargets={existingCustomerTargets}
     />
   );
 }

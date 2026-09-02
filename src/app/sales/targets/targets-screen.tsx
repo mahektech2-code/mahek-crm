@@ -62,6 +62,16 @@ type Props = {
   baselines: Record<string, Baseline>;
   baselineMonths: number;
   revisionReasons: string[];
+  /**
+   * What the CRM's own Monthly Targets already asks of this person's
+   * existing customers, one at a time — the total the telecaller side has
+   * already committed to for this period, keyed by user id. A person's
+   * revenue target set here and the sum of their customers' targets are two
+   * numbers that SHOULD roughly agree; this is how a manager can see when
+   * they do not, without opening the customer-level screen to add it up by
+   * hand. Zero where nothing has been set yet.
+   */
+  existingCustomerTargets: Record<string, number>;
 };
 
 /** Rupees on the screen, paise in the database. Never the other way round. */
@@ -108,6 +118,7 @@ export function TargetsScreen({
   baselines,
   baselineMonths,
   revisionReasons,
+  existingCustomerTargets,
 }: Props) {
   const router = useRouter();
   const [editing, setEditing] = useState<string | null>(null);
@@ -204,12 +215,13 @@ export function TargetsScreen({
         />
       ) : (
         <Table
-          minWidth={1180}
+          minWidth={1340}
           head={
             <>
               <HeadCell width={170}>Person</HeadCell>
               <HeadCell width={110}>Status</HeadCell>
               <HeadCell align="right" width={150}>Revenue</HeadCell>
+              <HeadCell align="right" width={160}>From existing customers</HeadCell>
               <HeadCell align="right" width={130}>Volume</HeadCell>
               <HeadCell align="right" width={90}>New</HeadCell>
               <HeadCell align="right" width={140}>Collection</HeadCell>
@@ -238,6 +250,12 @@ export function TargetsScreen({
                   )}
                 </Cell>
                 <Cell align="right">{orDash(r.revenueTargetPaise, money)}</Cell>
+                <Cell align="right">
+                  <ExistingCustomerTotal
+                    paise={existingCustomerTargets[r.userId] ?? 0}
+                    revenueTargetPaise={r.revenueTargetPaise}
+                  />
+                </Cell>
                 <Cell align="right">
                   {orDash(r.volumeTargetMl, (v) => `${Math.round(v / 1000).toLocaleString("en-IN")} L`)}
                 </Cell>
@@ -270,6 +288,7 @@ export function TargetsScreen({
           row={editingRow}
           period={period}
           baseline={baselines[editingRow.userId]}
+          existingCustomerPaise={existingCustomerTargets[editingRow.userId] ?? 0}
           categories={categories}
           revisionReasons={revisionReasons}
           onClose={() => setEditing(null)}
@@ -305,6 +324,7 @@ function Editor({
   row,
   period,
   baseline,
+  existingCustomerPaise,
   categories,
   revisionReasons,
   onClose,
@@ -313,6 +333,7 @@ function Editor({
   row: TargetRow;
   period: string;
   baseline: Baseline | undefined;
+  existingCustomerPaise: number;
   categories: { id: string; name: string; isResidual: boolean }[];
   revisionReasons: string[];
   onClose: () => void;
@@ -457,11 +478,16 @@ function Editor({
           suffix="₹"
           value={revenue}
           onChange={setRevenue}
-          hint={
+          hint={[
             baseline
               ? `${money(baseline.revenuePaise)} a month over the last ${baseline.monthsCounted}`
-              : undefined
-          }
+              : null,
+            existingCustomerPaise > 0
+              ? `${money(existingCustomerPaise)} already set for existing customers, one at a time, on Monthly Targets`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" · ") || undefined}
         />
         <Field
           label="Volume target"
@@ -718,6 +744,36 @@ function Growth({
     <span className={`text-[12px] ${tone}`}>
       {growth >= 0 ? "+" : ""}
       {growth.toFixed(1)}% on {money(baseline.revenuePaise)}
+    </span>
+  );
+}
+
+/**
+ * What the Monthly Targets screen already asks of this person's existing
+ * customers, one at a time, added up — so a manager reading "₹30,00,000"
+ * beside a person can see in the same glance that their own customers'
+ * targets already total ₹40,00,000, rather than discovering the disagreement
+ * by opening the customer-level screen and adding rows up by hand.
+ */
+function ExistingCustomerTotal({
+  paise,
+  revenueTargetPaise,
+}: {
+  paise: number;
+  revenueTargetPaise: number | null;
+}) {
+  if (paise <= 0) return <span className="text-muted">—</span>;
+  const exceedsTarget = revenueTargetPaise !== null && paise > revenueTargetPaise;
+  return (
+    <span
+      className={`tabular-nums ${exceedsTarget ? "font-medium text-warn-ink" : ""}`}
+      title={
+        exceedsTarget
+          ? "Already more than this person's own revenue target — the two numbers should roughly agree."
+          : "What their existing customers' monthly targets already total, from the CRM."
+      }
+    >
+      {money(paise)}
     </span>
   );
 }

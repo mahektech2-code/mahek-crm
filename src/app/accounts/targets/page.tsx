@@ -4,6 +4,7 @@ import { listAssignableUsers } from "@/lib/queries";
 import { today } from "@/lib/recompute";
 import {
   baselineFor,
+  existingCustomerTargetTotals,
   mixCategories,
   targetableCandidates,
 } from "@/lib/services/sales-target-service";
@@ -46,15 +47,17 @@ export default async function Page({
     : now.slice(0, 7);
 
   const config = await getConfig();
-  const [rows, categories, readings, unattributed, everyone] = await Promise.all([
-    targetableCandidates(period),
-    mixCategories(),
-    // Drafts too — this is the desk deciding whether a number is working, not
-    // the salesman's own screen, which reads published targets only.
-    readingsForPeriod(period, now, { includeDrafts: true }),
-    unattributedForPeriod(period),
-    listAssignableUsers(),
-  ]);
+  const [rows, categories, readings, unattributed, everyone, existingCustomerTargets] =
+    await Promise.all([
+      targetableCandidates(period),
+      mixCategories(),
+      // Drafts too — this is the desk deciding whether a number is working,
+      // not the salesman's own screen, which reads published targets only.
+      readingsForPeriod(period, now, { includeDrafts: true }),
+      unattributedForPeriod(period),
+      listAssignableUsers(),
+      existingCustomerTargetTotals(period),
+    ]);
 
   // Anybody a person here could add by hand, beyond the sales roles
   // `targetableCandidates` shows by default — the same "Add someone" the
@@ -83,6 +86,7 @@ export default async function Page({
       revisionReasons={config["performance.revisionReasons"]}
       readings={readings}
       unattributed={unattributed}
+      existingCustomerTargets={existingCustomerTargets}
     />
   );
 }

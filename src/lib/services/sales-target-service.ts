@@ -119,6 +119,40 @@ export async function targetableCandidates(period: string): Promise<TargetRow[]>
   }));
 }
 
+/**
+ * What each person's existing customers already carry, one at a time, on
+ * Monthly Targets — summed by who each customer is credited to, the SAME
+ * rule `targetableCandidates` above and `sales_performance` are both scored
+ * by. This is the number a person's own revenue target here is meant to
+ * roughly agree with: a manager typing ₹30,00,000 for someone whose
+ * customers already total ₹40,00,000 has set a target the customer-level
+ * numbers already contradict, and until now there was nowhere on this screen
+ * that said so.
+ *
+ * Deactivated customers are left out, matching what Monthly Targets itself
+ * shows — a deactivated account never reaches that table, so its target
+ * cannot be the one somebody forgot to update.
+ */
+export async function existingCustomerTargetTotals(
+  period: string,
+): Promise<Record<string, number>> {
+  const [year, month] = period.split("-").map(Number);
+  const rows = await db.execute<{ user_id: string | null; total: string }>(sql`
+    select ${creditedToSql("c")} as user_id, coalesce(sum(mt.target_amount), 0) as total
+      from monthly_targets mt
+      join customers c on c.id = mt.customer_id
+     where mt.year = ${year} and mt.month = ${month}
+       and c.status <> 'deactivated'
+     group by 1
+  `);
+  const out: Record<string, number> = {};
+  for (const r of rows) {
+    if (!r.user_id) continue;
+    out[r.user_id] = Number(r.total);
+  }
+  return out;
+}
+
 async function bandsByTarget(ids: string[]) {
   const out = new Map<string, TargetRow["bands"]>();
   if (!ids.length) return out;

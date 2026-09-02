@@ -39,6 +39,18 @@ import { err, ok, okVoid, type Result } from "../result";
 import { shortDateWithYear } from "../format";
 import { nextStepForCustomer } from "./queue-service";
 import { customerFilterClause, type CustomerListFilters } from "../queries";
+import { creditedToSql } from "../sales-attribution";
+
+/**
+ * Whose target a customer's monthly figure counts toward — the same rule
+ * `sales_performance` is scored by: the salesperson on the account, the
+ * back-office person only where there is no salesperson, nobody otherwise.
+ * `sales_person_name` and `owner_id` are deliberately left out of this, unlike
+ * the old `TARGET_OWNER_NAME_SQL` it replaces — a name from the sheet with no
+ * MahekOne login cannot be credited with a target, and `owner_id` on an
+ * imported book is whoever ran the import, one person on a thousand rows.
+ */
+const CREDITED_TO_NAME_SQL = sql<string | null>`(select name from users u where u.id = ${creditedToSql("customers")})`;
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -705,19 +717,12 @@ export async function listTargets(period?: string) {
     .select({
       customer: customers,
       /*
-       * Whose account it is, by the rule every scoped list already filters on
-       * — the sheet's salesperson first, then the linked account, and the
-       * owner only where a lead answers to one.
-       *
-       * Reading `owner_id` alone named one person on every row: the import
-       * writes it once for the whole book, so the column showed the importer
-       * a thousand times over while the list it sat beside named the real
-       * manager.
+       * Whose TARGET this month's figure counts toward — see
+       * `CREDITED_TO_NAME_SQL`. Deliberately not `ASSIGNED_TO_SQL`: that
+       * answers whose BOOK a customer sits in, which falls back to
+       * `owner_id` and can name whoever ran the import.
        */
-      ownerName: sql<string | null>`coalesce(
-        nullif(customers.sales_person_name, ''),
-        (select name from users u where u.id = ${ASSIGNED_TO_SQL})
-      )`,
+      ownerName: CREDITED_TO_NAME_SQL,
       target: monthlyTargets.targetAmount,
       isDefault: monthlyTargets.isDefault,
       carriedForward: monthlyTargets.carriedForward,
@@ -787,16 +792,6 @@ export async function listTargets(period?: string) {
     };
   });
 }
-
-/**
- * Who the "Account manager" column names, in SQL — the exact expression
- * `listTargets` resolves in JavaScript, kept as one fragment so the filter
- * offering a name and the column showing it can never disagree about it.
- */
-const TARGET_OWNER_NAME_SQL = sql<string | null>`coalesce(
-  nullif(customers.sales_person_name, ''),
-  (select name from users u where u.id = ${ASSIGNED_TO_SQL})
-)`;
 
 function targetAchievedSql(year: number, month: number) {
   return sql<number>`coalesce((
@@ -988,7 +983,7 @@ export async function listTargetsPage(
   const rows = await db
     .select({
       customer: customers,
-      ownerName: TARGET_OWNER_NAME_SQL,
+      ownerName: CREDITED_TO_NAME_SQL,
       target: monthlyTargets.targetAmount,
       isDefault: monthlyTargets.isDefault,
       carriedForward: monthlyTargets.carriedForward,
