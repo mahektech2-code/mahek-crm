@@ -2,11 +2,12 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Badge,
   Button,
   Card,
+  EmptyState,
   Field,
   Input,
   MetricStrip,
@@ -21,10 +22,24 @@ import {
   cx,
 } from "@/components/ui/primitives";
 import { Modal, RowMenu, Tabs } from "@/components/ui/overlays";
+import { MultiSelect } from "@/components/ui/multi-select";
+import { Icon } from "@/components/shell/icons";
 import { useToast } from "@/components/ui/toast";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { setTarget, setTargetsBulk } from "@/lib/actions/crm";
 import { money, moneyShort, pct, periodLabel } from "@/lib/format";
+
+const PER_PAGE = [25, 50, 100] as const;
+
+const STATUS_OPTIONS = [
+  { value: "behind", label: "Behind target" },
+  { value: "on_track", label: "On or above target" },
+];
+
+const BASIS_OPTIONS = [
+  { value: "default", label: "On the auto-applied default" },
+  { value: "set", label: "A real figure" },
+];
 
 /* ---------------------------------------------------------------------------
  * Monthly targets — per customer, per month.
@@ -85,6 +100,10 @@ export function MonthlyTargetsScreen({
   period,
   rows,
   shortfall,
+  filters,
+  pageInfo,
+  totals,
+  ownerOptions,
 }: {
   /** Only changes which extra row-menu link is offered — CRM has its own bills screen, Accounts folds everything into the customer's ledger. */
   app: "crm" | "accounts";
@@ -96,10 +115,31 @@ export function MonthlyTargetsScreen({
   /** Whether THIS person holds `target.set`/`target.shortfall` — a manager or accounts, never a telecaller. */
   canSet: boolean;
   period: string;
+  /** Already filtered, counted and sliced by Postgres — this is one page. */
   rows: Row[];
   shortfall: Shortfall;
+  filters: {
+    query: string;
+    status: string;
+    owner: string;
+    basis: string;
+    perPage: number;
+  };
+  pageInfo: { page: number; pageCount: number; total: number; bookTotal: number };
+  /** Over the filtered set, not the page — the summary card describes the search. */
+  totals: {
+    target: number;
+    achieved: number;
+    gap: number;
+    defaults: number;
+    behind: number;
+    maxGap: number;
+  };
+  /** Account manager names the filter can offer — read from the same column it filters. */
+  ownerOptions: string[];
 }) {
   const router = useRouter();
+  const search = useSearchParams();
   const { run } = useToast();
   const customerHref = React.useCallback(
     (customerId: string) => customerHrefTemplate.replace("{id}", customerId),
@@ -110,16 +150,86 @@ export function MonthlyTargetsScreen({
   const [editing, setEditing] = React.useState<Row | null>(null);
   const [bulkOpen, setBulkOpen] = React.useState(false);
 
-  const total = rows.reduce((a, r) => a + r.target, 0);
-  const achieved = rows.reduce((a, r) => a + r.achieved, 0);
-  const gap = Math.max(0, total - achieved);
-  const percent = pct(achieved, total);
-  const defaults = rows.filter((r) => r.isDefault).length;
+  const navigate = React.useCallback(
+    (patch: Record<string, string | number | undefined>) => {
+      const next = new URLSearchParams(search.toString());
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === undefined || v === "" || v === null) next.delete(k);
+        else next.set(k, String(v));
+      }
+      // Any change to what is being looked at starts at the beginning of it —
+      // unless the change IS the page.
+      if (!("page" in patch)) next.delete("page");
+      router.push(`${basePath}?${next.toString()}`, { scroll: false });
+    },
+    [router, search, basePath],
+  );
+
+  // The search box is the one control that cannot afford a round trip per
+  // keystroke, so it holds its own text and navigates when typing settles.
+  const [draft, setDraft] = React.useState(filters.query);
+  const searchTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const asList = (v: string) => (v ? v.split(",").filter(Boolean) : []);
+  const ownerOptionList = ownerOptions.map((o) => ({ value: o, label: o }));
+
+  const { page, pageCount, total } = pageInfo;
+  const perPage = filters.perPage;
+  const from = (page - 1) * perPage;
+  const target = totals.target;
+  const achieved = totals.achieved;
+  const gap = totals.gap;
+  const percent = pct(achieved, target);
+  const defaults = totals.defaults;
+
+  const describeMulti = (raw: string, options: { value: string; label: string }[]) => {
+    const vals = asList(raw);
+    if (!vals.length) return "";
+    const byValue = new Map(options.map((o) => [o.value, o.label]));
+    return vals.map((v) => byValue.get(v) ?? v).join(", ");
+  };
+
+  const chips = [
+    filters.status
+      ? {
+          label: `Status: ${describeMulti(filters.status, STATUS_OPTIONS)}`,
+          clear: () => navigate({ status: undefined }),
+        }
+      : null,
+    filters.owner
+      ? {
+          label: `Account manager: ${describeMulti(filters.owner, ownerOptionList)}`,
+          clear: () => navigate({ owner: undefined }),
+        }
+      : null,
+    filters.basis
+      ? {
+          label: `Basis: ${describeMulti(filters.basis, BASIS_OPTIONS)}`,
+          clear: () => navigate({ basis: undefined }),
+        }
+      : null,
+    filters.query
+      ? {
+          label: `Search: ${filters.query}`,
+          clear: () => {
+            setDraft("");
+            navigate({ q: undefined });
+          },
+        }
+      : null,
+  ].filter(Boolean) as Array<{ label: string; clear: () => void }>;
+
+  function clearAll() {
+    setDraft("");
+    navigate({ q: undefined, status: undefined, owner: undefined, basis: undefined });
+  }
 
   // The engine classifies the shortfall — the screen only lays it out. The
   // distinction is the point of the tab: a coverage gap is the telecaller's to
-  // fix, a customer gap is a price, stock or terms conversation.
-  const behind = rows.filter((r) => r.gap > 0);
+  // fix, a customer gap is a price, stock or terms conversation. Unfiltered
+  // and unpaginated on purpose — it reads the whole scoped book, independent
+  // of whatever the Targets tab's filters are currently set to.
+  const behind = totals.behind;
   const groups: Array<{
     title: string;
     accent: string;
@@ -207,12 +317,12 @@ export function MonthlyTargetsScreen({
 
       <MetricStrip
         metrics={[
-          { label: "Customers", value: String(rows.length) },
-          { label: "On or above target", value: String(rows.filter((r) => r.percent >= 100).length), tone: "success" },
-          { label: "Behind", value: String(behind.length), tone: behind.length ? "danger" : "ink" },
+          { label: "Customers", value: String(total) },
+          { label: "On or above target", value: String(total - behind), tone: "success" },
+          { label: "Behind", value: String(behind), tone: behind ? "danger" : "ink" },
           {
             label: "Biggest single gap",
-            value: behind.length ? moneyShort(Math.max(...behind.map((r) => r.gap))) : "-",
+            value: behind ? moneyShort(totals.maxGap) : "-",
           },
         ]}
       />
@@ -222,8 +332,8 @@ export function MonthlyTargetsScreen({
         onChange={setTab}
         className="mb-4"
         tabs={[
-          { key: "targets", label: "Targets", count: rows.length },
-          { key: "shortfall", label: "Where the shortfall is", count: behind.length },
+          { key: "targets", label: "Targets", count: total },
+          { key: "shortfall", label: "Where the shortfall is", count: behind },
         ]}
       />
 
@@ -294,7 +404,86 @@ export function MonthlyTargetsScreen({
           ))}
         </div>
       ) : (
-        <Card className="overflow-auto">
+        <>
+          <Card className="mb-0 flex flex-wrap items-center gap-2.5 rounded-b-none border-b-0 px-4 py-3">
+            <div className="relative w-[260px]">
+              <Icon
+                name="search"
+                size={16}
+                className="pointer-events-none absolute top-2 left-2.5 text-muted"
+              />
+              <input
+                value={draft}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  // Typing settles before the server is asked. A round trip
+                  // per keystroke would make the box feel broken on a 4G
+                  // handset.
+                  clearTimeout(searchTimer.current);
+                  searchTimer.current = setTimeout(
+                    () => navigate({ q: e.target.value }),
+                    300,
+                  );
+                }}
+                placeholder="Search customer name"
+                className="h-8 w-full rounded-[4px] border border-line pr-7 pl-7.5 text-sm outline-none focus:border-brand"
+              />
+              {filters.query ? (
+                <button
+                  onClick={() => {
+                    setDraft("");
+                    navigate({ q: undefined });
+                  }}
+                  aria-label="Clear search"
+                  className="absolute top-1.5 right-1.5 h-4.5 w-4.5 cursor-pointer text-muted"
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
+            <MultiSelect
+              label="Status"
+              placeholder="All statuses"
+              options={STATUS_OPTIONS}
+              selected={asList(filters.status)}
+              onChange={(next) => navigate({ status: next.join(",") || undefined })}
+            />
+            <MultiSelect
+              label="Account manager"
+              placeholder="Everyone"
+              options={ownerOptionList}
+              selected={asList(filters.owner)}
+              onChange={(next) => navigate({ owner: next.join(",") || undefined })}
+            />
+            <MultiSelect
+              label="Basis"
+              placeholder="Any basis"
+              options={BASIS_OPTIONS}
+              selected={asList(filters.basis)}
+              onChange={(next) => navigate({ basis: next.join(",") || undefined })}
+            />
+            {chips.length ? (
+              <Button variant="ghost" size="sm" onClick={clearAll}>
+                Clear filters
+              </Button>
+            ) : null}
+          </Card>
+          {chips.length ? (
+            <div className="flex flex-wrap items-center gap-1.5 border-r border-b border-l border-line bg-surface px-4 py-2.5">
+              {chips.map((c) => (
+                <button
+                  key={c.label}
+                  onClick={c.clear}
+                  className="flex cursor-pointer items-center gap-1 rounded-[4px] border border-line bg-canvas px-2 py-1 text-[12px] text-body hover:bg-line-soft"
+                >
+                  {c.label}
+                  <span className="text-muted">×</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <Card className={cx("overflow-auto", chips.length ? "rounded-t-none" : "mt-0 rounded-t-none border-t-0")}>
+            {rows.length ? (
           <table>
             <thead>
               <tr>
@@ -377,7 +566,76 @@ export function MonthlyTargetsScreen({
               ))}
             </tbody>
           </table>
-        </Card>
+            ) : (
+              <EmptyState
+                title="No customers match these filters"
+                body="Widen the search or clear the filters to see the full list."
+                action={
+                  <Button variant="primary" onClick={clearAll}>
+                    Clear filters
+                  </Button>
+                }
+              />
+            )}
+          </Card>
+
+          {total ? (
+            <div className="flex flex-wrap items-center gap-3 border-r border-b border-l border-line bg-surface px-4 py-3">
+              <span className="text-[13px] text-muted">
+                {from + 1}&ndash;{Math.min(from + perPage, total)} of{" "}
+                {total.toLocaleString("en-IN")}
+              </span>
+
+              <span className="flex items-center gap-2 text-[13px] text-muted">
+                <label htmlFor="targets-per-page">Show</label>
+                <select
+                  id="targets-per-page"
+                  value={perPage}
+                  onChange={(e) => {
+                    // Keep the first row of this page in view rather than
+                    // jumping to the top: a page size is a change of zoom,
+                    // not of place.
+                    const next = Number(e.target.value);
+                    navigate({ per: next, page: Math.floor(from / next) + 1 });
+                  }}
+                  className="h-8 cursor-pointer rounded-[4px] border border-line bg-canvas px-2 text-[13px] text-body"
+                >
+                  {PER_PAGE.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </span>
+
+              <span className="flex-1" />
+
+              <span className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={page <= 1}
+                  title={page <= 1 ? "This is the first page" : undefined}
+                  onClick={() => navigate({ page: page - 1 })}
+                >
+                  Previous
+                </Button>
+                <span className="text-[13px] text-body tabular-nums">
+                  {page} / {pageCount}
+                </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={page >= pageCount}
+                  title={page >= pageCount ? "This is the last page" : undefined}
+                  onClick={() => navigate({ page: page + 1 })}
+                >
+                  Next
+                </Button>
+              </span>
+            </div>
+          ) : null}
+        </>
       )}
 
       <SetTargetModal
@@ -396,14 +654,23 @@ export function MonthlyTargetsScreen({
 
       <BulkTargetModal
         open={bulkOpen}
-        count={rows.length}
+        count={total}
+        hasFilters={Boolean(filters.query || filters.status || filters.owner || filters.basis)}
         onClose={() => setBulkOpen(false)}
         onSubmit={async (mode, value, onlyDefaults) => {
-          const ids = (onlyDefaults ? rows.filter((r) => r.isDefault) : rows).map(
-            (r) => r.customerId,
-          );
           const result = await run(
-            setTargetsBulk({ customerIds: ids, mode, value, period }),
+            setTargetsBulk({
+              filters: {
+                query: filters.query || undefined,
+                status: filters.status || undefined,
+                owner: filters.owner || undefined,
+                basis: filters.basis || undefined,
+              },
+              onlyDefault: onlyDefaults,
+              mode,
+              value,
+              period,
+            }),
           );
           if (result.ok) {
             setBulkOpen(false);
@@ -511,11 +778,14 @@ function SetTargetModalBody({ row, period, onClose, onSubmit }: SetTargetProps) 
 function BulkTargetModal({
   open,
   count,
+  hasFilters,
   onClose,
   onSubmit,
 }: {
   open: boolean;
+  /** How many customers the current filters match — what this actually touches. */
   count: number;
+  hasFilters: boolean;
   onClose: () => void;
   onSubmit: (
     mode: "amount" | "uplift",
@@ -599,10 +869,10 @@ function BulkTargetModal({
         </label>
 
         <div className="rounded-[4px] border border-warn-line bg-warn-soft px-2.5 py-2 text-[13px] text-warn-ink">
-          This overwrites existing targets for the customers it touches
+          This overwrites existing targets for {hasFilters ? "the customers your filters match" : "the customers it touches"}
           {onlyDefaults
             ? " - with the box ticked, only the untouched defaults change."
-            : `, all ${count} of them.`}
+            : `, all ${count.toLocaleString("en-IN")} of them${hasFilters ? " (matching your current filters)" : ""}.`}
         </div>
       </div>
     </Modal>
