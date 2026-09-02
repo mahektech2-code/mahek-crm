@@ -10,7 +10,7 @@ import {
   listTemplates,
   listUnconfirmedCopies,
 } from "@/lib/services/whatsapp-service";
-import { clock, nowMs } from "@/lib/format";
+import { clock, longDate, nowMs } from "@/lib/format";
 import { WhatsappScreen } from "./whatsapp-screen";
 
 export const metadata = { title: "WhatsApp - MahekOne CRM" };
@@ -56,14 +56,24 @@ export default async function WhatsappPage({
     isManager(user) ? listUnconfirmedCopies() : Promise.resolve([]),
   ]);
 
-  // Oldest open bill per customer feeds the {{bill_no}} / {{bill_due}} fields.
-  const oldestBill = new Map<string, { billNo: string; dueDate: string }>();
-  for (const b of [...bills].sort((a, z) => a.dueDate.localeCompare(z.dueDate))) {
-    if (b.balance <= 0) continue;
-    if (!oldestBill.has(b.customerId)) {
-      oldestBill.set(b.customerId, { billNo: b.billNo, dueDate: b.dueDate });
-    }
+  // Every STATED open bill per customer, oldest first — feeds {{bill_no}},
+  // {{bill_due}} and the full {{bills_list}} a statement actually needs. An
+  // `unstated` bill is left out here exactly as `mergeValuesFor` leaves it out
+  // server-side: an unverified balance is not something to compose an
+  // outgoing message about, and the two must agree on that filter.
+  const openBillsByCustomer = new Map<
+    string,
+    Array<{ billNo: string; billDate: string; dueDate: string; balance: number }>
+  >();
+  for (const b of [...bills].sort((a, z) => a.billDate.localeCompare(z.billDate))) {
+    if (b.balance <= 0 || b.paymentPosition !== "stated") continue;
+    const list = openBillsByCustomer.get(b.customerId) ?? [];
+    list.push({ billNo: b.billNo, billDate: b.billDate, dueDate: b.dueDate, balance: b.balance });
+    openBillsByCustomer.set(b.customerId, list);
   }
+
+  const asOf = longDate(day);
+  const promiseByCustomer = new Map(followUps.map((f) => [f.customerId, f]));
 
   const customerPayload = customers.map((c) => ({
     id: c.id,
@@ -77,8 +87,12 @@ export default async function WhatsappPage({
     ownerName: c.ownerName,
     groupName: c.whatsappGroupName,
     destKind: c.whatsappDest,
-    oldestBillNo: oldestBill.get(c.id)?.billNo ?? null,
-    oldestBillDue: oldestBill.get(c.id)?.dueDate ?? null,
+    oldestBillNo: openBillsByCustomer.get(c.id)?.[0]?.billNo ?? null,
+    oldestBillDue: openBillsByCustomer.get(c.id)?.[0]?.dueDate ?? null,
+    openBills: openBillsByCustomer.get(c.id) ?? [],
+    asOf,
+    promisedAmount: promiseByCustomer.get(c.id)?.promisedAmount ?? null,
+    promisedDate: promiseByCustomer.get(c.id)?.promisedDate ?? null,
     slowPayer: c.slowPayer,
   }));
 

@@ -43,6 +43,21 @@ import { applyMerge, fieldLabel, mergeValues, missingFields, usedFields } from "
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { money, phoneDisplay, stamp } from "@/lib/format";
 
+/**
+ * The real `template_category` enum, with the words a manager reads instead
+ * of the column's own snake_case. The dropdown used to offer "Payments",
+ * "Orders", "Sales", "Service" — none of them a value Postgres would accept —
+ * so saving a new template, or changing an existing one's category, failed
+ * outright the moment somebody touched this field.
+ */
+const TEMPLATE_CATEGORY_OPTIONS = [
+  { value: "payment_reminder", label: "Payment reminder" },
+  { value: "order_confirmation", label: "Order confirmation" },
+  { value: "reactivation", label: "Reactivation" },
+  { value: "routine_check_in", label: "Routine check-in" },
+  { value: "other", label: "Other" },
+] as const;
+
 type Customer = {
   id: string;
   name: string;
@@ -58,6 +73,12 @@ type Customer = {
   destKind: "personal" | "group" | "both";
   oldestBillNo: string | null;
   oldestBillDue: string | null;
+  /** Every stated, unpaid bill, oldest first — feeds {{bills_list}}. */
+  openBills: Array<{ billNo: string; billDate: string; balance: number }>;
+  /** Today, already formatted server-side — feeds {{as_of}}. */
+  asOf: string;
+  promisedAmount: number | null;
+  promisedDate: string | null;
   slowPayer: boolean;
 };
 
@@ -487,6 +508,10 @@ function SendComposer({
         lastOrderValue: customer.lastOrderValue,
         oldestBillNo: customer.oldestBillNo,
         oldestBillDue: customer.oldestBillDue,
+        openBills: customer.openBills,
+        asOf: customer.asOf,
+        promisedAmount: customer.promisedAmount,
+        promisedDate: customer.promisedDate,
         ownerName: customer.ownerName,
       })
     : ({} as Record<string, string>);
@@ -1085,6 +1110,10 @@ function RunTab({
               lastOrderValue: c.lastOrderValue,
               oldestBillNo: c.oldestBillNo,
               oldestBillDue: c.oldestBillDue,
+              openBills: c.openBills,
+              asOf: c.asOf,
+              promisedAmount: c.promisedAmount,
+              promisedDate: c.promisedDate,
               ownerName: c.ownerName,
             }),
           )
@@ -1763,7 +1792,7 @@ function TemplateDrawerBody({
   onArchive,
 }: TemplateDrawerProps) {
   const [name, setName] = React.useState(template?.name ?? "");
-  const [category, setCategory] = React.useState(template?.category ?? "Payments");
+  const [category, setCategory] = React.useState(template?.category ?? "payment_reminder");
   const [body, setBody] = React.useState(template?.body ?? "");
   const [appliesTo, setAppliesTo] = React.useState<"personal" | "group" | "both">(
     template?.appliesTo ?? "personal",
@@ -1810,8 +1839,10 @@ function TemplateDrawerBody({
                   onChange={(e) => setCategory(e.target.value)}
                   disabled={!isManager}
                 >
-                  {["Payments", "Orders", "Sales", "Service"].map((c) => (
-                    <option key={c}>{c}</option>
+                  {TEMPLATE_CATEGORY_OPTIONS.map((c) => (
+                    <option key={c.value} value={c.value}>
+                      {c.label}
+                    </option>
                   ))}
                 </Select>
               </Field>
@@ -1830,7 +1861,7 @@ function TemplateDrawerBody({
               </Field>
               <Field
                 label="Message body"
-                hint="Merge fields: {{customer}} {{contact}} {{city}} {{outstanding}} {{bill_no}} {{bill_due}} {{last_order_date}} {{last_order_value}} {{owner}}"
+                hint="Merge fields: {{customer}} {{contact}} {{city}} {{phone}} {{outstanding}} {{bill_no}} {{bill_due}} {{bills_list}} {{as_of}} {{promised_amount}} {{promised_date}} {{last_order_date}} {{last_order_value}} {{owner}}"
                 error={tooLong ? "Long messages get skimmed - try to stay under 700 characters." : null}
               >
                 <VoiceTextarea
