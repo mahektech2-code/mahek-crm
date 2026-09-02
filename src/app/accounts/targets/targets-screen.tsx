@@ -76,6 +76,7 @@ export function TargetsScreen({
   revisionReasons,
   readings,
   unattributed,
+  existingCustomerTargets,
 }: {
   period: string;
   rows: TargetRow[];
@@ -87,6 +88,14 @@ export function TargetsScreen({
   revisionReasons: string[];
   readings: PerformanceReading[];
   unattributed: { revenuePaise: number; customers: number };
+  /**
+   * What Monthly Targets already asks of this person's existing customers,
+   * one at a time, added up and keyed by user id — see the definition
+   * beside `existingCustomerTargetTotals`. A revenue target set here and
+   * this total SHOULD roughly agree; this is how the desk sees when they
+   * do not without adding the customer-level rows up by hand.
+   */
+  existingCustomerTargets: Record<string, number>;
 }) {
   const router = useRouter();
 
@@ -196,6 +205,7 @@ export function TargetsScreen({
                 <Th>Person</Th>
                 <Th>Status</Th>
                 <Th align="right">Revenue</Th>
+                <Th align="right">From existing customers</Th>
                 <Th align="right">Volume</Th>
                 <Th align="right">New</Th>
                 <Th align="right">Collection</Th>
@@ -224,6 +234,12 @@ export function TargetsScreen({
                       )}
                     </Td>
                     <Td align="right">{orDash(r.revenueTargetPaise, money)}</Td>
+                    <Td align="right">
+                      <ExistingCustomerTotal
+                        paise={existingCustomerTargets[r.userId] ?? 0}
+                        revenueTargetPaise={r.revenueTargetPaise}
+                      />
+                    </Td>
                     <Td align="right">
                       {orDash(r.volumeTargetMl, (v) => `${Math.round(v / 1000).toLocaleString("en-IN")} L`)}
                     </Td>
@@ -258,7 +274,7 @@ export function TargetsScreen({
               })}
               {!allRows.length ? (
                 <Tr>
-                  <Td colSpan={9} className="py-8 text-center text-muted">
+                  <Td colSpan={10} className="py-8 text-center text-muted">
                     Nobody carries a customer book this month, so there is nobody to set a target
                     for.
                   </Td>
@@ -277,6 +293,7 @@ export function TargetsScreen({
         categories={categories}
         baseline={editing ? baselines[editing.userId] : undefined}
         baselineMonths={baselineMonths}
+        existingCustomerPaise={editing ? (existingCustomerTargets[editing.userId] ?? 0) : 0}
         revisionReasons={revisionReasons}
         onClose={() => setEditing(null)}
         onSaved={() => {
@@ -355,6 +372,7 @@ function TargetEditorModal({
   categories,
   baseline,
   baselineMonths,
+  existingCustomerPaise,
   revisionReasons,
   onClose,
   onSaved,
@@ -364,6 +382,7 @@ function TargetEditorModal({
   categories: { id: string; name: string; isResidual: boolean }[];
   baseline: Baseline | undefined;
   baselineMonths: number;
+  existingCustomerPaise: number;
   revisionReasons: string[];
   onClose: () => void;
   onSaved: () => void;
@@ -377,6 +396,7 @@ function TargetEditorModal({
       categories={categories}
       baseline={baseline}
       baselineMonths={baselineMonths}
+      existingCustomerPaise={existingCustomerPaise}
       revisionReasons={revisionReasons}
       onClose={onClose}
       onSaved={onSaved}
@@ -390,6 +410,7 @@ function TargetEditorModalBody({
   categories,
   baseline,
   baselineMonths,
+  existingCustomerPaise,
   revisionReasons,
   onClose,
   onSaved,
@@ -399,6 +420,7 @@ function TargetEditorModalBody({
   categories: { id: string; name: string; isResidual: boolean }[];
   baseline: Baseline | undefined;
   baselineMonths: number;
+  existingCustomerPaise: number;
   revisionReasons: string[];
   onClose: () => void;
   onSaved: () => void;
@@ -522,11 +544,16 @@ function TargetEditorModalBody({
       <div className="mb-4 grid grid-cols-2 gap-3.5">
         <Field
           label="Revenue target"
-          hint={
+          hint={[
             baseline
               ? `${money(baseline.revenuePaise)} a month over the last ${baseline.monthsCounted}`
-              : undefined
-          }
+              : null,
+            existingCustomerPaise > 0
+              ? `${money(existingCustomerPaise)} already set for existing customers, one at a time, on Monthly Targets`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" · ") || undefined}
         >
           <MoneyInput value={revenue} onChange={(e) => setRevenue(e.target.value)} placeholder="not asked" />
         </Field>
@@ -736,6 +763,36 @@ function orDash(v: number | null, render: (n: number) => string) {
     <span className="text-muted">—</span>
   ) : (
     <span className="tabular-nums">{render(v)}</span>
+  );
+}
+
+/**
+ * What Monthly Targets already asks of this person's existing customers, one
+ * at a time, added up — so the desk reading "₹30,00,000" beside a person can
+ * see in the same glance that their own customers' targets already total
+ * ₹40,00,000, rather than discovering the disagreement by opening the
+ * customer-level screen and adding rows up by hand.
+ */
+function ExistingCustomerTotal({
+  paise,
+  revenueTargetPaise,
+}: {
+  paise: number;
+  revenueTargetPaise: number | null;
+}) {
+  if (paise <= 0) return <span className="text-muted">—</span>;
+  const exceedsTarget = revenueTargetPaise !== null && paise > revenueTargetPaise;
+  return (
+    <span
+      className={`tabular-nums ${exceedsTarget ? "font-medium text-warn-ink" : ""}`}
+      title={
+        exceedsTarget
+          ? "Already more than this person's own revenue target — the two numbers should roughly agree."
+          : "What their existing customers' monthly targets already total, from the CRM."
+      }
+    >
+      {money(paise)}
+    </span>
   );
 }
 
