@@ -1,5 +1,6 @@
+import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { MonthNav, monthName } from "@/components/ui/month-nav";
+import { shiftMonth, monthName } from "@/components/ui/month-nav";
 import { money } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { BP, focusLines } from "@/lib/engines/performance";
@@ -69,7 +70,18 @@ export default async function Page({
         subtitle={`${monthName(period)} — ${reading.workingDaysElapsed} of ${reading.workingDaysTotal} working days gone`}
         actions={
           <div className="flex items-center gap-1 text-[13px]">
-            <MonthNav month={period} basePath="/crm/performance" paramName="period" />
+            <Link
+              href={`/crm/performance?period=${shiftMonth(period, -1)}`}
+              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ←
+            </Link>
+            <Link
+              href={`/crm/performance?period=${shiftMonth(period, 1)}`}
+              className="rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              →
+            </Link>
           </div>
         }
       />
