@@ -81,6 +81,11 @@ jobs:
           tags: |
             ${{ steps.tag.outputs.image }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          # Baked in as Next's deploymentId (next.config.ts) — the same sha
+          # the image is tagged with, so a tab open across a deploy reloads
+          # itself instead of hitting a stale Server Action.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           # GITHUB'S CACHE, NOT THE REGISTRY'S.
           #
           # This was `type=registry,mode=max`, which stores every layer of
