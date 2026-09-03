@@ -32,6 +32,7 @@ import { listUserApps } from "@/lib/access";
 import { updateSettings } from "@/lib/config/store";
 import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
 import { sendExpoPush } from "@/lib/mbos/push";
+import { calendarDate } from "@/lib/business-date";
 import { fieldBook, managerScope, onlyMine } from "@/lib/services/sales-service";
 import type { DocumentCategory } from "@/lib/mbos/library-labels";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
@@ -1010,7 +1011,7 @@ export async function setPriceListRate(input: {
     if (!Number.isFinite(input.ratePaise) || input.ratePaise <= 0) {
       return err("The rate has to be a positive amount.", "validation");
     }
-    const validFrom = input.validFrom || new Date().toISOString().slice(0, 10);
+    const validFrom = input.validFrom || calendarDate(new Date());
     if (!/^\d{4}-\d{2}-\d{2}$/.test(validFrom)) return err("That is not a date.", "validation");
 
     await db.transaction(async (tx) => {
