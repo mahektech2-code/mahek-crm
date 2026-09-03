@@ -16,6 +16,7 @@ import {
 } from "@/db/schema";
 import { getConfig } from "../config/store";
 import { resolveScope, scopedUserIds, requireCapability } from "../access-control";
+import { DEFAULT_TIER_WEIGHTS } from "../config/registry";
 import {
   aggregateEod,
   aggregateTeamEod,
@@ -105,6 +106,12 @@ export async function eodMetricsForRange(
       (select count(*) from calls c where c.user_id = ${userId}
         and c.interaction_type = 'order_received'
         and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as orders_without_call,
+      -- Single-select outcome (interactions.singleSelectOutcomes), so the
+      -- count is over calls, not over reasons — the breakdown by WHICH
+      -- reason is its own query below, run once rather than per row here.
+      (select count(*) from calls c where c.user_id = ${userId}
+        and c.interaction_type = 'outbound_call' and c.outcome = 'no_order'
+        and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as no_order_count,
       (select count(distinct c.customer_id) from calls c where c.user_id = ${userId}
         and c.source_module = 'call_queue'
         and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz)::int as queue_worked,
@@ -159,6 +166,113 @@ export async function eodMetricsForRange(
 
   const n = (k: string) => Number(row?.[k] ?? 0);
 
+  // Why not one this size mega-query: the queue and box/can pieces both need
+  // a JSONB unnest (reasons, line items), which does not compose cleanly as
+  // a scalar subquery beside the counts above. Four small round trips over
+  // one giant one, for a screen read a handful of times a day per person.
+  const [queueRow] = await db.execute<Record<string, string>>(sql`
+    with pay_ids as (
+      select distinct customer_id
+      from queue_snapshots
+      where user_id = ${userId} and day >= ${range.from}::date and day <= ${range.to}::date
+        and exists (
+          select 1 from jsonb_array_elements(reasons) r where r->>'kind' = 'paymentOverdue'
+        )
+    ),
+    called_today as (
+      select distinct c.customer_id from calls c
+      where c.user_id = ${userId} and c.source_module = 'call_queue'
+        and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz
+    ),
+    wa_today as (
+      select distinct m.customer_id from wa_messages m
+      where m.user_id = ${userId}
+        and m.status in ('sent_manually','sent','delivered','read')
+        and coalesce(m.confirmed_sent_at, m.sent_at) >= ${w.start}::timestamptz
+        and coalesce(m.confirmed_sent_at, m.sent_at) <  ${w.end}::timestamptz
+    )
+    select
+      -- The frozen composition itself, not a live rebuild — see the
+      -- queueAssigned doc comment on EodInput.
+      (select count(*) from queue_snapshots qs where qs.user_id = ${userId}
+        and qs.day >= ${range.from}::date and qs.day <= ${range.to}::date)::int as queue_assigned,
+      (select count(*) from queue_snapshots qs where qs.user_id = ${userId}
+        and qs.day >= ${range.from}::date and qs.day <= ${range.to}::date
+        and qs.score > ${DEFAULT_TIER_WEIGHTS.routineCall}
+        and qs.customer_id not in (select customer_id from called_today))::int as high_priority_pending,
+      (select count(*) from pay_ids)::int as payment_assigned,
+      (select count(*) from pay_ids p where p.customer_id in (select customer_id from called_today))::int as payment_calls_made,
+      (select count(*) from pay_ids p where p.customer_id in (select customer_id from wa_today))::int as payment_wa_sent,
+      (select count(*) from pay_ids p
+        where p.customer_id in (select customer_id from called_today)
+           or p.customer_id in (select customer_id from wa_today))::int as payment_actioned
+  `);
+  const qn = (k: string) => Number(queueRow?.[k] ?? 0);
+
+  const noOrderReasonRows = await db.execute<{ label: string; n: string }>(sql`
+    select coalesce(qn.label, 'Other') as label, count(*)::int as n
+    from calls c
+    left join quick_notes qn on qn.id = (c.quick_note_ids ->> 0)
+    where c.user_id = ${userId}
+      and c.interaction_type = 'outbound_call' and c.outcome = 'no_order'
+      and c.started_at >= ${w.start}::timestamptz and c.started_at < ${w.end}::timestamptz
+    group by coalesce(qn.label, 'Other')
+    order by count(*) desc
+  `);
+  const noOrderReasons = (noOrderReasonRows as unknown as { label: string; n: number }[]).map(
+    (r) => ({ label: r.label, count: Number(r.n) }),
+  );
+
+  // Boxes and loose cans, matched per line against its own SKU's packing —
+  // a formulation's own box size, never a flat divisor across every line.
+  // A product name the catalogue does not recognise contributes nothing,
+  // same as everywhere else an unmatched name is read (see product-service.ts).
+  const [boxRow] = await db.execute<Record<string, string>>(sql`
+    with today_orders as (
+      select o.line_items
+      from orders o
+      where o.user_id = ${userId}
+        and o.ordered_at >= ${w.start}::timestamptz and o.ordered_at < ${w.end}::timestamptz
+        and o.status in ('captured','confirmed','dispatched')
+    ),
+    lines as (
+      select (li ->> 'product') as product_name, (li ->> 'quantity')::int as qty
+      from today_orders, jsonb_array_elements(coalesce(line_items, '[]'::jsonb)) as li
+    ),
+    matched as (
+      select l.qty, p.cans_per_box
+      from lines l
+      join products p on
+        lower(regexp_replace(p.name, '[^a-zA-Z0-9]', '', 'g'))
+          = lower(regexp_replace(l.product_name, '[^a-zA-Z0-9]', '', 'g'))
+        or exists (
+          select 1 from product_aliases pa
+          where pa.product_id = p.id
+            and lower(regexp_replace(pa.name, '[^a-zA-Z0-9]', '', 'g'))
+              = lower(regexp_replace(l.product_name, '[^a-zA-Z0-9]', '', 'g'))
+        )
+    )
+    select
+      coalesce(sum(floor(qty::numeric / greatest(cans_per_box, 1))), 0)::int as boxes,
+      coalesce(sum(qty % greatest(cans_per_box, 1)), 0)::int as loose_cans
+    from matched
+  `);
+  const bn = (k: string) => Number(boxRow?.[k] ?? 0);
+
+  const promisedRows = await db
+    .select({ name: customers.name, date: followUpAttempts.promisedDate })
+    .from(followUpAttempts)
+    .innerJoin(customers, eq(customers.id, followUpAttempts.customerId))
+    .where(
+      and(
+        eq(followUpAttempts.userId, userId),
+        sql`${followUpAttempts.promisedAmount} is not null`,
+        sql`${followUpAttempts.attemptedAt} >= ${w.start}::timestamptz`,
+        sql`${followUpAttempts.attemptedAt} <  ${w.end}::timestamptz`,
+      ),
+    )
+    .orderBy(followUpAttempts.attemptedAt);
+
   return {
     callsAttempted: n("calls_attempted"),
     callsConnected: n("calls_connected"),
@@ -169,15 +283,26 @@ export async function eodMetricsForRange(
     ordersCaptured: n("orders_captured"),
     ordersCount: n("orders_count"),
     ordersValue: n("orders_value"),
+    ordersBoxes: bn("boxes"),
+    ordersLooseCans: bn("loose_cans"),
     followUpsMade: n("follow_ups"),
     promisesCount: n("promises_count"),
     promisesValue: n("promises_value"),
     paymentsConfirmed: n("payments_confirmed"),
+    promisedCustomers: promisedRows.map((r) => ({ name: r.name, date: r.date })),
     remindersClosed: n("reminders_closed"),
     remindersCreated: n("reminders_created"),
     remindersCarriedForward: n("reminders_carried"),
     complaintsLogged: n("complaints_logged"),
     whatsappSent: n("whatsapp_sent"),
+    noOrderCount: n("no_order_count"),
+    noOrderReasons,
+    queueAssigned: qn("queue_assigned"),
+    highPriorityPending: qn("high_priority_pending"),
+    paymentAssigned: qn("payment_assigned"),
+    paymentCallsMade: qn("payment_calls_made"),
+    paymentWaSent: qn("payment_wa_sent"),
+    paymentActioned: qn("payment_actioned"),
     targetAchieved: n("target_achieved"),
     targetAmount: n("target_amount"),
   };

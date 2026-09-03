@@ -49,11 +49,16 @@ export type EodInput = {
   ordersCaptured: number;
   ordersCount: number;
   ordersValue: number;
+  /** Cans converted through each SKU's own packing — see lib/catalogue.ts. */
+  ordersBoxes: number;
+  ordersLooseCans: number;
 
   followUpsMade: number;
   promisesCount: number;
   promisesValue: number;
   paymentsConfirmed: number;
+  /** Who promised, and when — the WhatsApp message names them. */
+  promisedCustomers: Array<{ name: string; date: BusinessDate | null }>;
 
   remindersClosed: number;
   remindersCreated: number;
@@ -63,6 +68,28 @@ export type EodInput = {
   /** Orders logged with no call at all — real work, counted separately. */
   ordersWithoutCall: number;
   whatsappSent: number;
+
+  /** Calls with the `no_order` outcome, and why — from the quick notes picked. */
+  noOrderCount: number;
+  noOrderReasons: Array<{ label: string; count: number }>;
+
+  /**
+   * The size of TODAY's calling queue, read from `queue_snapshots` — the same
+   * frozen composition the Call Log itself shows, never a second count built
+   * here. Zero where the queue was never opened today, which is the honest
+   * answer rather than a live rebuild that could disagree with whatever the
+   * Call Log freezes if it is opened later the same day.
+   */
+  queueAssigned: number;
+  /** Queued customers carrying a P1/P2 reason (see registry.ts) not yet called. */
+  highPriorityPending: number;
+
+  /** The collections seat of the same queue — `paymentOverdue` entries only. */
+  paymentAssigned: number;
+  paymentCallsMade: number;
+  paymentWaSent: number;
+  /** Distinct payment-tagged customers reached by EITHER channel today. */
+  paymentActioned: number;
 
   targetAchieved: number;
   targetAmount: number;
@@ -88,10 +115,30 @@ export function formatMoney(paise: number): string {
 }
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const WEEKDAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
 export function formatDate(date: BusinessDate): string {
   const [y, m, d] = date.split("-");
   return `${d} ${MONTHS[Number(m) - 1]} ${y}`;
+}
+
+/**
+ * "Mon, 3 Aug, 2026" — the individual WhatsApp message's own date line.
+ *
+ * The weekday is read off `Date.UTC(y, m, d)`, which is deterministic from
+ * the calendar date alone and touches no clock — a `BusinessDate` already
+ * names a day, not an instant, so there is no zone to get wrong here.
+ */
+export function formatDateLong(date: BusinessDate): string {
+  const [y, m, d] = date.split("-").map(Number);
+  const weekday = WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+  return `${weekday}, ${d} ${MONTHS[m - 1]}, ${y}`;
+}
+
+/** "23 Jun 26" — short enough for a promise line beside a customer's name. */
+export function formatDateShort(date: BusinessDate): string {
+  const [y, m, d] = date.split("-");
+  return `${Number(d)} ${MONTHS[Number(m) - 1]} ${y.slice(2)}`;
 }
 
 /**
@@ -110,14 +157,25 @@ function describeOrders(input: Omit<EodInput, "userName" | "date">): string {
   return `${input.ordersCaptured} taken · ${input.ordersCount} approved · ${value}`;
 }
 
-/** The same fact in the message's own punctuation, which is not the table's. */
-function describeOrdersForMessage(input: Omit<EodInput, "userName" | "date">): string {
-  const value = formatMoney(input.ordersValue);
-  if (input.ordersCaptured === input.ordersCount) {
-    return `${input.ordersCount} (${value})`;
-  }
-  return `${input.ordersCaptured} taken · ${input.ordersCount} approved (${value})`;
+/**
+ * The Orders line's own number — the telecaller's OWN work, same reasoning
+ * as `describeOrders`: an order taken this morning and not yet approved must
+ * not read as a day with nothing done. Equal in the ordinary case, where it
+ * is exactly the count the new format asks for.
+ */
+function ordersLineValue(input: Omit<EodInput, "userName" | "date">): string {
+  if (input.ordersCaptured === input.ordersCount) return String(input.ordersCount);
+  return `${input.ordersCaptured} (${input.ordersCount} appr.)`;
 }
+
+/** "(Will order later×4, Price issue×1)" — empty where nothing was picked. */
+function describeNoOrderReasons(reasons: Array<{ label: string; count: number }>): string {
+  if (!reasons.length) return "";
+  return ` (${reasons.map((r) => `${r.label}×${r.count}`).join(", ")})`;
+}
+
+/** Section breaks in the WhatsApp message. WhatsApp renders `─` as a plain rule. */
+const DIVIDER = "─".repeat(24);
 
 /**
  * The table half of a report — every figure but the paste-ready message —
@@ -164,21 +222,45 @@ export function aggregateEod(input: EodInput): EodReport {
 
   const lines = eodLines(input);
 
-  // Short lines, a middot as the only separator, asterisks for the one bold
-  // line. Nothing that WhatsApp renders badly, and no table characters.
+  // Calls PENDING is not a second "assigned" — it is Assigned minus Called,
+  // read below from the same `queueAssigned`/`queueWorked` this message
+  // already prints, so the two numbers can never disagree with each other.
+  const queuePending = Math.max(0, input.queueAssigned - input.queueWorked);
+  const calledPercent = input.queueAssigned
+    ? Math.round((input.queueWorked / input.queueAssigned) * 100)
+    : 0;
+  const paymentPending = Math.max(0, input.paymentAssigned - input.paymentActioned);
+
   const whatsappText = [
-    `*EOD - ${input.userName}*`,
-    formatDate(input.date),
-    "",
-    `Calls: ${input.callsAttempted} attempted · ${input.callsConnected} connected · ${input.callsMissed} missed · ${input.callsInbound} inbound`,
-    `Orders: ${describeOrdersForMessage(input)}`,
-    ...(input.ordersWithoutCall
-      ? [`Orders received without a call: ${input.ordersWithoutCall}`]
+    `*📊 EOD — ${input.userName}*`,
+    formatDateLong(input.date),
+    DIVIDER,
+    `📞 Order Calls: *${input.callsAttempted} / ${queuePending}*`,
+    `✅ Orders: *${ordersLineValue(input)}*`,
+    ...(input.ordersBoxes || input.ordersLooseCans
+      ? [`   📦 ${input.ordersBoxes} Box  🥫 ${input.ordersLooseCans} Can`]
       : []),
-    `Payments: ${input.followUpsMade} followed up · ${formatMoney(input.promisesValue)} promised`,
-    `Reminders: ${input.remindersClosed} closed · ${input.remindersCarriedForward} carried forward`,
-    `Complaints: ${input.complaintsLogged} logged`,
-    `Target: ${formatMoney(input.targetAchieved)} of ${formatMoney(input.targetAmount)} (${percent}%)`,
+    `📵 No Answer: ${input.callsMissed}`,
+    `🚫 No Order: ${input.noOrderCount}${describeNoOrderReasons(input.noOrderReasons)}`,
+    `💰 Payment Calls: *${input.paymentCallsMade} / ${input.paymentAssigned}*`,
+    `💬 Payment WA Sent: *${input.paymentWaSent} / ${input.paymentAssigned}*`,
+    DIVIDER,
+    `📋 Assigned: *${input.queueAssigned}*`,
+    `☎️  Called:   *${input.queueWorked}* (${calledPercent}%)`,
+    // Only said when there was a queue to clear — an empty queue is not a
+    // high-priority queue somebody finished, it is a day nobody opened one.
+    ...(input.queueAssigned > 0 && input.highPriorityPending === 0
+      ? ["✅ All high priority customers called!"]
+      : []),
+    DIVIDER,
+    `🤝 Pay Promised: *${input.promisedCustomers.length}*`,
+    ...input.promisedCustomers.map(
+      (p) => `   • ${p.name} → ${p.date ? formatDateShort(p.date) : "no date"}`,
+    ),
+    DIVIDER,
+    `🎯 Month: *${percent}%* (${formatMoney(input.targetAchieved)} / ${formatMoney(input.targetAmount)})`,
+    `💸 Payment Follow-up: ${input.paymentAssigned} assigned`,
+    `   ✅ Sent: ${input.paymentActioned}  ·  ⏳ Pending: ${paymentPending}`,
   ].join("\n");
 
   return { date: input.date, userName: input.userName, lines, whatsappText };
@@ -233,22 +315,44 @@ export function aggregateTeamEod(
   date: BusinessDate,
   rows: TeamRow[],
 ): TeamRollup {
-  const zero = (): Omit<EodInput, "userName" | "date"> => ({
+  // Split from the numbers: `noOrderReasons` and `promisedCustomers` are
+  // arrays, and `+=` on an array is JavaScript coercing it to a string, not
+  // summing it — the generic loop below is only ever handed the numeric
+  // fields, and the two arrays are merged on their own beneath it.
+  const numericZero = {
     callsAttempted: 0, callsConnected: 0, callsInbound: 0, callsMissed: 0, ordersWithoutCall: 0,
     queueWorked: 0,
-    ordersCaptured: 0, ordersCount: 0, ordersValue: 0,
+    ordersCaptured: 0, ordersCount: 0, ordersValue: 0, ordersBoxes: 0, ordersLooseCans: 0,
     followUpsMade: 0, promisesCount: 0, promisesValue: 0, paymentsConfirmed: 0,
     remindersClosed: 0, remindersCreated: 0, remindersCarriedForward: 0,
     complaintsLogged: 0, whatsappSent: 0,
+    noOrderCount: 0,
+    queueAssigned: 0, highPriorityPending: 0,
+    paymentAssigned: 0, paymentCallsMade: 0, paymentWaSent: 0, paymentActioned: 0,
     targetAchieved: 0, targetAmount: 0,
-  });
+  };
 
-  const totals = rows.reduce((acc, r) => {
+  const numericTotals = rows.reduce((acc, r) => {
     for (const key of Object.keys(acc) as Array<keyof typeof acc>) {
       acc[key] += r[key];
     }
     return acc;
-  }, zero());
+  }, { ...numericZero });
+
+  const noOrderReasons: Array<{ label: string; count: number }> = [];
+  for (const r of rows) {
+    for (const reason of r.noOrderReasons) {
+      const existing = noOrderReasons.find((x) => x.label === reason.label);
+      if (existing) existing.count += reason.count;
+      else noOrderReasons.push({ ...reason });
+    }
+  }
+
+  const totals: Omit<EodInput, "userName" | "date"> = {
+    ...numericTotals,
+    noOrderReasons,
+    promisedCustomers: rows.flatMap((r) => r.promisedCustomers),
+  };
 
   const withPercent = rows.map((r) => ({
     ...r,

@@ -1474,6 +1474,10 @@ export type DayActivity = Awaited<ReturnType<typeof eodMetricsFor>> & {
   connectRate: number;
 };
 
+// Numeric only. `noOrderReasons` and `promisedCustomers` are arrays, and
+// `+=` on an array is JavaScript coercing it to a string, not summing it —
+// they are merged separately in `rangeActivity`, the same way
+// `aggregateTeamEod` in the EOD engine already has to.
 const ZERO_METRICS = () => ({
   callsAttempted: 0,
   callsConnected: 0,
@@ -1484,6 +1488,8 @@ const ZERO_METRICS = () => ({
   ordersCaptured: 0,
   ordersCount: 0,
   ordersValue: 0,
+  ordersBoxes: 0,
+  ordersLooseCans: 0,
   followUpsMade: 0,
   promisesCount: 0,
   promisesValue: 0,
@@ -1493,6 +1499,13 @@ const ZERO_METRICS = () => ({
   remindersCarriedForward: 0,
   complaintsLogged: 0,
   whatsappSent: 0,
+  noOrderCount: 0,
+  queueAssigned: 0,
+  highPriorityPending: 0,
+  paymentAssigned: 0,
+  paymentCallsMade: 0,
+  paymentWaSent: 0,
+  paymentActioned: 0,
   targetAchieved: 0,
   targetAmount: 0,
 });
@@ -1520,17 +1533,29 @@ export async function rangeActivity(
   userId: string | null,
   range: DateRange,
 ): Promise<DayActivity> {
-  const metrics = userId
-    ? await eodMetricsForRange(userId, range)
-    : (
-        await Promise.all(
-          (await listTeam()).map((u) => eodMetricsForRange(u.id, range)),
-        )
-      ).reduce((acc, m) => {
-        for (const k of Object.keys(acc) as Array<keyof typeof acc>)
-          acc[k] += m[k];
-        return acc;
-      }, ZERO_METRICS());
+  const perPerson = userId
+    ? [await eodMetricsForRange(userId, range)]
+    : await Promise.all((await listTeam()).map((u) => eodMetricsForRange(u.id, range)));
+
+  const numeric = perPerson.reduce((acc, m) => {
+    for (const k of Object.keys(acc) as Array<keyof typeof acc>) acc[k] += m[k];
+    return acc;
+  }, ZERO_METRICS());
+
+  const noOrderReasons: Array<{ label: string; count: number }> = [];
+  for (const m of perPerson) {
+    for (const reason of m.noOrderReasons) {
+      const existing = noOrderReasons.find((x) => x.label === reason.label);
+      if (existing) existing.count += reason.count;
+      else noOrderReasons.push({ ...reason });
+    }
+  }
+
+  const metrics = {
+    ...numeric,
+    noOrderReasons,
+    promisedCustomers: perPerson.flatMap((m) => m.promisedCustomers),
+  };
 
   return {
     ...metrics,
