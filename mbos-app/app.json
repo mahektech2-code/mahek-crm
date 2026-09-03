@@ -42,7 +42,13 @@
           "isAndroidForegroundServiceEnabled": true
         }
       ],
-      "expo-task-manager"
+      "expo-task-manager",
+      [
+        "expo-notifications",
+        {
+          "color": "#5223E0"
+        }
+      ]
     ],
     "scheme": "mbos",
     "backgroundColor": "#F7F8FA"

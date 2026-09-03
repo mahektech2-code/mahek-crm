@@ -48,6 +48,9 @@ export const roleEnum = pgEnum("role", [
   "admin",
 ]);
 
+/** How a login code reached somebody's phone. */
+export const otpChannelEnum = pgEnum("otp_channel", ["sms", "whatsapp"]);
+
 export const customerStatusEnum = pgEnum("customer_status", [
   "active",
   "inactive",
@@ -1041,6 +1044,15 @@ export const customers = pgTable(
     visitFrequencyDays: integer("visit_frequency_days"),
     /** The code the trade knows them by, searched on the customer list. */
     dealerCode: text("dealer_code"),
+    /**
+     * The tier `mbos_price_list` is keyed on — "DEALER", "DISTRIBUTOR" —
+     * mirrored from `sheet_party_rows.tagPricelist` by the SAME name-matched
+     * projection that already fills phone, WhatsApp and the sales rep link.
+     * Without this a price list keyed on the tag has no way to reach a
+     * particular customer's order: the tag exists on the sheet, the rate
+     * exists on the list, and nothing joined the two until this column did.
+     */
+    priceTag: text("price_tag"),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -3744,6 +3756,14 @@ export const mbosDevices = pgTable(
     /** Why it was released, where somebody said. */
     releasedAt: timestamp("released_at", { withTimezone: true }),
     releaseReason: text("release_reason"),
+    /**
+     * Expo's own push token for this install — not APNs/FCM directly.
+     * Requested on the handset after notification permission is granted, and
+     * re-sent whenever Expo rotates it, which is why this is set from its own
+     * endpoint rather than only at sign-in: the token is not known yet at
+     * login time, and can change without a new sign-in.
+     */
+    pushToken: text("push_token"),
   },
   (t) => [
     uniqueIndex("mbos_devices_device_key").on(t.deviceId),

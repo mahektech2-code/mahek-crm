@@ -19,7 +19,9 @@ import {
   mbosActivityLocations,
   mbosJourneyPlans,
   mbosJourneyStops,
+  mbosCompetitorRecords,
   mbosLeaveRequests,
+  mbosTours,
   mbosSamples,
   mbosSyncReceipts,
   mbosTasks,
@@ -694,6 +696,10 @@ async function dispatchItem(
       return handleCustomerEdit(principal, item);
     case "leave":
       return handleLeave(principal, item);
+    case "tour":
+      return handleTour(principal, item);
+    case "competitor":
+      return handleCompetitor(principal, item);
     case "approval":
       return handleApproval(principal, item);
     case "plan_day":
@@ -2488,6 +2494,122 @@ async function handleLeave(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       p.reason ? ` ${p.reason}` : ""
     }`,
   );
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+const tourSchema = z.object({
+  startDate: z.string(),
+  endDate: z.string(),
+  cities: z.array(z.string().max(120)).max(20).default([]),
+  purpose: z.string().max(500).nullish(),
+  estimatedCostPaise: z.number().int().nonnegative().nullish(),
+  notes: z.string().max(2000).nullish(),
+});
+
+/**
+ * Working away from the usual beat for several days.
+ *
+ * `mbosTours` existed with zero code ever writing to it — a real approval
+ * type in the enum with no way to create the thing it approves. This is that
+ * door, mirroring `handleLeave`'s shape exactly: the subject record is
+ * written here, pending; the separate `approval` sync item the handset also
+ * sends is what actually asks the office to decide it.
+ */
+async function handleTour(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  const parsed = tourSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  if (p.endDate < p.startDate) {
+    return {
+      kind: "rejected",
+      value: reject("validation", "That tour ends before it starts. Check the dates and ask again."),
+    };
+  }
+
+  await db
+    .insert(mbosTours)
+    .values({
+      id: item.entityId,
+      userId: principal.user.id,
+      startDate: p.startDate,
+      endDate: p.endDate,
+      cities: p.cities,
+      purpose: p.purpose ?? null,
+      estimatedCostPaise: p.estimatedCostPaise ?? null,
+      notes: p.notes ?? null,
+      clientCreatedAt: new Date(item.clientCreatedAt),
+      createdById: principal.user.id,
+      updatedById: principal.user.id,
+      deviceId: principal.deviceId,
+    })
+    .onConflictDoNothing({ target: mbosTours.id });
+
+  await notifyManagers(
+    principal.user.id,
+    "A tour was requested",
+    `${principal.user.name} has asked to work ${p.cities.length ? p.cities.join(", ") : "away from the usual beat"} from ${p.startDate} to ${p.endDate}.${p.purpose ? ` ${p.purpose}` : ""}`,
+  );
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+const competitorSchema = z.object({
+  customerId: z.string().min(1),
+  visitId: z.string().nullish(),
+  competitorName: z.string().min(1).max(200),
+  productName: z.string().max(200).nullish(),
+  /** Paise. The handset's own column is `ratePaise`; the server's is `pricePaise`. */
+  ratePaise: z.number().int().nonnegative().nullish(),
+  creditDays: z.number().int().nonnegative().nullish(),
+  delivery: z.string().max(1000).nullish(),
+  strengths: z.string().max(1000).nullish(),
+  weaknesses: z.string().max(1000).nullish(),
+  recordedOn: z.string().nullish(),
+});
+
+/**
+ * What was heard about somebody else's price at a shop.
+ *
+ * `mbos_competitor_records` had a table, a read query the customer record's
+ * Competitors tab already rendered, and no way for a "+ Add what you heard"
+ * button anywhere to actually write one — the button toasted and nothing
+ * happened. This is that door.
+ *
+ * Column names differ from the handset's own local table on purpose rather
+ * than by drift: `ratePaise`/`delivery` there, `pricePaise`/`deliveryNote`
+ * here, matching this table's own established names rather than renaming a
+ * column the customer record already reads from elsewhere.
+ */
+async function handleCompetitor(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  const parsed = competitorSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const scoped = await scopedCustomer(principal, p.customerId);
+  if (!scoped.ok) return { kind: "rejected", value: scoped.value };
+
+  await db
+    .insert(mbosCompetitorRecords)
+    .values({
+      id: item.entityId,
+      customerId: scoped.customer.id,
+      visitId: p.visitId ?? null,
+      competitorName: p.competitorName,
+      productName: p.productName ?? null,
+      pricePaise: p.ratePaise ?? null,
+      creditDays: p.creditDays ?? null,
+      deliveryNote: p.delivery ?? null,
+      strengths: p.strengths ?? null,
+      weaknesses: p.weaknesses ?? null,
+      recordedOn: p.recordedOn ?? null,
+      clientCreatedAt: new Date(item.clientCreatedAt),
+      createdById: principal.user.id,
+      updatedById: principal.user.id,
+      deviceId: principal.deviceId,
+    })
+    .onConflictDoNothing({ target: mbosCompetitorRecords.id });
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }

@@ -9,11 +9,13 @@ import { inr, plural } from '../src/lib/format';
 import {
   billingChoicesFor,
   frequentProducts,
+  productsByIds,
   searchProducts,
   starterProducts,
   type BillingChoice,
 } from '../src/data/customers';
 import { assessCart, saveOrder, type CartLine, type OrderAssessment } from '../src/data/orders';
+import { lastOrderLines, ratesForTag, type ReorderLine } from '../src/data/pricing';
 import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 
@@ -70,6 +72,9 @@ export default function OrderScreen() {
   /** Which query the rows in `results` answer. Anything else is stale. */
   const [resultsFor, setResultsFor] = React.useState<string | null>(null);
   const [assessment, setAssessment] = React.useState<OrderAssessment | null>(null);
+  /** `mbos_price_list`, for this customer's own tag. See `data/pricing.ts`. */
+  const [listRates, setListRates] = React.useState<Map<string, number>>(new Map());
+  const [lastOrder, setLastOrder] = React.useState<ReorderLine[]>([]);
 
   /* ------------------------------------------- who we bill, who we deliver to
    *
@@ -139,6 +144,21 @@ export default function OrderScreen() {
       };
     }, [custId, remember]),
   );
+
+  const priceTag = c?.priceTag ?? null;
+
+  React.useEffect(() => {
+    let live = true;
+    if (!custId) return;
+    void Promise.all([ratesForTag(priceTag), lastOrderLines(custId)]).then(([rates, last]) => {
+      if (!live) return;
+      setListRates(rates);
+      setLastOrder(last);
+    });
+    return () => {
+      live = false;
+    };
+  }, [custId, priceTag]);
 
   const query = (oQ || '').trim();
 
@@ -223,6 +243,29 @@ export default function OrderScreen() {
   const canSubmit = inCart.length > 0 && !blank && !blocked && !!billing;
 
   const frequentOffered = frequent.filter((k) => !cart[k.id]);
+
+  /* This account's own list rate, summed — a SEPARATE figure from "Order
+     value" above, which stays tied to products.priceSource and reads "Not
+     known yet" until that switch is deliberately flipped. Null the moment any
+     line has no rate on this tag: a total that quietly excluded one line
+     would look complete and be wrong. */
+  const listValuePaise = priceTag && inCart.length && inCart.every((l) => listRates.has(l.productId))
+    ? inCart.reduce((sum, l) => sum + l.cans * (listRates.get(l.productId) ?? 0), 0)
+    : null;
+
+  const reorder = async () => {
+    const found = await productsByIds(lastOrder.map((l) => l.productId));
+    if (!found.length) return notify('Nothing from that order is still offered.');
+    remember(found);
+    const byId = new Map(lastOrder.map((l) => [l.productId, l.cans]));
+    for (const p of found) setQty(p.id, String(byId.get(p.id) ?? 1));
+    const dropped = lastOrder.length - found.length;
+    notify(
+      `${plural(found.length, 'line')} from the last order, added` +
+        (dropped ? ` — ${plural(dropped, 'line')} no longer offered` : '') +
+        ' — check quantities before sending.',
+    );
+  };
 
   const submit = async () => {
     if (!inCart.length) return notify('Add something first');
@@ -368,6 +411,39 @@ export default function OrderScreen() {
 
       {!blocked ? (
         <>
+          {/* Only offered on an EMPTY cart — reordering onto lines already
+              being built would silently overwrite what he just typed, and
+              there is no honest way to merge "put the last order back" with
+              "add three more of these" as one tap. */}
+          {lastOrder.length > 0 && inCart.length === 0 ? (
+            <Pressable
+              onPress={() => void reorder()}
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                {
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginTop: 12,
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  borderWidth: 1,
+                  borderColor: C.primaryEdge,
+                  backgroundColor: C.primaryTint,
+                  borderRadius: radius.card,
+                },
+                pressed && { opacity: 0.9 },
+              ]}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Put back the last order</T>
+                <T s="caption" style={{ marginTop: 2 }}>
+                  {plural(lastOrder.length, 'line')} — check quantities before sending
+                </T>
+              </View>
+              <T style={[{ fontSize: 15, color: C.primaryDeep }, weight(500)]}>Add all</T>
+            </Pressable>
+          ) : null}
+
           {frequentOffered.length > 0 ? (
             <View style={{ marginTop: 16 }}>
               <SectionLabel style={{ marginBottom: 10 }}>What they usually buy</SectionLabel>
@@ -481,14 +557,22 @@ export default function OrderScreen() {
               {inCart.map((line) => {
                 const priced = assessment?.lines.find((p) => p.line.productId === line.productId);
                 const qty = line.cans;
+                const listRatePaise = listRates.get(line.productId) ?? null;
                 /* Cans are what he counts; boxes and litres are derived from
-                   the SKU's own packing, never stored. */
+                   the SKU's own packing, never stored. The list rate is shown
+                   only where the CRM's own valuation has nothing to say — two
+                   figures on one line would read as a disagreement, not as a
+                   fallback. */
                 const derived = !qty
                   ? 'Set the quantity'
                   : [
                       plural(qty, 'can'),
                       priced ? plural(Math.ceil(priced.boxes), 'box', 'boxes') : null,
-                      priced?.valuePaise != null ? inr(priced.valuePaise / 100) : null,
+                      priced?.valuePaise != null
+                        ? inr(priced.valuePaise / 100)
+                        : listRatePaise != null
+                          ? inr((qty * listRatePaise) / 100) + ' at list rate'
+                          : null,
                     ]
                       .filter(Boolean)
                       .join(' · ');
@@ -580,6 +664,17 @@ export default function OrderScreen() {
                   confident zero. */}
               <T style={[type.h2, tabular]}>{valueUnavailable ? 'Not known yet' : inr(cartTotal)}</T>
             </View>
+            {/* A second, narrower figure: this account's own `mbos_price_list`
+                rate, summed. It is not the office's order value above — that
+                one waits on products.priceSource — but it is real, and it is
+                the only value most of this screen will show until that
+                switch is flipped. */}
+            {listValuePaise != null ? (
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginTop: 6 }}>
+                <T s="caption">List value{priceTag ? ' · ' + priceTag : ''}</T>
+                <T s="body" style={[weight(500), tabular]}>{inr(listValuePaise / 100)}</T>
+              </View>
+            ) : null}
             {limit != null ? (
               <>
                 <View style={{ height: 8, backgroundColor: C.hairline, borderRadius: 4, marginTop: 12, overflow: 'hidden' }}>
@@ -600,7 +695,11 @@ export default function OrderScreen() {
             ) : null}
             {valueUnavailable && inCart.length ? (
               <T s="caption" style={{ marginTop: 6 }}>
-                The rate list has not reached this phone, so this order cannot be priced here.
+                {listValuePaise != null
+                  ? 'The office order value waits on a setting nobody has switched on yet — see List value above for what this account actually pays.'
+                  : priceTag
+                    ? `No rate is set for ${priceTag} on every line here yet, so neither figure can be shown.`
+                    : 'This account carries no price tag yet, so there is no rate list to check it against.'}
               </T>
             ) : null}
             {needsApproval && assessment ? (

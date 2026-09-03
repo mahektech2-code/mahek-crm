@@ -305,6 +305,8 @@ export const APP_MODULES: AppModule[] = [
   sales("people", "Salesmen", "Administration", "Every salesman's own record — visits, orders, money, hours, leave."),
   sales("prefs", "App preferences", "Administration", "The thresholds every handset reads."),
   sales("logins", "Login history", "Administration", "Who signed in, from which handset, and what failed."),
+  sales("sync-health", "Sync health", "Administration", "Whose handset has gone quiet, and whose last pushes were refused."),
+  sales("notify", "Send a notification", "Administration", "A message to one salesman, a few, or the whole team — in-app and pushed."),
   sales("audit", "Audit trail", "Administration", "Every decision made here, with a name against it."),
 
   /* -------------------------------------------------------------- the HRMS */

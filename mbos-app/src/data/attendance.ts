@@ -69,6 +69,29 @@ export function workedMinutes(sessions: Session[], now = Date.now()): number {
   );
 }
 
+/**
+ * Was this calendar day a holiday — the input `deriveStatus` has always
+ * wanted and never had.
+ *
+ * Only a `universal` row answers yes. A regionally-scoped one is real data
+ * (see `holidays.scope`) but the phone has no reliable way to match its
+ * free-text scope against this salesman's own beat, so it is left for a
+ * future screen to LIST rather than trusted to silently flip a working day
+ * to Weekly Off on a guess.
+ */
+export async function isHoliday(day: string): Promise<boolean> {
+  const row = await one<{ n: number }>(
+    `SELECT count(*) as n FROM holidays WHERE onDate = ? AND universal = 1`,
+    [day],
+  );
+  return (row?.n ?? 0) > 0;
+}
+
+/** Everything on the calendar for one day, universal or not — for display. */
+export async function holidaysOn(day: string): Promise<{ id: string; name: string; scope: string | null; universal: number }[]> {
+  return all(`SELECT id, name, scope, universal FROM holidays WHERE onDate = ? ORDER BY universal DESC`, [day]);
+}
+
 /** `7h 42m`, the way the design writes a duration. */
 export function durationLabel(minutes: number): string {
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
@@ -242,7 +265,7 @@ export async function checkOut(
     sessions: sessions.map((x, i) => ({ id: `${row.id}:${i}`, checkInAt: x.inAt, checkOutAt: x.outAt })),
     halfDayThresholdHours: halfDay,
     fullDayThresholdHours: fullDay,
-    isWorkingDay: true,
+    isWorkingDay: !(await isHoliday(row.day)),
     approvedLeave: null,
   });
 

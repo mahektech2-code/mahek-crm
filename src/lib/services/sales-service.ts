@@ -104,7 +104,7 @@ export const managerScope = cache(async function managerScope(): Promise<Manager
  * alternative (falling through to unfiltered) is the leak this whole mechanism
  * exists to prevent.
  */
-function onlyMine(scope: ManagerScope, column: string) {
+export function onlyMine(scope: ManagerScope, column: string) {
   if (scope.salesmanIds === null) return sql``;
   const ids = scope.salesmanIds.length ? scope.salesmanIds : [""];
   return sql`and ${sql.raw(column)} in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
@@ -1186,6 +1186,68 @@ export async function catalogueRows(search?: string): Promise<CatalogueRow[]> {
   `) as unknown as CatalogueRow[];
 }
 
+export type PriceListRow = {
+  id: string;
+  customerPriceTag: string;
+  productId: string;
+  productName: string;
+  ratePaise: number;
+  validFrom: string | null;
+  validTo: string | null;
+};
+
+/**
+ * Every rate ever set, current and superseded alike.
+ *
+ * A superseded row (`validTo` in the past) is shown rather than hidden — it
+ * is what explains an order priced last month, and hiding it the moment it
+ * expires would make that explanation unreachable the day after it mattered.
+ * The screen is the one that decides how much of the past to draw.
+ */
+export async function priceListEntries(): Promise<PriceListRow[]> {
+  return db.execute<PriceListRow>(sql`
+    select pl.id, pl.customer_price_tag as "customerPriceTag", pl.product_id as "productId",
+           p.name as "productName", pl.rate_paise as "ratePaise",
+           pl.valid_from::text as "validFrom", pl.valid_to::text as "validTo"
+      from mbos_price_list pl
+      join products p on p.id = pl.product_id
+     order by (pl.valid_to is not null) asc, pl.customer_price_tag asc, p.name asc, pl.valid_from desc
+     limit 2000
+  `) as unknown as PriceListRow[];
+}
+
+/** Every price tag the Sales Party tab actually uses — a dropdown, not a guess. */
+export async function priceTagOptions(): Promise<string[]> {
+  const rows = await db.execute<{ tag: string }>(sql`
+    select distinct tag_pricelist as tag
+      from sheet_party_rows
+     where tag_pricelist is not null and tag_pricelist <> ''
+     order by 1
+  `);
+  return rows.map((r) => r.tag);
+}
+
+export type SchemeRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  active: boolean;
+  eligibility: unknown;
+  benefit: unknown;
+  validFrom: string | null;
+  validTo: string | null;
+};
+
+export async function schemeEntries(): Promise<SchemeRow[]> {
+  return db.execute<SchemeRow>(sql`
+    select s.id, s.name, s.description, s.active, s.eligibility, s.benefit,
+           s.valid_from::text as "validFrom", s.valid_to::text as "validTo"
+      from mbos_schemes s
+     order by s.active desc, s.valid_from desc nulls last, s.name asc
+     limit 500
+  `) as unknown as SchemeRow[];
+}
+
 /* ═══════════════════════════════════════════════════════════════════ people */
 
 export type AttendanceRow = {
@@ -1802,6 +1864,7 @@ export type LoginRow = {
   deviceActive: boolean | null;
   releasedAt: Date | null;
   releaseReason: string | null;
+  hasPushToken: boolean | null;
   lastLoginAt: Date | null;
 };
 
@@ -1823,6 +1886,7 @@ export async function deviceBindings(): Promise<LoginRow[]> {
            d.bound_at as "boundAt", d.last_seen_at as "lastSeenAt",
            d.active as "deviceActive",
            d.released_at as "releasedAt", d.release_reason as "releaseReason",
+           (d.push_token is not null) as "hasPushToken",
            u.last_login_at as "lastLoginAt"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
@@ -1831,6 +1895,69 @@ export async function deviceBindings(): Promise<LoginRow[]> {
      order by d.last_seen_at desc nulls last, u.name asc
      limit 200
   `) as unknown as LoginRow[];
+}
+
+export type SyncHealthRow = {
+  salesmanId: string;
+  salesmanName: string;
+  initials: string;
+  active: boolean;
+  deviceId: string | null;
+  model: string | null;
+  platform: string | null;
+  lastSeenAt: Date | null;
+  rejected7d: number;
+  conflicted7d: number;
+  unresolvedConflicts: number;
+};
+
+/**
+ * Whose handset is actually reaching the office.
+ *
+ * There is no such thing as "items stuck in the outbox" on this side of the
+ * wire — a queued item that has never reached the server leaves no trace
+ * here, by the sync contract's own design (see `storeReceipt`'s comment: a
+ * `retry` is deliberately never stored, because it is the one answer that
+ * must not stick). What CAN be answered from here is narrower and still
+ * useful: when a handset last spoke at all, and what the server has actually
+ * REFUSED or found in conflict since. A salesman whose phone has not spoken
+ * in three days, or whose last ten pushes were all rejected, is the same
+ * "something is wrong and nobody in the office knows" this screen exists to
+ * surface — it just answers from what the server saw, not from a queue depth
+ * nothing here can see.
+ */
+export async function syncHealth(): Promise<SyncHealthRow[]> {
+  const scope = await managerScope();
+  return db.execute<SyncHealthRow>(sql`
+    select u.id as "salesmanId", u.name as "salesmanName", u.initials, u.active,
+           d.device_id as "deviceId", d.model, d.platform, d.last_seen_at as "lastSeenAt",
+           coalesce(r.rejected, 0)::int as "rejected7d",
+           coalesce(r.conflicted, 0)::int as "conflicted7d",
+           coalesce(c.unresolved, 0)::int as "unresolvedConflicts"
+      from users u
+      join app_access a on a.user_id = u.id and a.app = 'field'
+      left join mbos_devices d on d.user_id = u.id and d.active
+      left join (
+        select user_id,
+               count(*) filter (where result_json ->> 'status' = 'rejected') as rejected,
+               count(*) filter (where result_json ->> 'status' = 'conflict') as conflicted
+          from mbos_sync_receipts
+         where created_at > now() - interval '7 days'
+         group by user_id
+      ) r on r.user_id = u.id
+      left join (
+        select created_by_id, count(*) as unresolved
+          from mbos_conflicts
+         where flagged_for_review and reviewed_at is null
+         group by created_by_id
+      ) c on c.created_by_id = u.id
+     where true ${onlyMine(scope, "u.id")}
+     order by (case when d.last_seen_at is null then 0 else 1 end) asc,
+              d.last_seen_at asc nulls first,
+              (coalesce(r.rejected, 0) + coalesce(c.unresolved, 0)) desc,
+              u.name asc
+     limit 300
+  `) as unknown as SyncHealthRow[];
 }
 
 export type AuditRow = {

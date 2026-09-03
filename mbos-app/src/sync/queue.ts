@@ -271,6 +271,7 @@ const ENTITY_TABLE: Record<string, string> = {
   complaint: 'complaints',
   expense: 'expenses',
   leave: 'leave_requests',
+  tour: 'tours',
   competitor: 'competitor_records',
   approval: 'approvals',
   plan_day: 'journey_days',

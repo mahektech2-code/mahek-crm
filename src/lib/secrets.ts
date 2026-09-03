@@ -35,6 +35,7 @@ import { appSecrets } from "@/db/schema";
 export const SECRET_NAMES = {
   "sarvam.apiKey": "SARVAM_API_KEY",
   "openai.apiKey": "OPENAI_API_KEY",
+  "msg91.authKey": "MSG91_AUTH_KEY",
 } as const;
 
 export type SecretName = keyof typeof SECRET_NAMES;

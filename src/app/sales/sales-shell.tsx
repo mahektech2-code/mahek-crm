@@ -103,6 +103,8 @@ const NAV: Array<{ label: string; items: Item[] }> = [
       { href: "/sales/people", label: "Salesmen", icon: "people" },
       { href: "/sales/prefs", label: "App preferences", icon: "sliders" },
       { href: "/sales/logins", label: "Login history", icon: "shield" },
+      { href: "/sales/sync-health", label: "Sync health", icon: "bell" },
+      { href: "/sales/notify", label: "Send a notification", icon: "bell" },
       { href: "/sales/audit", label: "Audit trail", icon: "list" },
     ],
   },
