@@ -29,7 +29,7 @@
     "db:setup": "node scripts/setup-db.mjs",
     "db:migrate": "drizzle-kit migrate",
     "db:generate": "drizzle-kit generate",
-    "db:deploy": "drizzle-kit migrate",
+    "db:deploy": "node scripts/migrate-deploy.mjs",
     "check:links": "node --env-file=.env.local scripts/check-links.mjs",
     "test": "tsx --conditions=react-server --test src/lib/engines/*.test.ts src/lib/csv.test.ts src/lib/catalogue.test.ts src/lib/notes.test.ts src/lib/hr-parse.test.ts src/lib/taken-order-parse.test.ts src/lib/business-date.test.ts src/lib/voice-readiness.test.ts src/lib/modules.test.ts src/lib/env-names.test.ts src/lib/outstanding-parse.test.ts src/lib/field-activity-parse.test.ts src/lib/field-activity-match.test.ts src/lib/customer-location-parse.test.ts",
     "test:db": "node --env-file=.env.local scripts/make-test-db.mjs",
