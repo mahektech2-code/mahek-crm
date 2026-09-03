@@ -4,4 +4,6 @@
 -- known yet at login time (it is requested after notification permission is
 -- granted, a step after the app opens) and Expo can rotate it without a new
 -- sign-in, so a device row has to be updatable outside the login path.
-ALTER TABLE mbos_devices ADD COLUMN push_token text;
+--
+-- IF NOT EXISTS: see 0080's own note.
+ALTER TABLE mbos_devices ADD COLUMN IF NOT EXISTS push_token text;
