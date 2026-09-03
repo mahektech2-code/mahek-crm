@@ -57,6 +57,7 @@ import {
   ACCOUNT_TYPE_PARAM,
   accountTypeLabel,
 } from "@/lib/account-types";
+import { UNASSIGNED_FILTER_VALUE } from "@/lib/am-filters";
 
 export type Row = {
   id: string;
@@ -297,9 +298,23 @@ export function CustomersScreen({
   const statusOptions: { value: string; label: string }[] = STATUSES.slice(1).map(
     (s) => ({ value: s, label: s }),
   );
-  const salesAmOptions = amOptions.sales.map((n) => ({ value: n, label: n }));
-  const salesManagerOptions = amOptions.salesManager.map((n) => ({ value: n, label: n }));
-  const backOfficeOptions = amOptions.backOffice.map((n) => ({ value: n, label: n }));
+  // "Unassigned" is not one of the names the column ever renders, so it is
+  // not among `amOptions` — it is the one option every one of these three
+  // filters offers regardless of what is in the book, since a query with
+  // nobody unassigned simply returns nothing for it.
+  const unassignedOption = { value: UNASSIGNED_FILTER_VALUE, label: "Unassigned" };
+  const salesAmOptions = [
+    unassignedOption,
+    ...amOptions.sales.map((n) => ({ value: n, label: n })),
+  ];
+  const salesManagerOptions = [
+    unassignedOption,
+    ...amOptions.salesManager.map((n) => ({ value: n, label: n })),
+  ];
+  const backOfficeOptions = [
+    unassignedOption,
+    ...amOptions.backOffice.map((n) => ({ value: n, label: n })),
+  ];
   const accountTypeOptions = TYPE_FILTERS.slice(1).map((word) => ({
     value: TYPE_PARAM[word] ?? "",
     label: word,

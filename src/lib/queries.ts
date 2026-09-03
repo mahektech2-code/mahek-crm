@@ -21,6 +21,7 @@ import {
   users,
 } from "@/db/schema";
 import { ASSIGNED_TO_SQL, resolveScope, scopedUserIds, scopedToUsers} from "./access-control";
+import { UNASSIGNED_FILTER_VALUE } from "./am-filters";
 import { isManager, requireUser } from "./auth";
 import { getScope } from "./scope";
 import { today as businessToday } from "./recompute";
@@ -625,15 +626,17 @@ export async function customerFilterClause(
   }
   if (filters.status) where.push(inList(STATUS_LABEL_SQL, filters.status));
   // The same expressions the column renders, so a name picked here always
-  // matches the rows showing that name.
+  // matches the rows showing that name. `inListOrUnassigned` rather than
+  // `inList`: these three are the only filters whose column can be NULL, and
+  // `=`/`in` never match NULL — a picked "Unassigned" needs its own clause.
   if (filters.salesAm) {
-    where.push(inList(SALES_AM_NAME_SQL, filters.salesAm));
+    where.push(inListOrUnassigned(SALES_AM_NAME_SQL, filters.salesAm));
   }
   if (filters.salesManager) {
-    where.push(inList(SALES_MANAGER_NAME_SQL, filters.salesManager));
+    where.push(inListOrUnassigned(SALES_MANAGER_NAME_SQL, filters.salesManager));
   }
   if (filters.backOfficeAm) {
-    where.push(inList(BACK_OFFICE_AM_NAME_SQL, filters.backOfficeAm));
+    where.push(inListOrUnassigned(BACK_OFFICE_AM_NAME_SQL, filters.backOfficeAm));
   }
   if (filters.thirdParty) {
     // Several of these are structurally different queries, not different
@@ -670,6 +673,26 @@ export function inList(expr: SQL, commaSeparated: string): SQL {
     values.map((v) => sql`${v}`),
     sql`, `,
   )})`;
+}
+
+/**
+ * Like `inList`, but for the three AM filters, whose expression coalesces to
+ * NULL when nobody holds the seat. `UNASSIGNED_FILTER_VALUE` is pulled out of
+ * the picked values and turned into its own `is null`, then OR'd with an
+ * `inList` over whatever real names are left — so "Unassigned" can be picked
+ * on its own or alongside actual people without either clause losing rows the
+ * other should have matched.
+ */
+export function inListOrUnassigned(expr: SQL, commaSeparated: string): SQL {
+  const values = splitMulti(commaSeparated);
+  const named = values.filter((v) => v !== UNASSIGNED_FILTER_VALUE);
+  const wantsUnassigned = named.length !== values.length;
+
+  const namedClause = named.length ? inList(expr, named.join(",")) : undefined;
+  const unassignedClause = wantsUnassigned ? sql`${expr} is null` : undefined;
+
+  if (namedClause && unassignedClause) return sql`(${or(namedClause, unassignedClause)})`;
+  return namedClause ?? unassignedClause ?? sql`false`;
 }
 
 /** One account-type filter's own clause — the value `customerFilterClause` used to inline directly. */
