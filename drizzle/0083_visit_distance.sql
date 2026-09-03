@@ -6,6 +6,8 @@
 -- `unverifiedReason`'s sentence — so no screen could ever show the number
 -- itself, and never for a visit that verified cleanly. This column is that
 -- same figure, kept.
-ALTER TABLE mbos_visits ADD COLUMN distance_from_shop_m integer;
-ALTER TABLE mbos_visits ADD COLUMN accepted_at timestamp with time zone;
-ALTER TABLE mbos_visits ADD COLUMN accepted_by_id text;
+--
+-- IF NOT EXISTS: see 0080's own note.
+ALTER TABLE mbos_visits ADD COLUMN IF NOT EXISTS distance_from_shop_m integer;
+ALTER TABLE mbos_visits ADD COLUMN IF NOT EXISTS accepted_at timestamp with time zone;
+ALTER TABLE mbos_visits ADD COLUMN IF NOT EXISTS accepted_by_id text;

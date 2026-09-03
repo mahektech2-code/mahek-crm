@@ -6,4 +6,6 @@
 -- party projection is what already fills phone, WhatsApp and the sales rep
 -- link from the same sheet by the same name match; this column rides along
 -- with it rather than inventing a second way to link a customer to the sheet.
-ALTER TABLE customers ADD COLUMN price_tag text;
+--
+-- IF NOT EXISTS: see 0080's own note.
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS price_tag text;

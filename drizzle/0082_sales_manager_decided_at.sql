@@ -3,4 +3,6 @@
 -- not "unassigned" — it is "the org chart's own answer stands." See the
 -- column's own comment in schema.ts and AGENTS.md's account on why this seat
 -- never needed one until the org chart became a real source that restates it.
-ALTER TABLE "customers" ADD COLUMN "sales_manager_decided_at" timestamp with time zone;
+--
+-- IF NOT EXISTS: see 0080's own note.
+ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "sales_manager_decided_at" timestamp with time zone;
