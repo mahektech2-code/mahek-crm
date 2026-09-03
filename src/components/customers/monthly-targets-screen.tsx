@@ -28,6 +28,7 @@ import { useToast } from "@/components/ui/toast";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { setTarget, setTargetsBulk } from "@/lib/actions/crm";
 import { money, moneyShort, pct, periodLabel } from "@/lib/format";
+import { UNASSIGNED_FILTER_VALUE } from "@/lib/am-filters";
 
 const PER_PAGE = [25, 50, 100] as const;
 
@@ -177,9 +178,22 @@ export function MonthlyTargetsScreen({
   const searchTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const asList = (v: string) => (v ? v.split(",").filter(Boolean) : []);
-  const salesAmOptions = amOptions.sales.map((n) => ({ value: n, label: n }));
-  const salesManagerOptions = amOptions.salesManager.map((n) => ({ value: n, label: n }));
-  const backOfficeOptions = amOptions.backOffice.map((n) => ({ value: n, label: n }));
+  // "Unassigned" is not one of the names the column ever renders, so it is
+  // not among `amOptions` — offered here as a fixed option on all three,
+  // same as on the Customers list.
+  const unassignedOption = { value: UNASSIGNED_FILTER_VALUE, label: "Unassigned" };
+  const salesAmOptions = [
+    unassignedOption,
+    ...amOptions.sales.map((n) => ({ value: n, label: n })),
+  ];
+  const salesManagerOptions = [
+    unassignedOption,
+    ...amOptions.salesManager.map((n) => ({ value: n, label: n })),
+  ];
+  const backOfficeOptions = [
+    unassignedOption,
+    ...amOptions.backOffice.map((n) => ({ value: n, label: n })),
+  ];
 
   const { page, pageCount, total } = pageInfo;
   const perPage = filters.perPage;
