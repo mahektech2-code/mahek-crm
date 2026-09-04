@@ -41,7 +41,7 @@ import { err, ok, okVoid, type Result } from "../result";
 import { shortDateWithYear } from "../format";
 import { nextStepForCustomer } from "./queue-service";
 import { customerFilterClause, type CustomerListFilters } from "../queries";
-import { creditedToSql } from "../sales-attribution";
+import { creditedToSql, CREDITED_TO_SEAT_SQL, type CreditSeat } from "../sales-attribution";
 
 /**
  * Whose target a customer's monthly figure counts toward — the same rule
@@ -53,6 +53,16 @@ import { creditedToSql } from "../sales-attribution";
  * imported book is whoever ran the import, one person on a thousand rows.
  */
 const CREDITED_TO_NAME_SQL = sql<string | null>`(select name from users u where u.id = ${creditedToSql("customers")})`;
+
+/**
+ * The two seats, read straight off the id — deliberately no sheet-text
+ * fallback, unlike `SALES_AM_NAME_SQL`/`BACK_OFFICE_AM_NAME_SQL` in
+ * queries.ts. Shown beside the credited name so the screen can say "also
+ * back office: X" when a different person holds the other seat — and a name
+ * with no MahekOne login could never be that second name anyway.
+ */
+const SALES_SEAT_NAME_SQL = sql<string | null>`(select name from users u where u.id = customers.sales_am_id)`;
+const BACK_OFFICE_SEAT_NAME_SQL = sql<string | null>`(select name from users u where u.id = customers.back_office_am_id)`;
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -760,6 +770,9 @@ export async function listTargets(period?: string) {
        * `owner_id` and can name whoever ran the import.
        */
       ownerName: CREDITED_TO_NAME_SQL,
+      creditedSeat: CREDITED_TO_SEAT_SQL,
+      salesSeatName: SALES_SEAT_NAME_SQL,
+      backOfficeSeatName: BACK_OFFICE_SEAT_NAME_SQL,
       target: monthlyTargets.targetAmount,
       isDefault: monthlyTargets.isDefault,
       carriedForward: monthlyTargets.carriedForward,
@@ -818,6 +831,9 @@ export async function listTargets(period?: string) {
       customerId: r.customer.id,
       customerName: r.customer.name,
       ownerName: r.ownerName,
+      creditedSeat: r.creditedSeat as CreditSeat,
+      salesSeatName: r.salesSeatName,
+      backOfficeSeatName: r.backOfficeSeatName,
       cycleDays: r.customer.cycleDays,
       contactsThisMonth: Number(r.contactsThisMonth ?? 0),
       target: resolved.amount,
@@ -1021,6 +1037,9 @@ export async function listTargetsPage(
     .select({
       customer: customers,
       ownerName: CREDITED_TO_NAME_SQL,
+      creditedSeat: CREDITED_TO_SEAT_SQL,
+      salesSeatName: SALES_SEAT_NAME_SQL,
+      backOfficeSeatName: BACK_OFFICE_SEAT_NAME_SQL,
       target: monthlyTargets.targetAmount,
       isDefault: monthlyTargets.isDefault,
       carriedForward: monthlyTargets.carriedForward,
@@ -1064,6 +1083,9 @@ export async function listTargetsPage(
       customerId: r.customer.id,
       customerName: r.customer.name,
       ownerName: r.ownerName,
+      creditedSeat: r.creditedSeat as CreditSeat,
+      salesSeatName: r.salesSeatName,
+      backOfficeSeatName: r.backOfficeSeatName,
       cycleDays: r.customer.cycleDays,
       contactsThisMonth: Number(r.contactsThisMonth ?? 0),
       target: resolved.amount,

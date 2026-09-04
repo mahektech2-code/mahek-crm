@@ -20,6 +20,7 @@ import {
   Th,
   Tr,
   cx,
+  type Tone,
 } from "@/components/ui/primitives";
 import { Modal, RowMenu, Tabs } from "@/components/ui/overlays";
 import { MultiSelect } from "@/components/ui/multi-select";
@@ -46,6 +47,26 @@ const STATUS_OPTIONS = [
   { value: "New", label: "New" },
 ];
 
+/**
+ * How the Account manager column says WHICH seat `ownerName` came through —
+ * see `CREDITED_TO_SEAT_SQL`. The column used to show only the credited
+ * name, so "Heena" against an account meant nothing without opening the
+ * record to see whether she sells to it or is only the back-office
+ * fallback.
+ */
+const SEAT_LABEL: Record<Row["creditedSeat"], string> = {
+  sales: "Sales",
+  "back-office": "Back office",
+  owner: "Lead owner",
+  none: "Unattributed",
+};
+const SEAT_TONE: Record<Row["creditedSeat"], Tone> = {
+  sales: "brand",
+  "back-office": "neutral",
+  owner: "muted",
+  none: "muted",
+};
+
 /* ---------------------------------------------------------------------------
  * Monthly targets — per customer, per month.
  *
@@ -67,6 +88,11 @@ type Row = {
   customerId: string;
   customerName: string;
   ownerName: string | null;
+  /** Which seat `ownerName` was credited through — see sales-attribution.ts. */
+  creditedSeat: "sales" | "back-office" | "owner" | "none";
+  /** The two seats, read straight off the id — for showing the OTHER one too. */
+  salesSeatName: string | null;
+  backOfficeSeatName: string | null;
   target: number;
   achieved: number;
   gap: number;
@@ -576,7 +602,27 @@ export function MonthlyTargetsScreen({
                       </span>
                     </span>
                   </Td>
-                  <Td>{r.ownerName ?? "-"}</Td>
+                  <Td>
+                    {r.ownerName ? (
+                      <span className="flex flex-col gap-0.5 py-0.5">
+                        <span className="flex items-center gap-1.5">
+                          <span>{r.ownerName}</span>
+                          <Badge tone={SEAT_TONE[r.creditedSeat]}>
+                            {SEAT_LABEL[r.creditedSeat]}
+                          </Badge>
+                        </span>
+                        {r.creditedSeat === "sales" &&
+                        r.backOfficeSeatName &&
+                        r.backOfficeSeatName !== r.ownerName ? (
+                          <span className="text-[12px] text-muted">
+                            Back office: {r.backOfficeSeatName}
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      <span className="text-muted">-</span>
+                    )}
+                  </Td>
                   <Td align="right">
                     <span className="flex justify-end">
                       <RowMenu
