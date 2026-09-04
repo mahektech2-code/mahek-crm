@@ -48,7 +48,8 @@
         {
           "color": "#5223E0"
         }
-      ]
+      ],
+      "./plugins/withReleaseSigning.js"
     ],
     "scheme": "mbos",
     "backgroundColor": "#F7F8FA"
