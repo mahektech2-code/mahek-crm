@@ -64,6 +64,21 @@ export const CREDITED_TO_SQL = sql`
   end`;
 
 /**
+ * The SAME case, spelled out as which seat rather than whose id — for a
+ * screen that shows the credited name and needs to say, next to it, whether
+ * that is the salesperson or the back-office fallback. Kept beside
+ * `CREDITED_TO_SQL` on purpose: one is read for the id, the other for the
+ * label, and they must never be free to drift apart from each other.
+ */
+export const CREDITED_TO_SEAT_SQL = sql<CreditSeat>`case
+  when customers.kind = 'lead' then
+    case when customers.owner_id is not null then 'owner' else 'none' end
+  when customers.sales_am_id is not null then 'sales'
+  when customers.back_office_am_id is not null then 'back-office'
+  else 'none'
+end`;
+
+/**
  * The same rule for raw SQL, where the table carries an alias.
  *
  * `creditedToSql("c")` inside a join, `creditedToSql("customers")` at the top

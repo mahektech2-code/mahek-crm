@@ -1,4 +1,6 @@
 import * as React from "react";
+import { Icon } from "@/components/shell/icons";
+import type { SortDirection } from "@/lib/sort-param";
 
 export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
@@ -319,6 +321,55 @@ export function Th({
     >
       {children}
     </th>
+  );
+}
+
+/**
+ * A `Th` that sorts its column when clicked — the chevron shows the CURRENT
+ * direction on the active column and sits faint and unrotated on every other
+ * sortable one, so a person scanning the header can tell which columns even
+ * offer it without having to click each one to find out.
+ */
+export function SortableTh({
+  children,
+  align = "left",
+  className,
+  active,
+  direction,
+  onSort,
+}: {
+  children: React.ReactNode;
+  align?: "left" | "right";
+  className?: string;
+  /** Whether THIS column is the one currently sorted on. */
+  active: boolean;
+  /** The direction to show — only meaningful while `active`. */
+  direction: SortDirection;
+  onSort: () => void;
+}) {
+  return (
+    <Th align={align} className={className} aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : undefined}>
+      <button
+        type="button"
+        onClick={onSort}
+        className={cx(
+          "inline-flex cursor-pointer items-center gap-1 hover:text-body",
+          align === "right" ? "flex-row-reverse" : undefined,
+          active ? "text-body" : undefined,
+        )}
+      >
+        {children}
+        <Icon
+          name="chevron"
+          size={12}
+          className={cx(
+            "shrink-0 transition-transform",
+            active ? "text-brand" : "text-muted opacity-40",
+            active && direction === "asc" ? "-rotate-90" : "rotate-90",
+          )}
+        />
+      </button>
+    </Th>
   );
 }
 
