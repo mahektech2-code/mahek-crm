@@ -16,6 +16,7 @@ import {
   Progress,
   SectionLabel,
   Select,
+  SortableTh,
   Td,
   Th,
   Tr,
@@ -30,6 +31,8 @@ import { APP_TIMEZONE } from "@/lib/business-date";
 import { setTarget, setTargetsBulk } from "@/lib/actions/crm";
 import { money, moneyShort, pct, periodLabel } from "@/lib/format";
 import { UNASSIGNED_FILTER_VALUE } from "@/lib/am-filters";
+import { useRestoreSort, rememberSort } from "@/components/ui/use-remembered-sort";
+import { parseSort, nextSort, formatSort } from "@/lib/sort-param";
 
 const PER_PAGE = [25, 50, 100] as const;
 
@@ -156,6 +159,8 @@ export function MonthlyTargetsScreen({
     salesAm: string;
     salesManager: string;
     backOfficeAm: string;
+    /** "column:asc"/"column:desc", or empty — see lib/sort-param.ts. */
+    sort: string;
     perPage: number;
   };
   pageInfo: { page: number; pageCount: number; total: number; bookTotal: number };
@@ -196,6 +201,19 @@ export function MonthlyTargetsScreen({
       router.push(`${basePath}?${next.toString()}`, { scroll: false });
     },
     [router, search, basePath],
+  );
+
+  const sort = parseSort(filters.sort);
+  // Remembered per app — see the same reasoning on the Customers list.
+  const sortTable = `targets.${app}`;
+  useRestoreSort(sortTable, sort, (v) => navigate({ sort: formatSort(v) }));
+  const sortBy = React.useCallback(
+    (column: string) => {
+      const v = nextSort(sort, column);
+      rememberSort(sortTable, v);
+      navigate({ sort: formatSort(v) });
+    },
+    [sort, sortTable, navigate],
   );
 
   // The search box is the one control that cannot afford a round trip per
@@ -554,11 +572,44 @@ export function MonthlyTargetsScreen({
           <table>
             <thead>
               <tr>
-                <Th>Customer</Th>
-                <Th align="right">Target</Th>
-                <Th align="right">Achieved</Th>
-                <Th align="right">Gap</Th>
-                <Th>Achievement</Th>
+                <SortableTh
+                  active={sort?.column === "name"}
+                  direction={sort?.direction ?? "asc"}
+                  onSort={() => sortBy("name")}
+                >
+                  Customer
+                </SortableTh>
+                <SortableTh
+                  align="right"
+                  active={sort?.column === "target"}
+                  direction={sort?.direction ?? "asc"}
+                  onSort={() => sortBy("target")}
+                >
+                  Target
+                </SortableTh>
+                <SortableTh
+                  align="right"
+                  active={sort?.column === "achieved"}
+                  direction={sort?.direction ?? "asc"}
+                  onSort={() => sortBy("achieved")}
+                >
+                  Achieved
+                </SortableTh>
+                <SortableTh
+                  align="right"
+                  active={sort?.column === "gap"}
+                  direction={sort?.direction ?? "asc"}
+                  onSort={() => sortBy("gap")}
+                >
+                  Gap
+                </SortableTh>
+                <SortableTh
+                  active={sort?.column === "achievement"}
+                  direction={sort?.direction ?? "asc"}
+                  onSort={() => sortBy("achievement")}
+                >
+                  Achievement
+                </SortableTh>
                 <Th>Account manager</Th>
                 <Th align="right" />
               </tr>

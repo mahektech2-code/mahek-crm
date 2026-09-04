@@ -14,11 +14,14 @@ import {
   PageHeader,
   Select,
   SlowPayerBadge,
+  SortableTh,
   Td,
   Th,
   Tr,
   cx,
 } from "@/components/ui/primitives";
+import { useRestoreSort, rememberSort } from "@/components/ui/use-remembered-sort";
+import { parseSort, nextSort, formatSort } from "@/lib/sort-param";
 import {
   ConfirmDialog,
   Modal,
@@ -235,6 +238,8 @@ export function CustomersScreen({
     backOfficeAm: string;
     /** The type filter's own word, or empty for all of them. */
     accountType: string;
+    /** "column:asc"/"column:desc", or empty — see lib/sort-param.ts. */
+    sort: string;
     perPage: number;
   };
   pageInfo: { page: number; pageCount: number; total: number; bookTotal: number };
@@ -293,6 +298,7 @@ export function CustomersScreen({
   const perPage = filters.perPage;
   const { page, pageCount, total, bookTotal } = pageInfo;
   const query = filters.query;
+  const sort = parseSort(filters.sort);
 
   const asList = (v: string) => (v ? v.split(",").filter(Boolean) : []);
   const statusOptions: { value: string; label: string }[] = STATUSES.slice(1).map(
@@ -339,6 +345,21 @@ export function CustomersScreen({
       router.push(`?${next.toString()}`, { scroll: false });
     },
     [router, search],
+  );
+
+  // Remembered per app — the CRM list and the Accounts one are read by
+  // different people doing different jobs, and there is no reason a
+  // telecaller's "Outstanding, highest first" should be what an accounts
+  // clerk sees the first time they open theirs.
+  const sortTable = `customers.${app}`;
+  useRestoreSort(sortTable, sort, (v) => navigate({ sort: formatSort(v) }));
+  const sortBy = React.useCallback(
+    (column: string) => {
+      const v = nextSort(sort, column);
+      rememberSort(sortTable, v);
+      navigate({ sort: formatSort(v) });
+    },
+    [sort, sortTable, navigate],
   );
 
   const [addOpen, setAddOpen] = React.useState(false);
@@ -779,21 +800,52 @@ export function CustomersScreen({
                     }
                   />
                 </Th>
-                <Th>Customer</Th>
+                <SortableTh
+                  active={sort?.column === "name"}
+                  direction={sort?.direction ?? "asc"}
+                  onSort={() => sortBy("name")}
+                >
+                  Customer
+                </SortableTh>
                 <Th>Contact person</Th>
                 <Th>Phone</Th>
                 <Th>Type</Th>
                 <Th>Account managers</Th>
-                <Th>Status</Th>
-                <Th>Last order</Th>
+                <SortableTh
+                  active={sort?.column === "status"}
+                  direction={sort?.direction ?? "asc"}
+                  onSort={() => sortBy("status")}
+                >
+                  Status
+                </SortableTh>
+                <SortableTh
+                  active={sort?.column === "lastOrder"}
+                  direction={sort?.direction ?? "asc"}
+                  onSort={() => sortBy("lastOrder")}
+                >
+                  Last order
+                </SortableTh>
                 <Th>Last contact</Th>
-                <Th align="right">Outstanding</Th>
+                <SortableTh
+                  align="right"
+                  active={sort?.column === "outstanding"}
+                  direction={sort?.direction ?? "asc"}
+                  onSort={() => sortBy("outstanding")}
+                >
+                  Outstanding
+                </SortableTh>
                 {/* WHEN THEY COME BACK, from the last call anybody logged.
                     Empty on a customer nobody has called, which is the honest
                     answer: nothing has been promised because nobody has
                     spoken to them. */}
                 <Th>Next call</Th>
-                <Th>City</Th>
+                <SortableTh
+                  active={sort?.column === "city"}
+                  direction={sort?.direction ?? "asc"}
+                  onSort={() => sortBy("city")}
+                >
+                  City
+                </SortableTh>
                 <Th align="right" className={pinnedHead("right")}>
                   Actions
                 </Th>
@@ -929,10 +981,16 @@ export function CustomersScreen({
                       not, and the eye picks out the three names down the
                       column without reading a word of the labels.
                     */}
-                    <span className="block text-sm text-body">
-                      <span className="text-muted">
-                        {r.kind === "lead" ? "Lead owner: " : "Sales: "}
-                      </span>
+                    {/*
+                      Badges say WHICH SEAT instead of a "Sales:"/"Back
+                      office:" prefix — the same reading Monthly Targets'
+                      Account manager column gives, so the two screens no
+                      longer disagree about how to say the same thing. Only
+                      the two CREDITING seats get one; Sales manager is a
+                      reporting line, not a seat a customer's numbers are
+                      credited through, so it stays a plain label.
+                    */}
+                    <span className="flex items-center gap-1.5 text-sm text-body">
                       {/*
                         NO fallback to `ownerName` for a customer.
                         `SALES_AM_NAME_SQL` already carries that fallback for
@@ -941,9 +999,14 @@ export function CustomersScreen({
                         account somebody has decided has no salesperson, where
                         null means unassigned rather than "ask the importer".
                       */}
-                      {r.kind === "lead"
-                        ? (r.ownerName ?? "Unassigned")
-                        : (r.salesAmName ?? "Unassigned")}
+                      <span>
+                        {r.kind === "lead"
+                          ? (r.ownerName ?? "Unassigned")
+                          : (r.salesAmName ?? "Unassigned")}
+                      </span>
+                      <Badge tone={r.kind === "lead" ? "muted" : "brand"}>
+                        {r.kind === "lead" ? "Lead owner" : "Sales"}
+                      </Badge>
                     </span>
                     {/*
                       A lead has no BACK OFFICE manager — nobody raises
@@ -958,14 +1021,17 @@ export function CustomersScreen({
                       <span className="text-muted">Sales manager: </span>
                       {r.salesManagerName ?? "Unassigned"}
                     </span>
-                    <span className="block text-sm text-body">
-                      <span className="text-muted">
-                        {r.kind === "lead" ? "Source: " : "Back office: "}
+                    {r.kind === "lead" ? (
+                      <span className="block text-sm text-body">
+                        <span className="text-muted">Source: </span>
+                        {r.leadSource ?? "not recorded"}
                       </span>
-                      {r.kind === "lead"
-                        ? (r.leadSource ?? "not recorded")
-                        : (r.backOfficeAmName ?? "Unassigned")}
-                    </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 text-sm text-body">
+                        <span>{r.backOfficeAmName ?? "Unassigned"}</span>
+                        <Badge tone="neutral">Back office</Badge>
+                      </span>
+                    )}
                   </Td>
                   <Td>
                     <Badge

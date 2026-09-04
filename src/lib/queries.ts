@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import { and, asc, desc, eq, inArray, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, or, sql, type Column, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import {
@@ -430,6 +430,8 @@ export type CustomerListFilters = {
    * than one, validated by `accountTypeParam` before it ever reaches here.
    */
   thirdParty?: string;
+  /** "column:asc" or "column:desc" — see `resolveSort`. Absent sorts by name. */
+  sort?: string;
   page?: number;
   perPage?: number;
 };
@@ -695,6 +697,29 @@ export function inListOrUnassigned(expr: SQL, commaSeparated: string): SQL {
   return namedClause ?? unassignedClause ?? sql`false`;
 }
 
+/**
+ * A clickable column header, everywhere one exists: "column:asc" or
+ * "column:desc" in the URL, turned into an ORDER BY against a fixed map of
+ * sortable columns for that table. Unknown or missing input falls back to
+ * `fallback` at "asc" — a stale `?sort=` from before a column was renamed, or
+ * simply no sort picked yet, must read as the table's ordinary order rather
+ * than throwing or silently returning nothing.
+ *
+ * The map, not a bare column name from the URL, decides what CAN be sorted —
+ * `?sort=password_hash:asc` must not become a real ORDER BY on a column
+ * nobody offered.
+ */
+export function resolveSort<T extends string>(
+  columns: Record<T, SQL | Column>,
+  sort: string | undefined,
+  fallback: T,
+): SQL {
+  const [rawColumn, rawDirection] = (sort ?? "").split(":");
+  const column = (rawColumn && rawColumn in columns ? rawColumn : fallback) as T;
+  const direction = rawDirection === "desc" ? "desc" : "asc";
+  return direction === "desc" ? desc(columns[column]) : asc(columns[column]);
+}
+
 /** One account-type filter's own clause — the value `customerFilterClause` used to inline directly. */
 function thirdPartyClause(value: string): SQL {
   switch (value) {
@@ -735,6 +760,15 @@ function thirdPartyClause(value: string): SQL {
       return sql`false`;
   }
 }
+
+/** What the Customers list may be sorted by, and the expression each reads. */
+const CUSTOMER_SORT_COLUMNS = {
+  name: customers.name,
+  status: STATUS_LABEL_SQL,
+  outstanding: customers.outstanding,
+  lastOrder: customers.lastOrderDate,
+  city: customers.city,
+} satisfies Record<string, SQL | Column>;
 
 export async function listCustomersPage(
   filters: CustomerListFilters = {},
@@ -845,7 +879,7 @@ export async function listCustomersPage(
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
     .where(clause)
-    .orderBy(asc(customers.name))
+    .orderBy(resolveSort(CUSTOMER_SORT_COLUMNS, filters.sort, "name"))
     .limit(perPage)
     .offset((page - 1) * perPage);
 

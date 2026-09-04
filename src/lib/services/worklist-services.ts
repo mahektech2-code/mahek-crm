@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -40,7 +40,7 @@ import {
 import { err, ok, okVoid, type Result } from "../result";
 import { shortDateWithYear } from "../format";
 import { nextStepForCustomer } from "./queue-service";
-import { customerFilterClause, type CustomerListFilters } from "../queries";
+import { customerFilterClause, resolveSort, type CustomerListFilters } from "../queries";
 import { creditedToSql, CREDITED_TO_SEAT_SQL, type CreditSeat } from "../sales-attribution";
 
 /**
@@ -865,7 +865,7 @@ function targetAchievedSql(year: number, month: number) {
  */
 export type TargetListFilters = Pick<
   CustomerListFilters,
-  "query" | "status" | "salesAm" | "salesManager" | "backOfficeAm"
+  "query" | "status" | "salesAm" | "salesManager" | "backOfficeAm" | "sort"
 > & {
   page?: number;
   perPage?: number;
@@ -992,6 +992,24 @@ export async function resolveTargetCustomerIds(
   return rows.map((r) => r.id);
 }
 
+/**
+ * What the Monthly Targets list may be sorted by. Built per call rather than
+ * a module-level constant — `targetExpr`/`achievedExpr`/`gapExpr` already
+ * read "0 where nothing was set" off `targetFilterClause`, the same
+ * expressions the tiles above the table are summed from, so a sorted column
+ * can never disagree with the totals sitting over it.
+ */
+function targetSortColumns(targetExpr: SQL<number>, achievedExpr: SQL<number>, gapExpr: SQL<number>) {
+  return {
+    name: customers.name,
+    target: targetExpr,
+    achieved: achievedExpr,
+    gap: gapExpr,
+    achievement: sql<number>`case when ${targetExpr} = 0 then 0
+      else round(${achievedExpr}::numeric * 100 / ${targetExpr}) end`,
+  };
+}
+
 export async function listTargetsPage(
   period: string | undefined,
   filters: TargetListFilters = {},
@@ -1054,7 +1072,9 @@ export async function listTargetsPage(
     .from(customers)
     .leftJoin(monthlyTargets, joinTarget)
     .where(clause)
-    .orderBy(asc(customers.name))
+    .orderBy(
+      resolveSort(targetSortColumns(targetExpr, achievedExpr, gapExpr), filters.sort, "name"),
+    )
     .limit(perPage)
     .offset((page - 1) * perPage);
 
