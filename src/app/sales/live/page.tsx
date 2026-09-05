@@ -152,6 +152,7 @@ export default async function Page({
           rebuild either in place. See `live-panel.tsx` and `street-map.tsx`. */}
       <LivePanel
         key={`${day}:${view}`}
+        day={day}
         rows={rows}
         tracks={tracks}
         activity={activity}

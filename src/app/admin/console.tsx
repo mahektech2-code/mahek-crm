@@ -46,6 +46,7 @@ import type { CatalogueData } from "./catalogue-data";
 import { SHEET_SUBTITLE, SHEET_TABS, type SheetData } from "./sheet-data";
 import { SheetSection } from "./sheet-section";
 import { VoiceSection, VOICE_SUBTITLE, type VoiceData } from "./voice-section";
+import { MapsSection, MAPS_SUBTITLE, type MapsData } from "./maps-section";
 import { ComponentsScreen } from "./components-section";
 import type { Person } from "@/lib/services/admin-people-service";
 import type { AccessRow } from "@/lib/services/access-service";
@@ -72,6 +73,7 @@ const PLATFORM_NAV = [
   { key: "notifications", label: "Notifications" },
   { key: "feedback", label: "Feedback" },
   { key: "voice", label: "Voice" },
+  { key: "maps", label: "Maps" },
   { key: "components", label: "Components" },
   { key: "audit", label: "Audit" },
 ] as const;
@@ -119,6 +121,7 @@ export function AdminConsole({
   catalogue,
   sheet,
   voice,
+  maps,
   people,
   access,
   feedback,
@@ -132,6 +135,7 @@ export function AdminConsole({
   catalogue: CatalogueData;
   sheet: SheetData;
   voice: VoiceData;
+  maps: MapsData;
   people: Person[];
   /** Who opens what, and how far into it. The People section IS this. */
   access: AccessRow[];
@@ -152,6 +156,7 @@ export function AdminConsole({
           catalogue={catalogue}
           sheet={sheet}
           voice={voice}
+          maps={maps}
           access={access}
           feedback={feedback}
           platform={platform}
@@ -202,6 +207,7 @@ function ConsoleShell({
   catalogue,
   sheet,
   voice,
+  maps,
   access,
   feedback,
   platform,
@@ -214,6 +220,7 @@ function ConsoleShell({
   catalogue: CatalogueData;
   sheet: SheetData;
   voice: VoiceData;
+  maps: MapsData;
   access: AccessRow[];
   feedback: FeedbackData;
   platform: PlatformData;
@@ -539,7 +546,9 @@ function ConsoleShell({
                             ? SHEET_SUBTITLE
                             : section === "voice"
                               ? VOICE_SUBTITLE
-                              : PLATFORM_SUBTITLES[section]}
+                              : section === "maps"
+                                ? MAPS_SUBTITLE
+                                : PLATFORM_SUBTITLES[section]}
                     </p>
                   </div>
                   <PrimaryAction section={section} />
@@ -608,6 +617,7 @@ function ConsoleShell({
                   access={access}
                   sheet={sheet}
                   voice={voice}
+                  maps={maps}
                   feedback={feedback}
                   platform={platform}
                   canWriteCatalogue={crm.canWrite}
@@ -757,6 +767,7 @@ function SectionBody({
   access,
   sheet,
   voice,
+  maps,
   feedback,
   platform,
   canWriteCatalogue,
@@ -782,6 +793,7 @@ function SectionBody({
   access: AccessRow[];
   sheet: SheetData;
   voice: VoiceData;
+  maps: MapsData;
   feedback: FeedbackData;
   platform: PlatformData;
   canWriteCatalogue: boolean;
@@ -804,6 +816,14 @@ function SectionBody({
     return (
       <div className="mt-5">
         <VoiceSection data={voice} />
+      </div>
+    );
+  }
+
+  if (section === "maps") {
+    return (
+      <div className="mt-5">
+        <MapsSection data={maps} />
       </div>
     );
   }

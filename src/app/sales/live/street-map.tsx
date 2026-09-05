@@ -49,6 +49,7 @@ function highlightMarker(el: HTMLDivElement, selected: boolean) {
 }
 
 export function StreetMap({
+  day,
   rows,
   tracks,
   activity,
@@ -56,6 +57,7 @@ export function StreetMap({
   view,
   selectedId,
 }: {
+  day: string;
   rows: LastKnown[];
   tracks: Map<string, TrackPoint[]>;
   activity: ActivityPoint[];
@@ -282,6 +284,56 @@ export function StreetMap({
     built.fitBounds(box, { padding: 56, maxZoom: MAX_FIT_ZOOM });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
+
+  /*
+   * The trail for whoever is picked, laid onto the road network — fetched
+   * lazily, and only for them.
+   *
+   * Every other salesman's line stays the raw GPS trail the map was built
+   * with. Snapping the whole team on every thirty-second poll would turn one
+   * page load into dozens of calls to an outside service for lines nobody is
+   * looking at; this asks for one, when a manager actually picks a name. If
+   * no key is set, or the call fails, the raw line already drawn is exactly
+   * what stays on screen — a failed snap is invisible, never a broken map.
+   *
+   * `snappedFor` remembers who has already been answered for this day, so
+   * deselecting and reselecting the same name does not ask again.
+   */
+  const snappedFor = React.useRef(new Set<string>());
+  React.useEffect(() => {
+    if (!selectedId || view !== "today") return;
+    const built = map.current;
+    if (!built) return;
+
+    const cacheKey = `${day}:${selectedId}`;
+    if (snappedFor.current.has(cacheKey)) return;
+
+    let cancelled = false;
+    fetch(
+      `/api/sales/live/snap-trail?salesmanId=${encodeURIComponent(selectedId)}&day=${encodeURIComponent(day)}`,
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body: { points: { lat: number; lng: number }[] | null } | null) => {
+        if (cancelled || !body?.points || body.points.length < 2) return;
+        snappedFor.current.add(cacheKey);
+        const source = built.getSource(`trail-${selectedId}`) as maplibregl.GeoJSONSource | undefined;
+        source?.setData({
+          type: "Feature",
+          properties: {},
+          geometry: {
+            type: "LineString",
+            coordinates: body.points.map((p) => [p.lng, p.lat]),
+          },
+        });
+      })
+      .catch(() => {
+        /* The raw trail stays exactly as drawn. */
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, day, view]);
 
   if (!hasAnything) {
     return (
