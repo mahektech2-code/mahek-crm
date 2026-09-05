@@ -29,7 +29,7 @@ const DEFAULTS: Record<string, unknown> = {
   /* Following the route while the day is open. The office decides; this is
      what a handset does before it has ever heard from the office. */
   'mbos.location.trackWhileWorking': true,
-  'mbos.location.trackEveryMinutes': 5,
+  'mbos.location.trackEverySeconds': 15,
 
   /* visits */
   'mbos.visits.minimumDwellSeconds': 120,
