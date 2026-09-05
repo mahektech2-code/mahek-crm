@@ -1505,7 +1505,7 @@ export type TrackPoint = {
 };
 
 /**
- * One person's day, in order.
+ * One person's day, in order, uncapped in any way that would thin it.
  *
  * The line a manager actually wants: a beat worked from one end to the other
  * looks completely unlike an afternoon spent in one place, and neither is
@@ -1515,6 +1515,12 @@ export type TrackPoint = {
  * something — a track with the shops marked on it answers "did he get to
  * Sadar" without anybody counting pins. The plain fixes carry no name at all
  * rather than a guessed one.
+ *
+ * The limit is generous rather than a real cap: this is one person's one day,
+ * not the whole team's (see `tracksForDay` for that), so even the fifteen-
+ * second sampling `mbos.location.trackEverySeconds` defaults to leaves a
+ * twelve-hour day at under 3,000 fixes — a limit of 2,000 here would have
+ * started truncating ordinary working days the moment that density shipped.
  */
 export async function trackForDay(salesmanId: string, day: string): Promise<TrackPoint[]> {
   const scope = await managerScope();
@@ -1535,7 +1541,7 @@ export async function trackForDay(salesmanId: string, day: string): Promise<Trac
        and (v.check_in_at ${IST_DAY})::date = ${day}::date
        and v.check_in_lat is not null
     order by at asc
-    limit 2000
+    limit 20000
   `) as unknown as TrackPoint[];
 }
 
@@ -1547,10 +1553,15 @@ export async function trackForDay(salesmanId: string, day: string): Promise<Trac
  * `row_number()` inside the CTE — because a global limit would give whoever
  * synced first the whole budget and leave the rest of the team as dots.
  *
- * Thinned to `every`th fix. A trail taken every five minutes over a nine-hour
- * day is a hundred points, and at the size this is drawn most of them land on
- * the same pixel: they cost bytes and buy nothing. Visits are never thinned —
- * they are the points that mean something.
+ * Positions are thinned to roughly `perPerson`, spread evenly across however
+ * many the day actually holds — never the first `perPerson` in arrival order.
+ * At the old five-minute sampling a cap this size was never reached, so a cap
+ * that silently truncated instead of thinning went unnoticed; at the current
+ * fifteen-second sampling a working day can carry several thousand fixes, and
+ * truncating to the earliest `perPerson` would cut the trail off a couple of
+ * hours in and lose the rest of the day. Visits are NEVER thinned or capped —
+ * they are the points that mean something, and are unioned in after the
+ * positions are already down to size.
  */
 export async function tracksForDay(
   day: string,
@@ -1559,32 +1570,38 @@ export async function tracksForDay(
   const scope = await managerScope();
 
   const rows = await db.execute<TrackPoint & { salesmanId: string }>(sql`
-    with points as (
+    with positions as (
       select p.user_id as "salesmanId", p.lat, p.lng, p.at,
-             p.accuracy_m as "accuracyM", null::text as place
+             p.accuracy_m as "accuracyM"
         from mbos_positions p
        where (p.at ${IST_DAY})::date = ${day}::date
          ${onlyMine(scope, "p.user_id")}
-      union all
-      select v.salesman_id, v.check_in_lat, v.check_in_lng, v.check_in_at,
-             v.check_in_accuracy_m, c.name
+    ),
+    numbered as (
+      select positions.*,
+             row_number() over (partition by positions."salesmanId" order by positions.at asc) as rn,
+             count(*) over (partition by positions."salesmanId") as total
+        from positions
+    ),
+    positions_thinned as (
+      select "salesmanId", lat, lng, at, "accuracyM", null::text as place
+        from numbered
+       where total <= ${perPerson}
+          or rn % greatest(1, ceil(total::numeric / ${perPerson})::int) = 0
+    ),
+    visits as (
+      select v.salesman_id as "salesmanId", v.check_in_lat as lat, v.check_in_lng as lng,
+             v.check_in_at as at, v.check_in_accuracy_m as "accuracyM", c.name as place
         from mbos_visits v
         join customers c on c.id = v.customer_id
        where (v.check_in_at ${IST_DAY})::date = ${day}::date
          and v.check_in_lat is not null
          ${onlyMine(scope, "v.salesman_id")}
-    ),
-    numbered as (
-      select points.*, row_number() over (
-        partition by points."salesmanId" order by points.at asc
-      ) as n
-        from points
     )
-    select numbered."salesmanId", numbered.lat, numbered.lng, numbered.at,
-           numbered."accuracyM", numbered.place
-      from numbered
-     where numbered.n <= ${perPerson}
-     order by numbered."salesmanId", numbered.at asc
+    select * from positions_thinned
+    union all
+    select * from visits
+    order by "salesmanId", at asc
   `);
 
   const byPerson = new Map<string, TrackPoint[]>();

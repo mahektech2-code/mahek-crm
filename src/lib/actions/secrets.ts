@@ -95,7 +95,7 @@ export async function setSecretAction(name: string, raw: string): Promise<Result
   });
 
   revalidatePath("/admin");
-  return okVoid(`${LABELS[name]} saved. Dictation uses it from the next recording.`);
+  return okVoid(`${LABELS[name]} saved. ${USED_FROM[name]}`);
 }
 
 export async function clearSecretAction(name: string): Promise<Result> {
@@ -131,4 +131,19 @@ const LABELS: Record<SecretName, string> = {
   "sarvam.apiKey": "The Sarvam key",
   "openai.apiKey": "The OpenAI key",
   "msg91.authKey": "The MSG91 key",
+  "olamaps.apiKey": "The Ola Maps key",
+};
+
+/**
+ * What starts using a saved key, said in words specific enough that the
+ * sentence is still true for whichever credential was just set. "Dictation
+ * uses it from the next recording" was hardcoded here before any credential
+ * but the two dictation ones existed — accurate for those, and silently wrong
+ * the moment a key with nothing to do with dictation was added.
+ */
+const USED_FROM: Record<SecretName, string> = {
+  "sarvam.apiKey": "Dictation uses it from the next recording.",
+  "openai.apiKey": "Dictation uses it from the next recording.",
+  "msg91.authKey": "WhatsApp sending uses it from the next message.",
+  "olamaps.apiKey": "The Live map's road-snapping uses it from the next sync.",
 };

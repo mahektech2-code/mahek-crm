@@ -2649,6 +2649,32 @@ nowhere on the map — inventing a spot for them is the one thing a map of
 where people are must not do. The list reads the newest of the trail, the
 check-in and each visit, so somebody whose tracking is off still appears.
 
+**The trail can be snapped onto the road it was walked on, and it never has
+to be.** At the fifteen-second sampling density this app uses, a raw GPS line
+already hugs the road on its own — snapping is a refinement, not a
+correction, so a deployment with no Ola Maps key still draws exactly what it
+always drew. `lib/services/road-snap-service.ts` calls Ola Maps'
+Snap-to-Road, batched at its own hundred-point ceiling, and returns null on
+anything that goes wrong — no key, a network failure, a bad answer — which
+`street-map.tsx` treats identically to "nothing to improve": the raw line
+stays exactly as drawn. The key is set from the Admin Console, under a
+section of its own (Platform → Maps), for the same reason dictation's keys
+are: a deploy nobody has shell access to needs a screen, not an environment
+variable, to turn a credential on.
+
+**It is asked for ONE trail, when a manager actually looks at it — never for
+the whole team on every poll.** `tracksForDay` answers the "today" view for
+every salesman at once, on a thirty-second refresh; snapping all of that on
+every tick would turn one open tab into dozens of calls to an outside service
+a minute, almost all of them for lines nobody is looking at. `/api/sales/
+live/snap-trail` is asked by the client only for whoever is selected in the
+team list, and only once per person per day — `street-map.tsx` remembers who
+has already been answered and does not ask again for a name already snapped.
+The raw fixes in `mbos_positions` are never touched by any of this: the
+snapped line is a second, disposable geometry for the map's `LineString`
+only, re-derivable at any time, exactly like every other engine reading in
+this codebase.
+
 ## Testing
 
 `npm run test` runs the engine tests: pure, fast, no database. They pin the

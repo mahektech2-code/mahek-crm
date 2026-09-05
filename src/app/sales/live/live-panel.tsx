@@ -28,6 +28,7 @@ const POLL_MS = 30_000;
  * be a request every thirty seconds for an answer that cannot change.
  */
 export function LivePanel({
+  day,
   rows,
   tracks,
   activity,
@@ -35,6 +36,7 @@ export function LivePanel({
   view,
   isToday,
 }: {
+  day: string;
   rows: LastKnown[];
   tracks: Map<string, TrackPoint[]>;
   activity: ActivityPoint[];
@@ -62,6 +64,7 @@ export function LivePanel({
   return (
     <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_clamp(280px,30%,360px)]">
       <StreetMap
+        day={day}
         rows={rows}
         tracks={tracks}
         activity={activity}
