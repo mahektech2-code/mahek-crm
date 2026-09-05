@@ -155,6 +155,7 @@ export default async function Page({
         activity={activity}
         staleAfterSeconds={config["mbos.location.activityFixMaxAgeSeconds"]}
         view={view}
+        isToday={isToday}
       />
 
       <p className="mt-3 max-w-[820px] text-[13px] text-pretty text-muted">
