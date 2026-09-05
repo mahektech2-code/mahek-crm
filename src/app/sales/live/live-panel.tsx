@@ -35,6 +35,7 @@ export function LivePanel({
   staleAfterSeconds,
   view,
   isToday,
+  olaMapsKey,
 }: {
   day: string;
   rows: LastKnown[];
@@ -43,6 +44,8 @@ export function LivePanel({
   staleAfterSeconds: number;
   view: "now" | "today";
   isToday: boolean;
+  /** Read once, server-side, in `page.tsx` — see `street-map.tsx`'s doc comment. */
+  olaMapsKey: string | null;
 }) {
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const router = useRouter();
@@ -71,6 +74,7 @@ export function LivePanel({
         staleAfterSeconds={staleAfterSeconds}
         view={view}
         selectedId={selectedId}
+        apiKey={olaMapsKey}
       />
       <TeamList rows={rows} selectedId={selectedId} onSelect={toggle} />
     </div>

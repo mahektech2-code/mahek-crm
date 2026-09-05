@@ -145,5 +145,5 @@ const USED_FROM: Record<SecretName, string> = {
   "sarvam.apiKey": "Dictation uses it from the next recording.",
   "openai.apiKey": "Dictation uses it from the next recording.",
   "msg91.authKey": "WhatsApp sending uses it from the next message.",
-  "olamaps.apiKey": "The Live map's road-snapping uses it from the next sync.",
+  "olamaps.apiKey": "The Live map draws its streets and snaps its trail from the next time it's opened.",
 };

@@ -9,33 +9,75 @@ import { activityLabel } from "@/lib/mbos/activity-labels";
 /**
  * The map, with streets under it.
  *
- * It used to be pins on a bare grid, and the reason was written into the file:
- * streets would mean "sending the coordinates of Mahek's salesmen to whoever
- * supplies them, on every render, plus a key and a bill". Two of those three
- * turned out not to be true of every supplier.
+ * It used to be pins on a bare grid, then OpenFreeMap — a supplier needing no
+ * key, no account and no bill. This is Ola Maps now, and the reason to give
+ * up "no key" is that the Live map already has one, for Snap-to-Road (see
+ * the trail-snapping effect below): once a key exists anyway, running two
+ * tile suppliers is two things to keep coverage and reliability current on,
+ * for one screen.
  *
- * **OpenFreeMap needs no key, no account and no bill**, and it sets no usage
- * limit — so the cost side of that argument is gone. What is left is the
- * privacy one, and it is smaller than the old comment claimed: THE PINS ARE
- * DRAWN HERE, from data that never leaves MahekOne. A tile server is asked for
- * squares of map, so what it learns is roughly which part of India is being
- * looked at, not where anybody is standing. That is a real signal and not
- * nothing — the viewport does centre on the team — but it is not the team's
- * coordinates, which is what the old note implied.
+ * **The key has to reach the browser, and that is a real exception.** Every
+ * other credential in `app_secrets` is read once, server-side, by the
+ * request about to spend it, and never otherwise leaves the server — that is
+ * the whole design of `readSecret`. A map tile key cannot follow that rule:
+ * the BROWSER is what asks a tile server for squares of map, hundreds of
+ * times over a session, so the key has to be readable there. That is true of
+ * every tile provider — Mapbox, Google, Ola — and the standard mitigation is
+ * the same one used elsewhere: restrict the key to this app's own domain in
+ * the provider's own console, so a copied key is useless anywhere else. The
+ * key is handed down as a plain prop from `page.tsx`'s one `readSecret` call
+ * for this reason and no other — nothing downstream of this component ever
+ * asks for it again.
+ *
+ * **THE PINS THEMSELVES STILL NEVER LEAVE MAHEKONE.** A tile server is asked
+ * for squares of map — roughly which part of India is being looked at — and
+ * that is a real signal, since the viewport centres on the team. It is not
+ * the team's coordinates: those are drawn here, from MahekOne's own data,
+ * and are never part of a tile request.
  *
  * **The renderer is MapLibre and the supplier is a URL.** That is deliberate:
- * if OpenFreeMap stops, or its coverage of a beat turns out to be thin, the
- * style URL below is the only thing that changes. Choosing a supplier's own
- * SDK would have made moving a rewrite instead of an edit.
+ * if Ola Maps' coverage of a beat turns out to be thin, or the service
+ * changes terms, the style URL and the `transformRequest` below are the only
+ * things that change. Pulling in a supplier's own SDK would have made moving
+ * a rewrite instead of an edit — and the `transformRequest` shape here is
+ * exactly what Ola Maps' own web SDK does internally, so this is not a
+ * workaround, it is the documented mechanism read out of their source.
  *
- * **The bare-grid rules survive the change.** A pin is drawn only where there
- * is a fix — nobody is placed by arithmetic, and somebody with no position is
- * in the team list saying so and nowhere on this map. The view fits the data
- * rather than filling the canvas.
+ * **Without a key, there is no map — said plainly, not drawn broken.** Every
+ * request the tile source makes would 401 the moment there is no key to
+ * attach, so this component does not attempt one: `apiKey` gates the whole
+ * build, and its absence gets its own state below, pointing at Admin Console
+ * → Platform → Maps rather than a screen full of missing tiles.
+ *
+ * **The bare-grid rules survive both changes of supplier.** A pin is drawn
+ * only where there is a fix — nobody is placed by arithmetic, and somebody
+ * with no position is in the team list saying so and nowhere on this map.
+ * The view fits the data rather than filling the canvas.
+ *
+ * **Map and satellite are the same map, not two.** `setStyle` swaps the
+ * style JSON in place rather than tearing the map down — the camera,
+ * markers and event handlers are untouched, only the trail and activity
+ * layers need re-drawing, because a style change wipes anything the STYLE
+ * carried rather than the map object. `drawOverlays` runs off `style.load`
+ * for exactly that reason: it fires on the first load and every switch
+ * after it, so one function draws the same thing every time rather than the
+ * initial build and a later switch drifting into two slightly different
+ * pictures.
  */
 
-/* No key, no account, no limit. See the note above before swapping it. */
-const STYLE = "https://tiles.openfreemap.org/styles/liberty";
+/** Ola Maps' own default vector style — see the doc comment before swapping it. */
+const STYLE_MAP = "https://api.olamaps.io/tiles/vector/v1/styles/default-light-standard/style.json";
+
+/**
+ * Ola Maps' satellite style — the same roads and labels, laid over Sentinel-2
+ * imagery rather than flat vector fill. Its own name in Ola's style library
+ * is odd ("default-dark-standard-satellite") but the imagery is real, not a
+ * dark theme with a misleading id.
+ */
+const STYLE_SATELLITE =
+  "https://api.olamaps.io/tiles/vector/v1/styles/default-dark-standard-satellite/style.json";
+
+type StyleMode = "map" | "satellite";
 
 /** Enough that a single pin does not open zoomed to the rooftop. */
 const MAX_FIT_ZOOM = 15;
@@ -56,6 +98,7 @@ export function StreetMap({
   staleAfterSeconds,
   view,
   selectedId,
+  apiKey,
 }: {
   day: string;
   rows: LastKnown[];
@@ -65,11 +108,16 @@ export function StreetMap({
   view: "now" | "today";
   /** Whoever is picked in the team list beside this — see the effect below. */
   selectedId: string | null;
+  /** Ola Maps' key, read once server-side and handed down — see the doc comment above. */
+  apiKey: string | null;
 }) {
   const host = React.useRef<HTMLDivElement | null>(null);
   const map = React.useRef<maplibregl.Map | null>(null);
   const markers = React.useRef(new Map<string, HTMLDivElement>());
+  /** Whether the map has ever finished its first real paint — see the load timeout below. */
+  const loadedOnce = React.useRef(false);
   const [failed, setFailed] = React.useState(false);
+  const [styleMode, setStyleMode] = React.useState<StyleMode>("map");
 
   const pinned = rows.filter((r) => r.lat != null && r.lng != null);
   const marks = view === "today" ? activity : [];
@@ -86,7 +134,7 @@ export function StreetMap({
   const hasAnything = points.length > 0;
 
   React.useEffect(() => {
-    if (!host.current || map.current || !hasAnything) return;
+    if (!host.current || map.current || !hasAnything || !apiKey) return;
 
     /*
      * Built one frame late, on purpose.
@@ -99,6 +147,7 @@ export function StreetMap({
      */
     let cancelled = false;
     let m: maplibregl.Map | null = null;
+    let loadTimeout: ReturnType<typeof setTimeout> | undefined;
     const markerMap = markers.current;
 
     const frame = requestAnimationFrame(() => {
@@ -107,12 +156,27 @@ export function StreetMap({
       try {
         m = new maplibregl.Map({
           container: host.current,
-          style: STYLE,
+          style: STYLE_MAP,
           center: [points[0][0], points[0][1]],
           zoom: 11,
-          // Attribution is a condition of using OpenFreeMap, and the style
-          // carries the OpenStreetMap credit it is built from.
+          // The style carries whatever attribution it is built from; the
+          // control just has to be present to show it.
           attributionControl: { compact: true },
+          /*
+           * Ola Maps' own web SDK does exactly this internally: append the
+           * key as a query parameter to every request the map makes, EXCEPT
+           * images — a tile PNG needs no key, only the vector/style/glyph
+           * JSON that names where to fetch it from does. Read out of their
+           * published SDK source rather than guessed at, because a wrong
+           * guess here fails silently as a blank map with no error worth
+           * reading.
+           */
+          transformRequest: (url, resourceType) => {
+            if (resourceType === "Image") return { url };
+            const withKey = new URL(url);
+            withKey.searchParams.append("api_key", apiKey);
+            return { url: withKey.toString() };
+          },
         });
       } catch {
         // WebGL unavailable — an old machine, or a locked-down browser.
@@ -122,118 +186,176 @@ export function StreetMap({
 
       const built = m;
       built.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
-      built.on("error", () => setFailed(true));
+      /*
+       * "error" is NOT wired to `failed`, on purpose, and this took a real
+       * bug to learn. MapLibre fires the same generic "error" event for a
+       * single non-fatal problem as it does for something that stops the
+       * map dead — and Ola Maps' own `default-light-standard` style ships
+       * one: a layer named "3d_model_data" that points at a source-layer
+       * ("3d_model") absent from the "vectordata" source's actual tiles.
+       * MapLibre logs it and carries on rendering every other layer
+       * perfectly — streets, labels, POIs — so a handler that flipped
+       * `failed` on ANY "error" put every single page load into "the map
+       * could not be drawn", even though the map was, provably, drawn.
+       *
+       * What actually distinguishes "broken" from "one bad layer reference"
+       * is whether the map ever finishes its first paint at all — so that is
+       * what is watched for instead, below, with a timeout standing in for
+       * "never".
+       */
       map.current = built;
 
-      built.on("load", () => {
-      /* MapLibre's compact attribution starts EXPANDED, and stays that way
-         until the map is DRAGGED — that is the only event its minimiser
-         listens for, so nobody has yet triggered it on a map that has just
-         appeared. The style loading also re-adds the class once the real
-         source attributions are known, so stripping it earlier does not
-         hold — this has to run after `load`, once that has settled.
-         Clicking the icon still toggles normally afterwards, since that
-         handler manages the class itself. */
-      built.getContainer().querySelector(".maplibregl-ctrl-attrib")?.classList.remove("maplibregl-compact-show");
+      /*
+       * The genuine failure case: nothing ever loads. A totally unreachable
+       * style URL, or a key rejected outright, both mean `load` never fires,
+       * which is the one signal that does not depend on reading meaning into
+       * MapLibre's error text. Cleared the moment `load` actually fires.
+       */
+      loadTimeout = setTimeout(() => {
+        if (!loadedOnce.current) setFailed(true);
+      }, 15_000);
 
-      /* The trail first, so pins and marks sit on top of it. */
-      for (const [id, ps] of trails) {
-        if (ps.length < 2) continue;
-        built.addSource(`trail-${id}`, {
-          type: "geojson",
-          data: {
-            type: "Feature",
-            properties: {},
-            geometry: { type: "LineString", coordinates: ps.map((p) => [p.lng, p.lat]) },
-          },
-        });
-        built.addLayer({
-          id: `trail-${id}`,
-          type: "line",
-          source: `trail-${id}`,
-          layout: { "line-cap": "round", "line-join": "round" },
-          paint: { "line-color": "#5223E0", "line-width": 3, "line-opacity": 0.75 },
-        });
-      }
-
-      /* The work, marked where it was done. An order taken two kilometres off
-         the beat is obvious on a line and invisible in a list. */
-      if (marks.length) {
-        built.addSource("activity", {
-          type: "geojson",
-          data: {
-            type: "FeatureCollection",
-            features: marks.map((a) => ({
-              type: "Feature" as const,
-              properties: {
-                label: `${activityLabel(a.entityType)}${
-                  a.accuracyM ? ` · ±${a.accuracyM} m` : ""
-                }`,
-                // A stale fix is drawn hollow rather than hidden: the act is
-                // certain and only its place is not.
-                stale: (a.ageSeconds ?? 0) > staleAfterSeconds ? 1 : 0,
-              },
-              geometry: { type: "Point" as const, coordinates: [a.lng, a.lat] },
-            })),
-          },
-        });
-        built.addLayer({
-          id: "activity",
-          type: "circle",
-          source: "activity",
-          paint: {
-            "circle-radius": 5,
-            "circle-color": ["case", ["==", ["get", "stale"], 1], "#FFFFFF", "#5223E0"],
-            "circle-stroke-width": 2,
-            "circle-stroke-color": "#5223E0",
-          },
-        });
-        built.on("click", "activity", (e: maplibregl.MapLayerMouseEvent) => {
-          const f = e.features?.[0];
-          if (!f) return;
-          new maplibregl.Popup({ closeButton: false })
-            .setLngLat(e.lngLat)
-            .setText(String(f.properties?.label ?? ""))
-            .addTo(built);
-        });
-        built.on("mouseenter", "activity", () => (built.getCanvas().style.cursor = "pointer"));
-        built.on("mouseleave", "activity", () => (built.getCanvas().style.cursor = ""));
-      }
-
-      /* One marker per salesman who has a fix. HTML rather than a symbol
-         layer, because the initials and the colour are the same two things
-         the team list shows and they should not be built twice. */
-      for (const r of pinned) {
-        const el = document.createElement("div");
-        el.className =
-          "flex h-7 w-7 items-center justify-center rounded-full border-2 border-white text-[11px] font-semibold text-white shadow-[0_1px_4px_rgba(22,22,22,0.4)] transition-shadow";
-        el.style.background = r.checkOutAt ? "#8A8F98" : r.seenAt ? "#5223E0" : "#C0392B";
-        el.textContent = r.initials;
-        new maplibregl.Marker({ element: el })
-          .setLngLat([r.lng as number, r.lat as number])
-          .setPopup(
-            new maplibregl.Popup({ closeButton: false, offset: 16 }).setText(
-              `${r.salesmanName}${r.place ? ` · ${r.place}` : ""}${
-                r.accuracyM ? ` · ±${r.accuracyM} m` : ""
-              }`,
-            ),
-          )
+      /*
+       * Bound to the MAP, not the layer, so it survives `setStyle` — the
+       * map/satellite switcher tears the style down and rebuilds it, which
+       * removes every custom source and layer (see `drawOverlays` below) but
+       * leaves listeners registered on the map object alone. Registering
+       * these once here, rather than inside `drawOverlays`, is what stops a
+       * style switch from stacking a second popup handler on top of the
+       * first. MapLibre resolves a layer-scoped listener at EVENT time, so
+       * it is harmless that the "activity" layer does not exist yet on the
+       * very first style load.
+       */
+      built.on("click", "activity", (e: maplibregl.MapLayerMouseEvent) => {
+        const f = e.features?.[0];
+        if (!f) return;
+        new maplibregl.Popup({ closeButton: false })
+          .setLngLat(e.lngLat)
+          .setText(String(f.properties?.label ?? ""))
           .addTo(built);
-        markerMap.set(r.salesmanId, el);
+      });
+      built.on("mouseenter", "activity", () => (built.getCanvas().style.cursor = "pointer"));
+      built.on("mouseleave", "activity", () => (built.getCanvas().style.cursor = ""));
+
+      /*
+       * Everything the STYLE carries rather than the map: the trail and
+       * activity sources and layers. `setStyle` throws all of this away and
+       * rebuilds from the new style JSON, so it has to be re-drawn every
+       * time — which is exactly what `style.load` fires for, including the
+       * very first time. Markers are HTML overlays bound to the map object,
+       * not the style, so they are untouched by a switch and are added
+       * separately, once, in the `load` handler below.
+       */
+      function drawOverlays() {
+        /* MapLibre's compact attribution starts EXPANDED, and stays that way
+           until the map is DRAGGED — that is the only event its minimiser
+           listens for, so nobody has yet triggered it on a map that has just
+           appeared. The style loading also re-adds the class once the real
+           source attributions are known, so stripping it earlier does not
+           hold — this has to run after the style has settled, on every
+           switch as well as the first load. Clicking the icon still toggles
+           normally afterwards, since that handler manages the class itself. */
+        built
+          .getContainer()
+          .querySelector(".maplibregl-ctrl-attrib")
+          ?.classList.remove("maplibregl-compact-show");
+
+        /* The trail first, so pins and marks sit on top of it. */
+        for (const [id, ps] of trails) {
+          if (ps.length < 2) continue;
+          built.addSource(`trail-${id}`, {
+            type: "geojson",
+            data: {
+              type: "Feature",
+              properties: {},
+              geometry: { type: "LineString", coordinates: ps.map((p) => [p.lng, p.lat]) },
+            },
+          });
+          built.addLayer({
+            id: `trail-${id}`,
+            type: "line",
+            source: `trail-${id}`,
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: { "line-color": "#5223E0", "line-width": 3, "line-opacity": 0.75 },
+          });
+        }
+
+        /* The work, marked where it was done. An order taken two kilometres
+           off the beat is obvious on a line and invisible in a list. */
+        if (marks.length) {
+          built.addSource("activity", {
+            type: "geojson",
+            data: {
+              type: "FeatureCollection",
+              features: marks.map((a) => ({
+                type: "Feature" as const,
+                properties: {
+                  label: `${activityLabel(a.entityType)}${
+                    a.accuracyM ? ` · ±${a.accuracyM} m` : ""
+                  }`,
+                  // A stale fix is drawn hollow rather than hidden: the act is
+                  // certain and only its place is not.
+                  stale: (a.ageSeconds ?? 0) > staleAfterSeconds ? 1 : 0,
+                },
+                geometry: { type: "Point" as const, coordinates: [a.lng, a.lat] },
+              })),
+            },
+          });
+          built.addLayer({
+            id: "activity",
+            type: "circle",
+            source: "activity",
+            paint: {
+              "circle-radius": 5,
+              "circle-color": ["case", ["==", ["get", "stale"], 1], "#FFFFFF", "#5223E0"],
+              "circle-stroke-width": 2,
+              "circle-stroke-color": "#5223E0",
+            },
+          });
+        }
       }
 
-      /* FIT, never fill. One pin gets a sensible zoom instead of a rooftop. */
-      const box = points.reduce(
-        (b, p) => b.extend(p),
-        new maplibregl.LngLatBounds(points[0], points[0]),
-      );
-      built.fitBounds(box, { padding: 56, maxZoom: MAX_FIT_ZOOM, animate: false });
+      built.on("style.load", drawOverlays);
+
+      built.on("load", () => {
+        loadedOnce.current = true;
+        clearTimeout(loadTimeout);
+
+        /* One marker per salesman who has a fix. HTML rather than a symbol
+           layer, because the initials and the colour are the same two things
+           the team list shows and they should not be built twice. */
+        for (const r of pinned) {
+          const el = document.createElement("div");
+          el.className =
+            "flex h-7 w-7 items-center justify-center rounded-full border-2 border-white text-[11px] font-semibold text-white shadow-[0_1px_4px_rgba(22,22,22,0.4)] transition-shadow";
+          el.style.background = r.checkOutAt ? "#8A8F98" : r.seenAt ? "#5223E0" : "#C0392B";
+          el.textContent = r.initials;
+          new maplibregl.Marker({ element: el })
+            .setLngLat([r.lng as number, r.lat as number])
+            .setPopup(
+              new maplibregl.Popup({ closeButton: false, offset: 16 }).setText(
+                `${r.salesmanName}${r.place ? ` · ${r.place}` : ""}${
+                  r.accuracyM ? ` · ±${r.accuracyM} m` : ""
+                }`,
+              ),
+            )
+            .addTo(built);
+          markerMap.set(r.salesmanId, el);
+        }
+
+        /* FIT, never fill. One pin gets a sensible zoom instead of a rooftop. */
+        const box = points.reduce(
+          (b, p) => b.extend(p),
+          new maplibregl.LngLatBounds(points[0], points[0]),
+        );
+        built.fitBounds(box, { padding: 56, maxZoom: MAX_FIT_ZOOM, animate: false });
       });
     });
 
     return () => {
       cancelled = true;
       cancelAnimationFrame(frame);
+      clearTimeout(loadTimeout);
       m?.remove();
       map.current = null;
       markerMap.clear();
@@ -251,6 +373,28 @@ export function StreetMap({
      */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /*
+   * Map / satellite is a property of the STYLE, so switching it calls
+   * `setStyle` rather than rebuilding the map — the same reasoning as the
+   * selection effect below: rebuilding would refetch everything for one
+   * click. `setStyle` fires `style.load` again, which is what re-draws the
+   * trail and activity layers it just threw away (see `drawOverlays`).
+   *
+   * The skip-on-mount guard matters here specifically: `styleMode` starts at
+   * `"map"`, the same style the building effect already constructs the map
+   * with, so running this on mount would call `setStyle` a second time on a
+   * style that had not finished loading yet — a real style reload for
+   * nothing, not just a wasted call.
+   */
+  const mountedStyleEffect = React.useRef(false);
+  React.useEffect(() => {
+    if (!mountedStyleEffect.current) {
+      mountedStyleEffect.current = true;
+      return;
+    }
+    map.current?.setStyle(styleMode === "satellite" ? STYLE_SATELLITE : STYLE_MAP);
+  }, [styleMode]);
 
   /*
    * Picking somebody in the team list moves the CAMERA on the map that
@@ -335,9 +479,24 @@ export function StreetMap({
     };
   }, [selectedId, day, view]);
 
+  if (!apiKey) {
+    return (
+      <Frame key="no-key">
+        <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+          <p className="text-[15px] font-semibold text-ink">The map needs a key</p>
+          <p className="mt-1 max-w-[420px] text-[13px] text-muted">
+            Add an Ola Maps key in Admin Console → Platform → Maps to draw the streets under
+            this. The team list beside this still shows everything that is known —
+            nobody&rsquo;s position is lost, only the picture of it.
+          </p>
+        </div>
+      </Frame>
+    );
+  }
+
   if (!hasAnything) {
     return (
-      <Frame>
+      <Frame key="empty">
         <div className="flex h-full flex-col items-center justify-center px-6 text-center">
           <p className="text-[15px] font-semibold text-ink">Nothing to place yet</p>
           <p className="mt-1 max-w-[420px] text-[13px] text-muted">
@@ -352,7 +511,7 @@ export function StreetMap({
 
   if (failed) {
     return (
-      <Frame>
+      <Frame key="failed">
         <div className="flex h-full flex-col items-center justify-center px-6 text-center">
           <p className="text-[15px] font-semibold text-ink">The map could not be drawn</p>
           <p className="mt-1 max-w-[420px] text-[13px] text-muted">
@@ -365,9 +524,43 @@ export function StreetMap({
   }
 
   return (
-    <Frame>
+    <Frame key="map">
       <div ref={host} className="h-full w-full" />
+      <StyleSwitcher mode={styleMode} onChange={setStyleMode} />
     </Frame>
+  );
+}
+
+/**
+ * Map / satellite, drawn top-left so it never sits over the NavigationControl
+ * MapLibre draws top-right — the two floated at the same corner is the exact
+ * overlap this screen has already shipped and fixed once.
+ */
+function StyleSwitcher({
+  mode,
+  onChange,
+}: {
+  mode: StyleMode;
+  onChange: (mode: StyleMode) => void;
+}) {
+  return (
+    <div className="absolute top-2 left-2 z-10 inline-flex overflow-hidden rounded-[4px] border border-line bg-surface shadow-[0_1px_4px_rgba(22,22,22,0.25)]">
+      {(["map", "satellite"] as const).map((option) => (
+        <button
+          key={option}
+          type="button"
+          onClick={() => onChange(option)}
+          className={
+            "px-2.5 py-1 text-[12px] font-medium capitalize " +
+            (mode === option
+              ? "bg-brand-soft text-[#5223E0]"
+              : "bg-surface text-body hover:bg-canvas")
+          }
+        >
+          {option}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -375,9 +568,7 @@ export function StreetMap({
 function Frame({ children }: { children: React.ReactNode }) {
   return (
     <div className="overflow-hidden rounded-[6px] border border-line bg-surface">
-      <div className="relative min-h-[320px] bg-[#F0F2F6]" style={{ aspectRatio: "2.4" }}>
-        {children}
-      </div>
+      <div className="relative h-[calc(100vh-280px)] min-h-[480px] bg-[#F0F2F6]">{children}</div>
     </div>
   );
 }
