@@ -22,7 +22,7 @@
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -883,6 +883,88 @@ describe("The journey channels' delta pull", () => {
     const delta = await buildPull(principal, cursor);
     assert.ok(Array.isArray(delta.journeyStops));
     assert.ok(Array.isArray(delta.planDays));
+  });
+});
+
+describe("Starting the day again after checking out", () => {
+  /*
+   * The handset already does the right thing: it clears its own checkOutAt,
+   * appends a new session and resumes GPS collection. What it sends the
+   * server for that resume is `{ id, day, sessions, resumedAt }` — no
+   * checkInAt, no checkOutAt — and the server used to have nothing that
+   * reacted to `resumedAt` at all, so the row's checkOutAt from the earlier
+   * checkout just sat there. The Live map's "who's out" filter
+   * (`checkInAt && !checkOutAt`) and `/api/mbos/positions`'s tracking gate
+   * both read that same column, so a resumed salesman vanished from the map
+   * and every fix he sent afterwards was silently discarded — while the sync
+   * call itself kept answering "accepted".
+   */
+  const day = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+
+  async function attendanceRow() {
+    const [row] = await db
+      .select()
+      .from(mbosAttendanceDays)
+      .where(and(eq(mbosAttendanceDays.userId, salesman.id), eq(mbosAttendanceDays.day, day)));
+    return row;
+  }
+
+  test("a resume clears checkOutAt, and a real checkout sets it again — repeatedly", async () => {
+    const checkIn = item({
+      entityType: "attendance",
+      op: "create",
+      payload: { day, checkInAt: Date.now() - 3 * 3_600_000 },
+    });
+    const [inResult] = await ingestSyncBatch(principal, [checkIn]);
+    assert.equal(inResult.status, "accepted", JSON.stringify(inResult));
+
+    const checkOut = item({
+      entityType: "attendance",
+      entityId: checkIn.entityId,
+      op: "update",
+      payload: { day, checkOutAt: Date.now() - 2 * 3_600_000 },
+    });
+    const [outResult] = await ingestSyncBatch(principal, [checkOut]);
+    assert.equal(outResult.status, "accepted", JSON.stringify(outResult));
+    assert.ok((await attendanceRow()).checkOutAt, "the first checkout never landed");
+
+    // Back out after lunch — the resume payload, exactly as the handset sends it.
+    const resume = item({
+      entityType: "attendance",
+      entityId: checkIn.entityId,
+      op: "update",
+      payload: { day, sessions: "[]", resumedAt: Date.now() - 3_600_000 },
+    });
+    const [resumeResult] = await ingestSyncBatch(principal, [resume]);
+    assert.equal(resumeResult.status, "accepted", JSON.stringify(resumeResult));
+    assert.equal(
+      (await attendanceRow()).checkOutAt,
+      null,
+      "resuming the day left the old checkout in place — the Live map and GPS tracking both read this column",
+    );
+
+    // A second real checkout — proving this is a toggle, not a one-time fix.
+    const checkOutAgain = item({
+      entityType: "attendance",
+      entityId: checkIn.entityId,
+      op: "update",
+      payload: { day, checkOutAt: Date.now() },
+    });
+    await ingestSyncBatch(principal, [checkOutAgain]);
+    assert.ok((await attendanceRow()).checkOutAt, "the second checkout never landed");
+
+    const resumeAgain = item({
+      entityType: "attendance",
+      entityId: checkIn.entityId,
+      op: "update",
+      payload: { day, sessions: "[]", resumedAt: Date.now() },
+    });
+    await ingestSyncBatch(principal, [resumeAgain]);
+    assert.equal(
+      (await attendanceRow()).checkOutAt,
+      null,
+      "a second resume the same day did not reopen the row",
+    );
   });
 });
 
