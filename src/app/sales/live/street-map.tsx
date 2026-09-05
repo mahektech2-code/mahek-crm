@@ -5,6 +5,12 @@ import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { ActivityPoint, LastKnown, TrackPoint } from "@/lib/services/sales-service";
 import { activityLabel } from "@/lib/mbos/activity-labels";
+import {
+  OlaMapsStyleSwitcher,
+  olaMapsStyleUrl,
+  olaMapsTransformRequest,
+  type OlaMapsStyleMode,
+} from "../ola-maps";
 
 /**
  * The map, with streets under it.
@@ -37,11 +43,13 @@ import { activityLabel } from "@/lib/mbos/activity-labels";
  *
  * **The renderer is MapLibre and the supplier is a URL.** That is deliberate:
  * if Ola Maps' coverage of a beat turns out to be thin, or the service
- * changes terms, the style URL and the `transformRequest` below are the only
- * things that change. Pulling in a supplier's own SDK would have made moving
- * a rewrite instead of an edit — and the `transformRequest` shape here is
- * exactly what Ola Maps' own web SDK does internally, so this is not a
- * workaround, it is the documented mechanism read out of their source.
+ * changes terms, `../ola-maps.tsx`'s style URLs and `transformRequest` are
+ * the only things that change — shared with Territory's `shop-map.tsx`, the
+ * other screen with an Ola Maps instance, so the two cannot drift into two
+ * different authentication mechanisms. Pulling in a supplier's own SDK would
+ * have made moving a rewrite instead of an edit — and that `transformRequest`
+ * shape is exactly what Ola Maps' own web SDK does internally, so this is not
+ * a workaround, it is the documented mechanism read out of their source.
  *
  * **Without a key, there is no map — said plainly, not drawn broken.** Every
  * request the tile source makes would 401 the moment there is no key to
@@ -64,20 +72,6 @@ import { activityLabel } from "@/lib/mbos/activity-labels";
  * initial build and a later switch drifting into two slightly different
  * pictures.
  */
-
-/** Ola Maps' own default vector style — see the doc comment before swapping it. */
-const STYLE_MAP = "https://api.olamaps.io/tiles/vector/v1/styles/default-light-standard/style.json";
-
-/**
- * Ola Maps' satellite style — the same roads and labels, laid over Sentinel-2
- * imagery rather than flat vector fill. Its own name in Ola's style library
- * is odd ("default-dark-standard-satellite") but the imagery is real, not a
- * dark theme with a misleading id.
- */
-const STYLE_SATELLITE =
-  "https://api.olamaps.io/tiles/vector/v1/styles/default-dark-standard-satellite/style.json";
-
-type StyleMode = "map" | "satellite";
 
 /** Enough that a single pin does not open zoomed to the rooftop. */
 const MAX_FIT_ZOOM = 15;
@@ -117,7 +111,7 @@ export function StreetMap({
   /** Whether the map has ever finished its first real paint — see the load timeout below. */
   const loadedOnce = React.useRef(false);
   const [failed, setFailed] = React.useState(false);
-  const [styleMode, setStyleMode] = React.useState<StyleMode>("map");
+  const [styleMode, setStyleMode] = React.useState<OlaMapsStyleMode>("map");
 
   const pinned = rows.filter((r) => r.lat != null && r.lng != null);
   const marks = view === "today" ? activity : [];
@@ -156,27 +150,13 @@ export function StreetMap({
       try {
         m = new maplibregl.Map({
           container: host.current,
-          style: STYLE_MAP,
+          style: olaMapsStyleUrl("map"),
           center: [points[0][0], points[0][1]],
           zoom: 11,
           // The style carries whatever attribution it is built from; the
           // control just has to be present to show it.
           attributionControl: { compact: true },
-          /*
-           * Ola Maps' own web SDK does exactly this internally: append the
-           * key as a query parameter to every request the map makes, EXCEPT
-           * images — a tile PNG needs no key, only the vector/style/glyph
-           * JSON that names where to fetch it from does. Read out of their
-           * published SDK source rather than guessed at, because a wrong
-           * guess here fails silently as a blank map with no error worth
-           * reading.
-           */
-          transformRequest: (url, resourceType) => {
-            if (resourceType === "Image") return { url };
-            const withKey = new URL(url);
-            withKey.searchParams.append("api_key", apiKey);
-            return { url: withKey.toString() };
-          },
+          transformRequest: olaMapsTransformRequest(apiKey),
         });
       } catch {
         // WebGL unavailable — an old machine, or a locked-down browser.
@@ -247,6 +227,19 @@ export function StreetMap({
        * separately, once, in the `load` handler below.
        */
       function drawOverlays() {
+        /*
+         * The map is provably working the moment its STYLE has loaded, which
+         * is well before every tile in view has finished downloading — that
+         * wait is what MapLibre's "load" event actually measures, and Ola
+         * Maps serving a burst of dozens of tile/glyph/sprite requests on one
+         * page can genuinely take longer than the load timeout to finish all
+         * of them. Marking `loadedOnce` here, on the first `style.load`
+         * rather than on the eventual `load`, is what keeps a merely slow
+         * connection from reading as a broken map.
+         */
+        loadedOnce.current = true;
+        clearTimeout(loadTimeout);
+
         /* MapLibre's compact attribution starts EXPANDED, and stays that way
            until the map is DRAGGED — that is the only event its minimiser
            listens for, so nobody has yet triggered it on a map that has just
@@ -318,9 +311,6 @@ export function StreetMap({
       built.on("style.load", drawOverlays);
 
       built.on("load", () => {
-        loadedOnce.current = true;
-        clearTimeout(loadTimeout);
-
         /* One marker per salesman who has a fix. HTML rather than a symbol
            layer, because the initials and the colour are the same two things
            the team list shows and they should not be built twice. */
@@ -393,7 +383,7 @@ export function StreetMap({
       mountedStyleEffect.current = true;
       return;
     }
-    map.current?.setStyle(styleMode === "satellite" ? STYLE_SATELLITE : STYLE_MAP);
+    map.current?.setStyle(olaMapsStyleUrl(styleMode));
   }, [styleMode]);
 
   /*
@@ -526,41 +516,8 @@ export function StreetMap({
   return (
     <Frame key="map">
       <div ref={host} className="h-full w-full" />
-      <StyleSwitcher mode={styleMode} onChange={setStyleMode} />
+      <OlaMapsStyleSwitcher mode={styleMode} onChange={setStyleMode} />
     </Frame>
-  );
-}
-
-/**
- * Map / satellite, drawn top-left so it never sits over the NavigationControl
- * MapLibre draws top-right — the two floated at the same corner is the exact
- * overlap this screen has already shipped and fixed once.
- */
-function StyleSwitcher({
-  mode,
-  onChange,
-}: {
-  mode: StyleMode;
-  onChange: (mode: StyleMode) => void;
-}) {
-  return (
-    <div className="absolute top-2 left-2 z-10 inline-flex overflow-hidden rounded-[4px] border border-line bg-surface shadow-[0_1px_4px_rgba(22,22,22,0.25)]">
-      {(["map", "satellite"] as const).map((option) => (
-        <button
-          key={option}
-          type="button"
-          onClick={() => onChange(option)}
-          className={
-            "px-2.5 py-1 text-[12px] font-medium capitalize " +
-            (mode === option
-              ? "bg-brand-soft text-[#5223E0]"
-              : "bg-surface text-body hover:bg-canvas")
-          }
-        >
-          {option}
-        </button>
-      ))}
-    </div>
   );
 }
 

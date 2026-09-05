@@ -2716,11 +2716,28 @@ a source-layer the `vectordata` source's tiles do not actually carry.
 MapLibre logs it and keeps rendering every other layer perfectly, so a
 handler that flipped the whole screen to "could not be drawn" on any
 `error` put every load of the Live map into that state — even though the
-map was, provably, drawn. What is watched for instead is whether the map
-ever finishes its FIRST paint at all, on a generous timeout: that is the
-one signal that does not depend on reading meaning into a vendor's error
-text, and a bad layer reference among thousands of good ones does not fail
-it.
+map was, provably, drawn. What is watched for instead is whether the
+STYLE ever loads at all, on a generous timeout: that is the one signal
+that does not depend on reading meaning into a vendor's error text, and a
+bad layer reference among thousands of good ones does not fail it. It is
+deliberately the style loading and not MapLibre's own "load" event, which
+waits for every tile in view to finish downloading too — Ola Maps serving
+a burst of tile, glyph and sprite requests on one page can genuinely take
+longer than the timeout to finish all of them, and a merely slow
+connection is not a broken map either.
+
+**Territory's shop map is a second Ola Maps instance, and what the two share
+lives in one file.** `sales/territory/shop-map.tsx` plots the book's own
+shops — clustered, since it can be a few thousand points — and
+field-collected prospect pins that never matched a customer, drawn hollow so
+the two are never mistaken for each other. It is built separately from the
+Live map's `street-map.tsx` because the two draw different things — one
+tracks salesmen live, this one is a static read of the book — but both need
+the same style URLs, the same key-authenticating `transformRequest` and the
+same Map/Satellite switcher, so those live once in `sales/ola-maps.tsx`
+rather than as two copies that would drift the day one of them changed. The
+same `olamaps.apiKey` gates both: without it, neither map draws streets, and
+each says so on its own screen rather than showing a blank canvas.
 
 ## Testing
 
