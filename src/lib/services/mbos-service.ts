@@ -183,13 +183,25 @@ export async function checkDeviceBinding(
     .where(eq(mbosDevices.deviceId, deviceId))
     .limit(1);
 
-  // The device id is unique across the table: a handset that already belongs
-  // to somebody else is not this person's to sign in on.
-  if (existingForDevice && existingForDevice.userId !== userId) {
+  // The device id is unique across the table, so a handset somebody else is
+  // ACTIVELY on is not this person's to sign in on. A RELEASED row is a
+  // different fact: `releaseDevice` (Sales Dashboard → Handsets) exists
+  // precisely so the physical phone can be handed to somebody else. Refusing
+  // here regardless of `active` used to make that impossible — releasing the
+  // old employee's row never actually freed the handset for a new one,
+  // because this check never looked at `active` at all. The row for the new
+  // employee is written by the ordinary `onConflictDoUpdate` below, which
+  // already reassigns `userId` on a released row; this is the only change
+  // needed to let it be reached.
+  //
+  // The message stays generic on purpose: whose account this handset is tied
+  // to, and which screen releases it, are an admin's business rather than
+  // the person holding the phone's — this is the one login refusal that is
+  // never that person's own account or credential being wrong.
+  if (existingForDevice && existingForDevice.active && existingForDevice.userId !== userId) {
     return {
       ok: false,
-      error:
-        "This handset is registered to another employee. An admin has to release it in the Admin Console before it can be used by somebody else.",
+      error: "This handset can't be used to sign in right now. Contact your admin.",
     };
   }
 

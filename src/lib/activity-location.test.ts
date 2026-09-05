@@ -727,10 +727,9 @@ describe("How many handsets one person may hold", () => {
 
     const outcome = await checkDeviceBinding(other.id, "probe-device");
     assert.equal(outcome.ok, false, "one salesman took over another's phone");
-    assert.match(
-      outcome.ok === false ? outcome.error : "",
-      /registered to another employee/i,
-    );
+    // Generic on purpose: whose account this handset belongs to is an
+    // admin's business, not something surfaced to whoever is holding it.
+    assert.match(outcome.ok === false ? outcome.error : "", /contact your admin/i);
   });
 });
 
@@ -798,6 +797,32 @@ describe("Releasing a handset", () => {
       .from(mbosDevices)
       .where(eq(mbosDevices.deviceId, "probe-device"));
     assert.equal(row.active, true, "it was released anyway");
+  });
+
+  test("a released handset can be claimed by somebody else — the whole point of releasing it", async () => {
+    // Before the fix, `checkDeviceBinding`'s hard refusal read `existingForDevice.userId`
+    // without ever checking `active`, so a released row still refused every OTHER
+    // employee forever — release only ever freed the SAME employee to rebind. This is
+    // the scenario the release button and its own error message exist for: handing a
+    // physical phone to somebody new.
+    await asOffice();
+    await releaseDevice({ deviceId: "probe-device", reason: "Reassigned to a new joiner" });
+
+    const [newHire] = await db
+      .insert(users)
+      .values({
+        id: id("usr"),
+        name: "Anjali",
+        email: `anjali-${randomUUID().slice(0, 6)}@test.local`,
+        phone: `98200${Math.floor(10000 + Math.random() * 89999)}`,
+        passwordHash: "x",
+        role: "telecaller",
+        initials: "AJ",
+      })
+      .returning();
+
+    const outcome = await checkDeviceBinding(newHire.id, "probe-device");
+    assert.equal(outcome.ok, true, outcome.ok ? "" : outcome.error);
   });
 
   test("releasing twice is refused rather than silently repeated", async () => {
