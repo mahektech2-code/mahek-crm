@@ -44,7 +44,9 @@ import { auditLog, notifications as notificationsTable } from "@/db/schema";
 import { ingestSyncBatch } from "@/lib/actions/mbos";
 import {
   buildBootstrap,
+  buildPull,
   checkDeviceBinding,
+  encodeCursor,
   type MbosPrincipal,
 } from "@/lib/services/mbos-service";
 import type { SyncItem } from "@/lib/mbos/types";
@@ -862,6 +864,25 @@ describe("Releasing a handset", () => {
       .from(mbosDevices)
       .where(eq(mbosDevices.deviceId, "probe-device"));
     assert.equal(row.active, true);
+  });
+});
+
+describe("The journey channels' delta pull", () => {
+  /*
+   * `PLAN_HISTORY_DAYS` bound as a bare parameter next to a `::date` cast
+   * left Postgres unable to tell `date - integer` (returns date) from
+   * `date - date` (returns integer) until the parameter's type was known, so
+   * it defaulted to `date` and the surrounding `plan_date >= …` then failed
+   * with "operator does not exist: date >= integer" — every delta pull for
+   * every handset with a cursor, on both the stops channel and the days
+   * channel. Nothing caught it because nothing had ever called buildPull with
+   * a real cursor: this is that call.
+   */
+  test("does not throw once a cursor makes it filter by plan history", async () => {
+    const cursor = encodeCursor(new Date(Date.now() - 60_000));
+    const delta = await buildPull(principal, cursor);
+    assert.ok(Array.isArray(delta.journeyStops));
+    assert.ok(Array.isArray(delta.planDays));
   });
 });
 
