@@ -2699,6 +2699,29 @@ snapped line is a second, disposable geometry for the map's `LineString`
 only, re-derivable at any time, exactly like every other engine reading in
 this codebase.
 
+**Map and satellite are a `setStyle` call, not two maps.** `StreetMap` swaps
+the style JSON in place rather than tearing the whole map down — the camera,
+the markers and the click handlers survive, because only what the STYLE
+itself carries (the trail and activity layers) gets wiped by the swap.
+`drawOverlays` runs off `style.load` rather than the once-only `load` event
+for exactly that reason: it fires on the very first paint and on every later
+switch, so one function draws the same picture every time instead of the
+initial build and a later switch drifting into two slightly different ones.
+
+**A single bad layer must not read as "the map could not be drawn."**
+MapLibre's `error` event fires identically for something fatal and for one
+malformed layer in an otherwise-fine style — and Ola Maps' own
+`default-light-standard` ships exactly that: a `3d_model_data` layer naming
+a source-layer the `vectordata` source's tiles do not actually carry.
+MapLibre logs it and keeps rendering every other layer perfectly, so a
+handler that flipped the whole screen to "could not be drawn" on any
+`error` put every load of the Live map into that state — even though the
+map was, provably, drawn. What is watched for instead is whether the map
+ever finishes its FIRST paint at all, on a generous timeout: that is the
+one signal that does not depend on reading meaning into a vendor's error
+text, and a bad layer reference among thousands of good ones does not fail
+it.
+
 ## Testing
 
 `npm run test` runs the engine tests: pure, fast, no database. They pin the
