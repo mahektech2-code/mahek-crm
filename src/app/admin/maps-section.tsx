@@ -6,13 +6,17 @@ import { SecretCredentialRow, type SecretMeta, type SecretRow } from "./secret-c
 /* ---------------------------------------------------------------------------
  * Maps credentials.
  *
- * One key, doing two jobs: it draws the STREETS under the Live map (Ola
- * Maps' vector tiles) and it can SNAP the "today" trail onto the road it was
- * actually walked on. The two are not equally optional — without a key the
- * map draws no streets at all, on either view, and says so rather than
- * showing a blank canvas; road-snapping on top of that is a refinement that
- * quietly does nothing without a key, since the raw GPS line already hugs
- * the road at this app's sampling density.
+ * One key, powering every Ola Maps instance in MahekOne: the Live map's
+ * streets and its Snap-to-Road, and Territory's shop map, which draws the
+ * book's own shops and field-collected prospect pins over the same tiles.
+ * `../sales/ola-maps.tsx` is where the style URLs and the authenticating
+ * `transformRequest` live once, shared by both screens' components
+ * (`live/street-map.tsx`, `territory/shop-map.tsx`), so this key is never
+ * spent two different ways by two copies of the same logic. Without it,
+ * NEITHER map draws streets — both say so plainly rather than showing a
+ * blank canvas — and Snap-to-Road on top of the Live map's trail is a
+ * refinement that quietly does nothing without a key either, since the raw
+ * GPS line already hugs the road at this app's sampling density.
  *
  * This is also the one credential in `app_secrets` that reaches the
  * browser. Every other key here is read once, server-side, by the request
@@ -31,7 +35,7 @@ export type MapsData = {
 };
 
 export const MAPS_SUBTITLE =
-  "The key the Live map calls Ola Maps with — for the streets under it, and for laying a salesman's trail onto the road he actually walked.";
+  "The key the Live map and Territory's shop map call Ola Maps with — for the streets under both, and for laying a salesman's trail onto the road he actually walked.";
 
 export const MAPS_TABS = [{ slug: "credentials", label: "Credentials" }];
 
@@ -39,10 +43,10 @@ const META: Record<string, SecretMeta> = {
   "olamaps.apiKey": {
     label: "Ola Maps",
     env: "OLAMAPS_API_KEY",
-    what: 'Draws the streets under the Live map (vector tiles) and snaps the "today" trail of whoever a manager selects onto the road network. Sent to the browser to load tiles — restrict it to this domain in Ola Maps’ own console.',
+    what: 'Draws the streets under the Live map and Territory\'s shop map (vector tiles), and snaps the "today" trail of whoever a manager selects on the Live map onto the road network. Sent to the browser to load tiles — restrict it to this domain in Ola Maps’ own console.',
     where: "maps.olakrutrim.com → your project → API Keys",
     removalConsequence:
-      "The Live map draws no streets at all — it says so, rather than showing a blank canvas — and the trail line it would otherwise snap onto the road goes back to a raw GPS line between fixes.",
+      "Neither the Live map nor Territory's shop map draws streets — both say so, rather than showing a blank canvas — and the trail line the Live map would otherwise snap onto the road goes back to a raw GPS line between fixes.",
   },
 };
 
@@ -52,7 +56,7 @@ export function MapsSection({ data }: { data: MapsData }) {
   return (
     <div className="space-y-5">
       <Card>
-        <CardHeader title="What the Live map is wired to" />
+        <CardHeader title="What is wired to it" />
         <div className="bg-surface px-4 py-3.5">
           <div className="flex items-center gap-2">
             <Dot tone={held ? "success" : "danger"} />
@@ -60,8 +64,8 @@ export function MapsSection({ data }: { data: MapsData }) {
           </div>
           <p className="mt-1.5 text-[13px] text-pretty text-muted">
             {held
-              ? "A key is set. The Live map draws its streets from Ola Maps, and the trail a manager opens on “Everywhere they went today” is snapped onto the road network before it is drawn."
-              : "No key is set, so the Live map draws no streets on either view — it says so plainly rather than showing a blank canvas. The team list beside it is unaffected."}
+              ? "A key is set. The Live map and Territory's shop map both draw their streets from Ola Maps, and the trail a manager opens on the Live map's “Everywhere they went today” is snapped onto the road network before it is drawn."
+              : "No key is set, so neither the Live map nor Territory's shop map draws streets — both say so plainly rather than showing a blank canvas. The team list and the shop table beside them are unaffected."}
           </p>
         </div>
       </Card>
