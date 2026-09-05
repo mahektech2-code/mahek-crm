@@ -9,33 +9,54 @@ import { activityLabel } from "@/lib/mbos/activity-labels";
 /**
  * The map, with streets under it.
  *
- * It used to be pins on a bare grid, and the reason was written into the file:
- * streets would mean "sending the coordinates of Mahek's salesmen to whoever
- * supplies them, on every render, plus a key and a bill". Two of those three
- * turned out not to be true of every supplier.
+ * It used to be pins on a bare grid, then OpenFreeMap — a supplier needing no
+ * key, no account and no bill. This is Ola Maps now, and the reason to give
+ * up "no key" is that the Live map already has one, for Snap-to-Road (see
+ * the trail-snapping effect below): once a key exists anyway, running two
+ * tile suppliers is two things to keep coverage and reliability current on,
+ * for one screen.
  *
- * **OpenFreeMap needs no key, no account and no bill**, and it sets no usage
- * limit — so the cost side of that argument is gone. What is left is the
- * privacy one, and it is smaller than the old comment claimed: THE PINS ARE
- * DRAWN HERE, from data that never leaves MahekOne. A tile server is asked for
- * squares of map, so what it learns is roughly which part of India is being
- * looked at, not where anybody is standing. That is a real signal and not
- * nothing — the viewport does centre on the team — but it is not the team's
- * coordinates, which is what the old note implied.
+ * **The key has to reach the browser, and that is a real exception.** Every
+ * other credential in `app_secrets` is read once, server-side, by the
+ * request about to spend it, and never otherwise leaves the server — that is
+ * the whole design of `readSecret`. A map tile key cannot follow that rule:
+ * the BROWSER is what asks a tile server for squares of map, hundreds of
+ * times over a session, so the key has to be readable there. That is true of
+ * every tile provider — Mapbox, Google, Ola — and the standard mitigation is
+ * the same one used elsewhere: restrict the key to this app's own domain in
+ * the provider's own console, so a copied key is useless anywhere else. The
+ * key is handed down as a plain prop from `page.tsx`'s one `readSecret` call
+ * for this reason and no other — nothing downstream of this component ever
+ * asks for it again.
+ *
+ * **THE PINS THEMSELVES STILL NEVER LEAVE MAHEKONE.** A tile server is asked
+ * for squares of map — roughly which part of India is being looked at — and
+ * that is a real signal, since the viewport centres on the team. It is not
+ * the team's coordinates: those are drawn here, from MahekOne's own data,
+ * and are never part of a tile request.
  *
  * **The renderer is MapLibre and the supplier is a URL.** That is deliberate:
- * if OpenFreeMap stops, or its coverage of a beat turns out to be thin, the
- * style URL below is the only thing that changes. Choosing a supplier's own
- * SDK would have made moving a rewrite instead of an edit.
+ * if Ola Maps' coverage of a beat turns out to be thin, or the service
+ * changes terms, the style URL and the `transformRequest` below are the only
+ * things that change. Pulling in a supplier's own SDK would have made moving
+ * a rewrite instead of an edit — and the `transformRequest` shape here is
+ * exactly what Ola Maps' own web SDK does internally, so this is not a
+ * workaround, it is the documented mechanism read out of their source.
  *
- * **The bare-grid rules survive the change.** A pin is drawn only where there
- * is a fix — nobody is placed by arithmetic, and somebody with no position is
- * in the team list saying so and nowhere on this map. The view fits the data
- * rather than filling the canvas.
+ * **Without a key, there is no map — said plainly, not drawn broken.** Every
+ * request the tile source makes would 401 the moment there is no key to
+ * attach, so this component does not attempt one: `apiKey` gates the whole
+ * build, and its absence gets its own state below, pointing at Admin Console
+ * → Platform → Maps rather than a screen full of missing tiles.
+ *
+ * **The bare-grid rules survive both changes of supplier.** A pin is drawn
+ * only where there is a fix — nobody is placed by arithmetic, and somebody
+ * with no position is in the team list saying so and nowhere on this map.
+ * The view fits the data rather than filling the canvas.
  */
 
-/* No key, no account, no limit. See the note above before swapping it. */
-const STYLE = "https://tiles.openfreemap.org/styles/liberty";
+/** Ola Maps' own default vector style — see the doc comment before swapping it. */
+const STYLE = "https://api.olamaps.io/tiles/vector/v1/styles/default-light-standard/style.json";
 
 /** Enough that a single pin does not open zoomed to the rooftop. */
 const MAX_FIT_ZOOM = 15;
@@ -56,6 +77,7 @@ export function StreetMap({
   staleAfterSeconds,
   view,
   selectedId,
+  apiKey,
 }: {
   day: string;
   rows: LastKnown[];
@@ -65,6 +87,8 @@ export function StreetMap({
   view: "now" | "today";
   /** Whoever is picked in the team list beside this — see the effect below. */
   selectedId: string | null;
+  /** Ola Maps' key, read once server-side and handed down — see the doc comment above. */
+  apiKey: string | null;
 }) {
   const host = React.useRef<HTMLDivElement | null>(null);
   const map = React.useRef<maplibregl.Map | null>(null);
@@ -86,7 +110,7 @@ export function StreetMap({
   const hasAnything = points.length > 0;
 
   React.useEffect(() => {
-    if (!host.current || map.current || !hasAnything) return;
+    if (!host.current || map.current || !hasAnything || !apiKey) return;
 
     /*
      * Built one frame late, on purpose.
@@ -110,9 +134,24 @@ export function StreetMap({
           style: STYLE,
           center: [points[0][0], points[0][1]],
           zoom: 11,
-          // Attribution is a condition of using OpenFreeMap, and the style
-          // carries the OpenStreetMap credit it is built from.
+          // The style carries whatever attribution it is built from; the
+          // control just has to be present to show it.
           attributionControl: { compact: true },
+          /*
+           * Ola Maps' own web SDK does exactly this internally: append the
+           * key as a query parameter to every request the map makes, EXCEPT
+           * images — a tile PNG needs no key, only the vector/style/glyph
+           * JSON that names where to fetch it from does. Read out of their
+           * published SDK source rather than guessed at, because a wrong
+           * guess here fails silently as a blank map with no error worth
+           * reading.
+           */
+          transformRequest: (url, resourceType) => {
+            if (resourceType === "Image") return { url };
+            const withKey = new URL(url);
+            withKey.searchParams.append("api_key", apiKey);
+            return { url: withKey.toString() };
+          },
         });
       } catch {
         // WebGL unavailable — an old machine, or a locked-down browser.
@@ -334,6 +373,21 @@ export function StreetMap({
       cancelled = true;
     };
   }, [selectedId, day, view]);
+
+  if (!apiKey) {
+    return (
+      <Frame>
+        <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+          <p className="text-[15px] font-semibold text-ink">The map needs a key</p>
+          <p className="mt-1 max-w-[420px] text-[13px] text-muted">
+            Add an Ola Maps key in Admin Console → Platform → Maps to draw the streets under
+            this. The team list beside this still shows everything that is known —
+            nobody&rsquo;s position is lost, only the picture of it.
+          </p>
+        </div>
+      </Frame>
+    );
+  }
 
   if (!hasAnything) {
     return (

@@ -2619,28 +2619,50 @@ a position for it is a record of somewhere a salesman stood while something
 failed — noise on every screen, and one more row held about a person for no
 reason.
 
-**The Live map has streets under it now, and it started with none.** The
+**The Live map has streets under it, and it started with none.** The
 original reasoning was that tiles meant sending Mahek's salesmen's coordinates
 to whoever supplies them, on every render, plus a key and a bill, to answer a
 question nobody was asking — so it shipped as pins on a bare equirectangular
-projection of the team's own bounding box instead. OpenFreeMap
-(`street-map.tsx`) answers two of those three objections outright: no key, no
-account, no bill, and no usage limit. The privacy one survives in a smaller
-form — the viewport centres on the team, which is a real signal — but the
-pins themselves are drawn from MahekOne's own data and never leave it; a tile
-server is only ever asked for squares of map. Two views, because they answer
-two questions: where they are NOW is the morning one, and everywhere they went
-TODAY is the evening one.
+projection of the team's own bounding box instead. OpenFreeMap answered two of
+those three objections outright — no key, no account, no bill, no usage
+limit — and was the first supplier. It is Ola Maps now: once the map needed a
+key anyway, for Snap-to-Road, running two tile suppliers for one screen was
+two things to keep coverage and reliability current on. The pins themselves
+are drawn from MahekOne's own data and never leave it; a tile server is only
+ever asked for squares of map, never a coordinate. Two views, because they
+answer two questions: where they are NOW is the morning one, and everywhere
+they went TODAY is the evening one.
+
+**And that key is the one exception to how every credential here is read.**
+`readSecret` — see AGENTS.md's own note on it, in `lib/secrets.ts` — is read
+once, server-side, by the request about to spend it, and never otherwise
+leaves the server; a map tile key cannot follow that rule, because the
+BROWSER is what repeatedly asks Ola Maps for tiles as somebody pans and
+zooms. `page.tsx` reads it once and hands it down as a plain prop, and
+nothing downstream asks for it again. This is true of every tile
+provider — Mapbox, Google, Ola — and the mitigation is the standard one:
+restrict the key to this deployment's own domain in Ola Maps' own console,
+so a copy seen in a browser's network tab is not spendable anywhere else.
+
+**Without a key there is no map, and the screen says so rather than drawing
+one broken.** Every tile request would fail the moment there is nothing to
+attach to it, so `street-map.tsx` does not attempt to build one: no key gets
+its own state, pointing at Admin Console → Platform → Maps, on both views —
+the team list beside it is unaffected either way.
 
 **The renderer is MapLibre and the supplier is a URL.** `STYLE` in
-`street-map.tsx` is the one line that names OpenFreeMap; if it stops, or its
-coverage of a beat turns out to be thin, swapping the supplier is an edit to
-that constant rather than a rewrite. The map's own Mercator projection and
-`fitBounds` replaced the hand-rolled equirectangular one — the FIT-not-FILL
-rule survives the change: one pin gets `MAX_FIT_ZOOM` instead of a rooftop, and
-every point on the screen, trail and activity marks included, is folded into
-the same bounds so a six-kilometre walk and a five-hundred-metre one are never
-drawn at the same scale by accident.
+`street-map.tsx` is the one line that names the tile supplier; if Ola Maps'
+coverage of a beat turns out to be thin, or terms change, swapping the
+supplier is an edit to that constant and its `transformRequest` rather than a
+rewrite. That `transformRequest` — appending the key to every request except
+an image tile — is not a workaround invented here: it is read out of Ola
+Maps' own published web SDK source, which does exactly this internally. The
+map's own Mercator projection and `fitBounds` replaced the hand-rolled
+equirectangular one — the FIT-not-FILL rule survives every change of
+supplier: one pin gets `MAX_FIT_ZOOM` instead of a rooftop, and every point on
+the screen, trail and activity marks included, is folded into the same bounds
+so a six-kilometre walk and a five-hundred-metre one are never drawn at the
+same scale by accident.
 
 **A pin is only drawn where there is a fix.** The design mock spaces salesmen
 out arithmetically, which is fine in a picture of a screen and a lie on a real
@@ -2649,18 +2671,20 @@ nowhere on the map — inventing a spot for them is the one thing a map of
 where people are must not do. The list reads the newest of the trail, the
 check-in and each visit, so somebody whose tracking is off still appears.
 
-**The trail can be snapped onto the road it was walked on, and it never has
-to be.** At the fifteen-second sampling density this app uses, a raw GPS line
-already hugs the road on its own — snapping is a refinement, not a
-correction, so a deployment with no Ola Maps key still draws exactly what it
-always drew. `lib/services/road-snap-service.ts` calls Ola Maps'
-Snap-to-Road, batched at its own hundred-point ceiling, and returns null on
-anything that goes wrong — no key, a network failure, a bad answer — which
-`street-map.tsx` treats identically to "nothing to improve": the raw line
-stays exactly as drawn. The key is set from the Admin Console, under a
-section of its own (Platform → Maps), for the same reason dictation's keys
-are: a deploy nobody has shell access to needs a screen, not an environment
-variable, to turn a credential on.
+**The trail can be snapped onto the road it was walked on, and Snap-to-Road
+specifically never has to run for the map to work.** At the fifteen-second
+sampling density this app uses, a raw GPS line already hugs the road on its
+own, so snapping is a refinement on top of a map that already has its
+streets — not the thing that draws them. `lib/services/road-snap-service.ts`
+calls Ola Maps' Snap-to-Road, batched at its own hundred-point ceiling, and
+returns null on anything that goes wrong — a network failure, a bad
+answer — which `street-map.tsx` treats identically to "nothing to improve":
+the raw line stays exactly as drawn. The SAME key gates both jobs, though:
+with none set, there are no streets to lay a trail onto in the first place
+(see above). It is set from the Admin Console, under a section of its own
+(Platform → Maps), for the same reason dictation's keys are: a deploy nobody
+has shell access to needs a screen, not an environment variable, to turn a
+credential on.
 
 **It is asked for ONE trail, when a manager actually looks at it — never for
 the whole team on every poll.** `tracksForDay` answers the "today" view for

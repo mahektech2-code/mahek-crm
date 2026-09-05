@@ -3,6 +3,7 @@ import { addDays } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { shortDateWithYear } from "@/lib/format";
 import { today } from "@/lib/recompute";
+import { readSecret } from "@/lib/secrets";
 import {
   activityPointsForDay,
   lastKnownPositions,
@@ -23,11 +24,12 @@ export const metadata = { title: "Live map — Sales Dashboard — MahekOne" };
  * to the other looks nothing like an afternoon spent in one place, and neither
  * is visible in a list of visits.
  *
- * **The map has streets under it now.** It was a bare grid, on the reasoning
- * that tiles meant a key, a bill and sending the team's coordinates away.
- * OpenFreeMap answers the first two — no key, no account, no limit — and the
- * third was overstated: the pins are drawn from MahekOne's own data and a tile
- * server is only ever asked for squares of map. See `street-map.tsx`.
+ * **The map has streets under it, from Ola Maps.** The key is read once,
+ * here, and handed down as a plain prop — the one credential in MahekOne
+ * that has to reach the browser, because a browser is what asks a tile
+ * server for squares of map. See `street-map.tsx` for why that is a
+ * deliberate exception to how every other key in `app_secrets` is read, and
+ * for what the SAME key also does for the "today" trail (Snap-to-Road).
  *
  * **A pin is only drawn where there is a fix.** Nobody is placed by arithmetic;
  * somebody with no position appears in the team list saying so and nowhere on
@@ -50,7 +52,11 @@ export default async function Page({
   const view = params.view === "today" ? "today" : "now";
   const isToday = day === now;
 
-  const [rows, config] = await Promise.all([lastKnownPositions(day), getConfig()]);
+  const [rows, config, olaMapsKey] = await Promise.all([
+    lastKnownPositions(day),
+    getConfig(),
+    readSecret("olamaps.apiKey"),
+  ]);
   const tracking = config["mbos.location.trackWhileWorking"];
   const everySeconds = config["mbos.location.trackEverySeconds"];
   const everyWords =
@@ -159,6 +165,7 @@ export default async function Page({
         staleAfterSeconds={config["mbos.location.activityFixMaxAgeSeconds"]}
         view={view}
         isToday={isToday}
+        olaMapsKey={olaMapsKey}
       />
 
       <p className="mt-3 max-w-[820px] text-[13px] text-pretty text-muted">
@@ -170,8 +177,9 @@ export default async function Page({
             ? `${plural(out.length, "salesman", "salesmen")} out now. `
             : "Nobody is checked in at the moment. "
           : ""}
-        The streets come from OpenFreeMap, which needs no key and sets no limit; the pins are
-        drawn here from MahekOne&rsquo;s own data, so no position is ever sent to it.
+        The streets come from Ola Maps; the pins are drawn here from MahekOne&rsquo;s own data,
+        so no position is ever sent to it — only which square of map is being looked at.
+        {!olaMapsKey ? " No key is set for it yet, so no streets are drawn below." : ""}
       </p>
     </div>
   );
