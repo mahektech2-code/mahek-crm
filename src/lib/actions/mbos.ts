@@ -2188,6 +2188,13 @@ const attendanceSchema = z.object({
   /** A correction asked for. The DECISION lives in `mbos_approvals`. */
   regularisationRequested: z.boolean().nullish(),
   regularisationReason: z.string().max(1000).nullish(),
+  /**
+   * Sent by the handset when a checked-out day is started again — a lunch
+   * break, or a phone that swapped devices mid-afternoon. It carries no date
+   * of its own to write anywhere; it is a signal to REOPEN the row, read only
+   * below, next to the `checkOutAt` it exists to undo.
+   */
+  resumedAt: z.number().nullish(),
 });
 
 async function handleAttendance(
@@ -2241,7 +2248,21 @@ async function handleAttendance(
       // `workedSeconds` and `status` are derived caches a job rebuilds from
       // the two marks rather than values this may type.
       set: {
-        ...(p.checkOutAt ? { checkOutAt: new Date(p.checkOutAt) } : {}),
+        /* A real checkout wins if both arrive together, which they never do
+         * in practice — `resumedAt` only reopens a row when this sync carries
+         * no checkout of its own. Without this branch, `checkOutAt` from the
+         * PREVIOUS checkout stayed on the row forever: the client had already
+         * cleared it locally and resumed GPS collection, but nothing told the
+         * server, so the Live map's "who's out" filter (`checkInAt &&
+         * !checkOutAt`) kept excluding him and `/api/mbos/positions` kept
+         * discarding every fix he sent with `tracking: "not-checked-in"` —
+         * both silent, because the sync call itself still answered
+         * "accepted". */
+        ...(p.checkOutAt
+          ? { checkOutAt: new Date(p.checkOutAt) }
+          : p.resumedAt != null
+            ? { checkOutAt: null }
+            : {}),
         ...(p.checkOutLat != null ? { checkOutLat: p.checkOutLat } : {}),
         ...(p.checkOutLng != null ? { checkOutLng: p.checkOutLng } : {}),
         ...(p.checkOutAccuracyM != null
