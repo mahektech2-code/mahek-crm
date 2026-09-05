@@ -32,6 +32,11 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The MBOS APK — see the /downloads handle_path block in Caddyfile.
+      # A plain file on the droplet's disk, replaced by hand on each release;
+      # never part of the app image, so a 90+ MB binary never touches the
+      # 500 MB container registry.
+      - ./downloads:/srv/downloads:ro
       - caddy_data:/data
       - caddy_config:/config
     environment:
