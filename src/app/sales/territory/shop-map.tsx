@@ -11,6 +11,7 @@ import {
   olaMapsTransformRequest,
   type OlaMapsStyleMode,
 } from "../ola-maps";
+import { CustomerQuickView } from "./customer-quick-view";
 
 /**
  * The territory table's own gap ("N of M shops have no coordinates") drawn as
@@ -28,6 +29,14 @@ import {
  * pins that never matched an existing customer: a shop the team has found,
  * not one MahekOne has a record of, drawn hollow so the two are never
  * mistaken for each other at a glance.
+ *
+ * A shop pin opens `customer-quick-view.tsx` — a real record, so it gets the
+ * record, read through `/api/sales/customer-quick-view` from the same two
+ * functions (`getCustomer`, `customerInformation`) the CRM's own record page
+ * reads, so a figure shown here can never disagree with the CRM's answer for
+ * the same account. A prospect pin keeps the plain text popup it always had:
+ * there is no customer record behind it yet, only the name, territory and
+ * industry already in the label.
  */
 
 const MAX_FIT_ZOOM = 15;
@@ -56,6 +65,7 @@ export function ShopMap({
   const [showShops, setShowShops] = React.useState(true);
   const [showProspects, setShowProspects] = React.useState(true);
   const [styleMode, setStyleMode] = React.useState<OlaMapsStyleMode>("map");
+  const [selectedShopId, setSelectedShopId] = React.useState<string | null>(null);
 
   const points: [number, number][] = [
     ...shops.map((s) => [s.lng, s.lat] as [number, number]),
@@ -121,13 +131,14 @@ export function ShopMap({
           built.easeTo({ center: geometry.coordinates as [number, number], zoom });
         });
       });
+      /* A shop pin opens the customer quick-view drawer rather than a text
+         popup — there is a real record behind it, and the drawer is where it
+         is read. Prospects keep the popup: there is no customer record yet,
+         only the name, territory and industry already in the label. */
       built.on("click", "shops-points", (e: maplibregl.MapLayerMouseEvent) => {
         const f = e.features?.[0];
-        if (!f) return;
-        new maplibregl.Popup({ closeButton: false })
-          .setLngLat(e.lngLat)
-          .setText(String(f.properties?.label ?? ""))
-          .addTo(built);
+        const shopId = f?.properties?.shopId;
+        if (typeof shopId === "string") setSelectedShopId(shopId);
       });
       built.on("click", "prospects-points", (e: maplibregl.MapLayerMouseEvent) => {
         const f = e.features?.[0];
@@ -179,6 +190,7 @@ export function ShopMap({
               features: shops.map((s) => ({
                 type: "Feature" as const,
                 properties: {
+                  shopId: s.id,
                   label: `${s.name} · ${s.city}${s.salesmanName ? ` · ${s.salesmanName}` : ""}`,
                 },
                 geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] },
@@ -389,6 +401,7 @@ export function ShopMap({
           Prospects ({prospects.length})
         </label>
       </div>
+      <CustomerQuickView customerId={selectedShopId} onClose={() => setSelectedShopId(null)} />
     </Frame>
   );
 }

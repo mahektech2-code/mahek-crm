@@ -2739,6 +2739,19 @@ rather than as two copies that would drift the day one of them changed. The
 same `olamaps.apiKey` gates both: without it, neither map draws streets, and
 each says so on its own screen rather than showing a blank canvas.
 
+**A shop pin is a real account, so clicking it opens the account, not a
+tooltip.** `customer-quick-view.tsx` reads
+`/api/sales/customer-quick-view`, which runs the SAME two functions the
+CRM's own record page and Information tab call — `getCustomer` for the
+profile, `customerInformation` for the purchase cycle and recent calls — so
+a figure a manager reads off a pin on the Sales Dashboard can never disagree
+with the CRM's own answer for that account. Fetched on click rather than
+carried on every pin, because most pins on a territory of a few thousand
+shops are never clicked. Out of scope or gone both answer with nothing to
+show, the same "absent to them, never a crash" rule the CRM record page
+itself follows. A prospect pin keeps its plain text popup — there is no
+customer record behind it yet.
+
 ## Testing
 
 `npm run test` runs the engine tests: pure, fast, no database. They pin the
