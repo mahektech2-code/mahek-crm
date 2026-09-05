@@ -2566,12 +2566,13 @@ is least forgivable.
 
 **Tracking runs between the check-in and the check-out and not one second either
 side.** A track that carried on after the day was closed would be following
-somebody home. The handset takes a fix every few minutes and posts batches to
-its own endpoint rather than through the outbox — a position is one of a
-hundred, worth nothing alone, and queueing them ahead of the visit behind them
-on a 2G connection buys nothing. `mbos.location.trackWhileWorking` is checked in
-the route as well as on the handset, because a hidden control is not a disabled
-feature.
+somebody home. The handset takes a fix every few seconds — dense enough that
+the line connecting them hugs the actual road with no map-matching service
+needed to snap it there — and posts batches to its own endpoint rather than
+through the outbox — a position is one of a thousand, worth nothing alone, and
+queueing them ahead of the visit behind them on a 2G connection buys nothing.
+`mbos.location.trackWhileWorking` is checked in the route as well as on the
+handset, because a hidden control is not a disabled feature.
 
 **Every activity is logged with where it was done, and it is written in ONE
 place.** Four MBOS tables carried a coordinate and twenty-three did not, so an

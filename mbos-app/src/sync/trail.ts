@@ -9,9 +9,11 @@ import { postPositions } from './api';
 /**
  * The trail.
  *
- * Where the salesman actually went, taken every few minutes while the day is
- * open. Two fixes a day — the check-in and each visit — is not a track, and a
- * map drawn from them looks like tracking without being it.
+ * Where the salesman actually went, taken every few seconds while the day is
+ * open — dense enough that the line connecting the fixes hugs the actual road
+ * on its own, with no map-matching service needed to snap it there. Two fixes
+ * a day — the check-in and each visit — is not a track, and a map drawn from
+ * them looks like tracking without being it.
  *
  * **It runs between the check-in and the check-out and not one second either
  * side.** A track that carried on after the day was closed would be following
@@ -84,14 +86,14 @@ TaskManager.defineTask<{ locations: Location.LocationObject[] }>(TASK_NAME, asyn
   await flush();
 });
 
-/* The floor, for a handset with no "always" permission. Every few minutes
+/* The floor, for a handset with no "always" permission. Every few seconds
    while the app happens to be open — the whole of what shipped before. */
 let foregroundTimer: ReturnType<typeof setInterval> | null = null;
 let running = false;
 
 async function takeForeground(): Promise<void> {
   try {
-    const result = await getFix({ accuracyThresholdM: 100, timeoutMs: 15_000 });
+    const result = await getFix({ accuracyThresholdM: 50, timeoutMs: 15_000 });
     const fix = fixOf(result);
     if (!fix) return;
     await store(fix.lat, fix.lng, fix.accuracyM, fix.at);
@@ -121,7 +123,7 @@ async function startBackground(everyMs: number): Promise<boolean> {
     if (!granted) return false;
 
     await Location.startLocationUpdatesAsync(TASK_NAME, {
-      accuracy: Location.Accuracy.Balanced,
+      accuracy: Location.Accuracy.High,
       timeInterval: everyMs,
       distanceInterval: 0,
       showsBackgroundLocationIndicator: true,
@@ -149,7 +151,7 @@ export function isTracking(): boolean {
  * Idempotent: called on check-in, on app resume and after a sign-in, and only
  * one of the two mechanisms below ever runs at a time. A handset whose
  * permission was refused takes no fixes and says nothing — the visit path has
- * already asked once and been told no, and asking again every five minutes is
+ * already asked once and been told no, and asking again on every fix is
  * how somebody turns the app off.
  */
 export async function start(): Promise<void> {
@@ -158,13 +160,13 @@ export async function start(): Promise<void> {
   const on = await getConfig<boolean>('mbos.location.trackWhileWorking', true);
   if (!on) return;
 
-  const minutes = await getConfig<number>('mbos.location.trackEveryMinutes', 5);
-  const every = Math.max(1, minutes) * 60_000;
+  const seconds = await getConfig<number>('mbos.location.trackEverySeconds', 15);
+  const every = Math.max(5, seconds) * 1_000;
 
   const backgroundStarted = await startBackground(every);
   if (!backgroundStarted) {
     /* One straight away, so a check-in puts a point on the map rather than a
-       five-minute gap at the start of every day. */
+       gap at the start of every day. */
     void takeForeground();
     foregroundTimer = setInterval(() => void takeForeground(), every);
   }

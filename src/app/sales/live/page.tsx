@@ -52,7 +52,9 @@ export default async function Page({
 
   const [rows, config] = await Promise.all([lastKnownPositions(day), getConfig()]);
   const tracking = config["mbos.location.trackWhileWorking"];
-  const everyMinutes = config["mbos.location.trackEveryMinutes"];
+  const everySeconds = config["mbos.location.trackEverySeconds"];
+  const everyWords =
+    everySeconds < 60 ? plural(everySeconds, "second") : plural(Math.round(everySeconds / 60), "minute");
 
   /* Only fetched for the view that draws it. The `now` view needs one row per
      person; the trails are a hundred times that, and paying for them to render
@@ -160,7 +162,7 @@ export default async function Page({
 
       <p className="mt-3 max-w-[820px] text-[13px] text-pretty text-muted">
         {tracking
-          ? `A handset reports its position about every ${everyMinutes} minutes while the day is open, and stops at the check-out. `
+          ? `A handset reports its position about every ${everyWords} while the day is open, and stops at the check-out. `
           : ""}
         {isToday
           ? out.length
