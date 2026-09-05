@@ -468,6 +468,18 @@ const TIMELINE_PER_CUSTOMER = 50;
  * the moment the day ended. Fifteen days back is a fortnight either side of
  * today, matching the fifteen-to-twenty-day forward window a manager plans
  * in one sitting.
+ *
+ * Every use of this constant in a query needs `::int` on it explicitly. Bound
+ * as a bare parameter next to `(now() at time zone $tz)::date - $this`,
+ * Postgres cannot resolve which of `date - integer` and `date - date` the
+ * subtraction is before it knows this parameter's type, defaults it to `date`
+ * under the datetime category's own preference rule, and the subtraction
+ * comes back `integer` — so the surrounding `plan_date >= …` then fails with
+ * `operator does not exist: date >= integer`. The cast pins the type before
+ * Postgres has to guess. Confirmed by reproducing the exact failure with a
+ * plain `PREPARE` carrying no parameter types, and confirming the cast alone
+ * fixes it; a literal `15` typed into the query text never hits this, because
+ * a literal is not an unresolved parameter.
  */
 const PLAN_HISTORY_DAYS = 15;
 
@@ -1279,7 +1291,7 @@ export async function buildPull(
           from mbos_journey_stops s
           join mbos_journey_plans p on p.id = s.plan_id
          where p.user_id = ${principal.user.id}
-           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}
+           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}::int
            and (s.updated_at > ${sinceIso} or p.updated_at > ${sinceIso})
          order by p.plan_date asc, s.sequence asc
          limit 500
@@ -1327,7 +1339,7 @@ export async function buildPull(
           from mbos_journey_plans p
           left join users m on m.id = p.proposed_by_id
          where p.user_id = ${principal.user.id}
-           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}
+           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}::int
            and p.updated_at > ${sinceIso}
          order by p.plan_date asc
          limit 200
