@@ -36,7 +36,8 @@ export type SalesIconName =
   | "bell"
   | "close"
   | "dots"
-  | "tick";
+  | "tick"
+  | "signOut";
 
 const PATHS: Record<SalesIconName, React.ReactNode> = {
   home: <path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z" />,
@@ -173,6 +174,15 @@ const PATHS: Record<SalesIconName, React.ReactNode> = {
     </>
   ),
   tick: <path d="m5 13 4 4L19 7" />,
+  // Same glyph as the CRM header's own sign-out icon (shell/icons.tsx) — one
+  // shape for the action everywhere it appears, not a stand-in borrowed from
+  // "close" because this set never had a real one.
+  signOut: (
+    <>
+      <path d="M9 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3" />
+      <path d="m16 17 5-5-5-5M21 12H9" />
+    </>
+  ),
 };
 
 export function SalesIcon({
