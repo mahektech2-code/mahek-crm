@@ -12,16 +12,26 @@ import { readSecret } from "@/lib/secrets";
  * buying-cycle engine, an activity's recorded location, anything) ever reads
  * this — only `street-map.tsx`'s LineString does.
  *
- * Batched at Ola Maps' own 100-point ceiling per request. Called for ONE
- * salesman's ONE day at a time, on demand, when a manager selects them on the
- * Live map — never for the whole team on every thirty-second poll, which is
- * what `tracksForDay` answers and what draws the "today" view before anybody
- * has picked a name. Snapping all of that on every poll would multiply into
- * dozens of external calls a tab makes on its own, for lines nobody is
- * looking at yet.
+ * Batched at Ola Maps' own ceiling per request — 50 points, not the 100 the
+ * endpoint's own naming suggests. That was found, not read off a spec: every
+ * call past the first batch of an ordinary working day's trail came back 400
+ * Bad Request with no field named in the answer, `snapToRoad` treats any
+ * failure as "nothing to improve" and returns null, and the raw, un-snapped
+ * trail is what a manager has always seen as a result — silently, because
+ * that fallback is also what a genuine outage looks like. A trail of 51
+ * fixes or fewer was never affected, which is short enough that it went
+ * unnoticed until a manager asked why a selected trail still cut through
+ * buildings.
+ *
+ * Called for ONE salesman's ONE day at a time, on demand, when a manager
+ * selects them on the Live map — never for the whole team on every
+ * thirty-second poll, which is what `tracksForDay` answers and what draws
+ * the "today" view before anybody has picked a name. Snapping all of that on
+ * every poll would multiply into dozens of external calls a tab makes on its
+ * own, for lines nobody is looking at yet.
  * ------------------------------------------------------------------------- */
 
-const OLAMAPS_MAX_POINTS_PER_REQUEST = 100;
+const OLAMAPS_MAX_POINTS_PER_REQUEST = 50;
 const SNAP_URL = "https://api.olamaps.io/routing/v1/snapToRoad";
 const REQUEST_TIMEOUT_MS = 8_000;
 
