@@ -94,6 +94,10 @@ export default async function Page({
 
   const out = rows.filter((r) => r.checkInAt && !r.checkOutAt && !r.onLeave);
   const noSignal = rows.filter((r) => !r.seenAt && !r.onLeave);
+  /* False, never null — null means the app has not reported yet, which is
+     not the same claim as "refused". See `mbos_devices.background_location_
+     granted`'s own comment for what the difference actually costs a trail. */
+  const noBackgroundTracking = rows.filter((r) => r.backgroundTrackingGranted === false && !r.onLeave);
 
   return (
     <div className="p-6">
@@ -172,6 +176,14 @@ export default async function Page({
               : `${plural(noSignal.length, "salesman", "salesmen")} with no GPS signal that day`
           }
           body="Tracking only runs while they are checked in, so this usually means the day was never started."
+        />
+      ) : null}
+
+      {view === "today" && noBackgroundTracking.length ? (
+        <Banner
+          tone="warn"
+          title={`${plural(noBackgroundTracking.length, "salesman", "salesmen")} without background location`}
+          body="Their trail will have real gaps that no sampling interval or map styling can close — the phone stops taking fixes the moment its screen locks. Ask them to open their phone's own Settings and set MahekOne's Location permission to “Allow all the time”."
         />
       ) : null}
 

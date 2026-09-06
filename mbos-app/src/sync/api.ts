@@ -351,3 +351,16 @@ export async function registerPushToken(pushToken: string | null): Promise<{ ok:
     body: JSON.stringify({ pushToken }),
   });
 }
+
+/**
+ * Whether this handset actually got the OS's background location
+ * permission — the office cannot know this any other way, since the OS's
+ * answer to that prompt never reaches a server on its own. Called once per
+ * `start()`, from `trail.ts`, right after the answer is known.
+ */
+export async function reportLocationPermission(backgroundGranted: boolean): Promise<{ ok: boolean }> {
+  return request('/api/mbos/location-permission', {
+    method: 'POST',
+    body: JSON.stringify({ backgroundGranted }),
+  });
+}

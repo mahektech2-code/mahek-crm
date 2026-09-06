@@ -1439,6 +1439,14 @@ export type LastKnown = {
   place: string | null;
   accuracyM: number | null;
   onLeave: boolean;
+  /**
+   * Whether this salesman's handset actually has the OS's background
+   * location permission — see `mbos_devices.background_location_granted`.
+   * False is the answer that matters: tracking has fallen back to a timer
+   * that dies the moment the phone locks, which is the real cause behind a
+   * trail with real gaps in it. Null means never reported, not refused.
+   */
+  backgroundTrackingGranted: boolean | null;
 };
 
 /**
@@ -1485,11 +1493,13 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
     select u.id as "salesmanId", u.name as "salesmanName", u.initials, u.active,
            d.check_in_at as "checkInAt", d.check_out_at as "checkOutAt",
            f.lat, f.lng, f.at as "seenAt", f.place, f.acc as "accuracyM",
-           (d.status = 'on_leave') as "onLeave"
+           (d.status = 'on_leave') as "onLeave",
+           dev.background_location_granted as "backgroundTrackingGranted"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date
       left join latest f on f.uid = u.id
+      left join mbos_devices dev on dev.user_id = u.id and dev.active
      where u.active ${onlyMine(scope, "u.id")}
      order by f.at desc nulls last, u.name asc
   `) as unknown as LastKnown[];

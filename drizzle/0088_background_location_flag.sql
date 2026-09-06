@@ -1,0 +1,14 @@
+-- Whether a handset actually has the OS's background location permission.
+--
+-- Granted, tracking is an OS-level task that keeps ticking with the screen
+-- locked. Refused, it falls back to a plain JS timer that only fires while
+-- the app is the thing on screen, so the trail goes dead the moment the
+-- phone locks and stays dead until the app is opened again. A manager
+-- looking at a real gap on the Live map has no way to tell which of those
+-- happened without this — and no sampling interval or map styling closes
+-- that kind of gap, only the salesman turning the permission on does.
+--
+-- Reported by the app itself, in trail.ts's start(), right after it finds
+-- out; null covers both a build too old to report it and a day where
+-- tracking has not opened yet.
+ALTER TABLE "mbos_devices" ADD COLUMN "background_location_granted" boolean;
