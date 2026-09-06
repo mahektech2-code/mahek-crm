@@ -18,21 +18,35 @@ import { snapToRoad } from "@/lib/services/road-snap-service";
  *
  * A 401 or a 403 answers exactly like a missing trail: `{ points: null }`.
  * There is nothing here worth telling an attacker the shape of.
+ *
+ * **Explicitly dynamic, and explicitly `no-store`.** The client's own cache is
+ * keyed on `salesmanId` and `day` and never asks twice for a name already
+ * answered — which means whatever this route answers the FIRST time is what a
+ * manager is stuck looking at for the rest of the day, with no natural retry.
+ * A transient Ola Maps hiccup, an inaccurate fix dropping the count under two,
+ * or the day still being written to are all real, ordinary reasons this can
+ * legitimately return `null` on one call and real points on the next — and
+ * Next.js caching a GET route handler's response by default is exactly the
+ * kind of thing that would silently freeze whichever answer arrived first.
  */
+export const dynamic = "force-dynamic";
+
+const NO_STORE = { headers: { "Cache-Control": "no-store" } };
+
 export async function GET(request: Request) {
   const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ points: null }, { status: 401 });
+  if (!user) return NextResponse.json({ points: null }, { status: 401, ...NO_STORE });
 
   const modules = await listUserModules(user.id, "sales");
   if (!modules.some((m) => m.key === "sales.live")) {
-    return NextResponse.json({ points: null }, { status: 403 });
+    return NextResponse.json({ points: null }, { status: 403, ...NO_STORE });
   }
 
   const params = new URL(request.url).searchParams;
   const salesmanId = params.get("salesmanId");
   const day = params.get("day");
   if (!salesmanId || !day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-    return NextResponse.json({ points: null }, { status: 400 });
+    return NextResponse.json({ points: null }, { status: 400, ...NO_STORE });
   }
 
   // Scoped inside `trackForDay` itself — a manager outside this salesman's
@@ -47,5 +61,5 @@ export async function GET(request: Request) {
   const accurate = dropInaccurateFixes(track, threshold);
   const snapped = await snapToRoad(accurate.map((p) => ({ lat: p.lat, lng: p.lng })));
 
-  return NextResponse.json({ points: snapped });
+  return NextResponse.json({ points: snapped }, NO_STORE);
 }
