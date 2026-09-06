@@ -402,14 +402,19 @@ export function StreetMap({
              dimmer over a gap, the same honesty the line itself carries.
              The symbol layer shares the trail's own source, so a later
              `setData` from the road-snapping effect below re-places these
-             along the snapped geometry for free. */
+             along the snapped geometry for free.
+             `symbol-spacing` is close to the icon's own width rather than a
+             gap between occasional markers, so the chevrons tile almost
+             edge to edge — the line itself reads as a stream of arrows
+             rather than a plain stroke with the occasional direction hint
+             stapled on. */
           built.addLayer({
             id: `trail-arrows-${id}`,
             type: "symbol",
             source: `trail-${id}`,
             layout: {
               "symbol-placement": "line",
-              "symbol-spacing": 70,
+              "symbol-spacing": 16,
               "icon-image": "trail-arrow",
               "icon-size": 0.9,
               "icon-rotation-alignment": "map",
