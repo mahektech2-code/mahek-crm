@@ -7,10 +7,26 @@ import { readSecret } from "@/lib/secrets";
  * The raw fixes in `mbos_positions` stay the untouched source of truth — this
  * never writes anything, and is re-derivable from them at any time exactly
  * like every other engine reading in this codebase. What it returns is a
- * second, disposable geometry: the same trail laid onto the road network,
- * for the LINE the map draws, and nothing downstream of a position (the
- * buying-cycle engine, an activity's recorded location, anything) ever reads
- * this — only `street-map.tsx`'s LineString does.
+ * second, disposable geometry: the SAME trail laid onto the road network —
+ * one snapped point per real fix, never more — for the LINE the map draws,
+ * and nothing downstream of a position (the buying-cycle engine, an
+ * activity's recorded location, anything) ever reads this — only
+ * `street-map.tsx`'s LineString does.
+ *
+ * `enhancePath` is deliberately never sent. It sounds like the setting a
+ * caller wants — a smoother line — and what it actually does is interpolate
+ * ola's OWN GUESS at how you would drive between two fixes that are not
+ * close together, along roads its routing engine picked rather than roads
+ * anybody was seen on: a batch of 50 real fixes came back as 82 points with
+ * it set, 50 without. Ordinary sampling gaps make this fire constantly, and
+ * what it draws is a plausible-looking detour with the same visual weight as
+ * a real fix — a manager reported roads a route had never gone near, and the
+ * shape of the trail was reading as a prediction while looking like a
+ * record. Without it, Ola still nudges a real fix onto the nearest road —
+ * genuine drift correction — but invents no path between two fixes that
+ * were never that close; a gap in the real trail stays a straight line
+ * between two real points, which is the same honest gap the raw trail
+ * already drew.
  *
  * Batched at Ola Maps' own ceiling per request — 50 points, not the 100 the
  * endpoint's own naming suggests. That was found, not read off a spec: every
@@ -45,6 +61,10 @@ type OlaMapsSnapResponse = {
 /**
  * Snaps a trail onto the road network, or returns null.
  *
+ * One output point per input point, always — see the file header for why
+ * `enhancePath` is never sent. Anything else would be Ola's routing engine
+ * inventing a path between two fixes rather than relocating a real one.
+ *
  * Null covers every way this can fail to help — no key set, fewer than two
  * points to draw a line between, a network error, a non-200, an answer that
  * is not `SUCCESS`. The caller's fallback is always the same: draw the raw
@@ -70,7 +90,7 @@ export async function snapToRoad(points: LatLng[]): Promise<LatLng[] | null> {
     }
 
     const path = batch.map((p) => `${p.lat},${p.lng}`).join("|");
-    const url = `${SNAP_URL}?points=${encodeURIComponent(path)}&enhancePath=true&api_key=${encodeURIComponent(apiKey)}`;
+    const url = `${SNAP_URL}?points=${encodeURIComponent(path)}&api_key=${encodeURIComponent(apiKey)}`;
 
     let response: Response;
     try {
