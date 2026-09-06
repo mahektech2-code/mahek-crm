@@ -51,3 +51,9 @@ next-env.d.ts
 # — never part of the app, and one `git add -A` away from being committed.
 scratch-*.mjs
 *.tmp.mjs
+
+# The MBOS APK is placed by hand at /opt/mahekone/downloads/mbos.apk on the
+# droplet — see the Caddyfile's /downloads handle_path comment — so it never
+# belongs in the app image or the git tree. A 90+ MB binary here would bloat
+# every image layer and the 500 MB container registry with it.
+/public/downloads/
