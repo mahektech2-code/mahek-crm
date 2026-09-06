@@ -6,9 +6,12 @@ import {
 export const metadata = { title: "Download MBOS - MahekOne" };
 
 /**
- * The APK itself lives at public/downloads/mbos.apk under a fixed filename,
- * so shipping an update is "overwrite the file" — this page's link never
- * needs to change.
+ * The APK itself is a plain file at /opt/mahekone/downloads/mbos.apk on the
+ * droplet — see the Caddyfile's /downloads handle_path — under a fixed
+ * filename, so shipping an update is "replace the file on the droplet", no
+ * deploy and no change to this page's link required. Deliberately never
+ * built into the app image: a 90+ MB binary there would bloat every layer
+ * and the container registry along with it.
  */
 const APK_PATH = "/downloads/mbos.apk";
 
