@@ -4,6 +4,7 @@ import * as React from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { DwellStop } from "@/lib/engines/dwell";
+import { splitTrailByGaps, type TrailSegment } from "@/lib/engines/trail-gaps";
 import { clock } from "@/lib/format";
 import type { ActivityPoint, LastKnown, TrackPoint } from "@/lib/services/sales-service";
 import { activityLabel } from "@/lib/mbos/activity-labels";
@@ -78,6 +79,14 @@ import {
  * dot, because "paused here" and "did something here" are different answers
  * and a manager should not have to click both to tell them apart.
  *
+ * **A solid line is evidence; a dashed one is a gap.** Two fixes far enough
+ * apart — see `lib/engines/trail-gaps.ts` and `gapMetres` — mean nobody knows
+ * which road was actually taken between them, most often a stretch driven
+ * rather than walked, or a dropped signal. Drawing that stretch the same as a
+ * densely-sampled one is how a manager ends up certain about a road that was
+ * never confirmed; the dashed line says plainly that this part is a straight
+ * line between two real points and nothing more.
+ *
  * **Map and satellite are the same map, not two.** `setStyle` swaps the
  * style JSON in place rather than tearing the map down — the camera,
  * markers and event handlers are untouched, only the trail and activity
@@ -130,6 +139,22 @@ function formatMinutes(minutes: number): string {
   return m ? `${h}h ${m}m` : `${h}h`;
 }
 
+/**
+ * A trail's segments, as one GeoJSON source — dense runs and gaps alike, each
+ * carrying which it is so `trail-${id}` and `trail-gap-${id}` can each filter
+ * to their own half without needing two sources for one line.
+ */
+function trailFeatureCollection(segments: TrailSegment[]): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: segments.map((s) => ({
+      type: "Feature",
+      properties: { gap: s.gap },
+      geometry: { type: "LineString", coordinates: s.coordinates },
+    })),
+  };
+}
+
 /** A ring round whoever the team list has picked, drawn above everybody else. */
 function highlightMarker(el: HTMLDivElement, selected: boolean) {
   el.style.boxShadow = selected
@@ -144,6 +169,7 @@ export function StreetMap({
   tracks,
   activity,
   dwells,
+  gapMetres,
   staleAfterSeconds,
   view,
   selectedId,
@@ -155,6 +181,8 @@ export function StreetMap({
   activity: ActivityPoint[];
   /** Where each salesman's trail stood still long enough to mean something. */
   dwells: Map<string, DwellStop[]>;
+  /** Metres apart before a hop is drawn as an honest gap — see `lib/engines/trail-gaps.ts`. */
+  gapMetres: number;
   staleAfterSeconds: number;
   view: "now" | "today";
   /** Whoever is picked in the team list beside this — see the effect below. */
@@ -325,25 +353,41 @@ export function StreetMap({
         /* The trail first, so pins and marks sit on top of it. */
         if (trails.length) ensureArrowIcon(built);
         for (const [id, ps] of trails) {
-          if (ps.length < 2) continue;
+          const segments = splitTrailByGaps(ps, gapMetres);
+          if (!segments.length) continue;
           built.addSource(`trail-${id}`, {
             type: "geojson",
-            data: {
-              type: "Feature",
-              properties: {},
-              geometry: { type: "LineString", coordinates: ps.map((p) => [p.lng, p.lat]) },
-            },
+            data: trailFeatureCollection(segments),
           });
+          /* Two layers reading the same source, split by the `gap` property
+             each feature carries — see `lib/engines/trail-gaps.ts`. A dashed
+             line for a hop nobody has evidence for, solid for one dense
+             enough to trust. */
           built.addLayer({
             id: `trail-${id}`,
             type: "line",
             source: `trail-${id}`,
+            filter: ["==", ["get", "gap"], false],
             layout: { "line-cap": "round", "line-join": "round" },
             paint: { "line-color": "#5223E0", "line-width": 3, "line-opacity": 0.75 },
           });
+          built.addLayer({
+            id: `trail-gap-${id}`,
+            type: "line",
+            source: `trail-${id}`,
+            filter: ["==", ["get", "gap"], true],
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: {
+              "line-color": "#5223E0",
+              "line-width": 2,
+              "line-opacity": 0.45,
+              "line-dasharray": [2, 2],
+            },
+          });
           /* Arrowheads along the line, so "which way did they go" reads off
-             the map itself rather than off which end has today's date. The
-             symbol layer shares the trail's own source, so a later
+             the map itself rather than off which end has today's date —
+             dimmer over a gap, the same honesty the line itself carries.
+             The symbol layer shares the trail's own source, so a later
              `setData` from the road-snapping effect below re-places these
              along the snapped geometry for free. */
           built.addLayer({
@@ -358,6 +402,9 @@ export function StreetMap({
               "icon-rotation-alignment": "map",
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
+            },
+            paint: {
+              "icon-opacity": ["case", ["==", ["get", "gap"], true], 0.45, 1],
             },
           });
         }
@@ -571,14 +618,13 @@ export function StreetMap({
         if (cancelled || !body?.points || body.points.length < 2) return;
         snappedFor.current.add(cacheKey);
         const source = built.getSource(`trail-${selectedId}`) as maplibregl.GeoJSONSource | undefined;
-        source?.setData({
-          type: "Feature",
-          properties: {},
-          geometry: {
-            type: "LineString",
-            coordinates: body.points.map((p) => [p.lng, p.lat]),
-          },
-        });
+        /* Snapping relocates each real fix onto its nearest road and returns
+           exactly one point per fix (see `road-snap-service.ts`) — it never
+           fills a gap with an invented path — so the SAME gap threshold
+           still applies to the snapped points, one-for-one with the raw
+           ones. A gap does not become confident just because its two ends
+           each moved a few metres onto a road. */
+        source?.setData(trailFeatureCollection(splitTrailByGaps(body.points, gapMetres)));
       })
       .catch(() => {
         /* The raw trail stays exactly as drawn. */
@@ -587,7 +633,7 @@ export function StreetMap({
     return () => {
       cancelled = true;
     };
-  }, [selectedId, day, view]);
+  }, [selectedId, day, view, gapMetres]);
 
   if (!apiKey) {
     return (
