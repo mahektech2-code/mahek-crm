@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
-import { splitTrailByGaps } from "./trail-gaps";
+import { dropInaccurateFixes, splitTrailByGaps } from "./trail-gaps";
 
 const pt = (lat: number, lng: number) => ({ lat, lng });
 
@@ -51,5 +51,26 @@ describe("where a trail is confident, and where it is a guess", () => {
     assert.ok(segs.every((s) => s.coordinates.length >= 2));
     assert.ok(segs.every((s) => s.gap));
     assert.equal(segs.length, 2);
+  });
+});
+
+describe("dropInaccurateFixes", () => {
+  const fix = (accuracyM: number | null) => ({ lat: 19, lng: 72, accuracyM });
+
+  it("keeps a fix at or under the threshold", () => {
+    assert.deepEqual(dropInaccurateFixes([fix(50)], 50), [fix(50)]);
+  });
+
+  it("drops a fix the handset itself rated worse than the threshold", () => {
+    assert.deepEqual(dropInaccurateFixes([fix(335)], 50), []);
+  });
+
+  it("keeps a fix with no reported accuracy — unrated is not the same as bad", () => {
+    assert.deepEqual(dropInaccurateFixes([fix(null)], 50), [fix(null)]);
+  });
+
+  it("filters a mixed run without reordering what survives", () => {
+    const points = [fix(10), fix(335), fix(20), fix(null)];
+    assert.deepEqual(dropInaccurateFixes(points, 50), [fix(10), fix(20), fix(null)]);
   });
 });

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { listUserModules } from "@/lib/access";
+import { getConfig } from "@/lib/config/store";
+import { dropInaccurateFixes } from "@/lib/engines/trail-gaps";
 import { trackForDay } from "@/lib/services/sales-service";
 import { snapToRoad } from "@/lib/services/road-snap-service";
 
@@ -36,7 +38,14 @@ export async function GET(request: Request) {
   // Scoped inside `trackForDay` itself — a manager outside this salesman's
   // territory gets an empty day, not somebody else's trail.
   const track = await trackForDay(salesmanId, day);
-  const snapped = await snapToRoad(track.map((p) => ({ lat: p.lat, lng: p.lng })));
+  // A fix the handset itself rated as imprecise is dropped before it ever
+  // reaches Snap-to-Road — see `dropInaccurateFixes`. Handing it a wildly
+  // imprecise fix would have it snap that point onto whatever road happens
+  // to be nearest, which is exactly the kind of invented precision the road
+  // snap must never produce.
+  const threshold = (await getConfig())["mbos.location.gpsAccuracyThresholdM"];
+  const accurate = dropInaccurateFixes(track, threshold);
+  const snapped = await snapToRoad(accurate.map((p) => ({ lat: p.lat, lng: p.lng })));
 
   return NextResponse.json({ points: snapped });
 }
