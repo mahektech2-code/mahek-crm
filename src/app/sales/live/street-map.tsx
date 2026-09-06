@@ -403,18 +403,25 @@ export function StreetMap({
              The symbol layer shares the trail's own source, so a later
              `setData` from the road-snapping effect below re-places these
              along the snapped geometry for free.
-             `symbol-spacing` is close to the icon's own width rather than a
-             gap between occasional markers, so the chevrons tile almost
-             edge to edge — the line itself reads as a stream of arrows
-             rather than a plain stroke with the occasional direction hint
-             stapled on. */
+             `symbol-spacing` is denser than the original 70px so the trail
+             reads as a stream of arrows rather than a plain stroke with an
+             occasional direction hint — but not packed edge to edge. A raw
+             GPS fix never sits on a perfectly straight line even when the
+             walk was: ordinary receiver noise wobbles it a metre or two
+             either side of the true path, hop to hop. Spaced tight enough
+             to place an arrow on every one of those wobbles, the line reads
+             as a mess of triangles pointing every which way rather than a
+             flow in one direction — each arrow is individually honest about
+             its own tiny zigzag, and the SUM of them stops being readable.
+             40px is loose enough to mostly land on the real, longer-run
+             direction between wobbles. */
           built.addLayer({
             id: `trail-arrows-${id}`,
             type: "symbol",
             source: `trail-${id}`,
             layout: {
               "symbol-placement": "line",
-              "symbol-spacing": 16,
+              "symbol-spacing": 40,
               "icon-image": "trail-arrow",
               "icon-size": 0.9,
               "icon-rotation-alignment": "map",
