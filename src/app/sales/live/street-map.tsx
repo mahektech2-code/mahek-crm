@@ -3,6 +3,8 @@
 import * as React from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import type { DwellStop } from "@/lib/engines/dwell";
+import { clock } from "@/lib/format";
 import type { ActivityPoint, LastKnown, TrackPoint } from "@/lib/services/sales-service";
 import { activityLabel } from "@/lib/mbos/activity-labels";
 import {
@@ -62,6 +64,20 @@ import {
  * with no position is in the team list saying so and nowhere on this map.
  * The view fits the data rather than filling the canvas.
  *
+ * **A line says where; the arrows say which way.** A trail with no direction
+ * on it answers "everywhere they went" and nothing about the order any of it
+ * happened in — two overlapping streets read as one shape either way round.
+ * `ensureArrowIcon` paints one triangle and every trail's own symbol layer
+ * places it along the line, oriented to the line's own bearing, so the
+ * direction survives the road-snapping effect below for free — it shares the
+ * trail's source and re-places itself whenever that source's data changes.
+ *
+ * **A stop is drawn differently from a stop-by-work.** `dwells` marks a run
+ * of fixes that never drifted for long enough to mean something — see
+ * `lib/engines/dwell.ts` — with a hollow ring rather than the solid "activity"
+ * dot, because "paused here" and "did something here" are different answers
+ * and a manager should not have to click both to tell them apart.
+ *
  * **Map and satellite are the same map, not two.** `setStyle` swaps the
  * style JSON in place rather than tearing the map down — the camera,
  * markers and event handlers are untouched, only the trail and activity
@@ -76,6 +92,44 @@ import {
 /** Enough that a single pin does not open zoomed to the rooftop. */
 const MAX_FIT_ZOOM = 15;
 
+/**
+ * Arrowheads along a trail, drawn once per map and reused by every trail.
+ *
+ * A symbol layer with `symbol-placement: "line"` needs an image to place —
+ * there is no built-in "just draw an arrow" primitive — so this paints one
+ * small triangle onto a canvas and registers it under a fixed id. Guarded by
+ * `hasImage` because `drawOverlays` runs on every style switch as well as the
+ * first load, and a style switch throws the registered image away with
+ * everything else the STYLE carried; re-adding an id that is still there
+ * would throw.
+ */
+function ensureArrowIcon(map: maplibregl.Map) {
+  if (map.hasImage("trail-arrow")) return;
+  const size = 18;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.fillStyle = "#5223E0";
+  ctx.beginPath();
+  ctx.moveTo(size / 2, 1);
+  ctx.lineTo(size - 3, size - 4);
+  ctx.lineTo(size / 2, size - 7);
+  ctx.lineTo(3, size - 4);
+  ctx.closePath();
+  ctx.fill();
+  map.addImage("trail-arrow", ctx.getImageData(0, 0, size, size));
+}
+
+/** "12 min", or "1h 5m" once a stop runs past the hour. */
+function formatMinutes(minutes: number): string {
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
 /** A ring round whoever the team list has picked, drawn above everybody else. */
 function highlightMarker(el: HTMLDivElement, selected: boolean) {
   el.style.boxShadow = selected
@@ -89,6 +143,7 @@ export function StreetMap({
   rows,
   tracks,
   activity,
+  dwells,
   staleAfterSeconds,
   view,
   selectedId,
@@ -98,6 +153,8 @@ export function StreetMap({
   rows: LastKnown[];
   tracks: Map<string, TrackPoint[]>;
   activity: ActivityPoint[];
+  /** Where each salesman's trail stood still long enough to mean something. */
+  dwells: Map<string, DwellStop[]>;
   staleAfterSeconds: number;
   view: "now" | "today";
   /** Whoever is picked in the team list beside this — see the effect below. */
@@ -116,6 +173,7 @@ export function StreetMap({
   const pinned = rows.filter((r) => r.lat != null && r.lng != null);
   const marks = view === "today" ? activity : [];
   const trails = view === "today" ? [...tracks.entries()] : [];
+  const stops = view === "today" ? [...dwells.values()].flat() : [];
 
   /* Everything being shown, so the fit covers the whole day's travel in the
      `today` view rather than only where each person ended up. */
@@ -217,6 +275,17 @@ export function StreetMap({
       built.on("mouseenter", "activity", () => (built.getCanvas().style.cursor = "pointer"));
       built.on("mouseleave", "activity", () => (built.getCanvas().style.cursor = ""));
 
+      built.on("click", "dwells", (e: maplibregl.MapLayerMouseEvent) => {
+        const f = e.features?.[0];
+        if (!f) return;
+        new maplibregl.Popup({ closeButton: false })
+          .setLngLat(e.lngLat)
+          .setText(String(f.properties?.label ?? ""))
+          .addTo(built);
+      });
+      built.on("mouseenter", "dwells", () => (built.getCanvas().style.cursor = "pointer"));
+      built.on("mouseleave", "dwells", () => (built.getCanvas().style.cursor = ""));
+
       /*
        * Everything the STYLE carries rather than the map: the trail and
        * activity sources and layers. `setStyle` throws all of this away and
@@ -254,6 +323,7 @@ export function StreetMap({
           ?.classList.remove("maplibregl-compact-show");
 
         /* The trail first, so pins and marks sit on top of it. */
+        if (trails.length) ensureArrowIcon(built);
         for (const [id, ps] of trails) {
           if (ps.length < 2) continue;
           built.addSource(`trail-${id}`, {
@@ -270,6 +340,56 @@ export function StreetMap({
             source: `trail-${id}`,
             layout: { "line-cap": "round", "line-join": "round" },
             paint: { "line-color": "#5223E0", "line-width": 3, "line-opacity": 0.75 },
+          });
+          /* Arrowheads along the line, so "which way did they go" reads off
+             the map itself rather than off which end has today's date. The
+             symbol layer shares the trail's own source, so a later
+             `setData` from the road-snapping effect below re-places these
+             along the snapped geometry for free. */
+          built.addLayer({
+            id: `trail-arrows-${id}`,
+            type: "symbol",
+            source: `trail-${id}`,
+            layout: {
+              "symbol-placement": "line",
+              "symbol-spacing": 70,
+              "icon-image": "trail-arrow",
+              "icon-size": 0.9,
+              "icon-rotation-alignment": "map",
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+            },
+          });
+        }
+
+        /* Where a trail stood still — a bigger, hollow ring rather than the
+           activity dot above, so a stop reads as "paused here" and not as a
+           third kind of visit. */
+        if (stops.length) {
+          built.addSource("dwells", {
+            type: "geojson",
+            data: {
+              type: "FeatureCollection",
+              features: stops.map((s) => ({
+                type: "Feature" as const,
+                properties: {
+                  label: `Stopped ${formatMinutes(s.minutes)} · ${clock(s.startAt)}–${clock(s.endAt)}`,
+                },
+                geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] },
+              })),
+            },
+          });
+          built.addLayer({
+            id: "dwells",
+            type: "circle",
+            source: "dwells",
+            paint: {
+              "circle-radius": 9,
+              "circle-color": "#FFFFFF",
+              "circle-opacity": 0.85,
+              "circle-stroke-width": 3,
+              "circle-stroke-color": "#5223E0",
+            },
           });
         }
 

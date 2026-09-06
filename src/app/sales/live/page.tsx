@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { addDays } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
+import { dwellStops, type DwellStop } from "@/lib/engines/dwell";
 import { shortDateWithYear } from "@/lib/format";
+import { metresBetween } from "@/lib/geo";
 import { today } from "@/lib/recompute";
 import { readSecret } from "@/lib/secrets";
 import {
@@ -69,6 +71,26 @@ export default async function Page({
     view === "today"
       ? await Promise.all([tracksForDay(day), activityPointsForDay(day)])
       : [new Map(), []];
+
+  /* "Distance" is the trail's own length, the same honesty rule
+     `today-tab.tsx` uses — the sum of the gaps between consecutive fixes,
+     never a straight line from start to end. Dwell stops are read off the
+     same trail: a run of fixes that never drifted, held long enough to be
+     more than a red light. Both are derived here, once, rather than inside
+     the client map component, which redraws on every selection change. */
+  const distanceMetres = new Map<string, number>();
+  const dwells = new Map<string, DwellStop[]>();
+  for (const [id, points] of tracks) {
+    let metres = 0;
+    for (let i = 1; i < points.length; i++) {
+      metres += metresBetween(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng);
+    }
+    distanceMetres.set(id, metres);
+    dwells.set(
+      id,
+      dwellStops(points, config["mbos.location.dwellRadiusMeters"], config["mbos.location.dwellMinMinutes"]),
+    );
+  }
 
   const out = rows.filter((r) => r.checkInAt && !r.checkOutAt && !r.onLeave);
   const noSignal = rows.filter((r) => !r.seenAt && !r.onLeave);
@@ -162,6 +184,8 @@ export default async function Page({
         rows={rows}
         tracks={tracks}
         activity={activity}
+        distanceMetres={distanceMetres}
+        dwells={dwells}
         staleAfterSeconds={config["mbos.location.activityFixMaxAgeSeconds"]}
         view={view}
         isToday={isToday}

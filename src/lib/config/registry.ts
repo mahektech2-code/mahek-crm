@@ -1665,10 +1665,32 @@ export const SETTINGS = [
     category: "mbos-location",
     label: "How often a position is taken",
     description:
-      "Seconds between fixes while the day is open. At this density the line connecting them hugs the actual road on its own, without needing a map-matching service to snap it there — the tighter the interval, the closer the shape gets to the road actually walked. Every few seconds is close to exact and costs real battery over a full field day; a minute or more is back to a line that cuts corners through buildings. Fifteen is the shape of the road, not just the shape of the beat.",
-    default: 15,
+      "Seconds between fixes while the day is open. At this density the line connecting them hugs the actual road on its own, without needing a map-matching service to snap it there — the tighter the interval, the closer the shape gets to the road actually walked. Every few seconds is close to exact and costs real battery over a full field day; a minute or more is back to a line that cuts corners through buildings. Five is close to exact — the shape of the road, not just the shape of the beat — and worth the extra battery once a salesman is checked in rather than idle.",
+    default: 5,
     min: 5,
     max: 300,
+  },
+  {
+    key: "mbos.location.dwellRadiusMeters",
+    type: "integer",
+    category: "mbos-location",
+    label: "How far counts as \"still there\"",
+    description:
+      "Metres a run of consecutive fixes may drift from each other and still count as one stop rather than movement — GPS drifts even standing still, so this has to clear ordinary drift without also swallowing a slow walk down one street. Sized off the accuracy a handset actually reports, not off the road: a tighter number here reads a slow walk as a stop, a looser one misses a real one.",
+    default: 60,
+    min: 15,
+    max: 300,
+  },
+  {
+    key: "mbos.location.dwellMinMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How long counts as a stop worth marking",
+    description:
+      "Minutes a salesman has to stay within the radius above before the Live map marks it as a stop rather than a red light or a moment fishing for change. A few minutes is long enough to mean something was actually happening there.",
+    default: 5,
+    min: 1,
+    max: 60,
   },
 
   {
@@ -2715,6 +2737,8 @@ export type Config = {
   "mbos.location.unplannedVisitsPerDay": number;
   "mbos.location.trackWhileWorking": boolean;
   "mbos.location.trackEverySeconds": number;
+  "mbos.location.dwellRadiusMeters": number;
+  "mbos.location.dwellMinMinutes": number;
   "mbos.location.logActivityLocation": boolean;
   "mbos.location.activityFixMaxAgeSeconds": number;
   "mbos.sync.quietHours": number;

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import * as React from "react";
+import type { DwellStop } from "@/lib/engines/dwell";
 import type { ActivityPoint, LastKnown, TrackPoint } from "@/lib/services/sales-service";
 import { TeamList } from "./map-canvas";
 import { StreetMap } from "./street-map";
@@ -32,6 +33,8 @@ export function LivePanel({
   rows,
   tracks,
   activity,
+  distanceMetres,
+  dwells,
   staleAfterSeconds,
   view,
   isToday,
@@ -41,6 +44,10 @@ export function LivePanel({
   rows: LastKnown[];
   tracks: Map<string, TrackPoint[]>;
   activity: ActivityPoint[];
+  /** The trail's own length, per salesman — empty outside the `today` view. */
+  distanceMetres: Map<string, number>;
+  /** Where each salesman's trail stood still long enough to mean something. */
+  dwells: Map<string, DwellStop[]>;
   staleAfterSeconds: number;
   view: "now" | "today";
   isToday: boolean;
@@ -71,12 +78,18 @@ export function LivePanel({
         rows={rows}
         tracks={tracks}
         activity={activity}
+        dwells={dwells}
         staleAfterSeconds={staleAfterSeconds}
         view={view}
         selectedId={selectedId}
         apiKey={olaMapsKey}
       />
-      <TeamList rows={rows} selectedId={selectedId} onSelect={toggle} />
+      <TeamList
+        rows={rows}
+        distanceMetres={view === "today" ? distanceMetres : null}
+        selectedId={selectedId}
+        onSelect={toggle}
+      />
     </div>
   );
 }
