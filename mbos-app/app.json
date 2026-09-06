@@ -43,6 +43,7 @@
         }
       ],
       "expo-task-manager",
+      "expo-background-task",
       [
         "expo-notifications",
         {
