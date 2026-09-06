@@ -2,6 +2,7 @@ import Link from "next/link";
 import { addDays } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { dwellStops, type DwellStop } from "@/lib/engines/dwell";
+import { dropInaccurateFixes } from "@/lib/engines/trail-gaps";
 import { shortDateWithYear } from "@/lib/format";
 import { metresBetween } from "@/lib/geo";
 import { today } from "@/lib/recompute";
@@ -71,6 +72,18 @@ export default async function Page({
     view === "today"
       ? await Promise.all([tracksForDay(day), activityPointsForDay(day)])
       : [new Map(), []];
+
+  /* A fix the handset itself rated as imprecise is dropped before any of
+     this runs — see `dropInaccurateFixes`. One 300-metre-radius fix between
+     two tight ones invents a hop nobody actually covered, which shows up as
+     a phantom gap, a wrong direction arrow, and a distance that never
+     happened. This is the same threshold `mbos.location.gpsAccuracyThresholdM`
+     already applies to visit verification; it is filtered out here rather
+     than corrected, because the trail shows only what is known. */
+  const accuracyThreshold = config["mbos.location.gpsAccuracyThresholdM"];
+  for (const [id, points] of tracks) {
+    tracks.set(id, dropInaccurateFixes(points, accuracyThreshold));
+  }
 
   /* "Distance" is the trail's own length, the same honesty rule
      `today-tab.tsx` uses — the sum of the gaps between consecutive fixes,

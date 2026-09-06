@@ -24,6 +24,29 @@ export type TrailSegment = {
   gap: boolean;
 };
 
+/**
+ * A fix the handset itself rates as imprecise is not evidence of where
+ * anybody was standing — the same reasoning `mbos.location.gpsAccuracyThresholdM`
+ * already applies to visit verification (see AGENTS.md). A single 300-metre-
+ * radius fix sitting between two tight ones manufactures a hop that never
+ * happened: the road distance covered is invented by the bad fix, not by
+ * anything the salesman did, and both the "gap" it draws and the direction
+ * arrow on it are simply wrong.
+ *
+ * A `null` accuracy is not the same claim as a bad one — most of this book's
+ * history predates the column, and a fix nobody rated is kept exactly as
+ * every other engine here keeps missing confidence: whole, never penalised.
+ * Only a fix the handset itself rated worse than the threshold is dropped —
+ * never corrected or moved, per the standing rule that this trail shows only
+ * what is known and never a prediction.
+ */
+export function dropInaccurateFixes<T extends { accuracyM: number | null }>(
+  points: T[],
+  thresholdMetres: number,
+): T[] {
+  return points.filter((p) => p.accuracyM === null || p.accuracyM <= thresholdMetres);
+}
+
 export function splitTrailByGaps(
   points: { lat: number; lng: number }[],
   gapMetres: number,
