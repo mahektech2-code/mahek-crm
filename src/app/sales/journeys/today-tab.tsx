@@ -8,7 +8,7 @@ import {
 } from "../parts";
 import { plural } from "../words";
 import type { Salesman, JourneyPlan, VisitRow, TrackPoint } from "@/lib/services/sales-service";
-import { metresBetween } from "@/lib/geo";
+import { formatDistance, metresBetween } from "@/lib/geo";
 
 /**
  * How today actually went, one row per salesman.
@@ -73,7 +73,7 @@ export function TodayTab({
       planned,
       done,
       offPlan,
-      km: metres >= 1000 ? `${(metres / 1000).toFixed(1)} km` : metres ? `${Math.round(metres)} m` : "—",
+      km: formatDistance(metres),
       adherencePct,
       note,
       hasFixes: points.length > 0,

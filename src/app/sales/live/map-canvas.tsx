@@ -1,6 +1,7 @@
 "use client";
 
 import { APP_TIMEZONE } from "@/lib/business-date";
+import { formatDistance } from "@/lib/geo";
 import type { LastKnown } from "@/lib/services/sales-service";
 
 /**
@@ -21,10 +22,13 @@ import type { LastKnown } from "@/lib/services/sales-service";
  */
 export function TeamList({
   rows,
+  distanceMetres,
   selectedId,
   onSelect,
 }: {
   rows: LastKnown[];
+  /** Null outside the "today" view — there is no trail to measure yet. */
+  distanceMetres: Map<string, number> | null;
   selectedId: string | null;
   onSelect: (id: string) => void;
 }) {
@@ -61,7 +65,10 @@ export function TeamList({
                 <span className="truncate text-sm font-medium text-ink">{r.salesmanName}</span>
               </span>
               <span className="mt-0.5 block truncate text-[12px] text-muted">{whereLine(r)}</span>
-              <span className="block text-[12px] text-muted">{seenLine(r)}</span>
+              <span className="block text-[12px] text-muted">
+                {seenLine(r)}
+                {distanceMetres ? ` · ${formatDistance(distanceMetres.get(r.salesmanId) ?? 0)}` : ""}
+              </span>
             </span>
           </button>
         );

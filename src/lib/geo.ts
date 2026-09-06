@@ -18,3 +18,14 @@ export function metresBetween(aLat: number, aLng: number, bLat: number, bLng: nu
     Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
+
+/**
+ * One rendering of a metre count, shared so the Journeys table and the Live
+ * map's team list cannot drift into two different roundings of the same
+ * trail.
+ */
+export function formatDistance(metres: number): string {
+  if (metres >= 1000) return `${(metres / 1000).toFixed(1)} km`;
+  if (metres) return `${Math.round(metres)} m`;
+  return "—";
+}
