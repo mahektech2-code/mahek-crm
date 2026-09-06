@@ -4,7 +4,7 @@ import * as TaskManager from 'expo-task-manager';
 import { all, run } from '../db';
 import { getConfig } from '../data/config';
 import { getFix, fixOf, rememberFix } from '../native/location';
-import { postPositions } from './api';
+import { postPositions, reportLocationPermission } from './api';
 
 /**
  * The trail.
@@ -171,6 +171,13 @@ export async function start(): Promise<void> {
     foregroundTimer = setInterval(() => void takeForeground(), every);
   }
   running = true;
+
+  /* Told to the office, not kept to the handset: a manager watching the Live
+     map has no other way to learn a trail's real gaps are a permission, not
+     a bug. Fire-and-forget, the same as a position that fails to send — this
+     is not on the critical path of the day opening, and `start()` runs again
+     on the next resume regardless. */
+  void reportLocationPermission(backgroundStarted).catch(() => {});
 }
 
 /**

@@ -69,6 +69,14 @@ export function TeamList({
                 {seenLine(r)}
                 {distanceMetres ? ` · ${formatDistance(distanceMetres.get(r.salesmanId) ?? 0)}` : ""}
               </span>
+              {r.backgroundTrackingGranted === false ? (
+                <span
+                  className="mt-0.5 block text-[12px] text-[#B3261E]"
+                  title="His trail will have real gaps no map can close. Ask him to open his phone's Settings and set MahekOne's Location permission to 'Allow all the time'."
+                >
+                  Background location off — trail has real gaps
+                </span>
+              ) : null}
             </span>
           </button>
         );
