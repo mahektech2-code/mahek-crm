@@ -35,6 +35,7 @@ export function LivePanel({
   activity,
   distanceMetres,
   dwells,
+  gapMetres,
   staleAfterSeconds,
   view,
   isToday,
@@ -48,6 +49,8 @@ export function LivePanel({
   distanceMetres: Map<string, number>;
   /** Where each salesman's trail stood still long enough to mean something. */
   dwells: Map<string, DwellStop[]>;
+  /** Metres apart before a hop is drawn as an honest gap — see `trail-gaps.ts`. */
+  gapMetres: number;
   staleAfterSeconds: number;
   view: "now" | "today";
   isToday: boolean;
@@ -79,6 +82,7 @@ export function LivePanel({
         tracks={tracks}
         activity={activity}
         dwells={dwells}
+        gapMetres={gapMetres}
         staleAfterSeconds={staleAfterSeconds}
         view={view}
         selectedId={selectedId}

@@ -186,6 +186,7 @@ export default async function Page({
         activity={activity}
         distanceMetres={distanceMetres}
         dwells={dwells}
+        gapMetres={config["mbos.location.trailGapMeters"]}
         staleAfterSeconds={config["mbos.location.activityFixMaxAgeSeconds"]}
         view={view}
         isToday={isToday}
@@ -204,6 +205,9 @@ export default async function Page({
         The streets come from Ola Maps; the pins are drawn here from MahekOne&rsquo;s own data,
         so no position is ever sent to it — only which square of map is being looked at.
         {!olaMapsKey ? " No key is set for it yet, so no streets are drawn below." : ""}
+        {view === "today" && olaMapsKey
+          ? " A dashed stretch of a trail is a real gap — two fixes far enough apart that the road actually taken between them is not known, most often a stretch driven rather than walked, or a dropped signal."
+          : ""}
       </p>
     </div>
   );

@@ -610,6 +610,13 @@
       "when": 1787501620000,
       "tag": "0086_five_second_tracking",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1787501680000,
+      "tag": "0087_three_second_tracking",
+      "breakpoints": true
     }
   ]
 }

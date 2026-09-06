@@ -160,8 +160,8 @@ export async function start(): Promise<void> {
   const on = await getConfig<boolean>('mbos.location.trackWhileWorking', true);
   if (!on) return;
 
-  const seconds = await getConfig<number>('mbos.location.trackEverySeconds', 15);
-  const every = Math.max(5, seconds) * 1_000;
+  const seconds = await getConfig<number>('mbos.location.trackEverySeconds', 3);
+  const every = Math.max(3, seconds) * 1_000;
 
   const backgroundStarted = await startBackground(every);
   if (!backgroundStarted) {
