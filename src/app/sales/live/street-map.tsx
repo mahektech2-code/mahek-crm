@@ -5,7 +5,7 @@ import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { DwellStop } from "@/lib/engines/dwell";
 import { splitTrailByGaps, type TrailSegment } from "@/lib/engines/trail-gaps";
-import { clock } from "@/lib/format";
+import { clock, clockSeconds } from "@/lib/format";
 import type { ActivityPoint, LastKnown, TrackPoint } from "@/lib/services/sales-service";
 import { activityLabel } from "@/lib/mbos/activity-labels";
 import {
@@ -65,13 +65,17 @@ import {
  * with no position is in the team list saying so and nowhere on this map.
  * The view fits the data rather than filling the canvas.
  *
- * **A line says where; the arrows say which way.** A trail with no direction
- * on it answers "everywhere they went" and nothing about the order any of it
- * happened in — two overlapping streets read as one shape either way round.
- * `ensureArrowIcon` paints one triangle and every trail's own symbol layer
- * places it along the line, oriented to the line's own bearing, so the
- * direction survives the road-snapping effect below for free — it shares the
- * trail's source and re-places itself whenever that source's data changes.
+ * **A line says where; hovering a point says exactly when.** Direction arrows
+ * tiled along the line were tried and dropped — a raw GPS fix wobbles a metre
+ * or two off the true path even on a dead-straight walk, and packing enough
+ * arrows to read as "a flow" meant placing one on nearly every wobble, which
+ * read as noise rather than direction. A dot at every real fix, hovered
+ * rather than decorated, tells the truer story: `clockSeconds` on hover
+ * answers "when were you exactly here" from the fix's own timestamp, which
+ * is evidence rather than an inferred bearing. `trail-points` is one shared
+ * source and layer for every trail on screen, the same pattern `activity`
+ * and `dwells` already use, so the hover handler is registered once rather
+ * than once per salesman shown.
  *
  * **A stop is drawn differently from a stop-by-work.** `dwells` marks a run
  * of fixes that never drifted for long enough to mean something — see
@@ -101,49 +105,6 @@ import {
 /** Enough that a single pin does not open zoomed to the rooftop. */
 const MAX_FIT_ZOOM = 15;
 
-/**
- * Arrowheads along a trail, drawn once per map and reused by every trail.
- *
- * A symbol layer with `symbol-placement: "line"` needs an image to place —
- * there is no built-in "just draw an arrow" primitive — so this paints one
- * small triangle onto a canvas and registers it under a fixed id. Guarded by
- * `hasImage` because `drawOverlays` runs on every style switch as well as the
- * first load, and a style switch throws the registered image away with
- * everything else the STYLE carried; re-adding an id that is still there
- * would throw.
- *
- * **The canvas is drawn at the SCREEN's own pixel density, and told so.**
- * `map.addImage` assumes a 1x icon unless given a `pixelRatio` — and on a
- * Retina screen the map itself is rendering at 2x or 3x, so a 1x icon sits
- * on a canvas built for a different density than the one actually drawing
- * it. What that produced was not a smaller arrow but a broken one: two
- * fragments where the fill and MapLibre's own resampling disagreed, reading
- * as an unreadable mark rather than a single dart. Scaling the canvas by
- * `devicePixelRatio` and passing the same number as `pixelRatio` is the
- * documented fix for exactly this — the icon is still drawn at the same
- * 18×18 logical size, just at the resolution the screen actually has.
- */
-function ensureArrowIcon(map: maplibregl.Map) {
-  if (map.hasImage("trail-arrow")) return;
-  const ratio = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
-  const size = 18;
-  const canvas = document.createElement("canvas");
-  canvas.width = size * ratio;
-  canvas.height = size * ratio;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.scale(ratio, ratio);
-  ctx.fillStyle = "#5223E0";
-  ctx.beginPath();
-  ctx.moveTo(size / 2, 1);
-  ctx.lineTo(size - 3, size - 4);
-  ctx.lineTo(size / 2, size - 7);
-  ctx.lineTo(3, size - 4);
-  ctx.closePath();
-  ctx.fill();
-  map.addImage("trail-arrow", ctx.getImageData(0, 0, canvas.width, canvas.height), { pixelRatio: ratio });
-}
-
 /** "12 min", or "1h 5m" once a stop runs past the hour. */
 function formatMinutes(minutes: number): string {
   if (minutes < 60) return `${Math.round(minutes)} min`;
@@ -165,6 +126,32 @@ function trailFeatureCollection(segments: TrailSegment[]): GeoJSON.FeatureCollec
       properties: { gap: s.gap },
       geometry: { type: "LineString", coordinates: s.coordinates },
     })),
+  };
+}
+
+/**
+ * Every real fix, across every trail on screen, as one point per hop.
+ *
+ * One shared source for all of them — the same choice `activity` and
+ * `dwells` already made — rather than a per-salesman source and layer,
+ * because a per-salesman layer id cannot be hovered by a handler registered
+ * once outside `drawOverlays`: the id only exists once that salesman's trail
+ * has been drawn, and a fresh handler added inside `drawOverlays` on every
+ * style switch would stack a second one on top of the first. `atMs` is the
+ * fix's own timestamp as milliseconds since the epoch — a plain number,
+ * because GeoJSON properties do not carry a `Date` — read back and formatted
+ * with `clockSeconds` only when a hover actually asks for it.
+ */
+function trailPointsFeatureCollection(trails: [string, { lat: number; lng: number; at: Date }[]][]): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: trails.flatMap(([, points]) =>
+      points.map((p) => ({
+        type: "Feature" as const,
+        properties: { atMs: p.at.getTime() },
+        geometry: { type: "Point" as const, coordinates: [p.lng, p.lat] },
+      })),
+    ),
   };
 }
 
@@ -327,6 +314,29 @@ export function StreetMap({
       built.on("mouseenter", "dwells", () => (built.getCanvas().style.cursor = "pointer"));
       built.on("mouseleave", "dwells", () => (built.getCanvas().style.cursor = ""));
 
+      /* A point is read on hover rather than click — a manager scanning
+         along a trail to see how the pace changed should not have to click
+         and dismiss a popup for every single fix. `hoverPopup` is closed
+         over by both handlers below so a fast sweep across several points
+         in a row never leaves more than one open. */
+      let hoverPopup: maplibregl.Popup | null = null;
+      built.on("mouseenter", "trail-points", (e: maplibregl.MapLayerMouseEvent) => {
+        built.getCanvas().style.cursor = "pointer";
+        const f = e.features?.[0];
+        const atMs = Number(f?.properties?.atMs);
+        if (!Number.isFinite(atMs)) return;
+        hoverPopup?.remove();
+        hoverPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false })
+          .setLngLat(e.lngLat)
+          .setText(clockSeconds(new Date(atMs)))
+          .addTo(built);
+      });
+      built.on("mouseleave", "trail-points", () => {
+        built.getCanvas().style.cursor = "";
+        hoverPopup?.remove();
+        hoverPopup = null;
+      });
+
       /*
        * Everything the STYLE carries rather than the map: the trail and
        * activity sources and layers. `setStyle` throws all of this away and
@@ -364,7 +374,6 @@ export function StreetMap({
           ?.classList.remove("maplibregl-compact-show");
 
         /* The trail first, so pins and marks sit on top of it. */
-        if (trails.length) ensureArrowIcon(built);
         for (const [id, ps] of trails) {
           const segments = splitTrailByGaps(ps, gapMetres);
           if (!segments.length) continue;
@@ -397,39 +406,25 @@ export function StreetMap({
               "line-dasharray": [2, 2],
             },
           });
-          /* Arrowheads along the line, so "which way did they go" reads off
-             the map itself rather than off which end has today's date —
-             dimmer over a gap, the same honesty the line itself carries.
-             The symbol layer shares the trail's own source, so a later
-             `setData` from the road-snapping effect below re-places these
-             along the snapped geometry for free.
-             `symbol-spacing` is denser than the original 70px so the trail
-             reads as a stream of arrows rather than a plain stroke with an
-             occasional direction hint — but not packed edge to edge. A raw
-             GPS fix never sits on a perfectly straight line even when the
-             walk was: ordinary receiver noise wobbles it a metre or two
-             either side of the true path, hop to hop. Spaced tight enough
-             to place an arrow on every one of those wobbles, the line reads
-             as a mess of triangles pointing every which way rather than a
-             flow in one direction — each arrow is individually honest about
-             its own tiny zigzag, and the SUM of them stops being readable.
-             40px is loose enough to mostly land on the real, longer-run
-             direction between wobbles. */
+        }
+
+        /* Every real fix, hoverable for its exact time — see
+           `trailPointsFeatureCollection`. Sits on top of the lines just
+           added, below the dwell rings and activity dots that follow. */
+        if (trails.length) {
+          built.addSource("trail-points", {
+            type: "geojson",
+            data: trailPointsFeatureCollection(trails),
+          });
           built.addLayer({
-            id: `trail-arrows-${id}`,
-            type: "symbol",
-            source: `trail-${id}`,
-            layout: {
-              "symbol-placement": "line",
-              "symbol-spacing": 40,
-              "icon-image": "trail-arrow",
-              "icon-size": 0.9,
-              "icon-rotation-alignment": "map",
-              "icon-allow-overlap": true,
-              "icon-ignore-placement": true,
-            },
+            id: "trail-points",
+            type: "circle",
+            source: "trail-points",
             paint: {
-              "icon-opacity": ["case", ["==", ["get", "gap"], true], 0.45, 1],
+              "circle-radius": 3,
+              "circle-color": "#5223E0",
+              "circle-stroke-width": 1,
+              "circle-stroke-color": "#ffffff",
             },
           });
         }
