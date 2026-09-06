@@ -1528,7 +1528,7 @@ export async function trackForDay(salesmanId: string, day: string): Promise<Trac
      not see this salesman gets an empty day, not somebody else's. */
   if (scope.salesmanIds !== null && !scope.salesmanIds.includes(salesmanId)) return [];
 
-  return db.execute<TrackPoint>(sql`
+  const rows = (await db.execute<TrackPoint>(sql`
     select p.lat, p.lng, p.at, p.accuracy_m as "accuracyM", null::text as place
       from mbos_positions p
      where p.user_id = ${salesmanId}
@@ -1542,7 +1542,14 @@ export async function trackForDay(salesmanId: string, day: string): Promise<Trac
        and v.check_in_lat is not null
     order by at asc
     limit 20000
-  `) as unknown as TrackPoint[];
+  `)) as unknown as TrackPoint[];
+  /* drizzle disables postgres.js's own timestamp parsing on the shared client
+     so it can apply schema-aware conversion itself — a conversion that only
+     runs for typed queries, never for a raw `db.execute`. Every timestamp this
+     file's raw queries return is therefore a string on the wire, whatever the
+     return type says; `at` is named here rather than left for whoever reads
+     `.getTime()` next to discover it. */
+  return rows.map((r) => ({ ...r, at: new Date(r.at) }));
 }
 
 /**
@@ -1607,10 +1614,12 @@ export async function tracksForDay(
   const byPerson = new Map<string, TrackPoint[]>();
   for (const row of rows) {
     const list = byPerson.get(row.salesmanId);
+    /* See the comment in `trackForDay`: a raw `db.execute` gets timestamps
+       back as strings, whatever TrackPoint's own type says. */
     const point = {
       lat: row.lat,
       lng: row.lng,
-      at: row.at,
+      at: new Date(row.at),
       accuracyM: row.accuracyM,
       place: row.place,
     };
@@ -1945,7 +1954,7 @@ export type SyncHealthRow = {
  */
 export async function syncHealth(): Promise<SyncHealthRow[]> {
   const scope = await managerScope();
-  return db.execute<SyncHealthRow>(sql`
+  const rows = (await db.execute<SyncHealthRow>(sql`
     select u.id as "salesmanId", u.name as "salesmanName", u.initials, u.active,
            d.device_id as "deviceId", d.model, d.platform, d.last_seen_at as "lastSeenAt",
            coalesce(r.rejected, 0)::int as "rejected7d",
@@ -1974,7 +1983,10 @@ export async function syncHealth(): Promise<SyncHealthRow[]> {
               (coalesce(r.rejected, 0) + coalesce(c.unresolved, 0)) desc,
               u.name asc
      limit 300
-  `) as unknown as SyncHealthRow[];
+  `)) as unknown as SyncHealthRow[];
+  /* See the comment in `trackForDay`: a raw `db.execute` returns a timestamp
+     as a string, whatever this row type says. */
+  return rows.map((r) => ({ ...r, lastSeenAt: r.lastSeenAt ? new Date(r.lastSeenAt) : null }));
 }
 
 export type AuditRow = {
