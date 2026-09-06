@@ -3,6 +3,7 @@ import { AppState } from 'react-native';
 import { openDb } from '../db';
 import { recoverInterrupted } from '../sync/queue';
 import { startBackgroundSync, stopBackgroundSync } from '../sync/engine';
+import { registerBackgroundSync, unregisterBackgroundSync } from '../sync/background-sync-task';
 import * as trail from '../sync/trail';
 import { currentSession, type Session } from '../data/session';
 import { autoCloseMissedCheckouts, dayState } from '../data/attendance';
@@ -50,6 +51,7 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
 
       if (existing) {
         startBackgroundSync();
+        void registerBackgroundSync();
         void runDayBoundaryWork(existing.user.id).then(() => resumeTrailIfDayOpen(existing.user.id));
         void registerForPush();
       }
@@ -90,9 +92,11 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
         setSession(s);
         if (s) {
           startBackgroundSync();
+          void registerBackgroundSync();
           void registerForPush();
         } else {
           stopBackgroundSync();
+          void unregisterBackgroundSync();
         }
       },
     }),

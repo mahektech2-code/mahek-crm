@@ -111,15 +111,28 @@ const MAX_FIT_ZOOM = 15;
  * first load, and a style switch throws the registered image away with
  * everything else the STYLE carried; re-adding an id that is still there
  * would throw.
+ *
+ * **The canvas is drawn at the SCREEN's own pixel density, and told so.**
+ * `map.addImage` assumes a 1x icon unless given a `pixelRatio` — and on a
+ * Retina screen the map itself is rendering at 2x or 3x, so a 1x icon sits
+ * on a canvas built for a different density than the one actually drawing
+ * it. What that produced was not a smaller arrow but a broken one: two
+ * fragments where the fill and MapLibre's own resampling disagreed, reading
+ * as an unreadable mark rather than a single dart. Scaling the canvas by
+ * `devicePixelRatio` and passing the same number as `pixelRatio` is the
+ * documented fix for exactly this — the icon is still drawn at the same
+ * 18×18 logical size, just at the resolution the screen actually has.
  */
 function ensureArrowIcon(map: maplibregl.Map) {
   if (map.hasImage("trail-arrow")) return;
+  const ratio = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
   const size = 18;
   const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = size * ratio;
+  canvas.height = size * ratio;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
+  ctx.scale(ratio, ratio);
   ctx.fillStyle = "#5223E0";
   ctx.beginPath();
   ctx.moveTo(size / 2, 1);
@@ -128,7 +141,7 @@ function ensureArrowIcon(map: maplibregl.Map) {
   ctx.lineTo(3, size - 4);
   ctx.closePath();
   ctx.fill();
-  map.addImage("trail-arrow", ctx.getImageData(0, 0, size, size));
+  map.addImage("trail-arrow", ctx.getImageData(0, 0, canvas.width, canvas.height), { pixelRatio: ratio });
 }
 
 /** "12 min", or "1h 5m" once a stop runs past the hour. */
