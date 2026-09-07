@@ -223,6 +223,31 @@ export async function projectCustomerMaster(
       continue;
     }
 
+    /*
+     * A PLACEHOLDER IS WORSE THAN A BLANK, and this is the case that proves it.
+     *
+     * The sync marks a mobile found on three or more shops as a placeholder —
+     * one number in this export sits on 952 rows and passes every validity
+     * check there is. Writing it onto a customer produces a record that looks
+     * complete and is not: 591 leads reached production carrying one man's
+     * phone number, and the first telecaller to work that list top-down rings
+     * him 591 times about shops he has never heard of.
+     *
+     * "No number" is a state this projection already knows how to hold and
+     * every screen already says out loud. "A number belonging to somebody
+     * else" is a state nothing detects downstream, because the column is
+     * populated and well-formed. So a detected placeholder is held exactly
+     * like a missing one, and the shop waits in staging — fully recorded,
+     * with its reason — until somebody supplies a real number.
+     */
+    const placeholder = row.issues.some(
+      (i) => i.kind === "contradiction" && i.column === "Mobile Number",
+    );
+    if (placeholder) {
+      hold("mobile is a placeholder shared with other shops");
+      continue;
+    }
+
     // `customers.city` is NOT NULL. The state is a poor city and a better
     // nothing — a record placed in the wrong town is worse than one held.
     const city = row.locationText ?? row.state;

@@ -51,6 +51,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.tag.outputs.image }}
+    env:
+      # Read by the `if:` on the collection wait below — a secret cannot be
+      # tested in an `if` directly, so it is lifted here once, the same way the
+      # prune job lifts it. Without the token the wait is skipped and the push
+      # simply takes its chances, which is what it did before this existed.
+      HAVE_GC_TOKEN: ${{ secrets.DO_API_TOKEN != '' && 'yes' || 'no' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -61,6 +67,58 @@ jobs:
         run: echo "image=${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v4
+
+      # WAIT FOR A COLLECTION THAT IS ALREADY RUNNING, and only for that.
+      #
+      # A garbage collection puts the registry READ-ONLY, and a push that lands
+      # inside one fails `401 Unauthorized` on the token fetch — which reads as
+      # a bad credential and is nothing of the kind. It happened the first time
+      # a deploy followed a prune closely: the prune at 21:14 started a
+      # collection, the push at 21:27 landed inside it, and two retries failed
+      # identically before a third, once the window had passed, succeeded with
+      # no change at all.
+      #
+      # The old code waited 15m30s after STARTING a collection, which was
+      # rightly removed — it spent a quarter of an hour of every deploy
+      # watching somebody else's clock, all of it after production was already
+      # serving. But it did protect this, by accident: holding the workflow's
+      # concurrency slot kept the NEXT deploy out of the window. Removing it
+      # removed the accident with the waste.
+      #
+      # So the wait moves to where the risk actually is and becomes
+      # conditional. Nothing is running on the ordinary deploy, this answers in
+      # one API call and moves on; only a deploy that genuinely collides with a
+      # collection pays anything, and it pays it instead of failing.
+      - name: Install doctl
+        if: env.HAVE_GC_TOKEN == 'yes'
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_API_TOKEN }}
+
+      - name: Wait for any registry garbage collection
+        if: env.HAVE_GC_TOKEN == 'yes'
+        run: |
+          set -euo pipefail
+          # Bounded. A collection of this registry takes about 25 seconds; ten
+          # minutes is far past any honest run, and timing out must not fail
+          # the deploy — the push is still worth attempting, and its own error
+          # is a better report than one invented here.
+          deadline=$(( SECONDS + 600 ))
+          while [ "${SECONDS}" -lt "${deadline}" ]; do
+            # `get-active` exits non-zero when there is none, which is the
+            # ordinary case and not an error.
+            if ! doctl registry garbage-collection get-active -o json > /tmp/gc.json 2>/dev/null; then
+              echo "No collection running."
+              exit 0
+            fi
+            if [ ! -s /tmp/gc.json ] || ! grep -q '"uuid"' /tmp/gc.json; then
+              echo "No collection running."
+              exit 0
+            fi
+            echo "A garbage collection is running; the registry is read-only. Waiting 20s."
+            sleep 20
+          done
+          echo "::warning title=Still collecting::A garbage collection was still running after 10 minutes. Pushing anyway; if this fails with 401 it is the collection, not the credential."
 
       # A registry-scoped credential, not the account API token. The account
       # token would work — DigitalOcean accepts it as both username and
