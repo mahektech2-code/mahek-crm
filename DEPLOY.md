@@ -101,13 +101,25 @@ remove one, so it filled and the next push failed with `denied: quota
 exceeded` — a green test job, a failed build, and the `deploy` job skipped
 underneath without a word about storage. It has happened twice: once when the
 build cache lived here as `buildcache` tags, and again from the images
-themselves. The `prune` job now runs BEFORE the build, keeps the newest three
-plus `latest`, and waits for the collection to finish — because deleting a tag
-frees nothing until it does.
+themselves. The `prune` job keeps the newest three plus `latest`, and it runs
+LAST — after the deploy it is housekeeping for, never before the build.
 
-If a deploy has already failed this way, the fix is to add the secret and
-re-run it: the prune runs first, so the run that was blocked clears its own
-space. By hand it is:
+It used to run first, on the reasoning that a push into a full registry is the
+failure it exists to prevent. That reasoning was backwards: DigitalOcean will
+not begin collecting until every write-scoped push token has expired, so
+starting a collection immediately before this run's own push is asking for the
+`401 Unauthorized` that appeared three times in one day. Ordering fixed it —
+and the wait that came with it was then deleted too, because it was watching
+DigitalOcean's fifteen-minute token TTL for fifteen minutes on every deploy,
+after production was already serving. See the comments on the job.
+
+A deploy is therefore GREEN in about four minutes, and the garbage collection
+finishes on DigitalOcean's side some quarter of an hour later without anything
+here waiting on it. `doctl registry garbage-collection list` says how it went.
+
+If a deploy has already failed on the quota, the fix is to add the secret and
+clear the space by hand — the prune runs after the build, so it cannot unblock
+the run it is inside:
 
 ```bash
 doctl auth init
@@ -278,12 +290,13 @@ sed -i 's|^IMAGE=.*|IMAGE=registry.digitalocean.com/mahekone/app:<sha>|' .env
 docker compose up -d app
 ```
 
-The newest three tags are kept, plus `latest` — the `prune` job in the deploy
-workflow enforces it before each push. This used to read "old tags stay in the
-registry for a week", which sounded like a policy and was only a description
-of what nobody had got round to deleting; the registry filled up twice on the
-strength of it. Three is what 500 MB holds at ~130 MB an image, so a rollback
-can reach the last three deploys and no further. A rollback that also has to
+The newest three tags are kept, plus `latest`, and whatever production is
+actually on — the `prune` job in the deploy workflow enforces it after each
+deploy. This used to read "old tags stay in the registry for a week", which
+sounded like a policy and was only a description of what nobody had got round
+to deleting; the registry filled up twice on the strength of it. Three is what
+500 MB holds at ~130 MB an image, so a rollback can reach the last three
+deploys and no further. A rollback that also has to
 undo a migration is a different and harder thing — restore the dump.
 
 **Jobs by hand** still work; they run on your laptop against the droplet
