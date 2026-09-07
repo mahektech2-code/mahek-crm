@@ -78,7 +78,18 @@ export async function listExpenses(): Promise<Expense[]> {
 export async function claimExpense(args: {
   userId: string;
   spentOn: string;
+  /**
+   * The LEGACY enum the column has always held: travel, food, lodging, other.
+   *
+   * `kind` below is the precise one the policy prices on, and the two are
+   * deliberately separate. `local_transport` is a kind and is NOT a category —
+   * `mbos_expense_category` has four values and the server refuses anything
+   * else, so sending a kind here would have every auto fare rejected with
+   * "invalid category", which is a refusal the salesman cannot act on.
+   */
   category: string;
+  /** travel | food | lodging | local_transport | other. Defaults to the category. */
+  kind?: string;
   amountPaise: number;
   billPhotoId: string | null;
   remarks: string;
@@ -118,7 +129,7 @@ export async function claimExpense(args: {
       billPhotoId: args.billPhotoId,
       remarks: args.remarks,
       state: 'Pending',
-      kind: args.category,
+      kind: args.kind ?? args.category,
       expenseDayId,
       vendorName: args.vendorName ?? null,
       billNumber: args.billNumber ?? null,
@@ -132,7 +143,7 @@ export async function claimExpense(args: {
       overCap,
       expenseDate: args.spentOn,
       description: args.remarks || undefined,
-      kind: args.category,
+      kind: args.kind ?? args.category,
       expenseDayId,
       vendorName: args.vendorName ?? undefined,
       billNumber: args.billNumber ?? undefined,

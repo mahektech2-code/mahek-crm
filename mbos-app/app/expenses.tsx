@@ -8,6 +8,7 @@ import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
 import { claimExpense, listExpenses, type Expense } from '../src/data/requests';
 import { getConfig } from '../src/data/config';
+import { activePolicy, previewClaim, CLAIM_KINDS, type LocalPolicy } from '../src/data/travel';
 import { takePhoto } from '../src/native/capture';
 import { dmy, inr, isoDate } from '../src/lib/format';
 import { useStore } from '../src/state/store';
@@ -38,9 +39,12 @@ export default function ExpensesScreen() {
   const boot = useBoot();
 
   const [rows, setRows] = React.useState<Expense[]>([]);
-  /* Caps, the claim window and the bill threshold are all configuration —
-     `mbos.expenses.*` — never numbers typed into this screen. */
-  const [caps, setCaps] = React.useState<Record<string, number>>({});
+  /* What he is allowed comes from the POLICY, not from configuration.
+     This screen used to read `mbos.expenses.categoryCapsPaise` and show a
+     monthly headroom off it — a different number, from a different source,
+     that the office does not pay on. Two answers to "what am I allowed" and
+     the one he read here was the wrong one. */
+  const [policy, setPolicy] = React.useState<LocalPolicy | null>(null);
   const [maxAgeDays, setMaxAgeDays] = React.useState(30);
 
   const [open, setOpen] = React.useState(false);
@@ -53,12 +57,12 @@ export default function ExpensesScreen() {
     let live = true;
     void Promise.all([
       listExpenses(),
-      getConfig<Record<string, number>>('mbos.expenses.categoryCapsPaise', {}),
+      activePolicy(),
       getConfig<number>('mbos.expenses.maxClaimAgeDays', 30),
-    ]).then(([e, c, age]) => {
+    ]).then(([e, p, age]) => {
       if (!live) return;
       setRows(e);
-      setCaps(c);
+      setPolicy(p);
       setMaxAgeDays(age);
     });
     return () => {
@@ -75,30 +79,22 @@ export default function ExpensesScreen() {
 
   const pending = rows.filter((r) => r.state === 'Pending').reduce((n, r) => n + r.amountPaise, 0);
 
-  /* What each category has already taken this month, so the headroom on screen
-     is the headroom the save path will check against. */
-  const month = isoDate(new Date()).slice(0, 7);
-  const usedPaise = (kind: string) =>
-    rows.filter((r) => r.category === kind && r.spentOn.slice(0, 7) === month).reduce((n, r) => n + r.amountPaise, 0);
-
-  const kinds = Object.keys(caps);
-  const kind = ex.kind || kinds[0] || '';
-  const capPaise = caps[kind] ?? 0;
+  const kinds = CLAIM_KINDS;
+  const kind = ex.kind || kinds[0]!.key;
   const exAmtPaise = (parseInt(ex.amt.replace(/[^0-9]/g, ''), 10) || 0) * 100;
-  const leftPaise = Math.max(0, capPaise - usedPaise(kind));
-  const exOver = exAmtPaise > leftPaise;
 
-  const capLine = !exAmtPaise
-    ? inr(leftPaise / 100) + ' of your ' + kind.toLowerCase() + ' budget is left this month'
-    : exOver
-      ? 'This is ' + inr((exAmtPaise - leftPaise) / 100) + ' over what is left — your manager has to allow it'
-      : inr((leftPaise - exAmtPaise) / 100) + ' would be left after this';
+  /* The same engine the office prices the day with, run on this one line. A
+     second reading of the rules here is how a salesman is told one figure and
+     paid another. */
+  const preview = previewClaim(policy, kind as never, exAmtPaise, ex.billMediaId != null);
+  const exOver = preview.excessPaise > 0;
+  const capLine = preview.line;
 
   const add = () => {
     setFixing(false);
     setErr(null);
     const today = new Date();
-    setEx({ ...EMPTY, kind: kinds[0] ?? '', when: dmy(isoDate(today)), whenIso: isoDate(today) });
+    setEx({ ...EMPTY, kind: kinds[0]!.key, when: dmy(isoDate(today)), whenIso: isoDate(today) });
     setOpen(true);
   };
 
@@ -145,10 +141,14 @@ export default function ExpensesScreen() {
     const { overCap } = await claimExpense({
       userId: boot.session?.user.id ?? '',
       spentOn: ex.whenIso,
-      category: kind,
+      category: kinds.find((k) => k.key === kind)?.category ?? 'other',
+      kind,
       amountPaise: exAmtPaise,
       billPhotoId: ex.billMediaId,
       remarks: ex.note.trim(),
+      /* Requirement 43 — asking for something outside policy takes a reason,
+         and it is the note he has already written rather than a second box. */
+      exceptionReason: exOver ? ex.note.trim() : null,
     });
 
     close();
@@ -233,11 +233,10 @@ export default function ExpensesScreen() {
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
             {kinds.map((k) => (
               <Choice
-                key={k}
-                label={k}
-                sub={inr(Math.max(0, (caps[k] ?? 0) - usedPaise(k)) / 100) + ' left'}
-                selected={kind === k}
-                onPress={() => patch({ kind: k })}
+                key={k.key}
+                label={k.label}
+                selected={kind === k.key}
+                onPress={() => patch({ kind: k.key })}
                 style={{ flex: 1 }}
               />
             ))}

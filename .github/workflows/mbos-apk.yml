@@ -1,0 +1,172 @@
+# Build, sign and publish the MBOS handset app.
+#
+# WHY THIS EXISTS. The APK used to be built on whichever laptop had an Android
+# SDK, a JDK the Gradle plugin accepted, and the keystore password — which was
+# one laptop, and the day it did not have a working JDK the field team simply
+# could not be given a new build. Worse, the API base is BAKED INTO THE BUNDLE
+# at build time and is not configurable afterwards, so a build made with the
+# wrong environment is not a broken setting, it is a broken binary that has to
+# be rebuilt and reinstalled by everybody.
+#
+# It is `workflow_dispatch` rather than push-triggered on purpose. A release
+# that reaches somebody's phone is a decision — Android sideloading has no
+# staged rollout and no rollback, so the person pressing the button is the
+# release, and it should be a person.
+name: MBOS APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_base:
+        description: "API base baked into the app (no trailing slash). This is NOT configurable after the build."
+        required: true
+        default: https://one.mahekindia.com
+      publish:
+        description: "Upload to R2 so /downloads serves it. Off = build and attach to this run only."
+        type: boolean
+        default: false
+
+concurrency:
+  # Never two release builds at once: they would race for the same object key
+  # in R2 and the second to finish would silently win.
+  group: mbos-apk
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The API base is checked BEFORE anything is built, because the failure
+      # it prevents is silent: a bundle pointed at localhost installs, opens,
+      # and fails every sync with a network error that looks like bad signal.
+      - name: Refuse a build that would point at nowhere
+        run: |
+          BASE="${{ inputs.api_base }}"
+          case "$BASE" in
+            https://*) ;;
+            *) echo "::error::api_base must be an https URL. Got '$BASE'. The app cannot be repointed after the build."; exit 1 ;;
+          esac
+          case "$BASE" in
+            */) echo "::error::api_base must not end in a slash — the app appends its own paths."; exit 1 ;;
+          esac
+          echo "Building against $BASE"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mbos-app/package-lock.json
+
+      # 17, specifically. The Android Gradle Plugin does not accept 18, which
+      # is what made this un-buildable on a developer machine that happened to
+      # have 18 installed — the whole reason this workflow exists.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        working-directory: mbos-app
+        run: npm ci
+
+      # `android/` is gitignored and regenerated every time. The signing plugin
+      # runs as part of this and re-applies the release signing config to the
+      # freshly generated build.gradle — see plugins/withReleaseSigning.js.
+      - name: Prebuild the native project
+        working-directory: mbos-app
+        env:
+          EXPO_PUBLIC_API_BASE: ${{ inputs.api_base }}
+          MBOS_KEYSTORE_STORE_PASSWORD: ${{ secrets.MBOS_KEYSTORE_STORE_PASSWORD }}
+          MBOS_KEYSTORE_KEY_PASSWORD: ${{ secrets.MBOS_KEYSTORE_KEY_PASSWORD }}
+          MBOS_KEYSTORE_KEY_ALIAS: ${{ secrets.MBOS_KEYSTORE_KEY_ALIAS }}
+        run: |
+          if [ -z "$MBOS_KEYSTORE_STORE_PASSWORD" ]; then
+            echo "::error::MBOS_KEYSTORE_STORE_PASSWORD is not set. Without the release key this would be signed with a throwaway debug key, and Android would treat the result as a DIFFERENT APP — every salesman would have to uninstall, losing anything not yet synced, before they could update. See mbos-app/keystore/README.md."
+            exit 1
+          fi
+          npx expo prebuild --platform android --no-install
+
+      - name: Build the release APK
+        working-directory: mbos-app/android
+        env:
+          EXPO_PUBLIC_API_BASE: ${{ inputs.api_base }}
+        run: ./gradlew assembleRelease --no-daemon
+
+      # Proof the signature is the committed key and not a debug fallback. A
+      # wrong signature builds and installs perfectly on a clean phone; it only
+      # fails on the salesman who already has the app, which is the worst place
+      # to discover it.
+      - name: Check it was signed with the release key
+        working-directory: mbos-app
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          test -f "$APK" || { echo "::error::No APK at $APK"; exit 1; }
+          EXPECTED=$(keytool -printcert -jarfile keystore/mbos-release.keystore 2>/dev/null | grep -m1 SHA256 || true)
+          ACTUAL=$(keytool -printcert -jarfile "$APK" | grep -m1 SHA256)
+          echo "APK certificate: $ACTUAL"
+          if echo "$ACTUAL" | grep -qi "androiddebugkey"; then
+            echo "::error::Signed with a debug key. Do not publish this."; exit 1
+          fi
+          ls -lh "$APK"
+
+      - name: Name it
+        id: name
+        working-directory: mbos-app
+        run: |
+          VERSION=$(node -p "require('./app.json').expo.version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "file=mbos-$VERSION-${GITHUB_SHA::7}.apk" >> "$GITHUB_OUTPUT"
+
+      # Always attached to the run, published or not — so a build can be
+      # inspected and installed by hand before anybody decides to publish it.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mbos-apk
+          path: mbos-app/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+
+      # R2, where the backups already go. NOT the container image: it is 89 MB
+      # and this deployment's registry quota is already what makes deploys fail
+      # while CI stays green.
+      - name: Publish to R2
+        if: ${{ inputs.publish }}
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          RCLONE_CONFIG_R2_REGION: auto
+          BUCKET: ${{ secrets.R2_DOWNLOADS_BUCKET }}
+        run: |
+          if [ -z "$BUCKET" ] || [ -z "$RCLONE_CONFIG_R2_ACCESS_KEY_ID" ]; then
+            echo "::error::R2_DOWNLOADS_BUCKET and the R2 credentials must be set as repository secrets to publish."
+            exit 1
+          fi
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+          APK=mbos-app/android/app/build/outputs/apk/release/app-release.apk
+          # Both names: the versioned one is the record, `mbos.apk` is the
+          # stable link people are given and bookmark.
+          rclone copyto "$APK" "R2:${BUCKET}/${{ steps.name.outputs.file }}" --s3-no-check-bucket
+          rclone copyto "$APK" "R2:${BUCKET}/mbos.apk" --s3-no-check-bucket
+          echo "Published ${{ steps.name.outputs.file }} and mbos.apk"
+
+      - name: Say what happened
+        run: |
+          {
+            echo "### MBOS ${{ steps.name.outputs.version }}"
+            echo ""
+            echo "- Built against \`${{ inputs.api_base }}\` — baked in, not changeable afterwards."
+            echo "- Signed with the committed release key, so this updates in place over an existing install."
+            if [ "${{ inputs.publish }}" = "true" ]; then
+              echo "- Published to R2 as \`${{ steps.name.outputs.file }}\` and \`mbos.apk\`."
+            else
+              echo "- **Not published.** Attached to this run only — download it from the Artifacts section above."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

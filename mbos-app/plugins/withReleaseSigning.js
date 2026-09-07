@@ -26,18 +26,38 @@ module.exports = function withReleaseSigning(config) {
       throw new Error('withReleaseSigning only supports Groovy build.gradle files');
     }
 
+    /*
+     * The password comes from the ENVIRONMENT first, and the local file second.
+     *
+     * The file is a developer's machine; the environment is CI, where there is
+     * no file and never should be — writing a secret to disk in a runner so a
+     * plugin can read it back is a copy of it in one more place for no reason.
+     * A build that has neither is refused NAMING BOTH, because "the properties
+     * file is missing" is unhelpful advice on a machine where the answer is a
+     * GitHub secret.
+     *
+     * Signing with the wrong key is not a build failure, which is why this
+     * refuses rather than falling back to anything: Android treats a
+     * differently-signed APK as a different app, so every salesman would have
+     * to uninstall and lose their unsynced work before they could update.
+     */
     const propsPath = path.join(__dirname, '..', 'keystore', 'mbos-release.keystore.properties');
-    if (!fs.existsSync(propsPath)) {
-      throw new Error(
-        `withReleaseSigning: ${propsPath} is missing. It is gitignored on purpose — ` +
-          'see keystore/README.md for where the password lives and why.',
-      );
-    }
-    const raw = fs.readFileSync(propsPath, 'utf8');
+    const fromFile = fs.existsSync(propsPath) ? fs.readFileSync(propsPath, 'utf8') : null;
+    const ENV_NAMES = {
+      storePassword: 'MBOS_KEYSTORE_STORE_PASSWORD',
+      keyPassword: 'MBOS_KEYSTORE_KEY_PASSWORD',
+      keyAlias: 'MBOS_KEYSTORE_KEY_ALIAS',
+    };
     const get = (key) => {
-      const match = raw.match(new RegExp(`^${key}=(.*)$`, 'm'));
-      if (!match) throw new Error(`withReleaseSigning: ${key} missing from ${propsPath}`);
-      return match[1].trim();
+      const fromEnv = process.env[ENV_NAMES[key]];
+      if (fromEnv && fromEnv.trim()) return fromEnv.trim();
+      const match = fromFile && fromFile.match(new RegExp(`^${key}=(.*)$`, 'm'));
+      if (match) return match[1].trim();
+      throw new Error(
+        `withReleaseSigning: no ${key}. Set ${ENV_NAMES[key]} in the environment ` +
+          `(CI does this from a repository secret), or put ${key}= in ${propsPath} ` +
+          'on a developer machine. See keystore/README.md.',
+      );
     };
     const storePassword = get('storePassword');
     const keyPassword = get('keyPassword');
