@@ -827,6 +827,119 @@ export const MIGRATIONS: string[][] = [
       lastSyncedAt INTEGER NOT NULL DEFAULT 0
     );`,
   ],
+
+  /* ---------------------------------------------------------- migration 5
+   * Travel, the day, and the policy the day is priced against.
+   *
+   * `expense_policy` is ONE ROW — a whole policy as JSON, replaced wholesale
+   * on every pull. It is not normalised into rules, and deliberately: the
+   * engine takes a Policy object, the wire sends one, and a schema in between
+   * would be a third vocabulary to keep in step with the other two. It is a
+   * few kilobytes.
+   * ------------------------------------------------------------------- */
+  [
+    `CREATE TABLE IF NOT EXISTS expense_days (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      day TEXT NOT NULL,
+      departedAt INTEGER,
+      returnedAt INTEGER,
+      departedFromHometown INTEGER NOT NULL DEFAULT 1,
+      destinationCity TEXT,
+      arrivedAtDestinationAt INTEGER,
+      overnight INTEGER NOT NULL DEFAULT 0,
+      stayedInHotel INTEGER NOT NULL DEFAULT 0,
+      openingOdometerKm INTEGER,
+      closingOdometerKm INTEGER,
+      odometerPhotoDemanded INTEGER NOT NULL DEFAULT 0,
+      submittedAt INTEGER,
+      lockedAt INTEGER,
+      note TEXT,
+      clientCreatedAt INTEGER NOT NULL,
+      serverCreatedAt INTEGER,
+      deviceId TEXT NOT NULL,
+      syncState TEXT NOT NULL DEFAULT 'local',
+      syncMessage TEXT
+    );`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS expense_days_day ON expense_days (userId, day);`,
+
+    `CREATE TABLE IF NOT EXISTS travel_legs (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      expenseDayId TEXT,
+      day TEXT,
+      modeKey TEXT NOT NULL,
+      fromLabel TEXT,
+      toLabel TEXT,
+      fromLat REAL, fromLng REAL, toLat REAL, toLng REAL,
+      startedAt INTEGER,
+      endedAt INTEGER,
+      purpose TEXT,
+      customerId TEXT,
+      visitId TEXT,
+      manualMetres INTEGER,
+      manualReason TEXT,
+      odometerStartKm INTEGER,
+      odometerEndKm INTEGER,
+      odometerPhotoId TEXT,
+      ticketAmountPaise INTEGER,
+      ticketPhotoId TEXT,
+      ticketReference TEXT,
+      note TEXT,
+      clientCreatedAt INTEGER NOT NULL,
+      serverCreatedAt INTEGER,
+      deviceId TEXT NOT NULL,
+      syncState TEXT NOT NULL DEFAULT 'local',
+      syncMessage TEXT
+    );`,
+    `CREATE INDEX IF NOT EXISTS travel_legs_day ON travel_legs (expenseDayId);`,
+
+    /* Reference. Replaced by a pull, cleared on sign-out. */
+    `CREATE TABLE IF NOT EXISTS travel_modes (
+      key TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      sortOrder INTEGER NOT NULL DEFAULT 0,
+      reimbursementKind TEXT NOT NULL,
+      requiresOdometer INTEGER NOT NULL DEFAULT 0,
+      requiresTicket INTEGER NOT NULL DEFAULT 0,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+
+    `CREATE TABLE IF NOT EXISTS expense_policy (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      policyId TEXT NOT NULL,
+      versionNo INTEGER NOT NULL,
+      effectiveFrom TEXT NOT NULL,
+      effectiveTo TEXT,
+      grade TEXT,
+      cityClass TEXT,
+      rulesJson TEXT NOT NULL,
+      sentencesJson TEXT NOT NULL,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+
+    /* What the office questioned, so the handset can say why a day is waiting
+       rather than leaving the salesman to guess. */
+    `CREATE TABLE IF NOT EXISTS expense_exceptions (
+      id TEXT PRIMARY KEY,
+      expenseDayId TEXT,
+      kind TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      message TEXT NOT NULL,
+      salesmanReason TEXT,
+      resolution TEXT,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+
+    /* The policy module's columns on the expense the salesman types. */
+    `ALTER TABLE expenses ADD COLUMN kind TEXT;`,
+    `ALTER TABLE expenses ADD COLUMN expenseDayId TEXT;`,
+    `ALTER TABLE expenses ADD COLUMN eligiblePaise INTEGER;`,
+    `ALTER TABLE expenses ADD COLUMN excessPaise INTEGER;`,
+    `ALTER TABLE expenses ADD COLUMN vendorName TEXT;`,
+    `ALTER TABLE expenses ADD COLUMN billNumber TEXT;`,
+    `ALTER TABLE expenses ADD COLUMN exceptionReason TEXT;`,
+  ],
 ];
 
 /** Tables holding work the salesman authored. A sync never deletes from these. */
@@ -834,6 +947,9 @@ export const OWNED_TABLES = [
   'visits', 'orders', 'order_lines', 'payments', 'attendance_days', 'tasks',
   'leads', 'samples', 'complaints', 'expenses', 'leave_requests', 'tours',
   'competitor_records', 'approvals',
+  /* The day and its legs are his work, not the office's — a pull must never
+     delete a leg he recorded in a market and has not sent yet. */
+  'expense_days', 'travel_legs',
 ] as const;
 
 /** Tables replaced wholesale by a pull. Safe to clear on sign-out. */
@@ -841,6 +957,10 @@ export const REFERENCE_TABLES = [
   'customers', 'products', 'price_list', 'schemes', 'timeline_events',
   'journey_stops', 'leave_balances', 'holidays', 'documents', 'courses',
   'notifications', 'performance', 'salary',
+  /* The policy and the modes are the office's, wholly. `expense_exceptions`
+     is too: they are the office's questions about his day, and a question he
+     has already answered comes back answered rather than being kept here. */
+  'travel_modes', 'expense_policy', 'expense_exceptions',
   /*
    * `journey_days` is here, and it is the awkward one.
    *

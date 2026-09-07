@@ -42,6 +42,12 @@ import {
   type PlatformData,
 } from "./platform-real";
 import { CATALOGUE_SUBTITLE, CATALOGUE_TABS, CatalogueSection } from "./catalogue-section";
+import {
+  EXPENSE_POLICY_SUBTITLE,
+  EXPENSE_POLICY_TABS,
+  ExpensePolicySection,
+} from "./expense-policy-section";
+import type { ExpensePolicyData } from "./expense-policy-data";
 import type { CatalogueData } from "./catalogue-data";
 import { SHEET_SUBTITLE, SHEET_TABS, type SheetData } from "./sheet-data";
 import { SheetSection } from "./sheet-section";
@@ -100,6 +106,13 @@ export type Address = { section?: string; tab?: string };
  */
 const CATALOGUE_SECTION = "catalogue";
 
+/*
+ * The expense policy is shared data too, not one app's settings: MBOS computes
+ * against it on the handset, the Sales Dashboard reads it to explain a claim,
+ * and accounts pay on it. It sits beside the catalogue for the same reason.
+ */
+const EXPENSE_POLICY_SECTION = "expense-policy";
+
 /**
  * The imported order sheet. Data rather than configuration, like the
  * catalogue — and read-only, because the spreadsheet is the source and a
@@ -119,6 +132,7 @@ export function AdminConsole({
   apps,
   crm,
   catalogue,
+  expensePolicy,
   sheet,
   voice,
   maps,
@@ -133,6 +147,7 @@ export function AdminConsole({
   apps: AppDefinition[];
   crm: CrmConfig;
   catalogue: CatalogueData;
+  expensePolicy: ExpensePolicyData;
   sheet: SheetData;
   voice: VoiceData;
   maps: MapsData;
@@ -154,6 +169,7 @@ export function AdminConsole({
           apps={apps}
           crm={crm}
           catalogue={catalogue}
+          expensePolicy={expensePolicy}
           sheet={sheet}
           voice={voice}
           maps={maps}
@@ -197,6 +213,7 @@ function addressOf(section: string, tab: string): string {
 function firstTab(section: string): string {
   if (section === "crm" || section === `${APP_PREFIX}crm`) return CRM_SCHEMA.tabs[0]?.key ?? "";
   if (section === CATALOGUE_SECTION) return CATALOGUE_TABS[0].slug;
+  if (section === EXPENSE_POLICY_SECTION) return EXPENSE_POLICY_TABS[0].slug;
   if (section === SHEET_SECTION) return SHEET_TABS[0].slug;
   return PLATFORM_TABS[section]?.[0]?.slug ?? "";
 }
@@ -205,6 +222,7 @@ function ConsoleShell({
   apps,
   crm,
   catalogue,
+  expensePolicy,
   sheet,
   voice,
   maps,
@@ -218,6 +236,7 @@ function ConsoleShell({
   apps: AppDefinition[];
   crm: CrmConfig;
   catalogue: CatalogueData;
+  expensePolicy: ExpensePolicyData;
   sheet: SheetData;
   voice: VoiceData;
   maps: MapsData;
@@ -266,6 +285,8 @@ function ConsoleShell({
     ? (schema?.tabs.map((t) => ({ slug: t.key, label: t.label })) ?? [])
     : section === CATALOGUE_SECTION
       ? CATALOGUE_TABS.map((t) => ({ slug: t.slug, label: t.label }))
+      : section === EXPENSE_POLICY_SECTION
+        ? EXPENSE_POLICY_TABS.map((t) => ({ slug: t.slug, label: t.label }))
       : section === SHEET_SECTION
         ? SHEET_TABS.map((t) => ({ slug: t.slug, label: t.label }))
         : (platformTabs ?? []);
@@ -498,6 +519,24 @@ function ConsoleShell({
               onClick={() => navigate(CATALOGUE_SECTION, firstTab(CATALOGUE_SECTION))}
             />
             <NavButton
+              label="Expense policy"
+              active={section === EXPENSE_POLICY_SECTION}
+              tone={expensePolicy.versions.some((v) => v.inForce) ? "success" : "danger"}
+              badge={
+                expensePolicy.versions.some((v) => v.inForce)
+                  ? undefined
+                  : expensePolicy.versions.length
+                    ? "draft"
+                    : "none"
+              }
+              title={
+                expensePolicy.versions.some((v) => v.inForce)
+                  ? undefined
+                  : "No expense policy is in force, so no claim has an eligible amount yet."
+              }
+              onClick={() => navigate(EXPENSE_POLICY_SECTION, firstTab(EXPENSE_POLICY_SECTION))}
+            />
+            <NavButton
               label="Order sheet"
               active={section === SHEET_SECTION}
               tone={sheet.summary.rowsWithIssues ? "danger" : "success"}
@@ -542,6 +581,8 @@ function ConsoleShell({
                           : "Registered in the app registry, not yet built."
                         : section === CATALOGUE_SECTION
                           ? CATALOGUE_SUBTITLE
+                          : section === EXPENSE_POLICY_SECTION
+                            ? EXPENSE_POLICY_SUBTITLE
                           : section === SHEET_SECTION
                             ? SHEET_SUBTITLE
                             : section === "voice"
@@ -614,6 +655,7 @@ function ConsoleShell({
                   isAdmin={me.role === "admin"}
                   collections={crm.collections}
                   catalogue={catalogue}
+                  expensePolicy={expensePolicy}
                   access={access}
                   sheet={sheet}
                   voice={voice}
@@ -764,6 +806,7 @@ function SectionBody({
   isAdmin,
   collections,
   catalogue,
+  expensePolicy,
   access,
   sheet,
   voice,
@@ -790,6 +833,7 @@ function SectionBody({
   isAdmin: boolean;
   collections: Record<string, Collection>;
   catalogue: CatalogueData;
+  expensePolicy: ExpensePolicyData;
   access: AccessRow[];
   sheet: SheetData;
   voice: VoiceData;
@@ -802,6 +846,10 @@ function SectionBody({
     return (
       <CatalogueBody catalogue={catalogue} canWrite={canWriteCatalogue} tab={tabIndex} />
     );
+  }
+
+  if (section === EXPENSE_POLICY_SECTION) {
+    return <ExpensePolicySection data={expensePolicy} tab={tabIndex} />;
   }
 
   if (section === SHEET_SECTION) {

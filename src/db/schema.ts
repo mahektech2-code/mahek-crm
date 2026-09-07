@@ -433,6 +433,19 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
    * which a course has.
    */
   "mbos_course",
+  /**
+   * A photograph of an odometer, or a bus ticket. Its own parent kind rather
+   * than `mbos_expense`, because `canRead` decides who may open a file FROM
+   * the parent kind — and a leg is read under the salesman's own scope while
+   * an expense is read under a claim's.
+   */
+  "mbos_travel_leg",
+  /**
+   * The policy document as HR issued it. Nothing parses it; it is the source
+   * of record, so that the rates typed beside it can always be checked
+   * against the thing they were typed from.
+   */
+  "expense_policy",
 ]);
 
 /**
@@ -2006,6 +2019,22 @@ export const attachments = pgTable(
     contentType: text("content_type").notNull(),
     sizeBytes: integer("size_bytes").notNull(),
     thumbnailRef: text("thumbnail_ref"),
+    /**
+     * SHA-256 of the bytes, taken on upload.
+     *
+     * Requirement 47 leans on it: the same FILE claimed twice is the commonest
+     * duplicate there is — a retried submission, one photograph attached to
+     * two days, one bill sent by two people. It is an exact hash and NOT a
+     * perceptual one, so it does not catch a bill photographed a second time;
+     * that would need an image decoder in the container, and the registry
+     * quota is already what breaks deploys here. Every screen that reports a
+     * match says which kind it found.
+     *
+     * Null on anything uploaded before this existed. Those take part in no
+     * duplicate check, which is the honest answer — reading every byte back
+     * out of the store to hash history would cost more than it could find.
+     */
+    contentHash: text("content_hash"),
     status: attachmentStatusEnum("status").notNull().default("uploading"),
     uploadedById: text("uploaded_by_id")
       .notNull()
@@ -4191,12 +4220,508 @@ export const mbosExpenses = pgTable(
     }),
     /** Set where the expense belongs to an outstation tour. */
     tourId: text("tour_id"),
+
+    /* ------------------------------------------------------------------
+     * The policy module.
+     *
+     * `amountPaise` above is CLAIMED — what the salesman asked for — and it
+     * always was, so it is not renamed. Renaming it would have touched six
+     * readers for no gain, and the one thing worse than a badly named column
+     * is a badly named column that six queries disagree about.
+     *
+     * `eligiblePaise` is what the policy allows. It is written at submission
+     * as a rendering convenience and it is NOT the truth: the truth is
+     * re-derived from the stamped policy version, which cannot change, so the
+     * two can only ever agree. There is a test saying so.
+     * ------------------------------------------------------------------ */
+
+    /** travel | food | lodging | local_transport | other. */
+    kind: text("kind"),
+    /** `travel_leg` | `expense_day` | `manual` — what produced this line. */
+    sourceType: text("source_type"),
+    sourceId: text("source_id"),
+    expenseDayId: text("expense_day_id"),
+
+    eligiblePaise: bigint("eligible_paise", { mode: "number" }),
+    /** Claimed less eligible, never negative. Requirements 35 and 41. */
+    excessPaise: bigint("excess_paise", { mode: "number" }),
+
+    /** The resolution this was worked out under. Stamped, never looked up. */
+    policyId: text("policy_id"),
+    resolvedGrade: text("resolved_grade"),
+    resolvedCityClass: text("resolved_city_class"),
+
+    /** Requirement 43 — why he is asking for something outside policy. */
+    exceptionReason: text("exception_reason"),
+
+    /* ---- what requirement 47 matches a duplicate on ---- */
+    vendorName: text("vendor_name"),
+    billNumber: text("bill_number"),
+    billDate: date("bill_date"),
+    /** A perceptual hash of the bill image, taken on upload. */
+    billHash: text("bill_hash"),
+
+    /**
+     * Requirement 50 — a locked day is corrected by SUPERSEDING a line, never
+     * by editing one. What was submitted stays exactly as it was submitted;
+     * the correction is a new row saying what it should have been, and both
+     * are readable. Editing in place destroys the only record of what the
+     * original claim said.
+     */
+    supersededById: text("superseded_by_id"),
+    supersedesId: text("supersedes_id"),
   },
   (t) => [
     index("mbos_expenses_user_idx").on(t.userId, t.expenseDate),
     index("mbos_expenses_claim_idx").on(t.claimId),
+    index("mbos_expenses_day_idx").on(t.expenseDayId),
+    index("mbos_expenses_dup_idx").on(t.userId, t.billNumber),
   ],
 );
+
+/* ------------------------------------------------- the expense POLICY */
+
+/**
+ * A policy VERSION.
+ *
+ * The caps this replaces lived in `app_settings` as one current value per
+ * category, and that is the storage requirement 6 makes impossible: raising
+ * ₹/km from 3.50 to 4.00 there would silently restate every expense ever
+ * claimed, because there would be nowhere for the old number to still be.
+ *
+ * **A published version is IMMUTABLE.** A change is a new version with a new
+ * effective-from date; the old one gets an effective-to. That is what makes
+ * "old expenses are calculated on the policy applicable on that expense date"
+ * a property of the storage rather than a rule somebody has to remember — an
+ * old claim re-read through `policyOn()` can only ever get the answer it got
+ * the first time, because there is nothing that could have changed.
+ *
+ * Two published versions may not cover one date. That is an exclusion
+ * constraint on the daterange in `0086`, not a check in a service: it is the
+ * one invalid state this table can express, and a screen refusing it is a
+ * screen somebody eventually bypasses. Drizzle cannot render an exclusion
+ * constraint, which is why it lives only in the SQL — the same arrangement the
+ * trigram indexes in `0008` and `0013` already have.
+ *
+ * `sourceAttachmentId` is the PDF, Excel or Word file HR actually issued.
+ * Nothing parses it: it is the source of record, so that the rules typed
+ * beside it can always be checked against the document they came from.
+ */
+export const expensePolicyStatusEnum = pgEnum("expense_policy_status", [
+  "draft",
+  "published",
+  "superseded",
+  "archived",
+]);
+
+export const expensePolicies = pgTable(
+  "expense_policies",
+  {
+    id: text("id").primaryKey(),
+    versionNo: integer("version_no").notNull(),
+    title: text("title").notNull(),
+    status: expensePolicyStatusEnum("status").notNull().default("draft"),
+    effectiveFrom: date("effective_from").notNull(),
+    /** Null is an open end — the version currently in force. */
+    effectiveTo: date("effective_to"),
+    /** The document as issued. Never parsed; always readable. */
+    sourceAttachmentId: text("source_attachment_id").references(() => attachments.id),
+    notes: text("notes"),
+    /** A decision, stamped — the same kind of mark as `orders.approved_at`. */
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedById: text("published_by_id").references(() => users.id),
+    supersededByPolicyId: text("superseded_by_policy_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("expense_policies_version_key").on(t.versionNo),
+    index("expense_policies_effective_idx").on(t.status, t.effectiveFrom),
+  ],
+);
+
+/**
+ * One rule of one policy.
+ *
+ * `kind` is the closed vocabulary in `lib/engines/expense-policy.ts` and
+ * `valueJson` is that kind's own payload, validated per kind on the way in.
+ * A general expression language was the alternative and it is a second
+ * programming language inside MahekOne: unreviewable, untestable, and one
+ * stray character from paying a whole team nothing.
+ *
+ * **`grade` and `cityClass` are on the RULE, not on an assignment table**, and
+ * requirements 7 and 8 are answered here. A real expense policy is one
+ * document with a table of hotel limits inside it, not twelve documents — and
+ * twelve policies would be twelve places to edit the day the fuel rate moves,
+ * eleven of which somebody forgets. Null means "any", the most specific match
+ * wins, and a grade outranks a city because grade is a fact about the person
+ * while city is a fact about one trip.
+ */
+export const expensePolicyRules = pgTable(
+  "expense_policy_rules",
+  {
+    id: text("id").primaryKey(),
+    policyId: text("policy_id")
+      .notNull()
+      .references(() => expensePolicies.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    /** `travel_mode:own_bike`, `category:lodging`, `meal:breakfast`, `*`. */
+    scopeKey: text("scope_key").notNull().default(""),
+    grade: text("grade"),
+    cityClass: text("city_class"),
+    valueJson: jsonb("value_json").$type<Record<string, unknown>>().notNull(),
+    sequence: integer("sequence").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("expense_policy_rules_policy_idx").on(t.policyId, t.kind),
+    /* One answer per question. Two rules of one kind at one specificity is an
+       ambiguous policy — the engine breaks the tie deterministically because
+       it also runs on a handset over whatever came down the wire, but there is
+       no reason to let one be STORED. */
+    uniqueIndex("expense_policy_rules_key").on(
+      t.policyId,
+      t.kind,
+      t.scopeKey,
+      t.grade,
+      t.cityClass,
+      t.sequence,
+    ),
+  ],
+);
+
+/**
+ * The grades a policy may name.
+ *
+ * HRMS holds `employees.position` — free text, typed by HR on the workbook —
+ * and `employees.department`, which is the sheet's "Position Type" and reads
+ * Sales / Office Staff / Other / Owner. Neither is a grade, and keying
+ * reimbursement rates on free text would give four spellings of "ASM" four
+ * different hotel limits, silently.
+ *
+ * So a grade is a row, the mapping from what HR typed is a second row, and
+ * exactly one grade is the RESIDUAL — enforced by a partial unique index, the
+ * same way the product mix categories are. A person whose position maps to
+ * nothing falls to the residual AND is listed as unmapped on the console
+ * screen: somebody being paid on a rule nobody chose for them is exactly the
+ * row that must not be silent.
+ */
+export const expenseGrades = pgTable(
+  "expense_grades",
+  {
+    id: text("id").primaryKey(),
+    key: text("key").notNull(),
+    label: text("label").notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+    isResidual: boolean("is_residual").notNull().default(false),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("expense_grades_key").on(t.key)],
+);
+
+/** What HR typed, normalised, and the grade it means. */
+export const expenseGradeMap = pgTable(
+  "expense_grade_map",
+  {
+    id: text("id").primaryKey(),
+    /** `employees.position`, lower-cased and squeezed. Stored as matched on. */
+    positionNormalised: text("position_normalised").notNull(),
+    /** As HR actually wrote it, for a screen to show. */
+    positionRaw: text("position_raw"),
+    gradeId: text("grade_id")
+      .notNull()
+      .references(() => expenseGrades.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("expense_grade_map_position_key").on(t.positionNormalised)],
+);
+
+/**
+ * Which class of city somebody was in.
+ *
+ * A rule set with four hundred city names in it is a rule set nobody
+ * maintains, and the day a new town is added the salesman there gets no
+ * allowance with nothing on any screen saying why. Four classes, and the
+ * city → class list is a thing an admin edits.
+ *
+ * The class is a property of the DESTINATION rather than of the employee's
+ * posting: the rules it feeds are a hotel limit and a food allowance, and both
+ * are about what things cost where somebody is standing. On a local day the
+ * destination is the home city, so one rule resolves both and there is no
+ * branch to get wrong.
+ */
+export const expenseCityClasses = pgTable(
+  "expense_city_classes",
+  {
+    id: text("id").primaryKey(),
+    /** Lower-cased and squeezed, matched on. `customers.city` is the source. */
+    cityNormalised: text("city_normalised").notNull(),
+    cityRaw: text("city_raw"),
+    /** `metro` | `tier1` | `tier2` | `other`. Text, so a fifth costs nothing. */
+    cityClass: text("city_class").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("expense_city_classes_city_key").on(t.cityNormalised),
+    index("expense_city_classes_class_idx").on(t.cityClass),
+  ],
+);
+
+
+/* ------------------------------------------------- travel and the day */
+
+/**
+ * How somebody got there.
+ *
+ * A ROW rather than a `pgEnum`, and requirement 3 is why: an admin adds and
+ * changes things here without a developer, and "Auto/Local Transport" is
+ * plainly the start of a list rather than the end of one. Postgres refuses to
+ * USE an enum value in the transaction that adds it and drizzle-kit applies
+ * every pending migration in one, so an enum would guarantee a two-deploy
+ * dance every time the client names a new mode.
+ *
+ * `reimbursementKind` is what the policy engine branches on, and it is stored
+ * here rather than inferred from the mode's name: `own_bike` is per-kilometre
+ * because somebody said so, not because of what it is called.
+ */
+export const mbosTravelModes = pgTable(
+  "mbos_travel_modes",
+  {
+    id: text("id").primaryKey(),
+    key: text("key").notNull(),
+    label: text("label").notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+    /** `per_km` | `actuals` | `zero` — which family of policy rule prices it. */
+    reimbursementKind: text("reimbursement_kind").notNull(),
+    /** Own vehicle: the salesman is asked for a start and end reading. */
+    requiresOdometer: boolean("requires_odometer").notNull().default(false),
+    /** A ticket: the salesman is asked what it cost and for the ticket. */
+    requiresTicket: boolean("requires_ticket").notNull().default(false),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("mbos_travel_modes_key").on(t.key)],
+);
+
+/**
+ * One day of one salesman, as far as expenses are concerned.
+ *
+ * It exists because food cannot be entered — requirement 26 says the meals are
+ * worked out from when he left and when he got back, so something has to hold
+ * those two times. Everything else it carries follows from being the only row
+ * that is per-person-per-day: it is what the daily summary totals, what the
+ * EOD submission submits, and what the lock locks.
+ *
+ * **The policy resolution is STAMPED here, not looked up later.** A person
+ * promoted from Executive to ASM would otherwise retroactively change what
+ * last year's claims were worth, because the grade is an input to the rules.
+ * The eligible arithmetic is still DERIVED — a published policy cannot change,
+ * so re-deriving is stable — but the question it is derived from is frozen.
+ */
+export const mbosExpenseDays = pgTable(
+  "mbos_expense_days",
+  {
+    ...mbosColumns(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    day: date("day").notNull(),
+
+    /* ---- when he was away. Requirement 26 is entirely these two. ---- */
+    departedAt: timestamp("departed_at", { withTimezone: true }),
+    returnedAt: timestamp("returned_at", { withTimezone: true }),
+    /** Requirement 28's condition: the late start is a start FROM HOME. */
+    departedFromHometown: boolean("departed_from_hometown").notNull().default(true),
+
+    /* ---- where he went ---- */
+    destinationCity: text("destination_city"),
+    /** Resolved from `expense_city_classes` and stamped. See the note above. */
+    destinationCityClass: text("destination_city_class"),
+    /** Requirement 29's window is measured against this. */
+    arrivedAtDestinationAt: timestamp("arrived_at_destination_at", { withTimezone: true }),
+    /**
+     * The first fix inside the destination, where the day's trail covered it.
+     * Kept BESIDE the entered time rather than replacing it: the entered time
+     * is what the allowance is computed from, because refusing somebody ₹250
+     * for a flat battery on an overnight bus is the wrong failure. This is the
+     * cross-examination.
+     */
+    arrivalObservedAt: timestamp("arrival_observed_at", { withTimezone: true }),
+
+    overnight: boolean("overnight").notNull().default(false),
+    stayedInHotel: boolean("stayed_in_hotel").notNull().default(false),
+    tourId: text("tour_id").references(() => mbosTours.id, { onDelete: "set null" }),
+
+    /* ---- the odometer chain, so a gap in it is visible ---- */
+    openingOdometerKm: integer("opening_odometer_km"),
+    closingOdometerKm: integer("closing_odometer_km"),
+    /**
+     * Requirement 20's random draw, made in the OFFICE and sent down. A check
+     * the handset rolls for itself is a check it can decline to fail.
+     */
+    odometerPhotoDemanded: boolean("odometer_photo_demanded").notNull().default(false),
+
+    /* ---- the policy this day was worked out under. §1.4 of the plan. ---- */
+    policyId: text("policy_id").references(() => expensePolicies.id),
+    resolvedGrade: text("resolved_grade"),
+    resolvedCityClass: text("resolved_city_class"),
+
+    /* ---- §J, the daily close ---- */
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    /** What the totals were at submission. A record, never rebuilt. */
+    submittedClaimedPaise: bigint("submitted_claimed_paise", { mode: "number" }),
+    submittedEligiblePaise: bigint("submitted_eligible_paise", { mode: "number" }),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    /** Requirement 50 — a correction is authorised, and it says why. */
+    reopenedAt: timestamp("reopened_at", { withTimezone: true }),
+    reopenedById: text("reopened_by_id").references(() => users.id),
+    reopenReason: text("reopen_reason"),
+    note: text("note"),
+  },
+  (t) => [
+    uniqueIndex("mbos_expense_days_user_day_key").on(t.userId, t.day),
+    index("mbos_expense_days_day_idx").on(t.day),
+    index("mbos_expense_days_submitted_idx").on(t.submittedAt),
+  ],
+);
+
+/**
+ * One movement, and the thing requirement 25's ledger is a list of.
+ *
+ * Deliberately NOT an `mbos_expenses` row with a category of travel. A leg has
+ * a from, a to, a mode, three candidate distances, an odometer pair, a photo,
+ * a purpose and a customer, and forcing that into a row holding a category and
+ * an amount throws all of it away — along with every requirement from 16 to 23
+ * and the whole of §K's sales-per-kilometre.
+ *
+ * **All three distances are kept.** Requirement 19 asks the system to compare
+ * GPS against the odometer, which is impossible if only the winner is stored,
+ * and requirement 48 asks for abnormal distance against GPS *and* the odometer
+ * *and* the person's own history. `chosenMetres` is what the money was paid
+ * on; the other two are the evidence that it was right.
+ *
+ * Metres and integers, for the same reason money is paise: a float of
+ * kilometres accumulates error across a day of legs where nobody can see it.
+ */
+export const mbosTravelLegs = pgTable(
+  "mbos_travel_legs",
+  {
+    ...mbosColumns(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    expenseDayId: text("expense_day_id").references(() => mbosExpenseDays.id, {
+      onDelete: "cascade",
+    }),
+    modeKey: text("mode_key").notNull(),
+
+    /* ---- requirement 21 ---- */
+    fromLabel: text("from_label"),
+    toLabel: text("to_label"),
+    fromLat: doublePrecision("from_lat"),
+    fromLng: doublePrecision("from_lng"),
+    toLat: doublePrecision("to_lat"),
+    toLng: doublePrecision("to_lng"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+
+    /* ---- requirements 22, 23, 55 and 56 ---- */
+    purpose: text("purpose"),
+    customerId: text("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    visitId: text("visit_id").references(() => mbosVisits.id, { onDelete: "set null" }),
+    orderId: text("order_id").references(() => orders.id, { onDelete: "set null" }),
+
+    /* ---- the three distances, requirements 16 to 19 ---- */
+    gpsMetres: integer("gps_metres"),
+    /** `trail` | `straight_line_factored`. Null where nothing measured it. */
+    gpsMethod: text("gps_method"),
+    gpsFixCount: integer("gps_fix_count"),
+    gpsCoveragePct: integer("gps_coverage_pct"),
+    /** Only where there is no GPS figure: what was asked and could not answer. */
+    gpsReason: text("gps_reason"),
+    manualMetres: integer("manual_metres"),
+    manualReason: text("manual_reason"),
+    odometerStartKm: integer("odometer_start_km"),
+    odometerEndKm: integer("odometer_end_km"),
+    odometerMetres: integer("odometer_metres"),
+    odometerPhotoId: text("odometer_photo_id").references(() => attachments.id),
+
+    /** What the policy said to pay on, and where it came from. Derived. */
+    chosenMetres: integer("chosen_metres"),
+    chosenSource: text("chosen_source"),
+    /** GPS against the odometer, in basis points. Requirement 19's number. */
+    varianceBps: integer("variance_bps"),
+
+    /* ---- a ticket, requirements 11 to 13 ---- */
+    ticketAmountPaise: bigint("ticket_amount_paise", { mode: "number" }),
+    ticketPhotoId: text("ticket_photo_id").references(() => attachments.id),
+    /** A PNR or ticket number. What requirement 47 matches a duplicate on. */
+    ticketReference: text("ticket_reference"),
+
+    note: text("note"),
+  },
+  (t) => [
+    index("mbos_travel_legs_user_idx").on(t.userId, t.startedAt.desc()),
+    index("mbos_travel_legs_day_idx").on(t.expenseDayId),
+    index("mbos_travel_legs_customer_idx").on(t.customerId),
+    index("mbos_travel_legs_visit_idx").on(t.visitId),
+  ],
+);
+
+/**
+ * Something on a day worth a person looking at.
+ *
+ * A table rather than a column on the expense, because the owner's exception
+ * dashboard is a list of these (requirement 69), each is resolved on its own
+ * (requirement 43), and one day can raise six for different reasons. A flags
+ * bitmask would answer "is anything wrong" and nothing else.
+ *
+ * **An exception routes a claim; it never refuses one.** The money is already
+ * spent, and refusing to record it has not saved it — it has only made sure
+ * nobody finds out. `severity` decides who decides, and nothing more.
+ */
+export const mbosExpenseExceptions = pgTable(
+  "mbos_expense_exceptions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    expenseDayId: text("expense_day_id").references(() => mbosExpenseDays.id, {
+      onDelete: "cascade",
+    }),
+    expenseId: text("expense_id").references(() => mbosExpenses.id, { onDelete: "cascade" }),
+    travelLegId: text("travel_leg_id").references(() => mbosTravelLegs.id, {
+      onDelete: "cascade",
+    }),
+    kind: text("kind").notNull(),
+    /** `info` | `warn` | `block_route`. */
+    severity: text("severity").notNull().default("warn"),
+    /** The sentence somebody reads, with the numbers already in it. */
+    message: text("message").notNull(),
+    /** The numbers behind it, so a screen can show the working. */
+    detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}),
+    /** Requirement 43 — what the salesman said when he asked for it anyway. */
+    salesmanReason: text("salesman_reason"),
+    raisedAt: timestamp("raised_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedById: text("resolved_by_id").references(() => users.id),
+    /** `accepted` | `rejected` | `corrected`. */
+    resolution: text("resolution"),
+    resolutionNote: text("resolution_note"),
+  },
+  (t) => [
+    index("mbos_expense_exceptions_open_idx").on(t.resolvedAt, t.severity),
+    index("mbos_expense_exceptions_day_idx").on(t.expenseDayId),
+    index("mbos_expense_exceptions_user_idx").on(t.userId, t.raisedAt.desc()),
+  ],
+);
+
 
 /* ------------------------------------------------------------ attendance */
 
@@ -4662,6 +5187,22 @@ export const mbosApprovals = pgTable(
     /** Mandatory on a rejection — somebody has to be told something. */
     decisionNote: text("decision_note"),
     approvedAmountPaise: bigint("approved_amount_paise", { mode: "number" }),
+    /**
+     * Which step of the chain this row is. Requirement 44.
+     *
+     * 0 is the ordinary decider; 1 is the escalation. The subject's state is
+     * the state of its HIGHEST step, which keeps the rule above true — the
+     * state is still derived from this table and never written beside it —
+     * while letting a claim need two answers rather than one.
+     *
+     * The owner is escalated TO, never substituted for. Skipping the manager
+     * removes the person who actually knows whether that salesman was in Pune
+     * on Tuesday, and requirement 45 is about keeping ROUTINE work off senior
+     * desks rather than moving exceptional work up one.
+     */
+    stepIndex: integer("step_index").notNull().default(0),
+    /** Why this step exists: `normal`, `over_cap`, `high_value`, ... */
+    routeReason: text("route_reason"),
   },
   (t) => [
     /** The approver's queue, and the only hot query on this table. */
@@ -5222,6 +5763,65 @@ export const salesPerformanceCategories = pgTable(
  * first night this ran there is no reading to compare against, and the screen
  * says so rather than showing a movement of zero.
  */
+/**
+ * What the field cost in a month, frozen at the end of it.
+ *
+ * Requirement 72's trend. A SNAPSHOT rather than a cache, and the distinction
+ * is the whole reason the table exists: a trend derived live from the ledger
+ * restates history every time somebody corrects an old claim or a manager
+ * approves a day from three months ago — so the shape of the last twelve
+ * months would change under the owner's eye without anything having happened.
+ * `customer_health_snapshots` next door made the same argument first.
+ *
+ * The nightly pass rewrites the CURRENT month's row and never a past one,
+ * which is what makes a closed month correct for free: it stops being
+ * overwritten on the last night of the month, so no job has to fire on exactly
+ * the right day.
+ *
+ * **It cannot be backfilled**, and the screen says "we cannot say yet" rather
+ * than drawing a flat line — a month before this table existed has no honest
+ * value, and drawing a zero for it would show the owner a cost reduction that
+ * never happened.
+ */
+export const expenseMonthSnapshots = pgTable(
+  "expense_month_snapshots",
+  {
+    id: text("id").primaryKey(),
+    /** `YYYY-MM`, the same key everything else in this schema uses. */
+    period: text("period").notNull(),
+    /** Null is the company total; a user id is that person's row. */
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
+
+    /* Approved money only, the same rule cost follows everywhere else. */
+    travelPaise: bigint("travel_paise", { mode: "number" }).notNull().default(0),
+    foodPaise: bigint("food_paise", { mode: "number" }).notNull().default(0),
+    lodgingPaise: bigint("lodging_paise", { mode: "number" }).notNull().default(0),
+    localTransportPaise: bigint("local_transport_paise", { mode: "number" }).notNull().default(0),
+    otherPaise: bigint("other_paise", { mode: "number" }).notNull().default(0),
+    /** Claimed and not yet decided. Kept apart so a slow month is not read as a cheap one. */
+    awaitingPaise: bigint("awaiting_paise", { mode: "number" }).notNull().default(0),
+
+    /* What it bought, so the trend is a ratio rather than a cost in a vacuum. */
+    revenuePaise: bigint("revenue_paise", { mode: "number" }).notNull().default(0),
+    metres: bigint("metres", { mode: "number" }).notNull().default(0),
+    visitCount: integer("visit_count").notNull().default(0),
+    newCustomerCount: integer("new_customer_count").notNull().default(0),
+    salesmanCount: integer("salesman_count").notNull().default(0),
+
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    /* One row per period per person, and one for the company.
+       The real index is `NULLS NOT DISTINCT` and lives in `0089` — Drizzle
+       cannot render that, the same way it cannot render the trigram indexes in
+       `0008` and `0013`. It matters: the company-wide row carries a null user,
+       and without it two of those are both storable, which doubles the whole
+       trend on the second nightly run of any month. */
+    uniqueIndex("expense_month_snapshots_key").on(t.period, t.userId),
+    index("expense_month_snapshots_period_idx").on(t.period),
+  ],
+);
+
 export const customerHealthSnapshots = pgTable(
   "customer_health_snapshots",
   {
@@ -5488,3 +6088,16 @@ export type MbosSyncReceipt = typeof mbosSyncReceipts.$inferSelect;
 export type MbosConflict = typeof mbosConflicts.$inferSelect;
 export type MbosPriceListEntry = typeof mbosPriceList.$inferSelect;
 export type MbosScheme = typeof mbosSchemes.$inferSelect;
+
+/* ------------------------------------------------------- expense policy */
+
+export type ExpensePolicy = typeof expensePolicies.$inferSelect;
+export type ExpensePolicyRule = typeof expensePolicyRules.$inferSelect;
+export type ExpenseGrade = typeof expenseGrades.$inferSelect;
+export type ExpenseGradeMapping = typeof expenseGradeMap.$inferSelect;
+export type ExpenseCityClass = typeof expenseCityClasses.$inferSelect;
+export type ExpenseMonthSnapshot = typeof expenseMonthSnapshots.$inferSelect;
+export type MbosTravelMode = typeof mbosTravelModes.$inferSelect;
+export type MbosExpenseDay = typeof mbosExpenseDays.$inferSelect;
+export type MbosTravelLeg = typeof mbosTravelLegs.$inferSelect;
+export type MbosExpenseException = typeof mbosExpenseExceptions.$inferSelect;

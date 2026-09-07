@@ -87,6 +87,8 @@ export type JobName =
   | "snapshot-queue"
   | "build-queues"
   | "link-delivery-parties"
+  /** This month's expense figures, frozen for the owner's trend. */
+  | "expense-month-snapshot"
   | "seed-targets"
   | "copy-forward-sales-targets"
   | "recompute-performance"
@@ -156,6 +158,26 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
   /* The field app's nightly tidy-up rides the same schedule as the CRM's.
      One cron, one place to look when something did not run. */
   results.push(await run("mbos-nightly", mbosNightly, triggeredById));
+
+  /* This month's expense figures, frozen.
+     Requirement 72's trend reads the snapshot rather than the ledger, so that
+     a closed month reads the same on every load and correcting an old claim
+     does not silently redraw a chart somebody made a decision from. Only the
+     CURRENT month is written: a past month stops being overwritten the day it
+     closes, which is what makes it correct without any job firing on exactly
+     the right date. */
+  results.push(
+    await run("expense-month-snapshot", async () => {
+      const { snapshotExpenseMonth } = await import(
+        "@/lib/services/expense-roi-service"
+      );
+      const rows = await snapshotExpenseMonth(day.slice(0, 7));
+      return {
+        recordsAffected: rows,
+        detail: `${day.slice(0, 7)}: ${rows} rows, one per salesman plus the company total`,
+      };
+    }, triggeredById),
+  );
 
   /* Where the goods went, from the tab that has always known and never said.
      Before the caches, because nothing downstream reads it yet — and after the

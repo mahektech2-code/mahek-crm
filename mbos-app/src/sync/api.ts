@@ -256,6 +256,14 @@ export type PullPayload = {
   performance?: unknown[];
   /** His own pay, current month and last. Reference only, same as performance. */
   salary?: unknown[];
+  /** The modes a leg may name. Upserted by key. */
+  travelModes?: unknown[];
+  /**
+   * The expense policy in force, narrowed to this salesman, as the rules his
+   * own copy of the engine reads. REPLACED wholesale — see `replaceExpensePolicy`.
+   * Null means the office has published nothing covering today.
+   */
+  expensePolicy?: unknown | null;
   /**
    * `{ mediaId, transcript }` per voice note the office has written out. It is
    * what releases the recording here — see `sync/media.ts`.

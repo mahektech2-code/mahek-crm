@@ -1,7 +1,7 @@
 import "server-only";
-import { put, del, get } from "@vercel/blob";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
+import { encodeS3Path, parseEndpoint, signRequest } from "./s3-signing";
 
 /**
  * Where attachment bytes live.
@@ -12,11 +12,17 @@ import { db } from "@/db";
  * them. For a few complaint photographs a week that is simpler in every way
  * that matters.
  *
- * Blob takes over the moment BLOB_READ_WRITE_TOKEN exists, because Postgres
- * stops being the right answer at volume: bytes in the database are bytes in
- * every backup, every restore and every replica, and they are billed as
- * database storage rather than as file storage. The switch is the constant at
- * the bottom of this file and nothing else.
+ * An S3-compatible store takes over the moment one is configured, because
+ * Postgres stops being the right answer at volume: bytes in the database are
+ * bytes in every backup, every restore and every replica, and they are billed
+ * as database storage rather than as file storage. The switch is the constant
+ * at the bottom of this file and nothing else.
+ *
+ * There was a third backend, Vercel Blob, and it is gone. It was the right
+ * answer while the app ran on Vercel; this deployment is a droplet with
+ * Cloudflare R2, so the SDK was 916 KB of image weight that no code path could
+ * reach — and the container registry being full is already what breaks deploys
+ * here. Nothing migrates: a `stored_ref` names the store it was written to.
  *
  * Neither backend is ever read directly by a browser. Bytes come back through
  * /api/attachments/[id], which checks the caller can see the parent record.
@@ -36,7 +42,7 @@ export interface FileStorage {
   }): Promise<StoredFile>;
   read(ref: string): Promise<ArrayBuffer>;
   remove(ref: string): Promise<void>;
-  readonly kind: "postgres" | "blob";
+  readonly kind: "postgres" | "s3";
 }
 
 /**
@@ -72,34 +78,168 @@ const postgresStorage: FileStorage = {
   },
 };
 
-const blobStorage: FileStorage = {
-  kind: "blob",
+/* ---------------------------------------------------------------------------
+ * S3-compatible object storage — DigitalOcean Spaces, R2, MinIO, S3 itself.
+ *
+ * **This is the backend the travel and expense module needs.** Bill and
+ * odometer photographs at field scale run to roughly 600 MB a month for a
+ * small team, and bytes in Postgres are bytes in every backup, every restore
+ * and every replica, billed as database storage. `AGENTS.md` already says
+ * Postgres stops being right at volume; this module is what crosses that line.
+ *
+ * **Mahek already runs Cloudflare R2, so this needs no new supplier, no SDK
+ * and no new bill.** R2 speaks the S3 API; so do Spaces, MinIO and S3 itself,
+ * and this code cannot tell them apart. R2's two particulars — the region is
+ * the literal word `auto`, and the endpoint carries the account id and NOT the
+ * bucket — are written out in `.env.production.example`, because both produce
+ * a bare 403 or 404 rather than anything naming the cause.
+ *
+ * Signing is `lib/s3-signing.ts`, hand-rolled against the published test
+ * vectors rather than pulled in as an SDK — see the note there.
+ * ------------------------------------------------------------------------- */
+
+function s3Config() {
+  /*
+   * The credentials this deployment ALREADY has.
+   *
+   * `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_ENDPOINT` are set for
+   * the offsite database backups (`deploy/backup.sh`). Attachments are the
+   * same account and the same token, so turning this on is ONE new variable —
+   * the bucket — rather than a second copy of a credential that then has to be
+   * rotated in two places and will not be.
+   *
+   * `S3_*` overrides all of it, for a deployment on something that is not R2.
+   */
+  const s3Bucket = process.env.S3_BUCKET;
+  const usingS3 = Boolean(s3Bucket ?? process.env.S3_ENDPOINT);
+  const endpoint = usingS3 ? process.env.S3_ENDPOINT : process.env.R2_ENDPOINT;
+  const accessKeyId = usingS3 ? process.env.S3_ACCESS_KEY_ID : process.env.R2_ACCESS_KEY_ID;
+  const secretAccessKey = usingS3
+    ? process.env.S3_SECRET_ACCESS_KEY
+    : process.env.R2_SECRET_ACCESS_KEY;
+  if (!endpoint || !accessKeyId || !secretAccessKey) return null;
+
+  const { host, bucketFromPath, protocol } = parseEndpoint(endpoint);
+  /* The explicit variable wins, so somebody who has set both and changed their
+     mind gets the one they last edited rather than the one buried in a URL. */
+  const bucket = s3Bucket ?? process.env.R2_ATTACHMENTS_BUCKET ?? bucketFromPath;
+  if (!bucket) return null;
+
+  /*
+   * **Never the backup bucket.** They are the same account and it is one
+   * character to point at the wrong one — and the consequence is not a mess,
+   * it is loss: the backup bucket has a retention policy that deletes old
+   * objects, so every bill photograph would quietly disappear on a schedule
+   * nobody associated with attachments. Refusing here means the store falls
+   * back to Postgres, which is slow and correct, rather than to a bucket that
+   * eats what it is given.
+   */
+  if (process.env.R2_BUCKET && bucket === process.env.R2_BUCKET) {
+    console.error(
+      "[storage] The attachments bucket is the same as R2_BUCKET, which is where database dumps go and which has a retention policy that deletes them. Attachments would be deleted on that schedule. Falling back to Postgres — give attachments their own bucket.",
+    );
+    return null;
+  }
+
+  return {
+    bucket,
+    host,
+    protocol,
+    /* R2 signs with the literal word `auto` and nothing else. A datacentre
+       code here answers 403 and explains nothing. */
+    region: process.env.S3_REGION ?? (usingS3 ? "us-east-1" : "auto"),
+    accessKeyId,
+    secretAccessKey,
+  };
+}
+
+const s3Storage: FileStorage = {
+  kind: "s3",
   async upload({ key, body, contentType }) {
-    // Private, not public-with-an-unguessable-name. An unguessable public URL
-    // is still a URL that works for anyone who ends up with it — forwarded,
-    // logged by a proxy, pasted into a chat.
-    await put(key, Buffer.from(body), {
-      access: "private",
-      contentType,
-      addRandomSuffix: false,
+    const config = s3Config()!;
+    const buffer = Buffer.from(body);
+    const path = `/${config.bucket}/${encodeS3Path(key)}`;
+    const headers = signRequest({
+      method: "PUT",
+      host: config.host,
+      path,
+      region: config.region,
+      accessKeyId: config.accessKeyId,
+      secretAccessKey: config.secretAccessKey,
+      body: buffer,
+      /* No ACL header, so the object takes the bucket's default — which must
+         be private. An unguessable public URL is still a URL that works for
+         anybody who ends up with it: forwarded, logged by a proxy, pasted into
+         a chat. Bytes are served by /api/attachments/[id] and nothing else. */
+      headers: { "Content-Type": contentType, "Content-Length": String(buffer.byteLength) },
+      now: new Date(),
     });
-    return { ref: key, sizeBytes: body.byteLength };
-  },
-  async read(ref) {
-    const result = await get(ref, { access: "private" });
-    if (!result || result.statusCode !== 200) {
-      throw new Error("Attachment could not be read from storage.");
+
+    const response = await fetch(`${config.protocol}//${config.host}${path}`, {
+      method: "PUT",
+      headers,
+      body: new Uint8Array(buffer),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `The file store refused the upload (${response.status}). ${await response.text().catch(() => "")}`.trim(),
+      );
     }
-    return new Response(result.stream).arrayBuffer();
+    return { ref: key, sizeBytes: buffer.byteLength };
   },
+
+  async read(ref) {
+    const config = s3Config()!;
+    const path = `/${config.bucket}/${encodeS3Path(ref)}`;
+    const headers = signRequest({
+      method: "GET",
+      host: config.host,
+      path,
+      region: config.region,
+      accessKeyId: config.accessKeyId,
+      secretAccessKey: config.secretAccessKey,
+      body: Buffer.alloc(0),
+      now: new Date(),
+    });
+    const response = await fetch(`${config.protocol}//${config.host}${path}`, { method: "GET", headers });
+    if (!response.ok) throw new Error("Attachment could not be read from storage.");
+    return response.arrayBuffer();
+  },
+
   async remove(ref) {
-    await del(ref);
+    const config = s3Config()!;
+    const path = `/${config.bucket}/${encodeS3Path(ref)}`;
+    const headers = signRequest({
+      method: "DELETE",
+      host: config.host,
+      path,
+      region: config.region,
+      accessKeyId: config.accessKeyId,
+      secretAccessKey: config.secretAccessKey,
+      body: Buffer.alloc(0),
+      now: new Date(),
+    });
+    const response = await fetch(`${config.protocol}//${config.host}${path}`, { method: "DELETE", headers });
+    /* 404 on a delete is success: the bytes are not there, which is what was
+       asked for. Anything else is a store that is refusing us, and a retention
+       sweep that silently fails is one nobody notices for a year. */
+    if (!response.ok && response.status !== 404) {
+      throw new Error(`The file store refused the delete (${response.status}).`);
+    }
   },
 };
 
-export const fileStorage: FileStorage = process.env.BLOB_READ_WRITE_TOKEN
-  ? blobStorage
-  : postgresStorage;
+/**
+ * Which backend is in use.
+ *
+ * S3 first, because a deployment that has configured one has said what it
+ * wants; Vercel Blob second, so an existing deployment keeps working
+ * untouched; Postgres last, which is the default and is right until volume
+ * says otherwise. Nothing migrates bytes between them — a `stored_ref` names
+ * the store it was written to, so switching backends leaves old files where
+ * they are and reads of them fail loudly rather than returning nothing.
+ */
+export const fileStorage: FileStorage = s3Config() ? s3Storage : postgresStorage;
 
 export {
   sniffContentType,

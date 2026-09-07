@@ -29,6 +29,16 @@ export const REJECTION_CODES = [
    */
   "delivery_party_unknown",
   "duplicate",
+  /*
+   * The day this record belongs to has already been submitted and locked.
+   *
+   * Its own code rather than `validation` for the same reason
+   * `outstanding_stale` has one: nothing is wrong with what the handset sent,
+   * it has simply arrived after the door closed. The answer is "ask for the
+   * day to be reopened", not "retry" and not "this app has a bug" — and the
+   * handset needs to be able to tell those apart to say the right sentence.
+   */
+  "day_locked",
   "validation",
   "not_permitted",
 ] as const;
@@ -78,6 +88,33 @@ export const SYNC_ENTITY_TYPES = [
    * which doors — he knows which of them are worth the walk on a Tuesday.
    */
   "plan_stops",
+  /**
+   * The day itself: when he left, when he got back, where he went and whether
+   * he slept in a hotel.
+   *
+   * It exists because food cannot be ENTERED. Requirement 26 works the meals
+   * out from the departure and return times, so something has to carry them —
+   * and once something does, it is also the only row that is per-person-per-
+   * day, which makes it what the daily summary totals and what the EOD lock
+   * locks.
+   */
+  "expense_day",
+  /**
+   * One movement: mode, from, to, and up to three readings of how far.
+   *
+   * Not an expense with a category of travel. A leg carries a purpose, a
+   * customer, an odometer pair and a GPS track, and folding it into a row
+   * holding a category and an amount throws away everything from requirement
+   * 16 to requirement 23 along with the whole of sales-per-kilometre.
+   */
+  "travel_leg",
+  /**
+   * The salesman closing his day. Separate from `expense_day` because
+   * submitting is a DECISION rather than another edit — it prices the day,
+   * routes it, and locks it, and an update that happened to set a timestamp
+   * would do none of that.
+   */
+  "expense_day_submit",
 ] as const;
 
 export type SyncEntityType = (typeof SYNC_ENTITY_TYPES)[number];
@@ -196,6 +233,23 @@ export type PullDelta = {
   priceList: unknown[];
   /** Live promotions. Eligibility and benefit are data, so no rule ships. */
   schemes: unknown[];
+  /**
+   * The travel modes a leg may name, and how each is reimbursed.
+   *
+   * Upserted by key. A mode DEACTIVATED in the office stops being offered
+   * because it stops being sent, and a leg already recorded against it keeps
+   * resolving — the same rule retired quick notes follow.
+   */
+  travelModes: unknown[];
+  /**
+   * The expense policy in force, narrowed to this salesman.
+   *
+   * **Replaced wholesale**, like the price list, and for the same reason: a
+   * withdrawn rule has to disappear, and a per-row merge leaves a rate on the
+   * phone that the office will not pay. Null means no policy covers today, and
+   * the handset says exactly that rather than showing an eligible ₹0.
+   */
+  expensePolicy: unknown | null;
   /** The library — a price sheet, a policy, a customer's own agreement. */
   documents: unknown[];
   /** Training, and which of it is compulsory. */

@@ -49,6 +49,7 @@ import {
 } from "@/lib/services/sheet-sync-service";
 import type { Config } from "@/lib/config/registry";
 import { today } from "@/lib/queries";
+import { expensePolicyData } from "../expense-policy-data";
 import { AdminConsole } from "../console";
 
 export const metadata = { title: "Admin Console · MahekOne" };
@@ -141,6 +142,16 @@ export default async function Page({
   // What the team has sent in from the Feedback button. Read here like every
   // other section's data, so the console arrives rendered.
   const [feedbackRows, counts] = await Promise.all([listFeedback(), feedbackCounts()]);
+
+  // The expense policy. Read here with everything else so the section arrives
+  // rendered — and gated the same way it is enforced: writing is accounts' and
+  // admin's, publishing is admin's alone, both checked again in the action.
+  const expensePolicy = await expensePolicyData(
+    await today(),
+    one("policy"),
+    can(user.role, "expense.policy.write"),
+    can(user.role, "expense.policy.publish"),
+  );
   const secrets = await secretStatuses();
 
   // The platform sections. Every one of these was a fixture until now, so they
@@ -232,6 +243,7 @@ export default async function Page({
         owners,
         canImport: canConfigureCrm || (isPlatformAdmin && isManager(user)),
       }}
+      expensePolicy={expensePolicy}
       catalogue={{
         summary,
         skus: skuPage.rows,

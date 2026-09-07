@@ -298,6 +298,30 @@ export const APP_MODULES: AppModule[] = [
   sales("holidays", "Holidays", "People", "The days nobody is expected to work."),
   sales("salary", "Salary", "People", "Pay, incentive and deductions. Granted deliberately."),
   sales("expenses", "Expenses & claims", "People", "What the field spent, and what it is owed back."),
+  sales(
+    "travel",
+    "Travel ledger",
+    "Field work",
+    "Every movement, with the odometer, the day's GPS track and anything typed by hand side by side — which is the only way to see that a leg read 60 km on a dial and 6 km on the phone.",
+  ),
+  sales(
+    "exceptions",
+    "Expense exceptions",
+    "People",
+    "Claims outside policy, distances that do not agree and spending unlike anything this person usually does. Questions rather than refusals — the money is already spent.",
+  ),
+  sales(
+    "expense-policy",
+    "Expense policy",
+    "People",
+    "Which rules are in force, from when, and who they apply to. Read-only: a policy is authored in the Admin Console, because a manager writing the rules for what their own team's travelling may cost is the conflict order approval exists to avoid.",
+  ),
+  sales(
+    "roi",
+    "Cost & return",
+    "Overview",
+    "Sales per kilometre, per visit, travel as a share of sales, and what each salesman costs against what he brought in. Revenue rather than margin — MahekOne holds no product costs.",
+  ),
 
   sales("documents", "Documents", "Enablement", "Price lists, policies and certificates the handset can open."),
   sales("knowledge", "Knowledge", "Enablement", "Training a salesman is expected to have done."),
@@ -371,6 +395,14 @@ export const APP_MODULES: AppModule[] = [
     "Customer health",
     "The five",
     "Active, at risk, dormant and lost, and who moved between them. The list behind it names customers, their salesperson and what they owe.",
+  ),
+
+  /* ------------------------------------------------------ §M, the field's cost */
+  reports(
+    "expenses",
+    "Field cost & exceptions",
+    "The five",
+    "What the sales team costs a month, broken down, against what it brought in — with only the exceptions that need somebody, and the trend behind both. Revenue rather than margin, because MahekOne holds no product costs.",
   ),
 
   /* --------------------------------------------------- the Founder Dashboard */

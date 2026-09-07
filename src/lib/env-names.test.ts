@@ -56,7 +56,7 @@ function documentedNames(): Set<string> {
   const text = readFileSync(join(ROOT, ".env.production.example"), "utf8");
   const names = new Set<string>();
   for (const line of text.split("\n")) {
-    // `# BLOB_READ_WRITE_TOKEN=` counts: it is documented as optional, which is
+    // A commented-out name counts as documented: it is documented as optional, which is
     // a decision somebody made, not an omission.
     const m = line.match(/^#?\s*([A-Z0-9_]+)=/);
     if (m) names.add(m[1]);

@@ -211,6 +211,15 @@ export const CAPABILITIES = [
   "customer.reassign",
   "customer.assignSalesManager",
   "customer.classify",
+  /*
+   * The expense policy: writing a draft, and putting one into force.
+   *
+   * Two capabilities rather than one because requirement 4 asks for a policy
+   * to be VERIFIED by an authorised person before it goes live, and
+   * verification by the person who typed the rates is not verification.
+   */
+  "expense.policy.write",
+  "expense.policy.publish",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -272,6 +281,37 @@ const ACCOUNTS_ONLY: ReadonlySet<Capability> = new Set<Capability>([
    * calling queue, which is not something to hold by default.
    */
   "customer.reassign",
+  /*
+   * Authoring the expense policy — the ₹/km, the meal amounts, the hotel
+   * ceilings, and who has to approve what.
+   *
+   * A manager is deliberately excluded, and it is the same conflict
+   * `order.approve` and `customer.reassign` exist to avoid, one level up: the
+   * person chasing a target must not write the rules for what the chase is
+   * allowed to cost. Accounts hold it because accounts already maintain every
+   * other money rule in this product, and admin holds everything.
+   *
+   * A manager still decides individual claims. Writing the policy and applying
+   * it are different jobs and this is the line between them.
+   */
+  "expense.policy.write",
+]);
+
+/**
+ * Putting an expense policy into force.
+ *
+ * The narrowest capability in the file, and the only one nobody but a platform
+ * admin holds. Publishing is what makes a set of rates real: from that moment
+ * every handset computes against them and every claim is paid on them, over
+ * a date range that reaches backwards. Requirement 4 asks for somebody to
+ * verify before that happens, so the person who typed the numbers cannot also
+ * be the only person who has read them.
+ *
+ * Deliberately not `config.write`, which is a manager's — a manager may not
+ * author this policy, so they certainly may not put one into force.
+ */
+const ADMIN_ONLY: ReadonlySet<Capability> = new Set<Capability>([
+  "expense.policy.publish",
 ]);
 
 /**
@@ -445,6 +485,7 @@ export { conflictsFor, ROLE_CONFLICTS, type RoleConflict } from "@/lib/role-conf
 
 export function can(role: string, capability: Capability): boolean {
   if (SHARED.has(capability)) return true;
+  if (ADMIN_ONLY.has(capability)) return role === "admin";
   if (ACCOUNTS_ONLY.has(capability)) {
     return role === "accounts" || role === "admin";
   }
@@ -459,14 +500,19 @@ export function can(role: string, capability: Capability): boolean {
 
 export class NotPermittedError extends Error {
   readonly capability: Capability;
-  readonly requiredRole: "manager" | "accounts";
+  readonly requiredRole: "manager" | "accounts" | "admin";
   constructor(capability: Capability) {
-    const role = ACCOUNTS_ONLY.has(capability) ? "accounts" : "manager";
+    const role = ADMIN_ONLY.has(capability)
+      ? "admin"
+      : ACCOUNTS_ONLY.has(capability)
+        ? "accounts"
+        : "manager";
     // Names the required role rather than pretending the resource is absent —
     // the interface shows locked-but-visible controls, and the backend should
     // tell the same story. It has to name the RIGHT role: telling a manager
     // they need the manager role is a dead end.
-    super(`That is ${role === "accounts" ? "an accounts" : "a manager"} action. "${capability}" requires the ${role} role.`);
+    const article = role === "accounts" ? "an accounts" : role === "admin" ? "an administrator" : "a manager";
+    super(`That is ${article} action. "${capability}" requires the ${role} role.`);
     this.name = "NotPermittedError";
     this.capability = capability;
     this.requiredRole = role;

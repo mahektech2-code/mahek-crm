@@ -10,6 +10,7 @@ import { useBoot } from '../src/state/boot';
 import { signOut as signOutReal } from '../src/data/session';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
 import { leaveBalances, listExpenses, listSamples } from '../src/data/requests';
+import { priceDay } from '../src/data/travel';
 import { openLeadCount } from '../src/data/leads';
 import { pendingCount, queueCounts } from '../src/sync/queue';
 import { isoDate, plural } from '../src/lib/format';
@@ -31,6 +32,9 @@ type Counts = {
   openLeads: number;
   leaveLeft: number;
   pendingExpenses: number;
+  dayOpen: boolean;
+  daySent: boolean;
+  legsToday: number;
   openSamples: number;
   toSend: number;
   rejected: number;
@@ -41,6 +45,9 @@ const EMPTY: Counts = {
   openLeads: 0,
   leaveLeft: 0,
   pendingExpenses: 0,
+  dayOpen: false,
+  daySent: false,
+  legsToday: 0,
   openSamples: 0,
   toSend: 0,
   rejected: 0,
@@ -65,7 +72,14 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
         { label: 'Attendance', badge: '', route: 'attendance' },
         { label: 'Leave', badge: n.leaveLeft ? n.leaveLeft + ' left' : '', route: 'leave' },
         { label: 'Salary', badge: '', route: 'salary' },
+        /* The day comes before the claims that hang off it: the meal
+           allowance is worked out from the times on it, so a salesman who
+           never opens this screen is a salesman never paid for his food. */
+        { label: 'Your day', badge: n.dayOpen ? '' : 'not started', route: 'day' },
+        { label: "Today's travel", badge: n.legsToday ? String(n.legsToday) : '', route: 'travel' },
+        { label: 'Close the day', badge: n.daySent ? 'sent' : '', route: 'eod' },
         { label: 'Expenses', badge: n.pendingExpenses ? n.pendingExpenses + ' pending' : '', route: 'expenses' },
+        { label: 'What you are allowed', badge: '', route: 'policy' },
         { label: 'Performance', badge: '', route: 'performance' },
       ],
     },
@@ -113,7 +127,8 @@ export default function MoreScreen() {
         listSamples(),
         pendingCount(),
         queueCounts(),
-      ]).then(([tasks, openLeads, balances, expenses, samples, toSend, queue]) => {
+        priceDay(boot.session?.user.id ?? '', today),
+      ]).then(([tasks, openLeads, balances, expenses, samples, toSend, queue, today_]) => {
         if (!live) return;
         setCounts({
           overdueTasks: tasks.filter((t) => bucketOf(t.dueDate, today) === 'Overdue').length,
@@ -123,6 +138,9 @@ export default function MoreScreen() {
           openSamples: samples.filter((s) => s.state !== 'Converted' && s.state !== 'Rejected').length,
           toSend,
           rejected: queue.rejected ?? 0,
+          dayOpen: today_.day != null,
+          daySent: today_.day?.lockedAt != null,
+          legsToday: today_.legs.length,
         });
       });
       return () => {

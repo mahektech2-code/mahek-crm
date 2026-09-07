@@ -1,4 +1,5 @@
 import "server-only";
+import { fileStorage } from "@/lib/storage";
 import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -318,9 +319,12 @@ export async function integrationStatus(): Promise<Integration[]> {
       name: "Attachment storage",
       state: "Healthy",
       last: "—",
-      note: process.env.BLOB_READ_WRITE_TOKEN
-        ? "Vercel Blob. Bytes live outside the database."
-        : "Postgres. Bytes live in the same backup and point-in-time restore as the rows that refer to them.",
+      /* Asked of the store itself rather than of an environment variable, so
+         this cannot go on describing a backend the code no longer selects. */
+      note:
+        fileStorage.kind === "s3"
+          ? "An S3-compatible bucket. Bytes live outside the database, and are still served only through /api/attachments/[id]."
+          : "Postgres. Bytes live in the same backup and point-in-time restore as the rows that refer to them — right until field photographs make it wrong.",
     },
     {
       name: "WhatsApp",

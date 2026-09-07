@@ -10,6 +10,9 @@ import {
   eodPeriodRange,
   isDashboardPeriod,
   isEodPeriod,
+  asDate,
+  localMinutesSince,
+  type CalendarDate,
   periodRange,
   previousRange,
   rangeBoundaryWindow,
@@ -293,5 +296,47 @@ describe("the spans the EOD report reads over", () => {
     assert.equal(isEodPeriod("last-month"), true);
     assert.equal(isEodPeriod("week"), false, "the dashboard's calendar week is not one of these");
     assert.equal(isEodPeriod(undefined), false);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * The wall clock, named.
+ * ------------------------------------------------------------------------- */
+
+describe("localMinutesSince", () => {
+  const day = "2026-09-07" as CalendarDate;
+
+  test("a morning instant is minutes since local midnight", () => {
+    // 07:30 IST is 02:00 UTC.
+    assert.equal(localMinutesSince(day, new Date("2026-09-07T02:00:00Z")), 7 * 60 + 30);
+  });
+
+  test("it answers in Asia/Kolkata, not in the server's zone", () => {
+    // 00:30 IST on the 7th is 19:00 UTC on the 6th. A bare getHours() on a
+    // UTC server would call this 19:00 the previous day.
+    assert.equal(localMinutesSince(day, new Date("2026-09-06T19:00:00Z")), 30);
+  });
+
+  test("an overnight return runs PAST 1440 rather than wrapping", () => {
+    // 01:30 IST on the 8th, on a day that began on the 7th.
+    assert.equal(localMinutesSince(day, new Date("2026-09-07T20:00:00Z")), 25 * 60 + 30);
+  });
+
+  test("an instant before the day is negative rather than silently clamped", () => {
+    assert.ok(localMinutesSince(day, new Date("2026-09-06T02:00:00Z"))! < 0);
+  });
+
+  test("a timestamp that arrived as a STRING is read, not thrown on", () => {
+    /* `db.execute` with raw SQL hands back strings for timestamptz, and half
+       this codebase reads rows that way. This is the seam that used to throw
+       "Invalid time value" from inside Intl, six frames from the cause. */
+    assert.equal(localMinutesSince(day, "2026-09-07T02:00:00Z"), 7 * 60 + 30);
+  });
+
+  test("something that is not an instant at all answers null, never an Invalid Date", () => {
+    assert.equal(localMinutesSince(day, "not a date"), null);
+    assert.equal(asDate(undefined), null);
+    assert.equal(asDate(new Date("nonsense")), null);
+    assert.ok(asDate("2026-09-07T02:00:00Z") instanceof Date);
   });
 });
