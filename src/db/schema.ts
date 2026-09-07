@@ -3793,6 +3793,22 @@ export const mbosDevices = pgTable(
      * login time, and can change without a new sign-in.
      */
     pushToken: text("push_token"),
+    /**
+     * Whether this handset actually got the OS's background location
+     * permission — reported by the app itself right after it asks, in
+     * `trail.ts`'s `start()`. Null means never reported: an app build from
+     * before this existed, or a day that has not opened tracking yet.
+     *
+     * The difference this answers is not cosmetic. Granted, the OS wakes the
+     * app to take a fix with the screen locked. Refused, tracking falls back
+     * to a plain JS timer that only ticks while the app is the one on
+     * screen — so the trail goes dead the moment the phone locks, for
+     * however long the drive to the next shop takes. That is the real gap a
+     * manager sees on the Live map, and no sampling interval or map styling
+     * closes it: only the salesman turning "Allow all the time" on in his
+     * phone's own settings does.
+     */
+    backgroundLocationGranted: boolean("background_location_granted"),
   },
   (t) => [
     uniqueIndex("mbos_devices_device_key").on(t.deviceId),

@@ -25,6 +25,16 @@ import { appSecrets } from "@/db/schema";
  * it — never to populate a screen. Screens call `secretStatus`, which selects
  * the last four characters and the timestamp and nothing else, so a query that
  * grew a `select *` could not start leaking keys onto a page.
+ *
+ * ONE NAMED EXCEPTION: `olamaps.apiKey` is handed to the browser, by
+ * `/sales/live/page.tsx`, because it is the browser that asks Ola Maps for
+ * map tiles — a key that never left the server could not load a single
+ * street. That is true of every tile provider (Mapbox, Google, Ola), and the
+ * usual answer is not secrecy but scope: restrict the key to this
+ * deployment's own domain in the provider's own console, so a copy seen in a
+ * network tab is not spendable anywhere else. `readSecret` is still the only
+ * function that selects it — the exception is what the caller does with the
+ * value once read, not a second way of reading it.
  * ------------------------------------------------------------------------- */
 
 /**
@@ -36,6 +46,7 @@ export const SECRET_NAMES = {
   "sarvam.apiKey": "SARVAM_API_KEY",
   "openai.apiKey": "OPENAI_API_KEY",
   "msg91.authKey": "MSG91_AUTH_KEY",
+  "olamaps.apiKey": "OLAMAPS_API_KEY",
 } as const;
 
 export type SecretName = keyof typeof SECRET_NAMES;

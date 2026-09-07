@@ -22,7 +22,7 @@
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -44,7 +44,9 @@ import { auditLog, notifications as notificationsTable } from "@/db/schema";
 import { ingestSyncBatch } from "@/lib/actions/mbos";
 import {
   buildBootstrap,
+  buildPull,
   checkDeviceBinding,
+  encodeCursor,
   type MbosPrincipal,
 } from "@/lib/services/mbos-service";
 import type { SyncItem } from "@/lib/mbos/types";
@@ -727,10 +729,9 @@ describe("How many handsets one person may hold", () => {
 
     const outcome = await checkDeviceBinding(other.id, "probe-device");
     assert.equal(outcome.ok, false, "one salesman took over another's phone");
-    assert.match(
-      outcome.ok === false ? outcome.error : "",
-      /registered to another employee/i,
-    );
+    // Generic on purpose: whose account this handset belongs to is an
+    // admin's business, not something surfaced to whoever is holding it.
+    assert.match(outcome.ok === false ? outcome.error : "", /contact your admin/i);
   });
 });
 
@@ -800,6 +801,32 @@ describe("Releasing a handset", () => {
     assert.equal(row.active, true, "it was released anyway");
   });
 
+  test("a released handset can be claimed by somebody else — the whole point of releasing it", async () => {
+    // Before the fix, `checkDeviceBinding`'s hard refusal read `existingForDevice.userId`
+    // without ever checking `active`, so a released row still refused every OTHER
+    // employee forever — release only ever freed the SAME employee to rebind. This is
+    // the scenario the release button and its own error message exist for: handing a
+    // physical phone to somebody new.
+    await asOffice();
+    await releaseDevice({ deviceId: "probe-device", reason: "Reassigned to a new joiner" });
+
+    const [newHire] = await db
+      .insert(users)
+      .values({
+        id: id("usr"),
+        name: "Anjali",
+        email: `anjali-${randomUUID().slice(0, 6)}@test.local`,
+        phone: `98200${Math.floor(10000 + Math.random() * 89999)}`,
+        passwordHash: "x",
+        role: "telecaller",
+        initials: "AJ",
+      })
+      .returning();
+
+    const outcome = await checkDeviceBinding(newHire.id, "probe-device");
+    assert.equal(outcome.ok, true, outcome.ok ? "" : outcome.error);
+  });
+
   test("releasing twice is refused rather than silently repeated", async () => {
     await asOffice();
     await releaseDevice({ deviceId: "probe-device", reason: "Broken" });
@@ -837,6 +864,107 @@ describe("Releasing a handset", () => {
       .from(mbosDevices)
       .where(eq(mbosDevices.deviceId, "probe-device"));
     assert.equal(row.active, true);
+  });
+});
+
+describe("The journey channels' delta pull", () => {
+  /*
+   * `PLAN_HISTORY_DAYS` bound as a bare parameter next to a `::date` cast
+   * left Postgres unable to tell `date - integer` (returns date) from
+   * `date - date` (returns integer) until the parameter's type was known, so
+   * it defaulted to `date` and the surrounding `plan_date >= …` then failed
+   * with "operator does not exist: date >= integer" — every delta pull for
+   * every handset with a cursor, on both the stops channel and the days
+   * channel. Nothing caught it because nothing had ever called buildPull with
+   * a real cursor: this is that call.
+   */
+  test("does not throw once a cursor makes it filter by plan history", async () => {
+    const cursor = encodeCursor(new Date(Date.now() - 60_000));
+    const delta = await buildPull(principal, cursor);
+    assert.ok(Array.isArray(delta.journeyStops));
+    assert.ok(Array.isArray(delta.planDays));
+  });
+});
+
+describe("Starting the day again after checking out", () => {
+  /*
+   * The handset already does the right thing: it clears its own checkOutAt,
+   * appends a new session and resumes GPS collection. What it sends the
+   * server for that resume is `{ id, day, sessions, resumedAt }` — no
+   * checkInAt, no checkOutAt — and the server used to have nothing that
+   * reacted to `resumedAt` at all, so the row's checkOutAt from the earlier
+   * checkout just sat there. The Live map's "who's out" filter
+   * (`checkInAt && !checkOutAt`) and `/api/mbos/positions`'s tracking gate
+   * both read that same column, so a resumed salesman vanished from the map
+   * and every fix he sent afterwards was silently discarded — while the sync
+   * call itself kept answering "accepted".
+   */
+  const day = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+
+  async function attendanceRow() {
+    const [row] = await db
+      .select()
+      .from(mbosAttendanceDays)
+      .where(and(eq(mbosAttendanceDays.userId, salesman.id), eq(mbosAttendanceDays.day, day)));
+    return row;
+  }
+
+  test("a resume clears checkOutAt, and a real checkout sets it again — repeatedly", async () => {
+    const checkIn = item({
+      entityType: "attendance",
+      op: "create",
+      payload: { day, checkInAt: Date.now() - 3 * 3_600_000 },
+    });
+    const [inResult] = await ingestSyncBatch(principal, [checkIn]);
+    assert.equal(inResult.status, "accepted", JSON.stringify(inResult));
+
+    const checkOut = item({
+      entityType: "attendance",
+      entityId: checkIn.entityId,
+      op: "update",
+      payload: { day, checkOutAt: Date.now() - 2 * 3_600_000 },
+    });
+    const [outResult] = await ingestSyncBatch(principal, [checkOut]);
+    assert.equal(outResult.status, "accepted", JSON.stringify(outResult));
+    assert.ok((await attendanceRow()).checkOutAt, "the first checkout never landed");
+
+    // Back out after lunch — the resume payload, exactly as the handset sends it.
+    const resume = item({
+      entityType: "attendance",
+      entityId: checkIn.entityId,
+      op: "update",
+      payload: { day, sessions: "[]", resumedAt: Date.now() - 3_600_000 },
+    });
+    const [resumeResult] = await ingestSyncBatch(principal, [resume]);
+    assert.equal(resumeResult.status, "accepted", JSON.stringify(resumeResult));
+    assert.equal(
+      (await attendanceRow()).checkOutAt,
+      null,
+      "resuming the day left the old checkout in place — the Live map and GPS tracking both read this column",
+    );
+
+    // A second real checkout — proving this is a toggle, not a one-time fix.
+    const checkOutAgain = item({
+      entityType: "attendance",
+      entityId: checkIn.entityId,
+      op: "update",
+      payload: { day, checkOutAt: Date.now() },
+    });
+    await ingestSyncBatch(principal, [checkOutAgain]);
+    assert.ok((await attendanceRow()).checkOutAt, "the second checkout never landed");
+
+    const resumeAgain = item({
+      entityType: "attendance",
+      entityId: checkIn.entityId,
+      op: "update",
+      payload: { day, sessions: "[]", resumedAt: Date.now() },
+    });
+    await ingestSyncBatch(principal, [resumeAgain]);
+    assert.equal(
+      (await attendanceRow()).checkOutAt,
+      null,
+      "a second resume the same day did not reopen the row",
+    );
   });
 });
 

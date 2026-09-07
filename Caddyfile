@@ -18,6 +18,16 @@
 {$DOMAIN} {
 	encode zstd gzip
 
+	# The MBOS APK, served straight off disk. Placed at
+	# /opt/mahekone/downloads/mbos.apk by hand — never built into the app
+	# image, so a 90+ MB binary never touches the 500 MB container registry
+	# (see the deploy job's own comments on that quota), and shipping an
+	# update is "replace the file on the droplet", no deploy required.
+	handle_path /downloads/* {
+		root * /srv/downloads
+		file_server
+	}
+
 	# The app publishes no port to the host; this is the only route to it.
 	reverse_proxy app:3000 {
 		# Server Actions and dictation uploads are POSTs that take a while.

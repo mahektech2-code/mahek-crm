@@ -9,6 +9,7 @@ import {
   territory,
 } from "@/lib/services/sales-service";
 import { today } from "@/lib/recompute";
+import { readSecret } from "@/lib/secrets";
 import { Banner, MetricRow, Pill, ScreenHeader } from "../parts";
 import { plural } from "../words";
 import { ShopMap } from "./shop-map";
@@ -39,13 +40,14 @@ const NO_REGION = "No region set";
  */
 export default async function Page() {
   const day = await today();
-  const [rows, gap, team, byRegion, shopMapPins, prospectMapPins] = await Promise.all([
+  const [rows, gap, team, byRegion, shopMapPins, prospectMapPins, olaMapsKey] = await Promise.all([
     territory(),
     gpsGap(),
     fieldTeam(),
     teamByRegion(day),
     shopPins(),
     prospectPins(),
+    readSecret("olamaps.apiKey"),
   ]);
 
   const unassigned = rows.filter((r) => !r.salesmanId);
@@ -135,7 +137,7 @@ export default async function Page() {
         <div className="mb-2.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
           Where they are
         </div>
-        <ShopMap shops={shopMapPins} prospects={prospectMapPins} />
+        <ShopMap shops={shopMapPins} prospects={prospectMapPins} apiKey={olaMapsKey} />
       </div>
 
       {managers.length ? (

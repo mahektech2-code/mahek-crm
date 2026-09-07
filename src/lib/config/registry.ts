@@ -1669,15 +1669,48 @@ export const SETTINGS = [
     default: true,
   },
   {
-    key: "mbos.location.trackEveryMinutes",
+    key: "mbos.location.trackEverySeconds",
     type: "integer",
     category: "mbos-location",
     label: "How often a position is taken",
     description:
-      "Minutes between fixes while the day is open. Every minute draws a smoother line and costs battery on a phone that has to last until the evening; every fifteen is a line that cuts corners through buildings. Five is a shape you can recognise a beat from.",
+      "Seconds between fixes while the day is open. At this density the line connecting them hugs the actual road on its own, without needing a map-matching service to snap it there — the tighter the interval, the closer the shape gets to the road actually walked. Every few seconds is close to exact and costs real battery over a full field day; a minute or more is back to a line that cuts corners through buildings. Three is close to exact — the shape of the road, not just the shape of the beat — and worth the extra battery once a salesman is checked in rather than idle. It is a ceiling on how often the HANDSET tries, not a promise: a dropped signal or a backgrounded app still leaves real gaps no interval fixes, which is what the Live map's own gap line is for.",
+    default: 3,
+    min: 3,
+    max: 300,
+  },
+  {
+    key: "mbos.location.dwellRadiusMeters",
+    type: "integer",
+    category: "mbos-location",
+    label: "How far counts as \"still there\"",
+    description:
+      "Metres a run of consecutive fixes may drift from each other and still count as one stop rather than movement — GPS drifts even standing still, so this has to clear ordinary drift without also swallowing a slow walk down one street. Sized off the accuracy a handset actually reports, not off the road: a tighter number here reads a slow walk as a stop, a looser one misses a real one.",
+    default: 60,
+    min: 15,
+    max: 300,
+  },
+  {
+    key: "mbos.location.dwellMinMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How long counts as a stop worth marking",
+    description:
+      "Minutes a salesman has to stay within the radius above before the Live map marks it as a stop rather than a red light or a moment fishing for change. A few minutes is long enough to mean something was actually happening there.",
     default: 5,
     min: 1,
     max: 60,
+  },
+  {
+    key: "mbos.location.trailGapMeters",
+    type: "integer",
+    category: "mbos-location",
+    label: "How far apart counts as no path recorded",
+    description:
+      "Metres between two consecutive fixes before the Live map stops drawing a confident line between them and draws an honest gap instead — a straight, dashed line saying nothing is known about what happened in between, rather than a solid one that looks like the road was walked. Below this, two fixes are close enough that a straight line between them already is the road, at the sampling density this app uses; above it, the fixes are far enough apart that the road actually taken is a guess, most often a stretch driven rather than walked, or a stretch where the handset's signal dropped.",
+    default: 200,
+    min: 50,
+    max: 2000,
   },
 
   {
@@ -2821,7 +2854,10 @@ export type Config = {
   "mbos.location.routeDeviationM": number;
   "mbos.location.unplannedVisitsPerDay": number;
   "mbos.location.trackWhileWorking": boolean;
-  "mbos.location.trackEveryMinutes": number;
+  "mbos.location.trackEverySeconds": number;
+  "mbos.location.dwellRadiusMeters": number;
+  "mbos.location.dwellMinMinutes": number;
+  "mbos.location.trailGapMeters": number;
   "mbos.location.logActivityLocation": boolean;
   "mbos.location.activityFixMaxAgeSeconds": number;
   "mbos.sync.quietHours": number;

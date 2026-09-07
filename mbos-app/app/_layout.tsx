@@ -14,6 +14,9 @@ import { animationFor, durationFor, ROUTE_MOTION, useReduceMotion } from '../src
    and run it — so this has to load on every bundle start, not on the first
    screen that happens to import it. See `sync/trail.ts`. */
 import '../src/sync/trail';
+/* Same reason, for the sync loop's own background task. See
+   `sync/background-sync-task.ts`. */
+import '../src/sync/background-sync-task';
 
 /* Called in global scope and deliberately not awaited — that is what its own
    documentation asks for, and awaiting it inside a hook races the first paint. */

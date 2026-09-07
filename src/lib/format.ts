@@ -155,10 +155,11 @@ const IST_PARTS = new Intl.DateTimeFormat("en-GB", {
   year: "numeric",
   hour: "2-digit",
   minute: "2-digit",
+  second: "2-digit",
   hour12: false,
 });
 
-type WallClock = { day: number; month: number; year: number; hour: number; minute: number };
+type WallClock = { day: number; month: number; year: number; hour: number; minute: number; second: number };
 
 function istParts(d: Date): WallClock | null {
   if (Number.isNaN(d.getTime())) return null;
@@ -172,6 +173,7 @@ function istParts(d: Date): WallClock | null {
     // Midnight comes back as "24" in some runtimes under hour12: false.
     hour: Number(parts.hour) % 24,
     minute: Number(parts.minute),
+    second: Number(parts.second),
   };
 }
 
@@ -199,6 +201,20 @@ export function clock(d: Date): string {
   const suffix = p.hour >= 12 ? "pm" : "am";
   const h = p.hour % 12 || 12;
   return `${h}:${String(p.minute).padStart(2, "0")} ${suffix}`;
+}
+
+/**
+ * Timestamp -> "3:45:12 pm", with seconds — for reading off a single GPS fix
+ * rather than a call log. A trail is sampled every few seconds, so "3:45 pm"
+ * on its own cannot tell one fix from the next one taken moments later; this
+ * is `clock()` with the one extra field that actually distinguishes them.
+ */
+export function clockSeconds(d: Date): string {
+  const p = istParts(d);
+  if (!p) return "-";
+  const suffix = p.hour >= 12 ? "pm" : "am";
+  const h = p.hour % 12 || 12;
+  return `${h}:${String(p.minute).padStart(2, "0")}:${String(p.second).padStart(2, "0")} ${suffix}`;
 }
 
 /** "4 days ago", "today", "in 3 days" */

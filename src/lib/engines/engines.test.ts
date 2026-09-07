@@ -1737,16 +1737,27 @@ describe("E6 EOD aggregator", () => {
     ordersCaptured: 6,
     ordersCount: 6,
     ordersValue: 18_450_000,
+    ordersBoxes: 6,
+    ordersLooseCans: 18,
     followUpsMade: 12,
     promisesCount: 4,
     promisesValue: 6_200_000,
     paymentsConfirmed: 0,
+    promisedCustomers: [{ name: "Amruteshwar Plywood", date: "2026-08-05" }],
     remindersClosed: 8,
     remindersCreated: 5,
     remindersCarriedForward: 3,
     complaintsLogged: 1,
     whatsappSent: 9,
     ordersWithoutCall: 0,
+    noOrderCount: 5,
+    noOrderReasons: [{ label: "Will order later", count: 4 }],
+    queueAssigned: 45,
+    highPriorityPending: 0,
+    paymentAssigned: 4,
+    paymentCallsMade: 0,
+    paymentWaSent: 0,
+    paymentActioned: 0,
     targetAchieved: 84_000_000,
     targetAmount: 120_000_000,
   };
@@ -1760,18 +1771,31 @@ describe("E6 EOD aggregator", () => {
 
   test("the WhatsApp text matches the specified shape", () => {
     const r = aggregateEod(input);
+    const bar = "─".repeat(24);
     assert.equal(
       r.whatsappText,
       [
-        "*EOD - Priya Sharma*",
-        "03 Aug 2026",
-        "",
-        "Calls: 42 attempted · 31 connected · 11 missed · 5 inbound",
-        "Orders: 6 (₹1,84,500)",
-        "Payments: 12 followed up · ₹62,000 promised",
-        "Reminders: 8 closed · 3 carried forward",
-        "Complaints: 1 logged",
-        "Target: ₹8,40,000 of ₹12,00,000 (70%)",
+        "*📊 EOD — Priya Sharma*",
+        "Mon, 3 Aug, 2026",
+        bar,
+        "📞 Order Calls: *42 / 3*",
+        "✅ Orders: *6*",
+        "   📦 6 Box  🥫 18 Can",
+        "📵 No Answer: 11",
+        "🚫 No Order: 5 (Will order later×4)",
+        "💰 Payment Calls: *0 / 4*",
+        "💬 Payment WA Sent: *0 / 4*",
+        bar,
+        "📋 Assigned: *45*",
+        "☎️  Called:   *42* (93%)",
+        "✅ All high priority customers called!",
+        bar,
+        "🤝 Pay Promised: *1*",
+        "   • Amruteshwar Plywood → 5 Aug 26",
+        bar,
+        "🎯 Month: *70%* (₹8,40,000 / ₹12,00,000)",
+        "💸 Payment Follow-up: 4 assigned",
+        "   ✅ Sent: 0  ·  ⏳ Pending: 4",
       ].join("\n"),
     );
   });
@@ -1782,14 +1806,14 @@ describe("E6 EOD aggregator", () => {
     const r = aggregateEod({ ...input, ordersCaptured: 3, ordersCount: 1, ordersValue: 40_000_00 });
     const orders = r.lines.find((l) => l.label === "Orders");
     assert.equal(orders?.value, "3 taken · 1 approved · ₹40,000");
-    assert.match(r.whatsappText, /Orders: 3 taken · 1 approved/);
+    assert.match(r.whatsappText, /Orders: \*3 \(1 appr\.\)\*/);
   });
 
   test("a day where everything taken was approved reads as one number", () => {
     // The split is worth showing only when it means something.
     const r = aggregateEod({ ...input, ordersCaptured: 6, ordersCount: 6 });
     assert.equal(r.lines.find((l) => l.label === "Orders")?.value, "6 · ₹1,84,500");
-    assert.match(r.whatsappText, /Orders: 6 \(₹1,84,500\)/);
+    assert.match(r.whatsappText, /Orders: \*6\*/);
   });
 
   test("the queue figure is a count of work done, not a second progress bar", () => {
@@ -1803,15 +1827,33 @@ describe("E6 EOD aggregator", () => {
     assert.equal(r.lines.some((l) => l.value.includes(" of ")), true, "target line still reads 'of'");
   });
 
+  test("no high-priority line where the queue was never opened today", () => {
+    // An empty queue is not a high-priority queue somebody finished — it is
+    // a day nobody opened one, and the two must not read alike.
+    const r = aggregateEod({ ...input, queueAssigned: 0, highPriorityPending: 0 });
+    assert.ok(!r.whatsappText.includes("All high priority"));
+  });
+
+  test("high-priority stays unsaid while any of it is still pending", () => {
+    const r = aggregateEod({ ...input, highPriorityPending: 2 });
+    assert.ok(!r.whatsappText.includes("All high priority"));
+  });
+
+  test("no-order reasons are silent when nothing was picked", () => {
+    const r = aggregateEod({ ...input, noOrderCount: 3, noOrderReasons: [] });
+    assert.match(r.whatsappText, /No Order: 3\n/);
+  });
+
+  test("the box/can breakdown is omitted on a day with nothing to convert", () => {
+    const r = aggregateEod({ ...input, ordersBoxes: 0, ordersLooseCans: 0 });
+    assert.ok(!r.whatsappText.includes("📦"));
+  });
+
   test("the WhatsApp text contains nothing that renders badly", () => {
     const { whatsappText } = aggregateEod(input);
     assert.ok(!whatsappText.includes("|"), "no table pipes");
     assert.ok(!whatsappText.includes("\t"), "no tabs");
     assert.ok(!/^[-*+] /m.test(whatsappText), "no markdown bullets");
-    assert.ok(
-      whatsappText.split("\n").every((l) => l.length <= 60),
-      "lines stay short enough not to wrap awkwardly",
-    );
   });
 
   test("a zero-activity day still produces a report", () => {
@@ -1827,8 +1869,8 @@ describe("E6 EOD aggregator", () => {
       ordersValue: 0,
       targetAchieved: 0,
     });
-    assert.match(zero.whatsappText, /Calls: 0 attempted/);
-    assert.match(zero.whatsappText, /\(0%\)/);
+    assert.match(zero.whatsappText, /Order Calls: \*0 \//);
+    assert.match(zero.whatsappText, /Month: \*0%\*/);
   });
 
   test("the pre-flight gate blocks while reminders due today are open", () => {

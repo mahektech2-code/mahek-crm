@@ -1439,6 +1439,14 @@ export type LastKnown = {
   place: string | null;
   accuracyM: number | null;
   onLeave: boolean;
+  /**
+   * Whether this salesman's handset actually has the OS's background
+   * location permission — see `mbos_devices.background_location_granted`.
+   * False is the answer that matters: tracking has fallen back to a timer
+   * that dies the moment the phone locks, which is the real cause behind a
+   * trail with real gaps in it. Null means never reported, not refused.
+   */
+  backgroundTrackingGranted: boolean | null;
 };
 
 /**
@@ -1485,11 +1493,13 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
     select u.id as "salesmanId", u.name as "salesmanName", u.initials, u.active,
            d.check_in_at as "checkInAt", d.check_out_at as "checkOutAt",
            f.lat, f.lng, f.at as "seenAt", f.place, f.acc as "accuracyM",
-           (d.status = 'on_leave') as "onLeave"
+           (d.status = 'on_leave') as "onLeave",
+           dev.background_location_granted as "backgroundTrackingGranted"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date
       left join latest f on f.uid = u.id
+      left join mbos_devices dev on dev.user_id = u.id and dev.active
      where u.active ${onlyMine(scope, "u.id")}
      order by f.at desc nulls last, u.name asc
   `) as unknown as LastKnown[];
@@ -1505,7 +1515,7 @@ export type TrackPoint = {
 };
 
 /**
- * One person's day, in order.
+ * One person's day, in order, uncapped in any way that would thin it.
  *
  * The line a manager actually wants: a beat worked from one end to the other
  * looks completely unlike an afternoon spent in one place, and neither is
@@ -1515,6 +1525,12 @@ export type TrackPoint = {
  * something — a track with the shops marked on it answers "did he get to
  * Sadar" without anybody counting pins. The plain fixes carry no name at all
  * rather than a guessed one.
+ *
+ * The limit is generous rather than a real cap: this is one person's one day,
+ * not the whole team's (see `tracksForDay` for that), so even the fifteen-
+ * second sampling `mbos.location.trackEverySeconds` defaults to leaves a
+ * twelve-hour day at under 3,000 fixes — a limit of 2,000 here would have
+ * started truncating ordinary working days the moment that density shipped.
  */
 export async function trackForDay(salesmanId: string, day: string): Promise<TrackPoint[]> {
   const scope = await managerScope();
@@ -1522,7 +1538,7 @@ export async function trackForDay(salesmanId: string, day: string): Promise<Trac
      not see this salesman gets an empty day, not somebody else's. */
   if (scope.salesmanIds !== null && !scope.salesmanIds.includes(salesmanId)) return [];
 
-  return db.execute<TrackPoint>(sql`
+  const rows = (await db.execute<TrackPoint>(sql`
     select p.lat, p.lng, p.at, p.accuracy_m as "accuracyM", null::text as place
       from mbos_positions p
      where p.user_id = ${salesmanId}
@@ -1535,8 +1551,15 @@ export async function trackForDay(salesmanId: string, day: string): Promise<Trac
        and (v.check_in_at ${IST_DAY})::date = ${day}::date
        and v.check_in_lat is not null
     order by at asc
-    limit 2000
-  `) as unknown as TrackPoint[];
+    limit 20000
+  `)) as unknown as TrackPoint[];
+  /* drizzle disables postgres.js's own timestamp parsing on the shared client
+     so it can apply schema-aware conversion itself — a conversion that only
+     runs for typed queries, never for a raw `db.execute`. Every timestamp this
+     file's raw queries return is therefore a string on the wire, whatever the
+     return type says; `at` is named here rather than left for whoever reads
+     `.getTime()` next to discover it. */
+  return rows.map((r) => ({ ...r, at: new Date(r.at) }));
 }
 
 /**
@@ -1547,10 +1570,15 @@ export async function trackForDay(salesmanId: string, day: string): Promise<Trac
  * `row_number()` inside the CTE — because a global limit would give whoever
  * synced first the whole budget and leave the rest of the team as dots.
  *
- * Thinned to `every`th fix. A trail taken every five minutes over a nine-hour
- * day is a hundred points, and at the size this is drawn most of them land on
- * the same pixel: they cost bytes and buy nothing. Visits are never thinned —
- * they are the points that mean something.
+ * Positions are thinned to roughly `perPerson`, spread evenly across however
+ * many the day actually holds — never the first `perPerson` in arrival order.
+ * At the old five-minute sampling a cap this size was never reached, so a cap
+ * that silently truncated instead of thinning went unnoticed; at the current
+ * fifteen-second sampling a working day can carry several thousand fixes, and
+ * truncating to the earliest `perPerson` would cut the trail off a couple of
+ * hours in and lose the rest of the day. Visits are NEVER thinned or capped —
+ * they are the points that mean something, and are unioned in after the
+ * positions are already down to size.
  */
 export async function tracksForDay(
   day: string,
@@ -1559,41 +1587,49 @@ export async function tracksForDay(
   const scope = await managerScope();
 
   const rows = await db.execute<TrackPoint & { salesmanId: string }>(sql`
-    with points as (
+    with positions as (
       select p.user_id as "salesmanId", p.lat, p.lng, p.at,
-             p.accuracy_m as "accuracyM", null::text as place
+             p.accuracy_m as "accuracyM"
         from mbos_positions p
        where (p.at ${IST_DAY})::date = ${day}::date
          ${onlyMine(scope, "p.user_id")}
-      union all
-      select v.salesman_id, v.check_in_lat, v.check_in_lng, v.check_in_at,
-             v.check_in_accuracy_m, c.name
+    ),
+    numbered as (
+      select positions.*,
+             row_number() over (partition by positions."salesmanId" order by positions.at asc) as rn,
+             count(*) over (partition by positions."salesmanId") as total
+        from positions
+    ),
+    positions_thinned as (
+      select "salesmanId", lat, lng, at, "accuracyM", null::text as place
+        from numbered
+       where total <= ${perPerson}
+          or rn % greatest(1, ceil(total::numeric / ${perPerson})::int) = 0
+    ),
+    visits as (
+      select v.salesman_id as "salesmanId", v.check_in_lat as lat, v.check_in_lng as lng,
+             v.check_in_at as at, v.check_in_accuracy_m as "accuracyM", c.name as place
         from mbos_visits v
         join customers c on c.id = v.customer_id
        where (v.check_in_at ${IST_DAY})::date = ${day}::date
          and v.check_in_lat is not null
          ${onlyMine(scope, "v.salesman_id")}
-    ),
-    numbered as (
-      select points.*, row_number() over (
-        partition by points."salesmanId" order by points.at asc
-      ) as n
-        from points
     )
-    select numbered."salesmanId", numbered.lat, numbered.lng, numbered.at,
-           numbered."accuracyM", numbered.place
-      from numbered
-     where numbered.n <= ${perPerson}
-     order by numbered."salesmanId", numbered.at asc
+    select * from positions_thinned
+    union all
+    select * from visits
+    order by "salesmanId", at asc
   `);
 
   const byPerson = new Map<string, TrackPoint[]>();
   for (const row of rows) {
     const list = byPerson.get(row.salesmanId);
+    /* See the comment in `trackForDay`: a raw `db.execute` gets timestamps
+       back as strings, whatever TrackPoint's own type says. */
     const point = {
       lat: row.lat,
       lng: row.lng,
-      at: row.at,
+      at: new Date(row.at),
       accuracyM: row.accuracyM,
       place: row.place,
     };
@@ -1928,7 +1964,7 @@ export type SyncHealthRow = {
  */
 export async function syncHealth(): Promise<SyncHealthRow[]> {
   const scope = await managerScope();
-  return db.execute<SyncHealthRow>(sql`
+  const rows = (await db.execute<SyncHealthRow>(sql`
     select u.id as "salesmanId", u.name as "salesmanName", u.initials, u.active,
            d.device_id as "deviceId", d.model, d.platform, d.last_seen_at as "lastSeenAt",
            coalesce(r.rejected, 0)::int as "rejected7d",
@@ -1957,7 +1993,10 @@ export async function syncHealth(): Promise<SyncHealthRow[]> {
               (coalesce(r.rejected, 0) + coalesce(c.unresolved, 0)) desc,
               u.name asc
      limit 300
-  `) as unknown as SyncHealthRow[];
+  `)) as unknown as SyncHealthRow[];
+  /* See the comment in `trackForDay`: a raw `db.execute` returns a timestamp
+     as a string, whatever this row type says. */
+  return rows.map((r) => ({ ...r, lastSeenAt: r.lastSeenAt ? new Date(r.lastSeenAt) : null }));
 }
 
 export type AuditRow = {

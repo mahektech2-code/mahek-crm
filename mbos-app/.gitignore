@@ -39,3 +39,7 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# The release keystore's password — kept out of git deliberately, see
+# keystore/README.md. The keystore file itself IS committed.
+/keystore/*.properties

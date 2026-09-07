@@ -185,13 +185,25 @@ export async function checkDeviceBinding(
     .where(eq(mbosDevices.deviceId, deviceId))
     .limit(1);
 
-  // The device id is unique across the table: a handset that already belongs
-  // to somebody else is not this person's to sign in on.
-  if (existingForDevice && existingForDevice.userId !== userId) {
+  // The device id is unique across the table, so a handset somebody else is
+  // ACTIVELY on is not this person's to sign in on. A RELEASED row is a
+  // different fact: `releaseDevice` (Sales Dashboard → Handsets) exists
+  // precisely so the physical phone can be handed to somebody else. Refusing
+  // here regardless of `active` used to make that impossible — releasing the
+  // old employee's row never actually freed the handset for a new one,
+  // because this check never looked at `active` at all. The row for the new
+  // employee is written by the ordinary `onConflictDoUpdate` below, which
+  // already reassigns `userId` on a released row; this is the only change
+  // needed to let it be reached.
+  //
+  // The message stays generic on purpose: whose account this handset is tied
+  // to, and which screen releases it, are an admin's business rather than
+  // the person holding the phone's — this is the one login refusal that is
+  // never that person's own account or credential being wrong.
+  if (existingForDevice && existingForDevice.active && existingForDevice.userId !== userId) {
     return {
       ok: false,
-      error:
-        "This handset is registered to another employee. An admin has to release it in the Admin Console before it can be used by somebody else.",
+      error: "This handset can't be used to sign in right now. Contact your admin.",
     };
   }
 
@@ -546,6 +558,18 @@ const TIMELINE_PER_CUSTOMER = 50;
  * the moment the day ended. Fifteen days back is a fortnight either side of
  * today, matching the fifteen-to-twenty-day forward window a manager plans
  * in one sitting.
+ *
+ * Every use of this constant in a query needs `::int` on it explicitly. Bound
+ * as a bare parameter next to `(now() at time zone $tz)::date - $this`,
+ * Postgres cannot resolve which of `date - integer` and `date - date` the
+ * subtraction is before it knows this parameter's type, defaults it to `date`
+ * under the datetime category's own preference rule, and the subtraction
+ * comes back `integer` — so the surrounding `plan_date >= …` then fails with
+ * `operator does not exist: date >= integer`. The cast pins the type before
+ * Postgres has to guess. Confirmed by reproducing the exact failure with a
+ * plain `PREPARE` carrying no parameter types, and confirming the cast alone
+ * fixes it; a literal `15` typed into the query text never hits this, because
+ * a literal is not an unresolved parameter.
  */
 const PLAN_HISTORY_DAYS = 15;
 
@@ -1361,7 +1385,7 @@ export async function buildPull(
           from mbos_journey_stops s
           join mbos_journey_plans p on p.id = s.plan_id
          where p.user_id = ${principal.user.id}
-           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}
+           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}::int
            and (s.updated_at > ${sinceIso} or p.updated_at > ${sinceIso})
          order by p.plan_date asc, s.sequence asc
          limit 500
@@ -1409,7 +1433,7 @@ export async function buildPull(
           from mbos_journey_plans p
           left join users m on m.id = p.proposed_by_id
          where p.user_id = ${principal.user.id}
-           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}
+           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}::int
            and p.updated_at > ${sinceIso}
          order by p.plan_date asc
          limit 200

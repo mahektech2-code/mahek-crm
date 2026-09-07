@@ -1,6 +1,8 @@
 import { deleteSecret, getSecret, setSecret } from '../native/secure';
 import * as Crypto from 'expo-crypto';
 import * as Device from 'expo-device';
+import * as Application from 'expo-application';
+import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { getKv, setKv } from '../db';
 
@@ -42,14 +44,48 @@ const DEVICE_KEY = 'mbos.deviceId';
  * One identifier per install, kept in the keychain rather than the database,
  * so wiping the local store on sign-out does not make this handset look like a
  * new device to the server's session binding.
+ *
+ * **A random UUID does not survive an UNinstall, and that is a different
+ * question from sign-out.** The keychain entry above is scoped to the app's
+ * own storage, and Android deletes an app's storage — keychain-backed or
+ * not — the moment it is uninstalled. A salesman who uninstalls and
+ * reinstalls the same app on the same phone gets a brand-new random id on
+ * first launch, which the server has never seen: `checkDeviceBinding` reads
+ * that, correctly, as a DIFFERENT handset, and refuses the sign-in until an
+ * admin releases the old one — exactly the rule the one-device-per-person
+ * binding is supposed to enforce, firing on a case it was never meant to
+ * catch. `Application.getAndroidId()` is the fix on Android: a value tied to
+ * the device, the signing key and the user, which survives a plain
+ * uninstall/reinstall precisely because it lives outside any app's own
+ * storage — an actually different phone, or a different signing key, still
+ * changes it. The stable release keystore this app now signs with is what
+ * makes that hold across a rebuilt APK rather than only within one install.
+ * iOS gets the equivalent, `getIosIdForVendorAsync` — weaker (Apple resets it
+ * once every app from this vendor is gone) but still better than a value
+ * guaranteed to reset on the exact action being fixed for. Either one is
+ * read only on first launch, same as before; an id already saved is never
+ * replaced, so an existing install's binding cannot shift under it.
  */
 export async function deviceId(): Promise<string> {
-  let id = await getSecret(DEVICE_KEY);
-  if (!id) {
-    id = Crypto.randomUUID();
-    await setSecret(DEVICE_KEY, id);
+  const existing = await getSecret(DEVICE_KEY);
+  if (existing) return existing;
+
+  let id: string | null = null;
+  try {
+    if (Platform.OS === 'android') {
+      id = Application.getAndroidId();
+    } else if (Platform.OS === 'ios') {
+      id = await Application.getIosIdForVendorAsync();
+    }
+  } catch {
+    /* Neither platform API is guaranteed — a simulator, a locked-down ROM,
+       a future OS change. The random id below is the same floor this
+       always had. */
   }
-  return id;
+
+  const resolved = id ?? Crypto.randomUUID();
+  await setSecret(DEVICE_KEY, resolved);
+  return resolved;
 }
 
 export async function deviceLabel(): Promise<string> {
@@ -357,5 +393,18 @@ export async function registerPushToken(pushToken: string | null): Promise<{ ok:
   return request('/api/mbos/push-token', {
     method: 'POST',
     body: JSON.stringify({ pushToken }),
+  });
+}
+
+/**
+ * Whether this handset actually got the OS's background location
+ * permission — the office cannot know this any other way, since the OS's
+ * answer to that prompt never reaches a server on its own. Called once per
+ * `start()`, from `trail.ts`, right after the answer is known.
+ */
+export async function reportLocationPermission(backgroundGranted: boolean): Promise<{ ok: boolean }> {
+  return request('/api/mbos/location-permission', {
+    method: 'POST',
+    body: JSON.stringify({ backgroundGranted }),
   });
 }

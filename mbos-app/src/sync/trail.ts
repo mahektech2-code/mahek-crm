@@ -4,14 +4,16 @@ import * as TaskManager from 'expo-task-manager';
 import { all, run } from '../db';
 import { getConfig } from '../data/config';
 import { getFix, fixOf, rememberFix } from '../native/location';
-import { postPositions } from './api';
+import { postPositions, reportLocationPermission } from './api';
 
 /**
  * The trail.
  *
- * Where the salesman actually went, taken every few minutes while the day is
- * open. Two fixes a day — the check-in and each visit — is not a track, and a
- * map drawn from them looks like tracking without being it.
+ * Where the salesman actually went, taken every few seconds while the day is
+ * open — dense enough that the line connecting the fixes hugs the actual road
+ * on its own, with no map-matching service needed to snap it there. Two fixes
+ * a day — the check-in and each visit — is not a track, and a map drawn from
+ * them looks like tracking without being it.
  *
  * **It runs between the check-in and the check-out and not one second either
  * side.** A track that carried on after the day was closed would be following
@@ -43,6 +45,20 @@ import { postPositions } from './api';
  * than none, and exactly what was shipped before.
  */
 
+/*
+ * Granting the "always" permission later has to be noticed, not just
+ * allowed. Settings and the app are two separate processes, and the OS never
+ * reaches into a running one to say a permission changed — the only way this
+ * side finds out is by asking again. `start()` used to ask once and remember
+ * the answer for the rest of the process's life (a plain `running` boolean),
+ * which meant a salesman who checked in before granting "Allow all the time"
+ * stayed on the foreground floor for the rest of the day even after granting
+ * it: the app was still running, the flag was still set, and nothing ever
+ * called `start()` a second time to notice anything had changed. It tracks
+ * WHICH mechanism is running instead, so a call to `start()` while still on
+ * the floor always retries the real thing, and only a call while the real
+ * thing is already running is a true no-op.
+ */
 const TASK_NAME = 'mbos-trail';
 
 type Row = { id: string; at: number; lat: number; lng: number; accuracyM: number | null };
@@ -84,14 +100,20 @@ TaskManager.defineTask<{ locations: Location.LocationObject[] }>(TASK_NAME, asyn
   await flush();
 });
 
-/* The floor, for a handset with no "always" permission. Every few minutes
+/* The floor, for a handset with no "always" permission. Every few seconds
    while the app happens to be open — the whole of what shipped before. */
 let foregroundTimer: ReturnType<typeof setInterval> | null = null;
-let running = false;
+/**
+ * Which mechanism is actually running, or neither. `'background'` is the
+ * best available and never needs retrying; `'foreground'` is the floor and
+ * every call to `start()` tries to upgrade past it, because the only thing
+ * that changed between one call and the next might be a permission grant.
+ */
+let mode: 'background' | 'foreground' | null = null;
 
 async function takeForeground(): Promise<void> {
   try {
-    const result = await getFix({ accuracyThresholdM: 100, timeoutMs: 15_000 });
+    const result = await getFix({ accuracyThresholdM: 50, timeoutMs: 15_000 });
     const fix = fixOf(result);
     if (!fix) return;
     await store(fix.lat, fix.lng, fix.accuracyM, fix.at);
@@ -121,7 +143,7 @@ async function startBackground(everyMs: number): Promise<boolean> {
     if (!granted) return false;
 
     await Location.startLocationUpdatesAsync(TASK_NAME, {
-      accuracy: Location.Accuracy.Balanced,
+      accuracy: Location.Accuracy.High,
       timeInterval: everyMs,
       distanceInterval: 0,
       showsBackgroundLocationIndicator: true,
@@ -140,35 +162,58 @@ async function startBackground(everyMs: number): Promise<boolean> {
 
 /** Is the trail running right now, one way or the other? */
 export function isTracking(): boolean {
-  return running;
+  return mode !== null;
 }
 
 /**
  * Start following, if the office has asked for it.
  *
- * Idempotent: called on check-in, on app resume and after a sign-in, and only
- * one of the two mechanisms below ever runs at a time. A handset whose
- * permission was refused takes no fixes and says nothing — the visit path has
- * already asked once and been told no, and asking again every five minutes is
- * how somebody turns the app off.
+ * Safe to call repeatedly — on check-in, on app resume, on a cold start
+ * while the day is already open, and after a sign-in — and it is meant to
+ * be, because it is also the only mechanism that notices a permission
+ * granted mid-session. Already on the real background task, it does
+ * nothing; still on the foreground floor, it retries the upgrade every
+ * time, which costs nothing when the answer is still no and is the only
+ * way it ever becomes yes without a check-out. A handset whose permission
+ * keeps being refused takes no fixes beyond the floor and says nothing more
+ * than the one report below — asking the OS again on every fix is how
+ * somebody turns the app off.
  */
 export async function start(): Promise<void> {
-  if (running) return;
+  if (mode === 'background') return;
 
   const on = await getConfig<boolean>('mbos.location.trackWhileWorking', true);
   if (!on) return;
 
-  const minutes = await getConfig<number>('mbos.location.trackEveryMinutes', 5);
-  const every = Math.max(1, minutes) * 60_000;
+  const seconds = await getConfig<number>('mbos.location.trackEverySeconds', 3);
+  const every = Math.max(3, seconds) * 1_000;
 
   const backgroundStarted = await startBackground(every);
-  if (!backgroundStarted) {
-    /* One straight away, so a check-in puts a point on the map rather than a
-       five-minute gap at the start of every day. */
+  if (backgroundStarted) {
+    /* Upgrading off the floor — its timer is now redundant, and running
+       both would double the very sampling this exists to fix. */
+    if (foregroundTimer) {
+      clearInterval(foregroundTimer);
+      foregroundTimer = null;
+    }
+    mode = 'background';
+  } else if (mode !== 'foreground') {
+    /* First start, floor only: one fix straight away, so a check-in puts a
+       point on the map rather than a gap at the start of every day. A retry
+       that is STILL not upgradeable leaves the existing timer running
+       rather than starting a second one beside it. */
     void takeForeground();
     foregroundTimer = setInterval(() => void takeForeground(), every);
+    mode = 'foreground';
   }
-  running = true;
+
+  /* Told to the office, not kept to the handset: a manager watching the Live
+     map has no other way to learn a trail's real gaps are a permission, not
+     a bug. Fire-and-forget, the same as a position that fails to send — this
+     is not on the critical path of the day opening, and every retry above
+     reports again, which is how a permission granted mid-session is ever
+     seen without waiting for a check-out. */
+  void reportLocationPermission(backgroundStarted).catch(() => {});
 }
 
 /**
@@ -177,7 +222,7 @@ export async function start(): Promise<void> {
  * pulled out so the second of those is not `flush()` calling itself.
  */
 async function stopTicking(): Promise<void> {
-  running = false;
+  mode = null;
   if (foregroundTimer) {
     clearInterval(foregroundTimer);
     foregroundTimer = null;

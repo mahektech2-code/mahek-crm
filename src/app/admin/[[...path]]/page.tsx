@@ -265,13 +265,21 @@ export default async function Page({
          * Statuses only — which credentials exist, from where, and their last
          * four characters. `secretStatuses` cannot return a key, so a future
          * edit here cannot start leaking one onto the page.
+         *
+         * Filtered to dictation's own two: this screen is titled and worded
+         * for "the keys dictation calls out with", and `SECRET_NAMES` now
+         * holds credentials for other features too. Rendering every known
+         * secret here regardless of which screen asked would put the Ola
+         * Maps key on a page that never mentions maps.
          */
-        secrets: secrets.map((s) => ({
-          name: s.name,
-          source: s.source,
-          last4: s.last4,
-          updatedAt: s.updatedAt ? s.updatedAt.toISOString() : null,
-        })),
+        secrets: secrets
+          .filter((s) => s.name === "sarvam.apiKey" || s.name === "openai.apiKey")
+          .map((s) => ({
+            name: s.name,
+            source: s.source,
+            last4: s.last4,
+            updatedAt: s.updatedAt ? s.updatedAt.toISOString() : null,
+          })),
         provider: config["voice.transcriptionProvider"],
         fallbackToOpenai: config["voice.fallbackToOpenai"],
         sarvamModel: config["voice.transcriptionModel"],
@@ -279,6 +287,17 @@ export default async function Page({
         languageModel: config["voice.languageModel"],
         maxSeconds: config["voice.maxSeconds"],
         enabled: config["voice.enabled"],
+        canWrite: isPlatformAdmin,
+      }}
+      maps={{
+        secrets: secrets
+          .filter((s) => s.name === "olamaps.apiKey")
+          .map((s) => ({
+            name: s.name,
+            source: s.source,
+            last4: s.last4,
+            updatedAt: s.updatedAt ? s.updatedAt.toISOString() : null,
+          })),
         canWrite: isPlatformAdmin,
       }}
       crm={{
