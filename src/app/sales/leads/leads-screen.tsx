@@ -263,11 +263,11 @@ export function LeadsScreen({
               <>
                 <HeadCell width={230}>Lead</HeadCell>
                 <HeadCell width={160}>Owner</HeadCell>
-                <HeadCell width={120}>Source</HeadCell>
-                <HeadCell align="right" width={140}>Potential</HeadCell>
-                <HeadCell width={130}>Stage</HeadCell>
+                <HeadCell width={140}>Source</HeadCell>
+                <HeadCell align="right" width={130}>Potential</HeadCell>
+                <HeadCell width={110}>Stage</HeadCell>
                 <HeadCell width={130}>Next</HeadCell>
-                <HeadCell width={130}>Age</HeadCell>
+                <HeadCell width={110}>Age</HeadCell>
                 <HeadCell width={190}>Health &amp; metrics</HeadCell>
                 <HeadCell width={44} />
               </>
