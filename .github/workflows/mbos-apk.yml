@@ -122,11 +122,16 @@ jobs:
           # Both sides normalised to lowercase hex with no separators: keytool
           # prints AA:BB:CC uppercase, apksigner prints aabbcc.
           norm() { tr -d ': ' | tr '[:upper:]' '[:lower:]'; }
+          # The LAST whitespace-separated token on each line, not a colon split.
+          # apksigner prints "Signer #1 certificate SHA-256 digest: <hex>", and
+          # splitting that on ':' hands back the label rather than the digest —
+          # which then never matches, and the step reports a signing failure
+          # that is really a parsing one. The digest is always the last token.
           ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" \
-            | grep -m1 -i "certificate SHA-256 digest" | awk -F: '{print $2}' | norm)
+            | grep -m1 -i "certificate SHA-256 digest" | awk '{print $NF}' | norm)
           EXPECTED=$(keytool -list -v -keystore keystore/mbos-release.keystore \
             -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null \
-            | grep -m1 "SHA256:" | awk '{print $2}' | norm)
+            | grep -m1 "SHA256:" | awk '{print $NF}' | norm)
 
           echo "APK signed by:  ${ACTUAL:-<none>}"
           echo "Keystore holds: ${EXPECTED:-<none>}"
@@ -136,6 +141,11 @@ jobs:
             exit 1
           fi
           if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "--- what each tool actually printed ---"
+            "$APKSIGNER" verify --print-certs "$APK" | grep -i "SHA-256" || true
+            keytool -list -v -keystore keystore/mbos-release.keystore \
+              -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null \
+              | grep "SHA256:" || true
             echo "::error::This APK is NOT signed with the committed release key. Android would treat it as a different app: every salesman would have to uninstall — losing anything unsynced — before they could update. Do not publish it."
             exit 1
           fi
