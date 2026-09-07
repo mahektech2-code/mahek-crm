@@ -234,13 +234,34 @@ export function Cell({
   return (
     <td
       colSpan={colSpan}
-      title={title ?? (truncate && typeof children === "string" ? children : undefined)}
+      /* The hover text is offered whenever the cell holds a plain string, not
+       * only where a width was passed. Now that EVERY cell clips, a value can
+       * be cut off in a column nobody thought to mark, and a truncated value
+       * with no way to read it in full is worse than one that overflowed. */
+      title={title ?? (typeof children === "string" ? children : undefined)}
       style={truncate ? { maxWidth: truncate, width: truncate } : undefined}
       onClick={onClick}
       className={cx(
-        "px-4 py-2.5 align-middle text-sm whitespace-nowrap text-body",
+        /*
+         * CLIPS BY DEFAULT, and it has to.
+         *
+         * The table is `table-fixed`, so a column is exactly as wide as its
+         * `HeadCell` says. Combined with `whitespace-nowrap` and no overflow
+         * rule, a value longer than its column did not widen the column and
+         * did not wrap — it PAINTED OVER the cell beside it, so two unrelated
+         * values sat on top of each other and neither could be read. A lead
+         * source of "Mahek EMP 2.0 shop master" landed across the Potential
+         * column and turned "Not estimated" into illegible overlap.
+         *
+         * Clipping was available all along as the `truncate` prop, which meant
+         * every column was one forgotten prop away from this, on data nobody
+         * had seen yet. That is the wrong default: a column that is too narrow
+         * should cut its text off, which is obvious and recoverable on hover,
+         * rather than silently corrupt its neighbour. `truncate` now only sets
+         * an explicit width; the clipping is universal.
+         */
+        "px-4 py-2.5 align-middle text-sm overflow-hidden text-ellipsis whitespace-nowrap text-body",
         align === "right" ? "text-right tabular-nums" : "text-left",
-        truncate ? "overflow-hidden text-ellipsis" : "",
         className,
       )}
     >

@@ -314,7 +314,10 @@ export async function projectCustomerMaster(
           // Where these came from, permanently and on the row itself. The
           // staging table records it too, but a lead source is what somebody
           // reads on the customer's own screen.
-          leadSource: kind === "lead" ? "Mahek EMP 2.0 shop master" : null,
+          /* SHORT, because it is rendered in a 140px table column and the
+           * long form ("Mahek EMP 2.0 shop master") was clipped to nothing
+           * useful. A source is a label somebody scans, not a sentence. */
+          leadSource: kind === "lead" ? "Mahek EMP 2.0" : null,
           gpsLat: pin?.lat,
           gpsLng: pin?.lng,
           // ownerId is deliberately null. On an imported book it would be
