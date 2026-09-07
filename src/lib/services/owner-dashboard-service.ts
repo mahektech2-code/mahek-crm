@@ -157,25 +157,27 @@ function windowOf(range: DateRange) {
 /* ------------------------------------------------------ KPI 1 & 2: leads */
 
 /**
- * Every lead created in a window, from BOTH places this product keeps one.
+ * Every lead created in a window.
  *
- * There are two, and they are genuinely different animals:
+ * THERE USED TO BE TWO, and this function is where the cost of that showed
+ * up worst. `customers.kind = 'lead'` was the CRM's — a party the book knows
+ * has never ordered, with no ladder — and `mbos_leads` was the handset's, with
+ * new → contacted → qualified → negotiation → won/lost. Both were real, both
+ * counted, and this had to union them and then DEDUPLICATE: a converted field
+ * lead wrote a customer row, and if that row was itself a lead created in the
+ * same window it was one opportunity counted twice, inflating the very KPI
+ * that measures lead generation.
  *
- *   `customers.kind = 'lead'` — a party the book knows about that has never
- *     ordered. It has an owner, a source and a created date, and NO ladder.
- *   `mbos_leads` — somebody a salesman actually met, with the full ladder:
- *     new → contacted → qualified → negotiation → won/lost.
+ * One row per lead now, so there is nothing to union and the double-count
+ * cannot be expressed. What survives is the distinction that was always
+ * worth keeping: a lead nobody has put on the ladder has a null `lead_stage`,
+ * so the conversion rate is still measured over ALL leads with the qualified
+ * figure reported beside it — a denominator restricted to qualified ones would
+ * silently drop most of this book and report a flattering number.
  *
- * Both are new business opportunities and both count, because the owner's
- * question is whether the company is generating any — not which table it
- * landed in. What differs is what can be said about them afterwards: only a
- * field lead can be `qualified`, which is why the conversion rate below is
- * measured over ALL leads and the qualified figure is reported beside it.
- *
- * DEDUPLICATED across the two. A field lead that was converted writes a
- * customer row, and if that row is itself a `kind = 'lead'` created in the same
- * window it would be the same opportunity counted twice — so a customer named
- * by any field lead's `converted_customer_id` is dropped from the CRM half.
+ * `origin` is kept in the shape because the screens read it, and it is now
+ * derived from whether anybody ever put the lead on a ladder rather than from
+ * which table it sat in.
  */
 export async function leadsCreatedIn(
   range: DateRange,
@@ -184,69 +186,47 @@ export async function leadsCreatedIn(
   const w = windowOf(range);
   const where = await ownerFilterClause(filters);
 
-  const [crm, field] = await Promise.all([
-    db.execute<Record<string, unknown>>(sql`
-      with first_order as (
-        select o.customer_id, min(o.ordered_at) as first_at
-          from orders o
-         where ${orderCountsSql("o")}
-         group by o.customer_id
-      )
-      select c.id as lead_id,
-             'crm' as origin,
-             c.id as customer_id,
-             c.lead_source as source,
-             c.owner_id as owner_user_id,
-             u.name as owner_name,
-             c.region as state,
-             c.city,
-             c.customer_type,
-             to_char(c.created_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD') as created_on,
-             null::text as stage,
-             to_char(f.first_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD') as first_order_on
-        from customers c
-        left join users u on u.id = c.owner_id
-        left join first_order f on f.customer_id = c.id
-       where c.kind = 'lead'
-         and c.created_at >= ${w.start} and c.created_at <= ${w.end}
-         and not exists (
-           select 1 from mbos_leads ml where ml.converted_customer_id = c.id
-         )
-         and ${where}
-    `),
-    db.execute<Record<string, unknown>>(sql`
-      with first_order as (
-        select o.customer_id, min(o.ordered_at) as first_at
-          from orders o
-         where ${orderCountsSql("o")}
-         group by o.customer_id
-      )
-      select l.id as lead_id,
-             'field' as origin,
-             l.converted_customer_id as customer_id,
-             l.source::text as source,
-             l.assigned_to_user_id as owner_user_id,
-             u.name as owner_name,
-             c.region as state,
-             coalesce(l.city, c.city) as city,
-             c.customer_type,
-             to_char(l.server_created_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD') as created_on,
-             l.stage::text as stage,
-             to_char(f.first_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD') as first_order_on
-        from mbos_leads l
-        left join users u on u.id = l.assigned_to_user_id
-        left join customers c on c.id = l.converted_customer_id
-        left join first_order f on f.customer_id = l.converted_customer_id
-       -- The SERVER's clock. A handset's is one its owner can set, and a lead
-       -- backdated into last month would move a cohort somebody is judged on.
-       where l.server_created_at >= ${w.start} and l.server_created_at <= ${w.end}
-         -- An unconverted field lead has no customer row to filter on, so the
-         -- customer filters can only narrow the ones that DO. Filtering them
-         -- out entirely would drop every lead still being worked, which is
-         -- most of them and exactly what the KPI is counting.
-         and (c.id is null or ${where})
-    `),
-  ]);
+  /*
+   * ONE LEAD, so this is ONE read.
+   *
+   * It used to be two queries against two tables, unioned and then
+   * deduplicated — `customers.kind = 'lead'` had to exclude anything a
+   * `mbos_leads` row pointed at, or a converted field lead was counted twice
+   * and inflated the very KPI that measures lead generation. There is one row
+   * per lead now, so there is nothing to union and nothing to deduplicate:
+   * the double-count it was guarding against cannot be expressed.
+   *
+   * `lead_stage is not null` is what makes a row a lead here rather than
+   * `kind = 'lead'` — a lead that has since been WON is a customer row now,
+   * and dropping it would remove exactly the conversions the cohort exists to
+   * measure.
+   */
+  const rows = await db.execute<Record<string, unknown>>(sql`
+    with first_order as (
+      select o.customer_id, min(o.ordered_at) as first_at
+        from orders o
+       where ${orderCountsSql("o")}
+       group by o.customer_id
+    )
+    select c.id as lead_id,
+           case when c.lead_stage is not null then 'field' else 'crm' end as origin,
+           c.id as customer_id,
+           c.lead_source as source,
+           c.owner_id as owner_user_id,
+           u.name as owner_name,
+           c.region as state,
+           c.city,
+           c.customer_type,
+           to_char(c.created_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD') as created_on,
+           c.lead_stage::text as stage,
+           to_char(f.first_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD') as first_order_on
+      from customers c
+      left join users u on u.id = c.owner_id
+      left join first_order f on f.customer_id = c.id
+     where (c.kind = 'lead' or c.lead_stage is not null)
+       and c.created_at >= ${w.start} and c.created_at <= ${w.end}
+       and ${where}
+  `);
 
   const map = (r: Record<string, unknown>): LeadRow => ({
     leadId: String(r.lead_id),
@@ -263,7 +243,7 @@ export async function leadsCreatedIn(
     firstOrderOn: r.first_order_on === null ? null : String(r.first_order_on),
   });
 
-  return [...crm.map(map), ...field.map(map)];
+  return rows.map(map);
 }
 
 /* --------------------------------------------------- KPI 3 & 4: the sales */

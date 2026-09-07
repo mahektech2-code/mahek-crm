@@ -17,7 +17,6 @@ import {
   mbosExpenseDays,
   mbosExpenseExceptions,
   mbosExpenses,
-  mbosLeads,
   mbosTravelLegs,
   mbosTravelModes,
   mbosActivityLocations,
@@ -532,7 +531,11 @@ const DEPENDENCY_TABLES: Record<string, string> = {
   payment: "payment_receipts",
   complaint: "complaints",
   sample: "mbos_samples",
-  lead: "mbos_leads",
+  /* ONE LEAD, so a lead dependency is looked up in `customers` like the
+   * customer one below it. Leaving this pointing at `mbos_leads` would make
+   * every visit or order queued against a lead wait for a row that is never
+   * written again — a retry loop with nothing at either end to explain it. */
+  lead: "customers",
   task: "mbos_tasks",
   expense: "mbos_expenses",
   attendance: "mbos_attendance_days",
@@ -1823,9 +1826,9 @@ async function handleLeadUpdate(
   const p = parsed.data;
 
   const [existing] = await db
-    .select({ id: mbosLeads.id, name: mbosLeads.name })
-    .from(mbosLeads)
-    .where(eq(mbosLeads.id, item.entityId))
+    .select({ id: customers.id, name: customers.name })
+    .from(customers)
+    .where(eq(customers.id, item.entityId))
     .limit(1);
 
   if (!existing) {
@@ -1846,32 +1849,39 @@ async function handleLeadUpdate(
     };
   }
 
-  const changed: Partial<typeof mbosLeads.$inferInsert> = {
+  const changed: Partial<typeof customers.$inferInsert> = {
     /* Any edit is contact, and staleness is measured from the last thing that
      * happened — so working a lead moves the clock whatever else it changed. */
-    lastActivityDate: await today(),
+    leadLastActivityDate: await today(),
     updatedAt: new Date(),
-    updatedById: principal.user.id,
   };
   if (p.name != null) changed.name = p.name;
   if (p.companyName != null) changed.companyName = p.companyName;
-  if (p.mobile != null) changed.mobile = p.mobile;
+  if (p.mobile != null) changed.phone = p.mobile;
   if (p.city != null) changed.city = p.city;
   if (p.area != null) changed.area = p.area;
-  if (p.stage != null) changed.stage = p.stage;
-  if (p.nextFollowUpDate != null) changed.nextFollowUpDate = p.nextFollowUpDate;
-  if (p.notes != null) changed.notes = p.notes;
+  if (p.stage != null) changed.leadStage = p.stage;
+  if (p.nextFollowUpDate != null) changed.leadNextFollowUpDate = p.nextFollowUpDate;
+  if (p.notes != null) changed.leadNotes = p.notes;
   if (p.estimatedPotentialPaise != null) {
-    changed.estimatedPotentialPaise = p.estimatedPotentialPaise;
+    changed.leadEstimatedPotentialPaise = p.estimatedPotentialPaise;
   }
-  if (p.lostReason != null) changed.lostReason = p.lostReason;
-  if (p.archived != null) changed.archived = p.archived;
+  if (p.lostReason != null) changed.leadLostReason = p.lostReason;
+  if (p.archived != null) changed.leadArchived = p.archived;
+  /*
+   * ONE LEAD, so winning one is this row becoming a customer rather than a
+   * second row being written and pointed at. The handset still sends
+   * `convertedCustomerId` — its payload shape is unchanged — and what that now
+   * means is "this is won": `kind` moves, and the calls, timeline and GPS fix
+   * come with it because they never moved.
+   */
   if (p.convertedCustomerId != null) {
-    changed.convertedCustomerId = p.convertedCustomerId;
-    changed.convertedAt = new Date();
+    changed.kind = "customer";
+    changed.leadStage = "won";
+    changed.leadConvertedAt = new Date();
   }
 
-  await db.update(mbosLeads).set(changed).where(eq(mbosLeads.id, item.entityId));
+  await db.update(customers).set(changed).where(eq(customers.id, item.entityId));
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }
@@ -1897,9 +1907,9 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
    * carries. A second row for one shop is two salesmen working it. */
   if (item.op === "create") {
     const clash = await db
-      .select({ id: mbosLeads.id, name: mbosLeads.name })
-      .from(mbosLeads)
-      .where(and(eq(mbosLeads.mobile, p.mobile), eq(mbosLeads.archived, false)))
+      .select({ id: customers.id, name: customers.name })
+      .from(customers)
+      .where(and(eq(customers.phone, p.mobile), eq(customers.leadArchived, false)))
       .limit(1);
     if (clash.length && clash[0].id !== item.entityId) {
       return {
@@ -1913,45 +1923,52 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
   }
 
   const day = await today();
+  /*
+   * `customers.city` is NOT NULL and the handset's lead form does not require
+   * a town, so one is fallen back to rather than refusing a lead a salesman
+   * has already captured standing in the shop. The convert flow still insists
+   * on a real town before the account is opened — that is where it matters.
+   */
+  const city = p.city ?? p.area ?? "Unknown";
+
   await db
-    .insert(mbosLeads)
+    .insert(customers)
     .values({
       id: item.entityId,
       name: p.name,
       companyName: p.companyName ?? null,
-      mobile: p.mobile,
-      city: p.city ?? null,
+      phone: p.mobile,
+      city,
       area: p.area ?? null,
-      source: p.source ?? "manual",
-      estimatedPotentialPaise: p.estimatedPotentialPaise ?? null,
-      assignedToUserId: principal.user.id,
-      stage: p.stage ?? "new",
-      nextFollowUpDate: p.nextFollowUpDate ?? null,
-      notes: p.notes ?? null,
+      kind: "lead",
+      leadSource: p.source ?? "manual",
+      /* The salesman who raised it OWNS it, and that is what puts it on his
+       * handset AND in the scoped lists the office reads — `ASSIGNED_TO_SQL`
+       * resolves a lead through `owner_id`. One column, three screens. */
+      ownerId: principal.user.id,
+      leadStage: p.stage ?? "new",
+      leadEstimatedPotentialPaise: p.estimatedPotentialPaise ?? null,
+      leadNextFollowUpDate: p.nextFollowUpDate ?? null,
+      leadNotes: p.notes ?? null,
       gpsLat: p.gpsLat ?? null,
       gpsLng: p.gpsLng ?? null,
-      lostReason: p.lostReason ?? null,
-      lastActivityDate: day,
-      clientCreatedAt: new Date(item.clientCreatedAt),
-      createdById: principal.user.id,
-      updatedById: principal.user.id,
-      deviceId: principal.deviceId,
+      leadLostReason: p.lostReason ?? null,
+      leadLastActivityDate: day,
     })
     .onConflictDoUpdate({
-      target: mbosLeads.id,
+      target: customers.id,
       set: {
         name: p.name,
         companyName: p.companyName ?? null,
-        mobile: p.mobile,
-        city: p.city ?? null,
+        phone: p.mobile,
+        city,
         area: p.area ?? null,
-        stage: p.stage ?? "new",
-        nextFollowUpDate: p.nextFollowUpDate ?? null,
-        notes: p.notes ?? null,
-        lostReason: p.lostReason ?? null,
-        lastActivityDate: day,
+        leadStage: p.stage ?? "new",
+        leadNextFollowUpDate: p.nextFollowUpDate ?? null,
+        leadNotes: p.notes ?? null,
+        leadLostReason: p.lostReason ?? null,
+        leadLastActivityDate: day,
         updatedAt: new Date(),
-        updatedById: principal.user.id,
       },
     });
 
@@ -3497,6 +3514,74 @@ async function handleCustomerCreate(
         .where(sql`right(regexp_replace(${customers.phone}, '[^0-9]', '', 'g'), 10) = ${digits}`)
         .limit(1)
     : [];
+
+  /*
+   * ONE LEAD, so winning one PROMOTES the row rather than writing a second.
+   *
+   * The handset creates a customer locally with its own id and sends
+   * `fromLeadId` alongside — a field that has been in this schema since the
+   * convert flow shipped and was read by nothing, so the comment claiming the
+   * two records stayed joined up was never true. It is now the whole
+   * mechanism: the lead row becomes the customer, keeping its calls, its
+   * timeline, its GPS fix and its history, and the lead's id goes back as
+   * `serverId` so the handset points at the record that already exists.
+   *
+   * Without this the conversion would write a SECOND row for a shop that is
+   * already in the book — which is exactly the duplication collapsing the two
+   * tables was meant to end.
+   */
+  if (p.fromLeadId) {
+    const [lead] = await db
+      .select({ id: customers.id, kind: customers.kind })
+      .from(customers)
+      .where(eq(customers.id, p.fromLeadId))
+      .limit(1);
+
+    if (lead && lead.kind === "lead") {
+      await db
+        .update(customers)
+        .set({
+          kind: "customer",
+          name: p.name,
+          contactPerson: p.contactPerson || p.name,
+          phone: p.phone,
+          city,
+          address: p.address ?? null,
+          salesAmId: principal.user.id,
+          thirdParty: Boolean(p.thirdParty),
+          gpsLat: p.gpsLat ?? null,
+          gpsLng: p.gpsLng ?? null,
+          leadStage: "won",
+          leadConvertedAt: new Date(),
+          leadArchived: false,
+          updatedAt: new Date(),
+        })
+        .where(eq(customers.id, lead.id));
+
+      if (distributor) {
+        await db
+          .insert(customerDistributors)
+          .values({
+            id: `cd_${randomUUID().slice(0, 12)}`,
+            customerId: lead.id,
+            distributorCustomerId: distributor.id,
+            isPrimary: true,
+            note: "Opened in the field",
+            createdById: principal.user.id,
+            updatedById: principal.user.id,
+          })
+          .onConflictDoNothing();
+      }
+
+      await notifyManagers(
+        principal.user.id,
+        "A new account was opened in the field",
+        `${principal.user.name} converted ${p.name} in ${p.city} from a lead. It has no credit limit or terms yet — accounts decide those.`,
+      );
+
+      return { kind: "accepted", value: { serverId: lead.id } };
+    }
+  }
 
   await db.transaction(async (tx) => {
     await tx.insert(customers).values({

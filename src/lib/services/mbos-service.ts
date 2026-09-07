@@ -865,20 +865,33 @@ async function openSamples(userId: string, customerIds: string[]) {
   `);
 }
 
+/**
+ * The salesman's open leads.
+ *
+ * ONE LEAD, so this reads `customers` — but the WIRE SHAPE is unchanged, field
+ * for field, because a handset in somebody's pocket was built against it and
+ * an APK cannot be recalled. `mobile` is `customers.phone`, `id` is the
+ * customer's own id, and `convertedCustomerId` is that same id once it has
+ * been won rather than a pointer to a second row that no longer exists.
+ */
 async function openLeads(userId: string) {
   return db.execute<Record<string, unknown>>(sql`
-    select l.id, l.name, l.company_name as "companyName", l.mobile, l.city, l.area,
-           l.source, l.stage, l.estimated_potential_paise as "estimatedPotentialPaise",
-           l.next_follow_up_date::text as "nextFollowUpDate", l.notes,
-           l.gps_lat as "gpsLat", l.gps_lng as "gpsLng",
-           l.converted_customer_id as "convertedCustomerId",
-           l.last_activity_date::text as "lastActivityDate",
-           l.updated_at as "updatedAt"
-      from mbos_leads l
-     where l.assigned_to_user_id = ${userId}
-       and l.archived = false
-       and l.stage not in ('won', 'lost')
-     order by l.next_follow_up_date asc nulls last
+    select c.id, c.name, c.company_name as "companyName", c.phone as mobile,
+           c.city, c.area,
+           c.lead_source as source, c.lead_stage as stage,
+           c.lead_estimated_potential_paise as "estimatedPotentialPaise",
+           c.lead_next_follow_up_date::text as "nextFollowUpDate",
+           c.lead_notes as notes,
+           c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
+           case when c.lead_converted_at is not null then c.id end as "convertedCustomerId",
+           c.lead_last_activity_date::text as "lastActivityDate",
+           c.updated_at as "updatedAt"
+      from customers c
+     where c.owner_id = ${userId}
+       and c.lead_stage is not null
+       and c.lead_archived = false
+       and c.lead_stage not in ('won', 'lost')
+     order by c.lead_next_follow_up_date asc nulls last
   `);
 }
 

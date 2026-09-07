@@ -732,6 +732,16 @@ export const impersonationTokens = pgTable(
 /* -------------------------------------------------------------- §3.3 customer */
 
 /** A record is one or the other, and the difference decides what is shown. */
+/** The qualification ladder. `won` is the stage a conversion leaves behind. */
+export const mbosLeadStageEnum = pgEnum("mbos_lead_stage", [
+  "new",
+  "contacted",
+  "qualified",
+  "negotiation",
+  "won",
+  "lost",
+]);
+
 export const customerKindEnum = pgEnum("customer_kind", ["lead", "customer"]);
 
 /**
@@ -791,6 +801,54 @@ export const customers = pgTable(
      */
     kind: customerKindEnum("kind").notNull().default("customer"),
     leadSource: text("lead_source"),
+
+    /* ---- working a lead ----
+     *
+     * ONE LEAD. These were `mbos_leads`, a second table for the same noun:
+     * the CRM had `kind = 'lead'` with no ladder, the handset had a ladder in
+     * a table of its own, and `leadsCreatedIn` had to read both and
+     * deduplicate them to answer "how many leads did we generate". Two tables
+     * for one word is how the telecaller's list, the manager's dashboard and
+     * the salesman's handset came to disagree about what a lead is.
+     *
+     * What that table held was never identity — it was the state of WORKING
+     * one — so it belongs beside the account it describes. A lead IS an
+     * account that has never ordered, which is the definition this codebase
+     * already used everywhere else.
+     *
+     * They are null on a customer, and that is meaningful rather than
+     * missing: a stage on an account that has been buying for four years
+     * would put the whole book on a funnel it left long ago.
+     *
+     * Winning one is `kind` moving to `customer`. There is no
+     * `convertedCustomerId` because there is no second row to point at, and
+     * the calls, the timeline and the GPS fix come with it because they never
+     * moved.
+     */
+    companyName: text("company_name"),
+    leadStage: mbosLeadStageEnum("lead_stage"),
+    /** Paise. What somebody THINKS it could be worth in a month, never measured. */
+    leadEstimatedPotentialPaise: bigint("lead_estimated_potential_paise", { mode: "number" }),
+    leadNextFollowUpDate: date("lead_next_follow_up_date"),
+    leadNotes: text("lead_notes"),
+    /** Required when the stage is `lost`: a loss nobody explained teaches nothing. */
+    leadLostReason: text("lead_lost_reason"),
+    /**
+     * A lead nobody has touched for the configured window archives itself. A
+     * flag rather than a delete, because a cold lead is exactly who a campaign
+     * goes back to next year.
+     */
+    leadArchived: boolean("lead_archived").notNull().default(false),
+    leadArchivedAt: timestamp("lead_archived_at", { withTimezone: true }),
+    /**
+     * Derived cache: the last day anything happened on this LEAD. Its own
+     * column rather than `lastContactDate`, which is the CRM's cache of calls
+     * and confirmed WhatsApp — folding the two would let a nightly recompute
+     * of one silently move the staleness clock of the other.
+     */
+    leadLastActivityDate: date("lead_last_activity_date"),
+    /** When it stopped being a lead. The row did not change identity. */
+    leadConvertedAt: timestamp("lead_converted_at", { withTimezone: true }),
 
     /*
      * A shop we deliver to, served through a distributor.
@@ -1084,6 +1142,14 @@ export const customers = pgTable(
     index("customers_sales_manager_name_idx").on(t.salesManagerPersonName),
     index("customers_name_idx").on(t.name),
     index("customers_phone_idx").on(t.phone),
+    /**
+     * The lead worklist, which the handset's pull and the manager's screen
+     * both ask for: this user's unarchived leads, soonest follow-up first.
+     * Partial, so it costs nothing on the customers that are not leads.
+     */
+    index("customers_lead_worklist_idx")
+      .on(t.ownerId, t.leadArchived, t.leadNextFollowUpDate)
+      .where(sql`kind = 'lead'`),
     index("customers_status_idx").on(t.status),
     uniqueIndex("customers_external_code_key").on(t.externalCode),
     /** The field team's two lists: a beat to walk, and a code to search by. */
@@ -3647,6 +3713,127 @@ export const fieldCustomerPins = pgTable(
   ],
 );
 
+/**
+ * The shop master of the same defunct prior system ("Mahek EMP 2.0") — its
+ * `Customer Details` tab, and the ONLY place a phone number for these shops
+ * exists. The Activity tab (`sheetFieldActivityRows`) has twelve columns and
+ * not one of them is a contact detail; the GPS pin export beside it
+ * (`fieldCustomerPins`) carries `CustomerPhone1..3` in its raw snapshot and
+ * has exactly one of 6,525 filled in. Between the three, this is the tab that
+ * makes a shop reachable rather than merely locatable.
+ *
+ * Staging, like every other sheet landing table here, and for the reason the
+ * order sheet learned the hard way: the projection reads this and never writes
+ * to it, so what the spreadsheet actually said stays derivable however badly
+ * the published side is later mangled.
+ *
+ * The natural key is the normalised name — the tab has no id column. That is
+ * weaker than `sheetFieldActivityRows`' own Activity ID and it is why
+ * duplicate names are COUNTED and reported rather than resolved by keeping
+ * whichever row was read last.
+ */
+export const sheetCustomerMasterRows = pgTable(
+  "sheet_customer_master_rows",
+  {
+    id: text("id").primaryKey(),
+    syncId: text("sync_id")
+      .notNull()
+      .references(() => sheetSyncRuns.id, { onDelete: "cascade" }),
+    /** 1-based row in the sheet, header included. */
+    rowNumber: integer("row_number").notNull(),
+
+    /** Every column as the sheet gave it. Never selected by a list query. */
+    raw: jsonb("raw").$type<Record<string, string>>().notNull(),
+    rowHash: text("row_hash").notNull(),
+
+    status: sheetRowStatusEnum("status").notNull().default("present"),
+    lastSeenSyncId: text("last_seen_sync_id"),
+
+    customerName: text("customer_name").notNull(),
+    /** `partyNameKey` of the name — the natural key, and the join to everything. */
+    nameKey: text("name_key").notNull(),
+
+    /*
+     * The cell as written, and the ten digits read out of it, kept apart.
+     * 5,121 of 5,292 rows hold a real Indian mobile; the rest hold something
+     * a person has to look at, and throwing away the original string would
+     * make "what did the sheet actually say" unanswerable.
+     */
+    mobileRaw: text("mobile_raw"),
+    mobile: text("mobile"),
+    altMobile: text("alt_mobile"),
+
+    address: text("address"),
+    /** The sheet's "Location" — a town, not a street. `customers.city` reads it. */
+    locationText: text("location_text"),
+    state: text("state"),
+
+    rating: text("rating"),
+    segmentation: text("segmentation"),
+    specialInstructions: text("special_instructions"),
+
+    /*
+     * The three seats, as NAMES. None of these are resolved to `users` here:
+     * the same lesson `customers.salesPersonName` records — most of the people
+     * the sheet names have never had a login, and linking only the few that
+     * match drops the rest on the floor and makes every screen fall back to
+     * whoever ran the import.
+     */
+    salesPersonName: text("sales_person_name"),
+    tagEmployeeName: text("tag_employee_name"),
+    backOfficeName: text("back_office_name"),
+
+    /** The old app's own Active/Deactive, verbatim — its casing is inconsistent. */
+    sheetStatus: text("sheet_status"),
+    deactivationRequest: text("deactivation_request"),
+    deactivationRemark: text("deactivation_remark"),
+
+    matchedCustomerId: text("matched_customer_id").references(() => customers.id, {
+      onDelete: "set null",
+    }),
+    customerMatchStatus: sheetMatchStatusEnum("customer_match_status")
+      .notNull()
+      .default("pending"),
+    matchNote: text("match_note"),
+
+    /**
+     * What the projection concluded, and the evidence it concluded it from.
+     *
+     * Kept beside the verdict deliberately. "Why is this shop a lead and that
+     * one a customer" is asked months later by somebody looking at one row,
+     * and re-running the rule from memory answers a question about today
+     * rather than about this row. `resolvedKind` is `lead` or `customer`;
+     * `resolvedStatus` is `active` or `deactivated`.
+     */
+    resolvedKind: text("resolved_kind"),
+    resolvedStatus: text("resolved_status"),
+    evidence: jsonb("evidence").$type<string[]>().notNull().default([]),
+
+    /**
+     * Set once this row has produced or updated its customer. Separate from
+     * the match for the reason `fieldCustomerPins.gpsAppliedAt` is separate:
+     * matching only decides WHICH customer and is safe to redo on every pass;
+     * projecting WRITES onto a row and must happen deliberately.
+     */
+    projectedCustomerId: text("projected_customer_id").references(() => customers.id, {
+      onDelete: "set null",
+    }),
+    projectedAt: timestamp("projected_at", { withTimezone: true }),
+
+    issues: jsonb("issues").$type<SheetRowIssue[]>().notNull().default([]),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sheet_customer_master_rows_name_key_idx").on(t.nameKey),
+    index("sheet_customer_master_rows_sync_idx").on(t.syncId),
+    index("sheet_customer_master_rows_mobile_idx").on(t.mobile),
+    /** The projection's own worklist: rows that have not yet produced a customer. */
+    index("sheet_customer_master_rows_unprojected_idx").on(t.status, t.projectedAt),
+  ],
+);
+
 /* ═══════════════════════════════════════════════════════ MBOS — field sales
  *
  * The Mahek Business Operating System's field app: a salesman's handset,
@@ -4096,15 +4283,8 @@ export const mbosLeadSourceEnum = pgEnum("mbos_lead_source", [
   "campaign",
 ]);
 
-/** The qualification ladder. `won` is the stage a conversion leaves behind. */
-export const mbosLeadStageEnum = pgEnum("mbos_lead_stage", [
-  "new",
-  "contacted",
-  "qualified",
-  "negotiation",
-  "won",
-  "lost",
-]);
+/* `mbosLeadStageEnum` now lives beside `customerKindEnum` — it is a column
+ * on `customers`, and a const must be defined before the table that reads it. */
 
 /**
  * §2.5 — a prospect the field team is working.

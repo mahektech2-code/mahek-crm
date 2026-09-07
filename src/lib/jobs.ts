@@ -65,6 +65,8 @@ import {
 } from "./services/field-activity-sync-service";
 import { projectFieldActivityTimeline } from "./services/field-activity-projection-service";
 
+import { syncCustomerMasterSheet } from "./services/customer-master-sync-service";
+import { projectCustomerMaster } from "./services/customer-master-projection-service";
 /* ---------------------------------------------------------------------------
  * §7 Scheduled work.
  *
@@ -106,6 +108,8 @@ export type JobName =
   | "field-activity-append"
   | "field-activity-sync"
   | "field-activity-project"
+  | "customer-master-sync"
+  | "customer-master-project"
   | "sheet-payments"
   | "taken-order-sync"
   | "taken-order-reparse"
@@ -717,6 +721,10 @@ export async function runJob(
       return [await runFieldActivitySync(triggeredById, "reconcile")];
     case "field-activity-project":
       return [await runFieldActivityProjection(triggeredById)];
+    case "customer-master-sync":
+      return [await runCustomerMasterSync(triggeredById)];
+    case "customer-master-project":
+      return [await runCustomerMasterProjection(options)];
     default:
       throw new Error(`Unknown job "${job}".`);
   }
@@ -872,6 +880,41 @@ async function runFieldActivitySync(
       };
     },
     triggeredById,
+  );
+}
+
+async function runCustomerMasterSync(triggeredById?: string): Promise<JobResult> {
+  return run(
+    "customer-master-sync",
+    async () => {
+      const outcome = await syncCustomerMasterSheet({ triggeredById });
+      return {
+        recordsAffected: outcome.rowsCreated + outcome.rowsUpdated,
+        detail: outcome.detail,
+      };
+    },
+    triggeredById,
+  );
+}
+
+/**
+ * Publishing the shop master into `customers`.
+ *
+ * `--dry-run` is offered for the same reason the sheet-paid revert offers it:
+ * a count read before the fact is the only review a run of this size gets, and
+ * this one creates thousands of rows rather than deleting them.
+ */
+async function runCustomerMasterProjection(options: JobOptions): Promise<JobResult> {
+  return run(
+    "customer-master-project",
+    async () => {
+      const result = await projectCustomerMaster({ dryRun: options.dryRun });
+      return {
+        recordsAffected: result.created + result.updated,
+        detail: result.detail,
+      };
+    },
+    undefined,
   );
 }
 
