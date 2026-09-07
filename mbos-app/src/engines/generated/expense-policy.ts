@@ -338,6 +338,16 @@ export const EXCEPTION_KINDS = [
   "gps_odometer_variance",
   "manual_km_disagrees",
   "unpriced_mode",
+  /**
+   * An overnight hotel on a policy that names no ceiling for one.
+   *
+   * The sibling of `unpriced_mode`, and it was missing for the same reason it
+   * matters: with no `lodging` rule the line is skipped, so the night is worth
+   * NOTHING and the whole claim becomes excess — silently, where an unpriced
+   * kilometre says so loudly. A salesman is out the price of a room and no
+   * screen anywhere gives the office a reason to look.
+   */
+  "unpriced_lodging",
   "day_hotel",
   "no_policy",
   "open_day",
@@ -858,7 +868,19 @@ export function computeDay(
       });
       continue;
     }
-    if (!lodgingRule) continue;
+    if (!lodgingRule) {
+      /* Counted as claimed above and deliberately NOT counted as eligible:
+         this engine does not invent a ceiling. What changes is that it says
+         so, exactly as an unpriced travel mode does. */
+      exceptions.push({
+        kind: "unpriced_lodging",
+        severity: "warn",
+        message: `Policy version ${policy.versionNo} says nothing about what a hotel night may cost, so ${rupees(line.claimedPaise)} has to be priced by hand.`,
+        detail: { claimedPaise: line.claimedPaise, nights, policyVersion: policy.versionNo },
+        lineId: line.id,
+      });
+      continue;
+    }
     const ceiling = lodgingRule.maxPerNightPaise * nights;
     const eligible = Math.min(line.claimedPaise, ceiling);
     lodgingEligible += eligible;
