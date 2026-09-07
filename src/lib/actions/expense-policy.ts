@@ -370,7 +370,14 @@ export async function policyReadiness(policyId: string): Promise<{
     warnings.push("No claim on this policy will ever require a bill.");
   }
   if (!kinds.has("lodging")) {
-    warnings.push("Nothing here says what a hotel night may cost, so a hotel claim will be paid in full.");
+    /* NOT "paid in full", which is what this said and is the opposite of what
+       happens: with no lodging rule the engine prices an overnight night at
+       NOTHING and the whole claim becomes excess. Told the wrong way round on
+       a screen somebody publishes from, it reads as a generous default worth
+       leaving alone. */
+    warnings.push(
+      "Nothing here says what a hotel night may cost, so an overnight hotel claim is worth nothing and goes up in full as excess for somebody to price by hand.",
+    );
   }
   if (!detail.policy.sourceAttachmentId) {
     warnings.push("The document this was typed from is not attached. Attaching it is what lets anybody check these figures later.");

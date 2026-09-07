@@ -368,6 +368,27 @@ describe("hotel", () => {
     }));
     assert.ok(r.exceptions.some((e) => e.kind === "missing_proof" && e.severity === "block_route"));
   });
+
+  /* The sibling of "a mode the policy never priced is named". A night on a
+     policy with no lodging rule was skipped in silence: worth nothing, wholly
+     excess, and nothing anywhere saying a figure was missing rather than a
+     claim refused. */
+  test("a night on a policy that never priced one is named, not silently zeroed", () => {
+    const noLodging = policy();
+    const r = computeDay(
+      { ...noLodging, rules: noLodging.rules.filter((x) => x.kind !== "lodging") },
+      SUBJECT,
+      day({ lines: [{ id: "l1", kind: "lodging", claimedPaise: 180000, hasProof: true, nights: 1 }] }),
+    );
+    assert.equal(r.lodgingClaimedPaise, 180000, "still recorded — it was spent");
+    assert.equal(r.lodgingEligiblePaise, 0, "no ceiling is invented");
+    assert.equal(r.totalExcessPaise, 180000);
+    const raised = r.exceptions.find((e) => e.kind === "unpriced_lodging");
+    assert.ok(raised, "the office is told a figure is missing");
+    assert.equal(raised!.severity, "warn");
+    assert.equal(raised!.lineId, "l1");
+    assert.match(raised!.message, /says nothing about what a hotel night may cost/);
+  });
 });
 
 /* ------------------------------------------- §A6 the policy of the DAY */
