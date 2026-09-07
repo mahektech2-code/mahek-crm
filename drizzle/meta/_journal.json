@@ -652,6 +652,20 @@
       "when": 1787501980000,
       "tag": "0092_expense_month_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1787502040000,
+      "tag": "0093_customer_master_import",
+      "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1787502100000,
+      "tag": "0094_one_lead",
+      "breakpoints": true
     }
   ]
 }

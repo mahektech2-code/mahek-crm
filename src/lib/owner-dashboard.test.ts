@@ -150,36 +150,40 @@ after(async () => {
 /* ================================================== KPI 1: what is a lead */
 
 describe("new leads", () => {
-  test("counts leads from BOTH places this product keeps one", async () => {
+  test("counts a lead whether or not anybody put it on the ladder", async () => {
+    // ONE LEAD. These were two tables and the origin was which one it sat in;
+    // it is one row now and the origin is whether a salesman ever staged it.
     await makeCustomer({ kind: "lead", leadSource: "website" });
-    await db.execute(sql`
-      insert into mbos_leads (id, server_created_at, created_by_id, name, mobile, source, stage)
-      values (${id("mbos_lead")}, now(), ${rahul.id}, 'Met at expo', '9000000001', 'exhibition', 'new')
-    `);
+    const met = await makeCustomer({ kind: "lead", leadSource: "exhibition" });
+    await db.execute(
+      sql`update customers set lead_stage = 'new' where id = ${met.id}`,
+    );
 
     const leads = await leadsCreatedIn(thisMonth(), {});
     assert.equal(leads.length, 2);
     assert.deepEqual(
       leads.map((l) => l.origin).sort(),
       ["crm", "field"],
-      "a business opportunity is one whichever table it landed in",
+      "a business opportunity is one whether or not it reached the ladder",
     );
   });
 
-  test("a field lead and the customer it became are ONE opportunity", async () => {
-    // Otherwise converting a lead inflates the very KPI that measures whether
-    // leads are being generated.
+  test("a lead and the customer it became are ONE opportunity", async () => {
+    // This used to be a real double-count risk: a converted field lead wrote a
+    // SECOND row in `customers`, and both were counted unless the query
+    // deduplicated. One row now, so winning a lead cannot inflate the KPI that
+    // measures whether leads are being generated — there is nothing to add up.
     const converted = await makeCustomer({ kind: "lead" });
     await db.execute(sql`
-      insert into mbos_leads (id, server_created_at, created_by_id, name, mobile,
-                              source, stage, converted_customer_id, converted_at)
-      values (${id("mbos_lead")}, now(), ${rahul.id}, 'Became a customer', '9000000002',
-              'referral', 'won', ${converted.id}, now())
+      update customers
+         set kind = 'customer', lead_stage = 'won', lead_converted_at = now()
+       where id = ${converted.id}
     `);
 
     const leads = await leadsCreatedIn(thisMonth(), {});
-    assert.equal(leads.length, 1, "the customer row must not be counted again");
+    assert.equal(leads.length, 1, "one opportunity, counted once");
     assert.equal(leads[0].origin, "field");
+    assert.equal(leads[0].stage, "won", "winning it must not hide it");
   });
 
   test("a customer that is not a lead is not counted", async () => {

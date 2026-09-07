@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
@@ -14,7 +14,6 @@ import {
   mbosDevices,
   mbosDocuments,
   mbosHolidays,
-  mbosLeads,
   mbosLeaveBalances,
   mbosLeaveRequests,
   mbosManagerTerritories,
@@ -1390,8 +1389,20 @@ export async function releaseDevice(input: {
  * the same way as everything else here: holding the Sales Dashboard.
  */
 
+/**
+ * ONE LEAD, so this reads `customers`.
+ *
+ * `lead_stage is not null` rather than `kind = 'lead'`: a won lead is a
+ * customer row now, and a manager must still be able to archive or reassign
+ * one after it converted — filtering on the kind would make the row vanish
+ * from every action at the moment it succeeded.
+ */
 async function requireLead(leadId: string) {
-  const [lead] = await db.select().from(mbosLeads).where(eq(mbosLeads.id, leadId)).limit(1);
+  const [lead] = await db
+    .select()
+    .from(customers)
+    .where(and(eq(customers.id, leadId), isNotNull(customers.leadStage)))
+    .limit(1);
   return lead ?? null;
 }
 
@@ -1418,13 +1429,13 @@ export async function reassignLead(input: {
 
     const lead = await requireLead(input.leadId);
     if (!lead) return err("That lead is no longer here.", "not_found");
-    if (lead.archived) {
+    if (lead.leadArchived) {
       return err(
         "That lead is archived. Restore it before moving it to somebody else.",
         "validation",
       );
     }
-    if (lead.assignedToUserId === input.salesmanId) {
+    if (lead.ownerId === input.salesmanId) {
       return ok(undefined, "Already theirs.");
     }
 
@@ -1447,18 +1458,21 @@ export async function reassignLead(input: {
       return err(`${salesman.name}'s account is closed.`, "validation");
     }
 
-    const [previousOwner] = lead.assignedToUserId
+    const [previousOwner] = lead.ownerId
       ? await db
           .select({ id: users.id, name: users.name })
           .from(users)
-          .where(eq(users.id, lead.assignedToUserId))
+          .where(eq(users.id, lead.ownerId))
           .limit(1)
       : [];
 
+    /* The owner IS the assignment — `ASSIGNED_TO_SQL` resolves a lead through
+     * `owner_id`, so one write puts it on the salesman's handset and in the
+     * office's scoped lists at the same time. */
     await db
-      .update(mbosLeads)
-      .set({ assignedToUserId: input.salesmanId, updatedAt: new Date(), updatedById: user.id })
-      .where(eq(mbosLeads.id, input.leadId));
+      .update(customers)
+      .set({ ownerId: input.salesmanId, updatedAt: new Date() })
+      .where(eq(customers.id, input.leadId));
 
     await db.insert(auditLog).values({
       id: gen("aud"),
@@ -1466,7 +1480,7 @@ export async function reassignLead(input: {
       action: "mbos.lead.reassign",
       entityType: "mbos_lead",
       entityId: input.leadId,
-      beforeState: { assignedToUserId: lead.assignedToUserId ?? null } as never,
+      beforeState: { assignedToUserId: lead.ownerId ?? null } as never,
       afterState: { assignedToUserId: input.salesmanId } as never,
     });
 
@@ -1506,16 +1520,16 @@ export async function chaseLeadOwner(input: {
 
     const lead = await requireLead(input.leadId);
     if (!lead) return err("That lead is no longer here.", "not_found");
-    if (lead.archived) {
+    if (lead.leadArchived) {
       return err("That lead is archived, so there is nobody actively working it.", "validation");
     }
-    if (!lead.assignedToUserId) {
+    if (!lead.ownerId) {
       return err("Nobody is working this lead yet — reassign it first.", "validation");
     }
 
     const note = input.note?.trim();
     await tell(
-      lead.assignedToUserId,
+      lead.ownerId,
       `Chase — ${leadLabel(lead)}`,
       note || `${user.name} asked you to follow up on ${leadLabel(lead)}.`,
     );
@@ -1548,17 +1562,12 @@ export async function archiveLead(input: { leadId: string; reason: string }): Pr
 
     const lead = await requireLead(input.leadId);
     if (!lead) return err("That lead is no longer here.", "not_found");
-    if (lead.archived) return ok(undefined, "Already archived.");
+    if (lead.leadArchived) return ok(undefined, "Already archived.");
 
     await db
-      .update(mbosLeads)
-      .set({
-        archived: true,
-        archivedAt: new Date(),
-        updatedAt: new Date(),
-        updatedById: user.id,
-      })
-      .where(eq(mbosLeads.id, input.leadId));
+      .update(customers)
+      .set({ leadArchived: true, leadArchivedAt: new Date(), updatedAt: new Date() })
+      .where(eq(customers.id, input.leadId));
 
     await db.insert(auditLog).values({
       id: gen("aud"),
@@ -1573,9 +1582,9 @@ export async function archiveLead(input: { leadId: string; reason: string }): Pr
     /* A lead vanishing off the working list with no explanation is exactly
      * the failure this whole app is built to avoid — the owner is told why,
      * not just that it happened. */
-    if (lead.assignedToUserId) {
+    if (lead.ownerId) {
       await tell(
-        lead.assignedToUserId,
+        lead.ownerId,
         `${leadLabel(lead)} was archived`,
         `${user.name} filed it away — ${reason}`,
       );
@@ -1595,17 +1604,12 @@ export async function restoreLead(input: { leadId: string }): Promise<Result> {
 
     const lead = await requireLead(input.leadId);
     if (!lead) return err("That lead is no longer here.", "not_found");
-    if (!lead.archived) return ok(undefined, "Not archived.");
+    if (!lead.leadArchived) return ok(undefined, "Not archived.");
 
     await db
-      .update(mbosLeads)
-      .set({
-        archived: false,
-        archivedAt: null,
-        updatedAt: new Date(),
-        updatedById: user.id,
-      })
-      .where(eq(mbosLeads.id, input.leadId));
+      .update(customers)
+      .set({ leadArchived: false, leadArchivedAt: null, updatedAt: new Date() })
+      .where(eq(customers.id, input.leadId));
 
     await db.insert(auditLog).values({
       id: gen("aud"),

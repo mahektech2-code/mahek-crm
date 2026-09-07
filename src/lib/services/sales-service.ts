@@ -853,28 +853,44 @@ export type LeadRow = {
   customerOutstandingPaise: number | null;
 };
 
+/*
+ * ONE LEAD, so this reads `customers`.
+ *
+ * The screen shows anything that has ever been a lead — `lead_stage is not
+ * null` — rather than `kind = 'lead'`. Winning one now moves `kind` to
+ * `customer` on the SAME row, and filtering on the kind would drop it out of
+ * the funnel at the moment it succeeded, which is the one band a manager most
+ * wants to see. The stage survives the conversion; `lead_converted_at` is what
+ * says it happened.
+ *
+ * The customer-health columns used to come from a join to the converted
+ * record. There is no second record now, so they are this row's own, shown
+ * only once it has actually been won — an unconverted lead would otherwise
+ * report the column defaults as though they were a health reading.
+ */
 const LEAD_ROW_SELECT = sql`
-    select l.id, l.name, l.company_name as "companyName", l.mobile, l.city, l.area,
-           l.source::text as source,
-           l.estimated_potential_paise as "estimatedPotentialPaise",
-           l.stage::text as stage,
-           l.assigned_to_user_id as "salesmanId",
+    select c.id, c.name, c.company_name as "companyName", c.phone as mobile,
+           c.city, c.area,
+           c.lead_source as source,
+           c.lead_estimated_potential_paise as "estimatedPotentialPaise",
+           c.lead_stage::text as stage,
+           c.owner_id as "salesmanId",
            u.name as "salesmanName", u.initials,
-           l.next_follow_up_date::text as "nextFollowUpDate",
-           l.last_activity_date::text as "lastActivityDate",
-           l.notes,
-           (l.gps_lat is not null and l.gps_lng is not null) as "hasGps",
-           l.server_created_at as "createdAt",
-           l.archived,
-           l.archived_at as "archivedAt",
-           l.lost_reason as "lostReason",
-           l.converted_customer_id as "convertedCustomerId",
-           l.converted_at as "convertedAt",
-           c2.health_score as "customerHealthScore",
-           c2.status::text as "customerStatus",
-           c2.last_order_date::text as "customerLastOrderDate",
-           c2.cycle_days as "customerCycleDays",
-           c2.outstanding as "customerOutstandingPaise"
+           c.lead_next_follow_up_date::text as "nextFollowUpDate",
+           c.lead_last_activity_date::text as "lastActivityDate",
+           c.lead_notes as notes,
+           (c.gps_lat is not null and c.gps_lng is not null) as "hasGps",
+           c.created_at as "createdAt",
+           c.lead_archived as archived,
+           c.lead_archived_at as "archivedAt",
+           c.lead_lost_reason as "lostReason",
+           case when c.lead_converted_at is not null then c.id end as "convertedCustomerId",
+           c.lead_converted_at as "convertedAt",
+           case when c.lead_converted_at is not null then c.health_score end as "customerHealthScore",
+           case when c.lead_converted_at is not null then c.status::text end as "customerStatus",
+           case when c.lead_converted_at is not null then c.last_order_date::text end as "customerLastOrderDate",
+           case when c.lead_converted_at is not null then c.cycle_days end as "customerCycleDays",
+           case when c.lead_converted_at is not null then c.outstanding end as "customerOutstandingPaise"
 `;
 
 /** Prospects each salesman is working, and how long since anybody touched one. */
@@ -882,14 +898,14 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
   const scope = await managerScope();
   return db.execute<LeadRow>(sql`
     ${LEAD_ROW_SELECT},
-           coalesce(${day}::date - l.last_activity_date, 0)::int as "quietDays",
-           (${day}::date - (l.server_created_at ${IST_DAY})::date)::int as "ageDays"
-      from mbos_leads l
-      left join users u on u.id = l.assigned_to_user_id
-      left join customers c2 on c2.id = l.converted_customer_id
-     where l.archived = false
-       ${onlyMine(scope, "l.assigned_to_user_id")}
-     order by l.next_follow_up_date asc nulls last, l.last_activity_date asc nulls last
+           coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
+           (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
+      from customers c
+      left join users u on u.id = c.owner_id
+     where c.lead_stage is not null
+       and c.lead_archived = false
+       ${onlyMine(scope, "c.owner_id")}
+     order by c.lead_next_follow_up_date asc nulls last, c.lead_last_activity_date asc nulls last
      limit 400
   `) as unknown as LeadRow[];
 }
@@ -907,14 +923,14 @@ export async function archivedLeadsList(day: string): Promise<LeadRow[]> {
   const scope = await managerScope();
   return db.execute<LeadRow>(sql`
     ${LEAD_ROW_SELECT},
-           coalesce(${day}::date - l.last_activity_date, 0)::int as "quietDays",
-           (${day}::date - (l.server_created_at ${IST_DAY})::date)::int as "ageDays"
-      from mbos_leads l
-      left join users u on u.id = l.assigned_to_user_id
-      left join customers c2 on c2.id = l.converted_customer_id
-     where l.archived = true
-       ${onlyMine(scope, "l.assigned_to_user_id")}
-     order by l.archived_at desc nulls last
+           coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
+           (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
+      from customers c
+      left join users u on u.id = c.owner_id
+     where c.lead_stage is not null
+       and c.lead_archived = true
+       ${onlyMine(scope, "c.owner_id")}
+     order by c.lead_archived_at desc nulls last
      limit 400
   `) as unknown as LeadRow[];
 }
@@ -924,9 +940,10 @@ export async function archivedLeadsCount(): Promise<number> {
   const scope = await managerScope();
   const rows = await db.execute<{ n: number }>(sql`
     select count(*)::int as n
-      from mbos_leads l
-     where l.archived = true
-       ${onlyMine(scope, "l.assigned_to_user_id")}
+      from customers c
+     where c.lead_stage is not null
+       and c.lead_archived = true
+       ${onlyMine(scope, "c.owner_id")}
   `);
   return Number(rows[0]?.n ?? 0);
 }
@@ -2866,13 +2883,14 @@ export async function salesmanRecord(
          order by s.requested_date desc nulls last limit ${limit}
       `),
       db.execute(sql`
-        select l.id, l.name, l.company_name as "companyName", l.mobile, l.city,
-               l.stage::text as stage,
-               l.next_follow_up_date::text as "nextFollowUpDate",
-               l.last_activity_date::text as "lastActivityDate"
-          from mbos_leads l
-         where l.assigned_to_user_id = ${userId} and l.archived = false
-         order by l.last_activity_date desc nulls last limit ${limit}
+        select c.id, c.name, c.company_name as "companyName", c.phone as mobile, c.city,
+               c.lead_stage::text as stage,
+               c.lead_next_follow_up_date::text as "nextFollowUpDate",
+               c.lead_last_activity_date::text as "lastActivityDate"
+          from customers c
+         where c.owner_id = ${userId} and c.lead_stage is not null
+           and c.lead_archived = false
+         order by c.lead_last_activity_date desc nulls last limit ${limit}
       `),
       db.execute(sql`
         select t.id, t.title, t.priority::text as priority,
