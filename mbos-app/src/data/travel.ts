@@ -522,3 +522,126 @@ export async function submitDay(
 
   return { ok: true, claimedPaise: claimed };
 }
+
+
+/* ------------------------------------------------- what a claim is worth */
+
+export type ClaimPreview = {
+  eligiblePaise: number;
+  excessPaise: number;
+  /** True where the policy says nothing about this kind at all. */
+  unpriced: boolean;
+  /** The sentence under the amount box. Always says something. */
+  line: string;
+  /** Whether a bill is compulsory at this amount. */
+  proofRequired: boolean;
+};
+
+/**
+ * What the policy allows for one claim, worked out on the phone.
+ *
+ * **The salesman must be shown the figure he will actually be paid**, and
+ * before this the Expenses screen showed him a monthly headroom from the old
+ * per-category caps in configuration — a different number, from a different
+ * source, that the office does not pay on. Two answers to "what am I allowed",
+ * and the one he read was the wrong one. That is precisely the drift the whole
+ * policy module exists to remove, and it was still sitting on the one screen
+ * where he decides whether to spend.
+ *
+ * It uses the same `computeDay` the office uses. Nothing here refuses a claim:
+ * over-policy is SAID, plainly, while he can still change it — and then sent
+ * anyway, because the money is already spent.
+ */
+export function previewClaim(
+  policy: LocalPolicy | null,
+  kind: ExpenseKind,
+  claimedPaise: number,
+  hasBill: boolean,
+): ClaimPreview {
+  if (!policy) {
+    return {
+      eligiblePaise: 0,
+      excessPaise: 0,
+      unpriced: true,
+      proofRequired: false,
+      line: 'This phone has no policy yet — the office will work out what this is worth.',
+    };
+  }
+  if (claimedPaise <= 0) {
+    return { eligiblePaise: 0, excessPaise: 0, unpriced: false, proofRequired: false, line: '' };
+  }
+
+  /* A day with this one line on it and nothing else. The engine prices a DAY,
+     so a single claim is a day of one — which keeps this answer and the EOD
+     answer the same arithmetic rather than a second reading of the rules. */
+  const day = new Date().toISOString().slice(0, 10);
+  const computed = computeDay(policy.policy, policy.subject, {
+    day,
+    clock: { departedMinutes: null, returnedMinutes: null, arrivedAtDestinationMinutes: null },
+    departedFromHometown: true,
+    stayedInHotel: kind === 'lodging',
+    overnight: kind === 'lodging',
+    legs: [],
+    lines: [
+      {
+        id: 'preview',
+        kind,
+        claimedPaise,
+        hasProof: hasBill,
+        nights: kind === 'lodging' ? 1 : undefined,
+      },
+    ],
+  });
+
+  const eligible =
+    kind === 'lodging' ? computed.lodgingEligiblePaise : computed.otherEligiblePaise;
+  const excess = Math.max(0, claimedPaise - eligible);
+  const proofRequired = computed.exceptions.some((e) => e.kind === 'missing_proof');
+
+  if (excess > 0) {
+    return {
+      eligiblePaise: eligible,
+      excessPaise: excess,
+      unpriced: false,
+      proofRequired,
+      line: `The policy allows ${rupees(eligible)} of this. The other ${rupees(excess)} needs your manager to agree it — send it anyway and say why.`,
+    };
+  }
+  if (proofRequired && !hasBill) {
+    return {
+      eligiblePaise: eligible,
+      excessPaise: 0,
+      unpriced: false,
+      proofRequired,
+      line: 'This much needs the bill photographed before it can be settled.',
+    };
+  }
+  return {
+    eligiblePaise: eligible,
+    excessPaise: 0,
+    unpriced: false,
+    proofRequired,
+    line: `Within policy — ${rupees(eligible)}.`,
+  };
+}
+
+function rupees(paise: number): string {
+  return '₹' + Math.round(paise / 100).toLocaleString('en-IN');
+}
+
+/**
+ * The kinds a salesman may claim, and the legacy CATEGORY each one is stored
+ * under.
+ *
+ * Two fields because they are two different vocabularies and always were:
+ * `mbos_expense_category` has exactly four values and the server refuses a
+ * fifth, so `local_transport` — a kind the policy prices separately — is
+ * stored as the category `travel`, which is what it is. Sending the kind as
+ * the category would get every auto fare rejected as invalid.
+ */
+export const CLAIM_KINDS: { key: ExpenseKind; category: string; label: string }[] = [
+  { key: 'food', category: 'food', label: 'Food' },
+  { key: 'lodging', category: 'lodging', label: 'Hotel' },
+  { key: 'local_transport', category: 'travel', label: 'Local transport' },
+  { key: 'other', category: 'other', label: 'Other' },
+];
