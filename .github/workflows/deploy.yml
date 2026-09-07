@@ -99,6 +99,16 @@ jobs:
           # cache free, it is scoped to this repository, and it evicts itself.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # NO ATTESTATION, so what is pushed is one image rather than a list.
+          #
+          # buildx attaches a provenance attestation by default, which turns a
+          # plain manifest into a manifest LIST carrying a second, attestation
+          # manifest beside the real one — so every tag costs two manifest
+          # pushes instead of one, and the registry stores both. Against a
+          # 500 MB free tier that has now filled twice, and a push that is
+          # already the slowest half of this job, an SBOM nothing in this
+          # deployment reads is not worth either.
+          provenance: false
 
   deploy:
     needs: build
@@ -346,60 +356,49 @@ jobs:
             process.stdout.write(del.join("\n"));
           ' > /tmp/delete.txt
 
+          # NOTHING DELETED MEANS NOTHING TO COLLECT, so no collection is
+          # started. A garbage collection puts the registry in read-only mode
+          # for as long as it runs, and starting one that has no unreferenced
+          # blobs to free spends that window for nothing.
           if [ ! -s /tmp/delete.txt ]; then
-            echo "Nothing to prune."
-          else
-            echo "Deleting $(wc -l < /tmp/delete.txt) tag(s)."
-            while read -r tag; do
-              [ -z "${tag}" ] && continue
-              doctl registry repository delete-tag app "${tag}" --force || true
-            done < /tmp/delete.txt
+            echo "Nothing to prune, so nothing to collect."
+            exit 0
           fi
 
+          echo "Deleting $(wc -l < /tmp/delete.txt) tag(s)."
+          while read -r tag; do
+            [ -z "${tag}" ] && continue
+            doctl registry repository delete-tag app "${tag}" --force || true
+          done < /tmp/delete.txt
+
+          # STARTED AND LEFT, never waited on.
+          #
           # Deleting a tag frees NOTHING on DigitalOcean until a collection
-          # runs. One already running is an ordinary result of two deploys
-          # close together rather than a failure.
-          if ! doctl registry garbage-collection start --include-untagged-manifests --force; then
+          # runs, so one is started here — and that is the whole of this step's
+          # job. The wait that used to follow was 15 minutes 30 seconds of a
+          # 20-minute deploy, every single time, all of it after production was
+          # already serving the new image. DigitalOcean will not begin
+          # collecting until every write-scoped push token issued before the
+          # request has expired, and their TTL is about a quarter of an hour;
+          # the collection itself then takes 25 seconds. The loop was watching
+          # somebody else's clock.
+          #
+          # It protected nothing, which is the part worth writing down. The
+          # `401 Unauthorized` on push that the wait was written for is
+          # prevented by ORDER — this job runs after `build` has pushed, not
+          # before it — and that was already true. Sitting here cannot stop the
+          # next push landing inside the collection window: a push cancels this
+          # run (see `concurrency` at the top) while DigitalOcean's collection
+          # carries on regardless. The wait was pure observation of an outcome
+          # nothing downstream reads.
+          #
+          # What is given up is the log line saying whether it succeeded.
+          # `doctl registry garbage-collection list` answers that on demand,
+          # and a collection that fails is picked back up by the next deploy
+          # that deletes a tag — which is exactly where the old `failed` branch
+          # pointed anyway.
+          if doctl registry garbage-collection start --include-untagged-manifests --force; then
+            echo "::notice::Garbage collection started. It runs on DigitalOcean's side and takes about fifteen minutes to begin; nothing here waits for it."
+          else
             echo "::notice::A garbage collection was already running; letting it finish."
           fi
-
-          # No longer bounded to five minutes — this runs after `deploy` has
-          # already finished, so nothing is waiting on it. The wait itself
-          # regularly outlasts five minutes on its own: DigitalOcean sits in
-          # "waiting for write JWTs to expire" until every write-scoped token
-          # issued before the collection started (this deploy's own push
-          # among them) has expired, which is longer than the old bound ever
-          # gave it credit for. Fifteen minutes is generous rather than exact;
-          # if it is somehow still running after that, next deploy's own
-          # prune picks the collection back up in the branch below.
-          #
-          # `get-active`, not `get` — there is no `get`, and doctl's own error
-          # for an unknown subcommand went to stderr and was thrown away by the
-          # redirect below, so this printed "none" on its very first check,
-          # every time, whether a collection had just been started or not. The
-          # loop never once actually waited: it declared victory immediately
-          # and the build pushed straight into a collection that was still
-          # running, which is what the intermittent `401 Unauthorized` on push
-          # actually was — a lock this step was supposed to wait out and never
-          # did.
-          # `set -e` plus the pipe above means ANY non-zero from `doctl` —
-          # a dropped connection, a moment's rate limiting — ends the whole
-          # script right here, on its first bad poll, with the job still
-          # marked `continue-on-error: true` so nothing downstream notices.
-          # First real run of the fixed loop above hit exactly this: doctl
-          # failed on its third check and the loop never got the other 27
-          # tries. `|| echo '[{"status":"unknown"}]'` keeps the pipeline
-          # itself at exit 0 — a failed CALL is not evidence the collection
-          # finished, so it reads as `unknown` and falls into the same
-          # branch as `requested` or `deleting unreferenced blobs`: keep
-          # waiting, rather than either crashing out or reporting done.
-          for _ in $(seq 1 90); do
-            status="$( { doctl registry garbage-collection get-active -o json 2>/dev/null \
-                || echo '[{"status":"unknown"}]'; } \
-              | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s)[0].status)}catch{console.log("none")}})')"
-            case "${status}" in
-              succeeded|none) echo "Collection finished (${status})."; break ;;
-              failed)         echo "::warning::Garbage collection failed; the next deploy's prune will pick it back up."; break ;;
-              *)              echo "Collecting… (${status})"; sleep 10 ;;
-            esac
-          done
