@@ -82,8 +82,20 @@ export async function claimExpense(args: {
   amountPaise: number;
   billPhotoId: string | null;
   remarks: string;
+  /** Who it was paid to, and the bill number. What a duplicate is caught on. */
+  vendorName?: string | null;
+  billNumber?: string | null;
+  /** Requirement 43 — why he is claiming something he knows is over. */
+  exceptionReason?: string | null;
 }): Promise<{ expenseId: string; overCap: boolean }> {
   const base = await stamp('expense');
+
+  /* Every claim belongs to a DAY. It is what the meal allowance is worked out
+     from, what the summary totals and what the office locks — a line floating
+     free of one is a line no daily total can ever include. Opening the day is
+     idempotent, so claiming an expense on a day nobody opened opens it. */
+  const { openDay } = await import('./travel');
+  const expenseDayId = await openDay({ userId: args.userId, day: args.spentOn });
   const caps = await getConfig<Record<string, number>>('mbos.expenses.categoryCapsPaise', {});
   const cap = caps[args.category];
 
@@ -106,6 +118,11 @@ export async function claimExpense(args: {
       billPhotoId: args.billPhotoId,
       remarks: args.remarks,
       state: 'Pending',
+      kind: args.category,
+      expenseDayId,
+      vendorName: args.vendorName ?? null,
+      billNumber: args.billNumber ?? null,
+      exceptionReason: args.exceptionReason ?? null,
     },
     /* `spentOn` and `remarks` are this table's words; MahekOne reads
        `expenseDate` and `description`, and the first of them is REQUIRED — so
@@ -115,7 +132,15 @@ export async function claimExpense(args: {
       overCap,
       expenseDate: args.spentOn,
       description: args.remarks || undefined,
+      kind: args.category,
+      expenseDayId,
+      vendorName: args.vendorName ?? undefined,
+      billNumber: args.billNumber ?? undefined,
+      exceptionReason: args.exceptionReason ?? undefined,
     },
+    /* The day has to reach the office first, or the line arrives naming a day
+       that is not there yet. PROTOCOL.md §3. */
+    dependsOn: [expenseDayId],
   });
 
   if (args.billPhotoId) await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, args.billPhotoId]);

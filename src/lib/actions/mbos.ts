@@ -1,5 +1,5 @@
 import "server-only";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
@@ -14,8 +14,12 @@ import {
   mbosAttendanceDays,
   mbosConflicts,
   mbosDevices,
+  mbosExpenseDays,
+  mbosExpenseExceptions,
   mbosExpenses,
   mbosLeads,
+  mbosTravelLegs,
+  mbosTravelModes,
   mbosActivityLocations,
   mbosJourneyPlans,
   mbosJourneyStops,
@@ -43,6 +47,9 @@ import { today, recomputeOutstanding, recomputeLastContact } from "../recompute"
 import { allocate, type AllocatableBill } from "../engines/allocation";
 import { computeHealth, type HealthFacts } from "../engines/health";
 import { fileStorage } from "../storage";
+import { classOfCity } from "../services/expense-policy-service";
+import { ensureDay } from "../services/expense-service";
+import { submitDay } from "../services/expense-submit-service";
 import { transcribeSpeech } from "../dictation";
 import { sniffContentType, ACCEPTED_AUDIO_TYPES } from "../file-types";
 import { issueToken, verifyToken, signingKeyPresent } from "../mbos/token";
@@ -706,6 +713,12 @@ async function dispatchItem(
       return handlePlanDay(principal, item);
     case "plan_stops":
       return handlePlanStops(principal, item);
+    case "expense_day":
+      return handleExpenseDay(principal, item);
+    case "travel_leg":
+      return handleTravelLeg(principal, item);
+    case "expense_day_submit":
+      return handleExpenseDaySubmit(principal, item);
     default:
       return {
         kind: "rejected",
@@ -2103,6 +2116,15 @@ const expenseSchema = z.object({
   description: z.string().max(2000).nullish(),
   billPhotoId: z.string().nullish(),
   claimId: z.string().nullish(),
+  /* ---- the policy module. Every one optional, so a handset that has not
+     been updated goes on syncing exactly as it did. ---- */
+  kind: z.enum(["travel", "food", "lodging", "local_transport", "other"]).nullish(),
+  expenseDayId: z.string().nullish(),
+  vendorName: z.string().max(200).nullish(),
+  billNumber: z.string().max(100).nullish(),
+  billDate: z.string().nullish(),
+  /** Requirement 43 — why he is claiming something outside policy. */
+  exceptionReason: z.string().max(2000).nullish(),
 });
 
 async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
@@ -2158,6 +2180,13 @@ async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<
       remarks: p.description ?? null,
       billPhotoId: p.billPhotoId ?? null,
       claimId: p.claimId ?? null,
+      kind: p.kind ?? p.category,
+      sourceType: "manual",
+      expenseDayId: p.expenseDayId ?? null,
+      vendorName: p.vendorName ?? null,
+      billNumber: p.billNumber ?? null,
+      billDate: p.billDate ?? null,
+      exceptionReason: p.exceptionReason ?? null,
       clientCreatedAt: new Date(item.clientCreatedAt),
       createdById: principal.user.id,
       updatedById: principal.user.id,
@@ -2166,6 +2195,308 @@ async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<
     .onConflictDoNothing({ target: mbosExpenses.id });
 
   return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/* ------------------------------------------------- travel, and the day itself */
+
+const expenseDaySchema = z.object({
+  day: z.string(),
+  departedAt: z.number().nullish(),
+  returnedAt: z.number().nullish(),
+  departedFromHometown: z.boolean().nullish(),
+  destinationCity: z.string().max(200).nullish(),
+  arrivedAtDestinationAt: z.number().nullish(),
+  overnight: z.boolean().nullish(),
+  stayedInHotel: z.boolean().nullish(),
+  openingOdometerKm: z.number().int().nullish(),
+  closingOdometerKm: z.number().int().nullish(),
+  tourId: z.string().nullish(),
+  note: z.string().max(2000).nullish(),
+});
+
+/**
+ * The day a salesman opened and closed.
+ *
+ * Idempotent on `(userId, day)` rather than on the client id, because a
+ * handset reinstalled mid-week mints a new id for a day the office already
+ * has — and two rows for one Tuesday would give that Tuesday two sets of
+ * meals. The client id is kept where it wins the race and the payload is
+ * merged where it does not.
+ *
+ * **A locked day is refused rather than merged.** Requirement 54 is the point
+ * of the lock; a handset that has been offline since before the day was
+ * submitted must not be able to quietly move the departure time that the
+ * meals were worked out from.
+ */
+async function handleExpenseDay(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  const parsed = expenseDaySchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const existing = await db
+    .select({ id: mbosExpenseDays.id, lockedAt: mbosExpenseDays.lockedAt })
+    .from(mbosExpenseDays)
+    .where(and(eq(mbosExpenseDays.userId, principal.user.id), eq(mbosExpenseDays.day, p.day)))
+    .limit(1);
+
+  if (existing[0]?.lockedAt) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "day_locked",
+        `${p.day} has already been submitted and locked. Ask your manager to reopen it — what was submitted stays exactly as it was, and a correction is recorded beside it.`,
+      ),
+    };
+  }
+
+  const cityClass = p.destinationCity ? await classOfCity(p.destinationCity) : null;
+  const values = {
+    departedAt: p.departedAt ? new Date(p.departedAt) : null,
+    returnedAt: p.returnedAt ? new Date(p.returnedAt) : null,
+    departedFromHometown: p.departedFromHometown ?? true,
+    destinationCity: p.destinationCity ?? null,
+    destinationCityClass: cityClass,
+    arrivedAtDestinationAt: p.arrivedAtDestinationAt ? new Date(p.arrivedAtDestinationAt) : null,
+    overnight: p.overnight ?? false,
+    stayedInHotel: p.stayedInHotel ?? false,
+    openingOdometerKm: p.openingOdometerKm ?? null,
+    closingOdometerKm: p.closingOdometerKm ?? null,
+    tourId: p.tourId ?? null,
+    note: p.note ?? null,
+    updatedAt: new Date(),
+    updatedById: principal.user.id,
+  };
+
+  if (existing[0]) {
+    await db.update(mbosExpenseDays).set(values).where(eq(mbosExpenseDays.id, existing[0].id));
+    return { kind: "accepted", value: { serverId: existing[0].id } };
+  }
+
+  await db
+    .insert(mbosExpenseDays)
+    .values({
+      id: item.entityId,
+      userId: principal.user.id,
+      day: p.day,
+      clientCreatedAt: new Date(item.clientCreatedAt),
+      createdById: principal.user.id,
+      deviceId: principal.deviceId,
+      ...values,
+    })
+    .onConflictDoNothing();
+
+  /* Requirement 20's random draw, made HERE and never on the phone. A check a
+     device rolls for itself is a check it can decline to fail. Drawn once per
+     day, on the day's first arrival, so it cannot be re-rolled by re-syncing. */
+  const config = await getConfig();
+  const pct = config["expenses.odometerPhotoRandomPct"];
+  if (pct > 0 && Math.random() * 100 < pct) {
+    await db
+      .update(mbosExpenseDays)
+      .set({ odometerPhotoDemanded: true })
+      .where(eq(mbosExpenseDays.id, item.entityId));
+  }
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+const travelLegSchema = z.object({
+  expenseDayId: z.string().nullish(),
+  day: z.string().nullish(),
+  modeKey: z.string().max(60),
+  fromLabel: z.string().max(200).nullish(),
+  toLabel: z.string().max(200).nullish(),
+  fromLat: z.number().nullish(),
+  fromLng: z.number().nullish(),
+  toLat: z.number().nullish(),
+  toLng: z.number().nullish(),
+  startedAt: z.number().nullish(),
+  endedAt: z.number().nullish(),
+  purpose: z.string().max(60).nullish(),
+  customerId: z.string().nullish(),
+  visitId: z.string().nullish(),
+  manualMetres: z.number().int().min(0).nullish(),
+  manualReason: z.string().max(500).nullish(),
+  odometerStartKm: z.number().int().min(0).nullish(),
+  odometerEndKm: z.number().int().min(0).nullish(),
+  odometerPhotoId: z.string().nullish(),
+  ticketAmountPaise: z.number().int().min(0).nullish(),
+  ticketPhotoId: z.string().nullish(),
+  ticketReference: z.string().max(100).nullish(),
+  note: z.string().max(2000).nullish(),
+});
+
+/**
+ * One movement.
+ *
+ * The mode is checked against `mbos_travel_modes` rather than trusted: a leg
+ * naming a mode nobody has priced would be recorded, be worth nothing, and say
+ * nothing about why — and the salesman would find out at month end. Refusing
+ * it names the modes that exist, which is something he can act on.
+ *
+ * The distance is NOT worked out here. The trail arrives in batches and a leg
+ * synced the minute it ended has fewer positions behind it than the same leg
+ * has by evening, so scoring happens on submission, when the day is complete.
+ */
+async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  const parsed = travelLegSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const [mode] = await db
+    .select({ key: mbosTravelModes.key })
+    .from(mbosTravelModes)
+    .where(and(eq(mbosTravelModes.key, p.modeKey), eq(mbosTravelModes.active, true)))
+    .limit(1);
+  if (!mode) {
+    const available = await db
+      .select({ label: mbosTravelModes.label })
+      .from(mbosTravelModes)
+      .where(eq(mbosTravelModes.active, true));
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `MahekOne has no travel mode called "${p.modeKey}". The ones it has are: ${available.map((m) => m.label).join(", ")}.`,
+      ),
+    };
+  }
+
+  /* A leg has to belong to a day, and the day is what makes the meals work —
+     so one is opened rather than the leg being refused for the want of it. */
+  let dayId = p.expenseDayId ?? null;
+  if (!dayId && p.day) {
+    dayId = await ensureDay(principal.user.id, p.day, principal.deviceId);
+  }
+
+  if (dayId) {
+    const [day] = await db
+      .select({ lockedAt: mbosExpenseDays.lockedAt })
+      .from(mbosExpenseDays)
+      .where(eq(mbosExpenseDays.id, dayId))
+      .limit(1);
+    if (day?.lockedAt) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "day_locked",
+          "That day has already been submitted and locked, so a leg cannot be added to it. Ask your manager to reopen it.",
+        ),
+      };
+    }
+  }
+
+  /* A customer named on a leg is checked the same way one named on an order
+     is. A leg is how servicing cost is told from acquisition cost, so a leg
+     pointing at somebody else's shop moves money between two figures the
+     owner reads. */
+  if (p.customerId) {
+    const scoped = await scopedCustomer(principal, p.customerId);
+    if (!scoped.ok) return { kind: "rejected", value: scoped.value };
+  }
+
+  const values = {
+    expenseDayId: dayId,
+    modeKey: p.modeKey,
+    fromLabel: p.fromLabel ?? null,
+    toLabel: p.toLabel ?? null,
+    fromLat: p.fromLat ?? null,
+    fromLng: p.fromLng ?? null,
+    toLat: p.toLat ?? null,
+    toLng: p.toLng ?? null,
+    startedAt: p.startedAt ? new Date(p.startedAt) : null,
+    endedAt: p.endedAt ? new Date(p.endedAt) : null,
+    purpose: p.purpose ?? null,
+    customerId: p.customerId ?? null,
+    visitId: p.visitId ?? null,
+    manualMetres: p.manualMetres ?? null,
+    manualReason: p.manualReason ?? null,
+    odometerStartKm: p.odometerStartKm ?? null,
+    odometerEndKm: p.odometerEndKm ?? null,
+    odometerPhotoId: p.odometerPhotoId ?? null,
+    ticketAmountPaise: p.ticketAmountPaise ?? null,
+    ticketPhotoId: p.ticketPhotoId ?? null,
+    ticketReference: p.ticketReference ?? null,
+    note: p.note ?? null,
+    updatedAt: new Date(),
+    updatedById: principal.user.id,
+  };
+
+  await db
+    .insert(mbosTravelLegs)
+    .values({
+      id: item.entityId,
+      userId: principal.user.id,
+      clientCreatedAt: new Date(item.clientCreatedAt),
+      createdById: principal.user.id,
+      deviceId: principal.deviceId,
+      ...values,
+    })
+    .onConflictDoUpdate({ target: mbosTravelLegs.id, set: values });
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+const submitSchema = z.object({
+  day: z.string(),
+  /** What the handset made the total. Compared, never trusted. */
+  clientClaimedPaise: z.number().int().min(0).nullish(),
+  note: z.string().max(2000).nullish(),
+});
+
+/**
+ * The salesman closing his day.
+ *
+ * **The server recomputes and the server's answer wins — and the difference is
+ * RECORDED.** The handset ran the same engine offline against the policy it
+ * last pulled, which may be a version behind. Silently overwriting his figure
+ * is how somebody is told ₹450 and paid ₹250 with nothing on any screen
+ * explaining it, and that is the fastest way to make a field app untrusted.
+ * `sync_conflicts` already does exactly this for the order sheet.
+ */
+async function handleExpenseDaySubmit(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const parsed = submitSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const outcome = await submitDay(principal.user.id, p.day, { note: p.note ?? null });
+  if (!outcome.ok) {
+    return { kind: "rejected", value: reject("day_locked", outcome.reason) };
+  }
+
+  if (
+    typeof p.clientClaimedPaise === "number" &&
+    p.clientClaimedPaise !== outcome.claimedPaise
+  ) {
+    await db
+      .insert(mbosExpenseExceptions)
+      .values({
+        id: gen("xexc"),
+        userId: principal.user.id,
+        expenseDayId: outcome.dayId,
+        kind: "client_disagreement",
+        severity: "info",
+        message: `The handset made this day ${rupees(p.clientClaimedPaise)} and the office makes it ${rupees(outcome.claimedPaise)}. The office figure is the one paid; the difference is usually a policy the phone had not yet pulled.`,
+        detail: {
+          clientClaimedPaise: p.clientClaimedPaise,
+          serverClaimedPaise: outcome.claimedPaise,
+        },
+      })
+      .onConflictDoNothing();
+  }
+
+  return {
+    kind: "accepted",
+    value: {
+      serverId: outcome.dayId,
+      /* The handset prints this, so the salesman learns what happened to his
+         day at the moment it syncs rather than at month end. */
+      serverNumber: outcome.autoApproved ? "Approved" : "With your manager",
+    },
+  };
 }
 
 /* -------------------------------------------------------------- attendance */
@@ -3647,6 +3978,10 @@ export async function storeMbosMedia(
         contentType: actual,
         sizeBytes: stored.sizeBytes,
         thumbnailRef: actual.startsWith("image/") ? stored.ref : null,
+        /* Requirement 47. The same file uploaded twice is the commonest
+           duplicate there is, and this is the only moment its bytes are here
+           to be hashed. */
+        contentHash: createHash("sha256").update(input.bytes).digest("hex"),
         status: "available",
         uploadedById: principal.user.id,
       })
@@ -3656,6 +3991,7 @@ export async function storeMbosMedia(
           storedRef: stored.ref,
           contentType: actual,
           sizeBytes: stored.sizeBytes,
+          contentHash: createHash("sha256").update(input.bytes).digest("hex"),
           status: "available",
           updatedAt: new Date(),
         },

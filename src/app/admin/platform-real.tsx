@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   Badge,
   Button,
+  Callout,
   Card,
   CardHeader,
   EmptyState,
@@ -17,6 +18,7 @@ import {
 } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { rebuildQueues, triggerJob } from "@/lib/actions/crm";
+import { checkAttachmentStorage, type StorageCheck } from "@/lib/actions/expenses";
 import type { QueueOwner } from "@/lib/services/admin-platform-service";
 import { stamp, shortDate } from "@/lib/format";
 import type {
@@ -227,6 +229,95 @@ export function HealthTab({ data }: { data: PlatformData }) {
 /* ---------------------------------------------------------- integrations */
 
 export function IntegrationsTab({ data }: { data: PlatformData }) {
+  return (
+    <>
+      <StorageCheckCard />
+      <IntegrationsTable data={data} />
+    </>
+  );
+}
+
+/**
+ * Prove the attachment store actually works, from here.
+ *
+ * The row below says which backend is configured. That is not the same as
+ * knowing it WORKS — a bucket with a token scoped to a different bucket looks
+ * identical from the outside, right up until a salesman's bill photograph
+ * fails to upload in a market and nobody finds out for a week.
+ *
+ * It is here rather than in a script because this deployment has no shell for
+ * the people who run it. A check that can only be run over SSH is a check
+ * nobody runs, which is the same reasoning that put the sheet import and the
+ * dictation keys on a screen.
+ */
+function StorageCheckCard() {
+  const [result, setResult] = React.useState<StorageCheck | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    const r = await checkAttachmentStorage();
+    setBusy(false);
+    if (!r.ok) {
+      setError(r.error);
+      setResult(null);
+      return;
+    }
+    setResult(r.data);
+  };
+
+  return (
+    <Card className="mt-5 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
+      <CardHeader
+        title="Attachment store"
+        hint="Writes a ten-byte file, reads it back, compares the bytes and deletes it — the whole round trip a bill photograph makes. Nothing is left behind."
+        action={
+          <Button variant="primary" disabled={busy} onClick={() => void run()}>
+            {busy ? "Checking…" : "Check it now"}
+          </Button>
+        }
+      />
+
+      {error ? <Callout tone="danger">{error}</Callout> : null}
+
+      {result ? (
+        <>
+          <Callout tone={result.ok ? "brand" : "danger"}>
+            {result.ok
+              ? `The ${result.backend === "s3" ? "bucket" : "Postgres store"} round-trips. Attachments will work.`
+              : `The ${result.backend === "s3" ? "bucket" : "Postgres store"} is not working. Nothing has been lost — uploads simply fail until it is fixed.`}
+          </Callout>
+
+          <ul className="space-y-1.5 text-[13px]">
+            {result.steps.map((s) => (
+              <li key={s.step} className="flex items-start gap-2.5">
+                <span
+                  className={
+                    s.ok
+                      ? "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-success"
+                      : "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-danger"
+                  }
+                />
+                <span>
+                  <span className="font-medium text-ink">{s.step}</span>
+                  <span className="text-muted"> — {s.detail}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          {result.advice ? (
+            <p className="mt-3 whitespace-pre-line text-[13px] text-muted">{result.advice}</p>
+          ) : null}
+        </>
+      ) : null}
+    </Card>
+  );
+}
+
+function IntegrationsTable({ data }: { data: PlatformData }) {
   return (
     <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
       <CardHeader

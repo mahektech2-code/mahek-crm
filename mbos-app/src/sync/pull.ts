@@ -36,6 +36,8 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertPerformance(pull.performance, now);
     touched += await upsertTasks(pull.tasks, now);
     touched += await upsertSalary(pull.salary, now);
+    touched += await upsertTravelModes(pull.travelModes, now);
+    touched += await replaceExpensePolicy(pull.expensePolicy, now);
     touched += await applyApprovals(pull.approvals);
     touched += await applyDeletions(pull.deletions);
   });
@@ -326,4 +328,96 @@ async function applyDeletions(deletions: { entity: string; ids: string[] }[] | u
     n += d.ids.length;
   }
   return n;
+}
+
+/* ------------------------------------------------- travel and the policy */
+
+/**
+ * The modes a leg may name.
+ *
+ * Upserted rather than replaced, so a mode the office retires stops being
+ * OFFERED — the pickers read `active` through the pull, which stops sending
+ * it — while a leg already recorded against it keeps resolving to a label.
+ * The same rule retired quick notes follow in the CRM.
+ */
+async function upsertTravelModes(rows: unknown[] | undefined, now: number): Promise<number> {
+  if (!rows?.length) return 0;
+  for (const raw of rows) {
+    const m = raw as {
+      key: string;
+      label: string;
+      sortOrder: number;
+      reimbursementKind: string;
+      requiresOdometer: boolean;
+      requiresTicket: boolean;
+    };
+    await run(
+      `INSERT INTO travel_modes (key, label, sortOrder, reimbursementKind,
+                                 requiresOdometer, requiresTicket, lastSyncedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         label = excluded.label,
+         sortOrder = excluded.sortOrder,
+         reimbursementKind = excluded.reimbursementKind,
+         requiresOdometer = excluded.requiresOdometer,
+         requiresTicket = excluded.requiresTicket,
+         lastSyncedAt = excluded.lastSyncedAt`,
+      [
+        m.key,
+        m.label,
+        m.sortOrder ?? 0,
+        m.reimbursementKind,
+        m.requiresOdometer ? 1 : 0,
+        m.requiresTicket ? 1 : 0,
+        now,
+      ],
+    );
+  }
+  return rows.length;
+}
+
+/**
+ * The expense policy, REPLACED WHOLESALE.
+ *
+ * Exactly like the price list, and for exactly the same reason: a rule the
+ * office withdrew has to disappear. A merge would leave a rate on this phone
+ * that the office will not pay, and the salesman would be told a number, act
+ * on it, and be paid a different one — which is the single fastest way to make
+ * a field app untrusted.
+ *
+ * Null is a real answer and it is kept as one: no policy covers today, so the
+ * screens say the office has not published one rather than showing ₹0 eligible
+ * against every claim.
+ */
+async function replaceExpensePolicy(policy: unknown, now: number): Promise<number> {
+  await run(`DELETE FROM expense_policy`);
+  if (!policy) return 0;
+  const p = policy as {
+    policyId: string;
+    versionNo: number;
+    effectiveFrom: string;
+    effectiveTo: string | null;
+    grade: string | null;
+    cityClass: string | null;
+    rules: unknown[];
+    sentences: string[];
+  };
+  await run(
+    `INSERT INTO expense_policy
+       (id, policyId, versionNo, effectiveFrom, effectiveTo, grade, cityClass,
+        rulesJson, sentencesJson, lastSyncedAt)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      p.policyId,
+      p.versionNo,
+      p.effectiveFrom,
+      p.effectiveTo,
+      p.grade,
+      p.cityClass,
+      JSON.stringify(p.rules ?? []),
+      JSON.stringify(p.sentences ?? []),
+      now,
+    ],
+  );
+  return 1;
 }

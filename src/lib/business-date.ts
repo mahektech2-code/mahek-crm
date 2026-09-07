@@ -411,6 +411,58 @@ export function calendarDate(at: Date, timezone: string = APP_TIMEZONE): Calenda
 }
 
 /**
+ * A stored instant, whatever shape it arrived in.
+ *
+ * **Drizzle's `db.execute` with raw SQL hands back what the driver parsed, and
+ * for a timestamptz that is a STRING** — not the `Date` a typed `.select()`
+ * returns. The two paths are used side by side all over this codebase, so a
+ * row read one way and a row read the other are different types wearing the
+ * same TypeScript annotation, and nothing catches it: `Date` is what the type
+ * says, and `.toISOString is not a function` is what happens at runtime.
+ *
+ * Every read that goes through `db.execute` and then treats a column as an
+ * instant has to come through here. Null for anything unparseable rather than
+ * an Invalid Date, because an Invalid Date propagates silently until something
+ * formats it and throws somewhere unrelated.
+ */
+export function asDate(value: unknown): Date | null {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value === "string" || typeof value === "number") {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+/**
+ * Minutes from local midnight on `day` to a stored instant.
+ *
+ * The FOURTH spelling of the zone rule, and the one the expense policy needs.
+ * A meal window is a wall clock — "breakfast is before eight" — and comparing
+ * a wall clock to a stored instant needs a zone. `getHours()` would answer in
+ * the zone of whichever machine asked, which on a server is UTC and five and a
+ * half hours wrong; `calendarDate` throws the clock away entirely.
+ *
+ * The result may exceed 1440 and that is the point: a salesman who left on
+ * Tuesday and got back at 1:30 on Wednesday morning was away until 25:30 on
+ * Tuesday, not until 01:30 on a day he had not reached yet. It may also be
+ * negative, for an instant before the day began.
+ *
+ * The engine sees only the number, so the engine cannot get the zone wrong.
+ */
+export function localMinutesSince(
+  day: CalendarDate,
+  at: Date | string | number,
+  timezone: string = APP_TIMEZONE,
+): number | null {
+  const instant = asDate(at);
+  if (instant === null) return null;
+  const parts = zonedParts(instant, timezone);
+  const on = iso(parts.year, parts.month, parts.day) as CalendarDate;
+  return calendarDaysBetween(day, on) * 1440 + parts.hour * 60 + parts.minute;
+}
+
+/**
  * A timestamptz rendered as a business date, in SQL. Every place that turns a
  * stored timestamp into a day must use this rather than a bare `::date`.
  */

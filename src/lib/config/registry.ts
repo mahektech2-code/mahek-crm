@@ -51,7 +51,16 @@ export type SettingCategory =
   /** The handsets themselves: how many a person may be signed in on. */
   | "mbos-devices"
   | "mbos-leads"
-  | "mbos-tasks";
+  | "mbos-tasks"
+  /**
+   * Travel and expense — the PLATFORM behaviour, not the reimbursement terms.
+   *
+   * Every rate, limit, time rule and approval rule lives in `expense_policies`
+   * instead, because those need versions and effective dates and these do not.
+   * The test for which belongs here: would changing it restate what an old
+   * claim was worth? If yes it is policy; if no it is a setting.
+   */
+  | "expenses";
 
 export type SettingDefinition = {
   key: string;
@@ -1828,6 +1837,104 @@ export const SETTINGS = [
     max: 365,
   },
 
+  /* --------------------------------------------- travel and expense policy */
+  {
+    key: "expenses.policyFallbackToConfig",
+    type: "boolean",
+    category: "expenses",
+    label: "Fall back to the old caps where no policy covers a date",
+    description:
+      "On, a day with no published policy is worked out on the mbos.expenses caps above rather than left unpriced. Off, the claims are recorded and the screen says plainly that nothing can be worked out yet — which is the honest answer, and the reason this defaults on is only that it is the behaviour a deployment already had.",
+    default: true,
+  },
+  {
+    key: "expenses.gpsRoadFactorBps",
+    type: "integer",
+    category: "expenses",
+    label: "Straight line to estimated road distance",
+    description:
+      "Basis points. 12500 means a road is assumed to be 25% longer than the crow flies. Used ONLY where the day's track did not cover a leg, and the result is labelled an estimate on every screen that shows it — never presented as a measurement.",
+    default: 12500,
+    min: 10000,
+    max: 30000,
+  },
+  {
+    key: "expenses.gpsMinCoveragePct",
+    type: "integer",
+    category: "expenses",
+    label: "Track coverage below which GPS is evidence rather than a distance",
+    description:
+      "Per cent. A leg the phone reported through is measurable; a leg it saw twice is not. Below this the trail figure is still shown — it is the cross-check against the odometer — but the leg falls back to a labelled estimate rather than being paid on a line that cut every corner.",
+    default: 60,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "expenses.odometerPhotoRandomPct",
+    type: "integer",
+    category: "expenses",
+    label: "Share of days asked for an odometer photograph at random",
+    description:
+      "Per cent. The draw is made in the office and sent to the handset, never rolled on the device — a random check a phone can decline to roll is not a check. Only read where the active policy's odometer rule says 'random'.",
+    default: 10,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "expenses.duplicateWindowDays",
+    type: "integer",
+    category: "expenses",
+    label: "How far either side a duplicate claim is looked for",
+    description:
+      "Days. A bill number or a bill photograph matching inside this window raises a question at the point of entry. It is a suggestion and never a gate: two salesmen claiming the same fare on one Tuesday is an ordinary Tuesday.",
+    default: 30,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "expenses.anomalyLookbackDays",
+    type: "integer",
+    category: "expenses",
+    label: "History a day is compared against",
+    description:
+      "Days. The person's own recent days and the team's, as medians rather than means — one enormous day in a month drags a mean up far enough to hide the next one.",
+    default: 90,
+    min: 7,
+    max: 730,
+  },
+  {
+    key: "expenses.anomalyMinHistoryDays",
+    type: "integer",
+    category: "expenses",
+    label: "Days of history before anybody is compared to themselves",
+    description:
+      "Below this nothing is flagged against a person's own average. Three days is not a pattern, and a flag raised in somebody's second week is a flag raised against not having been here long — which nobody can act on and everybody learns to ignore.",
+    default: 5,
+    min: 1,
+    max: 60,
+  },
+  {
+    key: "expenses.eodReopenWindowDays",
+    type: "integer",
+    category: "expenses",
+    label: "How long a submitted day may be reopened",
+    description:
+      "Days. Past this a locked day cannot be corrected at all, which is deliberate: an authorised correction is a real thing and an authorised correction to a quarter that has been reported on is not. Reopening always takes a reason.",
+    default: 7,
+    min: 0,
+    max: 90,
+  },
+  {
+    key: "expenses.trendMonths",
+    type: "integer",
+    category: "expenses",
+    label: "Months of expense trend the owner is shown",
+    description: "Requirement 72. Read from the monthly snapshot, not from live data — a trend rebuilt from live rows restates history every time an old claim is corrected.",
+    default: 12,
+    min: 3,
+    max: 36,
+  },
+
   /* ---------------------------------------------------------- attendance */
   {
     key: "mbos.attendance.geofenceRadiusM",
@@ -2735,6 +2842,15 @@ export type Config = {
   "mbos.expenses.billPhotoThresholdPaise": number;
   "mbos.expenses.categoryCapsPaise": Record<MbosExpenseCategory, number>;
   "mbos.expenses.backdatedDaysAllowed": number;
+  "expenses.policyFallbackToConfig": boolean;
+  "expenses.gpsRoadFactorBps": number;
+  "expenses.gpsMinCoveragePct": number;
+  "expenses.odometerPhotoRandomPct": number;
+  "expenses.duplicateWindowDays": number;
+  "expenses.anomalyLookbackDays": number;
+  "expenses.anomalyMinHistoryDays": number;
+  "expenses.eodReopenWindowDays": number;
+  "expenses.trendMonths": number;
 
   "mbos.attendance.geofenceRadiusM": number;
   "mbos.attendance.fullDayHours": number;

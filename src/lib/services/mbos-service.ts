@@ -14,6 +14,8 @@ import {
   scopedUserIds,
   type DataScope, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
+import { policyForDate, resolveSubject } from "./expense-policy-service";
+import { describeRule } from "../expense-rule-forms";
 import { verifyPassword } from "../password";
 import { bearerFrom, verifyToken, signingKeyPresent } from "../mbos/token";
 import { today } from "../recompute";
@@ -372,6 +374,62 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
   return out;
 }
 
+
+/* ------------------------------------------------- the expense policy, sent */
+
+/**
+ * The policy this person is under, as the rules his own copy of the engine
+ * will read, plus the same rules in English for the screen that shows them.
+ *
+ * Sent NARROWED to his grade and to nothing else — a policy carries every
+ * grade's hotel ceiling and putting all of them on a handset is putting
+ * somebody else's allowance on a device in a market. The narrowing keeps the
+ * qualifier on each rule, because the engine still matches on it and a rule
+ * stripped of its qualifier would apply to a city class it was never meant for.
+ */
+async function expensePolicyFor(userId: string, onDate: string) {
+  const [policy, subject] = await Promise.all([
+    policyForDate(onDate),
+    resolveSubject(userId, null),
+  ]);
+  if (!policy) return null;
+
+  const mine = policy.rules.filter(
+    (r) => r.grade === null || r.grade === subject.grade,
+  );
+
+  return {
+    policyId: policy.id,
+    versionNo: policy.versionNo,
+    effectiveFrom: policy.effectiveFrom,
+    effectiveTo: policy.effectiveTo,
+    grade: subject.grade,
+    cityClass: subject.cityClass,
+    rules: mine as unknown[],
+    sentences: mine.map((r) => describeRule(r)),
+  };
+}
+
+/** Every mode a leg may name. Read, never a literal on the handset. */
+async function travelModeRows() {
+  return db.execute<{
+    key: string;
+    label: string;
+    sortOrder: number;
+    reimbursementKind: string;
+    requiresOdometer: boolean;
+    requiresTicket: boolean;
+  }>(sql`
+    select key, label, sort_order as "sortOrder",
+           reimbursement_kind as "reimbursementKind",
+           requires_odometer as "requiresOdometer",
+           requires_ticket as "requiresTicket"
+      from mbos_travel_modes
+     where active
+     order by sort_order asc
+  `);
+}
+
 /* ------------------------------------------------------------- the payloads */
 
 function scopeIn(ids: string[] | null) {
@@ -440,6 +498,38 @@ export type BootstrapPayload = {
   performance: unknown[];
   /** This month's and last's. See `salaryFor` — read-only, nothing here writes it. */
   salary: unknown[];
+  /**
+   * The travel modes a leg may name, and how each is reimbursed.
+   *
+   * A list, never a constant in the app: requirement 3 says an admin adds one
+   * without a developer, and a mode typed into a picker is the same mistake as
+   * a product list typed into a screen.
+   */
+  travelModes: unknown[];
+  /**
+   * The expense policy in force, resolved for THIS person, as rules the
+   * handset's own copy of the engine reads.
+   *
+   * **Replaced wholesale, like the price list, and for the same reason.** A
+   * withdrawn rule has to disappear; a per-row upsert leaves a rate nobody
+   * pays any more sitting on the phone, and the salesman is told a number the
+   * office will not honour.
+   *
+   * Only the rules that apply to him are sent. The whole table would be every
+   * grade's hotel ceiling on every handset, which is somebody else's salary
+   * band on a device in a market.
+   */
+  expensePolicy: {
+    policyId: string;
+    versionNo: number;
+    effectiveFrom: string;
+    effectiveTo: string | null;
+    grade: string | null;
+    cityClass: string | null;
+    rules: unknown[];
+    /** In English, for the "what am I allowed" screen. */
+    sentences: string[];
+  } | null;
   config: Record<string, unknown>;
 };
 
@@ -539,6 +629,8 @@ export async function buildBootstrap(
     notifications: notificationRows,
     performance: performanceRows,
     salary: salaryRows,
+    travelModes: await travelModeRows(),
+    expensePolicy: await expensePolicyFor(principal.user.id, await today()),
     config,
   };
 }
@@ -1125,6 +1217,8 @@ export async function buildPull(
       documents: [],
       courses: [],
       salary: [],
+      travelModes: [],
+      expensePolicy: null,
       deletions: [],
     };
   }
@@ -1390,5 +1484,11 @@ export async function buildPull(
     performance: await performanceFor(principal.user.id, sinceIso),
     tasks: taskChanges as unknown[],
     salary: salaryRows as unknown[],
+    travelModes: await travelModeRows(),
+    /* Sent on EVERY delta rather than gated on the cursor, and deliberately.
+       It is a handful of rows, and the failure it prevents is the expensive
+       one: a phone quietly holding a superseded rate and telling a salesman a
+       number the office will not pay. */
+    expensePolicy: await expensePolicyFor(principal.user.id, await today()),
   };
 }

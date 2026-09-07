@@ -1,8 +1,12 @@
 import Link from "next/link";
 import { addDays } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
+import { dwellStops, type DwellStop } from "@/lib/engines/dwell";
+import { dropInaccurateFixes } from "@/lib/engines/trail-gaps";
 import { shortDateWithYear } from "@/lib/format";
+import { metresBetween } from "@/lib/geo";
 import { today } from "@/lib/recompute";
+import { readSecret } from "@/lib/secrets";
 import {
   activityPointsForDay,
   lastKnownPositions,
@@ -23,11 +27,12 @@ export const metadata = { title: "Live map — Sales Dashboard — MahekOne" };
  * to the other looks nothing like an afternoon spent in one place, and neither
  * is visible in a list of visits.
  *
- * **The map has streets under it now.** It was a bare grid, on the reasoning
- * that tiles meant a key, a bill and sending the team's coordinates away.
- * OpenFreeMap answers the first two — no key, no account, no limit — and the
- * third was overstated: the pins are drawn from MahekOne's own data and a tile
- * server is only ever asked for squares of map. See `street-map.tsx`.
+ * **The map has streets under it, from Ola Maps.** The key is read once,
+ * here, and handed down as a plain prop — the one credential in MahekOne
+ * that has to reach the browser, because a browser is what asks a tile
+ * server for squares of map. See `street-map.tsx` for why that is a
+ * deliberate exception to how every other key in `app_secrets` is read, and
+ * for what the SAME key also does for the "today" trail (Snap-to-Road).
  *
  * **A pin is only drawn where there is a fix.** Nobody is placed by arithmetic;
  * somebody with no position appears in the team list saying so and nowhere on
@@ -50,9 +55,15 @@ export default async function Page({
   const view = params.view === "today" ? "today" : "now";
   const isToday = day === now;
 
-  const [rows, config] = await Promise.all([lastKnownPositions(day), getConfig()]);
+  const [rows, config, olaMapsKey] = await Promise.all([
+    lastKnownPositions(day),
+    getConfig(),
+    readSecret("olamaps.apiKey"),
+  ]);
   const tracking = config["mbos.location.trackWhileWorking"];
-  const everyMinutes = config["mbos.location.trackEveryMinutes"];
+  const everySeconds = config["mbos.location.trackEverySeconds"];
+  const everyWords =
+    everySeconds < 60 ? plural(everySeconds, "second") : plural(Math.round(everySeconds / 60), "minute");
 
   /* Only fetched for the view that draws it. The `now` view needs one row per
      person; the trails are a hundred times that, and paying for them to render
@@ -62,8 +73,44 @@ export default async function Page({
       ? await Promise.all([tracksForDay(day), activityPointsForDay(day)])
       : [new Map(), []];
 
+  /* A fix the handset itself rated as imprecise is dropped before any of
+     this runs — see `dropInaccurateFixes`. One 300-metre-radius fix between
+     two tight ones invents a hop nobody actually covered, which shows up as
+     a phantom gap, a wrong direction arrow, and a distance that never
+     happened. This is the same threshold `mbos.location.gpsAccuracyThresholdM`
+     already applies to visit verification; it is filtered out here rather
+     than corrected, because the trail shows only what is known. */
+  const accuracyThreshold = config["mbos.location.gpsAccuracyThresholdM"];
+  for (const [id, points] of tracks) {
+    tracks.set(id, dropInaccurateFixes(points, accuracyThreshold));
+  }
+
+  /* "Distance" is the trail's own length, the same honesty rule
+     `today-tab.tsx` uses — the sum of the gaps between consecutive fixes,
+     never a straight line from start to end. Dwell stops are read off the
+     same trail: a run of fixes that never drifted, held long enough to be
+     more than a red light. Both are derived here, once, rather than inside
+     the client map component, which redraws on every selection change. */
+  const distanceMetres = new Map<string, number>();
+  const dwells = new Map<string, DwellStop[]>();
+  for (const [id, points] of tracks) {
+    let metres = 0;
+    for (let i = 1; i < points.length; i++) {
+      metres += metresBetween(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng);
+    }
+    distanceMetres.set(id, metres);
+    dwells.set(
+      id,
+      dwellStops(points, config["mbos.location.dwellRadiusMeters"], config["mbos.location.dwellMinMinutes"]),
+    );
+  }
+
   const out = rows.filter((r) => r.checkInAt && !r.checkOutAt && !r.onLeave);
   const noSignal = rows.filter((r) => !r.seenAt && !r.onLeave);
+  /* False, never null — null means the app has not reported yet, which is
+     not the same claim as "refused". See `mbos_devices.background_location_
+     granted`'s own comment for what the difference actually costs a trail. */
+  const noBackgroundTracking = rows.filter((r) => r.backgroundTrackingGranted === false && !r.onLeave);
 
   return (
     <div className="p-6">
@@ -145,29 +192,47 @@ export default async function Page({
         />
       ) : null}
 
+      {view === "today" && noBackgroundTracking.length ? (
+        <Banner
+          tone="warn"
+          title={`${plural(noBackgroundTracking.length, "salesman", "salesmen")} without background location`}
+          body="Their trail will have real gaps that no sampling interval or map styling can close — the phone stops taking fixes the moment its screen locks. Ask them to open their phone's own Settings and set MahekOne's Location permission to “Allow all the time”."
+        />
+      ) : null}
+
       {/* Keyed, so a change of day or view remounts the map — and the
           selection sitting above it — rather than asking an effect to
           rebuild either in place. See `live-panel.tsx` and `street-map.tsx`. */}
       <LivePanel
         key={`${day}:${view}`}
+        day={day}
         rows={rows}
         tracks={tracks}
         activity={activity}
+        distanceMetres={distanceMetres}
+        dwells={dwells}
+        gapMetres={config["mbos.location.trailGapMeters"]}
         staleAfterSeconds={config["mbos.location.activityFixMaxAgeSeconds"]}
         view={view}
+        isToday={isToday}
+        olaMapsKey={olaMapsKey}
       />
 
       <p className="mt-3 max-w-[820px] text-[13px] text-pretty text-muted">
         {tracking
-          ? `A handset reports its position about every ${everyMinutes} minutes while the day is open, and stops at the check-out. `
+          ? `A handset reports its position about every ${everyWords} while the day is open, and stops at the check-out. `
           : ""}
         {isToday
           ? out.length
             ? `${plural(out.length, "salesman", "salesmen")} out now. `
             : "Nobody is checked in at the moment. "
           : ""}
-        The streets come from OpenFreeMap, which needs no key and sets no limit; the pins are
-        drawn here from MahekOne&rsquo;s own data, so no position is ever sent to it.
+        The streets come from Ola Maps; the pins are drawn here from MahekOne&rsquo;s own data,
+        so no position is ever sent to it — only which square of map is being looked at.
+        {!olaMapsKey ? " No key is set for it yet, so no streets are drawn below." : ""}
+        {view === "today" && olaMapsKey
+          ? " A dashed stretch of a trail is a real gap — two fixes far enough apart that the road actually taken between them is not known, most often a stretch driven rather than walked, or a dropped signal."
+          : ""}
       </p>
     </div>
   );

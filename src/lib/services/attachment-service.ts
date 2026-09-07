@@ -1,5 +1,5 @@
 import "server-only";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -146,6 +146,10 @@ export async function createAttachment(input: {
       // few megabytes, and a resize pipeline for that is machinery earning
       // nothing. PDFs show a file icon, per §4.2.
       thumbnailRef: actual.startsWith("image/") ? stored.ref : null,
+      /* Requirement 47 — see the column's own note. Taken here because this is
+         the only moment the bytes are in hand; hashing later would mean
+         reading every file back out of the store. */
+      contentHash: createHash("sha256").update(input.bytes).digest("hex"),
       status: "available",
       uploadedById: ctx.user.id,
     });

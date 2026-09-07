@@ -603,6 +603,34 @@
       "when": 1787501560000,
       "tag": "0085_mbos_push_token",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1787501620000,
+      "tag": "0086_expense_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1787501680000,
+      "tag": "0087_travel_and_expense_days",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1787501740000,
+      "tag": "0088_attachment_content_hash",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1787501800000,
+      "tag": "0089_expense_month_snapshots",
+      "breakpoints": true
     }
   ]
 }

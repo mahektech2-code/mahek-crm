@@ -44,6 +44,7 @@ const files = [
   "src/lib/performance.test.ts",
   "src/lib/owner-dashboard.test.ts",
   "src/lib/founder-dashboard.test.ts",
+  "src/lib/expense-policy.test.ts",
 ];
 
 let failed = 0;
