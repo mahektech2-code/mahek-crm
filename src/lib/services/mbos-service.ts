@@ -878,7 +878,7 @@ async function openLeads(userId: string) {
   return db.execute<Record<string, unknown>>(sql`
     select c.id, c.name, c.company_name as "companyName", c.phone as mobile,
            c.city, c.area,
-           c.lead_source as source, c.lead_stage as stage,
+           coalesce(c.lead_source, 'manual') as source, c.lead_stage as stage,
            c.lead_estimated_potential_paise as "estimatedPotentialPaise",
            c.lead_next_follow_up_date::text as "nextFollowUpDate",
            c.lead_notes as notes,

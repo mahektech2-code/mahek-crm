@@ -871,7 +871,18 @@ export type LeadRow = {
 const LEAD_ROW_SELECT = sql`
     select c.id, c.name, c.company_name as "companyName", c.phone as mobile,
            c.city, c.area,
-           c.lead_source as source,
+           /* COALESCED, and NO BACKTICKS in this comment: it sits inside a
+            * sql template literal, and one backtick ends the literal.
+            *
+            * LeadRow.source is typed as a plain string and the screen calls
+            * .replace() on it. mbos_leads.source was NOT NULL with a default
+            * of 'manual'; customers.lead_source is nullable, so collapsing the
+            * two tables quietly removed an invariant three screens were
+            * written against - 42 leads with a null source took the whole page
+            * down with "Cannot read properties of null". The cast in
+            * db.execute of LeadRow is unchecked, so neither tsc nor a test
+            * could see it; the guarantee has to be restored here in the SQL. */
+           coalesce(c.lead_source, 'manual') as source,
            c.lead_estimated_potential_paise as "estimatedPotentialPaise",
            c.lead_stage::text as stage,
            c.owner_id as "salesmanId",
