@@ -11,17 +11,20 @@
  * thresholds arrive as arguments, and nothing here reads a clock or a table.
  *
  * **A GPS number has to say what kind of number it is, and that is the whole
- * point of this file.** The trail takes a fix every few minutes — five, by
- * default — so on a bike at thirty kilometres an hour the points are two and a
- * half kilometres apart and the line between them cuts every corner, every
- * flyover and every diversion. The figure it produces is a FLOOR on the real
- * distance, not the real distance, and it is a floor that gets looser the
- * faster somebody moves.
+ * point of this file.** How good the number is depends entirely on how often
+ * the phone reported, and that is configuration: at
+ * `mbos.location.trackEverySeconds` = 3 the points are metres apart and the
+ * line hugs the road actually walked; at a minute or more they are hundreds of
+ * metres apart and the line cuts every corner, flyover and diversion. The
+ * figure is a FLOOR on the real distance, and the floor gets looser as the
+ * interval widens and as the person moves faster.
  *
- * Presenting that as "the actual distance travelled" would short-pay the
- * salesman who covered the most ground, permanently and invisibly. So every
- * function here returns its method and its coverage beside its number, and the
- * screens print both.
+ * So the interval is never assumed. It arrives as an argument, coverage is
+ * measured against it, and every function returns its method and its coverage
+ * beside its number — because the same code path produces a near-exact
+ * distance on a three-second trail and a serious under-read on a stale one,
+ * and only the coverage tells them apart. Presenting either as "the actual
+ * distance travelled" would short-pay whoever covered the most ground.
  *
  * Metres and integers throughout, for the same reason money is paise: a float
  * of kilometres accumulates error across a day of legs and nobody can see it
@@ -68,11 +71,15 @@ export type TrailOptions = {
   /** Fixes looser than this are dropped: a 500 m fix is not a position. */
   maxAccuracyM: number;
   /**
-   * Expected gap between fixes, in minutes — `mbos.location.trackEveryMinutes`.
-   * Coverage is measured against it, so a leg with half the fixes it should
-   * have reads as 50% covered rather than as a confident short distance.
+   * Expected gap between fixes, in SECONDS — `mbos.location.trackEverySeconds`.
+   *
+   * Seconds rather than minutes because the setting is seconds and its floor is
+   * three: expressed in minutes that is 0.05, and integer arithmetic on it
+   * would round the expected fix count to nonsense. Coverage is measured
+   * against this, so a leg with half the fixes it should have reads as 50%
+   * covered rather than as a confident short distance.
    */
-  expectedFixEveryMinutes: number;
+  expectedFixEverySeconds: number;
   /**
    * Straight line → estimated road distance, in basis points of the straight
    * line. Only ever used where the trail could not answer, and the result is
@@ -127,8 +134,11 @@ export function trailDistance(
   /* Coverage is measured against how many fixes the cadence SHOULD have
      produced, not against the wall clock — a leg is covered when the phone was
      reporting throughout it, and that is a count. */
-  const minutes = (toAt - fromAt) / 60_000;
-  const expected = Math.max(2, Math.floor(minutes / opts.expectedFixEveryMinutes) + 1);
+  const seconds = (toAt - fromAt) / 1000;
+  const expected = Math.max(
+    2,
+    Math.floor(seconds / Math.max(1, opts.expectedFixEverySeconds)) + 1,
+  );
   const coveragePct = Math.min(100, Math.round((usable.length / expected) * 100));
 
   return { metres, method: "trail", fixCount: usable.length, coveragePct, reason: null };

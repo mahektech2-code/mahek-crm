@@ -332,7 +332,7 @@ export async function trailOptions(): Promise<TrailOptions> {
   const config = await getConfig();
   return {
     maxAccuracyM: config["mbos.location.gpsAccuracyThresholdM"],
-    expectedFixEveryMinutes: config["mbos.location.trackEveryMinutes"],
+    expectedFixEverySeconds: config["mbos.location.trackEverySeconds"],
     roadFactorBps: config["expenses.gpsRoadFactorBps"],
     minCoveragePct: config["expenses.gpsMinCoveragePct"],
   };

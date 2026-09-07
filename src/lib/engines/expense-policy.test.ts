@@ -525,7 +525,10 @@ describe("what a whole day comes to, and where it goes", () => {
 describe("distance from the day's track", () => {
   const OPTS: TrailOptions = {
     maxAccuracyM: 100,
-    expectedFixEveryMinutes: 5,
+    /* The shipped default is 3 seconds. These vectors use a 5-minute cadence
+       deliberately — a sparse trail is the case the coverage rule exists for,
+       and one that fails to under-read at 3 seconds would prove nothing. */
+    expectedFixEverySeconds: 300,
     roadFactorBps: 12500,
     minCoveragePct: 60,
   };

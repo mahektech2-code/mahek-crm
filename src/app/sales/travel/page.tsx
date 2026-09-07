@@ -53,7 +53,7 @@ export default async function Page({
     getConfig(),
   ]);
 
-  const variance = config["mbos.location.trackEveryMinutes"];
+  const fixEverySeconds = config["mbos.location.trackEverySeconds"];
   const totalMetres = rows.reduce((n, r) => n + (r.chosenMetres ?? 0), 0);
   const totalPaise = rows.reduce((n, r) => n + Number(r.eligiblePaise ?? 0), 0);
   const disagreeing = rows.filter((r) => r.varianceBps !== null && r.varianceBps > 2500);
@@ -99,7 +99,7 @@ export default async function Page({
       {rows.length === 0 ? (
         <Empty
           title="No travel recorded this month"
-          body={`Legs are recorded on the handset as the salesman moves. A position is taken every ${variance} minutes while somebody is checked in, and the distance is worked out when the day is submitted.`}
+          body={`Legs are recorded on the handset as the salesman moves. A position is taken every ${fixEverySeconds} seconds while somebody is checked in, and the distance is worked out when the day is submitted.`}
         />
       ) : (
         <Table
