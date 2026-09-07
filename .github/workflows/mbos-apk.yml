@@ -102,17 +102,44 @@ jobs:
       # wrong signature builds and installs perfectly on a clean phone; it only
       # fails on the salesman who already has the app, which is the worst place
       # to discover it.
+      #
+      # `apksigner`, NOT `keytool -printcert -jarfile`. A modern release APK is
+      # signed with APK Signature Scheme v2/v3 and carries no JAR signature at
+      # all, so keytool finds nothing and the check silently has no subject —
+      # which is how a verification step ends up verifying nothing.
       - name: Check it was signed with the release key
         working-directory: mbos-app
+        env:
+          STORE_PASSWORD: ${{ secrets.MBOS_KEYSTORE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.MBOS_KEYSTORE_KEY_ALIAS }}
         run: |
           APK=android/app/build/outputs/apk/release/app-release.apk
           test -f "$APK" || { echo "::error::No APK at $APK"; exit 1; }
-          EXPECTED=$(keytool -printcert -jarfile keystore/mbos-release.keystore 2>/dev/null | grep -m1 SHA256 || true)
-          ACTUAL=$(keytool -printcert -jarfile "$APK" | grep -m1 SHA256)
-          echo "APK certificate: $ACTUAL"
-          if echo "$ACTUAL" | grep -qi "androiddebugkey"; then
-            echo "::error::Signed with a debug key. Do not publish this."; exit 1
+
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+          test -n "$APKSIGNER" || { echo "::error::apksigner not found in the Android SDK."; exit 1; }
+
+          # Both sides normalised to lowercase hex with no separators: keytool
+          # prints AA:BB:CC uppercase, apksigner prints aabbcc.
+          norm() { tr -d ': ' | tr '[:upper:]' '[:lower:]'; }
+          ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" \
+            | grep -m1 -i "certificate SHA-256 digest" | awk -F: '{print $2}' | norm)
+          EXPECTED=$(keytool -list -v -keystore keystore/mbos-release.keystore \
+            -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null \
+            | grep -m1 "SHA256:" | awk '{print $2}' | norm)
+
+          echo "APK signed by:  ${ACTUAL:-<none>}"
+          echo "Keystore holds: ${EXPECTED:-<none>}"
+
+          if [ -z "$ACTUAL" ] || [ -z "$EXPECTED" ]; then
+            echo "::error::Could not read one of the certificates, so the signature is unverified. Refusing rather than publishing something nobody checked."
+            exit 1
           fi
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::This APK is NOT signed with the committed release key. Android would treat it as a different app: every salesman would have to uninstall — losing anything unsynced — before they could update. Do not publish it."
+            exit 1
+          fi
+          echo "Signature matches the committed release key."
           ls -lh "$APK"
 
       - name: Name it

@@ -50,6 +50,26 @@ export interface FileStorage {
  * filenames and sizes constantly; with the bytes alongside them, every such
  * read would drag megabytes through the connection pool to display a name.
  */
+/**
+ * Bytes out of `attachment_bytes`, or null where that table does not have them.
+ *
+ * Separate from the backend below because the S3 backend needs it too — see
+ * the fallback in `s3Storage.read`. Null rather than a throw, so a caller can
+ * ask "are they here?" without catching.
+ */
+async function readFromPostgres(ref: string): Promise<ArrayBuffer | null> {
+  const rows = await db.execute<{ bytes: Buffer }>(
+    sql`select bytes from attachment_bytes where ref = ${ref}`,
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const buffer = Buffer.from(row.bytes);
+  return buffer.buffer.slice(
+    buffer.byteOffset,
+    buffer.byteOffset + buffer.byteLength,
+  ) as ArrayBuffer;
+}
+
 const postgresStorage: FileStorage = {
   kind: "postgres",
   async upload({ key, body }) {
@@ -62,16 +82,9 @@ const postgresStorage: FileStorage = {
     return { ref: key, sizeBytes: buffer.byteLength };
   },
   async read(ref) {
-    const rows = await db.execute<{ bytes: Buffer }>(
-      sql`select bytes from attachment_bytes where ref = ${ref}`,
-    );
-    const row = rows[0];
-    if (!row) throw new Error("Attachment bytes are missing from storage.");
-    const buffer = Buffer.from(row.bytes);
-    return buffer.buffer.slice(
-      buffer.byteOffset,
-      buffer.byteOffset + buffer.byteLength,
-    ) as ArrayBuffer;
+    const bytes = await readFromPostgres(ref);
+    if (!bytes) throw new Error("Attachment bytes are missing from storage.");
+    return bytes;
   },
   async remove(ref) {
     await db.execute(sql`delete from attachment_bytes where ref = ${ref}`);
@@ -188,6 +201,21 @@ const s3Storage: FileStorage = {
     return { ref: key, sizeBytes: buffer.byteLength };
   },
 
+  /**
+   * The bytes, from the bucket — or from Postgres, where they predate it.
+   *
+   * **This fallback is what makes turning the bucket on a safe change rather
+   * than a destructive one.** Everything uploaded before the switch lives in
+   * `attachment_bytes`, and nothing migrates it: a complaint photograph from
+   * March is still in the database. Without this, the day somebody sets the
+   * bucket variable every existing payment proof, bill photograph and
+   * check-in selfie stops opening — and it fails as a 404 on a screen, which
+   * reads as "the file was lost" rather than "the store moved".
+   *
+   * The order is bucket first, because after the switch that is where almost
+   * everything is and the fallback should be the rare path. It also means the
+   * cost of the fallback is one 404 against R2, which is free.
+   */
   async read(ref) {
     const config = s3Config()!;
     const path = `/${config.bucket}/${encodeS3Path(ref)}`;
@@ -201,11 +229,31 @@ const s3Storage: FileStorage = {
       body: Buffer.alloc(0),
       now: new Date(),
     });
-    const response = await fetch(`${config.protocol}//${config.host}${path}`, { method: "GET", headers });
-    if (!response.ok) throw new Error("Attachment could not be read from storage.");
-    return response.arrayBuffer();
+    const response = await fetch(`${config.protocol}//${config.host}${path}`, {
+      method: "GET",
+      headers,
+    }).catch(() => null);
+
+    if (response?.ok) return response.arrayBuffer();
+
+    const older = await readFromPostgres(ref);
+    if (older) return older;
+
+    throw new Error(
+      `Attachment could not be read from storage. The bucket answered ${
+        response ? response.status : "nothing"
+      } and it is not in the database either.`,
+    );
   },
 
+  /**
+   * Removed from both, because it may be in either.
+   *
+   * A retention sweep that deleted only from the bucket would leave every
+   * pre-switch file in the database for ever — the rows would keep being
+   * counted, backed up and restored long after the record that referred to
+   * them was gone, which is the opposite of what retention is for.
+   */
   async remove(ref) {
     const config = s3Config()!;
     const path = `/${config.bucket}/${encodeS3Path(ref)}`;
@@ -219,13 +267,17 @@ const s3Storage: FileStorage = {
       body: Buffer.alloc(0),
       now: new Date(),
     });
-    const response = await fetch(`${config.protocol}//${config.host}${path}`, { method: "DELETE", headers });
+    const response = await fetch(`${config.protocol}//${config.host}${path}`, {
+      method: "DELETE",
+      headers,
+    });
     /* 404 on a delete is success: the bytes are not there, which is what was
        asked for. Anything else is a store that is refusing us, and a retention
        sweep that silently fails is one nobody notices for a year. */
     if (!response.ok && response.status !== 404) {
       throw new Error(`The file store refused the delete (${response.status}).`);
     }
+    await db.execute(sql`delete from attachment_bytes where ref = ${ref}`);
   },
 };
 
