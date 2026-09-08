@@ -77,6 +77,94 @@ export function wireNotes(notes: LeadNote[]): string | undefined {
     .slice(0, 4000);
 }
 
+/**
+ * The other direction, for a lead the OFFICE holds.
+ *
+ * `won` becomes `Converted`, which is the same swap `wireStage` makes going
+ * out, read backwards — and the reason this is a second table rather than an
+ * inversion of the first is that `STAGES` is not injective: `converted` and
+ * `won` both map to `won`, so reversing it would have to pick one and would
+ * pick wrong half the time.
+ *
+ * An unrecognised stage becomes `New` rather than being dropped. The stage
+ * column is what the filter chips select on, so a value none of them names is
+ * a lead that exists and cannot be found on any chip — worse than one filed a
+ * rung too early, which the next stage change corrects.
+ */
+const LOCAL_STAGES: Record<string, string> = {
+  new: 'New',
+  contacted: 'Contacted',
+  qualified: 'Qualified',
+  negotiation: 'Negotiation',
+  won: 'Converted',
+  converted: 'Converted',
+  lost: 'Lost',
+};
+
+export function localStage(stage: string | undefined): string {
+  return LOCAL_STAGES[(stage ?? 'new').trim().toLowerCase()] ?? 'New';
+}
+
+/**
+ * The office's single note field as the list this app keeps.
+ *
+ * `notesOf` already reads a bare string as one undated note, so writing the
+ * office's sentence straight through would render correctly — and then the
+ * first local `addNote` would append to a list built from it and the office's
+ * own dates would be gone. One note, dated to when it arrived, keeps the
+ * append working and never claims a date the office did not give.
+ */
+export function localNotes(notes: string | undefined | null, at: number): string | null {
+  const text = (notes ?? '').trim();
+  return text ? JSON.stringify([{ at, text }]) : null;
+}
+
+/**
+ * A sample's state, which the wire does not carry and the screen is built on.
+ *
+ * MahekOne tracks `trial_outcome` and the two timestamps; the design tracks one
+ * word. Converted beats delivered beats requested, in that order, because that
+ * is the order they happen in and the latest fact is the true one. Derived here
+ * rather than sent so the wire keeps MahekOne's vocabulary — which is the whole
+ * point of this file.
+ */
+export function localSampleState(s: {
+  convertedOrderId?: string | null;
+  deliveredAt?: string | number | null;
+  trialOutcome?: string | null;
+}): string {
+  if (s.convertedOrderId) return 'Converted';
+  if (s.trialOutcome === 'rejected') return 'Rejected';
+  if (s.deliveredAt) return 'Awaiting feedback';
+  return 'Requested';
+}
+
+/**
+ * An instant off the wire as the epoch milliseconds every local column holds.
+ *
+ * A DATE IS NOT AN INSTANT UNTIL SOMETHING NAMES THE MIDNIGHT, which is the
+ * same rule MahekOne states three times over about its own SQL, arriving here
+ * in a third set of clothes. `Date.parse('2026-09-08')` is specified to read a
+ * date-only string as UTC, so a `requestedDate` would land five and a half
+ * hours before the day it names — invisible on a handset in IST, where it
+ * still formats to the right date, and wrong the moment anything compares it
+ * to a local day boundary. A date means local midnight to the person holding
+ * the phone, so it is spelled that way; a full ISO instant carries its own
+ * zone and is left alone.
+ *
+ * Null rather than `NaN` where it will not parse: a column that says nothing
+ * is honest, and `NaN` in an INTEGER column compares false against everything
+ * and is never noticed.
+ */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+export function localInstant(value: string | number | null | undefined): number | null {
+  if (value == null) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const ms = Date.parse(DATE_ONLY.test(value.trim()) ? `${value.trim()}T00:00:00` : value);
+  return Number.isNaN(ms) ? null : ms;
+}
+
 /* ------------------------------------------------------------------- tasks */
 
 /**

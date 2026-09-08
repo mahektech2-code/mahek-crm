@@ -2279,6 +2279,73 @@ rate that was withdrawn has to disappear, and a per-row upsert leaves it behind
 — an order priced from a rate nobody sells at. It is a few hundred rows of three
 columns; a delta would save nothing worth the way it fails.
 
+**THE HANDSET'S SCHEMA IS THE WIRE CONTRACT, and one extra column empties the
+phone.** `applyPull` upserts a pulled row by writing exactly the columns that
+arrived — `INSERT INTO customers (<every key in the payload>)` — so a field the
+server knows about and the handset has no place for throws on an unknown
+column. It is ONE transaction, so that throw rolls back the whole pull: not the
+customers, the pull. Products, the price list, the timeline, the journey, the
+configuration, all of it. Seven of the ten pulled tables disagreed —
+`customersForDevice` alone sent eleven columns that had nowhere to land — so no
+MBOS handset had ever received a single row of reference data, on any build,
+since the app shipped. What made it invisible is that everything a salesman
+AUTHORS goes up perfectly: check-ins, visits, orders, the trail and the Live
+map all worked, and only the book was empty.
+
+**And the second half of the silence was in the sign-in.** `signIn` applies the
+bootstrap inside the same `try` that wraps the network call, so the SQLite
+error fell to a catch that reads "not an `ApiError`, therefore no answer at
+all" and went down the OFFLINE path — which succeeds, because
+`rememberForOffline` ran three lines earlier. The salesman was signed in
+against an empty database with nothing on the screen to say so. A local
+storage failure is now its own answer: `payload`, the fifth of the five checks
+that screen already names.
+
+**So the payload is trimmed to the handset, never the handset widened to the
+payload.** An APK cannot be recalled — the server has to be able to move first,
+and a phone in somebody's pocket cannot. `upsert` drops a column this build
+does not know about rather than refusing the row, which is the same trade in
+the other direction: a field the screens cannot read costs nothing, and
+refusing it costs the book. `src/lib/mbos-wire.test.ts` reads both files as
+text and pins it, because nothing else can — the server's SQL is a string, the
+handset's schema is a string in a project `tsconfig.json` excludes, and the two
+are joined only inside a phone. It type-checks, it lints, the integration tests
+pass, and it is wrong.
+
+**A HAND-ROLLED HANDLER CANNOT THROW, and that is the trap rather than the
+safety.** Three tables — `tasks`, `leads`, `samples` — are written by a handler
+that types its column list out, because none of them is the same word twice on
+the two sides: `companyName` is `company`, a lower-case `won` is `Converted`,
+one note field is a list, and a sample's `state` is not on the wire at all. A
+typed list cannot fail on an unknown column, so a field the handler READS and
+the server never sends is simply `undefined` — and the `ON CONFLICT` clause
+then writes that NULL over whatever was there. `upsertTasks` read
+`completionNote`, `completionPhotoId` and `escalatedAt`, none of which were on
+the wire, so every pull erased the note and the photograph off any task the
+salesman had completed. Nothing failed, nothing logged, and the loss looked
+like the salesman never wrote one.
+
+**Leads and samples are the two OWNED tables with an office end, so a pull may
+not overwrite what the outbox still holds.** They were on the bootstrap from
+the day it was written, on no delta at all, and applied nowhere — so a lead
+raised at a desk reached the phone only on a fresh sign-in, and in practice
+never. They come down on every pass now, like `journeyStops` and `tasks`, and
+they land under `where syncState = 'synced'`: a queued row is one this handset
+has said something about and the office has not heard yet, so the local answer
+is the newer fact and it stands until it is sent. The note list is written on
+INSERT only, because it is APPENDED to locally and the wire carries one
+flattened string — restating it every pass would replace a salesman's own notes
+with the office's rendering of them.
+
+**And a date off the wire is not an instant until something names the
+midnight.** The fourth spelling of the rule, in JavaScript on a handset:
+`Date.parse('2026-09-08')` is specified to read a date-only string as UTC, so a
+`requestedDate` lands five and a half hours before the day it names. It is
+invisible in IST, where it still formats to the right date, and wrong the
+moment anything compares it to a local day boundary. `localInstant` spells a
+date as local midnight and leaves a full ISO instant alone, because that one
+carries its own zone.
+
 **A parameter is a string, not a Date.** `postgres` serialises a JS Date by
 asking Node to measure it as text, and on Node 25 that throws — inside the
 driver, where no type check sees it. Every query in the MBOS pull delta carried

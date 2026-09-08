@@ -320,6 +320,22 @@ export type PullDelta = {
    * same as `performance` — this app writes no pay figure anywhere.
    */
   salary: unknown[];
+  /**
+   * A lead the OFFICE holds, and a sample the office has moved on.
+   *
+   * Both were on the bootstrap from the day it was written and on no delta at
+   * all — and the handset applied neither, so a lead raised at a desk reached
+   * the phone only if its owner signed out and back in, and never at all in
+   * practice. They come down on every pass now, for the same reason
+   * `journeyStops` and `tasks` do: work that appears in the office this
+   * afternoon has to arrive without the salesman signing out.
+   *
+   * They are the two OWNED tables that also have an office end, so a pulled
+   * row must never overwrite one this handset has not sent yet — that rule is
+   * enforced where the row lands, in `sync/pull.ts`, not here.
+   */
+  leads: unknown[];
+  samples: unknown[];
 };
 
 export type SyncResponse = {

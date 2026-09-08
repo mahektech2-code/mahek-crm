@@ -259,8 +259,8 @@ export type PullPayload = {
     status: string | null;
   } | null;
   /**
-   * `{ id, onDate, name, scope, universal, updatedAt }`. Only `universal`
-   * rows bind the attendance engine automatically — see `data/attendance.ts`.
+   * `{ id, onDate, name, scope, universal }`. Only `universal` rows bind the
+   * attendance engine automatically — see `data/attendance.ts`.
    */
   holidays?: unknown[];
   approvals?: unknown[];
