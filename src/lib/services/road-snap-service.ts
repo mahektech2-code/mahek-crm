@@ -1,5 +1,6 @@
 import "server-only";
 import { readSecret } from "@/lib/secrets";
+import { metresBetween } from "@/lib/geo";
 
 /* ---------------------------------------------------------------------------
  * Ola Maps' Snap-to-Road, called for the Live map's trail line only.
@@ -72,7 +73,57 @@ type OlaMapsSnapResponse = {
  * A microphone that fails when pressed is worse than one never offered, and
  * the same is true of a map line.
  */
+/**
+ * The road ACTUALLY TAKEN between a run of fixes, rather than the fixes joined
+ * up.
+ *
+ * `enhancePath` was removed in #251 and this brings it back deliberately and
+ * narrowly, because the objection it was removed for is real and is about
+ * DISTANCE BETWEEN FIXES rather than about the option: it "invents no path
+ * between two fixes that were never that close", and "ordinary sampling gaps
+ * make this fire constantly". Both were true of a trail whose fixes could be
+ * minutes apart.
+ *
+ * Two things changed. Fixes are three seconds apart now, so consecutive ones
+ * are METRES apart and there is no room between them for a routing engine to
+ * pick a road nobody was on. And the caller hands this one confident RUN at a
+ * time — `splitTrailByGaps` has already cut the day at every hop long enough
+ * to be a real absence, and those stay straight dashed lines drawn from the
+ * raw fixes. So the guess is confined to the space between two points a few
+ * metres apart, which is not a guess.
+ *
+ * `downsampleForPath` is what makes it affordable: a day of five thousand
+ * fixes is a hundred requests at fifty a batch, and at three-second sampling
+ * most of those fixes are within a stride of their neighbour. Thinning to a
+ * point every `PATH_ANCHOR_METRES` keeps every corner — the anchors are
+ * chosen by distance travelled, so a turn always has one either side of it —
+ * and hands Ola the shape rather than the noise.
+ *
+ * Returns null exactly as `snapToRoad` does, and the caller's fallback is the
+ * same: draw the raw fixes, which is what the map has always done.
+ */
+const PATH_ANCHOR_METRES = 20;
+
+function downsampleForPath(points: LatLng[]): LatLng[] {
+  if (points.length <= 2) return points;
+  const kept: LatLng[] = [points[0]];
+  for (const p of points.slice(1, -1)) {
+    const last = kept[kept.length - 1];
+    if (metresBetween(last.lat, last.lng, p.lat, p.lng) >= PATH_ANCHOR_METRES) kept.push(p);
+  }
+  kept.push(points[points.length - 1]);
+  return kept;
+}
+
+export async function roadPathFor(points: LatLng[]): Promise<LatLng[] | null> {
+  return callSnap(downsampleForPath(points), true);
+}
+
 export async function snapToRoad(points: LatLng[]): Promise<LatLng[] | null> {
+  return callSnap(points, false);
+}
+
+async function callSnap(points: LatLng[], enhancePath: boolean): Promise<LatLng[] | null> {
   if (points.length < 2) return null;
 
   const apiKey = await readSecret("olamaps.apiKey");
@@ -80,8 +131,27 @@ export async function snapToRoad(points: LatLng[]): Promise<LatLng[] | null> {
 
   const snapped: LatLng[] = [];
 
-  for (let i = 0; i < points.length; i += OLAMAPS_MAX_POINTS_PER_REQUEST) {
+  /*
+   * BATCHES OVERLAP BY ONE POINT, and that one point is the whole join.
+   *
+   * They used to be cut edge to edge — `slice(i, i + 50)`, then 50 to 100 —
+   * so Ola was asked to snap two halves of one walk with no knowledge of each
+   * other. Each half is snapped correctly and they meet at nothing: the last
+   * point of one and the first of the next are different fixes on different
+   * sides of a corner, and what lands on the map is a notch, a little hook
+   * past the turn, or a step sideways in the middle of a straight road. It
+   * looks exactly like a bug in the line and is really a bug in the seam.
+   *
+   * Sharing the boundary point means both requests see it, both snap it to
+   * the same place, and the second batch drops its copy — so the two halves
+   * are joined at a point they agree on rather than butted together at two
+   * they never compared.
+   */
+  const step = OLAMAPS_MAX_POINTS_PER_REQUEST - 1;
+
+  for (let i = 0; i < points.length; i += step) {
     const batch = points.slice(i, i + OLAMAPS_MAX_POINTS_PER_REQUEST);
+    if (i > 0 && batch.length < 2) break;
     if (batch.length < 2) {
       // A final batch of one point cannot be snapped on its own; carried
       // through raw rather than dropped, so the line still reaches its end.
@@ -90,7 +160,9 @@ export async function snapToRoad(points: LatLng[]): Promise<LatLng[] | null> {
     }
 
     const path = batch.map((p) => `${p.lat},${p.lng}`).join("|");
-    const url = `${SNAP_URL}?points=${encodeURIComponent(path)}&api_key=${encodeURIComponent(apiKey)}`;
+    const url =
+      `${SNAP_URL}?points=${encodeURIComponent(path)}&api_key=${encodeURIComponent(apiKey)}` +
+      (enhancePath ? "&enhancePath=true" : "");
 
     let response: Response;
     try {
@@ -108,7 +180,12 @@ export async function snapToRoad(points: LatLng[]): Promise<LatLng[] | null> {
     }
     if (body.status !== "SUCCESS" || !body.snapped_points?.length) return null;
 
-    for (const sp of body.snapped_points) snapped.push({ lat: sp.location.lat, lng: sp.location.lng });
+    /* The first point of every batch after the first is the previous batch's
+       last, already in `snapped`. */
+    const fresh = i > 0 ? body.snapped_points.slice(1) : body.snapped_points;
+    for (const sp of fresh) snapped.push({ lat: sp.location.lat, lng: sp.location.lng });
+
+    if (i + OLAMAPS_MAX_POINTS_PER_REQUEST >= points.length) break;
   }
 
   return snapped;

@@ -2,9 +2,15 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { listUserModules } from "@/lib/access";
 import { getConfig } from "@/lib/config/store";
-import { dropInaccurateFixes } from "@/lib/engines/trail-gaps";
+import { dropInaccurateFixes, splitTrailByGaps } from "@/lib/engines/trail-gaps";
+import {
+  offsetPolyline,
+  splitTrailIntoTrips,
+  tripColour,
+  tripOffset,
+} from "@/lib/engines/trail-trips";
 import { trackForDay } from "@/lib/services/sales-service";
-import { snapToRoad } from "@/lib/services/road-snap-service";
+import { roadPathFor } from "@/lib/services/road-snap-service";
 
 /**
  * The Live map's road-snapped trail, for one salesman on one day.
@@ -57,9 +63,58 @@ export async function GET(request: Request) {
   // imprecise fix would have it snap that point onto whatever road happens
   // to be nearest, which is exactly the kind of invented precision the road
   // snap must never produce.
-  const threshold = (await getConfig())["mbos.location.gpsAccuracyThresholdM"];
-  const accurate = dropInaccurateFixes(track, threshold);
-  const snapped = await snapToRoad(accurate.map((p) => ({ lat: p.lat, lng: p.lng })));
+  const config = await getConfig();
+  const accurate = dropInaccurateFixes(track, config["mbos.location.gpsAccuracyThresholdM"]);
 
-  return NextResponse.json({ points: snapped }, NO_STORE);
+  /*
+   * THE WHOLE LINE IS BUILT HERE, not just a list of moved points.
+   *
+   * It used to answer with one snapped point per fix and leave the client to
+   * cut it into trips and gaps again — which meant the client had to pair the
+   * answer back up with the raw fixes to recover their times, one for one, and
+   * a road-FOLLOWING path can never be one for one: it has as many points as
+   * the road has corners. Doing it here keeps the timestamps where they
+   * already are, so trips and gaps are decided from the real fixes and only
+   * the drawing is road-matched.
+   *
+   * A gap keeps the raw straight line between its two ends. That is the
+   * boundary #251 drew and it is kept exactly: the road is reconstructed only
+   * inside a run of fixes dense enough that there is nothing to invent.
+   */
+  const gapMetres = config["mbos.location.trailGapMeters"];
+  const trips = splitTrailIntoTrips(accurate, {
+    gapMetres,
+    dwellRadiusMetres: config["mbos.location.dwellRadiusMeters"],
+    tripBreakMinutes: config["mbos.location.tripBreakMinutes"],
+  });
+
+  const segments = [];
+  for (const trip of trips) {
+    for (const piece of splitTrailByGaps(trip.points, gapMetres)) {
+      const raw = piece.coordinates;
+      /* `[lng, lat]` on the wire, `{lat,lng}` through the service — GeoJSON
+         and Ola disagree about the order and this is where they meet. */
+      const road = piece.gap
+        ? null
+        : await roadPathFor(raw.map(([lng, lat]) => ({ lat, lng })));
+      segments.push({
+        gap: piece.gap,
+        trip: trip.index,
+        colour: tripColour(trip.index),
+        offset: tripOffset(trip.index),
+        metres: trip.metres,
+        fromMs: trip.startAt.getTime(),
+        toMs: trip.endAt.getTime(),
+        /* Nudged into its lane HERE, in the geometry, rather than by the
+           renderer — see `offsetPolyline` for why `line-offset` breaks at
+           exactly the corners somebody is trying to follow. */
+        coordinates: offsetPolyline(
+          road ? (road.map((p) => [p.lng, p.lat]) as [number, number][]) : raw,
+          tripOffset(trip.index),
+        ),
+      });
+    }
+  }
+
+  return NextResponse.json({ segments }, NO_STORE);
 }

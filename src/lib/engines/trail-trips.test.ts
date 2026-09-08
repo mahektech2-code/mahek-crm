@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { splitTrailIntoTrips, tripColour, TRIP_COLOURS } from "./trail-trips";
+import { splitTrailIntoTrips, tripColour, tripOffset, TRIP_COLOURS } from "./trail-trips";
 import { centroidOf, dwellRuns, dwellStops } from "./dwell";
 
 /** Metres → rough degrees of latitude, near enough for a test fixture. */
@@ -30,7 +30,7 @@ function stand(atM: number, startMin: number, minutes: number) {
   return out;
 }
 
-const OPTS = { gapMetres: 200, dwellRadiusMetres: 30, dwellMinMinutes: 5 };
+const OPTS = { gapMetres: 200, dwellRadiusMetres: 30, tripBreakMinutes: 5 };
 
 describe("splitting a day into trips", () => {
   it("a straight walk with no stop is ONE trip", () => {
@@ -94,7 +94,7 @@ describe("splitting a day into trips", () => {
 
   it("agrees with the stop marks the map already draws", () => {
     const points = [...walk(0, 300, 0), ...stand(300, 1, 10), ...walk(300, 600, 12)];
-    const stops = dwellStops(points, OPTS.dwellRadiusMetres, OPTS.dwellMinMinutes);
+    const stops = dwellStops(points, OPTS.dwellRadiusMetres, OPTS.tripBreakMinutes);
     const trips = splitTrailIntoTrips(points, OPTS);
     /* One stop drawn, one extra trip beyond the first — the mark and the
        colour change describe the same moment. */
@@ -110,7 +110,7 @@ describe("splitting a day into trips", () => {
   it("distance is the trail's own length, never start to end", () => {
     /* Out and back to where he started: end-to-end is zero, walked is not. */
     const points = [...walk(0, 200, 0), ...walk(200, 0, 3)];
-    const [trip] = splitTrailIntoTrips(points, { ...OPTS, dwellMinMinutes: 999 });
+    const [trip] = splitTrailIntoTrips(points, { ...OPTS, tripBreakMinutes: 999 });
     assert.ok(trip.metres > 350, `walked ${Math.round(trip.metres)} m`);
   });
 
@@ -124,13 +124,13 @@ describe("splitting a day into trips", () => {
       ...stand(100, 1, 20),
       ...walk(100, 400, 22),
     ];
-    const opts = { gapMetres: 200, dwellRadiusMetres: 60, dwellMinMinutes: 5 };
+    const opts = { gapMetres: 200, dwellRadiusMetres: 60, tripBreakMinutes: 5 };
     const [first, second] = splitTrailIntoTrips(points, opts);
     const boundary = second.points[0];
 
-    const run = dwellRuns(points, opts.dwellRadiusMetres, opts.dwellMinMinutes)[0];
+    const run = dwellRuns(points, opts.dwellRadiusMetres, opts.tripBreakMinutes)[0];
     const centre = centroidOf(points.slice(run.startIndex, run.endIndex + 1));
-    const stop = dwellStops(points, opts.dwellRadiusMetres, opts.dwellMinMinutes)[0];
+    const stop = dwellStops(points, opts.dwellRadiusMetres, opts.tripBreakMinutes)[0];
 
     /* Within a metre of the mark the map draws — the same point, give or take
        the nearest fix to it. */
@@ -147,12 +147,34 @@ describe("splitting a day into trips", () => {
     /* Below the radius the dwell rule itself cannot tell movement from a
        stop, so nothing here may claim to. */
     const points = [...walk(0, 30, 0), ...stand(30, 1, 20)];
-    assert.deepEqual(splitTrailIntoTrips(points, { gapMetres: 200, dwellRadiusMetres: 60, dwellMinMinutes: 5 }), []);
+    assert.deepEqual(splitTrailIntoTrips(points, { gapMetres: 200, dwellRadiusMetres: 60, tripBreakMinutes: 5 }), []);
   });
 
   it("colours cycle rather than running out", () => {
     assert.equal(tripColour(1), TRIP_COLOURS[0]);
     assert.equal(tripColour(TRIP_COLOURS.length + 1), TRIP_COLOURS[0]);
     assert.equal(tripColour(TRIP_COLOURS.length + 2), TRIP_COLOURS[1]);
+  });
+});
+
+describe("keeping two passes down one street apart", () => {
+  it("offsets every leg to the same side of travel, so out-and-back becomes two lanes", () => {
+    /* MapLibre measures `line-offset` from the line's OWN direction, so one
+       positive value puts the outbound leg on one side of the road and the
+       return leg — travelling the other way — on the other. Nothing here has
+       to know which direction a leg went. */
+    assert.ok(tripOffset(1) > 0, "an offset of zero draws both passes on top of each other");
+  });
+
+  it("staggers legs so two in the SAME direction do not sit on top of each other", () => {
+    /* Lanes answer out-and-back; they do not answer walking the same street
+       the same way twice, which sits on the same side. */
+    assert.notEqual(tripOffset(1), tripOffset(2));
+    assert.notEqual(tripOffset(2), tripOffset(3));
+  });
+
+  it("keeps the stagger small enough to stay a road rather than a fan", () => {
+    const spread = Math.max(tripOffset(1), tripOffset(2), tripOffset(3)) - tripOffset(1);
+    assert.ok(spread <= 6, `legs spread ${spread}px, which is wider than a lane`);
   });
 });

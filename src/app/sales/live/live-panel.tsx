@@ -37,7 +37,7 @@ export function LivePanel({
   dwells,
   gapMetres,
   dwellRadiusMetres,
-  dwellMinMinutes,
+  tripBreakMinutes,
   staleAfterSeconds,
   view,
   isToday,
@@ -54,7 +54,7 @@ export function LivePanel({
   /** Metres apart before a hop is drawn as an honest gap — see `trail-gaps.ts`. */
   gapMetres: number;
   dwellRadiusMetres: number;
-  dwellMinMinutes: number;
+  tripBreakMinutes: number;
   staleAfterSeconds: number;
   view: "now" | "today";
   isToday: boolean;
@@ -88,7 +88,7 @@ export function LivePanel({
         dwells={dwells}
         gapMetres={gapMetres}
         dwellRadiusMetres={dwellRadiusMetres}
-        dwellMinMinutes={dwellMinMinutes}
+        tripBreakMinutes={tripBreakMinutes}
         staleAfterSeconds={staleAfterSeconds}
         view={view}
         selectedId={selectedId}
