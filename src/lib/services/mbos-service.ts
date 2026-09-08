@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
@@ -469,15 +469,68 @@ function scopeIn(ids: string[] | null) {
   return scopedToUsers(ids);
 }
 
+/**
+ * `partyNameKey` in SQL: trim, collapse the whitespace, uppercase.
+ *
+ * Written once and applied to BOTH sides of the comparison, so the two halves
+ * cannot fold differently from each other — which is the failure a second
+ * spelling of a normalisation always produces, and the one nobody sees until
+ * two names that are obviously the same stop matching.
+ */
+function nameFold(column: SQL | AnyColumn) {
+  /* `[[:space:]]` rather than `\s`: a backslash escape inside a template
+     literal is cooked away before Postgres ever sees it, and the regex would
+     silently become `s+` — matching the letter s. */
+  return sql`upper(regexp_replace(btrim(${column}), '[[:space:]]+', ' ', 'g'))`;
+}
+
+/**
+ * THE SHOPS THAT NAME THIS SALESMAN, joined by the name rather than by a seat.
+ *
+ * `scopedToUsers` asks which customers carry this person in one of the two
+ * manager seats, and for a field salesman the answer is none of them: those
+ * seats hold account managers, and a field salesman is named — as text, off
+ * the party sheet — in `customers.sales_person_name`. So his handset was
+ * correctly empty, and no screen anywhere could say why.
+ *
+ * MBOS ONLY, deliberately. The CRM's lists are unchanged: `scopedToUsers`
+ * stays exactly what it was, because widening it would hand thirty-one screens
+ * a different answer to "whose book is this" overnight. The question MBOS asks
+ * is a narrower one — which shops does this salesman work — and this is the
+ * one place it is answered.
+ *
+ * It reads every user in scope, not just the principal, so a manager on the
+ * handset sees his team's shops the same way each of them does. Anything else
+ * would give the manager and his salesman two different books.
+ */
+function namedByUsers(ids: string[]) {
+  return sql`${nameFold(customers.salesPersonName)} in (
+    select ${nameFold(sql`u.sales_person_name`)}
+      from users u
+     where u.id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
+       and u.sales_person_name is not null
+       and btrim(u.sales_person_name) <> ''
+  )`;
+}
+
 /** The customer ids this principal may see. Every other query filters on it. */
 export async function customerIdsInScope(
   principal: MbosPrincipal,
 ): Promise<string[]> {
   const ids = scopedUserIds(principal.scope);
+
+  /*
+   * `null` is unrestricted, and it has to short-circuit BEFORE the `or` below.
+   * `scopeIn(null)` is `undefined` — Drizzle drops an undefined operand — so
+   * `or(undefined, namedBy…)` would collapse to the name match alone and
+   * NARROW an admin to it, which is the opposite of what null means.
+   */
+  const where = ids === null ? undefined : or(scopeIn(ids), namedByUsers(ids));
+
   const rows = await db
     .select({ id: customers.id })
     .from(customers)
-    .where(scopeIn(ids));
+    .where(where);
   return rows.map((r) => r.id);
 }
 

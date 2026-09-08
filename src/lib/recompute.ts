@@ -15,6 +15,7 @@ import {
   payments,
   salesTargetCategories,
   salesTargets,
+  sheetCustomerMasterRows,
   sheetPartyRows,
   sheetTakenOrderRows,
   users,
@@ -993,6 +994,49 @@ export async function recomputeSalesPeople(): Promise<number> {
     parties.map((p) => [partyNameKey(p.partyName), p.salesPersonName]),
   );
 
+  /*
+   * THE OTHER PLACE A SALESMAN IS NAMED, and the reason it is read here
+   * rather than written by the import that found it.
+   *
+   * The EMP 2.0 shop master names a salesman for nearly every one of its
+   * 5,292 shops, and the projection deliberately leaves that on the staging
+   * row: writing it to `customers.sales_person_name` would last until this
+   * job's next pass, which rewrites the column for every undecided customer
+   * from the PARTY sheet — including back to null where the party sheet is
+   * silent, which it is for all of them. Setting `am_decided_at` to protect
+   * it would be a lie, since no person decided anything, and would freeze
+   * both manager seats against a future sync as a side effect.
+   *
+   * So the fix belongs here, in the job that was going to overwrite it. The
+   * party sheet still WINS wherever it speaks — this is a fallback, not a
+   * merge — so no customer that has a name today gains a different one, and
+   * the only rows that change are the ones that were being blanked.
+   *
+   * What it costs is visible and intended: those shops start showing a
+   * salesperson on the CRM and Accounts lists, because `SALES_AM_NAME_SQL`
+   * reads this column first. That is the truth the shop master already held
+   * and nothing could reach.
+   */
+  const masterRows = await db
+    .select({
+      customerId: sheetCustomerMasterRows.projectedCustomerId,
+      salesPersonName: sheetCustomerMasterRows.salesPersonName,
+    })
+    .from(sheetCustomerMasterRows)
+    .where(
+      and(
+        eq(sheetCustomerMasterRows.status, "present"),
+        isNotNull(sheetCustomerMasterRows.projectedCustomerId),
+        isNotNull(sheetCustomerMasterRows.salesPersonName),
+      ),
+    );
+
+  const byCustomerId = new Map(
+    masterRows
+      .filter((r) => r.customerId && r.salesPersonName?.trim())
+      .map((r) => [r.customerId as string, r.salesPersonName as string]),
+  );
+
   const rows = await db
     .select({
       id: customers.id,
@@ -1019,7 +1063,7 @@ export async function recomputeSalesPeople(): Promise<number> {
      * a day to unpick.
      */
     if (c.amDecidedAt) continue;
-    const next = byKey.get(partyNameKey(c.name)) ?? null;
+    const next = byKey.get(partyNameKey(c.name)) ?? byCustomerId.get(c.id) ?? null;
     if (next === c.salesPersonName) continue;
     await db
       .update(customers)
