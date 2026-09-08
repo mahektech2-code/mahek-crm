@@ -128,6 +128,47 @@ export async function listCustomers(query = ''): Promise<Customer[]> {
   return all<Customer>(q.sql, q.params);
 }
 
+export type CustomerOrder = {
+  id: string;
+  customerId: string;
+  orderedAt: string | null;
+  status: string | null;
+  valuePaise: number | null;
+  lines: number | null;
+  orderNo: string | null;
+};
+
+export type CustomerPayment = {
+  id: string;
+  customerId: string;
+  receivedAt: string | null;
+  amountPaise: number | null;
+  mode: string | null;
+  reference: string | null;
+  status: string | null;
+};
+
+/**
+ * What the office knows this shop bought and paid.
+ *
+ * Read-only, and capped at ten of each by the server. The screen says so —
+ * a list that is a slice has to admit it, or the salesman reads ten orders as
+ * the whole history and tells the customer so.
+ */
+export async function customerOrders(id: string): Promise<CustomerOrder[]> {
+  return all<CustomerOrder>(
+    'SELECT * FROM customer_orders WHERE customerId = ? ORDER BY orderedAt DESC, id DESC',
+    [id],
+  );
+}
+
+export async function customerPayments(id: string): Promise<CustomerPayment[]> {
+  return all<CustomerPayment>(
+    'SELECT * FROM customer_payments WHERE customerId = ? ORDER BY receivedAt DESC, id DESC',
+    [id],
+  );
+}
+
 /**
  * What KIND of account this is, in one word.
  *

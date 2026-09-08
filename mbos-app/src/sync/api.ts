@@ -241,6 +241,9 @@ export type PullPayload = {
   journeyStops?: unknown[];
   tasks?: unknown[];
   samples?: unknown[];
+  /** The office's order and receipt history, ten of each per customer. */
+  customerOrders?: unknown[];
+  customerPayments?: unknown[];
   leads?: unknown[];
   notifications?: unknown[];
   documents?: unknown[];

@@ -513,6 +513,8 @@ export type BootstrapPayload = {
   samples: unknown[];
   leads: unknown[];
   timeline: unknown[];
+  customerOrders: unknown[];
+  customerPayments: unknown[];
   leaveBalances: unknown[];
   /**
    * TODAY'S ATTENDANCE, so a fresh install is not blind about a day it already
@@ -577,6 +579,13 @@ export type BootstrapPayload = {
 const TIMELINE_PER_CUSTOMER = 50;
 
 /**
+ * Ten orders and ten receipts a customer. Enough to answer "what do they buy"
+ * and "do they pay" while standing in the shop; far short of an accounts
+ * ledger, which is not what a handset is for and would not fit on one.
+ */
+const HISTORY_PER_CUSTOMER = 10;
+
+/**
  * How far back the journey channels reach.
  *
  * Both the stops and the days themselves used to filter `plan_date >= today`,
@@ -624,6 +633,8 @@ export async function buildBootstrap(
     sampleRows,
     leadRows,
     timelineRows,
+    orderHistoryRows,
+    paymentHistoryRows,
     leaveRows,
     attendanceRow,
     holidayRows,
@@ -643,6 +654,8 @@ export async function buildBootstrap(
     openSamples(principal.user.id, ids),
     openLeads(principal.user.id),
     recentTimeline(ids, TIMELINE_PER_CUSTOMER),
+    recentOrders(ids, HISTORY_PER_CUSTOMER),
+    recentPayments(ids, HISTORY_PER_CUSTOMER),
     leaveBalances(principal.user.id, Number(day.slice(0, 4))),
     attendanceToday(principal.user.id, day),
     holidaysFor(),
@@ -676,6 +689,8 @@ export async function buildBootstrap(
     samples: sampleRows,
     leads: leadRows,
     timeline: timelineRows,
+    customerOrders: orderHistoryRows,
+    customerPayments: paymentHistoryRows,
     leaveBalances: leaveRows,
     attendanceToday: attendanceRow,
     holidays: holidayRows,
@@ -965,6 +980,72 @@ async function openLeads(userId: string, since?: string | null) {
  * otherwise be six hundred round trips to a database three hundred
  * milliseconds away, which is the bootstrap taking three minutes.
  */
+/**
+ * What the office knows this shop bought, newest first, capped per customer.
+ *
+ * The record's Orders tab was a placeholder and the cheap fix was to render it
+ * off the timeline, which already syncs. Production says no: 10,874 orders
+ * against 61 order timeline events. A tab built that way would show one order
+ * to a salesman standing in a shop that has placed forty — and be believed.
+ *
+ * Capped the same way `recentTimeline` is, and for the same reason: a book of
+ * 587 customers must not put its whole order history on a phone.
+ *
+ * `total_amount` is what was actually billed or typed. Nothing here reaches for
+ * the catalogue to value a line — `products.priceSource` is still unset, and a
+ * confident wrong figure on a customer's record is worse than no figure.
+ */
+async function recentOrders(ids: string[], perCustomer: number) {
+  if (!ids.length) return [];
+  return db.execute<Record<string, unknown>>(sql`
+    select id, "customerId", "orderedAt", status, "valuePaise", lines, "orderNo"
+      from (
+        select o.id, o.customer_id as "customerId",
+               (o.ordered_at at time zone ${APP_TIMEZONE})::date::text as "orderedAt",
+               o.status::text as status,
+               o.total_amount as "valuePaise",
+               coalesce(jsonb_array_length(o.line_items), 0) as lines,
+               o.order_no as "orderNo",
+               row_number() over (
+                 partition by o.customer_id order by o.ordered_at desc, o.id desc
+               ) as rn
+          from orders o
+         where o.customer_id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
+      ) ranked
+     where rn <= ${perCustomer}
+     order by "customerId" asc, "orderedAt" desc
+  `);
+}
+
+/**
+ * And what it has paid. Every receipt, whatever its status.
+ *
+ * A REJECTED or REVERSED receipt is shown rather than hidden, because it is a
+ * fact about the account the salesman will be asked about — "we paid that" —
+ * and a statement that silently drops it leaves him with no answer. The status
+ * rides along so the screen can say which it is; only `confirmed` money has
+ * moved anything.
+ */
+async function recentPayments(ids: string[], perCustomer: number) {
+  if (!ids.length) return [];
+  return db.execute<Record<string, unknown>>(sql`
+    select id, "customerId", "receivedAt", "amountPaise", mode, reference, status
+      from (
+        select r.id, r.customer_id as "customerId",
+               r.received_at::text as "receivedAt",
+               r.amount as "amountPaise",
+               r.mode, r.reference, r.status::text as status,
+               row_number() over (
+                 partition by r.customer_id order by r.received_at desc, r.id desc
+               ) as rn
+          from payment_receipts r
+         where r.customer_id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
+      ) ranked
+     where rn <= ${perCustomer}
+     order by "customerId" asc, "receivedAt" desc
+  `);
+}
+
 async function recentTimeline(ids: string[], perCustomer: number) {
   if (!ids.length) return [];
   return db.execute<Record<string, unknown>>(sql`
@@ -1365,6 +1446,8 @@ export async function buildPull(
       expensePolicy: null,
       leads: [],
       samples: [],
+      customerOrders: [],
+      customerPayments: [],
       deletions: [],
     };
   }
@@ -1407,6 +1490,8 @@ export async function buildPull(
     taskChanges,
     leadChanges,
     sampleChanges,
+    orderHistoryChanges,
+    paymentHistoryChanges,
   ] = await Promise.all([
       idList
         ? db.execute<Record<string, unknown>>(sql`
@@ -1612,6 +1697,14 @@ export async function buildPull(
        * reach a handset through the delta that sign-in would have withheld. */
       openLeads(principal.user.id, sinceIso),
       openSamples(principal.user.id, ids, sinceIso),
+
+      /* Not `since`-gated. These are capped at ten a customer and the cap is
+         what a delta would have to re-derive anyway: an eleventh order does
+         not CHANGE a row, it displaces one, and no `updated_at` on any row
+         says so. Sending the current ten is both correct and smaller than the
+         query that would work out which ten changed. */
+      recentOrders(ids, HISTORY_PER_CUSTOMER),
+      recentPayments(ids, HISTORY_PER_CUSTOMER),
     ]);
 
   return {
@@ -1643,5 +1736,7 @@ export async function buildPull(
     expensePolicy: await expensePolicyFor(principal.user.id, await today()),
     leads: leadChanges as unknown[],
     samples: sampleChanges as unknown[],
+    customerOrders: orderHistoryChanges as unknown[],
+    customerPayments: paymentHistoryChanges as unknown[],
   };
 }
