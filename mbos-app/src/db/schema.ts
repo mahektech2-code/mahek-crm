@@ -964,6 +964,18 @@ export const MIGRATIONS: string[][] = [
       WHERE rowid NOT IN (SELECT MIN(rowid) FROM positions GROUP BY at, lat, lng);`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_fix ON positions(at, lat, lng);`,
   ],
+
+  /* ---- v12 · is this a shop or somebody we hope will become one? -------- */
+  [
+    /*
+     * `kind` was on the wire from the first MBOS commit and had nowhere to
+     * land, so it was dropped from the payload when the two sides were
+     * reconciled. It is wanted now: this list holds LEADS as well as
+     * customers — a lead reaches it through `owner_id` — and a card that does
+     * not say which is which asks the salesman to remember, per row.
+     */
+    `ALTER TABLE customers ADD COLUMN kind TEXT;`,
+  ],
 ];
 
 /**
@@ -980,6 +992,7 @@ export const MIGRATIONS: string[][] = [
  * block is now the whole of adding a migration.
  */
 export const SCHEMA_VERSION = MIGRATIONS.length;
+
 
 /** Tables holding work the salesman authored. A sync never deletes from these. */
 export const OWNED_TABLES = [

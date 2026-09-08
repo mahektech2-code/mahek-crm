@@ -7,7 +7,7 @@ import { Badge, Card, HealthPill, Input, PrimaryButton } from '../src/components
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
 import { competitorRecords, customerTimeline, recordCompetitor, type TimelineEvent } from '../src/data/customers';
-import { inr, isoDate, pretty } from '../src/lib/format';
+import { inr, isoDate, pretty, shopName } from '../src/lib/format';
 import { callNumber, openWhatsApp } from '../src/lib/messaging';
 
 /**
@@ -140,12 +140,12 @@ export default function CustomerRecord() {
   const owner = c.contactPerson ?? c.name;
 
   return (
-    <AppFrame title={c.name} activeTab="customers" onBack={() => router.back()} contentStyle={{ paddingBottom: 24 }}>
+    <AppFrame title={shopName(c.name)} activeTab="customers" onBack={() => router.back()} contentStyle={{ paddingBottom: 24 }}>
       {/* ---- the head ---- */}
       <View style={{ backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.hairline, padding: 16 }}>
         <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={type.h2}>{c.name}</Text>
+            <Text style={type.h2}>{shopName(c.name)}</Text>
             <Text style={[type.caption, { marginTop: 2 }]}>
               {[c.contactPerson, c.city, c.phone].filter(Boolean).join(' · ')}
             </Text>

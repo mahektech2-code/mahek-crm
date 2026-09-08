@@ -7,9 +7,10 @@ import { Card, HealthPill, PrimaryButton } from '../src/components/ui/primitives
 import { BottomSheet } from '../src/components/ui/overlays';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
-import { inr, isoDate, plural, pretty } from '../src/lib/format';
-import { callNumber, openWhatsApp } from '../src/lib/messaging';
+import { distanceLabel, inr, isoDate, plural, pretty, shopName } from '../src/lib/format';
+import { callNumber, openMaps, openWhatsApp } from '../src/lib/messaging';
 import {
+  accountType,
   addFieldShop,
   billableCustomers,
   cityOrigins,
@@ -18,7 +19,7 @@ import {
   listCustomersPage,
   type Customer,
 } from '../src/data/customers';
-import { CUSTOMER_PAGE, type Origin } from '../src/data/customer-query';
+import { CUSTOMER_PAGE, metresFromDist2, type Origin } from '../src/data/customer-query';
 import { whereNow } from '../src/native/where';
 
 /**
@@ -55,7 +56,7 @@ export default function Customers() {
    * should be in the same place as the question.
    */
   const [adding, setAdding] = React.useState(false);
-  const [shopName, setShopName] = React.useState('');
+  const [newShopName, setNewShopName] = React.useState('');
   const [shopPhone, setShopPhone] = React.useState('');
   const [shopCity, setShopCity] = React.useState('');
   const [billers, setBillers] = React.useState<Customer[]>([]);
@@ -172,7 +173,7 @@ export default function Customers() {
     /* Seeded with what he already typed. He has just searched for the shop by
        name; asking him to type it again is the sort of thing that gets a
        feature left unused. */
-    setShopName(custQ.trim());
+    setNewShopName(custQ.trim());
     setShopPhone('');
     setShopCity('');
     setBillerId(null);
@@ -186,7 +187,7 @@ export default function Customers() {
     setSaving(true);
     try {
       const r = await addFieldShop({
-        name: shopName,
+        name: newShopName,
         phone: shopPhone,
         city: shopCity,
         distributorCustomerId: biller.id,
@@ -314,6 +315,12 @@ export default function Customers() {
           const dues = x.outstandingPaise / 100;
           const stage = customerStage(x);
           const seenDays = daysSince(x.lastVisitDate, today);
+          const type_ = accountType(x);
+          /* Only where the origin is the salesman himself. A distance from the
+             middle of a town he picked is not how far HE has to walk, and
+             printing it as though it were would be a lie of the most useful
+             kind — believable, and acted on. */
+          const away = originMode === 'me' ? distanceLabel(metresFromDist2(x.dist2)) : null;
           return (
           <Card key={x.id} padded={false} style={{ overflow: 'hidden' }}>
             <Pressable
@@ -325,9 +332,15 @@ export default function Customers() {
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text numberOfLines={1} style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(500)]}>
-                    {x.name}
+                    {shopName(x.name)}
                   </Text>
-                  <Text style={[type.caption, { marginTop: 2 }]}>
+                  <Text numberOfLines={1} style={[type.caption, { marginTop: 2 }]}>
+                    {/* How far, first and in ink: standing in a street it is
+                        the one fact on the card he acts on immediately. */}
+                    {away ? (
+                      <Text style={[{ color: C.ink }, weight(500)]}>{away}</Text>
+                    ) : null}
+                    {away && (x.contactPerson || x.city) ? '  ·  ' : ''}
                     {[x.contactPerson, x.city].filter(Boolean).join(' · ')}
                   </Text>
                 </View>
@@ -349,16 +362,43 @@ export default function Customers() {
                   pretty(x.lastOrderDate)}
               </Text>
 
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
-                <View
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 4,
-                    backgroundColor: stage === 'Overdue' ? C.danger : stage === 'At risk' ? C.warn : C.success,
-                  }}
-                />
-                <Text style={{ fontSize: 14, color: C.body }}>{stage}</Text>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginTop: 8,
+                }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <View
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 4,
+                      backgroundColor: stage === 'Overdue' ? C.danger : stage === 'At risk' ? C.warn : C.success,
+                    }}
+                  />
+                  <Text style={{ fontSize: 14, color: C.body }}>{stage}</Text>
+                </View>
+
+                {/* Quiet, and on the other side of the row: it is a fact about
+                    the account rather than about today, so it should be
+                    findable without competing with the one that is. */}
+                {type_ ? (
+                  <View
+                    style={{
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: radius.sm,
+                      borderWidth: 1,
+                      borderColor: C.border,
+                      backgroundColor: C.wash,
+                    }}>
+                    <Text style={[{ fontSize: 11, color: C.muted, letterSpacing: 0.3 }, weight(500)]}>
+                      {type_}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
             </Pressable>
 
@@ -385,8 +425,26 @@ export default function Customers() {
                     if (out.status !== 'handed_off') notify(out.reason);
                   },
                 },
-                { g: 'nav', l: 'Navigate', run: () => notify('Maps to ' + x.name) },
-                { g: 'visit', l: 'Visit', run: () => { beginVisit(x.id); router.push('/visit'); } },
+                {
+                  /* `pin`, not `nav`. The two glyphs were the wrong way round:
+                     `visit` and `pin` are the SAME path — a map pin — so the
+                     button that checks you in was drawn as the universal symbol
+                     for "show me on a map", and the one that opens maps was a
+                     compass nobody reads that way. Tapping the pin expecting
+                     directions checked you into the shop instead. */
+                  g: 'pin',
+                  l: 'Navigate',
+                  run: async () => {
+                    const out = await openMaps({
+                      lat: x.gpsLat,
+                      lng: x.gpsLng,
+                      name: x.name,
+                      city: x.city,
+                    });
+                    if (out.status !== 'opened') notify(out.reason);
+                  },
+                },
+                { g: 'shop', l: 'Visit', run: () => { beginVisit(x.id); router.push('/visit'); } },
                 { g: 'order', l: 'Order', run: () => { set({ custId: x.id }); router.push('/order?from=customers'); } },
                 { g: 'dots', l: 'More', run: () => { set({ custId: x.id }); setRowMore(x); } },
               ].map((a) => (
@@ -550,7 +608,7 @@ export default function Customers() {
           Goods go here; the bill goes to whoever you pick below.
         </Text>
 
-        <Field label="Shop name" value={shopName} onChange={setShopName} placeholder="As it is written on the board" />
+        <Field label="Shop name" value={newShopName} onChange={setNewShopName} placeholder="As it is written on the board" />
         <Field
           label="Phone"
           value={shopPhone}

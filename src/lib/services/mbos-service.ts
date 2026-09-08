@@ -731,7 +731,9 @@ async function customersForDevice(ids: string[]) {
            c.territory_region as "territoryRegion", c.dealer_code as "dealerCode",
            -- what mbos_price_list is keyed on for this account
            c.price_tag as "priceTag",
-           c.status, c.gstin,
+           -- A lead reaches this list through its owner, so the card has to be
+           -- able to say which it is looking at. See migration v12.
+           c.kind, c.status, c.gstin,
            c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
            c.gps_accuracy_m as "gpsAccuracyM",
            c.customer_type as "customerType", c.potential,
@@ -1409,7 +1411,7 @@ export async function buildPull(
       idList
         ? db.execute<Record<string, unknown>>(sql`
             select c.id, c.name, c.contact_person as "contactPerson", c.phone,
-                   c.city, c.area, c.beat, c.status,
+                   c.city, c.area, c.beat, c.status, c.kind,
                    c.price_tag as "priceTag",
                    c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
                    c.credit_limit_paise as "creditLimitPaise",
