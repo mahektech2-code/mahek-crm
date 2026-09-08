@@ -12,11 +12,14 @@ import { callNumber, openWhatsApp } from '../src/lib/messaging';
 import {
   addFieldShop,
   billableCustomers,
+  cityOrigins,
   customerStage,
   daysSince,
-  listCustomers,
+  listCustomersPage,
   type Customer,
 } from '../src/data/customers';
+import { CUSTOMER_PAGE, type Origin } from '../src/data/customer-query';
+import { whereNow } from '../src/native/where';
 
 /**
  * The book. Search reaches the name, the owner, the city, the phone and the
@@ -60,23 +63,97 @@ export default function Customers() {
   const [billerQ, setBillerQ] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [rows, setRows] = React.useState<Customer[]>([]);
+  const [total, setTotal] = React.useState(0);
+  const [hasMore, setHasMore] = React.useState(false);
+  const [loadingMore, setLoadingMore] = React.useState(false);
   const [today] = React.useState(() => isoDate(new Date()));
+
+  /* ------------------------------------------------- where to measure from
+   *
+   * Three answers, and the screen says which one it is using. `me` is the
+   * trail's own freshest fix — `whereNow()` never waits on the radio, so
+   * choosing it costs nothing and returns instantly. A city is the mean of the
+   * shops pinned in it, read out of the book. `null` is the honest third
+   * answer: no fix, no city, so the book is alphabetical and nobody is being
+   * told a distance that was never measured.
+   */
+  const [originMode, setOriginMode] = React.useState<'me' | 'name' | string>('me');
+  const [origin, setOrigin] = React.useState<Origin>(null);
+  const [cities, setCities] = React.useState<{ city: string; lat: number; lng: number; n: number }[]>([]);
+  const [pickingCity, setPickingCity] = React.useState(false);
+  const [noFix, setNoFix] = React.useState(false);
 
   /* The search runs in SQLite, not over a list held in memory — the book is a
      territory, not six rows, and the query reaches the owner, the city, the
      phone and the GST number because that is whichever one the customer just
      said on the phone. */
-  useFocusEffect(
-    React.useCallback(() => {
-      let live = true;
-      void listCustomers(custQ).then((r) => {
-        if (live) setRows(r);
+  /* The towns, once. They change when the book does, not while he reads it. */
+  React.useEffect(() => {
+    void cityOrigins().then(setCities);
+  }, []);
+
+  /* Resolving the origin is separate from reading the page, because it can
+     answer "there is no fix" — which is a thing the screen has to SAY rather
+     than silently fall back from. */
+  React.useEffect(() => {
+    let live = true;
+    if (originMode === 'name') {
+      setOrigin(null);
+      setNoFix(false);
+      return;
+    }
+    if (originMode === 'me') {
+      void whereNow().then((w) => {
+        if (!live) return;
+        const has = typeof w?.lat === 'number' && typeof w?.lng === 'number';
+        setOrigin(has ? { lat: w!.lat!, lng: w!.lng! } : null);
+        setNoFix(!has);
       });
       return () => {
         live = false;
       };
-    }, [custQ]),
+    }
+    const city = cities.find((c) => c.city === originMode);
+    setOrigin(city ? { lat: city.lat, lng: city.lng } : null);
+    setNoFix(false);
+    return () => {
+      live = false;
+    };
+  }, [originMode, cities]);
+
+  /* THE FIRST PAGE ONLY. A changed search or a changed origin is a different
+     question, so the answer starts again from the top rather than appending to
+     the last one. */
+  useFocusEffect(
+    React.useCallback(() => {
+      let live = true;
+      void listCustomersPage({ query: custQ, origin }).then((p) => {
+        if (!live) return;
+        setRows(p.rows);
+        setTotal(p.total);
+        setHasMore(p.hasMore);
+      });
+      return () => {
+        live = false;
+      };
+    }, [custQ, origin]),
   );
+
+  /* Load more APPENDS, and asks for the page after what is on screen — never
+     a page number, which would skip or repeat a row the moment the book
+     changed underneath. */
+  const loadMore = async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const p = await listCustomersPage({ query: custQ, origin, offset: rows.length });
+      setRows((prev) => [...prev, ...p.rows]);
+      setTotal(p.total);
+      setHasMore(p.hasMore);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   /* Only while the sheet is open, and re-read as he narrows it: the book is a
      territory, not six rows, so this is a query rather than a filter. */
@@ -159,7 +236,59 @@ export default function Customers() {
         </Pressable>
       </View>
 
-      <Text style={[type.caption, { marginTop: 12 }]}>{plural(rows.length, 'customer') + ' · your territory'}</Text>
+      {/* WHERE FROM. Three chips rather than a menu: it is one tap, it is
+          always visible, and the one in use is the answer to "why is this shop
+          at the top". */}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
+        {[
+          { key: 'me', label: 'Near me' },
+          { key: 'city', label: cities.some((c) => c.city === originMode) ? originMode : 'By city' },
+          { key: 'name', label: 'A\u2013Z' },
+        ].map((chip) => {
+          const on =
+            chip.key === 'city'
+              ? cities.some((c) => c.city === originMode)
+              : originMode === chip.key;
+          return (
+            <Pressable
+              key={chip.key}
+              onPress={() => (chip.key === 'city' ? setPickingCity(true) : setOriginMode(chip.key))}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 7,
+                borderRadius: radius.sm,
+                borderWidth: 1,
+                borderColor: on ? C.ink : C.border,
+                backgroundColor: on ? C.ink : C.surface,
+              }}>
+              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
+                {chip.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {/* A CAPPED LIST SAYS WHAT IT IS A SLICE OF, and the count comes from
+          SQL rather than from what happens to be loaded — otherwise the first
+          page of a book of six hundred reads as a book of fifteen. */}
+      <Text style={[type.caption, { marginTop: 10 }]}>
+        {total === 0
+          ? 'Nothing in your book yet'
+          : rows.length < total
+            ? `Showing ${rows.length} of ${plural(total, 'customer')}`
+            : plural(total, 'customer') + ' \u00b7 your territory'}
+        {origin && originMode === 'me' ? ' \u00b7 nearest first' : ''}
+        {origin && originMode !== 'me' && originMode !== 'name' ? ` \u00b7 nearest ${originMode} first` : ''}
+      </Text>
+
+      {/* Asked and could not is a different fact from never asked, and the
+          salesman is the one who can do something about it. */}
+      {noFix && originMode === 'me' ? (
+        <Text style={[type.caption, { marginTop: 4, color: C.muted }]}>
+          {'No location fix yet, so this is A\u2013Z for now. Check in, or pick a city.'}
+        </Text>
+      ) : null}
 
       {/* Nothing matched. The one thing worth offering is the thing he is
           about to need — and the sentence says which kind of shop this opens,
@@ -278,6 +407,35 @@ export default function Customers() {
         })}
       </View>
 
+      {/* MORE, ON REQUEST. A button rather than infinite scroll: the next
+          fifteen cost a query and a render, and a salesman scrolling to find
+          one shop should not silently pull his whole territory onto the JS
+          thread — which is the fault this whole screen was rebuilt around. */}
+      {hasMore ? (
+        <Pressable
+          onPress={loadMore}
+          disabled={loadingMore}
+          style={({ pressed }) => [
+            {
+              marginTop: 12,
+              height: 48,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderWidth: 1,
+              borderColor: C.border,
+              borderRadius: radius.sm,
+              backgroundColor: C.surface,
+            },
+            pressed && { backgroundColor: C.wash },
+          ]}>
+          <Text style={[{ fontSize: 14, color: C.ink }, weight(500)]}>
+            {loadingMore
+              ? 'Loading\u2026'
+              : `Load ${Math.min(CUSTOMER_PAGE, total - rows.length)} more`}
+          </Text>
+        </Pressable>
+      ) : null}
+
       {rows.length === 0 ? (
         <Card style={{ marginTop: 8, paddingVertical: 40, paddingHorizontal: 20, alignItems: 'center' }}>
           <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Nothing matches that</Text>
@@ -292,6 +450,47 @@ export default function Customers() {
           />
         </Card>
       ) : null}
+
+      {/* THE TOWNS COME OUT OF THE BOOK, never a list typed into a screen —
+          the day somebody sells into a new town a hardcoded list is wrong and
+          nothing says so. A town with no pinned shop cannot be measured from,
+          so it is not offered. */}
+      <BottomSheet open={pickingCity} onClose={() => setPickingCity(false)} scroll>
+        <Text style={[{ fontSize: 17, color: C.ink, marginBottom: 4 }, weight(600)]}>
+          Nearest to which town?
+        </Text>
+        <Text style={[type.caption, { marginBottom: 12 }]}>
+          The book is sorted outwards from the middle of the town you pick.
+        </Text>
+        {cities.length === 0 ? (
+          <Text style={[type.caption, { paddingVertical: 12 }]}>
+            No shop in your book has been pinned yet, so there is nowhere to measure from.
+          </Text>
+        ) : (
+          cities.map((c) => (
+            <Pressable
+              key={c.city}
+              onPress={() => {
+                setOriginMode(c.city);
+                setPickingCity(false);
+              }}
+              style={({ pressed }) => [
+                {
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingVertical: 13,
+                  borderBottomWidth: 1,
+                  borderBottomColor: C.border,
+                },
+                pressed && { backgroundColor: C.wash },
+              ]}>
+              <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{c.city}</Text>
+              <Text style={type.caption}>{plural(c.n, 'shop')}</Text>
+            </Pressable>
+          ))
+        )}
+      </BottomSheet>
 
       <BottomSheet open={sheet === 'filters'} onClose={() => set({ sheet: null })}>
         <Text style={[{ fontSize: 15, color: C.ink, marginBottom: 4 }, weight(600)]}>Narrow it down</Text>

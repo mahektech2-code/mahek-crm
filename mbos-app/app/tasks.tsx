@@ -6,7 +6,7 @@ import { Card, Choice, DashedButton, Input, PrimaryButton, SecondaryButton, Sect
 import { BottomSheet } from '../src/components/ui/overlays';
 import { color as C, radius, shadow, weight } from '../src/theme/tokens';
 import { bucketOf, completeTask, createTask, listOpenTasks, snoozeTask, type Task } from '../src/data/tasks';
-import { daysSince, listCustomers, type Customer } from '../src/data/customers';
+import { customerNames, daysSince, listCustomersPage, type Customer } from '../src/data/customers';
 import { dmy, isoDate, plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 
@@ -41,7 +41,13 @@ export default function TasksScreen() {
   const askConfirm = useStore((s) => s.askConfirm);
 
   const [tasks, setTasks] = React.useState<Task[]>([]);
+  /* THE PICKER IS A PAGE, NOT THE BOOK. This rendered a Choice per customer
+     and read every row to do it — the same fault the Customers screen had, on
+     a screen nobody had opened with a full book yet. The names on the task
+     rows are looked up by id instead, so capping the picker cannot blank
+     them. */
   const [customers, setCustomers] = React.useState<Customer[]>([]);
+  const [names, setNames] = React.useState<Map<string, string>>(new Map());
   const [today] = React.useState(() => isoDate(new Date()));
 
   const [formOpen, setFormOpen] = React.useState(false);
@@ -53,10 +59,12 @@ export default function TasksScreen() {
 
   const load = React.useCallback(() => {
     let live = true;
-    void Promise.all([listOpenTasks(), listCustomers()]).then(([t, c]) => {
+    void Promise.all([listOpenTasks(), listCustomersPage({ limit: 50 })]).then(async ([t, c]) => {
       if (!live) return;
       setTasks(t);
-      setCustomers(c);
+      setCustomers(c.rows);
+      const found = await customerNames(t.map((x) => x.customerId ?? '').filter(Boolean));
+      if (live) setNames(found);
     });
     return () => {
       live = false;
@@ -65,7 +73,7 @@ export default function TasksScreen() {
 
   useFocusEffect(load);
 
-  const nameOf = (id: string | null) => customers.find((c) => c.id === id)?.name ?? '';
+  const nameOf = (id: string | null) => (id ? (names.get(id) ?? '') : '');
 
   const openForm = () => {
     setTitle('');
