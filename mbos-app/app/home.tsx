@@ -20,7 +20,8 @@ import { stopCounts } from '../src/data/journey';
 import { withinGeofence } from '../src/engines/geo';
 import { fixOf, getFix } from '../src/native/location';
 import { ensureLocationPermission } from '../src/native/permissions';
-import { takePhoto } from '../src/native/capture';
+import { queueSelfie } from '../src/native/capture';
+import { SelfieCamera, type SelfieResult } from '../src/components/ui/selfie-camera';
 
 /**
  * Home is the first thing on screen at 9am and the thing returned to between
@@ -178,6 +179,23 @@ export default function Home() {
     String(day.followUpsToday),
   ];
 
+  /*
+   * The selfie camera is a COMPONENT, and `startDay` needs a value from it, so
+   * the two are joined by a promise the modal resolves. It is the same shape
+   * as `askConfirm` — the flow raises an overlay and waits for the person —
+   * and it is why the camera is rendered at the bottom of this screen rather
+   * than pushed as a route: a route would take `startDay` off the stack
+   * half-way through, and the check-in it is in the middle of with it.
+   */
+  const [selfieOpen, setSelfieOpen] = React.useState(false);
+  const answerSelfie = React.useRef<((r: SelfieResult) => void) | null>(null);
+
+  const askSelfie = () =>
+    new Promise<SelfieResult>((resolve) => {
+      answerSelfie.current = resolve;
+      setSelfieOpen(true);
+    });
+
   /**
    * Starting the day: GPS, then attendance with a selfie, then the timer.
    *
@@ -196,12 +214,28 @@ export default function Home() {
       const base = await getConfig<{ lat: number; lng: number } | null>('mbos.attendance.baseLocation', null);
 
       const fix = fixOf(await getFix({ accuracyThresholdM: threshold }));
-      const selfie = await takePhoto({ parentType: 'attendance', parentId: 'pending', kind: 'selfie' });
+
+      /* Front-facing, inside the app, and skippable. Every way out of the
+         camera — cancel, a refused permission, a shutter that failed — comes
+         back as null, and the day starts regardless: the check-in is never
+         blocked by a photograph. */
+      const picked = await askSelfie();
+      /* Queueing it is inside its own try, because the rule is that a save is
+         never blocked by an attachment: a compression or a disk write that
+         fails must cost the photograph and not the day. */
+      let selfieMediaId: string | null = null;
+      if (picked) {
+        try {
+          selfieMediaId = await queueSelfie(picked.uri, 'pending');
+        } catch {
+          selfieMediaId = null;
+        }
+      }
 
       const row = await checkIn({
         userId,
         fix,
-        selfieMediaId: selfie.ok ? selfie.mediaId : null,
+        selfieMediaId,
         homeLocation: base,
       });
 
@@ -421,6 +455,15 @@ export default function Home() {
           The office has not set one. Today&rsquo;s orders, visits and collections are in the six figures above.
         </Text>
       </Card>
+
+      <SelfieCamera
+        open={selfieOpen}
+        onDone={(result) => {
+          setSelfieOpen(false);
+          answerSelfie.current?.(result);
+          answerSelfie.current = null;
+        }}
+      />
     </AppFrame>
   );
 }

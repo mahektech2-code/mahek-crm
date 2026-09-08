@@ -45,6 +45,19 @@
       "expo-task-manager",
       "expo-background-task",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "MahekOne takes a photo of you when you start your day, so the office can see the check-in was yours. It is used for nothing else, and the day starts whether or not you take one.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Unlock MBOS with Face ID instead of typing a password."
+        }
+      ],
+      [
         "expo-notifications",
         {
           "color": "#5223E0"

@@ -2266,6 +2266,22 @@ since he picked it is dropped, counted and NOTIFIED — refusing the whole day
 over one stale id loses the nineteen he got right, and dropping it silently is
 how somebody walks a day missing a stop they chose.
 
+**THE HANDSET IS RELEASED BY A WORKFLOW, and never from somebody's laptop.**
+`.github/workflows/mbos-apk.yml` builds it, verifies the signature against the
+committed keystore with `apksigner`, and publishes to R2 under a versioned name
+and to the droplet as the one stable `/downloads/mbos.apk`. It is
+`workflow_dispatch` — `gh workflow run "MBOS APK" --ref main -f
+api_base=https://one.mahekindia.com -f publish=true` — because sideloading has
+no staged rollout and no rollback, so a release is a decision somebody makes.
+`api_base` is baked into the bundle and cannot be changed afterwards.
+
+A release built by hand and copied up skips the signature check, the versioned
+archive and any record of what shipped, and puts the app back on whichever
+machine happens to have a JDK. That has happened, on 2026-09-08, because the
+release path was written down nowhere anybody looks — which is why it is
+written here. Local `gradlew assembleRelease` is for trying a change on your own
+phone and nothing else. See DEPLOY.md, "Releasing the handset app".
+
 **A pull says what exists; only a tombstone says what stopped.** A deleted row
 has no `updated_at` for a delta to notice, so without `mbos_deletions` a
 withdrawn document, a removed stop and a reassigned customer sit on the handset
