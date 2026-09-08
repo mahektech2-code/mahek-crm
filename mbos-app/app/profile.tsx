@@ -20,10 +20,47 @@ import { color as C, radius, weight } from '../src/theme/tokens';
  * record exactly as it was rather than half-changed.
  */
 
-const PREFS: { k: 'wifi' | 'push' | 'bio'; l: string; s: string }[] = [
-  { k: 'wifi', l: 'Sync on Wi-Fi only', s: 'Saves data when you are on mobile' },
-  { k: 'push', l: 'Push notifications', s: 'Tasks, approvals and announcements' },
-  { k: 'bio', l: 'Sign in with fingerprint', s: 'Instead of typing a password' },
+/**
+ * THREE SWITCHES THAT MOVED AND CHANGED NOTHING.
+ *
+ * `pfPrefs` is written by these toggles and read by NOTHING — not the sync, not
+ * the push registration, not the sign-in. It is not even persisted, so a switch
+ * somebody set went back the next time the app started. Three settings that
+ * looked like settings.
+ *
+ * Push is the one that was reported, and it is the one that cannot simply be
+ * wired up: `registerForPush` needs an EAS project id in `app.json`
+ * (`extra.eas.projectId`) to ask Expo's service for a token, `extra` is empty,
+ * and so nine handsets have registered zero tokens between them. No token means
+ * nothing to push TO, which is why a test push arrived nowhere. That needs an
+ * Expo account and `eas init`, not a code change.
+ *
+ * A switch that cannot do anything is worse than no switch: it is where
+ * somebody goes to fix the problem, and it tells them they already have. So
+ * each one now says whether it works, and the ones that do not are shown off
+ * and unpressable with the reason underneath.
+ */
+type Pref = { k: 'wifi' | 'push' | 'bio'; l: string; s: string; blocked?: string };
+
+const PREFS: Pref[] = [
+  {
+    k: 'wifi',
+    l: 'Sync on Wi-Fi only',
+    s: 'Saves data when you are on mobile',
+    blocked: 'Not built — the sync runs on whatever connection there is.',
+  },
+  {
+    k: 'push',
+    l: 'Push notifications',
+    s: 'Tasks, approvals and announcements',
+    blocked: 'Not switched on for this build. Notifications still arrive in the app.',
+  },
+  {
+    k: 'bio',
+    l: 'Sign in with fingerprint',
+    s: 'Instead of typing a password',
+    blocked: 'Not built — sign in with your password.',
+  },
 ];
 
 export default function ProfileScreen() {
@@ -218,12 +255,21 @@ export default function ProfileScreen() {
               borderTopColor: C.wash,
             }}>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <T style={{ fontSize: 16, lineHeight: 22, color: C.ink }}>{p.l}</T>
+              <T style={{ fontSize: 16, lineHeight: 22, color: C.ink, opacity: p.blocked ? 0.5 : 1 }}>{p.l}</T>
               <T s="caption" style={{ marginTop: 1 }}>
-                {p.s}
+                {p.blocked ?? p.s}
               </T>
             </View>
-            <Toggle size="sm" on={pfPrefs[p.k]} onPress={() => set({ pfPrefs: { ...pfPrefs, [p.k]: !pfPrefs[p.k] } })} />
+            {p.blocked ? (
+              /* Off and unpressable, rather than absent: the setting is a real
+                 thing somebody expects to find, and a switch that has quietly
+                 disappeared reads as a bug of its own. */
+              <View style={{ opacity: 0.35 }}>
+                <Toggle size="sm" on={false} onPress={() => {}} />
+              </View>
+            ) : (
+              <Toggle size="sm" on={pfPrefs[p.k]} onPress={() => set({ pfPrefs: { ...pfPrefs, [p.k]: !pfPrefs[p.k] } })} />
+            )}
           </View>
         ))}
       </ListCard>
