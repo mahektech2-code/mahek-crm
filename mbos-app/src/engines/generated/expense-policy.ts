@@ -311,6 +311,47 @@ export function ruleFor<K extends PolicyRuleKind>(
 }
 
 /**
+ * The statuses a version has to be in to be capable of being in force.
+ *
+ * `superseded` belongs here and leaving it out is the whole of the bug this
+ * constant exists to make impossible. Publishing v2 flips v1 to `superseded`
+ * IMMEDIATELY — at the moment somebody presses the button, not on the day the
+ * new rates start — so between scheduling a revision and its effective date
+ * the version actually pricing every claim carries that status. A reader that
+ * asks for `published` alone answers "no policy is in force" for a month at a
+ * time while the handsets are quite correctly still computing against v1.
+ *
+ * `draft` and `archived` are absent because neither has ever been put into
+ * force, which is the difference this list is drawing.
+ */
+export const IN_FORCE_STATUSES = ["published", "superseded"] as const;
+
+export type InForceStatus = (typeof IN_FORCE_STATUSES)[number];
+
+/**
+ * Is this version the authority on that date?
+ *
+ * ONE definition, and every caller reads it — the screens, the publish path
+ * and the pricing. There were three before, they disagreed, and the two that
+ * were wrong were the two a person actually looks at.
+ */
+export function isInForceOn(
+  policy: { status: string; effectiveFrom: string; effectiveTo: string | null },
+  onDate: string,
+): boolean {
+  if (!(IN_FORCE_STATUSES as readonly string[]).includes(policy.status)) return false;
+  return coversDate(policy, onDate);
+}
+
+/** The date half of it, on its own — `policyOn` has already filtered by status. */
+export function coversDate(
+  range: { effectiveFrom: string; effectiveTo: string | null },
+  onDate: string,
+): boolean {
+  return range.effectiveFrom <= onDate && (range.effectiveTo === null || range.effectiveTo >= onDate);
+}
+
+/**
  * The policy in force on a date.
  *
  * **This is requirement 6**, and it is one comparison rather than a rule
@@ -319,9 +360,7 @@ export function ruleFor<K extends PolicyRuleKind>(
  * got the first time.
  */
 export function policyOn(policies: readonly Policy[], onDate: string): Policy | null {
-  const covering = policies.filter(
-    (p) => p.effectiveFrom <= onDate && (p.effectiveTo === null || p.effectiveTo >= onDate),
-  );
+  const covering = policies.filter((p) => coversDate(p, onDate));
   if (covering.length === 0) return null;
   /* Two published versions covering one date is refused at the database. If
      one ever arrives anyway, the LATER version wins and the caller can see the

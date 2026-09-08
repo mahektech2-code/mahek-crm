@@ -467,27 +467,37 @@ export function ExpensePolicySection({
           }}
         />
 
-        <NewVersionModal
-          open={newVersion}
-          busy={busy}
-          versions={data.versions}
-          onClose={() => setNewVersion(false)}
-          onCreate={async (input) => {
-            const okay = await run(() => createPolicyDraft(input));
-            if (okay) setNewVersion(false);
-          }}
-        />
+        {newVersion ? (
+          <NewVersionModal
+            busy={busy}
+            versions={data.versions}
+            onClose={() => setNewVersion(false)}
+            onCreate={async (input) => {
+              const okay = await run(() => createPolicyDraft(input));
+              if (okay) setNewVersion(false);
+            }}
+          />
+        ) : null}
 
-        <PublishModal
-          open={publishing}
-          busy={busy}
-          detail={detail}
-          onClose={() => setPublishing(false)}
-          onPublish={async (input) => {
-            const okay = await run(() => publishPolicy(input));
-            if (okay) setPublishing(false);
-          }}
-        />
+        {/* Mounted only while open, and KEYED on the version.
+            `useState` runs once per mount and returning null does not unmount,
+            so one long-lived instance kept the first version it ever saw: the
+            publish dialog for version 2 offered version 1's effective date,
+            and the "type the number back" box still held what was typed before
+            a cancel — the one field on this screen whose whole purpose is to
+            be typed deliberately. */}
+        {publishing && detail ? (
+          <PublishModal
+            key={detail.policy.id}
+            busy={busy}
+            detail={detail}
+            onClose={() => setPublishing(false)}
+            onPublish={async (input) => {
+              const okay = await run(() => publishPolicy(input));
+              if (okay) setPublishing(false);
+            }}
+          />
+        ) : null}
       </div>
     );
   }
@@ -892,13 +902,11 @@ function RuleModal({
 }
 
 function NewVersionModal({
-  open,
   busy,
   versions,
   onClose,
   onCreate,
 }: {
-  open: boolean;
   busy: boolean;
   versions: ExpensePolicyData["versions"];
   onClose: () => void;
@@ -915,7 +923,6 @@ function NewVersionModal({
   const [copyFrom, setCopyFrom] = React.useState(
     versions.find((v) => v.inForce)?.id ?? versions[0]?.id ?? "",
   );
-  if (!open) return null;
 
   return (
     <Modal open onClose={onClose} title="A new policy version" width={520}>
@@ -968,21 +975,18 @@ function NewVersionModal({
 }
 
 function PublishModal({
-  open,
   busy,
   detail,
   onClose,
   onPublish,
 }: {
-  open: boolean;
   busy: boolean;
-  detail: ExpensePolicyData["detail"];
+  detail: NonNullable<ExpensePolicyData["detail"]>;
   onClose: () => void;
   onPublish: (input: { policyId: string; effectiveFrom: string; confirmVersionNo: number }) => void;
 }) {
-  const [from, setFrom] = React.useState(detail?.policy.effectiveFrom ?? "");
+  const [from, setFrom] = React.useState(detail.policy.effectiveFrom);
   const [typed, setTyped] = React.useState("");
-  if (!open || !detail) return null;
 
   return (
     <Modal open onClose={onClose} title={`Publish version ${detail.policy.versionNo}`} width={520}>

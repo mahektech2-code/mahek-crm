@@ -175,11 +175,18 @@ ON CONFLICT (key) DO NOTHING;
 --
 -- effective_from is 2000-01-01 so that when this is eventually published it
 -- covers every expense already in the book. Nothing is published here.
+--
+-- The title does NOT repeat the version number. Every screen that shows a
+-- version renders `Version {n} — {title}`, so a stored "Version 1 — …" came
+-- out as "Version 1 — Version 1 — as configured before the policy module".
+-- Editing this line is safe on a deployment that has already run it: the
+-- migrator selects journal entries newer than the watermark, so an applied
+-- file is never re-read, and the insert is ON CONFLICT DO NOTHING regardless.
 INSERT INTO expense_policies (id, version_no, title, status, effective_from, notes)
 VALUES (
   'xpol_v1_from_settings',
   1,
-  'Version 1 — as configured before the policy module',
+  'As configured before the policy module',
   'draft',
   DATE '2000-01-01',
   'Created by migration 0086 from the mbos.expenses.* settings that were in force. It is a DRAFT: publishing a policy is a decision, and a migration is not a person. Check the figures against the issued document, attach that document, then publish.'

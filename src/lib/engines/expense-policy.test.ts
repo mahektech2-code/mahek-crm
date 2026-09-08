@@ -6,6 +6,7 @@ import {
   computeDay,
   computeLeg,
   computeMeals,
+  isInForceOn,
   policyOn,
   routeDay,
   ruleFor,
@@ -412,6 +413,42 @@ describe("requirement 6 — the policy in force on the date", () => {
   test("the boundary days belong to the version that names them", () => {
     assert.equal(policyOn([v1, v2], "2026-08-31")!.id, "v1");
     assert.equal(policyOn([v1, v2], "2026-09-01")!.id, "v2");
+  });
+
+  /* The status half of the same question, which used to be answered three
+     different ways — and the two that read `published` alone were the two
+     every screen was built on. */
+  const range = { effectiveFrom: "2026-04-01", effectiveTo: "2026-11-30" };
+
+  test("a SUPERSEDED version is still in force inside its own dates", () => {
+    assert.equal(isInForceOn({ ...range, status: "superseded" }, "2026-09-09"), true);
+  });
+
+  test("scheduling the next version does not take this one out of force", () => {
+    /* Publishing v2 for 1 December marks v1 superseded on the DAY SOMEBODY
+       PRESSES THE BUTTON, not on 30 November. Every claim between now and then
+       is still priced on v1, so every screen has to agree that it is live. */
+    assert.equal(isInForceOn({ ...range, status: "superseded" }, "2026-09-09"), true);
+    assert.equal(
+      isInForceOn({ effectiveFrom: "2026-12-01", effectiveTo: null, status: "published" }, "2026-09-09"),
+      false,
+      "the scheduled one is not in force yet",
+    );
+  });
+
+  test("a draft is never in force, whatever dates it carries", () => {
+    assert.equal(isInForceOn({ ...range, status: "draft" }, "2026-09-09"), false);
+  });
+
+  test("an archived version is never in force either", () => {
+    assert.equal(isInForceOn({ ...range, status: "archived" }, "2026-09-09"), false);
+  });
+
+  test("dates still bound a published version", () => {
+    const open = { effectiveFrom: "2026-04-01", effectiveTo: null, status: "published" };
+    assert.equal(isInForceOn(open, "2026-03-31"), false);
+    assert.equal(isInForceOn(open, "2026-04-01"), true);
+    assert.equal(isInForceOn({ ...range, status: "superseded" }, "2026-12-01"), false);
   });
 });
 

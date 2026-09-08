@@ -34,7 +34,12 @@ import {
   saveRule,
   policyReadiness,
 } from "@/lib/actions/expense-policy";
-import { policyForDate, readPolicy } from "@/lib/services/expense-policy-service";
+import {
+  currentlyInForce,
+  listPolicies,
+  policyForDate,
+  readPolicy,
+} from "@/lib/services/expense-policy-service";
 import { priceDay } from "@/lib/services/expense-service";
 import { submitDay, reopenDay } from "@/lib/services/expense-submit-service";
 import { claimDays } from "@/lib/services/expense-claims-service";
@@ -333,6 +338,86 @@ describe("requirement 6 — an old expense keeps its old policy", () => {
 
     assert.equal((await policyForDate("2026-08-31"))!.versionNo, 1);
     assert.equal((await policyForDate("2026-09-01"))!.versionNo, 2);
+  });
+
+  /* ---------------------------------------------------------------------
+   * Scheduling the next version, which is the ordinary way a policy changes:
+   * HR issues the revision in September, it starts in December.
+   *
+   * Publishing marks the outgoing version `superseded` at the moment the
+   * button is pressed rather than on the day it actually ends, so for those
+   * three months the version pricing every claim carries that status. Two of
+   * the three readers asked for `published` alone and therefore answered "no
+   * policy is in force" — on the manager's own Expense policy screen, under a
+   * red banner saying claims had no eligible amount, directly above a table
+   * listing the version that was in fact pricing them.
+   *
+   * Nothing was ever MISPRICED: `policyForDate` had it right, which is why
+   * every test here passed while both screens were lying. That is the whole
+   * reason these assert the reader the SCREENS use.
+   * ------------------------------------------------------------------- */
+  describe("a revision scheduled for later", () => {
+    const midway = "2026-09-09";
+
+    async function scheduleAhead() {
+      await publishPolicyV("2026-04-01", 350);
+      await publishPolicyV("2026-12-01", 500);
+    }
+
+    test("the outgoing version still reads as in force until the day it ends", async () => {
+      await scheduleAhead();
+      const versions = await listPolicies(midway);
+      const live = versions.filter((v) => v.inForce);
+
+      assert.equal(live.length, 1, "exactly one version is in force on any date");
+      assert.equal(live[0]!.versionNo, 1);
+      assert.equal(live[0]!.status, "superseded", "and it is the superseded one");
+    });
+
+    test("the screens and the pricing name the same version", async () => {
+      await scheduleAhead();
+      for (const day of ["2026-09-09", "2026-11-30", "2026-12-01", "2027-06-01"]) {
+        const priced = await policyForDate(day);
+        const shown = (await listPolicies(day)).find((v) => v.inForce);
+        assert.equal(
+          shown?.versionNo ?? null,
+          priced?.versionNo ?? null,
+          `the screen and the ledger disagree about ${day}`,
+        );
+      }
+    });
+
+    test("publishing can still find the version whose end it has to close", async () => {
+      await scheduleAhead();
+      const previous = await currentlyInForce(midway);
+      assert.equal(previous?.versionNo, 1);
+    });
+
+    test("a version cannot be slid in front of one that already follows it", async () => {
+      await scheduleAhead();
+      /* Copied from v1, so the draft is publishable on its own merits and the
+         refusal below is about the DATES rather than about missing rules. */
+      const v1 = (await listPolicies("2026-09-09")).find((v) => v.versionNo === 1)!;
+      const draft = await createPolicyDraft({
+        title: "A correction dated inside the live window",
+        effectiveFrom: "2026-09-15",
+        copyFromPolicyId: v1.id,
+      });
+      assert.ok(draft.ok, draft.ok ? "" : draft.error);
+      const refused = await publishPolicy({
+        policyId: draft.data.id,
+        effectiveFrom: "2026-09-15",
+        confirmVersionNo: draft.data.versionNo,
+      });
+
+      assert.equal(refused.ok, false);
+      if (refused.ok) return;
+      /* Named, rather than handed to the exclusion constraint to explain in
+         its own words — which reached the screen as a wall of SQL and the
+         actor's user id. */
+      assert.match(refused.error, /Version 2 is already in force from 2026-12-01/);
+      assert.doesNotMatch(refused.error, /Failed query|update expense_policies/);
+    });
   });
 });
 

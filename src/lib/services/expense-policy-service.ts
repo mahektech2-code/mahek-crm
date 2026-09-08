@@ -1,5 +1,5 @@
 import "server-only";
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   expenseCityClasses,
@@ -8,7 +8,13 @@ import {
   expensePolicyRules,
 } from "@/db/schema";
 import { parseRule, describeRule } from "@/lib/expense-rule-forms";
-import { policyOn, type Policy, type PolicySubject } from "@/lib/engines/expense-policy";
+import {
+  IN_FORCE_STATUSES,
+  isInForceOn,
+  policyOn,
+  type Policy,
+  type PolicySubject,
+} from "@/lib/engines/expense-policy";
 import { asDate } from "@/lib/business-date";
 
 /* ---------------------------------------------------------------------------
@@ -95,10 +101,7 @@ export async function listPolicies(today: string): Promise<PolicySummary[]> {
   return rows.map((r) => ({
     ...r,
     publishedAt: asDate(r.publishedAt)?.toISOString() ?? null,
-    inForce:
-      r.status === "published" &&
-      r.effectiveFrom <= today &&
-      (r.effectiveTo === null || r.effectiveTo >= today),
+    inForce: isInForceOn(r, today),
   }));
 }
 
@@ -192,7 +195,7 @@ async function loadPolicies(statuses: readonly string[]): Promise<Policy[]> {
 
 /** The policy in force on a date, assembled for the engine. Null where none is. */
 export async function policyForDate(onDate: string): Promise<Policy | null> {
-  const policies = await loadPolicies(["published", "superseded"]);
+  const policies = await loadPolicies(IN_FORCE_STATUSES);
   return policyOn(policies, onDate);
 }
 
@@ -398,21 +401,49 @@ export async function nextVersionNo(): Promise<number> {
   return (row?.max ?? 0) + 1;
 }
 
-/** The published version whose open end a new one would close. */
-export async function currentlyInForce(onDate: string): Promise<{ id: string; versionNo: number; effectiveFrom: string } | null> {
-  const [row] = await db
-    .select({
-      id: expensePolicies.id,
-      versionNo: expensePolicies.versionNo,
-      effectiveFrom: sql<string>`${expensePolicies.effectiveFrom}::text`,
-    })
-    .from(expensePolicies)
-    .where(
-      sql`${expensePolicies.status} = 'published'
-          and ${expensePolicies.effectiveFrom} <= ${onDate}::date
-          and (${expensePolicies.effectiveTo} is null or ${expensePolicies.effectiveTo} >= ${onDate}::date)`,
+/**
+ * The version whose open end a new one would close.
+ *
+ * Read off `listPolicies` rather than asked of the database again. It was its
+ * own query with its own copy of the predicate, and the copy was wrong in the
+ * one way that matters: it named `published` only, so the moment a revision
+ * was SCHEDULED the version still pricing today's claims went to `superseded`
+ * and this answered null. A publish then found nothing to supersede, and a
+ * correction dated inside the live window was refused by the exclusion
+ * constraint with the driver's own words.
+ *
+ * A handful of rows, so the extra rule count per row costs nothing next to
+ * having one definition instead of two.
+ */
+export async function currentlyInForce(
+  onDate: string,
+): Promise<{ id: string; versionNo: number; effectiveFrom: string } | null> {
+  const covering = (await listPolicies(onDate))
+    .filter((v) => v.inForce)
+    .sort((a, b) => b.versionNo - a.versionNo);
+  const winner = covering[0];
+  return winner
+    ? { id: winner.id, versionNo: winner.versionNo, effectiveFrom: winner.effectiveFrom }
+    : null;
+}
+
+/**
+ * The earliest version already in force ON OR AFTER a date.
+ *
+ * A new version is given no end date, so putting one in front of a version
+ * that already follows it would leave two open-ended policies overlapping —
+ * which the exclusion constraint refuses, in words about GiST indexes. This
+ * lets the refusal name the version actually in the way.
+ */
+export async function firstInForceOnOrAfter(
+  onDate: string,
+): Promise<{ versionNo: number; effectiveFrom: string } | null> {
+  const later = (await listPolicies(onDate))
+    .filter(
+      (v) =>
+        (IN_FORCE_STATUSES as readonly string[]).includes(v.status) && v.effectiveFrom >= onDate,
     )
-    .orderBy(desc(expensePolicies.versionNo))
-    .limit(1);
-  return row ?? null;
+    .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  const first = later[0];
+  return first ? { versionNo: first.versionNo, effectiveFrom: first.effectiveFrom } : null;
 }

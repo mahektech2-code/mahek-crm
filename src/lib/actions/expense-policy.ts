@@ -18,6 +18,7 @@ import { requireCapability } from "@/lib/access-control";
 import { validateRule, ruleSpec, type RuleDraft } from "@/lib/expense-rule-forms";
 import {
   currentlyInForce,
+  firstInForceOnOrAfter,
   nextVersionNo,
   normaliseKey,
   readPolicy,
@@ -439,6 +440,18 @@ export async function publishPolicy(input: unknown): Promise<Result<{ versionNo:
     );
   }
 
+  /* And nothing may be slid in FRONT of a version that already follows. A new
+     version carries no end date, so it would run straight through the later
+     one — refused by the exclusion constraint either way, but refused there in
+     words about GiST operator classes on a screen somebody publishes from. */
+  const following = await firstInForceOnOrAfter(p.effectiveFrom);
+  if (following) {
+    return fail(
+      `Version ${following.versionNo} is already in force from ${following.effectiveFrom}, so this one cannot start on ${p.effectiveFrom} — it has no end date and would run through it. Give this version a start after ${following.effectiveFrom}.`,
+      "conflict",
+    );
+  }
+
   try {
     await db.transaction(async (tx) => {
       if (previous) {
@@ -464,8 +477,14 @@ export async function publishPolicy(input: unknown): Promise<Result<{ versionNo:
       `);
     });
   } catch (e) {
+    /* The exclusion constraint, almost certainly. Its own message names a GiST
+       index and prints the statement and its parameters, which on this screen
+       is a wall of SQL where a sentence belongs — the checks above exist to
+       catch the two reachable ways in and say which one it was. Logged rather
+       than shown, because an unexpected one still has to be findable. */
+    console.error("[expense-policy] publish refused by the database", e);
     return fail(
-      `Publishing was refused because it would leave two policies in force on one date. ${e instanceof Error ? e.message : ""}`.trim(),
+      "Publishing was refused because it would leave two policies in force on one date. Check the dates on the Versions tab.",
       "conflict",
     );
   }
