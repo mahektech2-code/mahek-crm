@@ -537,6 +537,30 @@ export const users = pgTable(
     initials: text("initials").notNull(),
     /** The manager a telecaller reports to — drives a manager's team scope. */
     reportsToId: text("reports_to_id"),
+    /**
+     * What the SHEETS call this person, where that is not what MahekOne calls
+     * them — and the one thing that gives a field salesman a book.
+     *
+     * A salesperson is a NAME, not an account: `customers.sales_person_name`
+     * holds "Prakash Vasudev Prasad" as the party sheet spells it, and nothing
+     * has ever joined that string back to a login. So a field salesman signed
+     * in to MBOS, `scopedToUsers` matched him against `sales_am_id` and
+     * `back_office_am_id`, found him in neither, and his handset showed an
+     * empty book — correctly, and with nothing on any screen able to say why.
+     *
+     * This is the join. It is DELIBERATE rather than inferred from
+     * `users.name`: matching on that would mean renaming somebody, or hiring a
+     * second person with the same name, silently changing who can see which
+     * customers. A scope rule that moves on its own is the one kind this
+     * codebase cannot have. `npm run salesman:link` proposes the links by
+     * folding the two sets of names together and refuses the ambiguous ones
+     * rather than picking.
+     *
+     * NULL is the ordinary state for everybody who is not a field salesman,
+     * and it costs nothing: the match is only ever asked inside MBOS, and a
+     * null answers no.
+     */
+    salesPersonName: text("sales_person_name"),
     active: boolean("active").notNull().default(true),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
