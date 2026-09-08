@@ -50,7 +50,15 @@ export type Trip<P extends TripPoint = TripPoint> = {
 export type TripOptions = {
   gapMetres: number;
   dwellRadiusMetres: number;
-  dwellMinMinutes: number;
+  /**
+   * How long somebody has to be still before the colour changes.
+   *
+   * Deliberately NOT `dwellMinMinutes`, which is the threshold for putting a
+   * mark on the map. Every pause worth marking is not a new journey: a day
+   * spent in one market has a stop at every counter, and colouring each of
+   * them as its own leg turns a morning into a rainbow that answers nothing.
+   */
+  tripBreakMinutes: number;
 };
 
 /**
@@ -72,9 +80,56 @@ function isJourney<P extends TripPoint>(points: P[], metres: number, dwellRadius
   return points.length >= 2 && metres > dwellRadiusMetres;
 }
 
+/**
+ * ONE STOP THAT WANDERED IS ONE STOP.
+ *
+ * `dwellRuns` anchors each run on its FIRST fix and closes it the moment
+ * anything strays past the radius — so somebody standing outside a shop for a
+ * quarter of an hour, drifting sixty metres across a forecourt in the middle
+ * of it, comes back as two stops three seconds apart rather than one. Each of
+ * those produced its own colour change, and the "leg" between them was six
+ * minutes of a man who had not gone anywhere.
+ *
+ * So runs are joined back up before anything is measured: consecutive runs
+ * with no real travelling between them are the same rest, however many times
+ * the anchor was reset inside it. Only then is the length asked about, and
+ * only a rest longer than `tripBreakMinutes` ends a leg.
+ *
+ * `SETTLING_SECONDS` is what "no real travelling" means — a few seconds of
+ * walking across a yard, not a trip to another street. It is small and fixed
+ * rather than configurable because it is a property of how `dwellRuns` cuts,
+ * not a decision anybody would want to make differently.
+ */
+const SETTLING_SECONDS = 90;
+
+function mergeAdjacentRests<P extends TripPoint>(
+  runs: { startIndex: number; endIndex: number; minutes: number }[],
+  points: P[],
+  tripBreakMinutes: number,
+): { startIndex: number; endIndex: number; minutes: number }[] {
+  const merged: { startIndex: number; endIndex: number; minutes: number }[] = [];
+
+  for (const run of runs) {
+    const last = merged[merged.length - 1];
+    const apart = last
+      ? (points[run.startIndex].at.getTime() - points[last.endIndex].at.getTime()) / 1000
+      : Infinity;
+
+    if (last && apart <= SETTLING_SECONDS) {
+      last.endIndex = run.endIndex;
+      last.minutes =
+        (points[last.endIndex].at.getTime() - points[last.startIndex].at.getTime()) / 60_000;
+      continue;
+    }
+    merged.push({ ...run });
+  }
+
+  return merged.filter((r) => r.minutes >= tripBreakMinutes);
+}
+
 export function splitTrailIntoTrips<P extends TripPoint>(
   points: P[],
-  { gapMetres, dwellRadiusMetres, dwellMinMinutes }: TripOptions,
+  { gapMetres, dwellRadiusMetres, tripBreakMinutes }: TripOptions,
 ): Trip<P>[] {
   if (points.length < 2) return [];
 
@@ -98,7 +153,14 @@ export function splitTrailIntoTrips<P extends TripPoint>(
    * "at the stop".
    */
   const restEnds = new Set(
-    dwellRuns(points, dwellRadiusMetres, dwellMinMinutes)
+    mergeAdjacentRests(
+      /* Runs shorter than this are not rests at all — they are the ordinary
+         cadence of walking, where the anchor resets every few strides. Merging
+         those would join an entire journey into one enormous "stop". */
+      dwellRuns(points, dwellRadiusMetres, SETTLING_SECONDS / 60),
+      points,
+      tripBreakMinutes,
+    )
       .map((r) => {
         const centre = centroidOf(points.slice(r.startIndex, r.endIndex + 1));
         let best = r.startIndex;
@@ -183,6 +245,104 @@ export const TRIP_COLOURS = [
   "#3F51B5",
 ] as const;
 
+/**
+ * How far a leg is nudged sideways from the centre of the road, in METRES.
+ *
+ * TWO PASSES DOWN ONE STREET ARE ONE LINE, and that is a real loss: walking
+ * out and back is drawn as a single stroke, so the turn at the far end is
+ * invisible and a road worked twice looks like a road worked once. Colour
+ * cannot fix it — the second line is exactly under the first, and only its
+ * ends show.
+ *
+ * `offsetPolyline` moves each point to the RIGHT OF TRAVEL, so one constant
+ * offset does the whole of the out-and-back case for free — the return leg is
+ * travelling the other way, so its right is the other side of the road, and
+ * the two passes separate into lanes exactly as traffic does. It reads the way
+ * somebody already understands a road.
+ *
+ * The stagger on top is for the case lanes cannot answer: two legs down the
+ * same street in the SAME direction, which sit on the same side. Three
+ * positions is enough — a fourth pass down one street in one direction is
+ * rare, and by then the colours are doing the work.
+ */
+/*
+ * JUST ENOUGH THAT TWO LINES TOUCH RATHER THAN MERGE.
+ *
+ * This started at 3.5 m plus 3 m a step, which put the third leg nine and a
+ * half metres from the centreline — off the carriageway and along the
+ * buildings, undoing the road-matching it was drawn on top of. Narrowing it
+ * to 1.8 + 1.2 fixed the road but was still visible as a line running beside
+ * its street rather than down it.
+ *
+ * The measure that settled it: feeding each drawn line back to Snap-to-Road
+ * and asking how far it is from a road. The answer came back as exactly these
+ * constants — 1.8, 3.0, 4.2 — which is the proof that the geometry was never
+ * off-road at all and every metre of the gap was this.
+ *
+ * So it is a hair now. The separation between two passes is TWICE the base,
+ * which at the zoom somebody reads a junction at is about the width of the
+ * line itself: they sit against each other rather than on top of each other,
+ * which is all that was ever needed to see there were two. Anything more is
+ * a route drawn next to its road.
+ */
+const LANE_METRES = 1.1;
+const STAGGER_METRES = 0.7;
+
+export function tripOffset(index: number): number {
+  return LANE_METRES + ((index - 1) % 3) * STAGGER_METRES;
+}
+
 export function tripColour(index: number): string {
   return TRIP_COLOURS[(index - 1) % TRIP_COLOURS.length];
+}
+
+/**
+ * The same line, moved sideways by a few metres.
+ *
+ * MapLibre has `line-offset` and it is the obvious way to do this. It offsets
+ * each SEGMENT and then tries to join them, and at the ninety-degree corners a
+ * street grid is made of the joins come apart — the line arrives at the turn,
+ * stops, and starts again a few pixels away, so a route reads as broken at
+ * exactly the corners somebody is trying to follow. It is the renderer's
+ * problem and there is no setting that fixes it.
+ *
+ * Offsetting the COORDINATES has no such seam: what comes out is an ordinary
+ * polyline, and the corner is a corner like any other, drawn with the same
+ * round join as the rest of the line.
+ *
+ * Each point moves perpendicular to the direction through it — the average of
+ * the way in and the way out, so a corner mitres rather than stepping — and to
+ * the RIGHT of travel, which is what makes an out-and-back separate into two
+ * lanes without anything having to notice it doubled back.
+ *
+ * In METRES rather than pixels, which is the other reason to do it here: a
+ * lane is a real width on the ground, so it stays the same width of road at
+ * every zoom instead of swelling into a smear as you go out.
+ */
+export function offsetPolyline(
+  coordinates: [number, number][],
+  metres: number,
+): [number, number][] {
+  if (coordinates.length < 2 || metres === 0) return coordinates;
+
+  return coordinates.map(([lng, lat], i) => {
+    const before = coordinates[Math.max(0, i - 1)];
+    const after = coordinates[Math.min(coordinates.length - 1, i + 1)];
+
+    /* The direction through this point, in metres rather than degrees, so the
+       perpendicular is square on the ground and not stretched by latitude. */
+    const cos = Math.cos((lat * Math.PI) / 180);
+    const dx = (after[0] - before[0]) * cos;
+    const dy = after[1] - before[1];
+    const length = Math.hypot(dx, dy);
+    if (length === 0) return [lng, lat];
+
+    /* Right of travel: rotate the heading by -90 degrees. */
+    const px = dy / length;
+    const py = -dx / length;
+
+    const dLat = (metres * py) / 111_320;
+    const dLng = (metres * px) / (111_320 * (cos || 1));
+    return [lng + dLng, lat + dLat];
+  });
 }

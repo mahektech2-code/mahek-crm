@@ -5,13 +5,19 @@ import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { DwellStop } from "@/lib/engines/dwell";
 import { splitTrailByGaps, type TrailSegment } from "@/lib/engines/trail-gaps";
-import { splitTrailIntoTrips, tripColour } from "@/lib/engines/trail-trips";
+import {
+  offsetPolyline,
+  splitTrailIntoTrips,
+  tripColour,
+  tripOffset,
+} from "@/lib/engines/trail-trips";
 import { clock, clockSeconds } from "@/lib/format";
 import { formatDistance } from "@/lib/geo";
 import type { ActivityPoint, LastKnown, TrackPoint } from "@/lib/services/sales-service";
 import { activityLabel } from "@/lib/mbos/activity-labels";
 import {
   OlaMapsStyleSwitcher,
+  olaMapsStyle,
   olaMapsStyleUrl,
   olaMapsTransformRequest,
   type OlaMapsStyleMode,
@@ -123,6 +129,8 @@ function formatMinutes(minutes: number): string {
 type TripSegment = TrailSegment & {
   trip: number;
   colour: string;
+  /** Pixels to the right of travel — see `tripOffset`. */
+  offset: number;
   /** The whole trip's figures, repeated on each of its segments — see `tripSegments`. */
   metres: number;
   fromMs: number;
@@ -148,14 +156,16 @@ function tripSegments(
   points: { lat: number; lng: number; at: Date }[],
   gapMetres: number,
   dwellRadiusMetres: number,
-  dwellMinMinutes: number,
+  tripBreakMinutes: number,
 ): TripSegment[] {
-  return splitTrailIntoTrips(points, { gapMetres, dwellRadiusMetres, dwellMinMinutes }).flatMap(
+  return splitTrailIntoTrips(points, { gapMetres, dwellRadiusMetres, tripBreakMinutes }).flatMap(
     (trip) =>
       splitTrailByGaps(trip.points, gapMetres).map((s) => ({
         ...s,
+        coordinates: offsetPolyline(s.coordinates, tripOffset(trip.index)),
         trip: trip.index,
         colour: tripColour(trip.index),
+        offset: tripOffset(trip.index),
         /* The WHOLE trip's length on every segment of it, so a hover anywhere
            along the leg answers for the leg rather than for the piece of it
            under the cursor — which is what somebody pointing at a line is
@@ -176,6 +186,7 @@ function trailFeatureCollection(segments: TripSegment[]): GeoJSON.FeatureCollect
         gap: s.gap,
         trip: s.trip,
         colour: s.colour,
+        offset: s.offset,
         metres: s.metres,
         fromMs: s.fromMs,
         toMs: s.toMs,
@@ -197,22 +208,46 @@ function trailFeatureCollection(segments: TripSegment[]): GeoJSON.FeatureCollect
 /**
  * How wide a route is drawn, at the zoom it is being read at.
  *
- * A fixed pixel width is a different road at every zoom: three pixels is a
+ * A fixed pixel width is a different road at every zoom: four pixels is a
  * confident line over a street plan and a thread over a city. `interpolate`
  * ties it to the scale, so a beat looks like a route whether somebody is
  * reading one junction or a whole district.
+ *
+ * `base` is an EXPRESSION as readily as a number, and that is the whole point
+ * of its shape. MapLibre allows exactly ONE zoom-based `interpolate` per
+ * expression, so the hover states cannot be written the obvious way —
+ * `["case", hovered, widthByZoom(6), widthByZoom(3)]` is two of them and the
+ * map refuses the whole paint property, leaving the line at whatever it was.
+ * Turning it inside out — one interpolate, with the case as its OUTPUT —
+ * says the same thing and is legal.
  */
-function widthByZoom(base: number): maplibregl.ExpressionSpecification {
+function widthByZoom(
+  base: number | maplibregl.ExpressionSpecification,
+): maplibregl.ExpressionSpecification {
   return [
     "interpolate",
     ["linear"],
     ["zoom"],
     11,
-    base * 0.6,
+    ["*", base, 0.6],
     14,
     base,
     18,
-    base * 1.6,
+    ["*", base, 1.6],
+  ] as unknown as maplibregl.ExpressionSpecification;
+}
+
+/** Pick between two widths by whether this feature is the hovered trip. */
+function byHover(
+  hovered: number,
+  whenHovered: number,
+  otherwise: number,
+): maplibregl.ExpressionSpecification {
+  return [
+    "case",
+    ["==", ["get", "trip"], hovered],
+    whenHovered,
+    otherwise,
   ] as unknown as maplibregl.ExpressionSpecification;
 }
 
@@ -222,7 +257,9 @@ function trailPaint(hovered: number | null) {
     /* Nearly solid. It was three-quarters, which let the street plan show
        through the route and left every colour looking like a wash of the one
        underneath rather than its own. A route is the subject of this screen;
-       the map is the context. */
+       the map is the context. Opacity carries no zoom interpolate, so the
+       plain `case` is fine here — only the widths had to be turned inside
+       out. */
     opacity:
       hovered === null
         ? 0.95
@@ -232,34 +269,17 @@ function trailPaint(hovered: number | null) {
             1,
             0.2,
           ] as unknown as maplibregl.ExpressionSpecification),
-    width:
-      hovered === null
-        ? widthByZoom(4)
-        : ([
-            "case",
-            ["==", ["get", "trip"], hovered],
-            widthByZoom(6),
-            widthByZoom(3),
-          ] as unknown as maplibregl.ExpressionSpecification),
+    width: hovered === null ? widthByZoom(4) : widthByZoom(byHover(hovered, 6, 3)),
     /* THE CASING — a white line under the coloured one, a couple of pixels
        proud of it either side.
-       
-       It is the whole difference between a route drawn ON a map and one
-       drawn OVER it. Without it the line shares its edges with every road it
-       runs along and every label it crosses, and the eye has to separate them
-       by hue alone; with it the route carries its own border everywhere and
-       reads as a single object at a glance. It is what every printed route
-       map does, and the reason the reference looks cleaner than a plain
-       stroke of the same colour. */
+
+       It is the whole difference between a route drawn ON a map and one drawn
+       OVER it. Without it the line shares its edges with every road it runs
+       along and every label it crosses, and the eye has to separate them by
+       hue alone; with it the route carries its own border everywhere and
+       reads as a single object at a glance. */
     casingWidth:
-      hovered === null
-        ? widthByZoom(7)
-        : ([
-            "case",
-            ["==", ["get", "trip"], hovered],
-            widthByZoom(9.5),
-            widthByZoom(5.5),
-          ] as unknown as maplibregl.ExpressionSpecification),
+      hovered === null ? widthByZoom(7) : widthByZoom(byHover(hovered, 9.5, 5.5)),
     casingOpacity:
       hovered === null
         ? 0.9
@@ -314,7 +334,7 @@ export function StreetMap({
   dwells,
   gapMetres,
   dwellRadiusMetres,
-  dwellMinMinutes,
+  tripBreakMinutes,
   staleAfterSeconds,
   view,
   selectedId,
@@ -330,7 +350,7 @@ export function StreetMap({
   gapMetres: number;
   /** What counts as standing still, and so as the end of one trip — see `lib/engines/trail-trips.ts`. */
   dwellRadiusMetres: number;
-  dwellMinMinutes: number;
+  tripBreakMinutes: number;
   staleAfterSeconds: number;
   view: "now" | "today";
   /** Whoever is picked in the team list beside this — see the effect below. */
@@ -343,21 +363,20 @@ export function StreetMap({
   const markers = React.useRef(new Map<string, HTMLDivElement>());
   /** Whether the map has ever finished its first real paint — see the load timeout below. */
   const loadedOnce = React.useRef(false);
+  /*
+   * The same fact as `loadedOnce`, as STATE rather than a ref.
+   *
+   * The road-line effect below cannot start before the map exists, and a ref
+   * cannot tell it when that changes: it ran once on mount with `map.current`
+   * still null, returned, and — its dependencies never changing again — never
+   * ran a second time. The old code only escaped that by depending on
+   * `selectedId`, which a click changed after the map was up; taking the
+   * selection requirement out took the accidental retry with it, and the
+   * request simply stopped being made.
+   */
+  const [mapReady, setMapReady] = React.useState(false);
   /** Which trip the cursor is over, or null. A ref — see the mousemove handler. */
   const hoveredTrip = React.useRef<number | null>(null);
-  /*
-   * The trails, reachable from an effect that must not re-run for them.
-   *
-   * `tracks` is a fresh Map on every render and the page refreshes itself on a
-   * timer, so listing it as a dependency of the snap effect below would fire a
-   * new snap request every tick. What that effect actually needs is the
-   * CURRENT timestamps at the moment its fetch returns, which is what a ref
-   * gives it — the identity of the Map is not the thing it cares about.
-   */
-  const tracksRef = React.useRef(tracks);
-  React.useEffect(() => {
-    tracksRef.current = tracks;
-  }, [tracks]);
   const [failed, setFailed] = React.useState(false);
   const [styleMode, setStyleMode] = React.useState<OlaMapsStyleMode>("map");
 
@@ -393,13 +412,26 @@ export function StreetMap({
     let loadTimeout: ReturnType<typeof setTimeout> | undefined;
     const markerMap = markers.current;
 
-    const frame = requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(async () => {
+      if (cancelled || !host.current) return;
+
+      /* Ola's own style declares a layer over data it does not serve, which
+         MapLibre rejects on every load — see `olaMapsStyle`. Fetching and
+         cleaning it first costs one request and buys a style that validates:
+         no console error, and a `load` event that actually fires. A failure
+         here falls back to the URL, which is exactly what it was before. */
+      let cleanStyle: unknown = olaMapsStyleUrl("map");
+      try {
+        cleanStyle = await olaMapsStyle("map", apiKey);
+      } catch {
+        /* Left as the URL. */
+      }
       if (cancelled || !host.current) return;
 
       try {
         m = new maplibregl.Map({
           container: host.current,
-          style: olaMapsStyleUrl("map"),
+          style: cleanStyle as maplibregl.StyleSpecification,
           center: [points[0][0], points[0][1]],
           zoom: 11,
           // The style carries whatever attribution it is built from; the
@@ -603,6 +635,7 @@ export function StreetMap({
          * connection from reading as a broken map.
          */
         loadedOnce.current = true;
+        setMapReady(true);
         clearTimeout(loadTimeout);
 
         /* MapLibre's compact attribution starts EXPANDED, and stays that way
@@ -620,7 +653,11 @@ export function StreetMap({
 
         /* The trail first, so pins and marks sit on top of it. */
         for (const [id, ps] of trails) {
-          const segments = tripSegments(ps, gapMetres, dwellRadiusMetres, dwellMinMinutes);
+          /* The road-matched line if it has arrived, the raw fixes until it
+             does. Both are the same shape, so nothing below knows which. */
+          const segments =
+            roadLines.current.get(id) ??
+            tripSegments(ps, gapMetres, dwellRadiusMetres, tripBreakMinutes);
           if (!segments.length) continue;
           built.addSource(`trail-${id}`, {
             type: "geojson",
@@ -810,7 +847,34 @@ export function StreetMap({
 
       built.on("style.load", drawOverlays);
 
-      built.on("load", () => {
+      /*
+       * THE PINS AND THE FIRST FIT RUN OFF `style.load`, NOT `load`.
+       *
+       * `load` fires when the map considers itself fully loaded — style,
+       * sources and the first frame — and against Ola's style it never fires
+       * at all. Its own style JSON declares a layer over a source layer that
+       * does not exist (`3d_model` on `vectordata`, which MapLibre reports as
+       * an error on every single load), and the map never reaches the state
+       * where it calls itself loaded.
+       *
+       * Everything attached to `load` therefore never ran: not one salesman
+       * marker, and not the initial `fitBounds`. That is why the map opened
+       * on the whole of Bangalore with the day's trail a few pixels wide
+       * somewhere in the middle — the trail itself drew correctly, because
+       * `drawOverlays` hangs off `style.load`, which does fire.
+       *
+       * So this hangs off the same event the trail does. It has to be
+       * idempotent, because `style.load` fires again on every Map/Satellite
+       * switch: the markers are torn down and rebuilt rather than added a
+       * second time, and the fit only runs the FIRST time, so toggling
+       * satellite does not yank the camera back from wherever somebody has
+       * panned to.
+       */
+      let fittedOnce = false;
+      function placePinsAndFit() {
+        for (const el of markerMap.values()) el.remove();
+        markerMap.clear();
+
         /* One marker per salesman who has a fix. HTML rather than a symbol
            layer, because the initials and the colour are the same two things
            the team list shows and they should not be built twice. */
@@ -833,13 +897,39 @@ export function StreetMap({
           markerMap.set(r.salesmanId, el);
         }
 
+        if (fittedOnce || !points.length) return;
+        fittedOnce = true;
         /* FIT, never fill. One pin gets a sensible zoom instead of a rooftop. */
         const box = points.reduce(
           (b, p) => b.extend(p),
           new maplibregl.LngLatBounds(points[0], points[0]),
         );
         built.fitBounds(box, { padding: 56, maxZoom: MAX_FIT_ZOOM, animate: false });
-      });
+      }
+
+      built.on("style.load", placePinsAndFit);
+
+      /*
+       * AND RUN THEM NOW IF THE STYLE IS ALREADY UP.
+       *
+       * `style` used to be a URL, which MapLibre fetches — so the style was
+       * always still loading when these listeners were attached a line later,
+       * and `style.load` was always ahead of them. Handing it a style OBJECT
+       * instead, which is what stripping Ola's bad layer requires, means it
+       * can be applied synchronously inside the constructor: the event has
+       * already fired by the time anything is listening, and every listener
+       * waits for a second one that never comes.
+       *
+       * The whole map went blank on that — no trail, no pins, no fit, and
+       * then "the map could not be drawn" fifteen seconds later from the
+       * timeout, which is a real failure message for a map that had loaded
+       * perfectly. Asking the map its state rather than trusting the ordering
+       * costs one call and does not care which way round it happened.
+       */
+      if (built.isStyleLoaded()) {
+        drawOverlays();
+        placePinsAndFit();
+      }
     });
 
     return () => {
@@ -883,7 +973,15 @@ export function StreetMap({
       mountedStyleEffect.current = true;
       return;
     }
-    map.current?.setStyle(olaMapsStyleUrl(styleMode));
+    const built = map.current;
+    if (!built || !apiKey) return;
+    void olaMapsStyle(styleMode, apiKey)
+      .then((clean) => built.setStyle(clean as maplibregl.StyleSpecification))
+      .catch(() => built.setStyle(olaMapsStyleUrl(styleMode)));
+    /* `apiKey` cannot change without the whole component being keyed anew —
+       it is read once, server-side, per page — so it is not a reason to
+       re-run and swap the style out from under somebody. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [styleMode]);
 
   /*
@@ -933,53 +1031,81 @@ export function StreetMap({
    * `snappedFor` remembers who has already been answered for this day, so
    * deselecting and reselecting the same name does not ask again.
    */
+  /*
+   * THE ROAD LINE, REMEMBERED — not merely pushed at the map once.
+   *
+   * `drawOverlays` builds each trail's source from the RAW fixes, and it runs
+   * on `style.load`: on first paint, and again every time somebody toggles
+   * Satellite. So a road line that was only ever `setData`'d into the source
+   * lost twice over — overwritten by the next style load, and dropped
+   * altogether whenever the fetch landed before the source it was written to
+   * existed, which is a race the map won about as often as it lost.
+   *
+   * That is why the corrected line was not on screen even though the server
+   * was returning it correctly. Held here, it survives both: `drawOverlays`
+   * prefers it over the raw geometry, and a fetch that finishes early simply
+   * has it waiting.
+   */
+  const roadLines = React.useRef(new Map<string, TripSegment[]>());
   const snappedFor = React.useRef(new Set<string>());
+  /* Stable across the thirty-second poll: `tracks` is a fresh Map every time,
+     but WHO is on it rarely changes, and who is on it is all this needs. */
+  const trailIds = [...tracks.keys()].sort().join(",");
   React.useEffect(() => {
-    if (!selectedId || view !== "today") return;
+    if (view !== "today" || !trailIds || !mapReady) return;
     const built = map.current;
     if (!built) return;
 
-    const cacheKey = `${day}:${selectedId}`;
-    if (snappedFor.current.has(cacheKey)) return;
-
     let cancelled = false;
-    fetch(
-      `/api/sales/live/snap-trail?salesmanId=${encodeURIComponent(selectedId)}&day=${encodeURIComponent(day)}`,
-    )
+    /*
+     * EVERY trail on screen, not only a selected one.
+     *
+     * It was gated on selection because snapping meant one request per fifty
+     * FIXES — a working day was around a hundred calls, and the whole team on
+     * every poll was out of the question. The road path is asked for in
+     * twenty-metre anchors now, so a day is two or three requests and a team
+     * is under ten, once per page rather than per poll. The reason for the
+     * gate was cost, and the cost is gone.
+     *
+     * It mattered because the gate was invisible: the default view drew raw
+     * GPS cutting across blocks, and the corrected line only appeared if you
+     * happened to click a name. Nothing said so.
+     */
+    for (const id of trailIds.split(",")) {
+      const cacheKey = `${day}:${id}`;
+      if (snappedFor.current.has(cacheKey)) continue;
+      void fetchRoadLine(id, cacheKey);
+    }
+
+    function fetchRoadLine(id: string, cacheKey: string) {
+      return fetch(
+        `/api/sales/live/snap-trail?salesmanId=${encodeURIComponent(id)}&day=${encodeURIComponent(day)}`,
+      )
       .then((r) => (r.ok ? r.json() : null))
-      .then((body: { points: { lat: number; lng: number }[] | null } | null) => {
-        if (cancelled || !body?.points || body.points.length < 2) return;
+      .then((body: { segments: TripSegment[] | null } | null) => {
+        if (cancelled || !body?.segments?.length) return;
         snappedFor.current.add(cacheKey);
-        const source = built.getSource(`trail-${selectedId}`) as maplibregl.GeoJSONSource | undefined;
-        /* Snapping relocates each real fix onto its nearest road and returns
-           exactly one point per fix (see `road-snap-service.ts`) — it never
-           fills a gap with an invented path — so the SAME gap threshold
-           still applies to the snapped points, one-for-one with the raw
-           ones. A gap does not become confident just because its two ends
-           each moved a few metres onto a road. */
-        /* The snapped points carry no clock of their own, and a trip boundary
-           is a question about TIME as much as distance — a stop is a place
-           held for minutes. They are one-for-one with the raw fixes, so each
-           takes its own fix's timestamp back; if that ever stops being true
-           the trail is left unsnapped rather than paired up wrongly, because
-           a mismatched pairing would move every boundary silently. */
-        const raw = tracksRef.current.get(selectedId) ?? [];
-        if (raw.length !== body.points.length) return;
-        const timed = body.points.map((p, i) => ({ ...p, at: raw[i].at }));
-        source?.setData(
-          trailFeatureCollection(
-            tripSegments(timed, gapMetres, dwellRadiusMetres, dwellMinMinutes),
-          ),
-        );
+        roadLines.current.set(id, body.segments);
+        const source = built!.getSource(`trail-${id}`) as maplibregl.GeoJSONSource | undefined;
+        /*
+         * DRAWN AS SENT. The server cut the day into trips, kept every gap
+         * straight, and road-matched only the confident runs — see the route.
+         * There is nothing left to re-derive here, and that is the point: a
+         * road-following line has as many points as the road has corners, so
+         * it can never be paired back up with the raw fixes one for one the
+         * way a plain snap could. The timestamps stay where they already are.
+         */
+        source?.setData(trailFeatureCollection(body.segments));
       })
       .catch(() => {
         /* The raw trail stays exactly as drawn. */
       });
+    }
 
     return () => {
       cancelled = true;
     };
-  }, [selectedId, day, view, gapMetres, dwellRadiusMetres, dwellMinMinutes]);
+  }, [trailIds, day, view, mapReady]);
 
   if (!apiKey) {
     return (

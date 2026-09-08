@@ -1702,6 +1702,17 @@ export const SETTINGS = [
     max: 60,
   },
   {
+    key: "mbos.location.tripBreakMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How long a stop has to be before the trail changes colour",
+    description:
+      "Minutes. The Live map draws a day as coloured legs, and a stop longer than this is what ends one leg and begins the next. Deliberately longer than the stop-marking threshold above: every pause worth a mark on the map is not a new journey, and colouring it as one turns a morning in a single market into a rainbow nobody can read. A shop visit ends a leg; waiting at a counter does not.",
+    default: 10,
+    min: 2,
+    max: 120,
+  },
+  {
     key: "mbos.location.trailGapMeters",
     type: "integer",
     category: "mbos-location",
@@ -2857,6 +2868,7 @@ export type Config = {
   "mbos.location.trackEverySeconds": number;
   "mbos.location.dwellRadiusMeters": number;
   "mbos.location.dwellMinMinutes": number;
+  "mbos.location.tripBreakMinutes": number;
   "mbos.location.trailGapMeters": number;
   "mbos.location.logActivityLocation": boolean;
   "mbos.location.activityFixMaxAgeSeconds": number;
