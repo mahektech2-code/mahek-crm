@@ -2606,11 +2606,46 @@ async function handleAttendance(
          * discarding every fix he sent with `tracking: "not-checked-in"` —
          * both silent, because the sync call itself still answered
          * "accepted". */
+        /* AND A CHECK-IN LATER THAN THE RECORDED CHECK-OUT IS A NEW SESSION,
+         * which is what the third branch says.
+         *
+         * `resumedAt` reaches us only from the handset's RESUME path, and it
+         * can only take that path while it still holds today's row locally. A
+         * phone that reinstalled, signed out, or otherwise lost its local
+         * database finds no row for today, takes the CREATE path instead, and
+         * sends a fresh id carrying `checkInAt` and neither `checkOutAt` nor
+         * `resumedAt`. That arrived here as "no branch matched", so the
+         * morning's `check_out_at` stayed on the row — the person checked in
+         * on their phone and checked out on every screen, missing from the
+         * Live map's `checkInAt && !checkOutAt` filter, with
+         * `/api/mbos/positions` refusing every fix they sent because the day
+         * it could see was closed. Silent again: the sync answered "accepted".
+         *
+         * Losing the local database is the ordinary consequence of installing
+         * a new build, so this would have met every salesman on the next
+         * release — and did, on the first phone to take one.
+         *
+         * It is COMPARED against the stored check-out rather than believed
+         * outright, because a re-sent create must stay idempotent: the
+         * morning's own check-in arriving twice is EARLIER than the check-out
+         * it later produced, and reopening the day on that would silently undo
+         * a real check-out. Only a check-in after the close is a new session.
+         *
+         * Unqualified `check_out_at` inside DO UPDATE SET is the EXISTING
+         * row's value — `excluded` would be the proposed one — so this is the
+         * one place a bare column is what is wanted, the opposite of the
+         * correlated-subquery trap in AGENTS.md. `.toISOString()` because
+         * binding a JS Date into a raw fragment throws inside the driver on
+         * Node 25, which is its own rule over there. */
         ...(p.checkOutAt
           ? { checkOutAt: new Date(p.checkOutAt) }
           : p.resumedAt != null
             ? { checkOutAt: null }
-            : {}),
+            : p.checkInAt != null
+              ? {
+                  checkOutAt: sql`case when ${mbosAttendanceDays.checkOutAt} < ${new Date(p.checkInAt).toISOString()}::timestamptz then null else ${mbosAttendanceDays.checkOutAt} end`,
+                }
+              : {}),
         ...(p.checkOutLat != null ? { checkOutLat: p.checkOutLat } : {}),
         ...(p.checkOutLng != null ? { checkOutLng: p.checkOutLng } : {}),
         ...(p.checkOutAccuracyM != null
