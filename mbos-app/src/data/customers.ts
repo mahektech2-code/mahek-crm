@@ -1,4 +1,10 @@
 import { all, newId, one } from '../db';
+import {
+  cityOriginsQuery,
+  customerCountQuery,
+  customerPageQuery,
+  type Origin,
+} from './customer-query';
 import { enqueue } from '../sync/queue';
 import { insertAndQueue, insertLocal, stamp } from './write';
 
@@ -51,20 +57,70 @@ export type Customer = {
   lastSyncedAt: number;
 };
 
-export async function listCustomers(query = ''): Promise<Customer[]> {
-  const q = query.trim().toLowerCase();
-  if (!q) return all<Customer>('SELECT * FROM customers ORDER BY name');
-  /* Name, owner, city, phone and GST — because a salesman looking somebody up
-     mid-conversation has whichever of those the customer just said. */
-  const like = `%${q}%`;
-  return all<Customer>(
-    `SELECT * FROM customers
-      WHERE lower(name) LIKE ? OR lower(COALESCE(contactPerson,'')) LIKE ?
-         OR lower(COALESCE(city,'')) LIKE ? OR COALESCE(phone,'') LIKE ?
-         OR lower(COALESCE(gstin,'')) LIKE ? OR lower(COALESCE(dealerCode,'')) LIKE ?
-      ORDER BY name`,
-    [like, like, like, like, like, like],
+export type CustomerPage = {
+  rows: Customer[];
+  /** How many MATCH, from SQL. Never how many happen to be loaded. */
+  total: number;
+  hasMore: boolean;
+};
+
+/**
+ * One page of the book, nearest first — the SQL is in `customer-query.ts`.
+ *
+ * This function is the only thing that touches the database; everything about
+ * WHAT is asked lives next door, pure, where a test can run it against a real
+ * SQLite and check that a distance ordering actually orders by distance.
+ */
+export async function listCustomersPage(args: {
+  query?: string;
+  origin?: Origin;
+  offset?: number;
+  limit?: number;
+} = {}): Promise<CustomerPage> {
+  const offset = args.offset ?? 0;
+
+  const count = customerCountQuery(args.query);
+  const totalRow = await one<{ n: number }>(count.sql, count.params);
+  const total = totalRow?.n ?? 0;
+
+  const page = customerPageQuery({ ...args, offset });
+  const rows = await all<Customer>(page.sql, page.params);
+
+  return { rows, total, hasMore: offset + rows.length < total };
+}
+
+/**
+ * Names for a handful of ids.
+ *
+ * The Tasks screen used to read the WHOLE book to turn a task's customer id
+ * into a name — five thousand rows held in memory to render a dozen labels.
+ * A task list shows the tasks it has, so it asks for the names it needs.
+ */
+export async function customerNames(ids: string[]): Promise<Map<string, string>> {
+  const wanted = [...new Set(ids.filter(Boolean))];
+  if (!wanted.length) return new Map();
+  const rows = await all<{ id: string; name: string }>(
+    `SELECT id, name FROM customers WHERE id IN (${wanted.map(() => '?').join(',')})`,
+    wanted,
   );
+  return new Map(rows.map((r) => [r.id, r.name]));
+}
+
+/** The towns this book actually sells into, each with its centre. */
+export async function cityOrigins(): Promise<{ city: string; lat: number; lng: number; n: number }[]> {
+  const q = cityOriginsQuery();
+  return all<{ city: string; lat: number; lng: number; n: number }>(q.sql, q.params);
+}
+
+/**
+ * The whole book, for a caller that genuinely needs every row.
+ *
+ * Kept, and kept honest: this is a LOOKUP, not a list to draw. Anything that
+ * renders what this returns has the bug `CUSTOMER_PAGE` exists to prevent.
+ */
+export async function listCustomers(query = ''): Promise<Customer[]> {
+  const q = customerPageQuery({ query, limit: -1 });
+  return all<Customer>(q.sql, q.params);
 }
 
 /**

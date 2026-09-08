@@ -334,11 +334,31 @@ export async function loadPrincipal(
     };
   }
 
-  // `team` explicitly rather than by default: the narrowing preference is a
-  // cookie, and a handset has no cookie jar to read one from. A manager on the
-  // field app sees their team, which is what the launcher would have given
-  // them anyway.
-  const ctx = await scopeForUser(user, "team");
+  /*
+   * `mine` explicitly: A HANDSET IS ONE PERSON WALKING ONE BEAT.
+   *
+   * The narrowing preference is a cookie and a handset has no cookie jar, so
+   * this argument is the whole of the answer rather than a default somebody
+   * can move. It used to say `team` on the reasoning that a manager on the
+   * field app should see their team — and for a manager that was arguable,
+   * but `scopeForUser` does not honour the preference for an ADMIN at all:
+   * that branch returns `all` before the narrowing is read. So the one admin
+   * holding `field` was handed the entire company — 5,915 customers — onto a
+   * phone, where the customer list rendered every one of them and stopped
+   * responding.
+   *
+   * Scope is the right place to fix that rather than the screen, because
+   * every MBOS screen is personal in the same way: my day, my visits, my
+   * customers, my performance, my pay. There is no screen on this app that a
+   * team-wide answer makes better, and a field handset is the one client
+   * where the cost of a wide answer is paid in battery, bandwidth and a book
+   * nobody can scroll.
+   *
+   * Still the ONE `scopeForUser` — an argument to it, not a second reading of
+   * what "mine" means. `accounts` is unaffected: that branch answers `all`
+   * before any preference is read, and no accounts user holds `field`.
+   */
+  const ctx = await scopeForUser(user, "mine");
   return {
     ok: true,
     principal: { user, deviceId, role: ctx.role, scope: ctx.scope },
