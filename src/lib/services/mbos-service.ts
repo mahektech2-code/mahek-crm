@@ -707,29 +707,28 @@ async function customersForDevice(ids: string[]) {
   if (!ids.length) return [];
   return db.execute<Record<string, unknown>>(sql`
     select c.id, c.name, c.contact_person as "contactPerson", c.phone,
-           c.whatsapp_phone as "whatsappPhone", c.alt_phone as "altPhone",
-           c.address, c.city, c.region, c.area, c.beat,
+           c.city, c.area, c.beat,
            c.territory_region as "territoryRegion", c.dealer_code as "dealerCode",
            -- what mbos_price_list is keyed on for this account
            c.price_tag as "priceTag",
-           c.kind, c.status, c.gstin,
+           c.status, c.gstin,
            c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
-           c.gps_accuracy_m as "gpsAccuracyM", c.gps_captured_at as "gpsCapturedAt",
+           c.gps_accuracy_m as "gpsAccuracyM",
            c.customer_type as "customerType", c.potential,
-           c.credit_term_days as "creditTermDays", c.credit_days as "creditDays",
+           -- The standing term, falling back the way every other screen falls
+           -- back. The handset prints this as "N days" on the shop card and
+           -- has no second field to put a term in.
+           coalesce(c.credit_days, c.credit_term_days) as "creditDays",
            c.credit_limit_paise as "creditLimitPaise",
            c.credit_blocked as "creditBlocked",
            c.credit_block_reason as "creditBlockReason",
            c.outstanding as "outstandingPaise",
-           c.slow_payer as "slowPayer",
            c.health_score as "healthScore",
            c.health_components as "healthComponents",
-           c.health_computed_at as "healthComputedAt",
            c.last_order_date as "lastOrderDate",
            c.last_visit_date as "lastVisitDate",
            c.visit_frequency_days as "visitFrequencyDays",
            c.cycle_days as "cycleDays",
-           c.sales_person_name as "salesPersonName",
            -- who we bill for this one; see the note above the function
            c.third_party as "thirdParty",
            coalesce((
@@ -741,8 +740,7 @@ async function customersForDevice(ids: string[]) {
                from customer_distributors d
                join customers dc on dc.id = d.distributor_customer_id
               where d.customer_id = c.id
-           ), '[]'::json) as "distributors",
-           c.updated_at as "updatedAt"
+           ), '[]'::json) as "distributors"
       from customers c
      where c.id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
      order by c.name asc
@@ -758,11 +756,12 @@ async function activeCatalogue() {
   return db.execute<Record<string, unknown>>(sql`
     select p.id, p.name, p.raw_name as "rawName", p.pack_size as "packSize",
            p.packing, p.millilitres_per_can as "millilitresPerCan",
-           p.cans_per_box as "cansPerBox",
-           p.weight_grams as "weightGrams", p.weight_basis as "weightBasis",
-           p.active, p.status, p.display_order as "displayOrder",
-           b.name as "brandName", f.name as "formulationName",
-           p.updated_at as "updatedAt"
+           p.cans_per_box as "cansPerBox", p.active,
+           -- brand and formulation are what the catalogue and the order
+           -- form read for the subtitle under a SKU -- one liquid sells as
+           -- Nano, Astar Nano and M5x4 Thinner, and that line is what tells
+           -- them apart mid-call.
+           b.name as brand, f.name as formulation
       from products p
       left join product_brands b on b.id = p.brand_id
       left join product_formulations f on f.id = p.formulation_id
@@ -823,6 +822,12 @@ async function openTasks(userId: string) {
            t.customer_id as "customerId", t.status,
            t.snoozed_to::text as "snoozedTo", t.snooze_reason as "snoozeReason",
            t.source_type as "sourceType", t.source_id as "sourceId",
+           -- Read by upsertTasks and never sent, so every pull wrote them
+           -- back as NULL: a task the salesman completed lost its note and its
+           -- photograph the moment the office next mentioned the task at all.
+           t.completion_note as "completionNote",
+           t.completion_photo_id as "completionPhotoId",
+           t.escalated_at as "escalatedAt",
            t.updated_at as "updatedAt"
       from mbos_tasks t
      where t.assigned_to_user_id = ${userId}
@@ -849,6 +854,12 @@ async function tasksSince(userId: string, sinceIso: string) {
            t.customer_id as "customerId", t.status,
            t.snoozed_to::text as "snoozedTo", t.snooze_reason as "snoozeReason",
            t.source_type as "sourceType", t.source_id as "sourceId",
+           -- Read by upsertTasks and never sent, so every pull wrote them
+           -- back as NULL: a task the salesman completed lost its note and its
+           -- photograph the moment the office next mentioned the task at all.
+           t.completion_note as "completionNote",
+           t.completion_photo_id as "completionPhotoId",
+           t.escalated_at as "escalatedAt",
            t.updated_at as "updatedAt"
       from mbos_tasks t
      where t.assigned_to_user_id = ${userId}
@@ -858,20 +869,38 @@ async function tasksSince(userId: string, sinceIso: string) {
   `);
 }
 
-async function openSamples(userId: string, customerIds: string[]) {
+/**
+ * Samples out on trial.
+ *
+ * `productName` is joined rather than left to the handset to look up: a sample
+ * can name a SKU that is no longer active, and the catalogue the handset holds
+ * carries only what can currently be ordered — so the one screen that lists
+ * these would have printed a row with no product on it. The name is what the
+ * salesman asks the shop about; the id is what an order would be raised from.
+ *
+ * `since` makes it a delta as well as a bootstrap. Without it, a sample the
+ * office marked delivered this morning reached the phone only on a fresh
+ * sign-in.
+ */
+async function openSamples(userId: string, customerIds: string[], since?: string | null) {
   if (!customerIds.length) return [];
   return db.execute<Record<string, unknown>>(sql`
     select s.id, s.customer_id as "customerId", s.product_id as "productId",
+           pr.name as "productName",
            s.quantity_cans as "quantityCans",
            s.requested_date::text as "requestedDate",
-           s.delivered_at as "deliveredAt", s.trial_outcome as "trialOutcome",
+           s.delivered_at as "deliveredAt",
+           s.delivery_photo_id as "deliveryPhotoId",
+           s.trial_outcome as "trialOutcome",
            s.follow_up_date::text as "followUpDate",
            s.feedback_notes as "feedbackNotes",
            s.converted_order_id as "convertedOrderId",
            s.updated_at as "updatedAt"
       from mbos_samples s
+      left join products pr on pr.id = s.product_id
      where s.salesman_id = ${userId}
        and s.trial_outcome = 'pending'
+       ${since ? sql`and s.updated_at > ${since}` : sql``}
      order by s.follow_up_date asc nulls last
   `);
 }
@@ -885,7 +914,7 @@ async function openSamples(userId: string, customerIds: string[]) {
  * customer's own id, and `convertedCustomerId` is that same id once it has
  * been won rather than a pointer to a second row that no longer exists.
  */
-async function openLeads(userId: string) {
+async function openLeads(userId: string, since?: string | null) {
   return db.execute<Record<string, unknown>>(sql`
     select c.id, c.name, c.company_name as "companyName", c.phone as mobile,
            c.city, c.area,
@@ -902,6 +931,7 @@ async function openLeads(userId: string) {
        and c.lead_stage is not null
        and c.lead_archived = false
        and c.lead_stage not in ('won', 'lost')
+       ${since ? sql`and c.updated_at > ${since}` : sql``}
      order by c.lead_next_follow_up_date asc nulls last
   `);
 }
@@ -917,11 +947,11 @@ async function recentTimeline(ids: string[], perCustomer: number) {
   if (!ids.length) return [];
   return db.execute<Record<string, unknown>>(sql`
     select id, "customerId", "eventType", "sourceApp", "sourceRecordId",
-           "occurredAt", "actorUserId", summary
+           "occurredAt", actor, summary
       from (
         select t.id, t.customer_id as "customerId", t.event_type as "eventType",
                t.source_app as "sourceApp", t.source_record_id as "sourceRecordId",
-               t.occurred_at as "occurredAt", t.actor_user_id as "actorUserId",
+               t.occurred_at as "occurredAt", t.actor_user_id as actor,
                t.summary,
                row_number() over (
                  partition by t.customer_id order by t.occurred_at desc, t.id desc
@@ -976,8 +1006,11 @@ async function attendanceToday(userId: string, day: string) {
 
 async function leaveBalances(userId: string, year: number) {
   return db.execute<Record<string, unknown>>(sql`
-    select b.id, b.year, b.leave_type as "leaveType",
-           b.entitled_days as "entitledDays", b.used_days as "usedDays"
+    select b.leave_type as kind, b.year::text as period,
+           b.entitled_days as entitled, b.used_days as used,
+           -- Derived here because the handset has a column for it and no
+           -- arithmetic to fill it with; the row is upserted verbatim.
+           (b.entitled_days - b.used_days) as available
       from mbos_leave_balances b
      where b.user_id = ${userId} and b.year = ${year}
      order by b.leave_type asc
@@ -997,8 +1030,10 @@ async function visibleDocuments(role: string, customerIds: string[], since?: str
     : sql`d.customer_id is null`;
 
   return db.execute<Record<string, unknown>>(sql`
-    select d.id, d.title, d.category, d.attachment_id as "attachmentId",
-           d.customer_id as "customerId", d.updated_at as "updatedAt"
+    select d.id, d.title, d.category,
+           -- What the handset fetches the bytes by, and the column it keeps
+           -- them under once it has.
+           d.attachment_id as "remoteRef"
       from mbos_documents d
      where d.active = true
        and (jsonb_array_length(d.visible_to_roles) = 0
@@ -1011,13 +1046,13 @@ async function visibleDocuments(role: string, customerIds: string[], since?: str
 
 async function coursesFor(userId: string, since?: string | null) {
   return db.execute<Record<string, unknown>>(sql`
-    select c.id, c.title, c.category, c.duration_minutes as "durationMinutes",
-           c.attachment_id as "attachmentId",
-           c.pass_mark_percent as "passMarkPercent",
-           c.mandatory, c.due_date::text as "dueDate",
-           p.started_at as "startedAt", p.completed_at as "completedAt",
-           p.quiz_score_percent as "quizScorePercent", p.passed,
-           p.certificate_ref as "certificateRef"
+    select c.id, c.title, c.category, c.duration_minutes as minutes,
+           c.mandatory, c.due_date::text as deadline,
+           -- Epoch milliseconds: the column on the handset is an INTEGER and
+           -- every other instant in that store is counted the same way. See
+           -- actualAt in journeyStops, which does this for the same reason.
+           (extract(epoch from p.completed_at) * 1000)::double precision as "completedAt",
+           p.quiz_score_percent as "quizScore"
       from mbos_courses c
       left join mbos_course_progress p
              on p.course_id = c.id and p.user_id = ${userId}
@@ -1045,8 +1080,7 @@ async function coursesFor(userId: string, since?: string | null) {
 async function holidaysFor(since?: string | null) {
   return db.execute<Record<string, unknown>>(sql`
     select h.id, h.on_date::text as "onDate", h.name, h.scope,
-           (h.scope is null) as "universal",
-           h.updated_at as "updatedAt"
+           (h.scope is null) as "universal"
       from mbos_holidays h
      where extract(year from h.on_date) >= extract(year from (now() at time zone ${APP_TIMEZONE})) - 1
        ${since ? sql`and h.updated_at > ${since}` : sql``}
@@ -1307,6 +1341,8 @@ export async function buildPull(
       salary: [],
       travelModes: [],
       expensePolicy: null,
+      leads: [],
+      samples: [],
       deletions: [],
     };
   }
@@ -1347,24 +1383,23 @@ export async function buildPull(
     salaryRows,
     deletionRows,
     taskChanges,
+    leadChanges,
+    sampleChanges,
   ] = await Promise.all([
       idList
         ? db.execute<Record<string, unknown>>(sql`
             select c.id, c.name, c.contact_person as "contactPerson", c.phone,
-                   c.address, c.city, c.area, c.beat, c.status,
+                   c.city, c.area, c.beat, c.status,
                    c.price_tag as "priceTag",
                    c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
                    c.credit_limit_paise as "creditLimitPaise",
                    c.credit_blocked as "creditBlocked",
                    c.credit_block_reason as "creditBlockReason",
                    c.outstanding as "outstandingPaise",
-                   c.slow_payer as "slowPayer",
                    c.health_score as "healthScore",
                    c.health_components as "healthComponents",
-                   c.health_computed_at as "healthComputedAt",
                    c.last_order_date as "lastOrderDate",
-                   c.last_visit_date as "lastVisitDate",
-                   c.updated_at as "updatedAt"
+                   c.last_visit_date as "lastVisitDate"
               from customers c
              where c.id in ${idList} and c.updated_at > ${sinceIso}
              order by c.updated_at asc
@@ -1374,8 +1409,7 @@ export async function buildPull(
       db.execute<Record<string, unknown>>(sql`
         select p.id, p.name, p.pack_size as "packSize", p.packing,
                p.millilitres_per_can as "millilitresPerCan",
-               p.cans_per_box as "cansPerBox", p.active, p.status,
-               p.updated_at as "updatedAt"
+               p.cans_per_box as "cansPerBox", p.active
           from products p
          where p.updated_at > ${sinceIso}
          order by p.updated_at asc
@@ -1385,7 +1419,7 @@ export async function buildPull(
         ? db.execute<Record<string, unknown>>(sql`
             select t.id, t.customer_id as "customerId", t.event_type as "eventType",
                    t.source_app as "sourceApp", t.source_record_id as "sourceRecordId",
-                   t.occurred_at as "occurredAt", t.actor_user_id as "actorUserId",
+                   t.occurred_at as "occurredAt", t.actor_user_id as actor,
                    t.summary
               from timeline_events t
              where t.customer_id in ${idList} and t.created_at > ${sinceIso}
@@ -1549,6 +1583,13 @@ export async function buildPull(
       deletionsSince(principal.user.id, sinceIso),
 
       tasksSince(principal.user.id, sinceIso),
+
+      /* A lead raised at a desk and a sample the office has moved on — both
+       * were sent at sign-in and nowhere else, and applied nowhere at all.
+       * Narrowed by the same functions the bootstrap uses, so nothing can
+       * reach a handset through the delta that sign-in would have withheld. */
+      openLeads(principal.user.id, sinceIso),
+      openSamples(principal.user.id, ids, sinceIso),
     ]);
 
   return {
@@ -1578,5 +1619,7 @@ export async function buildPull(
        one: a phone quietly holding a superseded rate and telling a salesman a
        number the office will not pay. */
     expensePolicy: await expensePolicyFor(principal.user.id, await today()),
+    leads: leadChanges as unknown[],
+    samples: sampleChanges as unknown[],
   };
 }
