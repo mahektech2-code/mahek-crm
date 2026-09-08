@@ -194,26 +194,80 @@ function trailFeatureCollection(segments: TripSegment[]): GeoJSON.FeatureCollect
  * being distinguished FROM. `null` is the resting state and paints every trip
  * alike.
  */
+/**
+ * How wide a route is drawn, at the zoom it is being read at.
+ *
+ * A fixed pixel width is a different road at every zoom: three pixels is a
+ * confident line over a street plan and a thread over a city. `interpolate`
+ * ties it to the scale, so a beat looks like a route whether somebody is
+ * reading one junction or a whole district.
+ */
+function widthByZoom(base: number): maplibregl.ExpressionSpecification {
+  return [
+    "interpolate",
+    ["linear"],
+    ["zoom"],
+    11,
+    base * 0.6,
+    14,
+    base,
+    18,
+    base * 1.6,
+  ] as unknown as maplibregl.ExpressionSpecification;
+}
+
 function trailPaint(hovered: number | null) {
   return {
     colour: ["get", "colour"] as unknown as maplibregl.ExpressionSpecification,
+    /* Nearly solid. It was three-quarters, which let the street plan show
+       through the route and left every colour looking like a wash of the one
+       underneath rather than its own. A route is the subject of this screen;
+       the map is the context. */
     opacity:
       hovered === null
-        ? 0.75
+        ? 0.95
+        : ([
+            "case",
+            ["==", ["get", "trip"], hovered],
+            1,
+            0.2,
+          ] as unknown as maplibregl.ExpressionSpecification),
+    width:
+      hovered === null
+        ? widthByZoom(4)
+        : ([
+            "case",
+            ["==", ["get", "trip"], hovered],
+            widthByZoom(6),
+            widthByZoom(3),
+          ] as unknown as maplibregl.ExpressionSpecification),
+    /* THE CASING — a white line under the coloured one, a couple of pixels
+       proud of it either side.
+       
+       It is the whole difference between a route drawn ON a map and one
+       drawn OVER it. Without it the line shares its edges with every road it
+       runs along and every label it crosses, and the eye has to separate them
+       by hue alone; with it the route carries its own border everywhere and
+       reads as a single object at a glance. It is what every printed route
+       map does, and the reason the reference looks cleaner than a plain
+       stroke of the same colour. */
+    casingWidth:
+      hovered === null
+        ? widthByZoom(7)
+        : ([
+            "case",
+            ["==", ["get", "trip"], hovered],
+            widthByZoom(9.5),
+            widthByZoom(5.5),
+          ] as unknown as maplibregl.ExpressionSpecification),
+    casingOpacity:
+      hovered === null
+        ? 0.9
         : ([
             "case",
             ["==", ["get", "trip"], hovered],
             0.95,
-            0.22,
-          ] as unknown as maplibregl.ExpressionSpecification),
-    width:
-      hovered === null
-        ? 3
-        : ([
-            "case",
-            ["==", ["get", "trip"], hovered],
-            5,
-            2,
+            0.15,
           ] as unknown as maplibregl.ExpressionSpecification),
   };
 }
@@ -476,6 +530,10 @@ export function StreetMap({
         const layers = built
           .getStyle()
           .layers.map((l) => l.id)
+          /* The CASING is deliberately in here too. It reads the same source
+             and so carries the same `trip`, and being the wider of the two it
+             is what makes a line a few pixels thick comfortable to point at —
+             the hit area is the white border, not just the colour. */
           .filter((id) => id.startsWith("trail-") && id !== "trail-points");
         if (!layers.length) return;
 
@@ -491,6 +549,11 @@ export function StreetMap({
              whether or not its trip is the one being pointed at, and fading
              it in with the rest would make an absence look like evidence. */
           if (id.startsWith("trail-gap-")) continue;
+          if (id.startsWith("trail-casing-")) {
+            built.setPaintProperty(id, "line-opacity", paint.casingOpacity);
+            built.setPaintProperty(id, "line-width", paint.casingWidth);
+            continue;
+          }
           built.setPaintProperty(id, "line-opacity", paint.opacity);
           built.setPaintProperty(id, "line-width", paint.width);
         }
@@ -567,6 +630,20 @@ export function StreetMap({
              each feature carries — see `lib/engines/trail-gaps.ts`. A dashed
              line for a hop nobody has evidence for, solid for one dense
              enough to trust. */
+          /* The casing goes down FIRST, so the coloured line lands on top of
+             it — MapLibre draws in the order layers are added. */
+          built.addLayer({
+            id: `trail-casing-${id}`,
+            type: "line",
+            source: `trail-${id}`,
+            filter: ["==", ["get", "gap"], false],
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: {
+              "line-color": "#FFFFFF",
+              "line-width": trailPaint(null).casingWidth,
+              "line-opacity": trailPaint(null).casingOpacity,
+            },
+          });
           built.addLayer({
             id: `trail-${id}`,
             type: "line",
@@ -587,11 +664,14 @@ export function StreetMap({
             layout: { "line-cap": "round", "line-join": "round" },
             paint: {
               /* The gap keeps its trip's colour too — it is part of that
-                 journey, just the part nobody recorded. */
+                 journey, just the part nobody recorded. No casing and a
+                 thinner, softer stroke: the casing is what makes a line read
+                 as a route somebody actually took, which is the one claim a
+                 gap must not make. */
               "line-color": trailPaint(null).colour,
-              "line-width": 2,
-              "line-opacity": 0.45,
-              "line-dasharray": [2, 2],
+              "line-width": widthByZoom(2.5),
+              "line-opacity": 0.5,
+              "line-dasharray": [1.5, 2],
             },
           });
         }
@@ -609,10 +689,55 @@ export function StreetMap({
             type: "circle",
             source: "trail-points",
             paint: {
-              "circle-radius": 3,
-              "circle-color": "#5223E0",
-              "circle-stroke-width": 1,
-              "circle-stroke-color": "#ffffff",
+              /*
+               * VERTICES, not a second subject.
+               *
+               * These were solid brand-violet at a fixed three pixels, which
+               * put a hard blue dot every few metres along a line that is now
+               * carrying the day's colours — the dots read as the thing and
+               * the route read as what joined them. They are white on the
+               * coloured line now, so they mark where a real fix was without
+               * arguing with the leg they sit on.
+               *
+               * And they grow with the zoom. A fix every three seconds is
+               * hundreds of dots across a district: at the zoom a whole beat
+               * is read at they are noise, and only close in — where somebody
+               * is actually asking "when was he exactly here" — are they worth
+               * the ink. They fade out entirely rather than shrink to a
+               * speck, because a dot too small to hover is a control that
+               * looks available and is not.
+               */
+              "circle-radius": [
+                "interpolate",
+                ["linear"],
+                ["zoom"],
+                14,
+                0,
+                15.5,
+                1.8,
+                18,
+                3.2,
+              ],
+              "circle-color": "#FFFFFF",
+              "circle-opacity": [
+                "interpolate",
+                ["linear"],
+                ["zoom"],
+                14,
+                0,
+                15.5,
+                0.9,
+              ],
+              "circle-stroke-width": [
+                "interpolate",
+                ["linear"],
+                ["zoom"],
+                14,
+                0,
+                15.5,
+                1,
+              ],
+              "circle-stroke-color": "rgba(22,22,22,0.35)",
             },
           });
         }
