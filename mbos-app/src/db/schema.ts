@@ -20,8 +20,6 @@
  *   conflict.
  */
 
-export const SCHEMA_VERSION = 10;
-
 /**
  * Every statement is idempotent, and migrations are applied in order by
  * `user_version`. A handset that has been offline across two releases must
@@ -940,7 +938,48 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE expenses ADD COLUMN billNumber TEXT;`,
     `ALTER TABLE expenses ADD COLUMN exceptionReason TEXT;`,
   ],
+
+  /* ---- v12 · a position is its reading, so a redelivery is not a new row -- */
+  [
+    /*
+     * The trail queue had `id TEXT PRIMARY KEY` and nothing else unique, and
+     * every id was a fresh UUID — so `INSERT OR IGNORE` had nothing to ignore
+     * on. Android redelivers a batch of deferred locations whenever the task
+     * does not complete, and each redelivery became a new row: production
+     * carried 33,000 rows for 4,000 real fixes, one of them ninety-three times.
+     *
+     * The duplicates are collapsed FIRST — a unique index cannot be created
+     * over a table that already violates it, and a migration that throws here
+     * would strand the handset for ever. `MIN(rowid)` keeps the copy that
+     * arrived first, which is the one already ordered against its neighbours.
+     *
+     * This is also what unblocks the phones already in the field. The queue
+     * drains OLDEST FIRST, so a backlog of duplicates is precisely what stood
+     * between a salesman's current position and the Live map — one handset was
+     * thousands of rows behind, all of them copies of a previous evening.
+     * Collapsing it on first launch means the next flush sends today, without
+     * anybody being asked to do anything.
+     */
+    `DELETE FROM positions
+      WHERE rowid NOT IN (SELECT MIN(rowid) FROM positions GROUP BY at, lat, lng);`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_fix ON positions(at, lat, lng);`,
+  ],
 ];
+
+/**
+ * DERIVED, never typed.
+ *
+ * It was a literal, and it drifted: the travel and expense module added an
+ * eleventh block and left the constant at 10, so `migrate()`'s own
+ * `current >= SCHEMA_VERSION` guard returned before running it. A FRESH install
+ * was fine — it starts at 0 and runs everything — which is exactly why nobody
+ * saw it. Every handset that already had the app sat at `user_version = 10`,
+ * skipped the block, and had no travel tables at all.
+ *
+ * A version that counts the migrations cannot disagree with them. Adding a
+ * block is now the whole of adding a migration.
+ */
+export const SCHEMA_VERSION = MIGRATIONS.length;
 
 /** Tables holding work the salesman authored. A sync never deletes from these. */
 export const OWNED_TABLES = [

@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte, isNotNull, isNull, lte, or } from "drizzle-orm";
 import { db } from "@/db";
 import { mbosAttendanceDays, mbosPositions } from "@/db/schema";
 import { authenticate } from "@/lib/services/mbos-service";
 import { getConfig } from "@/lib/config/store";
-import { today } from "@/lib/recompute";
 
 /* ---------------------------------------------------------------------------
  * The trail.
@@ -23,26 +22,51 @@ import { today } from "@/lib/recompute";
  * microphone follows, and for the same reason: a hidden control is not a
  * disabled one, and an old build carries on doing whatever it was built to do.
  *
- * **The check-in window is checked here too, not only assumed.** AGENTS.md
- * says tracking "runs between the check-in and the check-out and not one
- * second either side" — that was true of the handset's own timer and false of
- * this endpoint, which accepted a fix from anybody whenever the feature flag
- * was on. A stray batch from a build that kept the sensor running past
- * checkout landed anyway. `mbos_attendance_days` for today already answers
- * "is this person checked in" for the Live map's own "who's out" query; this
- * asks it the same way, scoped to one person instead of the whole team.
+ * **A fix is checked against the SESSION IT BELONGS TO, not against today.**
+ * AGENTS.md says tracking "runs between the check-in and the check-out and not
+ * one second either side", and this is where that is enforced — but it used to
+ * be enforced by asking whether the sender is checked in RIGHT NOW, which is a
+ * different question and gave the wrong answer twice over. A batch is a queue
+ * catching up: its fixes were taken hours or days before they arrive, so the
+ * day to judge them against is the day they were TAKEN. Worse, any closed day
+ * refused the whole batch — and `markMissedCheckouts` closes a forgotten day at
+ * the last position it can see, so a handset that lost its trail early had its
+ * day closed early and then had every later fix refused BECAUSE the day was
+ * closed. The privacy rule is unchanged and now actually holds for fixes taken
+ * outside a session; what changes is that a fix taken inside one is kept
+ * however late it arrives.
  *
-
+ * **A batch with no session to file it against is KEPT, not dropped.** The
+ * handset deletes what it sends on any `ok`, so answering "no" to a batch whose
+ * check-in is still sitting in the outbox would silently destroy a morning to
+ * win a race by thirty seconds. `no-session-yet` is the one answer that tells
+ * it to hold on to them.
+ *
  * **Nothing is confirmed row by row.** The handset deletes what it sent once
  * this answers, so the answer says how many landed and nothing more. A
- * duplicate is dropped on the primary key rather than reported — the id was
- * minted on the device, so a retry writes the same rows.
+ * duplicate is dropped on the unique index rather than reported — the id is
+ * derived from the reading, so a redelivery writes the same row, and
+ * `mbos_positions_fix_key` catches even a row whose id was minted before that
+ * was true.
  * ------------------------------------------------------------------------- */
 
 export const dynamic = "force-dynamic";
 
 /** One batch is a few hours of a stalled handset catching up, not a day of them. */
 const MAX_BATCH = 500;
+
+/**
+ * How far outside a session a fix may fall and still belong to it.
+ *
+ * The check-in writes its own fix and its own timestamp from the same clock,
+ * milliseconds apart but in an order nobody controls, so a strict comparison
+ * throws away the first point of the day about half the time. Two minutes is
+ * wide enough to cover that and the ordinary drift between a phone that has
+ * been offline and a server that has not; it is nowhere near wide enough to be
+ * the thing the rule exists to prevent, which is a track that carries on into
+ * somebody's evening.
+ */
+const EDGE_GRACE_MS = 2 * 60_000;
 
 export async function POST(request: Request) {
   const auth = await authenticate(request);
@@ -59,25 +83,6 @@ export async function POST(request: Request) {
      * should stop taking fixes and drop what it holds, which is what `off`
      * tells it to do. A 4xx here would look like a fault and be retried. */
     return NextResponse.json({ ok: true, stored: 0, tracking: "off" });
-  }
-
-  const day = await today();
-  const [attendance] = await db
-    .select({ checkInAt: mbosAttendanceDays.checkInAt, checkOutAt: mbosAttendanceDays.checkOutAt })
-    .from(mbosAttendanceDays)
-    .where(
-      and(
-        eq(mbosAttendanceDays.userId, auth.principal.user.id),
-        eq(mbosAttendanceDays.day, day),
-      ),
-    )
-    .limit(1);
-
-  if (!attendance || attendance.checkInAt === null || attendance.checkOutAt !== null) {
-    /* Also not an error, for the same reason `tracking: "off"` is not one —
-     * the handset should stop sending and drop what it holds rather than
-     * retry a batch that will never be accepted. */
-    return NextResponse.json({ ok: true, stored: 0, tracking: "not-checked-in" });
   }
 
   let body: { positions?: unknown };
@@ -126,13 +131,53 @@ export async function POST(request: Request) {
     ];
   });
 
-  if (values.length) {
-    await db.insert(mbosPositions).values(values).onConflictDoNothing();
+  if (!values.length) {
+    return NextResponse.json({ ok: true, stored: 0, dropped: rows.length });
+  }
+
+  /* The days any of these fixes could belong to. Read from the fixes
+     themselves rather than from the clock, because a batch is a backlog. */
+  const times = values.map((v) => v.at.getTime());
+  const oldest = new Date(Math.min(...times) - EDGE_GRACE_MS);
+  const newest = new Date(Math.max(...times) + EDGE_GRACE_MS);
+
+  const sessions = await db
+    .select({ checkInAt: mbosAttendanceDays.checkInAt, checkOutAt: mbosAttendanceDays.checkOutAt })
+    .from(mbosAttendanceDays)
+    .where(
+      and(
+        eq(mbosAttendanceDays.userId, auth.principal.user.id),
+        isNotNull(mbosAttendanceDays.checkInAt),
+        lte(mbosAttendanceDays.checkInAt, newest),
+        or(isNull(mbosAttendanceDays.checkOutAt), gte(mbosAttendanceDays.checkOutAt, oldest)),
+      ),
+    );
+
+  if (!sessions.length) {
+    /* Also not an error. The check-in these belong to has almost certainly not
+     * synced yet — the outbox goes up before the trail does, but a failed push
+     * puts them out of order. The handset holds on to them. */
+    return NextResponse.json({ ok: true, stored: 0, tracking: "no-session-yet" });
+  }
+
+  const windows = sessions.map((s) => ({
+    from: s.checkInAt!.getTime() - EDGE_GRACE_MS,
+    /* An open day runs to now, which is to say it has no end yet. */
+    to: s.checkOutAt ? s.checkOutAt.getTime() + EDGE_GRACE_MS : Number.POSITIVE_INFINITY,
+  }));
+
+  const inside = values.filter((v) => {
+    const t = v.at.getTime();
+    return windows.some((w) => t >= w.from && t <= w.to);
+  });
+
+  if (inside.length) {
+    await db.insert(mbosPositions).values(inside).onConflictDoNothing();
   }
 
   return NextResponse.json({
     ok: true,
-    stored: values.length,
-    dropped: rows.length - values.length,
+    stored: inside.length,
+    dropped: rows.length - inside.length,
   });
 }

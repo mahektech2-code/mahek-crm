@@ -2628,6 +2628,71 @@ queueing them ahead of the visit behind them on a 2G connection buys nothing.
 `mbos.location.trackWhileWorking` is checked in the route as well as on the
 handset, because a hidden control is not a disabled feature.
 
+**A POSITION IS ITS READING, and an id that is not derived from one is a
+duplicate generator.** Every fix was stored under a fresh `randomUUID()`, so
+`INSERT OR IGNORE` on the handset had nothing to ignore ON and neither did
+`onConflictDoNothing` here. `data.locations` is a BATCH of deferred fixes and
+Android hands the batch over again whenever the task did not complete — which
+is every time the OS reaps the process mid-flush. Production reached 33,000
+rows for 4,000 real fixes, one of them ninety-three times across ninety-two
+separate uploads. The id is `at|lat|lng` now, and `mbos_positions_fix_key` is
+the half that does not depend on which build is in somebody's pocket: an old
+APK cannot reintroduce the damage while it waits to be updated.
+
+**A QUEUE DRAINED OLDEST-FIRST, ONE BATCH PER TICK, CANNOT CATCH UP.** `flush()`
+sent exactly one batch of five hundred, and the sync tick that calls it is a
+`setInterval` that only advances while the app is open — a drain with a fixed
+rate in front of a queue with none. At a fix every three seconds that is twenty
+rows a minute before any redelivery, filled all day and emptied at five hundred
+per minute of SCREEN TIME, oldest first. The newest fix, which is the only one
+the Live map wants, sits at the back of it. A phone uploaded three thousand rows
+across six successful posts in one day and moved its trail forward by three
+minutes of the PREVIOUS evening, while its owner walked a full beat — and
+nothing anywhere looked wrong. The posts returned 200, the connection was fine,
+and the office simply saw a salesman standing where he had been the night
+before. `flush()` loops until the queue is short now. The general lesson is the
+one worth keeping: a drain whose rate is fixed and whose fill rate is not is a
+queue that reports success all the way down.
+
+**A fix is judged against the SESSION IT BELONGS TO, not against today.** The
+sentence at the top of this section used to be enforced by asking whether the
+sender is checked in RIGHT NOW, which is a different question. A batch is a
+queue catching up — its fixes were taken hours or days before they arrive — so
+the day to judge them against is the day they were TAKEN. Worse, any CLOSED day
+refused the whole batch, and `markMissedCheckouts` closes a forgotten day at the
+last position it can see: a handset that lost its trail early had its day closed
+early, and every later fix was then refused BECAUSE the day was closed, on the
+strength of a closing time that existed only because the fixes were missing.
+The route reads the attendance rows the batch actually spans. The privacy rule
+is unchanged and only now actually holds.
+
+**A batch with no session to file it against is KEPT, not dropped.** The handset
+deletes what it sends on any `ok`, so `ok: true, stored: 0` is an instruction to
+forget — and answering that to a batch whose check-in is still in the outbox
+destroys a morning to win a race by thirty seconds. `no-session-yet` is the one
+answer that means hold on to them, and the handset drops them itself after a
+week, because a queue that only ever grows is the other way to lose a day.
+
+**`SCHEMA_VERSION` COUNTS THE MIGRATIONS RATHER THAN BEING TYPED BESIDE THEM.**
+It was a literal and it drifted: travel and expense added an eleventh block and
+left the constant at 10, so `migrate()`'s own `current >= SCHEMA_VERSION` guard
+returned before running it. A fresh install was fine — it starts at 0 and runs
+everything — which is exactly why nobody saw it, and why the handsets that
+skipped the block were precisely the ones already in the field. It is
+`MIGRATIONS.length` now, so adding a block is the whole of adding a migration.
+
+**`timeInterval` never reaches Android, and no error says so.** expo-location
+declares it `Long?` and reads it out of the task's persisted options with
+`map["timeInterval"] as? Long` — but those options are stored as JSON, so
+`org.json` hands back a boxed `Integer` and a strict `as?` yields null. The
+override is skipped in silence and the accuracy preset's own fallback stands:
+`High` is 2000 ms, `Balanced` 3000. `distanceInterval` is declared `Int?` and
+survives the same round trip, which is why the parameter nobody meant to be
+load-bearing is the only one arriving. It is close enough to
+`trackEverySeconds`'s floor of 3 to be harmless today, and it means that
+setting is INERT on Android — raising it to a minute would change nothing.
+Enforce a cadence in JS if one is ever needed; do not trust that field.
+
 **Every activity is logged with where it was done, and it is written in ONE
 place.** Four MBOS tables carried a coordinate and twenty-three did not, so an
 order taken at a shop, a payment collected at a counter and a complaint raised

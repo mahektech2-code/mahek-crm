@@ -5591,7 +5591,24 @@ export const mbosPositions = pgTable(
     deviceId: text("device_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("mbos_positions_user_at_idx").on(t.userId, t.at)],
+  (t) => [
+    index("mbos_positions_user_at_idx").on(t.userId, t.at),
+    /*
+     * A position IS its reading, so the same reading is one row.
+     *
+     * The primary key is an id the handset mints, and it used to mint a fresh
+     * UUID for a fix it had already stored — Android redelivers a batch of
+     * deferred locations whenever the background task does not complete, so
+     * `onConflictDoNothing` had nothing to conflict ON. Production reached
+     * 33,000 rows for 4,000 real fixes, one of them ninety-three times across
+     * ninety-two separate uploads.
+     *
+     * The handset derives the id from the reading now; this is the guard that
+     * does not depend on which build is in somebody's pocket, and an old APK
+     * cannot reintroduce the damage while it waits to be updated.
+     */
+    uniqueIndex("mbos_positions_fix_key").on(t.userId, t.at, t.lat, t.lng),
+  ],
 );
 
 /* ----------------------------------------------------- activity locations */
