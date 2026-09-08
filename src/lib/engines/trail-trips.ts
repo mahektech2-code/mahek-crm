@@ -1,5 +1,5 @@
 import { metresBetween } from "../geo";
-import { dwellRuns } from "./dwell";
+import { centroidOf, dwellRuns } from "./dwell";
 
 /**
  * A day, cut into the journeys it was actually made of.
@@ -54,14 +54,22 @@ export type TripOptions = {
 };
 
 /**
- * A trip of one point is not a journey.
+ * A trip has to GO somewhere.
  *
- * Standing still through two consecutive dwells, or a single stray fix
- * between two gaps, would otherwise become a "trip" with no line to draw and
- * a colour in the key that points at nothing.
+ * Two fixes is not enough on its own. Splitting at the middle of a stop —
+ * which is what putting the boundary under the stop mark means — leaves the
+ * second half of that standing-still on the far side of the line, and a
+ * twenty-minute stop at the end of a day would otherwise finish as a "trip"
+ * of four metres of GPS jitter with a colour of its own in the key.
+ *
+ * The floor is `dwellRadiusMetres` and deliberately not a new number: that
+ * setting already IS the answer to "how much movement is still standing
+ * still". Anything under it the dwell rule itself could not have told apart
+ * from a stop, so nothing that reaches this test as a real journey is lost by
+ * measuring it the same way.
  */
-function isJourney<P extends TripPoint>(points: P[]): boolean {
-  return points.length >= 2;
+function isJourney<P extends TripPoint>(points: P[], metres: number, dwellRadiusMetres: number): boolean {
+  return points.length >= 2 && metres > dwellRadiusMetres;
 }
 
 export function splitTrailIntoTrips<P extends TripPoint>(
@@ -70,13 +78,43 @@ export function splitTrailIntoTrips<P extends TripPoint>(
 ): Trip<P>[] {
   if (points.length < 2) return [];
 
-  /* Where he stopped. `endIndex` is the last fix of the stop, which is the
-     fix the NEXT trip starts from — he set off from where he was standing. */
+  /*
+   * Where he stopped — and specifically, WHERE ON THE GROUND, not merely when.
+   *
+   * The obvious index is the run's last fix, and it is wrong by up to the
+   * dwell radius. A run holds while every fix stays within `dwellRadiusMetres`
+   * of the run's FIRST fix, so it does not end when he leaves the shop; it
+   * ends once he has walked far enough from where he arrived. Splitting there
+   * put the colour change sixty metres up the road from the circle that
+   * explains it — the departure's first sixty metres were painted as part of
+   * the journey that had already finished, and the boundary landed at a
+   * junction with nothing marked on it. Every stop had the same offset;
+   * nobody could have named the cause from the screen.
+   *
+   * So the boundary is the fix NEAREST THE STOP'S CENTROID, which is the exact
+   * point the map draws the mark at. The colour changes under the circle, the
+   * walk away from the shop belongs to the trip that walks away, and the
+   * handful of metres of jitter either side of the split are both honestly
+   * "at the stop".
+   */
   const restEnds = new Set(
     dwellRuns(points, dwellRadiusMetres, dwellMinMinutes)
-      .map((r) => r.endIndex)
-      /* A stop that runs to the end of the day starts nothing after it. */
-      .filter((i) => i < points.length - 1),
+      .map((r) => {
+        const centre = centroidOf(points.slice(r.startIndex, r.endIndex + 1));
+        let best = r.startIndex;
+        let bestMetres = Infinity;
+        for (let i = r.startIndex; i <= r.endIndex; i++) {
+          const m = metresBetween(centre.lat, centre.lng, points[i].lat, points[i].lng);
+          if (m < bestMetres) {
+            bestMetres = m;
+            best = i;
+          }
+        }
+        return best;
+      })
+      /* A stop whose centre is the very last thing recorded starts nothing
+         after it, and one at the very beginning ends nothing before it. */
+      .filter((i) => i > 0 && i < points.length - 1),
   );
 
   const trips: Trip<P>[] = [];
@@ -84,11 +122,11 @@ export function splitTrailIntoTrips<P extends TripPoint>(
 
   const close = (endIndex: number, nextStart: number) => {
     const slice = points.slice(start, endIndex + 1);
-    if (isJourney(slice)) {
-      let metres = 0;
-      for (let i = 1; i < slice.length; i++) {
-        metres += metresBetween(slice[i - 1].lat, slice[i - 1].lng, slice[i].lat, slice[i].lng);
-      }
+    let metres = 0;
+    for (let i = 1; i < slice.length; i++) {
+      metres += metresBetween(slice[i - 1].lat, slice[i - 1].lng, slice[i].lat, slice[i].lng);
+    }
+    if (isJourney(slice, metres, dwellRadiusMetres)) {
       trips.push({
         index: trips.length + 1,
         points: slice,

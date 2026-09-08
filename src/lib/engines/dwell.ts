@@ -77,6 +77,24 @@ export function dwellRuns(
   return runs;
 }
 
+/**
+ * Where a run of fixes actually sat, as one point.
+ *
+ * The mean of the run rather than its first fix: the anchor is where he
+ * ARRIVED, and on a twenty-minute stop the fixes spread out around the place
+ * he stood rather than around the moment he got there. Exported because the
+ * trip boundary has to land on the same spot the stop mark is drawn at — two
+ * ways of averaging one stop would put the colour change a few metres from
+ * the circle explaining it, which is exactly the kind of small wrongness
+ * nobody can name and everybody stops trusting.
+ */
+export function centroidOf(points: { lat: number; lng: number }[]): { lat: number; lng: number } {
+  return {
+    lat: points.reduce((sum, p) => sum + p.lat, 0) / points.length,
+    lng: points.reduce((sum, p) => sum + p.lng, 0) / points.length,
+  };
+}
+
 export function dwellStops(
   points: { lat: number; lng: number; at: Date }[],
   radiusMetres: number,
@@ -85,8 +103,7 @@ export function dwellStops(
   return dwellRuns(points, radiusMetres, minMinutes).map((r) => {
     const run = points.slice(r.startIndex, r.endIndex + 1);
     return {
-      lat: run.reduce((sum, p) => sum + p.lat, 0) / run.length,
-      lng: run.reduce((sum, p) => sum + p.lng, 0) / run.length,
+      ...centroidOf(run),
       startAt: run[0].at,
       endAt: run[run.length - 1].at,
       minutes: r.minutes,
