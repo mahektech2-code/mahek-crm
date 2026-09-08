@@ -15,7 +15,7 @@ import { getKv, setKv } from '../db';
  * failure means for the item that caused it.
  */
 
-const BASE =
+export const BASE =
   (Constants.expoConfig?.extra as { apiBase?: string } | undefined)?.apiBase ??
   process.env.EXPO_PUBLIC_API_BASE ??
   'http://localhost:3000';

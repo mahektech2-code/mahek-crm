@@ -21,6 +21,7 @@ import { getConfig } from '../src/data/config';
 import { optimiseRoute } from '../src/engines/route';
 import { fixOf, getFix } from '../src/native/location';
 import { dmy, inr, isoDate, plural } from '../src/lib/format';
+import { openMaps, openRoute, shareText } from '../src/lib/messaging';
 import { useBoot } from '../src/state/boot';
 import { useStore } from '../src/state/store';
 
@@ -421,7 +422,15 @@ export default function JourneyScreen() {
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
             <SecondaryButton
               label="Navigate"
-              onPress={() => notify('Maps to ' + next.customerName)}
+              onPress={async () => {
+                const out = await openMaps({
+                  lat: next.gpsLat,
+                  lng: next.gpsLng,
+                  name: next.customerName,
+                  city: next.area,
+                });
+                if (out.status !== 'opened') notify(out.reason);
+              }}
               style={{ flex: 1, borderRadius: radius.xl }}
             />
             <PrimaryButton
@@ -467,9 +476,19 @@ export default function JourneyScreen() {
               </View>
 
               <Pressable
-                onPress={() =>
-                  done ? notify(x.customerName + ' · visit already logged today') : notify('Maps to ' + x.customerName)
-                }
+                onPress={async () => {
+                  /* A stop already walked answers with what happened; one still
+                     ahead answers by opening the way to it. Both used to answer
+                     with a toast. */
+                  if (done) return notify(x.customerName + ' · visit already logged today');
+                  const out = await openMaps({
+                    lat: x.gpsLat,
+                    lng: x.gpsLng,
+                    name: x.customerName,
+                    city: x.area,
+                  });
+                  if (out.status !== 'opened') notify(out.reason);
+                }}
                 accessibilityRole="button"
                 style={{
                   flex: 1,
@@ -558,10 +577,39 @@ export default function JourneyScreen() {
           {
             glyph: 'nav',
             label: 'Navigate the whole day',
-            sub: 'Opens every stop in order',
-            run: () => notify('Full route sent to maps'),
+            sub: 'Opens the route in order, up to ten stops',
+            run: async () => {
+              const out = await openRoute(
+                stops.map((st) => ({ lat: st.gpsLat, lng: st.gpsLng })),
+              );
+              if (out.status !== 'opened') return notify(out.reason);
+              /* Said plainly rather than hidden: a route that quietly stops at
+                 lunchtime is worse than one that says where it stops. */
+              if (out.dropped > 0) {
+                notify(
+                  `Maps takes ten stops — the last ${out.dropped} are not in this route.`,
+                );
+              }
+            },
           },
-          { glyph: 'share', label: 'Share the plan', sub: 'To your manager on WhatsApp', run: () => notify('Route shared') },
+          {
+            glyph: 'share',
+            label: 'Share the plan',
+            sub: 'Pick who, in the share sheet',
+            run: async () => {
+              if (!stops.length) return notify('There are no stops to share yet.');
+              const lines = stops.map(
+                (st, i) =>
+                  `${i + 1}. ${st.customerName}` +
+                  (st.area ? ` — ${st.area}` : '') +
+                  (st.plannedAt ? ` (${st.plannedAt})` : ''),
+              );
+              const out = await shareText(
+                [`Plan for ${today} — ${plural(stops.length, 'stop')}`, ...lines].join('\n'),
+              );
+              if (out.status === 'copied') notify(out.reason);
+            },
+          },
           {
             glyph: 'cal',
             label: 'Request a tour',

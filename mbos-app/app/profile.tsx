@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Input, ListCard, PrimaryButton, SecondaryButton, T, Toggle } from '../src/components/ui/primitives';
-import { signOut as signOutReal } from '../src/data/session';
+import { openPasswordReset, signOut as signOutReal } from '../src/data/session';
 import { pendingCount } from '../src/sync/queue';
 import { plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
@@ -231,7 +231,14 @@ export default function ProfileScreen() {
       <SecondaryButton
         label="Change password"
         style={{ marginTop: 16 }}
-        onPress={() => notify('A link to set a new password has been sent to your mobile')}
+        onPress={async () => {
+          const opened = await openPasswordReset();
+          notify(
+            opened
+              ? 'Opening the reset page. It emails a link to your work address.'
+              : 'Could not open the browser. Ask your manager to send you a reset link.',
+          );
+        }}
       />
 
       <Pressable
