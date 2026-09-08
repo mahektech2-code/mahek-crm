@@ -22,7 +22,7 @@ on:
         required: true
         default: https://one.mahekindia.com
       publish:
-        description: "Upload to R2 so /downloads serves it. Off = build and attach to this run only."
+        description: "Publish the release: archive it in R2 and put it on the droplet, which is what /downloads serves. Off = build and attach to this run only."
         type: boolean
         default: false
 
@@ -194,6 +194,69 @@ jobs:
           rclone copyto "$APK" "R2:${BUCKET}/mbos.apk" --s3-no-check-bucket
           echo "Published ${{ steps.name.outputs.file }} and mbos.apk"
 
+      # R2 IS THE RECORD; THE DROPLET IS WHAT SERVES.
+      #
+      # This step is the one that was missing, and its absence is why a green
+      # "publish" run left every handset on the previous build. The input said
+      # "Upload to R2 so /downloads serves it" — but nothing serves /downloads
+      # from R2. Caddy has always read it straight off the droplet's own disk:
+      #
+      #     handle_path /downloads/* { root * /srv/downloads; file_server }
+      #
+      # and `deploy/docker-compose.yml` mounts `./downloads` there read-only.
+      # R2 in this repo is a BACKUP destination — `deploy/backup.sh` writes to
+      # it, `deploy/restore.sh` reads from it, and neither has anything to do
+      # with `/downloads`. So the upload above succeeded into a bucket no
+      # browser ever asks for, and the workflow reported success.
+      #
+      # Both halves are kept rather than one replacing the other, because they
+      # answer different questions: the bucket keeps every release under its
+      # versioned name and outlives any one droplet, and the droplet holds the
+      # single stable file people are given a link to. The versioned name never
+      # goes to the droplet — 25 GiB of disk should not accumulate a release
+      # history nobody reads from there.
+      #
+      # It copies the ARTIFACT rather than pulling back down from R2, so the
+      # droplet needs no R2 credentials of its own and this cannot be broken by
+      # whatever the backup token's scope happens to be. Written to a temporary
+      # name and moved into place, because `mv` within a filesystem is atomic
+      # and `scp` straight onto the live path would serve a half-written 89 MB
+      # file to anybody downloading during the upload.
+      - name: Serve it from the droplet
+        if: ${{ inputs.publish }}
+        env:
+          KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: |
+          if [ -z "$HOST" ] || [ -z "$KEY" ]; then
+            echo "::error::SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS and DROPLET_HOST must be set — they are what /downloads is actually served from."
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          echo "${KEY}" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          echo "${HOSTS}" > ~/.ssh/known_hosts
+          APK=mbos-app/android/app/build/outputs/apk/release/app-release.apk
+          scp -o BatchMode=yes "$APK" "deploy@${HOST}:/opt/mahekone/downloads/.mbos.apk.incoming"
+          ssh -o BatchMode=yes "deploy@${HOST}" \
+            'mv /opt/mahekone/downloads/.mbos.apk.incoming /opt/mahekone/downloads/mbos.apk && ls -l /opt/mahekone/downloads/mbos.apk'
+          echo "Serving from the droplet at /downloads/mbos.apk"
+
+      # Proof, not assumption. A publish that reported success while the field
+      # kept the previous build is exactly what happened last time, so the run
+      # fails if the bytes now being served are not the bytes just built.
+      - name: Check the live download is this build
+        if: ${{ inputs.publish }}
+        run: |
+          APK=mbos-app/android/app/build/outputs/apk/release/app-release.apk
+          BUILT=$(sha256sum "$APK" | cut -d' ' -f1)
+          LIVE=$(curl -fsSL "${{ inputs.api_base }}/downloads/mbos.apk" | sha256sum | cut -d' ' -f1)
+          if [ "$BUILT" != "$LIVE" ]; then
+            echo "::error::${{ inputs.api_base }}/downloads/mbos.apk is NOT this build. Built ${BUILT}, serving ${LIVE}."
+            exit 1
+          fi
+          echo "Live download matches this build (${BUILT})."
+
       - name: Say what happened
         run: |
           {
@@ -202,7 +265,7 @@ jobs:
             echo "- Built against \`${{ inputs.api_base }}\` — baked in, not changeable afterwards."
             echo "- Signed with the committed release key, so this updates in place over an existing install."
             if [ "${{ inputs.publish }}" = "true" ]; then
-              echo "- Published to R2 as \`${{ steps.name.outputs.file }}\` and \`mbos.apk\`."
+              echo "- Archived in R2 as \`${{ steps.name.outputs.file }}\`, and serving at \`${{ inputs.api_base }}/downloads/mbos.apk\` — verified byte-for-byte against this build."
             else
               echo "- **Not published.** Attached to this run only — download it from the Artifacts section above."
             fi
