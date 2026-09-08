@@ -55,6 +55,11 @@ export type Customer = {
   /** When this row was last refreshed from MahekOne. Shown wherever a
    *  decision hangs on the figures — credit limit and outstanding above all. */
   lastSyncedAt: number;
+  /** Squared degrees from the origin the page was sorted by, when there was
+   *  one. `metresFromDist2` is the only thing that reads it. */
+  dist2?: number | null;
+  /** `customer` or `lead`. Null on a row synced before migration v12. */
+  kind?: string | null;
 };
 
 export type CustomerPage = {
@@ -121,6 +126,26 @@ export async function cityOrigins(): Promise<{ city: string; lat: number; lng: n
 export async function listCustomers(query = ''): Promise<Customer[]> {
   const q = customerPageQuery({ query, limit: -1 });
   return all<Customer>(q.sql, q.params);
+}
+
+/**
+ * What KIND of account this is, in one word.
+ *
+ * The mark wins over the kind, which is the rule MahekOne's own
+ * `lib/account-types.ts` states for the web list and for the same reason:
+ * "Lead · Third party" is two facts fighting over one glance, and on a phone
+ * there is even less room to lose the argument in. A shop we deliver to and do
+ * not bill is a third party whatever its kind says.
+ *
+ * `null` where the row predates migration v12 and nothing has re-synced it —
+ * saying "Customer" on no evidence would be a guess, and this is the one field
+ * whose whole job is to stop the salesman guessing.
+ */
+export function accountType(c: Pick<Customer, 'kind' | 'thirdParty'>): string | null {
+  if (c.thirdParty) return 'Third party';
+  if (c.kind === 'lead') return 'Lead';
+  if (c.kind === 'customer') return 'Customer';
+  return null;
 }
 
 /**

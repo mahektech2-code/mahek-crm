@@ -57,6 +57,64 @@ export async function openWhatsApp(phone: string, message: string): Promise<Send
   }
 }
 
+/**
+ * Take him there.
+ *
+ * This button existed and did nothing — it raised a toast saying "Maps to
+ * <shop>" and stopped, which is worse than not drawing it: a control that
+ * acknowledges the tap and then does not act teaches people the app is
+ * unreliable rather than that the feature is missing.
+ *
+ * The coordinates are the point. Most of this book is pinned, and a shop in a
+ * market lane is findable by its dot and very often not by its name — so where
+ * there is a fix, that is what is handed over, and the shop's name rides along
+ * only as the LABEL on the pin. Where there is no fix we search for the name
+ * and the town instead, which is the same thing he would have typed himself.
+ *
+ * `google.navigation:` first, because it starts turn-by-turn in the app he
+ * already has, and the https form second, which any Android resolves into
+ * Google Maps and any other platform opens in a browser. Falling all the way
+ * to the browser is still an answer; refusing is not.
+ */
+export type MapsOutcome = { status: 'opened' } | { status: 'failed'; reason: string };
+
+export async function openMaps(args: {
+  lat?: number | null;
+  lng?: number | null;
+  name?: string | null;
+  city?: string | null;
+}): Promise<MapsOutcome> {
+  const hasFix = typeof args.lat === 'number' && typeof args.lng === 'number';
+
+  const query = hasFix
+    ? `${args.lat},${args.lng}`
+    : [args.name, args.city].filter(Boolean).join(' ').trim();
+
+  if (!query) {
+    return {
+      status: 'failed',
+      reason: 'No location and no name to search for on this customer.',
+    };
+  }
+
+  /* Turn-by-turn straight away, which is what the button says it does. */
+  const native = hasFix
+    ? `google.navigation:q=${args.lat},${args.lng}`
+    : `geo:0,0?q=${encodeURIComponent(query)}`;
+  const web = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(query)}`;
+
+  try {
+    if (Platform.OS === 'android' && (await Linking.canOpenURL(native))) {
+      await Linking.openURL(native);
+      return { status: 'opened' };
+    }
+    await Linking.openURL(web);
+    return { status: 'opened' };
+  } catch {
+    return { status: 'failed', reason: 'No maps app would open on this handset.' };
+  }
+}
+
 export async function openSms(phone: string, message: string): Promise<SendOutcome> {
   /* iOS wants `&` for the body, Android wants `?`. Getting it wrong opens the
      composer with an empty message, which reads as the app losing the text. */

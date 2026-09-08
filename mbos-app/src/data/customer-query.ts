@@ -119,8 +119,29 @@ export function customerPageQuery(args: {
   };
 }
 
+/** Degrees of latitude to metres. Good to a few parts in ten thousand. */
+const METRES_PER_DEGREE = 111_320;
+
 /**
- * Somewhere to measure from when the radio has nothing.
+ * The `dist2` a page carries, as metres.
+ *
+ * Deliberately here, beside the SQL that produced it, because the two share a
+ * definition: `dist2` is squared degrees with longitude already scaled by
+ * cos(latitude), so the conversion is one square root and one constant. Put
+ * this anywhere else and the day the ordering changes shape, the number on the
+ * card goes on being computed the old way and quietly disagrees with the order
+ * the rows are in.
+ *
+ * That shared origin is the point. A card cannot show a smaller distance than
+ * the card above it, because the figure it prints and the figure it was sorted
+ * by are the same number.
+ */
+export function metresFromDist2(dist2: number | null | undefined): number | null {
+  if (dist2 == null || !Number.isFinite(dist2) || dist2 < 0) return null;
+  return Math.sqrt(dist2) * METRES_PER_DEGREE;
+}
+
+/**
  *
  * Built from the book rather than from a list of town names typed into a
  * screen — the same rule the web app states about product lists, for the same
