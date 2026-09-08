@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Pressable } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, DashedButton, T } from '../src/components/ui/primitives';
 import { color as C, weight, type BadgeTone } from '../src/theme/tokens';
@@ -27,6 +27,7 @@ function isOverdue(x: Sample, today: string): boolean {
 export default function SamplesScreen() {
   const back = useCameFrom('more');
   const notify = useStore((s) => s.notify);
+  const set = useStore((s) => s.set);
   const custId = useStore((s) => s.custId);
 
   const [rows, setRows] = React.useState<Sample[]>([]);
@@ -89,8 +90,17 @@ export default function SamplesScreen() {
         {rows.map((x) => {
           const days = Math.max(0, Math.round((now - x.requestedAt) / 86_400_000));
           const name = names[x.customerId] ?? 'Unknown customer';
+          /* The record, on its Samples tab — where the trial sits beside the
+             shop's orders and payments, which is the question anybody tapping a
+             sample is actually asking. */
           return (
-            <Pressable key={x.id} onPress={() => notify(name + ' · ' + (x.productName ?? ''))} accessibilityRole="button">
+            <Pressable
+              key={x.id}
+              onPress={() => {
+                set({ custId: x.customerId, pTab: 4 });
+                router.push('/customer');
+              }}
+              accessibilityRole="button">
               <Card>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
                   <View style={{ flex: 1, minWidth: 0 }}>

@@ -66,7 +66,28 @@ export default function CatalogueScreen() {
           {rows.map((x, i) => (
             <Pressable
               key={x.id}
-              onPress={() => notify(x.name + ' · rate card, pack sizes and current stock')}
+              /* It used to promise "rate card, pack sizes and current stock".
+                 Two of those three do not exist anywhere in MahekOne: the
+                 product master carries NO prices — `products.priceSource` is
+                 unset and `canValueOrders()` answers no — and nothing tracks
+                 stock at all. So it says the packing, which is real, and says
+                 plainly that the rate is not set rather than implying a rate
+                 card somebody could go and look at. */
+              onPress={() =>
+                notify(
+                  [
+                    x.name,
+                    x.packSize,
+                    x.cansPerBox ? x.cansPerBox + ' per box' : null,
+                    x.formulation ?? x.brand,
+                    x.sellingPricePaise != null
+                      ? inr(x.sellingPricePaise / 100) + ' per can'
+                      : 'No rate set — the office prices this order',
+                  ]
+                    .filter(Boolean)
+                    .join(' · '),
+                )
+              }
               accessibilityRole="button"
               style={{
                 flexDirection: 'row',

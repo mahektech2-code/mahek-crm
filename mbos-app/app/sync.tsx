@@ -6,7 +6,7 @@ import { Badge, Card, ListCard, PrimaryButton, T } from '../src/components/ui/pr
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import { plural } from '../src/lib/format';
-import { conflictCount, listQueue, queueCounts, retryItem, type QueueItem } from '../src/sync/queue';
+import { conflictCount, listQueue, queueCounts, queueDepth, retryItem, type QueueItem } from '../src/sync/queue';
 import { mediaCounts } from '../src/sync/media';
 import { syncNow } from '../src/sync/engine';
 import { useStore } from '../src/state/store';
@@ -72,18 +72,21 @@ export default function SyncScreen() {
   const notify = useStore((s) => s.notify);
 
   const [rows, setRows] = React.useState<QueueItem[]>([]);
+
+  const [depth, setDepth] = React.useState(0);
   const [counts, setCounts] = React.useState<Record<string, number>>({});
   const [media, setMedia] = React.useState({ pending: 0, failed: 0 });
   const [conflicts, setConflicts] = React.useState(0);
 
   const load = React.useCallback(() => {
     let live = true;
-    void Promise.all([listQueue(), queueCounts(), mediaCounts(), conflictCount()]).then(([q, c, m, k]) => {
+    void Promise.all([listQueue(), queueCounts(), mediaCounts(), conflictCount(), queueDepth()]).then(([q, c, m, k, d]) => {
       if (!live) return;
       setRows(q);
       setCounts(c);
       setMedia(m);
       setConflicts(k);
+      setDepth(d);
     });
     return () => {
       live = false;
@@ -125,6 +128,11 @@ export default function SyncScreen() {
       ) : null}
 
       <ListCard style={{ marginTop: 12 }}>
+        {depth > rows.length ? (
+          <T s="caption" style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+            {`Showing the ${rows.length} most urgent of ${depth} waiting.`}
+          </T>
+        ) : null}
         {rows.map((q, i) => (
           <View
             key={q.id}
