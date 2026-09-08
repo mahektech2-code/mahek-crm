@@ -272,6 +272,45 @@ out why before you rely on it.
 
 ---
 
+## Releasing the handset app
+
+**The APK is built and published by the `MBOS APK` workflow, never from a
+laptop.** Actions → MBOS APK → Run workflow, or:
+
+```bash
+gh workflow run "MBOS APK" --ref main \
+  -f api_base=https://one.mahekindia.com -f publish=true
+```
+
+`workflow_dispatch` and not a push trigger, deliberately: sideloading has no
+staged rollout and no rollback, so the person pressing the button is the
+release. `publish: false` builds it and attaches it to the run without putting
+it in front of anybody, which is how you try one before shipping it.
+
+**`api_base` is baked into the bundle** and cannot be changed after the build,
+so a build made against the wrong one is a broken binary rather than a wrong
+setting. The workflow refuses anything that is not https or that ends in a
+slash, before it builds.
+
+**The signature is checked against the committed keystore in the run**, with
+`apksigner` rather than `keytool -printcert -jarfile` — a modern release APK
+carries no JAR signature at all, so keytool finds nothing and a check written
+that way silently verifies nothing. A wrong key installs perfectly on a clean
+phone and fails only on the salesman who already has the app, so this is the
+step that must not be skipped.
+
+Publishing writes to two places, answering two questions: R2 keeps every
+release under a versioned name and outlives any one droplet, and the droplet
+holds the single stable file `/downloads/mbos.apk` that people are given a link
+to. Caddy serves that off the droplet's own disk — nothing serves `/downloads`
+from R2.
+
+**Do not build a release by hand and `scp` it up.** It skips the signature
+check, the versioned archive and the record of what was shipped, and it puts
+the release back on whichever laptop has a JDK — which is the situation this
+workflow exists to end. Local `gradlew assembleRelease` is for trying a change
+on your own phone.
+
 ## Day to day
 
 ```bash
