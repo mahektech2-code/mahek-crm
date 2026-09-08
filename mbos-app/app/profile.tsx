@@ -10,6 +10,8 @@ import { plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { color as C, radius, weight } from '../src/theme/tokens';
+import { canOffer, isOn as lockIsOn, setOn as rememberLockChoice } from '../src/data/app-lock';
+import { prompt as promptBiometric } from '../src/native/biometrics';
 
 /**
  * Profile — the four things about him the office may have wrong, and three
@@ -20,10 +22,9 @@ import { color as C, radius, weight } from '../src/theme/tokens';
  * record exactly as it was rather than half-changed.
  */
 
-const PREFS: { k: 'wifi' | 'push' | 'bio'; l: string; s: string }[] = [
+const PREFS: { k: 'wifi' | 'push'; l: string; s: string }[] = [
   { k: 'wifi', l: 'Sync on Wi-Fi only', s: 'Saves data when you are on mobile' },
   { k: 'push', l: 'Push notifications', s: 'Tasks, approvals and announcements' },
-  { k: 'bio', l: 'Sign in with fingerprint', s: 'Instead of typing a password' },
 ];
 
 export default function ProfileScreen() {
@@ -52,6 +53,61 @@ export default function ProfileScreen() {
       live = false;
     };
   }, []);
+
+  /*
+   * The app lock, which is a property of THIS HANDSET rather than of the
+   * account — so it is read from the phone, not from the session, and it is
+   * asked again every time the screen opens. Somebody can add or remove a
+   * fingerprint in the phone's own Settings between two visits here, and a row
+   * that answered from a value cached at boot would offer a switch that no
+   * longer works.
+   */
+  const [lockOn, setLockOn] = React.useState(false);
+  const [lockOffer, setLockOffer] = React.useState<{ ok: boolean; why: string; label: string } | null>(null);
+  const [lockBusy, setLockBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    let live = true;
+    void Promise.all([lockIsOn(), canOffer()]).then(([on, offer]) => {
+      if (!live) return;
+      setLockOn(on);
+      setLockOffer(offer);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  /**
+   * Turning it on asks for the finger first.
+   *
+   * Nobody should be able to switch on a lock they have not just proved they
+   * can open — that is how a handset ends up shut with a day's unsent orders
+   * inside it. Turning it OFF asks too, for the opposite reason: the person
+   * standing over somebody else's unlocked phone is exactly who would
+   * otherwise switch the protection off.
+   */
+  const toggleLock = async () => {
+    if (lockBusy || !lockOffer?.ok) return;
+    setLockBusy(true);
+    try {
+      const wanted = !lockOn;
+      const outcome = await promptBiometric(wanted ? 'Turn the app lock on' : 'Turn the app lock off');
+      if (!outcome.ok) {
+        if (outcome.kind !== 'cancelled') notify(outcome.message);
+        return;
+      }
+      await rememberLockChoice(wanted);
+      setLockOn(wanted);
+      notify(
+        wanted
+          ? 'App lock on — MBOS will ask for your fingerprint when you come back to it'
+          : 'App lock off',
+      );
+    } finally {
+      setLockBusy(false);
+    }
+  };
 
   /* Four facts about him, seeded from the session the office issued. The
      emergency contact and the address are not in the payload, so they start
@@ -226,6 +282,38 @@ export default function ProfileScreen() {
             <Toggle size="sm" on={pfPrefs[p.k]} onPress={() => set({ pfPrefs: { ...pfPrefs, [p.k]: !pfPrefs[p.k] } })} />
           </View>
         ))}
+
+        {/*
+          The app lock. Drawn with the switch where the phone can actually
+          honour it, and as a sentence where it cannot — the same rule the
+          microphone follows in MahekOne: a control that fails when pressed is
+          worse than one never shown, and "add a fingerprint in Settings first"
+          is something the person can act on.
+        */}
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 16,
+            paddingHorizontal: 16,
+            paddingVertical: 14,
+            borderTopWidth: 1,
+            borderTopColor: C.wash,
+          }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <T style={{ fontSize: 16, lineHeight: 22, color: C.ink }}>
+              {'Lock MBOS with ' + (lockOffer?.label ?? 'fingerprint').toLowerCase()}
+            </T>
+            <T s="caption" style={{ marginTop: 1 }}>
+              {lockOffer && !lockOffer.ok
+                ? lockOffer.why
+                : 'Asked for when you come back to the app. Your day keeps syncing while it is locked.'}
+            </T>
+          </View>
+          {lockOffer?.ok ? (
+            <Toggle size="sm" on={lockOn} onPress={() => void toggleLock()} />
+          ) : null}
+        </View>
       </ListCard>
 
       <SecondaryButton

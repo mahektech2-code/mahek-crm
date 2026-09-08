@@ -44,6 +44,20 @@ export async function takePhoto(args: {
   return { ok: true, mediaId, uri: asset.uri };
 }
 
+/**
+ * A selfie that was taken by our OWN camera, queued.
+ *
+ * `takePhoto` above is permission + system camera + queue in one call, which
+ * is right for a shop front and wrong for the check-in selfie: that one is
+ * taken by `SelfieCamera`, because handing off to the system camera opens it
+ * rear-facing and expo's `cameraType` is only a request to another app. So the
+ * capture half is somebody else's and only the queueing half is here — which
+ * keeps `sync/media` reached from one module rather than two.
+ */
+export async function queueSelfie(uri: string, parentId: string): Promise<string> {
+  return captureImage({ uri, parentType: 'attendance', parentId, kind: 'selfie' });
+}
+
 export async function requestMicrophone(): Promise<boolean> {
   const status = await AudioModule.requestRecordingPermissionsAsync();
   return status.granted;
