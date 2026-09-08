@@ -237,6 +237,13 @@ jobs:
           echo "${KEY}" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
           echo "${HOSTS}" > ~/.ssh/known_hosts
           APK=mbos-app/android/app/build/outputs/apk/release/app-release.apk
+          # Nothing provisions this directory — not bootstrap.sh, not the
+          # deploy job. It exists on the live droplet only because somebody
+          # made it by hand for the first release, and docker compose would
+          # otherwise create `./downloads` itself, owned by root, which the
+          # `deploy` user then cannot write into. Making it here means a
+          # rebuilt droplet publishes correctly on the first attempt.
+          ssh -o BatchMode=yes "deploy@${HOST}" 'mkdir -p /opt/mahekone/downloads'
           scp -o BatchMode=yes "$APK" "deploy@${HOST}:/opt/mahekone/downloads/.mbos.apk.incoming"
           ssh -o BatchMode=yes "deploy@${HOST}" \
             'mv /opt/mahekone/downloads/.mbos.apk.incoming /opt/mahekone/downloads/mbos.apk && ls -l /opt/mahekone/downloads/mbos.apk'
