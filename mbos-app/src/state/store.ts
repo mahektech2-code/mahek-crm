@@ -47,7 +47,6 @@ type State = {
   pw: string;
   dial: string;
   remember: boolean;
-  bio: boolean;
 
   /* ---- the day ---- */
   checkedIn: boolean;
@@ -97,7 +96,7 @@ type State = {
 
   /* ---- profile ---- */
   pfSaved: Record<string, string>;
-  pfPrefs: { wifi: boolean; push: boolean; bio: boolean };
+  pfPrefs: { wifi: boolean; push: boolean };
 };
 
 type Actions = {
@@ -131,7 +130,6 @@ export const useStore = create<State & Actions>((set, get) => ({
   pw: '',
   dial: '+91',
   remember: true,
-  bio: true,
 
   checkedIn: false,
   gps: 'acquiring',
@@ -170,7 +168,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   catQ: '',
 
   pfSaved: {},
-  pfPrefs: { wifi: true, push: true, bio: true },
+  pfPrefs: { wifi: true, push: true },
 
   set: (patch) => set(patch as Partial<State>),
 

@@ -2169,6 +2169,17 @@ export const SETTINGS = [
       "On, somebody signed in on one phone is refused on a second until the first is released — brief §2.2, and the reason is that a field account is a person's own: two live handsets on one login means a day's visits, orders and cash-in-hand that nobody can attribute, and a phone that has quietly left the company still holding a book of customers. Off, the same login opens on as many handsets as it is typed into. Turn it off deliberately and for a reason — a salesman whose phone broke on a Tuesday, a shared handset between shifts — because nothing else in the app distinguishes the two devices afterwards. It does NOT let one person take over a handset registered to somebody else; that stays refused either way.",
     default: true,
   },
+  {
+    key: "mbos.devices.appLockGraceSeconds",
+    type: "integer",
+    category: "mbos-devices",
+    label: "App lock grace period",
+    description:
+      "Seconds the app may sit in the background before the fingerprint is asked for again. The lock exists because a field handset carries the whole book — every customer, what each owes, and the ability to place an order — and it spends the day on shop counters. But the app hands off constantly and deliberately: the system camera for a shop photo, WhatsApp to send a receipt, the dialler to ring a customer. Locking on every return would make the salesman prove himself twenty times a morning to finish jobs he was in the middle of, which is how a lock gets turned off. Long enough for a hand-off, short enough that a phone left on a counter closes itself. A cold start always asks, whatever this says.",
+    default: 180,
+    min: 0,
+    max: 3600,
+  },
 
   {
     key: "mbos.orders.numberSeriesPrefix",
@@ -2921,6 +2932,7 @@ export type Config = {
   "mbos.sync.accessTokenMinutes": number;
 
   "mbos.devices.onePerPerson": boolean;
+  "mbos.devices.appLockGraceSeconds": number;
 
   "mbos.leads.staleDays": number;
   "mbos.leads.archiveDays": number;
