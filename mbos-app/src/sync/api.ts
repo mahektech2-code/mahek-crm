@@ -15,7 +15,7 @@ import { getKv, setKv } from '../db';
  * failure means for the item that caused it.
  */
 
-const BASE =
+export const BASE =
   (Constants.expoConfig?.extra as { apiBase?: string } | undefined)?.apiBase ??
   process.env.EXPO_PUBLIC_API_BASE ??
   'http://localhost:3000';
@@ -241,6 +241,9 @@ export type PullPayload = {
   journeyStops?: unknown[];
   tasks?: unknown[];
   samples?: unknown[];
+  /** The office's order and receipt history, ten of each per customer. */
+  customerOrders?: unknown[];
+  customerPayments?: unknown[];
   leads?: unknown[];
   notifications?: unknown[];
   documents?: unknown[];

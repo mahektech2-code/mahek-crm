@@ -414,7 +414,8 @@ export default function Home() {
           {DASH_CARDS.map((d, i) => (
             <Pressable
               key={d.l}
-              onPress={() => notify(d.l + ' — opens the list behind this number')}
+              disabled={!d.route}
+              onPress={() => d.route && router.push(`/${d.route}?from=home`)}
               style={{
                 width: '50%',
                 padding: 14,

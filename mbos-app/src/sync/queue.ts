@@ -303,6 +303,14 @@ export async function queueCounts(): Promise<Record<string, number>> {
 }
 
 /** What the status strip counts: everything authored here the office cannot see yet. */
+/** Everything waiting, counted in SQL — never the length of a capped list. */
+export async function queueDepth(): Promise<number> {
+  const row = await one<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM sync_queue WHERE state <> 'synced'`,
+  );
+  return row?.n ?? 0;
+}
+
 export async function pendingCount(): Promise<number> {
   const row = await one<{ n: number }>(
     `SELECT COUNT(*) AS n FROM sync_queue WHERE state IN ('queued','syncing','failed','blocked')`,
@@ -313,11 +321,27 @@ export async function pendingCount(): Promise<number> {
   return (row?.n ?? 0) + (media?.n ?? 0);
 }
 
-export async function listQueue(): Promise<QueueItem[]> {
+/**
+ * How many outbox rows the Sync screen draws at once.
+ *
+ * The read was unbounded and the screen maps every row it gets. That is fine
+ * on the ordinary day — a handful of records waiting — and it is exactly wrong
+ * on the day it matters: a week offline, or a queue that has stopped draining,
+ * is when somebody opens this screen, and it is when the list is longest. The
+ * customer book taught this lesson already, and it cost an ANR.
+ *
+ * The trouble is sorted so the rejected and failed rows come first, so a cap
+ * keeps what somebody came to look at.
+ */
+export const QUEUE_PAGE = 50;
+
+export async function listQueue(limit = QUEUE_PAGE): Promise<QueueItem[]> {
   return all<QueueItem>(
     `SELECT * FROM sync_queue WHERE state <> 'synced' ORDER BY
        CASE state WHEN 'rejected' THEN 0 WHEN 'failed' THEN 1 WHEN 'blocked' THEN 2
-                  WHEN 'syncing' THEN 3 ELSE 4 END, createdAt DESC`,
+                  WHEN 'syncing' THEN 3 ELSE 4 END, createdAt DESC
+     LIMIT ?`,
+    [limit],
   );
 }
 

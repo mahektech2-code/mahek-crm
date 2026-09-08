@@ -348,7 +348,7 @@ export default function Visit() {
           </View>
           {gps === 'off' ? (
             <Pressable
-              onPress={() => notify('Saved without a location · flagged for your manager')}
+              onPress={() => notify('Carrying on without a location — save the visit as usual and your manager will see it was unpinned.')}
               style={{ height: HIT, paddingHorizontal: 12, borderRadius: radius.sm, borderWidth: 1, borderColor: C.faint, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center' }}>
               <Text style={[{ fontSize: 15, color: C.body }, weight(500)]}>Carry on</Text>
             </Pressable>

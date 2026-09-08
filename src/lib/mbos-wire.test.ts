@@ -185,6 +185,8 @@ const WIRE: { fn: string; table: string; extra?: string[] }[] = [
   { fn: "customersForDevice", table: "customers", extra: ["lastSyncedAt"] },
   { fn: "activeCatalogue", table: "products", extra: ["lastSyncedAt"] },
   { fn: "recentTimeline", table: "timeline_events" },
+  { fn: "recentOrders", table: "customer_orders", extra: ["lastSyncedAt"] },
+  { fn: "recentPayments", table: "customer_payments", extra: ["lastSyncedAt"] },
   { fn: "journeyStops", table: "journey_stops", extra: ["lastSyncedAt"] },
   { fn: "schemeRows", table: "schemes" },
   { fn: "unreadNotifications", table: "notifications" },
@@ -241,6 +243,11 @@ const DELTA: { anchor: string; table: string }[] = [
   { anchor: 'select p.id, p.plan_date::text as "planDate"', table: "journey_days" },
   { anchor: "select b.leave_type::text as kind", table: "leave_balances" },
 ];
+
+/* The history channels are sent by the SAME functions on both paths — the
+   delta calls `recentOrders`/`recentPayments` rather than spelling them out
+   again — so the bootstrap check above covers both. Listed here in words so
+   the next person to add an inline copy knows it has to be registered. */
 
 test("the delta's own queries send nothing the handset cannot hold either", () => {
   const service = readFileSync(SERVICE, "utf8");
