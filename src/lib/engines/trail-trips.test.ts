@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { splitTrailIntoTrips, tripColour, TRIP_COLOURS } from "./trail-trips";
-import { dwellStops } from "./dwell";
+import { centroidOf, dwellRuns, dwellStops } from "./dwell";
 
 /** Metres → rough degrees of latitude, near enough for a test fixture. */
 const M = 1 / 111_320;
@@ -112,6 +112,42 @@ describe("splitting a day into trips", () => {
     const points = [...walk(0, 200, 0), ...walk(200, 0, 3)];
     const [trip] = splitTrailIntoTrips(points, { ...OPTS, dwellMinMinutes: 999 });
     assert.ok(trip.metres > 350, `walked ${Math.round(trip.metres)} m`);
+  });
+
+  it("THE COLOUR CHANGES UNDER THE STOP MARK, not where the run happened to end", () => {
+    /* Twenty minutes parked, then a walk away. The run holds until he is a
+       full radius from where he ARRIVED, so its last fix is out along the
+       departure — splitting there put the colour change up the road from the
+       circle explaining it. The boundary is the stop's own centre now. */
+    const points = [
+      ...walk(0, 100, 0),
+      ...stand(100, 1, 20),
+      ...walk(100, 400, 22),
+    ];
+    const opts = { gapMetres: 200, dwellRadiusMetres: 60, dwellMinMinutes: 5 };
+    const [first, second] = splitTrailIntoTrips(points, opts);
+    const boundary = second.points[0];
+
+    const run = dwellRuns(points, opts.dwellRadiusMetres, opts.dwellMinMinutes)[0];
+    const centre = centroidOf(points.slice(run.startIndex, run.endIndex + 1));
+    const stop = dwellStops(points, opts.dwellRadiusMetres, opts.dwellMinMinutes)[0];
+
+    /* Within a metre of the mark the map draws — the same point, give or take
+       the nearest fix to it. */
+    const off = Math.abs(boundary.lat - centre.lat) * 111_320;
+    assert.ok(off < 1, `boundary sits ${off.toFixed(1)} m from the stop's centre`);
+    assert.ok(Math.abs(boundary.lat - stop.lat) * 111_320 < 1);
+
+    /* And the far end of the run is NOT where it split — that is the bug. */
+    assert.notEqual(boundary.at.getTime(), points[run.endIndex].at.getTime());
+    assert.equal(first.points[first.points.length - 1].at.getTime(), boundary.at.getTime());
+  });
+
+  it("a leg shorter than the dwell radius is standing still, not a journey", () => {
+    /* Below the radius the dwell rule itself cannot tell movement from a
+       stop, so nothing here may claim to. */
+    const points = [...walk(0, 30, 0), ...stand(30, 1, 20)];
+    assert.deepEqual(splitTrailIntoTrips(points, { gapMetres: 200, dwellRadiusMetres: 60, dwellMinMinutes: 5 }), []);
   });
 
   it("colours cycle rather than running out", () => {

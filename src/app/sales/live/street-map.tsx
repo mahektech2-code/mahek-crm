@@ -7,6 +7,7 @@ import type { DwellStop } from "@/lib/engines/dwell";
 import { splitTrailByGaps, type TrailSegment } from "@/lib/engines/trail-gaps";
 import { splitTrailIntoTrips, tripColour } from "@/lib/engines/trail-trips";
 import { clock, clockSeconds } from "@/lib/format";
+import { formatDistance } from "@/lib/geo";
 import type { ActivityPoint, LastKnown, TrackPoint } from "@/lib/services/sales-service";
 import { activityLabel } from "@/lib/mbos/activity-labels";
 import {
@@ -119,7 +120,14 @@ function formatMinutes(minutes: number): string {
  * carrying which it is so `trail-${id}` and `trail-gap-${id}` can each filter
  * to their own half without needing two sources for one line.
  */
-type TripSegment = TrailSegment & { trip: number; colour: string };
+type TripSegment = TrailSegment & {
+  trip: number;
+  colour: string;
+  /** The whole trip's figures, repeated on each of its segments — see `tripSegments`. */
+  metres: number;
+  fromMs: number;
+  toMs: number;
+};
 
 /**
  * A day's line, cut into its journeys and coloured by which one.
@@ -148,6 +156,13 @@ function tripSegments(
         ...s,
         trip: trip.index,
         colour: tripColour(trip.index),
+        /* The WHOLE trip's length on every segment of it, so a hover anywhere
+           along the leg answers for the leg rather than for the piece of it
+           under the cursor — which is what somebody pointing at a line is
+           asking. GeoJSON carries no Date, so the two ends are milliseconds. */
+        metres: trip.metres,
+        fromMs: trip.startAt.getTime(),
+        toMs: trip.endAt.getTime(),
       })),
   );
 }
@@ -157,7 +172,14 @@ function trailFeatureCollection(segments: TripSegment[]): GeoJSON.FeatureCollect
     type: "FeatureCollection",
     features: segments.map((s) => ({
       type: "Feature",
-      properties: { gap: s.gap, trip: s.trip, colour: s.colour },
+      properties: {
+        gap: s.gap,
+        trip: s.trip,
+        colour: s.colour,
+        metres: s.metres,
+        fromMs: s.fromMs,
+        toMs: s.toMs,
+      },
       geometry: { type: "LineString", coordinates: s.coordinates },
     })),
   };
@@ -407,6 +429,9 @@ export function StreetMap({
          over by both handlers below so a fast sweep across several points
          in a row never leaves more than one open. */
       let hoverPopup: maplibregl.Popup | null = null;
+      /* Its own handle: a trip's figure and a fix's clock can be wanted at the
+         same moment, and one shared popup would make each close the other. */
+      let tripPopup: maplibregl.Popup | null = null;
       built.on("mouseenter", "trail-points", (e: maplibregl.MapLayerMouseEvent) => {
         built.getCanvas().style.cursor = "pointer";
         const f = e.features?.[0];
@@ -469,6 +494,29 @@ export function StreetMap({
           built.setPaintProperty(id, "line-opacity", paint.opacity);
           built.setPaintProperty(id, "line-width", paint.width);
         }
+
+        /* WHAT THE LEG WAS, not merely which one it is. Lighting a line up
+           answers "these two are different"; the figure answers the question
+           that comes straight after it, which is how far he actually went.
+           `formatDistance` is the same function the team list beside the map
+           prints its own total with, so a leg and a day are read in one
+           vocabulary rather than two. */
+        tripPopup?.remove();
+        tripPopup = null;
+        if (next === null) return;
+        const f = hit[0];
+        const metres = Number(f.properties?.metres);
+        const fromMs = Number(f.properties?.fromMs);
+        const toMs = Number(f.properties?.toMs);
+        if (!Number.isFinite(metres)) return;
+        const when =
+          Number.isFinite(fromMs) && Number.isFinite(toMs)
+            ? ` · ${clock(new Date(fromMs))}–${clock(new Date(toMs))}`
+            : "";
+        tripPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false })
+          .setLngLat(e.lngLat)
+          .setText(`Trip ${next} · ${formatDistance(metres)}${when}`)
+          .addTo(built);
       });
 
       /*
