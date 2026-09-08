@@ -212,6 +212,8 @@ export default async function Page({
         distanceMetres={distanceMetres}
         dwells={dwells}
         gapMetres={config["mbos.location.trailGapMeters"]}
+        dwellRadiusMetres={config["mbos.location.dwellRadiusMeters"]}
+        dwellMinMinutes={config["mbos.location.dwellMinMinutes"]}
         staleAfterSeconds={config["mbos.location.activityFixMaxAgeSeconds"]}
         view={view}
         isToday={isToday}
