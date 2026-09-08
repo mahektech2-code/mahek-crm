@@ -6,6 +6,7 @@ import { Icon } from '../src/components/ui/Icon';
 import { Badge, Card, HealthPill, Input, PrimaryButton } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
+import { customerSamples, type Sample } from '../src/data/requests';
 import {
   competitorRecords,
   customerOrders,
@@ -80,6 +81,7 @@ export default function CustomerRecord() {
   const [events, setEvents] = React.useState<TimelineEvent[]>([]);
   const [orders, setOrders] = React.useState<CustomerOrder[]>([]);
   const [receipts, setReceipts] = React.useState<CustomerPayment[]>([]);
+  const [samples, setSamples] = React.useState<Sample[]>([]);
   const [competitors, setCompetitors] = React.useState<Awaited<ReturnType<typeof competitorRecords>>>([]);
   const [compForm, setCompForm] = React.useState(false);
   const [comp, setComp] = React.useState({ name: '', rate: '', note: '', credit: '', delivery: '', strengths: '', weaknesses: '' });
@@ -94,9 +96,11 @@ export default function CustomerRecord() {
       competitorRecords(id),
       customerOrders(id),
       customerPayments(id),
-    ]).then(([t, k, o, r]) => {
+      customerSamples(id),
+    ]).then(([t, k, o, r, sm]) => {
       setOrders(o);
       setReceipts(r);
+      setSamples(sm);
       setEvents(t);
       setCompetitors(k);
     });
@@ -111,9 +115,11 @@ export default function CustomerRecord() {
       competitorRecords(id),
       customerOrders(id),
       customerPayments(id),
-    ]).then(([t, k, o, r]) => {
+      customerSamples(id),
+    ]).then(([t, k, o, r, sm]) => {
       setOrders(o);
       setReceipts(r);
+      setSamples(sm);
         if (!live) return;
         setEvents(t);
         setCompetitors(k);
@@ -434,11 +440,47 @@ export default function CustomerRecord() {
           </View>
         ) : null}
 
+        {/* ---- what they were given to try ---- */}
         {pTab === 4 ? (
-          <Empty
-            head="Samples"
-            body="Samples raised on this handset, and what the office decided about them, show here."
-          />
+          <View style={{ gap: 10 }}>
+            {samples.length === 0 ? (
+              <Empty
+                head="No trials on this shop"
+                body="Samples you raise here show up straight away. The office only sends down the ones still open, so a trial closed at a desk stays there."
+              />
+            ) : (
+              <>
+                {samples.map((sm) => (
+                  <Card key={sm.id} style={{ gap: 4 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+                      <Text style={[{ fontSize: 15, color: C.ink, flexShrink: 1 }, weight(600)]}>
+                        {sm.productName ?? 'Product not recorded'}
+                      </Text>
+                      <Badge tone={sampleTone(sm.state)}>{sm.state}</Badge>
+                    </View>
+                    <Text style={type.caption}>
+                      {[
+                        sm.cans ? sm.cans + (sm.cans === 1 ? ' can' : ' cans') : null,
+                        'given ' + pretty(isoDate(new Date(sm.requestedAt))),
+                        sm.trialOutcome && sm.trialOutcome !== 'pending' ? 'outcome: ' + sm.trialOutcome : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </Text>
+                    {/* The promise, and only while it is still a promise. A
+                        follow-up date on a trial that is already converted or
+                        rejected is a date nobody is going to keep. */}
+                    {sm.followUpDate && sm.state !== 'Converted' && sm.state !== 'Rejected' ? (
+                      <Text style={[type.caption, { color: C.body }]}>
+                        {'Ask again ' + pretty(sm.followUpDate)}
+                      </Text>
+                    ) : null}
+                    {sm.reason ? <Text style={type.caption}>{sm.reason}</Text> : null}
+                  </Card>
+                ))}
+              </>
+            )}
+          </View>
         ) : null}
 
         {/* ---- competitors ---- */}
@@ -617,4 +659,19 @@ function Slice({ n, noun }: { n: number; noun: string }) {
       {'The last ' + n + ' ' + noun + 's. Older ones stay in the office.'}
     </Text>
   );
+}
+
+/**
+ * A trial's state as a colour.
+ *
+ * Converted is the only good ending and reads as one; Rejected is a real
+ * answer rather than a failure, so it is neutral rather than red — a shop that
+ * tried the drum and said no has told the salesman something worth knowing,
+ * and colouring it like a fault is how that stops being recorded.
+ */
+function sampleTone(state: string): BadgeTone {
+  if (state === 'Converted') return 'success';
+  if (state === 'Awaiting feedback') return 'amber';
+  if (state === 'Rejected') return 'neutral';
+  return 'info';
 }
