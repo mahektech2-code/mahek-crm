@@ -666,6 +666,13 @@
       "when": 1787502100000,
       "tag": "0094_one_lead",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1787502160000,
+      "tag": "0095_mbos_positions_fix_key",
+      "breakpoints": true
     }
   ]
 }

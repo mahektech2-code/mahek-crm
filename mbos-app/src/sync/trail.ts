@@ -1,4 +1,3 @@
-import * as Crypto from 'expo-crypto';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { all, run } from '../db';
@@ -63,10 +62,34 @@ const TASK_NAME = 'mbos-trail';
 
 type Row = { id: string; at: number; lat: number; lng: number; accuracyM: number | null };
 
+/**
+ * The id IS the reading.
+ *
+ * It was `randomUUID()`, which meant `INSERT OR IGNORE` had nothing to ignore
+ * ON — the id was unique by construction, so the only thing it could collide
+ * with was itself, and the same fix stored twice became two rows. The server's
+ * `onConflictDoNothing` was defeated for exactly the same reason.
+ *
+ * That matters because Android REDELIVERS. `data.locations` is a batch of
+ * deferred fixes, and the OS hands the batch over again whenever the task did
+ * not complete — which is every time the process is reaped mid-flush, and on
+ * these handsets that is often. Production reached 33,000 rows for 4,000 real
+ * fixes; one fix was stored ninety-three times, across ninety-two separate
+ * uploads.
+ *
+ * Same instant, same place, same id, so a redelivery collides with the row
+ * already held and costs nothing. Six decimal places is about a tenth of a
+ * metre — far finer than any fix this app will ever see, so nothing genuinely
+ * distinct is folded together by the rounding.
+ */
+function fixId(at: number, lat: number, lng: number): string {
+  return `mbos_pos_${at}_${Math.round(lat * 1e6)}_${Math.round(lng * 1e6)}`;
+}
+
 async function store(lat: number, lng: number, accuracyM: number | null, at: number): Promise<void> {
   await run(
     'INSERT OR IGNORE INTO positions (id, at, lat, lng, accuracyM) VALUES (?, ?, ?, ?, ?)',
-    [`mbos_pos_${Crypto.randomUUID()}`, at, lat, lng, accuracyM],
+    [fixId(at, lat, lng), at, lat, lng, accuracyM],
   );
 }
 
@@ -252,35 +275,101 @@ export async function pending(): Promise<number> {
 const BATCH = 500;
 
 /**
+ * How many batches one call may send.
+ *
+ * It used to send exactly ONE, and that is a drain with a fixed rate in front
+ * of a queue with none. At a fix every three seconds the handset produces
+ * twenty rows a minute before any redelivery; `flush()` ran once per sync tick,
+ * and the sync tick is a `setInterval` that only advances while the app is
+ * open. So the queue is emptied oldest-first at five hundred rows per minute of
+ * SCREEN TIME and filled all day — and the newest fix, which is the only one
+ * the Live map wants, sits at the back of it.
+ *
+ * What that looked like in production: a phone uploaded three thousand rows
+ * across six successful posts in one day and moved its trail forward by three
+ * minutes of the PREVIOUS evening, while its owner walked a full beat. Nothing
+ * errored. The posts returned 200, the data connection was fine, and the office
+ * simply saw a salesman standing where he had been the night before.
+ *
+ * The cap is here so a wedged queue cannot spin for ever, not because stopping
+ * early is ever wanted.
+ */
+const MAX_PASSES = 50;
+
+/**
+ * How long a position the server cannot yet file is kept.
+ *
+ * Only reached on `no-session-yet` — the check-in is still in the outbox, or
+ * never made it. Days of that is worth surviving; a fortnight of it is a queue
+ * nobody will ever drain.
+ */
+const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+let flushing = false;
+
+/**
  * Send what is queued.
  *
  * Called after every sync pass as well as on check-out, so a handset that
  * found signal between two shops uses it. Rows are deleted only on a clean
  * answer; anything else leaves them for the next attempt.
+ *
+ * Not re-entrant. The background task and the sync timer both call it, and two
+ * passes reading the same five hundred rows would post them twice — harmless
+ * now that the id is the reading, and pointless bandwidth on a 2G connection
+ * either way.
  */
 export async function flush(): Promise<number> {
-  const rows = await all<Row>(
-    'SELECT id, at, lat, lng, accuracyM FROM positions ORDER BY at ASC LIMIT ?',
-    [BATCH],
-  );
-  if (!rows.length) return 0;
-
+  if (flushing) return 0;
+  flushing = true;
   try {
-    const answer = await postPositions(rows);
-    if (!answer?.ok) return 0;
+    let sent = 0;
 
-    const marks = rows.map(() => '?').join(',');
-    await run(`DELETE FROM positions WHERE id IN (${marks})`, rows.map((r) => r.id));
+    for (let pass = 0; pass < MAX_PASSES; pass++) {
+      const rows = await all<Row>(
+        'SELECT id, at, lat, lng, accuracyM FROM positions ORDER BY at ASC LIMIT ?',
+        [BATCH],
+      );
+      if (!rows.length) return sent;
 
-    /* The office turned it off. Stop taking fixes and drop what is held —
-       keeping them would be storing something nobody asked for. */
-    if (answer.tracking === 'off') {
-      await stopTicking();
-      await run('DELETE FROM positions');
+      let answer: Awaited<ReturnType<typeof postPositions>> | null = null;
+      try {
+        answer = await postPositions(rows);
+      } catch {
+        return sent;
+      }
+      if (!answer?.ok) return sent;
+
+      /* The office turned it off. Stop taking fixes and drop what is held —
+         keeping them would be storing something nobody asked for. */
+      if (answer.tracking === 'off') {
+        await stopTicking();
+        await run('DELETE FROM positions');
+        return sent;
+      }
+
+      /* The server has no working session these fixes could belong to — almost
+         always a check-in still sitting in the outbox. They are KEPT, because
+         the handset deletes on any `ok` and throwing a morning away to win a
+         race by thirty seconds is the worse trade. Anything old enough that no
+         check-in is ever coming goes, so this cannot become a queue that only
+         grows. */
+      if (answer.tracking === 'no-session-yet') {
+        await run('DELETE FROM positions WHERE at < ?', [Date.now() - RETENTION_MS]);
+        return sent;
+      }
+
+      const marks = rows.map(() => '?').join(',');
+      await run(`DELETE FROM positions WHERE id IN (${marks})`, rows.map((r) => r.id));
+      sent += rows.length;
+
+      /* A short read is the last of them. Asking again would cost a round trip
+         to be told the same thing. */
+      if (rows.length < BATCH) return sent;
     }
 
-    return rows.length;
-  } catch {
-    return 0;
+    return sent;
+  } finally {
+    flushing = false;
   }
 }
