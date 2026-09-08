@@ -5,6 +5,7 @@ import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { DwellStop } from "@/lib/engines/dwell";
 import { splitTrailByGaps, type TrailSegment } from "@/lib/engines/trail-gaps";
+import { splitTrailIntoTrips, tripColour } from "@/lib/engines/trail-trips";
 import { clock, clockSeconds } from "@/lib/format";
 import type { ActivityPoint, LastKnown, TrackPoint } from "@/lib/services/sales-service";
 import { activityLabel } from "@/lib/mbos/activity-labels";
@@ -118,14 +119,80 @@ function formatMinutes(minutes: number): string {
  * carrying which it is so `trail-${id}` and `trail-gap-${id}` can each filter
  * to their own half without needing two sources for one line.
  */
-function trailFeatureCollection(segments: TrailSegment[]): GeoJSON.FeatureCollection {
+type TripSegment = TrailSegment & { trip: number; colour: string };
+
+/**
+ * A day's line, cut into its journeys and coloured by which one.
+ *
+ * One colour for a whole day drew a road he walked three times as a single
+ * line, and threw away the only thing a manager wanted from it — the order.
+ * `splitTrailIntoTrips` cuts the day at the rests and the gaps it already
+ * knows about, and each leg carries its own colour from there.
+ *
+ * The gap split still runs INSIDE each trip rather than instead of it: a trip
+ * can contain a stretch nobody recorded, and that stretch is still dashed. So
+ * the two facts stay independent — the colour says which journey, the dash
+ * says how much of it is evidence.
+ */
+function tripSegments(
+  /* Only what a trip is decided from — so the raw trail and the snapped one,
+     which carries no accuracy or place, both go through the same function. */
+  points: { lat: number; lng: number; at: Date }[],
+  gapMetres: number,
+  dwellRadiusMetres: number,
+  dwellMinMinutes: number,
+): TripSegment[] {
+  return splitTrailIntoTrips(points, { gapMetres, dwellRadiusMetres, dwellMinMinutes }).flatMap(
+    (trip) =>
+      splitTrailByGaps(trip.points, gapMetres).map((s) => ({
+        ...s,
+        trip: trip.index,
+        colour: tripColour(trip.index),
+      })),
+  );
+}
+
+function trailFeatureCollection(segments: TripSegment[]): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
     features: segments.map((s) => ({
       type: "Feature",
-      properties: { gap: s.gap },
+      properties: { gap: s.gap, trip: s.trip, colour: s.colour },
       geometry: { type: "LineString", coordinates: s.coordinates },
     })),
+  };
+}
+
+/**
+ * How a trail is painted, given whichever trip the cursor is over.
+ *
+ * Nothing is hidden when one leg is picked out — the rest drop to a quarter
+ * opacity rather than disappearing, because the answer to "which of these
+ * lines is the 5pm one" is only useful while you can still see what it is
+ * being distinguished FROM. `null` is the resting state and paints every trip
+ * alike.
+ */
+function trailPaint(hovered: number | null) {
+  return {
+    colour: ["get", "colour"] as unknown as maplibregl.ExpressionSpecification,
+    opacity:
+      hovered === null
+        ? 0.75
+        : ([
+            "case",
+            ["==", ["get", "trip"], hovered],
+            0.95,
+            0.22,
+          ] as unknown as maplibregl.ExpressionSpecification),
+    width:
+      hovered === null
+        ? 3
+        : ([
+            "case",
+            ["==", ["get", "trip"], hovered],
+            5,
+            2,
+          ] as unknown as maplibregl.ExpressionSpecification),
   };
 }
 
@@ -170,6 +237,8 @@ export function StreetMap({
   activity,
   dwells,
   gapMetres,
+  dwellRadiusMetres,
+  dwellMinMinutes,
   staleAfterSeconds,
   view,
   selectedId,
@@ -183,6 +252,9 @@ export function StreetMap({
   dwells: Map<string, DwellStop[]>;
   /** Metres apart before a hop is drawn as an honest gap — see `lib/engines/trail-gaps.ts`. */
   gapMetres: number;
+  /** What counts as standing still, and so as the end of one trip — see `lib/engines/trail-trips.ts`. */
+  dwellRadiusMetres: number;
+  dwellMinMinutes: number;
   staleAfterSeconds: number;
   view: "now" | "today";
   /** Whoever is picked in the team list beside this — see the effect below. */
@@ -195,6 +267,21 @@ export function StreetMap({
   const markers = React.useRef(new Map<string, HTMLDivElement>());
   /** Whether the map has ever finished its first real paint — see the load timeout below. */
   const loadedOnce = React.useRef(false);
+  /** Which trip the cursor is over, or null. A ref — see the mousemove handler. */
+  const hoveredTrip = React.useRef<number | null>(null);
+  /*
+   * The trails, reachable from an effect that must not re-run for them.
+   *
+   * `tracks` is a fresh Map on every render and the page refreshes itself on a
+   * timer, so listing it as a dependency of the snap effect below would fire a
+   * new snap request every tick. What that effect actually needs is the
+   * CURRENT timestamps at the moment its fetch returns, which is what a ref
+   * gives it — the identity of the Map is not the thing it cares about.
+   */
+  const tracksRef = React.useRef(tracks);
+  React.useEffect(() => {
+    tracksRef.current = tracks;
+  }, [tracks]);
   const [failed, setFailed] = React.useState(false);
   const [styleMode, setStyleMode] = React.useState<OlaMapsStyleMode>("map");
 
@@ -338,6 +425,53 @@ export function StreetMap({
       });
 
       /*
+       * PICKING ONE JOURNEY OUT OF A DAY.
+       *
+       * Colour alone separates trips that run down different streets; it does
+       * not separate two that run down the SAME one, which is the case this
+       * whole feature exists for — the second line is simply drawn over the
+       * first, and only its edges show. Hovering lifts one leg and drops the
+       * rest to a quarter opacity, so the road he walked at five reads apart
+       * from the one he walked at eleven even where they lie on top of each
+       * other.
+       *
+       * ONE handler, registered here rather than per layer inside
+       * `drawOverlays`, and for the reason `trail-points` is a single shared
+       * source: a trail layer's id does not exist until that salesman has been
+       * drawn, and `drawOverlays` runs again on every style switch, so a
+       * handler added in there would stack a second copy on top of the first
+       * each time somebody toggled Satellite. `queryRenderedFeatures` needs no
+       * layer id up front — it asks what is actually under the cursor.
+       *
+       * The hovered trip is a REF, not state: this fires on every mouse move
+       * across the map, and re-rendering a MapLibre host component that often
+       * would tear down and rebuild the very layers being painted.
+       */
+      built.on("mousemove", (e: maplibregl.MapMouseEvent) => {
+        const layers = built
+          .getStyle()
+          .layers.map((l) => l.id)
+          .filter((id) => id.startsWith("trail-") && id !== "trail-points");
+        if (!layers.length) return;
+
+        const hit = built.queryRenderedFeatures(e.point, { layers });
+        const trip = hit.length ? Number(hit[0].properties?.trip) : null;
+        const next = Number.isFinite(trip) ? (trip as number) : null;
+        if (next === hoveredTrip.current) return;
+        hoveredTrip.current = next;
+
+        const paint = trailPaint(next);
+        for (const id of layers) {
+          /* The dashed half keeps its own weight and opacity — it is a gap
+             whether or not its trip is the one being pointed at, and fading
+             it in with the rest would make an absence look like evidence. */
+          if (id.startsWith("trail-gap-")) continue;
+          built.setPaintProperty(id, "line-opacity", paint.opacity);
+          built.setPaintProperty(id, "line-width", paint.width);
+        }
+      });
+
+      /*
        * Everything the STYLE carries rather than the map: the trail and
        * activity sources and layers. `setStyle` throws all of this away and
        * rebuilds from the new style JSON, so it has to be re-drawn every
@@ -375,7 +509,7 @@ export function StreetMap({
 
         /* The trail first, so pins and marks sit on top of it. */
         for (const [id, ps] of trails) {
-          const segments = splitTrailByGaps(ps, gapMetres);
+          const segments = tripSegments(ps, gapMetres, dwellRadiusMetres, dwellMinMinutes);
           if (!segments.length) continue;
           built.addSource(`trail-${id}`, {
             type: "geojson",
@@ -391,7 +525,11 @@ export function StreetMap({
             source: `trail-${id}`,
             filter: ["==", ["get", "gap"], false],
             layout: { "line-cap": "round", "line-join": "round" },
-            paint: { "line-color": "#5223E0", "line-width": 3, "line-opacity": 0.75 },
+            paint: {
+              "line-color": trailPaint(null).colour,
+              "line-width": trailPaint(null).width,
+              "line-opacity": trailPaint(null).opacity,
+            },
           });
           built.addLayer({
             id: `trail-gap-${id}`,
@@ -400,7 +538,9 @@ export function StreetMap({
             filter: ["==", ["get", "gap"], true],
             layout: { "line-cap": "round", "line-join": "round" },
             paint: {
-              "line-color": "#5223E0",
+              /* The gap keeps its trip's colour too — it is part of that
+                 journey, just the part nobody recorded. */
+              "line-color": trailPaint(null).colour,
               "line-width": 2,
               "line-opacity": 0.45,
               "line-dasharray": [2, 2],
@@ -644,7 +784,20 @@ export function StreetMap({
            still applies to the snapped points, one-for-one with the raw
            ones. A gap does not become confident just because its two ends
            each moved a few metres onto a road. */
-        source?.setData(trailFeatureCollection(splitTrailByGaps(body.points, gapMetres)));
+        /* The snapped points carry no clock of their own, and a trip boundary
+           is a question about TIME as much as distance — a stop is a place
+           held for minutes. They are one-for-one with the raw fixes, so each
+           takes its own fix's timestamp back; if that ever stops being true
+           the trail is left unsnapped rather than paired up wrongly, because
+           a mismatched pairing would move every boundary silently. */
+        const raw = tracksRef.current.get(selectedId) ?? [];
+        if (raw.length !== body.points.length) return;
+        const timed = body.points.map((p, i) => ({ ...p, at: raw[i].at }));
+        source?.setData(
+          trailFeatureCollection(
+            tripSegments(timed, gapMetres, dwellRadiusMetres, dwellMinMinutes),
+          ),
+        );
       })
       .catch(() => {
         /* The raw trail stays exactly as drawn. */
@@ -653,7 +806,7 @@ export function StreetMap({
     return () => {
       cancelled = true;
     };
-  }, [selectedId, day, view, gapMetres]);
+  }, [selectedId, day, view, gapMetres, dwellRadiusMetres, dwellMinMinutes]);
 
   if (!apiKey) {
     return (

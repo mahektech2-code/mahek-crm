@@ -30,31 +30,38 @@ export type DwellStop = {
   minutes: number;
 };
 
-export function dwellStops(
+/**
+ * The same runs, as INDEXES rather than as places.
+ *
+ * `dwellStops` answers "where did he stand still", which is what the map's
+ * stop marks want. `splitTrailIntoTrips` needs the other half of the same
+ * fact — WHICH FIXES those were — so it can end one trip where he stopped and
+ * begin the next where he set off again.
+ *
+ * Both read this rather than each implementing the rule, because two copies
+ * of "what counts as standing still" would drift, and the half that drifted
+ * would be the half somebody was looking at: a stop drawn on the map with the
+ * trail either side of it unbroken, or a colour change at a place with no
+ * mark on it. One rule, two readers.
+ */
+export type DwellRun = { startIndex: number; endIndex: number; minutes: number };
+
+export function dwellRuns(
   points: { lat: number; lng: number; at: Date }[],
   radiusMetres: number,
   minMinutes: number,
-): DwellStop[] {
-  const stops: DwellStop[] = [];
-  if (points.length < 2) return stops;
+): DwellRun[] {
+  const runs: DwellRun[] = [];
+  if (points.length < 2) return runs;
 
   let anchor = points[0];
   let runStart = 0;
 
   const closeRun = (endIndex: number) => {
-    const run = points.slice(runStart, endIndex + 1);
-    const first = run[0];
-    const last = run[run.length - 1];
+    const first = points[runStart];
+    const last = points[endIndex];
     const minutes = (last.at.getTime() - first.at.getTime()) / 60_000;
-    if (minutes >= minMinutes) {
-      stops.push({
-        lat: run.reduce((sum, p) => sum + p.lat, 0) / run.length,
-        lng: run.reduce((sum, p) => sum + p.lng, 0) / run.length,
-        startAt: first.at,
-        endAt: last.at,
-        minutes,
-      });
-    }
+    if (minutes >= minMinutes) runs.push({ startIndex: runStart, endIndex, minutes });
   };
 
   for (let i = 1; i < points.length; i++) {
@@ -67,5 +74,22 @@ export function dwellStops(
   }
   closeRun(points.length - 1);
 
-  return stops;
+  return runs;
+}
+
+export function dwellStops(
+  points: { lat: number; lng: number; at: Date }[],
+  radiusMetres: number,
+  minMinutes: number,
+): DwellStop[] {
+  return dwellRuns(points, radiusMetres, minMinutes).map((r) => {
+    const run = points.slice(r.startIndex, r.endIndex + 1);
+    return {
+      lat: run.reduce((sum, p) => sum + p.lat, 0) / run.length,
+      lng: run.reduce((sum, p) => sum + p.lng, 0) / run.length,
+      startAt: run[0].at,
+      endAt: run[run.length - 1].at,
+      minutes: r.minutes,
+    };
+  });
 }
