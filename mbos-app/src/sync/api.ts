@@ -246,6 +246,18 @@ export type PullPayload = {
   documents?: unknown[];
   courses?: unknown[];
   leaveBalances?: unknown[];
+  /** Today's attendance, sent only by bootstrap. See `restoreAttendance`. */
+  attendanceToday?: {
+    id: string;
+    userId: string;
+    day: string;
+    checkInAt: number | null;
+    checkInLat: number | null;
+    checkInLng: number | null;
+    checkInAccuracyM: number | null;
+    checkOutAt: number | null;
+    status: string | null;
+  } | null;
   /**
    * `{ id, onDate, name, scope, universal, updatedAt }`. Only `universal`
    * rows bind the attendance engine automatically — see `data/attendance.ts`.

@@ -4,6 +4,7 @@ import { db } from "@/db";
 import {
   appAccess,
   customers,
+  mbosAttendanceDays,
   mbosDevices,
   notifications,
   users,
@@ -493,6 +494,13 @@ export type BootstrapPayload = {
   leads: unknown[];
   timeline: unknown[];
   leaveBalances: unknown[];
+  /**
+   * TODAY'S ATTENDANCE, so a fresh install is not blind about a day it already
+   * has. The one piece of OWNED data this payload carries, and it is here
+   * because the handset cannot ask the question any other way — see
+   * `restoreAttendance` on the other side for why it may only ever fill a gap.
+   */
+  attendanceToday: unknown | null;
   /** This year's and last's. See `holidaysFor` for why only `universal` ones bind. */
   holidays: unknown[];
   documents: unknown[];
@@ -597,6 +605,7 @@ export async function buildBootstrap(
     leadRows,
     timelineRows,
     leaveRows,
+    attendanceRow,
     holidayRows,
     documentRows,
     courseRows,
@@ -615,6 +624,7 @@ export async function buildBootstrap(
     openLeads(principal.user.id),
     recentTimeline(ids, TIMELINE_PER_CUSTOMER),
     leaveBalances(principal.user.id, Number(day.slice(0, 4))),
+    attendanceToday(principal.user.id, day),
     holidaysFor(),
     visibleDocuments(principal.role, ids),
     coursesFor(principal.user.id),
@@ -647,6 +657,7 @@ export async function buildBootstrap(
     leads: leadRows,
     timeline: timelineRows,
     leaveBalances: leaveRows,
+    attendanceToday: attendanceRow,
     holidays: holidayRows,
     documents: documentRows,
     courses: courseRows,
@@ -921,6 +932,46 @@ async function recentTimeline(ids: string[], perCustomer: number) {
      where rn <= ${perCustomer}
      order by "customerId" asc, "occurredAt" desc
   `);
+}
+
+/**
+ * Today's attendance row, or null.
+ *
+ * The ONLY owned record this payload carries, and it earns the exception by
+ * being the one thing a handset cannot work out for itself. `checkIn()` asks
+ * `todayRow()`, which is purely local, so a phone that has just been installed
+ * finds nothing and concludes the day has not started — then creates a second
+ * check-in for a day the server already holds. Until this existed there was no
+ * channel that could have told it otherwise: attendance is pushed and never
+ * pulled, by the rule that a sync must not overwrite what somebody authored
+ * offline.
+ *
+ * That rule is kept intact on the other side rather than bent here: the
+ * handset FILLS A GAP with this and never overwrites a row it already has, so
+ * a check-in saved four minutes ago in a market with no signal still wins.
+ */
+async function attendanceToday(userId: string, day: string) {
+  const [row] = await db
+    .select({
+      id: mbosAttendanceDays.id,
+      userId: mbosAttendanceDays.userId,
+      day: mbosAttendanceDays.day,
+      checkInAt: mbosAttendanceDays.checkInAt,
+      checkInLat: mbosAttendanceDays.checkInLat,
+      checkInLng: mbosAttendanceDays.checkInLng,
+      checkInAccuracyM: mbosAttendanceDays.checkInAccuracyM,
+      checkOutAt: mbosAttendanceDays.checkOutAt,
+      status: mbosAttendanceDays.status,
+    })
+    .from(mbosAttendanceDays)
+    .where(and(eq(mbosAttendanceDays.userId, userId), eq(mbosAttendanceDays.day, day)))
+    .limit(1);
+  if (!row) return null;
+  return {
+    ...row,
+    checkInAt: row.checkInAt ? row.checkInAt.getTime() : null,
+    checkOutAt: row.checkOutAt ? row.checkOutAt.getTime() : null,
+  };
 }
 
 async function leaveBalances(userId: string, year: number) {

@@ -1,5 +1,5 @@
 import { run, tx } from '../db';
-import type { PullPayload } from './api';
+import { deviceId, type PullPayload } from './api';
 
 /**
  * Applying what came down.
@@ -39,6 +39,7 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertTravelModes(pull.travelModes, now);
     touched += await replaceExpensePolicy(pull.expensePolicy, now);
     touched += await applyApprovals(pull.approvals);
+    touched += await restoreAttendance(pull.attendanceToday);
     touched += await applyDeletions(pull.deletions);
   });
 
@@ -70,6 +71,66 @@ async function applyTranscripts(
     }
   }
   return rows.length;
+}
+
+/**
+ * Today's attendance, for a handset that has none.
+ *
+ * THE ONE EXCEPTION TO THE RULE AT THE TOP OF THIS FILE, and it is written as
+ * an exception rather than a relaxation: `INSERT OR IGNORE` against the unique
+ * index on `(userId, day)`, so it can only ever fill a GAP. A row already here
+ * — including a check-in saved four minutes ago in a market with no signal —
+ * is never touched, which is the whole of what "a pull never overwrites owned
+ * data" was protecting.
+ *
+ * It exists because a fresh install was blind. `checkIn()` asks `todayRow()`,
+ * which is purely local, so a handset that has just been installed finds
+ * nothing and concludes the day has not started — then files a SECOND check-in
+ * for a day the server already holds, under a new id. The server merged it
+ * onto the existing row and, having no `resumedAt` to go on, left the morning's
+ * `check_out_at` in place: checked in on the phone, checked out on every
+ * screen, and every position refused because the day the server could see was
+ * closed. Silent on both ends. Losing the local database is simply what
+ * installing a build does, so this met the first person to take one.
+ *
+ * The server-side upsert now also reopens a day on a check-in later than the
+ * recorded check-out, which repairs it after the fact. This is the half that
+ * stops it happening: with today's row present, `checkIn()` takes the resume
+ * path it was always meant to take.
+ *
+ * Sent by bootstrap only. A delta pull omits it and this is a no-op.
+ */
+async function restoreAttendance(row: PullPayload['attendanceToday']): Promise<number> {
+  if (!row?.id || !row.userId || !row.day) return 0;
+
+  /* The server keeps two marks; the handset keeps a list of sessions. One
+     session is the honest translation of one pair — still open where there is
+     no check-out, closed where there is. */
+  const sessions = row.checkInAt
+    ? [{ inAt: row.checkInAt, outAt: row.checkOutAt ?? null }]
+    : [];
+
+  await run(
+    `INSERT OR IGNORE INTO attendance_days
+       (id, userId, day, checkInAt, checkInLat, checkInLng, checkInAccuracyM,
+        checkOutAt, status, sessions, clientCreatedAt, deviceId, syncState)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'synced')`,
+    [
+      row.id,
+      row.userId,
+      row.day,
+      row.checkInAt,
+      row.checkInLat,
+      row.checkInLng,
+      row.checkInAccuracyM,
+      row.checkOutAt,
+      row.status,
+      JSON.stringify(sessions),
+      row.checkInAt ?? Date.now(),
+      await deviceId(),
+    ],
+  );
+  return 1;
 }
 
 /* ------------------------------------------------------------- primitives */
