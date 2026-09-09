@@ -41,7 +41,7 @@ import {
   type OrderLine,
 } from "@/db/schema";
 import { MBOS_EVENT, writeTimelineEvent, type TimelineWriter } from "../timeline";
-import { APP_TIMEZONE } from "../business-date";
+import { APP_TIMEZONE, calendarDate } from "../business-date";
 import { qualifyLead } from "../services/lead-qualification-service";
 import { convertLeadOnFirstOrder } from "../services/lead-conversion-service";
 import { scopedToUsers} from "../access-control";
@@ -2311,7 +2311,15 @@ async function afterSampleReceived(
   if (!assignee) return;
 
   const days = config["mbos.samples.reviewAfterDays"];
-  const due = new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+  /*
+   * `calendarDate`, not `toISOString().slice(0, 10)`.
+   *
+   * That spelling answers in UTC, so a review scheduled at 2am IST lands on the
+   * previous day — and unlike the SQL version of this mistake it is wrong on
+   * every machine equally, so it never looks like a timezone bug. The §11 grep
+   * test caught this one.
+   */
+  const due = calendarDate(new Date(Date.now() + days * 86_400_000));
 
   await db
     .insert(mbosTasks)

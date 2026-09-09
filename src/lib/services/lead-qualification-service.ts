@@ -8,7 +8,7 @@ import {
   users,
 } from "@/db/schema";
 import { getConfig } from "../config/store";
-import { nextWorkingDay, type BusinessDate } from "../business-date";
+import { calendarDate, nextWorkingDay, type BusinessDate } from "../business-date";
 import { managerNameByEmployeeName } from "./org-service";
 import { MBOS_EVENT, writeTimelineEvent } from "../timeline";
 import { notifyUser } from "../notify";
@@ -216,7 +216,15 @@ async function raiseValidationTask(
     .findMany()
     .catch(() => [] as { onDate: string }[]);
 
-  const today = new Date().toISOString().slice(0, 10) as BusinessDate;
+  /*
+   * `calendarDate`, not `toISOString().slice(0, 10)`.
+   *
+   * That spelling answers in UTC, so a lead qualified at 2am IST would compute
+   * its "next working day" from yesterday — and it is wrong on every machine
+   * equally, which is exactly why it never reads as a timezone bug. The §11
+   * grep test caught it, which is what that test is for.
+   */
+  const today = calendarDate(new Date()) as BusinessDate;
   let due = nextWorkingDay(today, {
     timezone: config["workingDay.timezone"],
     dayBoundaryHour: config["workingDay.dayBoundaryHour"],
