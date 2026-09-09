@@ -18,7 +18,7 @@ import {
   reminders,
 } from "@/db/schema";
 import { OUTCOMES_BY_TYPE, type InteractionTypeKey, type OutcomeKey } from "@/db/catalogue";
-import { assignedUserId, resolveScope, assertCustomerInScope } from "../access-control";
+import { resolveScope, assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
 import {
   recomputeBuyingCycle,
