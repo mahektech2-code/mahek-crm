@@ -964,6 +964,166 @@ export const MIGRATIONS: string[][] = [
       WHERE rowid NOT IN (SELECT MIN(rowid) FROM positions GROUP BY at, lat, lng);`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_fix ON positions(at, lat, lng);`,
   ],
+
+  /* ---- v13 · the lead funnel ------------------------------------------- */
+  [
+    /*
+     * THE LADDER, ON THE PHONE.
+     *
+     * A lead used to be six words in one column. It is now a rung on one of
+     * three ladders, eight mandatory answers, a checklist of twelve or thirty,
+     * a next action nobody may leave empty, and a decision about whether the
+     * shop is worth pursuing at all — and every one of those has to be
+     * answerable standing outside the shop with no signal, which is why they
+     * are columns here rather than questions asked of a server.
+     *
+     * `funnelStage` is a SECOND column beside `stage` rather than a
+     * replacement for it. `stage` holds this app's own six words, which the
+     * filter chips select on, the badge colours key off and `leadAlert` reads;
+     * `funnelStage` holds the specification's rung. Overwriting `stage` with
+     * `sample_review` would put a lead on no chip at all — findable nowhere,
+     * which is worse than filed a rung early. They are kept in step by
+     * `bandOf()`, in one place, so the two can never disagree about one lead.
+     */
+    `ALTER TABLE leads ADD COLUMN salesType TEXT;`,
+    `ALTER TABLE leads ADD COLUMN funnelStage TEXT;`,
+    `ALTER TABLE leads ADD COLUMN stageSince TEXT;`,
+
+    /* §6 — the eight a Suspect owes before it may be a Prospect. Columns
+       rather than checklist ticks, because the gate reads real values: a tick
+       beside an empty field is exactly what the gate engine exists to stop. */
+    `ALTER TABLE leads ADD COLUMN customerType TEXT;`,
+    `ALTER TABLE leads ADD COLUMN monthlyLitres INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN competitor TEXT;`,
+    `ALTER TABLE leads ADD COLUMN requiredProductId TEXT;`,
+    `ALTER TABLE leads ADD COLUMN requiredProductName TEXT;`,
+    `ALTER TABLE leads ADD COLUMN contactPerson TEXT;`,
+    `ALTER TABLE leads ADD COLUMN decisionMaker TEXT;`,
+    `ALTER TABLE leads ADD COLUMN creditDaysWanted INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN application TEXT;`,
+    `ALTER TABLE leads ADD COLUMN gstin TEXT;`,
+    `ALTER TABLE leads ADD COLUMN prospectReasonCode TEXT;`,
+
+    /* §9 §11 — the checklist's answers, keyed by condition id. One JSON
+       column rather than fifty-five, for the same reason the server keeps one
+       jsonb: the only reader is the gate engine, which takes the whole set. */
+    `ALTER TABLE leads ADD COLUMN qualification TEXT NOT NULL DEFAULT '{}';`,
+    `ALTER TABLE leads ADD COLUMN distributorProfile TEXT NOT NULL DEFAULT '{}';`,
+
+    /* §24 — an active lead may not sit with nothing owed by anybody. A date
+       alone is what this had, and a date alone is how a lead sits for six
+       weeks with everybody assuming somebody else has it. */
+    `ALTER TABLE leads ADD COLUMN nextAction TEXT;`,
+    `ALTER TABLE leads ADD COLUMN nextActionDate TEXT;`,
+    `ALTER TABLE leads ADD COLUMN nextActionOwnerId TEXT;`,
+    `ALTER TABLE leads ADD COLUMN nextActionOutcome TEXT;`,
+
+    /* §4 — the answer, not the count. How many visits a suspect has had is
+       counted from `visits`, because a column would drift the first time one
+       arrived late from another handset. */
+    `ALTER TABLE leads ADD COLUMN suspectDecidedAt INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN suspectIsProspect INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN suspectReasonCode TEXT;`,
+
+    /* §8 — the manager's verification call, which is his and never the
+       salesman's. Held here only so the gate can read it offline. */
+    `ALTER TABLE leads ADD COLUMN verifiedAt INTEGER;`,
+
+    /* §23 — who bills this shop, and who at the distributor calls on it.
+       `distributorSalesmanName` is the seat where the person holding it has no
+       MahekOne login, exactly as `sales_manager_person_name` is in the CRM. */
+    `ALTER TABLE leads ADD COLUMN thirdParty INTEGER NOT NULL DEFAULT 0;`,
+    `ALTER TABLE leads ADD COLUMN distributorCustomerId TEXT;`,
+    `ALTER TABLE leads ADD COLUMN distributorName TEXT;`,
+    `ALTER TABLE leads ADD COLUMN distributorSalesmanId TEXT;`,
+    `ALTER TABLE leads ADD COLUMN distributorSalesmanName TEXT;`,
+
+    /* §18 — what the customer said when somebody asked for the order. */
+    `ALTER TABLE leads ADD COLUMN expectedOrderDate TEXT;`,
+    `ALTER TABLE leads ADD COLUMN expectedOrderValuePaise INTEGER;`,
+
+    /* §26 — the free-text box becomes a code. "Good potential" was the answer
+       to every open question ever asked, and it can be counted by nobody. */
+    `ALTER TABLE leads ADD COLUMN lostReasonCode TEXT;`,
+
+    /*
+     * §25 — a lead's history, which was one string.
+     *
+     * `lead_notes` is a JSON list of sentences and nothing else: it cannot say
+     * that the stage moved, that a sample went out, that the manager verified
+     * the customer, or who did any of it. A timeline is what somebody reads
+     * before ringing a shop they have not been to in a month, and rebuilding
+     * one from a paragraph is not possible. Local, appended, never edited —
+     * the office keeps its own and the two are joined by `leadId`.
+     */
+    `CREATE TABLE IF NOT EXISTS lead_events (
+      id TEXT PRIMARY KEY,
+      leadId TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      detail TEXT,
+      fromStage TEXT,
+      toStage TEXT,
+      actor TEXT,
+      occurredAt INTEGER NOT NULL
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_lead_events_lead ON lead_events(leadId, occurredAt DESC);`,
+
+    /*
+     * §15 — the sample's own lifecycle, which the wire did not carry.
+     *
+     * `state` already existed as one derived word; these are the dates behind
+     * it, so every step has a name and a time against it rather than being
+     * inferred from whichever timestamp happened to be set. `localSampleState`
+     * goes on deriving the word for a sample the office sent down; a sample
+     * this handset moved sets it directly.
+     */
+    `ALTER TABLE samples ADD COLUMN leadId TEXT;`,
+    `ALTER TABLE samples ADD COLUMN reasonCode TEXT;`,
+    `ALTER TABLE samples ADD COLUMN application TEXT;`,
+    `ALTER TABLE samples ADD COLUMN approvedAt INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN dispatchedAt INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN courierName TEXT;`,
+    `ALTER TABLE samples ADD COLUMN courierDocket TEXT;`,
+    `ALTER TABLE samples ADD COLUMN expectedDeliveryDate TEXT;`,
+    `ALTER TABLE samples ADD COLUMN receivedConfirmedAt INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN trialCompletedAt INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN reviewedAt INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN cancelledAt INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN cancelReason TEXT;`,
+
+    /*
+     * §16 — the seven-part review, as a row rather than a paragraph.
+     *
+     * `feedbackNotes` on the sample is one free-text field, and what a trial
+     * is asked is seven separate questions — six named and one open. Folded
+     * into one string, "quality fine, dries slow, dearer than Asian" cannot be
+     * read back as three answers, and the six named ones are exactly what the
+     * negotiation call needs one at a time.
+     *
+     * One row per sample, keyed on the sample, because a second review of the
+     * same trial is a correction of the first and not a second opinion.
+     */
+    `CREATE TABLE IF NOT EXISTS sample_feedback (
+      id TEXT PRIMARY KEY,
+      sampleId TEXT NOT NULL UNIQUE,
+      customerId TEXT NOT NULL,
+      quality TEXT,
+      performance TEXT,
+      application TEXT,
+      drying TEXT,
+      competitorComparison TEXT,
+      priceFeedback TEXT,
+      otherComments TEXT,
+      trialOutcome TEXT,
+      photoId TEXT,
+      recordedAt INTEGER NOT NULL,
+      clientCreatedAt INTEGER NOT NULL,
+      deviceId TEXT NOT NULL,
+      syncState TEXT NOT NULL DEFAULT 'local',
+      syncMessage TEXT
+    );`,
+  ],
 ];
 
 /**
@@ -986,6 +1146,11 @@ export const OWNED_TABLES = [
   'visits', 'orders', 'order_lines', 'payments', 'attendance_days', 'tasks',
   'leads', 'samples', 'complaints', 'expenses', 'leave_requests', 'tours',
   'competitor_records', 'approvals',
+  /* The funnel's two. A lead's timeline is written here as it happens and the
+     office keeps its own — a sync never deletes a line of it, because what a
+     salesman recorded about a shop is the record even where the office's own
+     copy disagrees about a stage. */
+  'lead_events', 'sample_feedback',
   /* The day and its legs are his work, not the office's — a pull must never
      delete a leg he recorded in a market and has not sent yet. */
   'expense_days', 'travel_legs',

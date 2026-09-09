@@ -7,6 +7,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import {
   auditLog,
+  customerAmChanges,
   customers,
   leadManagerCalls,
   mbosDocuments,
@@ -1061,6 +1062,193 @@ function zodErr(error: z.ZodError): ReturnType<typeof err> {
     message: i.message,
   }));
   return err(fieldErrors[0]?.message ?? "That is not valid.", "validation", fieldErrors);
+}
+
+/* ---------------------------------------------------------------------------
+ * §22 — THE HANDOVER, AND WHY IT IS ACCOUNTS' AND NOT THE MANAGER'S
+ *
+ * A promotion already releases `lead_manager_id`: the lead manager worked a
+ * LEAD — the verification call, the nurture sequence, the files — and a customer
+ * is worked by whoever owns the account, which is a different job with a
+ * different worklist. What `advanceLeadStage` deliberately does NOT do is name
+ * the new owner, and that is a permission boundary rather than an omission.
+ *
+ * Whose book an account sits in decides who is credited for its orders and
+ * whose targets it counts toward, so a manager naming the relationship owner is
+ * a manager moving numbers between their own people — including themselves.
+ * That is the conflict `customer.reassign` exists to prevent, and AGENTS.md is
+ * explicit that it is accounts' and admin's and not a manager's.
+ *
+ * So the act is offered on the screen where it makes sense, refused by the
+ * capability rather than by being absent, and does both halves in ONE
+ * transaction: the seat moves, the lead manager is released, the reason is
+ * recorded in `customer_am_changes` with the names ON the row so the history
+ * stays readable after somebody leaves, and both people are told — a book that
+ * grows overnight with no message reads as a bug in the queue.
+ * ------------------------------------------------------------------------- */
+
+const handoverSchema = z.object({
+  customerId: z.string().min(1),
+  ownerId: z.string().min(1),
+  reasonCode: z.string().max(80).optional(),
+  note: z.string().max(500).optional(),
+});
+
+export async function handOverToRelationshipOwner(
+  raw: z.input<typeof handoverSchema>,
+): Promise<Result<null>> {
+  try {
+    const parsed = handoverSchema.safeParse(raw);
+    if (!parsed.success) return zodErr(parsed.error);
+    const { customerId, ownerId, reasonCode, note } = parsed.data;
+
+    /* Refused here, not hidden on the screen — a server action is a URL. */
+    const ctx = await requireCapability("customer.reassign");
+
+    const lead = await leadRow(customerId);
+    if (!lead) return err("That account no longer exists.", "not_found");
+    await assertCustomerInScope({
+      kind: lead.kind,
+      ownerId: lead.ownerId,
+      salesAmId: lead.salesAmId,
+      backOfficeAmId: lead.backOfficeAmId,
+    });
+
+    /*
+     * Only an account that is actually on the book. Handing over a lead nobody
+     * has sold to yet would name a relationship owner for a relationship that
+     * does not exist, and would release the lead manager who is still the only
+     * person working it.
+     */
+    if (lead.kind !== "customer") {
+      return err(
+        `${lead.name} is still a lead. The handover happens when they order — there is no relationship to hand over yet.`,
+        "validation",
+      );
+    }
+
+    const [owner] = await db
+      .select({ id: users.id, name: users.name, active: users.active })
+      .from(users)
+      .where(eq(users.id, ownerId))
+      .limit(1);
+    if (!owner || !owner.active) {
+      return err("That person cannot take an account on.", "validation", [
+        { field: "ownerId", message: "Pick somebody with an active MahekOne account." },
+      ]);
+    }
+
+    const previousOwnerId = lead.salesAmId ?? null;
+    const previousManagerId = lead.leadManagerId ?? null;
+    if (previousOwnerId === owner.id && !previousManagerId) {
+      /* Nothing to do, and notifying nobody is the right answer — a
+         reassignment that changes nothing must not send two people a message. */
+      return ok(null, `${owner.name} already holds ${lead.name}.`);
+    }
+
+    const [previous] = previousOwnerId
+      ? await db
+          .select({ name: users.name })
+          .from(users)
+          .where(eq(users.id, previousOwnerId))
+          .limit(1)
+      : [{ name: null as string | null }];
+
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await tx
+        .update(customers)
+        .set({
+          salesAmId: owner.id,
+          /*
+           * The mark that holds the sheet off a decision somebody made. Without
+           * it `recomputeSalesPeople` rewrites `sales_person_name` from the
+           * party tab overnight and the account moves for scope while every
+           * screen goes on showing the old person — which nobody reports as a
+           * sync bug, they report that reassignment does not work.
+           */
+          amDecidedAt: now,
+          salesPersonName: owner.name,
+          /* §22 — the lead manager seat goes with it. */
+          leadManagerId: null,
+          leadManagerAssignedAt: null,
+          updatedAt: now,
+          updatedById: ctx.user.id,
+        })
+        .where(eq(customers.id, customerId));
+
+      await tx.insert(customerAmChanges).values({
+        id: `amc_${randomUUID().slice(0, 12)}`,
+        customerId,
+        role: "sales",
+        fromUserId: previousOwnerId,
+        toUserId: owner.id,
+        /* Names ON the row, so the history stays readable after the person
+           leaves and their `users` row goes with them. */
+        fromName: previous?.name ?? null,
+        toName: owner.name,
+        reasonCode: reasonCode ?? "lead_won",
+        note: note ?? null,
+        changedById: ctx.user.id,
+        changedAt: now,
+      });
+
+      await tx.insert(auditLog).values({
+        id: `aud_${randomUUID().slice(0, 12)}`,
+        actorId: ctx.user.id,
+        actorRole: ctx.authorisedBy,
+        action: "lead.handover",
+        entityType: "customer",
+        entityId: customerId,
+        beforeState: { salesAmId: previousOwnerId, leadManagerId: previousManagerId },
+        afterState: { salesAmId: owner.id, leadManagerId: null, reasonCode: reasonCode ?? "lead_won" },
+      });
+
+      /* Inside the transaction, like every other timeline write in this file:
+         a handover recorded with no line on the customer's own history is a
+         book that changed hands with nothing on the record saying so. */
+      await writeTimelineEvent(tx, {
+        customerId,
+        eventType: "lead_handover",
+        sourceApp: "crm",
+        sourceRecordId: customerId,
+        occurredAt: now,
+        actorUserId: ctx.user.id,
+        summary: `Handed over to ${owner.name} as the relationship owner`,
+      });
+    });
+
+    /* Both sides, and the new owner especially: work has moved onto their book
+       without them asking, and the first they would otherwise know is a list
+       that grew overnight. One notification per person, never one per account. */
+    const told = [
+      { userId: owner.id, body: `${lead.name} is yours now — they placed their first order and the lead is closed.` },
+      ...(previousOwnerId && previousOwnerId !== owner.id
+        ? [{ userId: previousOwnerId, body: `${lead.name} has moved to ${owner.name}.` }]
+        : []),
+      ...(previousManagerId && previousManagerId !== owner.id && previousManagerId !== previousOwnerId
+        ? [{ userId: previousManagerId, body: `${lead.name} is on the book, so the lead manager seat is released. ${owner.name} holds the account.` }]
+        : []),
+    ];
+    if (told.length) {
+      await db.insert(notifications).values(
+        told.map((t) => ({
+          id: `ntf_${randomUUID().slice(0, 12)}`,
+          userId: t.userId,
+          kind: "lead_handover" as const,
+          title: "An account changed hands",
+          body: t.body,
+          href: `/crm/customers/${customerId}`,
+        })),
+      );
+    }
+
+    revalidatePath(`/sales/leads/${customerId}`);
+    revalidatePath("/sales/leads");
+    return ok(null, `${lead.name} is ${owner.name}'s now, and both of them have been told.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
 }
 
 /*

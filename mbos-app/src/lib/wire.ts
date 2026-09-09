@@ -1,4 +1,6 @@
 import { isoDate } from './format';
+import { bandOf, isOnTheBookAt } from '../engines/funnel/lead-ladder';
+import type { LeadSalesType, LeadStage } from '../engines/funnel/lead-labels';
 
 /**
  * The words this app shows, in the words MahekOne stores — PROTOCOL.md §4.1.
@@ -103,6 +105,79 @@ const LOCAL_STAGES: Record<string, string> = {
 
 export function localStage(stage: string | undefined): string {
   return LOCAL_STAGES[(stage ?? 'new').trim().toLowerCase()] ?? 'New';
+}
+
+/* --------------------------------------------------- the funnel's rungs */
+
+/**
+ * The specification's twenty-three rungs, going out.
+ *
+ * A funnel stage is stored as its CODE on both ends — `sample_review` is
+ * `sample_review` here and there — so this is a validation rather than a
+ * translation, and that is exactly why it has to exist. `LeadStage` is a
+ * TypeScript union and the column is TEXT; a rung that is not one of the
+ * twenty-three would be refused for the whole lead, taking the note, the next
+ * action and the qualification answers with it. Undefined leaves the stage
+ * where it was, which is the smaller of the two wrong answers — the same rule
+ * `wireStage` follows above.
+ *
+ * TODO(integration): `leadSchema.stage` in `src/lib/actions/mbos.ts` is still
+ * the six legacy values, so every rung below outside those six is currently
+ * rejected by zod. Workstream A widens it to `LeadStage` — the column
+ * `customers.lead_stage` is already `mbos_lead_stage` and holds all of them.
+ */
+const FUNNEL_STAGES = new Set<string>([
+  'new', 'contacted', 'qualified', 'negotiation', 'won', 'lost',
+  'suspect', 'prospect', 'qualification', 'sample_trial', 'sample_received',
+  'sample_review', 'first_order', 'delivery', 'payment', 'second_order',
+  'customer', 'management_review', 'commercial_discussion',
+  'distributor_approval', 'distributor_agreement', 'initial_stock_order',
+  'active_distributor',
+]);
+
+export function wireFunnelStage(stage: string | null | undefined): string | undefined {
+  const s = (stage ?? '').trim().toLowerCase();
+  return FUNNEL_STAGES.has(s) ? s : undefined;
+}
+
+export function localFunnelStage(stage: string | null | undefined): LeadStage | null {
+  const s = wireFunnelStage(stage);
+  return s ? (s as LeadStage) : null;
+}
+
+/**
+ * The rung, said in the six words this app's filter chips select on.
+ *
+ * The two columns are kept in step HERE and nowhere else. `funnelStage` is the
+ * truth about where a lead stands; `stage` is what the list draws and filters,
+ * and a lead whose `stage` reads `sample_review` sits on no chip at all — it
+ * exists and cannot be found, which is worse than being filed a rung early.
+ *
+ * `bandOf` is the same four-band reading the console's funnel bar and the
+ * owner's cohort take, so a lead is in the same band on a phone and on a
+ * report. The terminal rungs are outside every band by design, and they are
+ * the two words this app already had for them.
+ */
+export function legacyStageFor(
+  funnelStage: string | null | undefined,
+  salesType: LeadSalesType | null | undefined,
+): string {
+  const s = localFunnelStage(funnelStage);
+  if (!s) return 'New';
+  if (s === 'lost') return 'Lost';
+  /* On the book is `Converted` here, and `isOnTheBookAt` is asked rather than
+     the band — a lead at `first_order` is in the funnel's Negotiation band and
+     is plainly an account we have sold to, and this app's own word for that
+     has always been Converted. The two questions have different answers on
+     five rungs and the band is the wrong one to ask on a phone. */
+  if (isOnTheBookAt(s, salesType)) return 'Converted';
+  switch (bandOf(s)) {
+    case 'new': return 'New';
+    case 'contacted': return 'Contacted';
+    case 'qualified': return 'Qualified';
+    case 'negotiation': return 'Negotiation';
+    default: return 'New';
+  }
 }
 
 /**

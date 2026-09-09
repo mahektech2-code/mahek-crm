@@ -8,6 +8,7 @@ import {
   bills,
   complaints,
   customerDistributors,
+  distributorProfiles,
   customers,
   syncConflicts,
   mbosApprovals,
@@ -26,6 +27,7 @@ import {
   mbosLeaveRequests,
   mbosTours,
   mbosSamples,
+  sampleFeedback,
   mbosSyncReceipts,
   mbosTasks,
   mbosVisits,
@@ -1714,6 +1716,60 @@ async function handleComplaint(
 
 /* ----------------------------------------------------------------- samples */
 
+/*
+ * A MARK ON AN EXISTING SAMPLE IS NOT A HANDOVER, and parsing both with this
+ * schema rejected every one of them.
+ *
+ * `handleSample` ran the full non-partial schema over every `sample` item, so a
+ * courier docket — which carries a sample id and a docket and nothing else —
+ * failed on a missing `customerId` and came back to the salesman as though the
+ * docket itself were invalid. Sending the customer id along to get past it was
+ * the workaround the handset reached for, and it made the real bug worse: the
+ * insert is `onConflictDoNothing`, so each mark wrote another "Sample handed to
+ * X" line onto the customer's timeline.
+ *
+ * `sampleUpdateSchema` is the update branch, and `handleSample` routes on
+ * `item.op` the way `handleLead` already does.
+ */
+const sampleUpdateSchema = z.object({
+  state: z
+    .enum([
+      "requested",
+      "approved",
+      "rejected",
+      "dispatched",
+      "received",
+      "trial_done",
+      "reviewed",
+      "cancelled",
+    ])
+    .nullish(),
+  reasonCode: z.string().max(80).nullish(),
+  application: z.string().max(500).nullish(),
+  courierName: z.string().max(200).nullish(),
+  courierDocket: z.string().max(120).nullish(),
+  expectedDeliveryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  receivedConfirmedAt: z.number().nullish(),
+  trialCompletedAt: z.number().nullish(),
+  deliveredAt: z.number().nullish(),
+  deliveryPhotoId: z.string().nullish(),
+  followUpDate: z.string().nullish(),
+  feedbackNotes: z.string().max(2000).nullish(),
+  trialOutcome: z.enum(["pending", "approved", "rejected", "more_testing"]).nullish(),
+  /* §16 — the seven, where the review was taken on the phone. */
+  feedback: z
+    .object({
+      quality: z.string().max(1000).nullish(),
+      performance: z.string().max(1000).nullish(),
+      application: z.string().max(1000).nullish(),
+      drying: z.string().max(1000).nullish(),
+      competitorComparison: z.string().max(1000).nullish(),
+      priceFeedback: z.string().max(1000).nullish(),
+      otherComments: z.string().max(1000).nullish(),
+    })
+    .nullish(),
+});
+
 const sampleSchema = z.object({
   customerId: z.string(),
   productId: z.string().nullish(),
@@ -1726,7 +1782,95 @@ const sampleSchema = z.object({
   visitId: z.string().nullish(),
 });
 
+/**
+ * A mark on a sample that already exists — a docket, a delivery, a review.
+ *
+ * Split from the handover below because the two carry different payloads and
+ * were being parsed by one schema. A docket arrives with a sample id and a
+ * courier and no `customerId`, which the non-partial `sampleSchema` refused —
+ * and the salesman was told his docket was invalid. Working around it by
+ * sending the customer id along made it worse rather than better: the handover
+ * path's insert is `onConflictDoNothing`, so it did not fail, it quietly wrote
+ * another "Sample handed to X" line onto the customer's timeline for every mark.
+ *
+ * The state machine itself is `lib/actions/lead-samples.ts` and is not
+ * duplicated here. This writes the columns the salesman established in the
+ * field and lets the office's own transitions own the approvals.
+ */
+async function handleSampleUpdate(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const parsed = sampleUpdateSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const [existing] = await db
+    .select({ id: mbosSamples.id, customerId: mbosSamples.customerId })
+    .from(mbosSamples)
+    .where(eq(mbosSamples.id, item.entityId))
+    .limit(1);
+
+  /* A retry rather than a rejection: the handover is a separate outbox item and
+     may simply not have drained yet. The same answer `handleLeadUpdate` gives
+     for a lead that has not reached the office. */
+  if (!existing) {
+    return {
+      kind: "retry",
+      message:
+        "That sample has not reached the office yet, so there is nothing to mark. It will be tried again once it has.",
+    };
+  }
+
+  const scoped = await scopedCustomer(principal, existing.customerId);
+  if (!scoped.ok) return { kind: "rejected", value: scoped.value };
+
+  const changed: Partial<typeof mbosSamples.$inferInsert> = { updatedAt: new Date() };
+  if (p.state != null) changed.state = p.state;
+  if (p.reasonCode != null) changed.reasonCode = p.reasonCode;
+  if (p.application != null) changed.application = p.application;
+  if (p.courierName != null) changed.courierName = p.courierName;
+  if (p.courierDocket != null) changed.courierDocket = p.courierDocket;
+  if (p.expectedDeliveryDate != null) changed.expectedDeliveryDate = p.expectedDeliveryDate;
+  if (p.receivedConfirmedAt != null) changed.receivedConfirmedAt = new Date(p.receivedConfirmedAt);
+  if (p.trialCompletedAt != null) changed.trialCompletedAt = new Date(p.trialCompletedAt);
+  if (p.deliveredAt != null) changed.deliveredAt = new Date(p.deliveredAt);
+  if (p.deliveryPhotoId != null) changed.deliveryPhotoId = p.deliveryPhotoId;
+  if (p.followUpDate != null) changed.followUpDate = p.followUpDate;
+  if (p.feedbackNotes != null) changed.feedbackNotes = p.feedbackNotes;
+  if (p.trialOutcome != null) changed.trialOutcome = p.trialOutcome;
+
+  await db.update(mbosSamples).set(changed).where(eq(mbosSamples.id, item.entityId));
+
+  /* §16 — one review per sample. A second opinion is a second sample, which is
+     what the unique index says, so a re-sent item updates rather than duplicates. */
+  if (p.feedback) {
+    const f = Object.fromEntries(
+      Object.entries(p.feedback).filter(([, v]) => v != null),
+    );
+    if (Object.keys(f).length) {
+      await db
+        .insert(sampleFeedback)
+        .values({
+          id: `sfb_${randomUUID().slice(0, 12)}`,
+          sampleId: item.entityId,
+          customerId: existing.customerId,
+          ...f,
+          recordedById: principal.user.id,
+        })
+        .onConflictDoUpdate({
+          target: sampleFeedback.sampleId,
+          set: { ...f, recordedAt: new Date(), recordedById: principal.user.id },
+        });
+    }
+  }
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
 async function handleSample(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  if (item.op === "update") return handleSampleUpdate(principal, item);
+
   const parsed = sampleSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;
@@ -1866,6 +2010,42 @@ const leadSchema = z.object({
   gstin: z.string().max(20).nullish(),
   /* §9 §11 — the checklist, keyed by condition id. Merged, never replaced. */
   qualification: z.record(z.string(), z.union([z.boolean(), z.string()])).nullish(),
+  /*
+   * §11 — the thirty a distributor answers, as the handset holds them.
+   *
+   * A field the handset SENDS and the schema does not name is stripped by
+   * `safeParse` without a word, which is the quietest failure on this wire: the
+   * salesman fills four screens standing in a godown, the sync says `accepted`,
+   * and the office has nothing. Named here so it lands, and merged into
+   * `distributor_profiles` rather than written over it — the office fills the
+   * commercial half of that row and must not lose it to a phone that has never
+   * seen those columns.
+   */
+  distributorProfile: z.record(z.string(), z.unknown()).nullish(),
+  /*
+   * §23 — the chain, named on the lead rather than reconstructed at conversion.
+   *
+   * `thirdParty` is the mark; the other two are who invoices the shop and which
+   * of their own people covers it. AGENTS.md is explicit that no IMPORT may set
+   * the mark — this is not an import, it is a salesman standing in the shop
+   * saying who delivers to it, which is the one place the answer is actually
+   * known.
+   */
+  thirdParty: z.boolean().nullish(),
+  distributorCustomerId: z.string().nullish(),
+  distributorSalesmanId: z.string().nullish(),
+  /*
+   * §18 — what the customer said when asked for the first order.
+   *
+   * LOAD-BEARING, and the reason this omission mattered more than the other
+   * three: `gateTo(..., "first_order")` refuses without an expected date. With
+   * the field stripped on the way in, a salesman could pass that rung on his own
+   * phone — his copy of the engine had the date — and be refused at the office,
+   * with the two halves of one engine disagreeing about one lead. An offline
+   * gate is only worth having if the same answer survives the wire.
+   */
+  expectedOrderDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  expectedOrderValuePaise: z.number().int().nonnegative().nullish(),
   /* §24 — what happens next, on what day, and who is doing it. */
   nextAction: z
     .object({
@@ -2014,6 +2194,20 @@ async function handleLeadUpdate(
   if (p.suspectDecidedAt != null) {
     changed.leadSuspectDecidedAt = new Date(p.suspectDecidedAt);
   }
+  /* §18 — and this one is why the omission mattered. The gate in front of
+     `first_order` reads it, so with the field stripped the salesman's own copy
+     of the engine said yes and the office said no about the same lead. */
+  if (p.expectedOrderDate != null) changed.leadExpectedOrderDate = p.expectedOrderDate;
+  if (p.expectedOrderValuePaise != null) {
+    changed.leadExpectedOrderValuePaise = p.expectedOrderValuePaise;
+  }
+  /* §23 — the mark, from the one place the answer is actually known. The
+     no-import rule is about a spreadsheet, not about a salesman standing in the
+     shop; the distributor behind it is written below, after the row lands. */
+  if (p.thirdParty != null) changed.thirdParty = p.thirdParty;
+  if (p.distributorSalesmanId != null) {
+    changed.leadDistributorSalesmanId = p.distributorSalesmanId;
+  }
   /*
    * ONE LEAD, so winning one is this row becoming a customer rather than a
    * second row being written and pointed at. The handset still sends
@@ -2028,6 +2222,68 @@ async function handleLeadUpdate(
   }
 
   await db.update(customers).set(changed).where(eq(customers.id, item.entityId));
+
+  /*
+   * §11 — the thirty answers MERGE into the profile rather than replace it.
+   *
+   * The office fills the commercial half of that row — the discount, the credit
+   * limit, the exclusivity — and a handset that has never seen those columns
+   * would null every one of them by sending the twenty-six it does know. That
+   * is `upsertTasks` in different clothes: a typed column list wrote `undefined`
+   * over a completed task's note because the field was read and never sent.
+   * Only the keys actually present are written.
+   */
+  if (p.distributorProfile && Object.keys(p.distributorProfile).length) {
+    const patch = Object.fromEntries(
+      Object.entries(p.distributorProfile).filter(([, v]) => v !== undefined),
+    );
+    await db
+      .insert(distributorProfiles)
+      .values({
+        id: `dp_${randomUUID().slice(0, 12)}`,
+        customerId: item.entityId,
+        ...patch,
+        createdById: principal.user.id,
+        updatedById: principal.user.id,
+      })
+      .onConflictDoUpdate({
+        target: distributorProfiles.customerId,
+        set: { ...patch, updatedAt: new Date(), updatedById: principal.user.id },
+      });
+  }
+
+  /*
+   * §23 — who invoices this shop, recorded from the first visit.
+   *
+   * Checked rather than trusted, on exactly the rule the console's own picker
+   * enforces and `handleCustomerCreate` already repeats: a distributor is an
+   * account we invoice, so it must be a real customer and not itself a third
+   * party. A shop pointed at another shop is an arrangement nobody can act on.
+   * A bad id is dropped rather than refusing the whole item — the lead's own
+   * answers are good and the salesman is long gone from the shop.
+   */
+  if (p.distributorCustomerId) {
+    const [biller] = await db
+      .select({ id: customers.id, kind: customers.kind, thirdParty: customers.thirdParty })
+      .from(customers)
+      .where(eq(customers.id, p.distributorCustomerId))
+      .limit(1);
+    if (biller && biller.kind === "customer" && !biller.thirdParty) {
+      await db
+        .insert(customerDistributors)
+        .values({
+          id: `cd_${randomUUID().slice(0, 12)}`,
+          customerId: item.entityId,
+          distributorCustomerId: biller.id,
+          distributorSalesmanId: p.distributorSalesmanId ?? null,
+          isPrimary: true,
+          note: "Named on the lead in the field",
+          createdById: principal.user.id,
+          updatedById: principal.user.id,
+        })
+        .onConflictDoNothing();
+    }
+  }
 
   /*
    * §28 — THE PHONE IS NOT TRUSTED, IT IS MERELY INFORMED.

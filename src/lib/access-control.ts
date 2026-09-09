@@ -234,6 +234,25 @@ export const CAPABILITIES = [
   "lead.work",
   "lead.override",
   "lead.verify",
+  /*
+   * §15 — letting a sample go out, which is stock leaving the godown.
+   *
+   * It exists because a capability that does NOT exist is one everybody holds:
+   * `can()` falls through to `!MANAGER_ONLY.has(...)` for anything it does not
+   * recognise, so an unnamed capability fails OPEN. Without this the salesman
+   * would have been approving the stock he had just asked for.
+   */
+  "sample.approve",
+  /*
+   * §12 — the discount, the credit limit and the exclusivity.
+   *
+   * Separate from `distributor.approve` because they are different acts by
+   * different people: a sales manager NEGOTIATES the terms and management
+   * ALLOWS them, and it is the terms themselves that decide whether management
+   * has to be asked at all. A salesman writing his own customer a 30% discount
+   * would route his own appointment past the person meant to weigh it.
+   */
+  "distributor.terms",
   "distributor.approve",
 ] as const;
 
@@ -288,6 +307,21 @@ const MANAGER_ONLY: ReadonlySet<Capability> = new Set<Capability>([
    * their own work is not a check.
    */
   "lead.verify",
+  /*
+   * §15 — a salesman must not approve the stock he asked for.
+   *
+   * The same shape as `order.approve` being kept off the person carrying the
+   * target: the sample is a cost, the person who wants it out of the door is
+   * the person it helps, and one signature covering both is not a signature.
+   */
+  "sample.approve",
+  /*
+   * §12 — terms are negotiated by a manager and allowed by management.
+   *
+   * A manager may agree them; whether that agreement needs management is
+   * decided by `approvalRouteReason` from the numbers, not by who typed them.
+   */
+  "distributor.terms",
 ]);
 
 /**

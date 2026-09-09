@@ -45,6 +45,59 @@ export type Lead = {
   lastActivityDate: string | null;
   clientCreatedAt: number;
   syncState: string;
+
+  /* ---------------------------------------------------------- the funnel
+   *
+   * Every one of these is a column on the row this app already had, so a lead
+   * raised before the funnel existed reads back with them null — and null on
+   * `salesType` is what `ladderFor()` calls the LEGACY ladder, which is the
+   * six rungs this app shipped with. That is the whole reason the funnel could
+   * land without a migration that moves rows: an old lead goes on climbing
+   * exactly what it was climbing.
+   *
+   * `stage` above and `funnelStage` here are kept in step by `legacyStageFor`.
+   * See the v13 migration for why there are two.
+   */
+  salesType: string | null;
+  funnelStage: string | null;
+  stageSince: string | null;
+
+  customerType: string | null;
+  monthlyLitres: number | null;
+  competitor: string | null;
+  requiredProductId: string | null;
+  requiredProductName: string | null;
+  contactPerson: string | null;
+  decisionMaker: string | null;
+  creditDaysWanted: number | null;
+  application: string | null;
+  gstin: string | null;
+  prospectReasonCode: string | null;
+
+  /** JSON, keyed by condition id. Read as a whole by the gate engine. */
+  qualification: string | null;
+  distributorProfile: string | null;
+
+  nextAction: string | null;
+  nextActionDate: string | null;
+  nextActionOwnerId: string | null;
+  nextActionOutcome: string | null;
+
+  suspectDecidedAt: number | null;
+  suspectIsProspect: number | null;
+  suspectReasonCode: string | null;
+
+  verifiedAt: number | null;
+
+  thirdParty: number;
+  distributorCustomerId: string | null;
+  distributorName: string | null;
+  distributorSalesmanId: string | null;
+  distributorSalesmanName: string | null;
+
+  expectedOrderDate: string | null;
+  expectedOrderValuePaise: number | null;
+  lostReasonCode: string | null;
 };
 
 export type LeadNote = { at: number; text: string };
@@ -145,6 +198,17 @@ export async function createLead(args: {
   nextFollowUpDate?: string | null;
   note?: string | null;
   today?: string;
+  /**
+   * §2 — which of the three ladders this lead climbs.
+   *
+   * Asked FIRST on the form, before a name is typed, because it decides what
+   * the rest of the funnel asks: a distributor answers thirty questions and a
+   * shop answers twelve, and finding that out after the fact means going round
+   * again. Optional here and nowhere else — a lead raised by the office, or by
+   * a build of this app older than the funnel, has none, and `ladderFor(null)`
+   * is the six rungs that has always meant.
+   */
+  salesType?: string | null;
 }): Promise<LeadResult<string>> {
   const today = args.today ?? isoDate(new Date());
 
@@ -176,8 +240,12 @@ export async function createLead(args: {
        Every lead a salesman created was refused on all three at once. */
     payloadExtras: {
       companyName: args.company?.trim() || undefined,
-      stage: 'new',
+      /* A lead on a ladder is raised onto its FOOT, which is `suspect` on all
+         three of them; one with no sales type is raised onto `new`, which is
+         the foot of the legacy ladder and what this app has always sent. */
+      stage: args.salesType ? 'suspect' : 'new',
       notes: wireNotes(notes),
+      funnel: args.salesType ? { salesType: args.salesType } : undefined,
     },
     row: {
       ...base,
@@ -188,6 +256,12 @@ export async function createLead(args: {
       source: args.source ?? null,
       estimatedPotentialPaise: args.estimatedPotentialPaise ?? null,
       assigneeId: args.assigneeId ?? null,
+      salesType: args.salesType ?? null,
+      funnelStage: args.salesType ? 'suspect' : null,
+      stageSince: today,
+      /* The six-word column the chips and `leadAlert` read. A suspect is a
+         lead nobody has been to see yet, which is what New has always meant
+         here — `legacyStageFor` is what keeps the two in step from now on. */
       stage: 'New',
       nextFollowUpDate: args.nextFollowUpDate ?? null,
       notes,

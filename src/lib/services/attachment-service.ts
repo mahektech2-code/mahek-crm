@@ -405,6 +405,15 @@ async function customerBehind(
   parentType: string,
   parentId: string,
 ): Promise<string | null> {
+  /*
+   * §12 — the agreement's parent IS the customer, so there is nothing to look
+   * up. Named explicitly rather than left to the fall-through below: that
+   * fall-through goes to `calls`, which is how every attendance selfie came to
+   * answer 404 to the salesman in it — an id looked up among calls, found
+   * nothing, and the read was refused.
+   */
+  if (parentType === "distributor_agreement") return parentId;
+
   const table =
     parentType === "complaint"
       ? complaints

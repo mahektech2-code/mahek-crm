@@ -441,6 +441,22 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
    */
   "mbos_travel_leg",
   /**
+   * §12 — the signed distributor agreement, and its own parent kind for the
+   * usual reason: `canRead` decides who may open a file FROM the parent kind.
+   *
+   * Filed as `mbos_document` it would be read under the document rules, which
+   * are role lists and a customer's scope — a commercial contract handed to
+   * every salesman holding the field app. Left unparented, which is what it was
+   * before this value existed, `sweepOrphans` deletes the bytes within
+   * `attachments.orphanCleanupHours` and marks the row removed: the same
+   * nightly job that quietly destroyed every field photograph for months.
+   *
+   * `parentId` is the CUSTOMER, because the agreement is about the account and
+   * not about the application row — a profile can be superseded and the
+   * contract it produced is still the contract.
+   */
+  "distributor_agreement",
+  /**
    * The policy document as HR issued it. Nothing parses it; it is the source
    * of record, so that the rates typed beside it can always be checked
    * against the thing they were typed from.
