@@ -50,6 +50,8 @@ export type SettingCategory =
   | "mbos-sync"
   /** The handsets themselves: how many a person may be signed in on. */
   | "mbos-devices"
+  /** Reaching a handset that is not open. */
+  | "mbos-push"
   | "mbos-leads"
   | "mbos-tasks"
   /**
@@ -2181,6 +2183,46 @@ export const SETTINGS = [
     max: 3600,
   },
 
+  /* ----------------------------------------------------------------- push */
+  {
+    key: "mbos.push.enabled",
+    type: "boolean",
+    category: "mbos-push",
+    label: "Send push notifications",
+    description:
+      "Off, MahekOne still writes every notification — the bell in the app is unaffected and nothing is lost. What stops is the message arriving on a handset that is closed, which is the only way somebody learns about a declined order or a task before they next open the app. Turn it off to silence the field team's phones without losing the record of what they were told.",
+    default: true,
+  },
+  {
+    key: "mbos.push.expoProjectId",
+    type: "text",
+    category: "mbos-push",
+    label: "Expo project id",
+    description:
+      "The id `getExpoPushTokenAsync` asks Expo's service for a token against — a UUID from `eas init`, or from the project's page on expo.dev. It lives HERE rather than only in `app.json` because a value baked into the bundle is a value that needs a new APK on every handset to change, and the last thing this setting should be is another reason to rebuild. The handset reads it from its synced configuration and falls back to `app.json` where this is blank. Empty means no token can be requested at all, and every screen that mentions push says so rather than pretending.",
+    default: "",
+  },
+  {
+    key: "mbos.push.quietHours",
+    type: "structured",
+    category: "mbos-push",
+    label: "Quiet hours",
+    description:
+      "The window a push waits out, as `[from, to]` in 24-hour local time. A field salesman's phone is his own phone, and an order approval at half past eleven at night is a notification that teaches him to turn them off — which costs the ones that matter. `[22, 7]` is ten at night until seven in the morning; equal values mean no quiet hours at all. The notification row is still written immediately either way: what waits is the buzz, not the record.",
+    default: [22, 7],
+  },
+  {
+    key: "mbos.push.failureRetentionDays",
+    type: "integer",
+    category: "mbos-push",
+    label: "How long a failed push is kept",
+    description:
+      "A delivered push is deleted the moment its receipt confirms it — the notification row is the record and a second copy of it is not worth keeping. A FAILED one is kept this long, because it is the only evidence of why somebody never heard about a decision, and it is the list to read before concluding that push does not work.",
+    default: 30,
+    min: 1,
+    max: 365,
+  },
+
   {
     key: "mbos.orders.numberSeriesPrefix",
     type: "text",
@@ -3045,6 +3087,11 @@ export type Config = {
 
   "mbos.devices.onePerPerson": boolean;
   "mbos.devices.appLockGraceSeconds": number;
+
+  "mbos.push.enabled": boolean;
+  "mbos.push.expoProjectId": string;
+  "mbos.push.quietHours": number[];
+  "mbos.push.failureRetentionDays": number;
 
   "mbos.leads.staleDays": number;
   "mbos.leads.archiveDays": number;

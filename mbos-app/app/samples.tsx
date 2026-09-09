@@ -89,8 +89,22 @@ export default function SamplesScreen() {
         {rows.map((x) => {
           const days = Math.max(0, Math.round((now - x.requestedAt) / 86_400_000));
           const name = names[x.customerId] ?? 'Unknown customer';
+          /*
+           * To the SAMPLE, not to the customer's Samples tab.
+           *
+           * This routed to the customer record, which is the right answer for a
+           * READ — the trial beside the shop's orders and payments. But a sample
+           * now has a lifecycle to record: dispatch, courier, the shop
+           * confirming receipt, the trial starting and finishing, the verdict.
+           * All of that lives on the sample itself, and routing to the customer
+           * would leave every one of those screens unreachable. The customer's
+           * tab is still there for reading.
+           */
           return (
-            <Pressable key={x.id} onPress={() => router.push(`/sample?id=${x.id}&from=samples`)} accessibilityRole="button">
+            <Pressable
+              key={x.id}
+              onPress={() => router.push(`/sample?id=${x.id}&from=samples`)}
+              accessibilityRole="button">
               <Card>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
                   <View style={{ flex: 1, minWidth: 0 }}>

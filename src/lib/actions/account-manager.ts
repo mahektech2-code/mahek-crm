@@ -17,6 +17,7 @@ import { assignedUserId, requireCapability } from "@/lib/access-control";
 import { CRM_EVENT, writeTimelineEvents } from "@/lib/timeline";
 import { getConfig } from "@/lib/config/store";
 import { err, okVoid, fromThrown, type Result } from "@/lib/result";
+import { notifyUsers } from "../notify";
 
 /* ---------------------------------------------------------------------------
  * Changing who an account answers to.
@@ -510,7 +511,7 @@ export async function updateAccountManagers(
         href: "/crm/customers",
       });
     }
-    if (notes.length) await db.insert(notifications).values(notes);
+    if (notes.length) await notifyUsers(notes);
 
     try {
       revalidatePath("/crm/customers");

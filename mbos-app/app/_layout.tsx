@@ -9,6 +9,7 @@ import { Inter_600SemiBold } from '@expo-google-fonts/inter/600SemiBold';
 import { color } from '../src/theme/tokens';
 import { BootProvider } from '../src/state/boot';
 import { AppLock } from '../src/components/shell/AppLock';
+import { PushTaps } from '../src/state/push-taps';
 import { animationFor, durationFor, ROUTE_MOTION, useReduceMotion } from '../src/components/ui/motion';
 /* Side-effect only: registers the trail's background task. The OS can launch
    the app headless, with no screen ever mounted, purely to deliver a location
@@ -51,6 +52,9 @@ export default function RootLayout() {
       {/* Over the whole Stack, so a lock raised on any screen covers the header
           and the tab bar too — and inside BootProvider, because there is
           nothing to lock until there is a session. */}
+      {/* Renders nothing; it exists so a tapped push opens what it is about,
+          including the tap that cold-starts the app. */}
+      <PushTaps />
       <AppLock>
         <Stack
           screenOptions={{

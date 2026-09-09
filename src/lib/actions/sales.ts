@@ -30,7 +30,6 @@ import { requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
 import { updateSettings } from "@/lib/config/store";
 import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
-import { sendExpoPush } from "@/lib/mbos/push";
 import { calendarDate } from "@/lib/business-date";
 import { fieldBook, managerScope, onlyMine } from "@/lib/services/sales-service";
 import type { DocumentCategory } from "@/lib/mbos/library-labels";
@@ -41,6 +40,7 @@ import {
   TERRITORY_KINDS,
   type TerritoryKind,
 } from "@/lib/services/territory-service";
+import { notifyUsers } from "../notify";
 
 /** Count, noun and verb agree at every value. */
 function plural(n: number, noun: string, pl?: string): string {
@@ -107,19 +107,10 @@ function refresh() {
  * route he cannot open.
  */
 async function tell(userId: string, title: string, body: string) {
-  await db
-    .insert(notifications)
-    .values({ id: gen("ntf"), userId, title, body, kind: "info" })
-    .catch(() => {});
-
-  /* Best-effort, and never on the critical path — the row above is the
-     record, this is a courtesy for whoever is not staring at the app when
-     it lands. A push failure must not be able to fail a decision. */
-  const devices = await db
-    .select({ pushToken: mbosDevices.pushToken })
-    .from(mbosDevices)
-    .where(and(eq(mbosDevices.userId, userId), eq(mbosDevices.active, true)));
-  await sendExpoPush(devices.map((d) => d.pushToken), title, body).catch(() => {});
+  /* The row and the push are one act, and `notifyUsers` is where that act
+     lives now — this function used to do its own device lookup, which is
+     exactly the copy fourteen other callers never made. */
+  await notifyUsers([{ userId, title, body, mbosHref: "/rejections" }]).catch(() => {});
 }
 
 /* ══════════════════════════════════════════════════════════ the decisions */
@@ -952,15 +943,7 @@ export async function sendFieldNotification(input: {
       );
     }
 
-    await db.insert(notifications).values(
-      targets.map((id) => ({ id: gen("ntf"), userId: id, title, body, kind: "info" as const })),
-    );
-
-    const devices = await db
-      .select({ pushToken: mbosDevices.pushToken })
-      .from(mbosDevices)
-      .where(and(inArray(mbosDevices.userId, targets), eq(mbosDevices.active, true)));
-    await sendExpoPush(devices.map((d) => d.pushToken), title, body).catch(() => {});
+    await notifyUsers(targets.map((userId) => ({ userId, title, body })));
 
     await db.insert(auditLog).values({
       id: gen("aud"),

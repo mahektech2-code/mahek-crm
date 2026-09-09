@@ -71,6 +71,78 @@ export function isoDate(d: Date): string {
   );
 }
 
+/**
+ * How far away, in words a person walking a beat would use.
+ *
+ * Metres under a kilometre and kilometres above it, and the precision drops as
+ * the number grows because that is how the figure is actually used: at 80 m he
+ * is looking for the door, at 14 km he is deciding whether to go at all, and a
+ * tenth of a kilometre means nothing to that decision. Rounding metres to the
+ * nearest ten is honest about a GPS fix that is itself good to a few metres —
+ * printing "83 m" claims an accuracy the handset does not have.
+ */
+export function distanceLabel(metres: number | null | undefined): string | null {
+  if (metres == null || !Number.isFinite(metres) || metres < 0) return null;
+  if (metres < 950) return `${Math.max(10, Math.round(metres / 10) * 10)} m`;
+  const km = metres / 1000;
+  return km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
+}
+
+/**
+ * A SHOP'S NAME AS IT SHOULD BE READ, not as it was typed.
+ *
+ * Half this book is shouted and a third of it is whispered: of 5,915 customers,
+ * 1,254 are entirely upper case, 1,644 entirely lower, and plenty of the rest
+ * are "new Asha paint". It comes from a spreadsheet a dozen people have typed
+ * into over years, and nobody is going to go back and fix it.
+ *
+ * So it is fixed on the way to the SCREEN and never in the store. The name is
+ * how orders and bills are matched back to legacy records — MahekOne's own rule
+ * about `products.name` being a join key that must never be rewritten applies
+ * here for the same reason — and the search box matches on what is stored. This
+ * changes what is drawn and nothing else.
+ *
+ * THE RULE IS PER WORD, because a name is not uniformly wrong:
+ *
+ *   - A word holding both cases is somebody's deliberate spelling. Left alone,
+ *     which is what keeps "McDonald" and "3D" intact.
+ *   - A word in capitals inside a name that is NOT all capitals is an acronym
+ *     the author shouted on purpose — "JSK Hardware", "P Janardhan Rao". Left
+ *     alone.
+ *   - Everything else is title-cased.
+ *
+ * The second rule is the one that earns its keep. Without it "JSK Hardware"
+ * becomes "Jsk Hardware", which is worse than shouting. It cannot save an
+ * acronym inside a name that is ALL capitals — "JSK HARDWARE" becomes "Jsk
+ * Hardware" — because at that point there is nothing in the string that
+ * distinguishes the acronym from the rest, and inventing a dictionary of them
+ * would be wrong more often and less predictably.
+ *
+ * Separators are preserved exactly: "M/S", "R.K.", "A & B" keep their shape,
+ * because splitting on them and rejoining is how "M/S" turns into "M / S".
+ */
+export function shopName(name: string | null | undefined): string {
+  const raw = (name ?? '').trim();
+  if (!raw) return '';
+
+  const shouted = raw === raw.toUpperCase();
+
+  /* Split on the RUNS BETWEEN letters and digits, so every separator that was
+     there comes back untouched — one pass, no rejoining by hand. */
+  return raw.replace(/[\p{L}\p{N}]+/gu, (word) => {
+    const hasLower = word !== word.toUpperCase();
+    const hasUpper = word !== word.toLowerCase();
+
+    /* Deliberate mixed case: somebody meant it. */
+    if (hasLower && hasUpper) return word;
+
+    /* An acronym shouted inside a name that is not itself shouted. */
+    if (hasUpper && !shouted) return word;
+
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  });
+}
+
 export function initialsOf(name: string): string {
   return name
     .split(/\s+/)

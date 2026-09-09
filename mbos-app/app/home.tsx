@@ -9,7 +9,18 @@ import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { compactInr, inr, isoDate, plural } from '../src/lib/format';
 import { DASH_CARDS, DAY_AHEAD } from '../src/data/fixtures';
-import { checkIn, checkOut, dayState, durationLabel, setOverrideReason, todayRow } from '../src/data/attendance';
+import {
+  checkIn,
+  checkOut,
+  dayState,
+  durationLabel,
+  setOverrideReason,
+  todayRow,
+  workedLabel,
+  workedMs,
+  type Session,
+} from '../src/data/attendance';
+import { useTicker } from '../src/components/ui/use-ticker';
 import { collectionDue } from '../src/data/customers';
 import { getConfig } from '../src/data/config';
 import { ordersToday } from '../src/data/orders';
@@ -52,6 +63,8 @@ type Day = {
   running: boolean;
   workedMinutes: number;
   sessionCount: number;
+  /** Held so the duration can keep counting without another read. */
+  sessions: Session[];
 };
 
 const EMPTY: Day = {
@@ -73,6 +86,7 @@ const EMPTY: Day = {
   running: false,
   workedMinutes: 0,
   sessionCount: 0,
+  sessions: [],
 };
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -96,6 +110,24 @@ export default function Home() {
   const [starting, setStarting] = React.useState(false);
 
   /*
+   * The clock, as state and ticked — never read during render.
+   *
+   * Once a second while a session is open, and no timer at all once the day is
+   * closed. It replaces a flat thirty-second interval, but that interval was
+   * not why this screen's duration stood still: `workedMinutes` was a figure
+   * taken by `load()` when the screen came into focus, and then rendered
+   * unchanged for as long as somebody looked at it. The tick moved `now` and
+   * nothing on the card read it. A day being recorded and a day whose
+   * recording has stopped looked identical, which is the one thing an
+   * attendance screen must never do.
+   *
+   * The duration is derived from the sessions and this clock now, so it moves
+   * because the day is running rather than because something re-fetched.
+   */
+  const now = useTicker(day.running ? 1000 : 60_000);
+  const workedSoFarMs = workedMs(day.sessions, now);
+
+  /*
    * Location is asked for HERE, on the first open, and not at the check-in.
    *
    * The check-in is the worst moment to ask: he is outside a shop with the day
@@ -109,12 +141,6 @@ export default function Home() {
     void ensureLocationPermission();
   }, []);
 
-  /* The clock is read once per mount and ticked, never during render. */
-  const [now, setNow] = React.useState(() => Date.now());
-  React.useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(t);
-  }, []);
 
   const load = React.useCallback(() => {
     if (!userId) return;
@@ -149,6 +175,7 @@ export default function Home() {
         running: state.running,
         workedMinutes: state.workedMinutes,
         sessionCount: state.sessionCount,
+        sessions: state.sessions,
       });
     });
   }, [userId]);
@@ -363,7 +390,7 @@ export default function Home() {
             <View style={{ minWidth: 0, flex: 1 }}>
               <Text style={type.label}>{day.running ? 'On the road' : 'Day closed'}</Text>
               <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>
-                {durationLabel(day.workedMinutes) + ' · ' + day.stopsDone + ' of ' + day.stops + ' done'}
+                {workedLabel(workedSoFarMs, day.running) + ' · ' + day.stopsDone + ' of ' + day.stops + ' done'}
               </Text>
               {/* Two stretches of work is a fact about the day, and this is the
                   only place it is visible before payroll asks about it. */}
@@ -414,7 +441,8 @@ export default function Home() {
           {DASH_CARDS.map((d, i) => (
             <Pressable
               key={d.l}
-              onPress={() => notify(d.l + ' — opens the list behind this number')}
+              disabled={!d.route}
+              onPress={() => d.route && router.push(`/${d.route}?from=home`)}
               style={{
                 width: '50%',
                 padding: 14,

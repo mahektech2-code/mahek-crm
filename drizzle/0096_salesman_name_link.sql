@@ -1,0 +1,11 @@
+-- What the sheets call somebody, where that is not what MahekOne calls them.
+--
+-- A field salesman's handset showed an empty book because nothing joined
+-- `customers.sales_person_name` — a free-text name off the party sheet — back
+-- to the login of the person it names. This column is that join, and MBOS is
+-- the only thing that reads it.
+--
+-- Nullable, no default and no backfill: every existing row keeps meaning
+-- exactly what it meant, and a link is a thing somebody sets deliberately.
+-- `npm run salesman:link` is what proposes them.
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "sales_person_name" text;

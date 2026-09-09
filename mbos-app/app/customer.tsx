@@ -6,8 +6,18 @@ import { Icon } from '../src/components/ui/Icon';
 import { Badge, Card, HealthPill, Input, PrimaryButton } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
-import { competitorRecords, customerTimeline, recordCompetitor, type TimelineEvent } from '../src/data/customers';
-import { inr, isoDate, pretty } from '../src/lib/format';
+import { customerSamples, type Sample } from '../src/data/requests';
+import {
+  competitorRecords,
+  customerOrders,
+  customerPayments,
+  customerTimeline,
+  recordCompetitor,
+  type CustomerOrder,
+  type CustomerPayment,
+  type TimelineEvent,
+} from '../src/data/customers';
+import { inr, isoDate, pretty, shopName } from '../src/lib/format';
 import { callNumber, openWhatsApp } from '../src/lib/messaging';
 
 /**
@@ -69,6 +79,9 @@ export default function CustomerRecord() {
   const beginVisit = useStore((s) => s.beginVisit);
 
   const [events, setEvents] = React.useState<TimelineEvent[]>([]);
+  const [orders, setOrders] = React.useState<CustomerOrder[]>([]);
+  const [receipts, setReceipts] = React.useState<CustomerPayment[]>([]);
+  const [samples, setSamples] = React.useState<Sample[]>([]);
   const [competitors, setCompetitors] = React.useState<Awaited<ReturnType<typeof competitorRecords>>>([]);
   const [compForm, setCompForm] = React.useState(false);
   const [comp, setComp] = React.useState({ name: '', rate: '', note: '', credit: '', delivery: '', strengths: '', weaknesses: '' });
@@ -78,7 +91,16 @@ export default function CustomerRecord() {
 
   const reload = React.useCallback(() => {
     if (!id) return;
-    void Promise.all([customerTimeline(id, tlFilter), competitorRecords(id)]).then(([t, k]) => {
+    void Promise.all([
+      customerTimeline(id, tlFilter),
+      competitorRecords(id),
+      customerOrders(id),
+      customerPayments(id),
+      customerSamples(id),
+    ]).then(([t, k, o, r, sm]) => {
+      setOrders(o);
+      setReceipts(r);
+      setSamples(sm);
       setEvents(t);
       setCompetitors(k);
     });
@@ -88,7 +110,16 @@ export default function CustomerRecord() {
     React.useCallback(() => {
       let live = true;
       if (!id) return;
-      void Promise.all([customerTimeline(id, tlFilter), competitorRecords(id)]).then(([t, k]) => {
+      void Promise.all([
+      customerTimeline(id, tlFilter),
+      competitorRecords(id),
+      customerOrders(id),
+      customerPayments(id),
+      customerSamples(id),
+    ]).then(([t, k, o, r, sm]) => {
+      setOrders(o);
+      setReceipts(r);
+      setSamples(sm);
         if (!live) return;
         setEvents(t);
         setCompetitors(k);
@@ -140,12 +171,12 @@ export default function CustomerRecord() {
   const owner = c.contactPerson ?? c.name;
 
   return (
-    <AppFrame title={c.name} activeTab="customers" onBack={() => router.back()} contentStyle={{ paddingBottom: 24 }}>
+    <AppFrame title={shopName(c.name)} activeTab="customers" onBack={() => router.back()} contentStyle={{ paddingBottom: 24 }}>
       {/* ---- the head ---- */}
       <View style={{ backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.hairline, padding: 16 }}>
         <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={type.h2}>{c.name}</Text>
+            <Text style={type.h2}>{shopName(c.name)}</Text>
             <Text style={[type.caption, { marginTop: 2 }]}>
               {[c.contactPerson, c.city, c.phone].filter(Boolean).join(' · ')}
             </Text>
@@ -229,12 +260,28 @@ export default function CustomerRecord() {
             <Card>
               <Text style={[type.label, { marginBottom: 10 }]}>Basics</Text>
               {[
+                /* Outstanding first. It is the fact that changes what he says
+                   when the door opens, and it was on the card and not here —
+                   so the record, which is the screen you open to prepare, was
+                   the one place it could not be read. */
+                {
+                  label: 'Outstanding',
+                  value: c.outstandingPaise ? inr(c.outstandingPaise / 100) : 'Nothing outstanding',
+                },
+                { label: 'Contact', value: c.contactPerson ?? '—' },
+                { label: 'Phone', value: c.phone ?? '—' },
+                { label: 'Where', value: [c.area, c.city].filter(Boolean).join(', ') || '—' },
+                { label: 'Beat', value: c.beat ?? '—' },
                 { label: 'GST', value: c.gstin ?? '—' },
+                { label: 'Dealer code', value: c.dealerCode ?? '—' },
                 {
                   label: 'Credit limit',
                   value: c.creditLimitPaise != null ? inr(c.creditLimitPaise / 100) : 'Not set',
                 },
+                { label: 'Credit days', value: c.creditDays != null ? c.creditDays + ' days' : '—' },
+                { label: 'Price list', value: c.priceTag ?? '—' },
                 { label: 'Potential', value: c.potential ?? '—' },
+                { label: 'Orders every', value: c.cycleDays != null ? c.cycleDays + ' days' : '—' },
                 { label: 'Last visit', value: pretty(c.lastVisitDate) },
                 { label: 'Last order', value: pretty(c.lastOrderDate) },
               ].map((b) => (
@@ -317,13 +364,123 @@ export default function CustomerRecord() {
         ) : null}
 
         {/* ---- orders / payments / samples ---- */}
-        {pTab === 2 || pTab === 3 || pTab === 4 ? (
-          <Card style={{ paddingVertical: 32, paddingHorizontal: 20, alignItems: 'center' }}>
-            <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>{['', '', 'Orders', 'Payments', 'Samples'][pTab]}</Text>
-            <Text style={[type.small, { color: C.muted, textAlign: 'center', marginTop: 6 }]}>
-              Order history, pending and repeat lines land here. Next to build.
-            </Text>
-          </Card>
+        {/* ---- what they bought ---- */}
+        {pTab === 2 ? (
+          <View style={{ gap: 10 }}>
+            {orders.length === 0 ? (
+              <Empty
+                head="No orders on this handset"
+                body="The office's order history arrives with the day's sync. If this shop has ordered and nothing is here, sign out and in once."
+              />
+            ) : (
+              <>
+                {orders.map((o) => (
+                  <Card key={o.id} style={{ gap: 4 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+                      <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
+                        {o.valuePaise != null ? inr(o.valuePaise / 100) : 'Value not recorded'}
+                      </Text>
+                      <Text style={type.caption}>{pretty(o.orderedAt)}</Text>
+                    </View>
+                    <Text style={type.caption}>
+                      {[
+                        o.orderNo ? 'No. ' + o.orderNo : null,
+                        o.lines ? o.lines + (o.lines === 1 ? ' line' : ' lines') : null,
+                        o.status,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </Text>
+                  </Card>
+                ))}
+                <Slice n={orders.length} noun="order" />
+              </>
+            )}
+          </View>
+        ) : null}
+
+        {/* ---- what they paid ---- */}
+        {pTab === 3 ? (
+          <View style={{ gap: 10 }}>
+            {receipts.length === 0 ? (
+              <Empty
+                head="No payments on this handset"
+                body="Receipts the office has recorded arrive with the day's sync. If this shop has paid and nothing is here, sign out and in once."
+              />
+            ) : (
+              <>
+                {receipts.map((r) => (
+                  <Card key={r.id} style={{ gap: 4 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+                      <Text
+                        style={[
+                          {
+                            fontSize: 15,
+                            /* Only confirmed money has moved anything. A
+                               rejected or reversed receipt is shown rather than
+                               hidden — the customer will say "we paid that",
+                               and he needs an answer — but it must not read
+                               like money in the bank. */
+                            color: r.status === 'confirmed' ? C.ink : C.muted,
+                          },
+                          weight(600),
+                        ]}>
+                        {r.amountPaise != null ? inr(r.amountPaise / 100) : '—'}
+                      </Text>
+                      <Text style={type.caption}>{pretty(r.receivedAt)}</Text>
+                    </View>
+                    <Text style={type.caption}>
+                      {[r.mode, r.reference, r.status].filter(Boolean).join(' · ')}
+                    </Text>
+                  </Card>
+                ))}
+                <Slice n={receipts.length} noun="payment" />
+              </>
+            )}
+          </View>
+        ) : null}
+
+        {/* ---- what they were given to try ---- */}
+        {pTab === 4 ? (
+          <View style={{ gap: 10 }}>
+            {samples.length === 0 ? (
+              <Empty
+                head="No trials on this shop"
+                body="Samples you raise here show up straight away. The office only sends down the ones still open, so a trial closed at a desk stays there."
+              />
+            ) : (
+              <>
+                {samples.map((sm) => (
+                  <Card key={sm.id} style={{ gap: 4 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+                      <Text style={[{ fontSize: 15, color: C.ink, flexShrink: 1 }, weight(600)]}>
+                        {sm.productName ?? 'Product not recorded'}
+                      </Text>
+                      <Badge tone={sampleTone(sm.state)}>{sm.state}</Badge>
+                    </View>
+                    <Text style={type.caption}>
+                      {[
+                        sm.cans ? sm.cans + (sm.cans === 1 ? ' can' : ' cans') : null,
+                        'given ' + pretty(isoDate(new Date(sm.requestedAt))),
+                        sm.trialOutcome && sm.trialOutcome !== 'pending' ? 'outcome: ' + sm.trialOutcome : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </Text>
+                    {/* The promise, and only while it is still a promise. A
+                        follow-up date on a trial that is already converted or
+                        rejected is a date nobody is going to keep. */}
+                    {sm.followUpDate && sm.state !== 'Converted' && sm.state !== 'Rejected' ? (
+                      <Text style={[type.caption, { color: C.body }]}>
+                        {'Ask again ' + pretty(sm.followUpDate)}
+                      </Text>
+                    ) : null}
+                    {sm.reason ? <Text style={type.caption}>{sm.reason}</Text> : null}
+                  </Card>
+                ))}
+              </>
+            )}
+          </View>
         ) : null}
 
         {/* ---- competitors ---- */}
@@ -468,4 +625,53 @@ function PayBehaviour({ raw }: { raw: string | null }) {
       </Text>
     </Card>
   );
+}
+
+/**
+ * Nothing here, and WHY.
+ *
+ * An empty list on an offline-first app has two causes a salesman can tell
+ * apart and act on differently: this shop has never done it, or this handset
+ * has not been told. Drawing the same blank card for both leaves him to guess,
+ * and the guess he makes is that the app is broken.
+ */
+function Empty({ head, body }: { head: string; body: string }) {
+  return (
+    <Card style={{ paddingVertical: 32, paddingHorizontal: 20, alignItems: 'center' }}>
+      <Text style={[{ fontSize: 15, color: C.ink, textAlign: 'center' }, weight(600)]}>{head}</Text>
+      <Text style={[type.small, { color: C.muted, textAlign: 'center', marginTop: 6 }]}>{body}</Text>
+    </Card>
+  );
+}
+
+/**
+ * A capped list admits it.
+ *
+ * The server sends ten of each per customer. Without this line a salesman
+ * reads ten orders as the whole history and tells the customer so — which is
+ * the same failure the web app's timeline had, and it was fixed there by
+ * saying what the list is a slice of.
+ */
+function Slice({ n, noun }: { n: number; noun: string }) {
+  if (n < 10) return null;
+  return (
+    <Text style={[type.caption, { textAlign: 'center', marginTop: 2 }]}>
+      {'The last ' + n + ' ' + noun + 's. Older ones stay in the office.'}
+    </Text>
+  );
+}
+
+/**
+ * A trial's state as a colour.
+ *
+ * Converted is the only good ending and reads as one; Rejected is a real
+ * answer rather than a failure, so it is neutral rather than red — a shop that
+ * tried the drum and said no has told the salesman something worth knowing,
+ * and colouring it like a fault is how that stops being recorded.
+ */
+function sampleTone(state: string): BadgeTone {
+  if (state === 'Converted') return 'success';
+  if (state === 'Awaiting feedback') return 'amber';
+  if (state === 'Rejected') return 'neutral';
+  return 'info';
 }

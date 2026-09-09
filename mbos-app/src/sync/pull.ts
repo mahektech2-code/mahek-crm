@@ -25,6 +25,8 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertPriceList(pull.priceList);
     touched += await upsertSchemes(pull.schemes);
     touched += await upsertTimeline(pull.timeline);
+    touched += await upsertCustomerOrders(pull.customerOrders, now);
+    touched += await upsertCustomerPayments(pull.customerPayments, now);
     touched += await upsertStops(pull.journeyStops, now);
     touched += await upsertPlanDays(pull.planDays, now);
     touched += await upsertConfig(pull.config, now);
@@ -226,6 +228,16 @@ function upsertSchemes(rows: unknown[] | undefined) {
 
 function upsertTimeline(rows: unknown[] | undefined) {
   return upsert('timeline_events', 'id', rows);
+}
+
+/* The office's history, read-only here. Its own tables rather than `orders`
+   and `payments`, which are the salesman's own and feed his outbox. */
+function upsertCustomerOrders(rows: unknown[] | undefined, now: number) {
+  return upsert('customer_orders', 'id', rows, { lastSyncedAt: now });
+}
+
+function upsertCustomerPayments(rows: unknown[] | undefined, now: number) {
+  return upsert('customer_payments', 'id', rows, { lastSyncedAt: now });
 }
 
 function upsertStops(rows: unknown[] | undefined, now: number) {

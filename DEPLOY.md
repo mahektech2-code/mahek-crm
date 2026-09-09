@@ -272,6 +272,92 @@ out why before you rely on it.
 
 ---
 
+## Releasing the handset app
+
+**The APK is built and published by the `MBOS APK` workflow, never from a
+laptop.** Actions → MBOS APK → Run workflow, or:
+
+```bash
+gh workflow run "MBOS APK" --ref main \
+  -f api_base=https://one.mahekindia.com -f publish=true
+```
+
+`workflow_dispatch` and not a push trigger, deliberately: sideloading has no
+staged rollout and no rollback, so the person pressing the button is the
+release. `publish: false` builds it and attaches it to the run without putting
+it in front of anybody, which is how you try one before shipping it.
+
+**`api_base` is baked into the bundle** and cannot be changed after the build,
+so a build made against the wrong one is a broken binary rather than a wrong
+setting. The workflow refuses anything that is not https or that ends in a
+slash, before it builds.
+
+**The signature is checked against the committed keystore in the run**, with
+`apksigner` rather than `keytool -printcert -jarfile` — a modern release APK
+carries no JAR signature at all, so keytool finds nothing and a check written
+that way silently verifies nothing. A wrong key installs perfectly on a clean
+phone and fails only on the salesman who already has the app, so this is the
+step that must not be skipped.
+
+Publishing writes to two places, answering two questions: R2 keeps every
+release under a versioned name and outlives any one droplet, and the droplet
+holds the single stable file `/downloads/mbos.apk` that people are given a link
+to. Caddy serves that off the droplet's own disk — nothing serves `/downloads`
+from R2.
+
+**Do not build a release by hand and `scp` it up.** It skips the signature
+check, the versioned archive and the record of what was shipped, and it puts
+the release back on whichever laptop has a JDK — which is the situation this
+workflow exists to end. Local `gradlew assembleRelease` is for trying a change
+on your own phone.
+
+## Shipping to the handset without reinstalling it
+
+**Most changes to MBOS no longer need an APK.** `expo-updates` is wired in:
+JavaScript, assets, copy and engine rules travel over the air, and a handset
+picks the new bundle up in the background and runs it the next time it opens.
+
+The project is `@dasabhinaba34/mbos`
+(`713eb7ff-b462-48c8-9b6a-b89d60bc9bbd`), and the same project id is what makes
+PUSH NOTIFICATIONS work — `registerForPush` reads `extra.eas.projectId` and
+returned early for as long as it was missing, which is why nine devices held
+zero push tokens between them.
+
+```bash
+cd mbos-app && npx eas-cli@latest update --branch production --message "what changed"
+```
+
+**THE CHANNEL IS PINNED IN `app.json`, and it has to be.** A build made by
+`eas build` gets its channel stamped in by EAS; ours are built by gradle in the
+`MBOS APK` workflow, so nothing stamps anything. Without
+`updates.requestHeaders["expo-channel-name"]` the handset asks for updates on no
+channel at all and quietly receives none — a publish that goes green and
+reaches nobody, which is the same failure mode as a run dispatched with
+`publish: false`. It is set to `production`, and `eas update --branch
+production` is what feeds it.
+
+**What can never go over the air:** anything native — a new native module, a
+permission, an Expo SDK bump, and `EXPO_PUBLIC_API_BASE`, which is inlined into
+the bundle at build time. Those are an APK, always.
+
+**`runtimeVersion` is what enforces that**, and it is the `fingerprint` policy
+rather than `appVersion` on purpose. `appVersion` would read `1.0.0` — a number
+this project has never bumped — so every native change would keep the same
+runtime and an update would happily push JS to a build that cannot run it. A
+fingerprint hashes the native project, so it changes when the native side does,
+whether or not anybody remembered to.
+
+**An update never delays a launch.** `fallbackToCacheTimeout` is 0 and the check
+is not awaited: the app opens on the bundle it has, downloads the new one
+behind it, and runs it next time. It deliberately does not `reloadAsync()` —
+restarting the app under somebody with a half-filled order form on screen would
+lose real work to deliver a cosmetic change.
+
+**Which build a handset is running is printed on its Sync screen.** "Running the
+build that was installed" means the embedded bundle; anything else names the
+update. Without that, "the fix is not on my phone" and "the fix does not work"
+look identical from the office.
+
 ## Day to day
 
 ```bash

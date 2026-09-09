@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Input, ListCard, PrimaryButton, SecondaryButton, T, Toggle } from '../src/components/ui/primitives';
-import { signOut as signOutReal } from '../src/data/session';
+import { openPasswordReset, signOut as signOutReal } from '../src/data/session';
 import { pendingCount } from '../src/sync/queue';
 import { plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
@@ -12,6 +12,7 @@ import { useBoot } from '../src/state/boot';
 import { color as C, radius, weight } from '../src/theme/tokens';
 import { canOffer, isOn as lockIsOn, setOn as rememberLockChoice } from '../src/data/app-lock';
 import { prompt as promptBiometric } from '../src/native/biometrics';
+import { pushStatus, registerForPush, type PushReadiness } from '../src/native/push';
 
 /**
  * Profile — the four things about him the office may have wrong, and three
@@ -22,9 +23,42 @@ import { prompt as promptBiometric } from '../src/native/biometrics';
  * record exactly as it was rather than half-changed.
  */
 
-const PREFS: { k: 'wifi' | 'push'; l: string; s: string }[] = [
-  { k: 'wifi', l: 'Sync on Wi-Fi only', s: 'Saves data when you are on mobile' },
-  { k: 'push', l: 'Push notifications', s: 'Tasks, approvals and announcements' },
+/**
+ * TWO SWITCHES THAT MOVE AND CHANGE NOTHING, AND ONE THAT NOW DOES.
+ *
+ * `pfPrefs` is written by these toggles and read by NOTHING — not the sync, not
+ * the push registration. It is not even persisted, so a switch somebody set
+ * went back the next time the app started. Settings that looked like settings.
+ *
+ * Push is the one that was reported, and it is the one that cannot simply be
+ * wired up: `registerForPush` needs an EAS project id in `app.json`
+ * (`extra.eas.projectId`) to ask Expo's service for a token, `extra` is empty,
+ * and so nine handsets have registered zero tokens between them. No token means
+ * nothing to push TO, which is why a test push arrived nowhere. That needs an
+ * Expo account and `eas init`, not a code change.
+ *
+ * A switch that cannot do anything is worse than no switch: it is where
+ * somebody goes to fix the problem, and it tells them they already have. So
+ * each one says whether it works, and the ones that do not are shown off and
+ * unpressable with the reason underneath.
+ *
+ * THE FINGERPRINT IS NO LONGER ONE OF THEM. It sat here reading "Not built —
+ * sign in with your password", which was true of the dead toggle it described
+ * and is now false: it is a real app lock, with its own row beneath this list,
+ * because it has state a static entry cannot carry — whether the phone has a
+ * sensor, whether a finger is enrolled on it, and whether this handset has the
+ * lock switched on. Leaving it here as "not built" would be the same lie in the
+ * other direction.
+ */
+type Pref = { k: 'wifi'; l: string; s: string; blocked?: string };
+
+const PREFS: Pref[] = [
+  {
+    k: 'wifi',
+    l: 'Sync on Wi-Fi only',
+    s: 'Saves data when you are on mobile',
+    blocked: 'Not built — the sync runs on whatever connection there is.',
+  },
 ];
 
 export default function ProfileScreen() {
@@ -62,16 +96,28 @@ export default function ProfileScreen() {
    * that answered from a value cached at boot would offer a switch that no
    * longer works.
    */
+  /*
+   * Push, asked WITHOUT prompting.
+   *
+   * It said "Not switched on for this build" until push was built, which was
+   * true and is now false — and a switch that lies in the reassuring
+   * direction is worse than one that lies in the other, because it is where
+   * somebody goes to fix the problem and it tells them they already have.
+   */
+  const [push, setPush] = React.useState<PushReadiness | null>(null);
+  const [pushBusy, setPushBusy] = React.useState(false);
+
   const [lockOn, setLockOn] = React.useState(false);
   const [lockOffer, setLockOffer] = React.useState<{ ok: boolean; why: string; label: string } | null>(null);
   const [lockBusy, setLockBusy] = React.useState(false);
 
   React.useEffect(() => {
     let live = true;
-    void Promise.all([lockIsOn(), canOffer()]).then(([on, offer]) => {
+    void Promise.all([lockIsOn(), canOffer(), pushStatus()]).then(([on, offer, p]) => {
       if (!live) return;
       setLockOn(on);
       setLockOffer(offer);
+      setPush(p);
     });
     return () => {
       live = false;
@@ -274,14 +320,75 @@ export default function ProfileScreen() {
               borderTopColor: C.wash,
             }}>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <T style={{ fontSize: 16, lineHeight: 22, color: C.ink }}>{p.l}</T>
+              <T style={{ fontSize: 16, lineHeight: 22, color: C.ink, opacity: p.blocked ? 0.5 : 1 }}>{p.l}</T>
               <T s="caption" style={{ marginTop: 1 }}>
-                {p.s}
+                {p.blocked ?? p.s}
               </T>
             </View>
-            <Toggle size="sm" on={pfPrefs[p.k]} onPress={() => set({ pfPrefs: { ...pfPrefs, [p.k]: !pfPrefs[p.k] } })} />
+            {p.blocked ? (
+              /* Off and unpressable, rather than absent: the setting is a real
+                 thing somebody expects to find, and a switch that has quietly
+                 disappeared reads as a bug of its own. */
+              <View style={{ opacity: 0.35 }}>
+                <Toggle size="sm" on={false} onPress={() => {}} />
+              </View>
+            ) : (
+              <Toggle size="sm" on={pfPrefs[p.k]} onPress={() => set({ pfPrefs: { ...pfPrefs, [p.k]: !pfPrefs[p.k] } })} />
+            )}
           </View>
         ))}
+
+        {/*
+          Push, and whether it can actually reach this phone.
+
+          Three different answers with three different things to do about
+          them — the office has not finished setting it up, this phone has
+          notifications switched off, or it is working — and a single toggle
+          could express none of them. Where the person can fix it themselves
+          the row is a button; where they cannot, it says who can.
+        */}
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 16,
+            paddingHorizontal: 16,
+            paddingVertical: 14,
+            borderTopWidth: 1,
+            borderTopColor: C.wash,
+          }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <T style={{ fontSize: 16, lineHeight: 22, color: C.ink, opacity: push?.ok ? 1 : 0.5 }}>
+              Push notifications
+            </T>
+            <T s="caption" style={{ marginTop: 1 }}>
+              {push == null
+                ? 'Checking…'
+                : push.ok
+                  ? 'On. Decisions reach you without opening the app.'
+                  : push.why}
+            </T>
+          </View>
+          {push && !push.ok && push.reason === 'permission' ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={pushBusy}
+              onPress={() => {
+                setPushBusy(true);
+                void registerForPush()
+                  .then((r) => {
+                    setPush(r);
+                    if (!r.ok) notify(r.why);
+                  })
+                  .finally(() => setPushBusy(false));
+              }}
+              style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 4 }}>
+              <T style={[{ fontSize: 15, color: C.primary }, weight(500)]}>
+                {pushBusy ? 'Asking…' : 'Turn on'}
+              </T>
+            </Pressable>
+          ) : null}
+        </View>
 
         {/*
           The app lock. Drawn with the switch where the phone can actually
@@ -319,7 +426,14 @@ export default function ProfileScreen() {
       <SecondaryButton
         label="Change password"
         style={{ marginTop: 16 }}
-        onPress={() => notify('A link to set a new password has been sent to your mobile')}
+        onPress={async () => {
+          const opened = await openPasswordReset();
+          notify(
+            opened
+              ? 'Opening the reset page. It emails a link to your work address.'
+              : 'Could not open the browser. Ask your manager to send you a reset link.',
+          );
+        }}
       />
 
       <Pressable

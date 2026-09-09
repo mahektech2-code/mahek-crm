@@ -355,6 +355,16 @@ export type PullDelta = {
    */
   leads: unknown[];
   samples: unknown[];
+  /**
+   * What the office knows this shop bought and paid, ten of each per customer.
+   *
+   * Their own tables on the handset rather than `orders` and `payments`, which
+   * are OWNED there — the salesman authors those and they feed his outbox. A
+   * sync writing into them would put the office's rows in the queue that sends
+   * his.
+   */
+  customerOrders: unknown[];
+  customerPayments: unknown[];
 };
 
 export type SyncResponse = {

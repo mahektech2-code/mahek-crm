@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
@@ -493,30 +493,83 @@ function scopeIn(ids: string[] | null) {
   return scopedToUsers(ids);
 }
 
+/**
+ * `partyNameKey` in SQL: trim, collapse the whitespace, uppercase.
+ *
+ * Written once and applied to BOTH sides of the comparison, so the two halves
+ * cannot fold differently from each other — which is the failure a second
+ * spelling of a normalisation always produces, and the one nobody sees until
+ * two names that are obviously the same stop matching.
+ */
+function nameFold(column: SQL | AnyColumn) {
+  /* `[[:space:]]` rather than `\s`: a backslash escape inside a template
+     literal is cooked away before Postgres ever sees it, and the regex would
+     silently become `s+` — matching the letter s. */
+  return sql`upper(regexp_replace(btrim(${column}), '[[:space:]]+', ' ', 'g'))`;
+}
+
+/**
+ * THE SHOPS THAT NAME THIS SALESMAN, joined by the name rather than by a seat.
+ *
+ * `scopedToUsers` asks which customers carry this person in one of the two
+ * manager seats, and for a field salesman the answer is none of them: those
+ * seats hold account managers, and a field salesman is named — as text, off
+ * the party sheet — in `customers.sales_person_name`. So his handset was
+ * correctly empty, and no screen anywhere could say why.
+ *
+ * MBOS ONLY, deliberately. The CRM's lists are unchanged: `scopedToUsers`
+ * stays exactly what it was, because widening it would hand thirty-one screens
+ * a different answer to "whose book is this" overnight. The question MBOS asks
+ * is a narrower one — which shops does this salesman work — and this is the
+ * one place it is answered.
+ *
+ * It reads every user in scope, not just the principal, so a manager on the
+ * handset sees his team's shops the same way each of them does. Anything else
+ * would give the manager and his salesman two different books.
+ */
+function namedByUsers(ids: string[]) {
+  return sql`${nameFold(customers.salesPersonName)} in (
+    select ${nameFold(sql`u.sales_person_name`)}
+      from users u
+     where u.id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
+       and u.sales_person_name is not null
+       and btrim(u.sales_person_name) <> ''
+  )`;
+}
+
 /** The customer ids this principal may see. Every other query filters on it. */
 export async function customerIdsInScope(
   principal: MbosPrincipal,
 ): Promise<string[]> {
   const ids = scopedUserIds(principal.scope);
   /*
-   * WHO MAY SEE IT, AND WHERE HE WORKS — two clauses doing two jobs.
+   * WHO MAY SEE IT, AND WHERE HE WORKS — two clauses doing two different jobs,
+   * and they are ANDed rather than folded together.
    *
-   * `scopeIn` is the security boundary and is unchanged: the three seats decide
-   * whose book a record is in. The territory clause NARROWS that book to the
-   * cities and beats this person actually works, and can only ever remove rows
-   * from it. Nobody is given sight of another salesman's customer by being
-   * allocated a city.
+   * The first is the security boundary and is main's: the three seats decide
+   * whose book a record is in, `namedByUsers` adds the salesman the customer
+   * master NAMES, and `null` short-circuits BEFORE the `or` because
+   * `scopeIn(null)` is `undefined` — Drizzle drops an undefined operand, so
+   * `or(undefined, namedBy…)` would collapse to the name match alone and NARROW
+   * an admin to it, which is the opposite of what null means.
    *
-   * `territoryClauseFor` answers undefined where nothing is allocated, and
-   * `and()` drops an undefined — so a person with no territory keeps the whole
-   * book they had. Allocating cities to eight people and forgetting the ninth
-   * must not empty her handset.
+   * The second is the territory, and it can only ever REMOVE rows from what the
+   * first allows. Nobody is given sight of another salesman's customer by being
+   * allocated a city. `territoryClauseFor` answers undefined where nothing is
+   * allocated and `and()` drops it, so a person with no territory keeps the
+   * whole book they had — allocating cities to eight people and forgetting the
+   * ninth must not empty her handset.
+   *
+   * `and(undefined, undefined)` is undefined, so an admin with no territory is
+   * still unrestricted. Both null-handling rules survive the pairing.
    */
+  const visible = ids === null ? undefined : or(scopeIn(ids), namedByUsers(ids));
   const territory = await territoryClauseFor(principal.user.id);
+
   const rows = await db
     .select({ id: customers.id })
     .from(customers)
-    .where(and(scopeIn(ids), territory));
+    .where(and(visible, territory));
   return rows.map((r) => r.id);
 }
 
@@ -552,6 +605,8 @@ export type BootstrapPayload = {
   samples: unknown[];
   leads: unknown[];
   timeline: unknown[];
+  customerOrders: unknown[];
+  customerPayments: unknown[];
   leaveBalances: unknown[];
   /**
    * TODAY'S ATTENDANCE, so a fresh install is not blind about a day it already
@@ -616,6 +671,13 @@ export type BootstrapPayload = {
 const TIMELINE_PER_CUSTOMER = 50;
 
 /**
+ * Ten orders and ten receipts a customer. Enough to answer "what do they buy"
+ * and "do they pay" while standing in the shop; far short of an accounts
+ * ledger, which is not what a handset is for and would not fit on one.
+ */
+const HISTORY_PER_CUSTOMER = 10;
+
+/**
  * How far back the journey channels reach.
  *
  * Both the stops and the days themselves used to filter `plan_date >= today`,
@@ -663,6 +725,8 @@ export async function buildBootstrap(
     sampleRows,
     leadRows,
     timelineRows,
+    orderHistoryRows,
+    paymentHistoryRows,
     leaveRows,
     attendanceRow,
     holidayRows,
@@ -682,6 +746,8 @@ export async function buildBootstrap(
     openSamples(principal.user.id, ids),
     openLeads(principal.user.id),
     recentTimeline(ids, TIMELINE_PER_CUSTOMER),
+    recentOrders(ids, HISTORY_PER_CUSTOMER),
+    recentPayments(ids, HISTORY_PER_CUSTOMER),
     leaveBalances(principal.user.id, Number(day.slice(0, 4))),
     attendanceToday(principal.user.id, day),
     holidaysFor(),
@@ -715,6 +781,8 @@ export async function buildBootstrap(
     samples: sampleRows,
     leads: leadRows,
     timeline: timelineRows,
+    customerOrders: orderHistoryRows,
+    customerPayments: paymentHistoryRows,
     leaveBalances: leaveRows,
     attendanceToday: attendanceRow,
     holidays: holidayRows,
@@ -770,7 +838,9 @@ async function customersForDevice(ids: string[]) {
            c.territory_region as "territoryRegion", c.dealer_code as "dealerCode",
            -- what mbos_price_list is keyed on for this account
            c.price_tag as "priceTag",
-           c.status, c.gstin,
+           -- A lead reaches this list through its owner, so the card has to be
+           -- able to say which it is looking at. See migration v12.
+           c.kind, c.status, c.gstin,
            c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
            c.gps_accuracy_m as "gpsAccuracyM",
            c.customer_type as "customerType", c.potential,
@@ -1034,6 +1104,72 @@ async function openLeads(userId: string, since?: string | null) {
  * otherwise be six hundred round trips to a database three hundred
  * milliseconds away, which is the bootstrap taking three minutes.
  */
+/**
+ * What the office knows this shop bought, newest first, capped per customer.
+ *
+ * The record's Orders tab was a placeholder and the cheap fix was to render it
+ * off the timeline, which already syncs. Production says no: 10,874 orders
+ * against 61 order timeline events. A tab built that way would show one order
+ * to a salesman standing in a shop that has placed forty — and be believed.
+ *
+ * Capped the same way `recentTimeline` is, and for the same reason: a book of
+ * 587 customers must not put its whole order history on a phone.
+ *
+ * `total_amount` is what was actually billed or typed. Nothing here reaches for
+ * the catalogue to value a line — `products.priceSource` is still unset, and a
+ * confident wrong figure on a customer's record is worse than no figure.
+ */
+async function recentOrders(ids: string[], perCustomer: number) {
+  if (!ids.length) return [];
+  return db.execute<Record<string, unknown>>(sql`
+    select id, "customerId", "orderedAt", status, "valuePaise", lines, "orderNo"
+      from (
+        select o.id, o.customer_id as "customerId",
+               (o.ordered_at at time zone ${APP_TIMEZONE})::date::text as "orderedAt",
+               o.status::text as status,
+               o.total_amount as "valuePaise",
+               coalesce(jsonb_array_length(o.line_items), 0) as lines,
+               o.order_no as "orderNo",
+               row_number() over (
+                 partition by o.customer_id order by o.ordered_at desc, o.id desc
+               ) as rn
+          from orders o
+         where o.customer_id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
+      ) ranked
+     where rn <= ${perCustomer}
+     order by "customerId" asc, "orderedAt" desc
+  `);
+}
+
+/**
+ * And what it has paid. Every receipt, whatever its status.
+ *
+ * A REJECTED or REVERSED receipt is shown rather than hidden, because it is a
+ * fact about the account the salesman will be asked about — "we paid that" —
+ * and a statement that silently drops it leaves him with no answer. The status
+ * rides along so the screen can say which it is; only `confirmed` money has
+ * moved anything.
+ */
+async function recentPayments(ids: string[], perCustomer: number) {
+  if (!ids.length) return [];
+  return db.execute<Record<string, unknown>>(sql`
+    select id, "customerId", "receivedAt", "amountPaise", mode, reference, status
+      from (
+        select r.id, r.customer_id as "customerId",
+               r.received_at::text as "receivedAt",
+               r.amount as "amountPaise",
+               r.mode, r.reference, r.status::text as status,
+               row_number() over (
+                 partition by r.customer_id order by r.received_at desc, r.id desc
+               ) as rn
+          from payment_receipts r
+         where r.customer_id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
+      ) ranked
+     where rn <= ${perCustomer}
+     order by "customerId" asc, "receivedAt" desc
+  `);
+}
+
 async function recentTimeline(ids: string[], perCustomer: number) {
   if (!ids.length) return [];
   return db.execute<Record<string, unknown>>(sql`
@@ -1434,6 +1570,8 @@ export async function buildPull(
       expensePolicy: null,
       leads: [],
       samples: [],
+      customerOrders: [],
+      customerPayments: [],
       deletions: [],
     };
   }
@@ -1476,11 +1614,13 @@ export async function buildPull(
     taskChanges,
     leadChanges,
     sampleChanges,
+    orderHistoryChanges,
+    paymentHistoryChanges,
   ] = await Promise.all([
       idList
         ? db.execute<Record<string, unknown>>(sql`
             select c.id, c.name, c.contact_person as "contactPerson", c.phone,
-                   c.city, c.area, c.beat, c.status,
+                   c.city, c.area, c.beat, c.status, c.kind,
                    c.price_tag as "priceTag",
                    c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
                    c.credit_limit_paise as "creditLimitPaise",
@@ -1681,6 +1821,14 @@ export async function buildPull(
        * reach a handset through the delta that sign-in would have withheld. */
       openLeads(principal.user.id, sinceIso),
       openSamples(principal.user.id, ids, sinceIso),
+
+      /* Not `since`-gated. These are capped at ten a customer and the cap is
+         what a delta would have to re-derive anyway: an eleventh order does
+         not CHANGE a row, it displaces one, and no `updated_at` on any row
+         says so. Sending the current ten is both correct and smaller than the
+         query that would work out which ten changed. */
+      recentOrders(ids, HISTORY_PER_CUSTOMER),
+      recentPayments(ids, HISTORY_PER_CUSTOMER),
     ]);
 
   return {
@@ -1712,5 +1860,7 @@ export async function buildPull(
     expensePolicy: await expensePolicyFor(principal.user.id, await today()),
     leads: leadChanges as unknown[],
     samples: sampleChanges as unknown[],
+    customerOrders: orderHistoryChanges as unknown[],
+    customerPayments: paymentHistoryChanges as unknown[],
   };
 }

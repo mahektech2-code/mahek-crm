@@ -71,6 +71,7 @@ import type {
   SyncItem,
   SyncResult,
 } from "../mbos/types";
+import { notifyUsers } from "../notify";
 
 /* ---------------------------------------------------------------------------
  * MBOS — every write the handset makes.
@@ -4463,17 +4464,16 @@ async function handlePlanStops(principal: MbosPrincipal, item: SyncItem): Promis
    * notification because the accept has no room for a sentence and inventing
    * one would change the shape of every other handler's answer. */
   if (refused.length) {
-    await db
-      .insert(notifications)
-      .values({
-        id: gen("ntf"),
+    await notifyUsers([
+      {
         userId: principal.user.id,
         title: `${plan.planDate}: ${refused.length} ${refused.length === 1 ? "shop" : "shops"} left out`,
         body: `${allowed.length} of ${allowed.length + refused.length} picked. The rest are not in your book any more — ask your manager if one of them should be.`,
         kind: "warning",
         href: "/journey",
-      })
-      .catch(() => {});
+        mbosHref: "/journey",
+      },
+    ]).catch(() => {});
   }
 
   return { kind: "accepted", value: { serverId: item.entityId } };
@@ -5007,14 +5007,15 @@ async function handleCustomerEdit(
   if (conflicted) {
     // Nothing is discarded silently: whoever made the edit that lost is told.
     if (before?.updatedById && before.updatedById !== principal.user.id) {
-      await db.insert(notifications).values({
-        id: gen("ntf"),
-        userId: before.updatedById,
-        title: "Your edit was overwritten",
-        body: `${principal.user.name} changed ${customer.name} from the field after you did. Both versions are kept — open the conflict log to compare.`,
-        kind: "warning",
-        href: `/crm/customers/${customer.id}`,
-      });
+      await notifyUsers([
+        {
+          userId: before.updatedById,
+          title: "Your edit was overwritten",
+          body: `${principal.user.name} changed ${customer.name} from the field after you did. Both versions are kept — open the conflict log to compare.`,
+          kind: "warning",
+          href: `/crm/customers/${customer.id}`,
+        },
+      ]);
     }
     return {
       kind: "conflict",
@@ -5061,17 +5062,16 @@ export async function raiseRejectionTask(
     })
     .catch(() => {});
 
-  await db
-    .insert(notifications)
-    .values({
-      id: gen("ntf"),
+  await notifyUsers([
+    {
       userId: principal.user.id,
       title: "An order was refused",
       body: rejection.message,
       kind: "warning",
       href: "/field",
-    })
-    .catch(() => {});
+      mbosHref: "/rejections",
+    },
+  ]).catch(() => {});
 }
 
 async function notifyManagers(actorId: string, title: string, body: string) {

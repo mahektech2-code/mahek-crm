@@ -62,7 +62,18 @@ export default function KnowledgeScreen() {
             return (
               <Pressable
                 key={k.id}
-                onPress={() => notify(k.title)}
+                /* A course is a title and, usually, something to read. Where
+                   there is nothing attached it is a briefing somebody gave in a
+                   room — a real thing to record and tick off, and not a broken
+                   row — so it says which it is instead of doing nothing. */
+                onPress={() =>
+                  notify(
+                    k.minutes
+                      ? `${k.title} — about ${k.minutes} minutes` +
+                          (k.deadline ? `, due ${k.deadline}` : '')
+                      : `${k.title} — nothing attached to open`,
+                  )
+                }
                 accessibilityRole="button"
                 style={{
                   flexDirection: 'row',

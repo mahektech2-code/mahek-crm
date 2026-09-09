@@ -556,6 +556,30 @@ export const users = pgTable(
     initials: text("initials").notNull(),
     /** The manager a telecaller reports to — drives a manager's team scope. */
     reportsToId: text("reports_to_id"),
+    /**
+     * What the SHEETS call this person, where that is not what MahekOne calls
+     * them — and the one thing that gives a field salesman a book.
+     *
+     * A salesperson is a NAME, not an account: `customers.sales_person_name`
+     * holds "Prakash Vasudev Prasad" as the party sheet spells it, and nothing
+     * has ever joined that string back to a login. So a field salesman signed
+     * in to MBOS, `scopedToUsers` matched him against `sales_am_id` and
+     * `back_office_am_id`, found him in neither, and his handset showed an
+     * empty book — correctly, and with nothing on any screen able to say why.
+     *
+     * This is the join. It is DELIBERATE rather than inferred from
+     * `users.name`: matching on that would mean renaming somebody, or hiring a
+     * second person with the same name, silently changing who can see which
+     * customers. A scope rule that moves on its own is the one kind this
+     * codebase cannot have. `npm run salesman:link` proposes the links by
+     * folding the two sets of names together and refuses the ambiguous ones
+     * rather than picking.
+     *
+     * NULL is the ordinary state for everybody who is not a field salesman,
+     * and it costs nothing: the match is only ever asked inside MBOS, and a
+     * null answers no.
+     */
+    salesPersonName: text("sales_person_name"),
     active: boolean("active").notNull().default(true),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -4113,6 +4137,55 @@ export const timelineEvents = pgTable(
  * device that has been released, and the row stays because "whose phone wrote
  * this record in March" outlives the phone.
  */
+/**
+ * Whether a push actually arrived — the half of Expo's API nothing used.
+ *
+ * `send` returns a TICKET per message, and a ticket means "accepted for
+ * delivery", not "delivered". The verdict comes later from `getReceipts`,
+ * and that is the only place `DeviceNotRegistered` is ever reported: a token
+ * that will never work again. Without reading it the token stays on the
+ * device row for ever, every send to it is discarded by Expo, and the office
+ * sees nothing but success.
+ *
+ * A WORKLIST, not a log. Written when a message is accepted, DELETED when its
+ * receipt says it arrived, and kept with the reason when it did not. So this
+ * table holds "pushes not yet confirmed, plus recent failures" — small by
+ * construction, and exactly the list somebody wants when they ask why a push
+ * never came.
+ */
+export const mbosPushReceipts = pgTable(
+  "mbos_push_receipts",
+  {
+    id: text("id").primaryKey(),
+    /** Expo's ticket id. Null where the send was refused outright — a failure
+     *  that never gets a receipt and must not sit waiting for one. */
+    ticketId: text("ticket_id"),
+    deviceId: text("device_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** The notification row it rode on. Nullable: the row is the record and
+     *  the push is a courtesy on top of it, never the other way round. */
+    notificationId: text("notification_id"),
+    /** The token AS IT WAS at send time — invalidation has to know which
+     *  string to clear, and the device row may have rotated since. */
+    pushToken: text("push_token").notNull(),
+    /** `accepted` · `delivered` · `failed`. Text rather than an enum because
+     *  Expo's own error vocabulary is theirs to extend, and this codebase has
+     *  already been bitten by not being able to use a new enum value in the
+     *  migration that adds it. */
+    status: text("status").notNull().default("accepted"),
+    errorCode: text("error_code"),
+    errorDetail: text("error_detail"),
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("mbos_push_receipts_pending_idx").on(t.status, t.sentAt),
+    index("mbos_push_receipts_user_idx").on(t.userId, t.sentAt),
+  ],
+);
+
 export const mbosDevices = pgTable(
   "mbos_devices",
   {

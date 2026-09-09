@@ -965,7 +965,63 @@ export const MIGRATIONS: string[][] = [
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_fix ON positions(at, lat, lng);`,
   ],
 
-  /* ---- v13 · a lead has a place, and somebody running it ----------------- */
+  /* ---- v12 · is this a shop or somebody we hope will become one? -------- */
+  [
+    /*
+     * `kind` was on the wire from the first MBOS commit and had nowhere to
+     * land, so it was dropped from the payload when the two sides were
+     * reconciled. It is wanted now: this list holds LEADS as well as
+     * customers — a lead reaches it through `owner_id` — and a card that does
+     * not say which is which asks the salesman to remember, per row.
+     */
+    `ALTER TABLE customers ADD COLUMN kind TEXT;`,
+  ],
+
+  /* ---- v13 · what the office knows this shop bought and paid ------------ */
+  [
+    /*
+     * THE RECORD'S HISTORY TABS WERE PLACEHOLDERS — "Next to build" — and the
+     * obvious cheap fix was to render them off `timeline_events`, which already
+     * syncs. Production says no: 10,874 orders against 61 order events, and
+     * 18,414 receipts against 271 payment events. A tab built that way would
+     * show one order to a salesman standing in a shop that has placed forty,
+     * and be believed. Better a placeholder than a screen that lies.
+     *
+     * So the office's history gets its own channel and its own tables.
+     *
+     * NOT `orders` and `payments`. Those are OWNED — the salesman authors them,
+     * they carry `syncState` and they feed the outbox — and a sync writing into
+     * them would put the office's rows in the queue that sends his. These are
+     * reference: read-only here, replaced by the pull, cleared on sign-out.
+     */
+    `CREATE TABLE IF NOT EXISTS customer_orders (
+      id TEXT PRIMARY KEY,
+      customerId TEXT NOT NULL,
+      orderedAt TEXT,
+      status TEXT,
+      valuePaise INTEGER,
+      lines INTEGER,
+      orderNo TEXT,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_customer_orders_cust
+       ON customer_orders(customerId, orderedAt DESC);`,
+
+    `CREATE TABLE IF NOT EXISTS customer_payments (
+      id TEXT PRIMARY KEY,
+      customerId TEXT NOT NULL,
+      receivedAt TEXT,
+      amountPaise INTEGER,
+      mode TEXT,
+      reference TEXT,
+      status TEXT,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_customer_payments_cust
+       ON customer_payments(customerId, receivedAt DESC);`,
+  ],
+
+  /* ---- v14 · a lead has a place, and somebody running it ----------------- */
   [
     /*
      * THE SERVER HAS BEEN SENDING THESE ALL ALONG.
@@ -995,7 +1051,7 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE leads ADD COLUMN leadManagerName TEXT;`,
   ],
 
-  /* ---- v14 · what the salesman actually learns in the shop --------------- */
+  /* ---- v15 · what the salesman actually learns in the shop --------------- */
   [
     /*
      * §A and §C of the brief. The form asked for a name, a company, a mobile,
@@ -1032,7 +1088,7 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE leads ADD COLUMN competitorName TEXT;`,
   ],
 
-  /* ---- v15 · a Suspect cannot be visited for ever ----------------------- */
+  /* ---- v16 · a Suspect cannot be visited for ever ----------------------- */
   [
     /*
      * How many times anybody has stood in this shop, as the server counts it.
@@ -1051,7 +1107,7 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE leads ADD COLUMN holdReason TEXT;`,
   ],
 
-  /* ---- v16 · the validation call, and the script it is made from -------- */
+  /* ---- v17 · the validation call, and the script it is made from -------- */
   [
     /*
      * §E. Its own table rather than columns on `leads`, for the reason the
@@ -1099,7 +1155,7 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE tasks ADD COLUMN sourceId TEXT;`,
   ],
 
-  /* ---- v17 · a sample, from the lorry to the verdict -------------------- */
+  /* ---- v18 · a sample, from the lorry to the verdict -------------------- */
   [
     /*
      * §I, §J and §K. Three dates rather than one, because they are three
@@ -1144,6 +1200,7 @@ export const MIGRATIONS: string[][] = [
  */
 export const SCHEMA_VERSION = MIGRATIONS.length;
 
+
 /** Tables holding work the salesman authored. A sync never deletes from these. */
 export const OWNED_TABLES = [
   'visits', 'orders', 'order_lines', 'payments', 'attendance_days', 'tasks',
@@ -1159,6 +1216,7 @@ export const REFERENCE_TABLES = [
   'customers', 'products', 'price_list', 'schemes', 'timeline_events',
   'journey_stops', 'leave_balances', 'holidays', 'documents', 'courses',
   'notifications', 'performance', 'salary',
+  'customer_orders', 'customer_payments',
   /* The policy and the modes are the office's, wholly. `expense_exceptions`
      is too: they are the office's questions about his day, and a question he
      has already answered comes back answered rather than being kept here. */

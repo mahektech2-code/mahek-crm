@@ -19,6 +19,7 @@ import { eq, or, sql } from "drizzle-orm";
 import { db } from "../src/db";
 import { appAccess, customers, users } from "../src/db/schema";
 import { ASSIGNED_TO_SQL, BACK_OFFICE_SQL, scopedToUsers } from "../src/lib/access-control";
+import { customerIdsInScope } from "../src/lib/services/mbos-service";
 
 /** Whether this deployment has taken the EMP 2.0 shop master yet. */
 async function hasMaster(): Promise<boolean> {
@@ -47,6 +48,7 @@ async function main() {
       active: users.active,
       reportsToId: users.reportsToId,
       lastLoginAt: users.lastLoginAt,
+    salesPersonName: users.salesPersonName,
     })
     .from(users)
     .where(
@@ -93,14 +95,42 @@ async function main() {
       `   scope: ${ids === null ? "all (admin)" : isManager ? `team — ${ids.length} people` : "mine — just this account"}`,
     );
 
-    const [{ n }] = await db
+    /*
+     * THE NUMBER THE HANDSET ACTUALLY GETS, asked of the function that
+     * actually answers it.
+     *
+     * This used to count `scopedToUsers` — the CRM's rule — and print the
+     * answer as "the handset would receive". The two were the same thing
+     * until the name link landed, and then they were not: a linked salesman
+     * whose twelve shops name him read as zero here, which is the diagnostic
+     * telling somebody their fix had not worked.
+     */
+    const seatOnly = await db
       .select({ n: sql<number>`count(*)::int` })
       .from(customers)
       .where(scopedToUsers(ids));
+
+    const reaching = await customerIdsInScope({
+      user: u as unknown as typeof users.$inferSelect,
+      deviceId: "diagnostic",
+      role: (isManager ? "manager" : "telecaller") as "manager" | "telecaller",
+      scope:
+        ids === null
+          ? { kind: "all", userIds: null }
+          : { kind: isManager ? "team" : "own", userIds: ids },
+    });
+
+    const n = reaching.length;
     console.log(`   customers the handset would receive: ${n}`);
+    console.log(
+      `     by a manager seat: ${seatOnly[0].n} · by the name link${u.salesPersonName ? ` ("${u.salesPersonName}")` : " (not linked)"}: ${n - seatOnly[0].n}`,
+    );
 
     if (n > 0) {
-      console.log(`   → The book is not empty on the server. The fault is in the sync or on the handset.`);
+      console.log(
+        `   → The server has a book for this person. If the handset still shows none, the\n` +
+          `     fault is downstream of here — the sync, or the phone.`,
+      );
       continue;
     }
 
@@ -179,7 +209,8 @@ async function main() {
 
     console.log(
       `   → Nothing links this login to a customer. The handset is empty because the book is,\n` +
-        `     not because the sync failed.`,
+        `     not because the sync failed. If a spelling above is this person, link it:\n` +
+        `       npm run salesman:link -- --user ${u.email} --name "<that spelling>" --apply`,
     );
   }
 

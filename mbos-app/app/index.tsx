@@ -6,7 +6,7 @@ import { color as C, HIT, radius, type, weight } from '../src/theme/tokens';
 import { PrimaryButton, Toggle } from '../src/components/ui/primitives';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
-import { signIn as signInReal, type LoginStep } from '../src/data/session';
+import { openPasswordReset, signIn as signInReal, type LoginStep } from '../src/data/session';
 import { useKeyboardHeight } from '../src/components/ui/keyboard';
 
 /**
@@ -319,7 +319,14 @@ export default function Login() {
                 <PrimaryButton label="Sign in" onPress={() => void submit()} style={{ marginTop: 24 }} />
 
                 <Pressable
-                  onPress={() => notify('Reset flow — three steps, mobile then OTP then new password')}
+                  onPress={async () => {
+                    const opened = await openPasswordReset();
+                    notify(
+                      opened
+                        ? 'Opening the reset page. It emails a link to your work address.'
+                        : 'Could not open the browser. Ask your manager to send you a reset link.',
+                    );
+                  }}
                   style={{ width: '100%', height: HIT, marginTop: 8, alignItems: 'center', justifyContent: 'center' }}>
                   <Text style={[{ fontSize: 15, color: C.primary }, weight(500)]}>Forgot password</Text>
                 </Pressable>
@@ -402,10 +409,15 @@ export default function Login() {
               style={{ marginTop: 16 }}
             />
 
+            {/* There is no OTP service. `/api/mbos/auth/otp` — the route this
+                app's own `requestOtp` posts to — is not on the server, so a
+                code was never sent and cannot be sent again. Saying "Code sent
+                again" was the app inventing the one fact somebody in a market
+                with no signal would most want to believe. */}
             <Pressable
-              onPress={() => notify('Code sent again to ' + masked)}
+              onPress={() => notify('Codes are not switched on. Go back and use your password.')}
               style={{ width: '100%', height: HIT, marginTop: 8, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={[{ fontSize: 15, color: C.primary }, weight(500)]}>Send it again</Text>
+              <Text style={[{ fontSize: 15, color: C.muted }, weight(500)]}>Send it again</Text>
             </Pressable>
             <Text style={[type.caption, { marginTop: 8 }]}>
               No SMS on site? Go back and sign in with your password instead.

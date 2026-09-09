@@ -8,12 +8,13 @@ import {
   mbosSamples,
   mbosTasks,
   mbosVisits,
-  notifications,
-} from "@/db/schema";
+  } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
 import { recomputeSalesPerformance } from "@/lib/services/performance-service";
+import { notifyUsers } from "./notify";
+import { collectPushReceipts, prunePushFailures } from "./mbos/push";
 
 /**
  * The scheduled work MBOS needs, per brief §8.
@@ -30,8 +31,6 @@ import { recomputeSalesPerformance } from "@/lib/services/performance-service";
  */
 
 export type Counted = { recordsAffected: number; detail: string };
-
-const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
 /** Today, in the business timezone rather than the server's. */
 const TODAY = sql`((now() AT TIME ZONE ${APP_TIMEZONE})::date)`;
@@ -230,14 +229,18 @@ export async function escalateOverdueTasks(): Promise<Counted> {
 
   for (const t of due) {
     if (!t.assignedToUserId) continue;
-    await db.insert(notifications).values({
-      id: id("notif"),
-      userId: t.assignedToUserId,
-      title: "Task overdue",
-      body: `${t.title} is past its date and your manager has been told.`,
-      kind: "warning",
-      href: "/field/tasks",
-    });
+    await notifyUsers([
+      {
+        userId: t.assignedToUserId,
+        title: "Task overdue",
+        body: `${t.title} is past its date and your manager has been told.`,
+        kind: "warning",
+        href: "/field/tasks",
+        // The handset's own task list. `/field/tasks` is a MahekOne route the
+        // salesman this is addressed to has no app to open.
+        mbosHref: "/tasks",
+      },
+    ]);
   }
 
   return { recordsAffected: due.length, detail: `${due.length} tasks escalated` };
@@ -368,8 +371,45 @@ export async function raiseReorderFollowUps(): Promise<Counted> {
 
 /* ----------------------------------------------------------- composites */
 
+/**
+ * What Expo made of the messages it accepted, read back.
+ *
+ * Hourly, which is comfortably inside Expo's 24-hour receipt window and the
+ * only requirement there is. It is the sole path by which a dead token is ever
+ * discovered: `DeviceNotRegistered` arrives here and nowhere else, and a token
+ * nobody clears is one every future message is thrown away against while the
+ * office reads an unbroken run of successes.
+ *
+ * Cheap by construction — one request per hundred outstanding tickets, and the
+ * table is a worklist that empties itself, so a quiet hour costs one query
+ * that finds nothing.
+ */
+async function readPushReceipts(): Promise<Counted> {
+  const r = await collectPushReceipts();
+  return {
+    recordsAffected: r.checked,
+    detail: r.checked
+      ? `${r.delivered} delivered, ${r.failed} failed, ${r.tokensCleared} dead ${r.tokensCleared === 1 ? "token" : "tokens"} cleared`
+      : "no push receipts outstanding",
+  };
+}
+
+/**
+ * Failed pushes older than the retention window, swept.
+ *
+ * Delivered ones are already gone — deleted the moment their receipt confirmed
+ * them, because the notification row is the record and a second copy of "this
+ * worked" earns nothing. What is left is the evidence of what did NOT arrive,
+ * and it is kept only as long as somebody might read it.
+ */
+async function sweepPushFailures(): Promise<Counted> {
+  const gone = await prunePushFailures();
+  return { recordsAffected: gone, detail: `${gone} old push failures cleared` };
+}
+
 export async function mbosNightly(): Promise<Counted> {
   const parts = [
+    await sweepPushFailures(),
     await closeOpenVisits(),
     await markMissedCheckouts(),
     await ageLeads(),
@@ -407,6 +447,7 @@ export async function mbosHourly(): Promise<Counted> {
     await escalateApprovals(),
     await flagOverdueSamples(),
     await refreshPerformance(),
+    await readPushReceipts(),
   ];
   return {
     recordsAffected: parts.reduce((a, p) => a + p.recordsAffected, 0),

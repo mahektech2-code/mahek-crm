@@ -383,7 +383,29 @@ export type Sample = {
   satisfaction: string | null;
   additionalRequirement: string | null;
   rejectionReason: string | null;
+  /* The row has carried these since the table was written; the type simply
+     never named them, so the one screen that wants them could not read them. */
+  cans: number | null;
+  reason: string | null;
+  convertedOrderId: string | null;
 };
+
+/**
+ * This shop's trials, newest first.
+ *
+ * Two kinds of row land here and both belong: everything the salesman raised on
+ * this handset, at whatever state it reached, and the OPEN trials the office
+ * knows about — `openSamples` sends `trial_outcome = 'pending'` and nothing
+ * else, so a sample somebody closed at a desk months ago is not on the phone.
+ * The screen says that rather than letting a short list read as the whole
+ * story.
+ */
+export async function customerSamples(customerId: string): Promise<Sample[]> {
+  return all<Sample>(
+    'SELECT * FROM samples WHERE customerId = ? ORDER BY requestedAt DESC, id DESC',
+    [customerId],
+  );
+}
 
 export async function listSamples(): Promise<Sample[]> {
   return all<Sample>('SELECT * FROM samples ORDER BY requestedAt DESC');

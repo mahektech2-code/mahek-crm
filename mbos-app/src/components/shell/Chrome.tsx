@@ -21,7 +21,8 @@ export function Header({
 }: {
   title: string;
   onBack?: () => void;
-  onBell: () => void;
+  /** Absent on the notifications screen itself — see `AppFrame`. */
+  onBell?: () => void;
   unread: number;
 }) {
   return (
@@ -34,14 +35,22 @@ export function Header({
       <Text numberOfLines={1} style={[{ flex: 1, fontSize: 14, lineHeight: 20, color: C.ink }, weight(600)]}>
         {title}
       </Text>
-      <Pressable onPress={onBell} accessibilityLabel="Notifications" style={s.iconBtn}>
-        <Icon name="bell" size={24} color={C.body} strokeWidth={1.5} />
-        {unread > 0 ? (
-          <View style={s.bellBadge}>
-            <Text style={[{ color: '#fff', fontSize: 12, lineHeight: 18, textAlign: 'center' }, weight(500)]}>{unread}</Text>
-          </View>
-        ) : null}
-      </Pressable>
+      {/* A bell whose whole job is to bring you to the notifications screen is
+          furniture once you are standing on it — and tapping it pushed a second
+          copy of the page. The space is held rather than collapsed, so the title
+          does not jump sideways as you arrive. */}
+      {onBell ? (
+        <Pressable onPress={onBell} accessibilityLabel="Notifications" style={s.iconBtn}>
+          <Icon name="bell" size={24} color={C.body} strokeWidth={1.5} />
+          {unread > 0 ? (
+            <View style={s.bellBadge}>
+              <Text style={[{ color: '#fff', fontSize: 12, lineHeight: 18, textAlign: 'center' }, weight(500)]}>{unread}</Text>
+            </View>
+          ) : null}
+        </Pressable>
+      ) : (
+        <View style={s.iconBtn} />
+      )}
     </View>
   );
 }

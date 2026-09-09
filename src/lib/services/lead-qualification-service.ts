@@ -4,16 +4,14 @@ import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import {
   customers,
-  mbosDevices,
   mbosTasks,
-  notifications,
   users,
 } from "@/db/schema";
 import { getConfig } from "../config/store";
 import { nextWorkingDay, type BusinessDate } from "../business-date";
 import { managerNameByEmployeeName } from "./org-service";
 import { MBOS_EVENT, writeTimelineEvent } from "../timeline";
-import { sendExpoPush } from "../mbos/push";
+import { notifyUser } from "../notify";
 
 /* ---------------------------------------------------------------------------
  * §D and §E — what happens the moment a lead becomes a Prospect.
@@ -67,23 +65,32 @@ export async function lineManagerFor(userId: string): Promise<string | null> {
   return manager?.id ?? null;
 }
 
-/** One person, one notification, plus a push where their handset is bound. */
-async function tell(userId: string, title: string, body: string, href?: string) {
-  await db
-    .insert(notifications)
-    .values({ id: gen("ntf"), userId, title, body, kind: "info", href: href ?? null })
-    .catch(() => {});
-
-  const devices = await db
-    .select({ pushToken: mbosDevices.pushToken })
-    .from(mbosDevices)
-    .where(and(eq(mbosDevices.userId, userId), eq(mbosDevices.active, true)))
-    .catch(() => []);
-  await sendExpoPush(
-    devices.map((d) => d.pushToken),
+/**
+ * One person, told.
+ *
+ * Through `notifyUser`, which writes the row AND sends the push — this used to
+ * do both by hand, and main has since made that one function with delivery
+ * receipts behind it. A second copy would have gone on sending pushes nothing
+ * tracked.
+ *
+ * `mbosHref` is separate from `href` on purpose: the bell in MahekOne and a tap
+ * on a handset open different sets of screens, and `/sales/leads` is a page a
+ * field salesman has no app to open.
+ */
+async function tell(
+  userId: string,
+  title: string,
+  body: string,
+  href?: string,
+  mbosHref?: string,
+) {
+  await notifyUser({
+    userId,
     title,
     body,
-  ).catch(() => {});
+    href: href ?? null,
+    mbosHref: mbosHref ?? null,
+  }).catch(() => {});
 }
 
 export type QualifyOutcome = {
@@ -144,6 +151,7 @@ export async function qualifyLead(
         "A Prospect has no Lead Manager",
         `${salesman.name} qualified ${customerName}, and the org chart names nobody above them. Assign somebody to run it, or it sits.`,
         "/sales/leads",
+        "/leads",
       );
     }
     return { leadManagerId: null, taskId: null, assigned: false };
@@ -183,6 +191,7 @@ export async function qualifyLead(
     "You are running a new Prospect",
     `${customerName} was qualified in the field and is yours to convert. There is a validation call on your list for the next working day.`,
     "/sales/leads",
+    "/tasks",
   );
 
   return { leadManagerId, taskId, assigned: true };
