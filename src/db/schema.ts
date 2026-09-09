@@ -5029,7 +5029,41 @@ export const mbosAttendanceDays = pgTable(
     checkOutLat: doublePrecision("check_out_lat"),
     checkOutLng: doublePrecision("check_out_lng"),
     checkOutAccuracyM: integer("check_out_accuracy_m"),
+    /** An `attachments` id — the selfie the check-OUT captured. */
+    checkOutSelfieId: text("check_out_selfie_id").references(() => attachments.id),
     checkOutAddress: text("check_out_address"),
+
+    /**
+     * THE DAY'S SESSIONS, and the two marks above are only its ends.
+     *
+     * `[{ inAt, outAt, inSelfieId, outSelfieId }]`, oldest first, at most one
+     * open — the handset's own shape, stored as it arrives. The handset has
+     * modelled a day this way since its v2 migration ("a salesman breaks for
+     * lunch, or goes home and comes out again for an evening call") and the
+     * server had nowhere to put it: a three-session day arrived here as one
+     * pair, so 9-to-1 plus 2-to-6 read as nine hours on the record that feeds
+     * a payslip, and the office could not see the break at all.
+     *
+     * It is also the only place N selfies can live. Every check-in and every
+     * check-out is photographed, so a day with two breaks carries six — and
+     * `checkInSelfieId`/`checkOutSelfieId` beside it are the first and the
+     * last of them, mirrors for the screens exactly as the two timestamps are.
+     *
+     * Stored rather than derived, and NOT a cache: it is what the handset
+     * reported, and rebuilding it from the two marks is precisely the loss it
+     * exists to stop. `workedSeconds` below is the cache.
+     */
+    sessions: jsonb("sessions")
+      .$type<
+        {
+          inAt: number;
+          outAt: number | null;
+          inSelfieId?: string | null;
+          outSelfieId?: string | null;
+        }[]
+      >()
+      .notNull()
+      .default([]),
     /** True where the day closed itself because nobody checked out. */
     autoCheckedOut: boolean("auto_checked_out").notNull().default(false),
 

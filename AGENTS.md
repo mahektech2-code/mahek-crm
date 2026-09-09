@@ -953,6 +953,83 @@ everywhere. A failed upload leaves the complaint, call or follow-up intact and
 the message says how many files made it — never all-or-nothing, and never a
 lost call because a photograph did not upload.
 
+**THE ATTENDANCE SELFIE IS THE ONE EXCEPTION, and it is not an attachment.**
+Every MBOS check-in and every check-out takes a front-facing photograph inside
+the app, there is no path through `src/data/attendance.ts` that writes a
+session end without one, and the camera screen's only two exits are the
+photograph and abandoning the action. That reverses the rule above for exactly
+one file, on the reasoning the rule itself rests on: everything else here is a
+photograph OF something attached to a record that stands without it, and this
+one IS the record. An attendance mark on its own is a claim that somebody was
+somewhere at a time; the photograph is the only part of it that is evidence.
+Skippable — which is how it shipped, under a button reading "Start the day
+without a photo" — the two kinds of day were indistinguishable afterwards:
+some proved something, some proved nothing, and nothing on the record said
+which. The GPS fix is still never required, still recorded as missing when it
+is missing, and the day still starts outside the geofence with the reason
+asked for afterwards. A refused camera permission is therefore a real dead
+end, and the screen says so in words rather than working around itself.
+
+**A selfie is required PER SESSION, at BOTH ends.** A day is
+`[{ inAt, outAt }]` — a salesman breaks for lunch or comes out again in the
+evening — so "a selfie at check-in" would have meant one photograph covering
+three separate arrivals. `resumeDay` passed `selfieMediaId: null` and
+check-out took no photograph at all, so a day proved that somebody arrived
+once and proved nothing whatever about when they stopped, which is the half
+that decides the hours. Both are now required BY THE TYPE rather than by the
+screen: `checkIn` and `checkOut` take a non-nullable id, because a screen that
+forgets to ask is a screen and a parameter that cannot be omitted is the rule.
+Each session carries `inSelfieId` and `outSelfieId`, and the day-level
+`check_in_selfie_id`/`check_out_selfie_id` are the first-in and last-out
+mirrors, exactly as `check_in_at` and `check_out_at` already are.
+
+**THE SERVER HAD NO SESSIONS, so a day of three arrived as one pair.** The
+handset has modelled a day as a list since its own v2 migration and
+`mbos_attendance_days` kept two timestamps — so 9-to-1 plus 2-to-6 reached the
+office as nine hours on the record that feeds a payslip, with the break
+invisible. It is a `jsonb` column now, stored as the handset reports it and
+NOT a cache: rebuilding it from the two marks is precisely the loss it exists
+to prevent. It is also the only place N photographs can live, since a day with
+two breaks carries six.
+
+**A check-in is never refused because a photograph is still uploading.** Media
+is a separate queue that syncs AFTER its parent — that is the whole point of
+it — so an attendance row routinely names a file whose bytes are still on the
+phone, and the two selfie columns are foreign keys onto `attachments`. A key
+does not care about the reason: it would reject the check-in over a file in
+transit. So the id is written to those columns only once the attachment row
+exists, the handset re-sends as its media queue drains, and the `sessions`
+list holds every id from the first pass regardless — the mark is never lost to
+the ordering of an upload.
+
+**EVERY FIELD PHOTOGRAPH WAS BEING DELETED BY THE NIGHTLY JOB.** The worst bug
+in the subsystem and the quietest: `storeMbosMedia` never wrote `parent_type`
+or `parent_id`. The handset has sent both on every upload since it was
+written; the route read an `entityId` nothing sends, and the action dropped
+even that. So every selfie, cheque, bill and shop front landed in
+`attachments` with a null parent — and `sweepOrphans`, which runs nightly,
+selects exactly that (`parent_id is null` past
+`attachments.orphanCleanupHours`, 24 by default), removes the bytes from
+storage and marks the row removed. A photograph taken on Monday was gone on
+Tuesday. Until then it was readable by its uploader alone, because `canRead`
+falls back to "unbound and still the uploader's own" — so no manager had ever
+been able to open one either. The enum values (`mbos_visit`,
+`mbos_attendance`, …) had been declared a migration early with a comment
+saying they were used by nothing "yet"; nothing ever went back for them.
+`MBOS_PARENTS` is the mapping, an unrecognised name parents nothing rather
+than guessing, and the sweep still removes what genuinely belongs to nothing.
+
+**An attendance selfie has no customer behind it, and answered 404 to
+everybody.** The second half of the same story. `customerBehind` falls through
+to `calls` for any parent type it does not name, so an attendance id was
+looked up among calls, found nothing, and every read was refused — to the
+salesman in the photograph and to the manager it exists for. Who may open one
+is asked in `canReadAttendanceSelfie`: the person in it, and whoever can see
+his attendance, which is `managerScope` — the Sales Dashboard's own narrowing
+rather than a second opinion about it. Not "anybody holding the field app": a
+salesman must not be able to fetch a colleague's photograph by id, and these
+ids travel in payloads.
+
 **Removing an attachment is a status, not a delete.** It detaches from the
 parent and moves to `removed`; the bytes go only when retention says so. A
 payment proof outlives whoever tidied it off a screen.

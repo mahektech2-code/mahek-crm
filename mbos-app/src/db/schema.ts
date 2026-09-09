@@ -1058,6 +1058,25 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE journey_days ADD COLUMN pickedIds TEXT;`,
   ],
 
+  /* ---- v15 · the check-OUT selfie, which had nowhere to go ---------------- */
+  [
+    /*
+     * Attendance took a photograph at one end of the day.
+     *
+     * `checkInSelfieId` has existed since v1 and there was no counterpart, so
+     * a day proved somebody arrived and proved nothing about when they
+     * stopped — which is the half that decides the hours. Both are mandatory
+     * now and this is where the last one lands.
+     *
+     * The MIRROR, not the record. Every session in `sessions` carries its own
+     * `inSelfieId` and `outSelfieId` — a day with two breaks is three arrivals
+     * and three departures, and each of the six is photographed — and these
+     * two columns hold the first in and the last out, exactly as `checkInAt`
+     * and `checkOutAt` already do beside them. Screens read the mirrors;
+     * anybody auditing a session reads the list.
+     */
+    `ALTER TABLE attendance_days ADD COLUMN checkOutSelfieId TEXT;`,
+  ],
 ];
 
 /**
