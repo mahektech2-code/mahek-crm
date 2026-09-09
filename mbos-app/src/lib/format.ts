@@ -56,6 +56,58 @@ export function dmy(iso: string | null | undefined): string {
   return parseInt(p[2], 10) + ' ' + MONTHS[parseInt(p[1], 10) - 1];
 }
 
+/**
+ * `Mon 18 Aug` — a day named the way somebody says it out loud.
+ *
+ * Built in UTC deliberately: these are calendar days with no time of day in
+ * them, so there is no zone to get right, and building them locally is what
+ * shifts a date across a DST boundary.
+ *
+ * It lived in `app/journey.tsx` and nowhere else, so the pick screen printed
+ * `2026-09-09` on the card naming the very day the route screen called
+ * `Wed 9 Sep` — one day, two vocabularies, on two screens one tap apart.
+ */
+export function dayLabel(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return String(iso);
+  const at = new Date(Date.UTC(y, m - 1, d));
+  const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][at.getUTCDay()];
+  return day + ' ' + at.getUTCDate() + ' ' + MONTHS[at.getUTCMonth()];
+}
+
+/**
+ * `Today`, `Tomorrow`, or `Wed 9 Sep`.
+ *
+ * The route screen listed every day by date while its own headline talked
+ * about "today" — so the card naming the day somebody is standing in read
+ * `Wed 9 Sep`, and connecting the two meant knowing today's date. The two days
+ * worth naming in words are the two anybody acts on.
+ *
+ * `Yesterday` is deliberately absent: past days appear under Recently, where
+ * every row is a date and one relative word among them reads as a different
+ * kind of row.
+ */
+export function dayLabelRelative(iso: string, today: string): string {
+  if (iso === today) return 'Today';
+  const [y, m, d] = today.split('-').map(Number);
+  if (y && m && d) {
+    const next = new Date(Date.UTC(y, m - 1, d + 1));
+    if (iso === isoDateUtc(next)) return 'Tomorrow';
+  }
+  return dayLabel(iso);
+}
+
+/** `YYYY-MM-DD` off a date built in UTC — the zone `dayLabel` works in. */
+function isoDateUtc(d: Date): string {
+  return (
+    d.getUTCFullYear() +
+    '-' +
+    String(d.getUTCMonth() + 1).padStart(2, '0') +
+    '-' +
+    String(d.getUTCDate()).padStart(2, '0')
+  );
+}
+
 export function monthName(monthIndex: number): string {
   return MONTH_NAMES[monthIndex];
 }

@@ -275,6 +275,15 @@ const ENTITY_TABLE: Record<string, string> = {
   competitor: 'competitor_records',
   approval: 'approvals',
   plan_day: 'journey_days',
+  /*
+   * Both answers about a day land on the same row, because `entityId` for a
+   * pick IS the plan day's id. Missing, a refused pick wrote nothing back at
+   * all: the local row kept the `dayState = 'planned'` the pick had set
+   * optimistically, with no stops behind it and nothing on the screen saying
+   * the office had refused it — a route claiming to be a route, which is the
+   * one state this model exists to prevent.
+   */
+  plan_stops: 'journey_days',
 };
 
 async function setEntityState(

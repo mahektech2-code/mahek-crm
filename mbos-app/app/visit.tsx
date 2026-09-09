@@ -49,6 +49,9 @@ export default function Visit() {
   const visitStart = useStore((s) => s.visitStart);
   const visitDone = useStore((s) => s.visitDone);
   const set = useStore((s) => s.set);
+  /* Set on the route screen, before the shop was chosen. See `deviationReason`
+     in the save below. */
+  const offPlanReason = useStore((s) => s.offPlanReason);
   const notify = useStore((s) => s.notify);
   const markVisitDone = useStore((s) => s.markVisitDone);
   const askConfirm = useStore((s) => s.askConfirm);
@@ -243,7 +246,20 @@ export default function Visit() {
         nextFollowUpDate: nextDate || null,
         journeyStopId: stopId,
         wasPlanned: !!stopId,
-        deviationReason: null,
+        /*
+         * Why this shop, when it is not on the plan.
+         *
+         * Hardcoded null since this screen was written, while the route screen
+         * asked for the reason and threw it away in a toast — so `visits`
+         * carried the column, the manager screens read it, and no visit in the
+         * history has ever had one. It is taken on the route screen and spent
+         * here.
+         *
+         * Dropped where the shop turns OUT to be on today's plan: a stop he
+         * was always going to make is not a deviation, whatever he typed
+         * before he chose it.
+         */
+        deviationReason: stopId ? null : offPlanReason,
         locationMismatch: verdictGeo.mismatch,
         metresFromShop: metresAway,
         verified: unverifiedReason == null,
@@ -251,7 +267,9 @@ export default function Visit() {
         linkedComplaintId: linked.complaintId ?? null,
         linkedSampleId: linked.sampleId ?? null,
       });
-      set({ visitSpent: spent });
+      /* Spent, whether or not it was used — a reason typed for one shop must
+         not attach itself to the next unrelated visit hours later. */
+      set({ visitSpent: spent, offPlanReason: null });
       router.replace('/saved');
     } catch {
       setSaving(false);

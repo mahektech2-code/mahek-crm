@@ -75,6 +75,19 @@ type State = {
   nextDate: string;
   visitStart: number | null;
   visitSpent: string | null;
+  /**
+   * Why the next visit is off the plan.
+   *
+   * Set on the route screen, spent by the visit. It has to live here rather
+   * than travel as a route param because the two are separated by a THIRD
+   * screen — the reason is given on the route, the shop is chosen on the
+   * Customers list, and the visit is where both arrive. `visits` has carried
+   * `deviationReason` and `wasPlanned` since it was written and the handset
+   * sent null for the first of them on every visit ever logged; the button
+   * that was supposed to fill it raised a toast and wrote nothing, on a screen
+   * whose own words are "your manager sees the reason".
+   */
+  offPlanReason: string | null;
   /** What this visit has already produced, so returning to it shows the work is done. */
   visitDone: Partial<Record<OutcomeKey, string>>;
   overrodeReason: string | null;
@@ -152,6 +165,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   nextDate: NO_DATE_YET,
   visitStart: null,
   visitSpent: null,
+  offPlanReason: null,
   visitDone: {},
   overrodeReason: null,
   form: null,
@@ -200,6 +214,10 @@ export const useStore = create<State & Actions>((set, get) => ({
       visitDone: {},
       overrodeReason: null,
       sheet: null,
+      /* `offPlanReason` is deliberately NOT reset here. It is set on the route
+         screen BEFORE the shop is chosen, and choosing the shop is what calls
+         this — clearing it would throw away the reason on the way to the very
+         visit it was written for. The visit clears it once, on save. */
     }),
 
   markVisitDone: (k, line) => set({ visitDone: { ...get().visitDone, [k]: line } }),
