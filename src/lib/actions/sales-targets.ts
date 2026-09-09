@@ -7,7 +7,6 @@ import { z } from "zod";
 import { db } from "@/db";
 import {
   auditLog,
-  notifications,
   salesTargetCategories,
   salesTargetRevisions,
   salesTargets,
@@ -18,6 +17,7 @@ import { getConfig } from "@/lib/config/store";
 import { money } from "@/lib/format";
 import { revisionsFor } from "@/lib/services/sales-target-service";
 import { err, fieldErr, fromThrown, ok, okVoid, type Result } from "@/lib/result";
+import { notifyUsers } from "../notify";
 
 /* ---------------------------------------------------------------------------
  * Setting somebody's target, publishing it, and changing it afterwards.
@@ -449,14 +449,17 @@ export async function targetRevisionHistory(
 async function notify(userId: string, title: string, body: string) {
   const [person] = await db.select().from(users).where(eq(users.id, userId));
   if (!person) return;
-  await db.insert(notifications).values({
-    id: id("ntf"),
-    userId,
-    title,
-    body,
-    kind: "info",
-    // Somewhere to go and read it. A bell saying a number changed with nothing
-    // behind it is worse than no bell.
-    href: "/crm/performance",
-  });
+  await notifyUsers([
+    {
+      userId,
+      title,
+      body,
+      // Somewhere to go and read it. A bell saying a number changed with
+      // nothing behind it is worse than no bell.
+      href: "/crm/performance",
+      // A published target is the one thing on this list a field salesman is
+      // told about, and `/performance` is where his own figures are.
+      mbosHref: "/performance",
+    },
+  ]);
 }

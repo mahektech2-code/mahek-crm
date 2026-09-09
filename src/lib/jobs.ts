@@ -7,7 +7,6 @@ import {
   calls,
   complaints,
   jobRuns,
-  notifications,
   queueSnapshots,
   reminders,
   users,
@@ -67,6 +66,7 @@ import { projectFieldActivityTimeline } from "./services/field-activity-projecti
 
 import { syncCustomerMasterSheet } from "./services/customer-master-sync-service";
 import { projectCustomerMaster } from "./services/customer-master-projection-service";
+import { notifyUsers } from "./notify";
 /* ---------------------------------------------------------------------------
  * §7 Scheduled work.
  *
@@ -509,14 +509,15 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
             .set({ slaEscalatedAt: new Date() })
             .where(eq(complaints.id, c.id));
           for (const m of managers) {
-            await db.insert(notifications).values({
-              id: id("ntf"),
-              userId: m.id,
-              title: "Complaint past its SLA",
-              body: "A complaint has passed its resolution deadline and needs attention.",
-              kind: "danger",
-              href: "/crm/complaints",
-            });
+            await notifyUsers([
+              {
+                userId: m.id,
+                title: "Complaint past its SLA",
+                body: "A complaint has passed its resolution deadline and needs attention.",
+                kind: "danger",
+                href: "/crm/complaints",
+              },
+            ]);
           }
         }
       }

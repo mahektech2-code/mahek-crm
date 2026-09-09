@@ -680,6 +680,13 @@
       "when": 1787502220000,
       "tag": "0096_salesman_name_link",
       "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1787502280000,
+      "tag": "0097_push_delivery",
+      "breakpoints": true
     }
   ]
 }

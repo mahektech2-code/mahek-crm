@@ -82,6 +82,7 @@ import {
 } from "@/lib/queries";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
 import { initialsOf } from "@/lib/format";
+import { notifyUsers } from "../notify";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -1004,14 +1005,14 @@ export async function requestReactivation(
       .from(users)
       .where(inArray(users.role, ["manager", "admin"]));
     for (const m of managers) {
-      await db.insert(notifications).values({
-        id: id("ntf"),
-        userId: m.id,
-        title: "Reactivation requested",
-        body: `${ctx.user.name} asked to bring back ${deactivated.length} customer${deactivated.length === 1 ? "" : "s"}: ${reason.trim()}`,
-        kind: "info",
-        href: "/crm/status-requests",
-      });
+      await notifyUsers([
+        {
+          userId: m.id,
+          title: "Reactivation requested",
+          body: `${ctx.user.name} asked to bring back ${deactivated.length} customer${deactivated.length === 1 ? "" : "s"}: ${reason.trim()}`,
+          href: "/crm/status-requests",
+        },
+      ]);
     }
 
     refreshAll();
