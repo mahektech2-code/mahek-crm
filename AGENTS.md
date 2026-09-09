@@ -143,6 +143,45 @@ holding the whole app and nobody who was deliberately narrowed.
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
 
+**"WHAT IS NEAR ME" IS ORDERED BY WHAT IS WORTH DOING, not by distance.**
+The mapping brief says so in as many words, and `engines/nearby.ts` is the one
+place that rule lives: distance is a COST subtracted from what a stop is worth,
+never the sort key. A shop with NO reason is dropped rather than listed —
+"nearby" is a list of what to do, and the whole book is a different screen
+answering a different question. Proximity decides exactly one thing: which of
+two shops with the same reason to go to first.
+
+It is deliberately NOT a second copy of the Call Log's ranking. That engine
+weighs a promise against a debt against a stock check to order four hundred
+names for a telecaller working down a list; this answers "of the eleven shops
+within three kilometres, which one now". Re-deriving the first here would be a
+scoring system drifting from a scoring system, invisible until two screens
+disagree about one shop. **Next Best Visit is the HEAD of that list**, not a
+second sum, so the button and the list can never recommend different shops.
+
+**And it needs no map.** Every coordinate, cycle, debt and open task is already
+on the handset, so this works with one bar in a market lane — which is the only
+moment anybody asks. The map itself stays blocked on a native dependency and a
+new APK; the ANSWER was never blocked on either.
+
+**Navigate is a deep link, and that is the whole feature.** No dependency, no
+key, no bill, no tile ever fetched. `engines/route.ts` orders a day by
+straight-line distance and says in its own header that it is not a routing
+service — real turn-by-turn needs a road network, a directions API and a
+connection, and the phone that most needs directions has one bar. An app that
+has already downloaded the roads beats all of that, free.
+
+**A POTENTIAL IS A JUDGEMENT and is stored with its author and its date.**
+`products.priceSource` is still `unset`, so nothing here can derive what a shop
+could spend. `potential_monthly_paise` is somebody's estimate, and an estimate
+with no date on it is one a reader cannot weigh. The ANNUAL figure and CURRENT
+SALES are derived and never stored: the first is twelve times the month and the
+second comes from orders, and a stored second copy is one that can disagree.
+**The gap is never negative** — a shop buying more than somebody guessed is an
+estimate that has been overtaken, and "-₹40,000 opportunity" invites the reader
+to see a decline. **No estimate is not a gap of zero**, which would read as "no
+opportunity here": null says the true thing, that nobody has judged it.
+
 **EVERY TIMELINE KIND IS A CONSTANT, never a literal at the call site.**
 `CRM_EVENT` and `MBOS_EVENT` in `lib/timeline.ts` are the whole vocabulary. The
 natural key is (app, kind, source row), so a literal that drifts by one

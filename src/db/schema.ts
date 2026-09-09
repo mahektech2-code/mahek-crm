@@ -1198,6 +1198,29 @@ export const customers = pgTable(
 
     customerType: customerTypeEnum("customer_type"),
     potential: customerPotentialEnum("potential"),
+    /**
+     * 2-§P — what this account could be worth in a month, in PAISE.
+     *
+     * `potential` beside it orders a book into three bands and cannot be
+     * subtracted from anything; a gap needs a number. The lead columns already
+     * hold this for a lead, and it stops being readable the moment the lead
+     * becomes a customer — which is the point at which the question starts
+     * being worth asking every quarter.
+     *
+     * A JUDGEMENT, never a measurement, and the two columns beside it are what
+     * keep that visible: `products.priceSource` is still `unset`, so nothing in
+     * MahekOne can derive what a shop could spend, and an estimate with no date
+     * on it is one nobody can weigh. "He thought this in 2024" is most of what
+     * a reader needs to know about a figure like this.
+     *
+     * There is no ANNUAL column and no CURRENT SALES column. The first is this
+     * times twelve and the second is derivable from orders — a stored second
+     * copy is a copy that can disagree, and two screens quoting two numbers for
+     * one shop is how both stop being believed.
+     */
+    potentialMonthlyPaise: bigint("potential_monthly_paise", { mode: "number" }),
+    potentialEstimatedAt: timestamp("potential_estimated_at", { withTimezone: true }),
+    potentialEstimatedById: text("potential_estimated_by_id").references(() => users.id),
 
     /** Paise, like every other amount. Null means no limit has been set. */
     creditLimitPaise: bigint("credit_limit_paise", { mode: "number" }),

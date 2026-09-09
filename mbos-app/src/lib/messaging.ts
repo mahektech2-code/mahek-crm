@@ -166,3 +166,63 @@ export function orderMessage(args: {
 
   return out.join('\n');
 }
+
+/* ------------------------------------------------------------- navigation */
+
+/**
+ * Hand the shop to whatever maps app the phone has.
+ *
+ * §G and 2-§D ask for a Navigate button, and this is the whole of it: a deep
+ * link, no dependency, no key, no bill, and no tile ever fetched. Android takes
+ * `google.navigation:` straight into turn-by-turn; everything else gets the
+ * platform's `geo:` or, failing that, a maps URL the browser will pick up.
+ *
+ * Deliberately NOT a route we compute. `engines/route.ts` orders a day's stops
+ * by straight-line distance and says in its own header that it is not a routing
+ * service — real turn-by-turn needs a road network, a directions API and a
+ * connection, and the phone that most needs directions is the one with one bar
+ * in a market lane. Handing off to an app that has already downloaded the roads
+ * is better than any of that, and free.
+ *
+ * The name rides along so the destination reads as a shop rather than a pair of
+ * numbers when the maps app shows it back.
+ */
+export async function navigateTo(
+  coords: { lat: number; lng: number },
+  label?: string | null,
+): Promise<SendOutcome> {
+  const point = coords.lat + ',' + coords.lng;
+  const name = label?.trim() ? encodeURIComponent(label.trim()) : null;
+
+  const candidates =
+    Platform.OS === 'android'
+      ? [
+          'google.navigation:q=' + point,
+          'geo:' + point + '?q=' + point + (name ? '(' + name + ')' : ''),
+        ]
+      : [
+          /* Apple Maps takes a label directly; `geo:` is the generic fallback. */
+          'maps://?daddr=' + point + (name ? '&q=' + name : ''),
+          'geo:' + point,
+        ];
+  candidates.push('https://www.google.com/maps/dir/?api=1&destination=' + point);
+
+  for (const url of candidates) {
+    try {
+      if (await Linking.canOpenURL(url)) {
+        await Linking.openURL(url);
+        return { status: 'handed_off', channel: 'copy' };
+      }
+    } catch {
+      /* Try the next one. A phone with no maps app at all is rare and is
+         handled by the fallback below rather than by an error nobody can act
+         on. */
+    }
+  }
+
+  /* Nothing would open it. The coordinates go on the clipboard, because a
+     salesman standing outside with a number he can paste is better off than one
+     told "navigation is unavailable". */
+  await Clipboard.setStringAsync(point);
+  return { status: 'copied', reason: 'No maps app would open — the location is on your clipboard.' };
+}

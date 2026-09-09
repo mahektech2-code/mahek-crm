@@ -4568,6 +4568,9 @@ const customerEditSchema = z.object({
   dealerCode: z.string().max(60).optional(),
   customerType: z.enum(["dealer", "manufacturer", "distributor", "retailer"]).optional(),
   potential: z.enum(["high", "medium", "low"]).optional(),
+  /* 2-§P — the figure the band cannot give you. A judgement, so who made it and
+     when are written with it: an estimate with no date is one nobody can weigh. */
+  potentialMonthlyPaise: z.number().int().nonnegative().optional(),
   visitFrequencyDays: z.number().int().positive().optional(),
   gpsLat: z.number().optional(),
   gpsLng: z.number().optional(),
@@ -4921,6 +4924,15 @@ async function handleCustomerEdit(
   if (p.dealerCode !== undefined) changed.dealerCode = p.dealerCode;
   if (p.customerType !== undefined) changed.customerType = p.customerType;
   if (p.potential !== undefined) changed.potential = p.potential;
+  /* 2-§P. Stamped with WHO and WHEN in the same breath, because this is a
+     judgement rather than a measurement — nothing in MahekOne can derive what
+     a shop could spend while `products.priceSource` is unset, and a figure with
+     no author and no date is one a reader cannot weigh. */
+  if (p.potentialMonthlyPaise !== undefined) {
+    changed.potentialMonthlyPaise = p.potentialMonthlyPaise;
+    changed.potentialEstimatedAt = new Date();
+    changed.potentialEstimatedById = principal.user.id;
+  }
   if (p.visitFrequencyDays !== undefined) changed.visitFrequencyDays = p.visitFrequencyDays;
   if (p.gpsLat !== undefined) changed.gpsLat = p.gpsLat;
   if (p.gpsLng !== undefined) changed.gpsLng = p.gpsLng;

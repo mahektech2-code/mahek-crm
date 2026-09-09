@@ -2314,6 +2314,27 @@ export const SETTINGS = [
     max: 30,
   },
 
+  {
+    key: "mbos.location.nearbyRadiusOptions",
+    type: "structured",
+    category: "mbos-location",
+    label: "Nearby search radii",
+    description:
+      "The distances the handset offers when a salesman asks what is near him, in metres. Configuration because a city beat and a district tour do not mean the same thing by 'nearby' — five kilometres is the next lane in Nagpur and half a day in Vidarbha.",
+    default: { metres: [1000, 3000, 5000, 10000, 25000] },
+  },
+  {
+    key: "mbos.location.nearbyPerKilometreCost",
+    type: "integer",
+    category: "mbos-location",
+    label: "What a kilometre is worth",
+    description:
+      "How much a kilometre of travel counts AGAINST a reason to visit, when the handset orders what is nearby. This is the whole trade-off in one number: raise it and the list stays local, lower it and a good reason will send somebody across town. It is configuration and not a constant because a kilometre on a two-wheeler through a market and a kilometre on a district tour are not the same kilometre.",
+    default: 12,
+    min: 0,
+    max: 200,
+  },
+
   /* --------------------------------------------------------------- tasks */
   {
     key: "mbos.tasks.escalationHours",
@@ -3031,6 +3052,8 @@ export type Config = {
   "mbos.leads.visitsBeforeDecision": number;
   "mbos.leads.maxSuspectVisits": number;
   "mbos.samples.reviewAfterDays": number;
+  "mbos.location.nearbyRadiusOptions": { metres: number[] };
+  "mbos.location.nearbyPerKilometreCost": number;
   "mbos.leads.validationScript": {
     sections: { heading: string; lines: string[] }[];
   };

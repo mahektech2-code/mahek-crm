@@ -715,6 +715,13 @@
       "when": 1787502520000,
       "tag": "0101_order_delivery_and_terms",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1787502580000,
+      "tag": "0102_customer_potential",
+      "breakpoints": true
     }
   ]
 }
