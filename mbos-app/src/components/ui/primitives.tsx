@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { BADGE, color as C, HIT, radius, shadow, type, weight, tabular, type BadgeTone } from '../../theme/tokens';
 import { usePressScale } from './motion';
+import type { HealthBandValue } from '../../data/customers';
 
 /**
  * A pressable that scales has two boxes: the wrapper that carries the
@@ -117,21 +118,91 @@ export function Badge({ tone, children, style }: { tone: BadgeTone; children: Re
  * customer card, so it carries its own verdict rather than making the reader
  * remember where 70 and 50 sit.
  */
-export function HealthPill({ value, large = false }: { value: number; large?: boolean }) {
-  const bg = value >= 70 ? C.successBg : value >= 50 ? C.warnBg : C.dangerBg;
-  const fg = value >= 70 ? C.success : value >= 50 ? C.warnInk : C.danger;
+/**
+ * The retention band, as the server computed it. `null` means the customer has
+ * never ordered — not a band anybody can invent.
+ *
+ * The VALUES are the server's (`HealthBand` in engines/inactivity.ts) and
+ * arrive on the wire; only the words are here, because this project cannot
+ * import from the server's tree. Keep them in step with
+ * `HEALTH_BAND_LABELS` — the wire test pins the column, not the labels.
+ */
+const BAND_WORD: Record<HealthBandValue, string> = {
+  active: 'Active',
+  'at-risk': 'At risk',
+  dormant: 'Dormant',
+  lost: 'Lost',
+};
+
+const BAND_COLOUR: Record<HealthBandValue, { bg: string; fg: string }> = {
+  active: { bg: C.successBg, fg: C.success },
+  'at-risk': { bg: C.warnBg, fg: C.warnInk },
+  dormant: { bg: C.dangerBg, fg: C.danger },
+  lost: { bg: C.dangerBg, fg: C.danger },
+};
+
+/**
+ * HEALTH, AND THE TWO QUESTIONS IT ANSWERS — B3-16.
+ *
+ * The BAND is whether they have stopped buying, measured in their own cycles.
+ * The SCORE is how the relationship is doing across five components. This drew
+ * only the score, coloured at a hardcoded 70 and 50, and the manager's console
+ * called a low score "At risk" — the same phrase the owner's report uses for a
+ * customer who is genuinely going quiet. One shop, one afternoon, two people
+ * reading one phrase and meaning different things.
+ *
+ * The band gets the word. The score keeps its number and never borrows it. The
+ * thresholds are configuration now and arrive with the payload, because
+ * nothing business-critical is a constant.
+ */
+export function HealthPill({
+  value,
+  band = null,
+  strongAtOrAbove = 70,
+  watchBelow = 40,
+  large = false,
+}: {
+  value: number | null;
+  band?: HealthBandValue | null;
+  strongAtOrAbove?: number;
+  watchBelow?: number;
+  large?: boolean;
+}) {
+  const tone = band ? BAND_COLOUR[band] : null;
+  const scoreFg =
+    value === null
+      ? C.muted
+      : value >= strongAtOrAbove
+        ? C.success
+        : value < watchBelow
+          ? C.danger
+          : C.warnInk;
+
   return (
-    <View
-      style={{
-        minWidth: large ? 52 : 44,
-        height: large ? 32 : 28,
-        paddingHorizontal: 8,
-        borderRadius: 14,
-        backgroundColor: bg,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}>
-      <Text style={[{ fontSize: large ? 14 : 13, color: fg }, weight(600), tabular]}>{'● ' + value}</Text>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      {/* The headline. Absent where the customer has never ordered — they have
+          not stopped buying, they have not started, and a band drawn there
+          would be an invention. */}
+      {band ? (
+        <View
+          style={{
+            height: large ? 32 : 28,
+            paddingHorizontal: 10,
+            borderRadius: 14,
+            backgroundColor: tone!.bg,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+          <Text style={[{ fontSize: large ? 13 : 12, color: tone!.fg }, weight(600)]}>
+            {BAND_WORD[band]}
+          </Text>
+        </View>
+      ) : null}
+      {value !== null ? (
+        <Text style={[{ fontSize: large ? 14 : 13, color: scoreFg }, weight(600), tabular]}>
+          {'● ' + value}
+        </Text>
+      ) : null}
     </View>
   );
 }

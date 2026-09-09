@@ -2088,10 +2088,21 @@ export const SETTINGS = [
     key: "mbos.health.atRiskBelow",
     type: "integer",
     category: "mbos-health",
-    label: "At-risk score",
+    label: "Watch below this score",
     description:
-      "A customer scoring below this is shown as at risk on the salesman's list and in the AI assistant's suggestions. Advisory — nothing is blocked by a score.",
+      "A customer scoring below this is worth a look, and the screens say which of the five components is dragging. Deliberately NOT called at risk any more: that phrase belongs to the retention band, which asks whether somebody has stopped BUYING, and a customer ordering perfectly on time can still score badly for late payments or open complaints. Two settings using one phrase for two questions is what B3-16 was raised about. Advisory - nothing is blocked by a score. The key keeps its old name so no stored setting has to be migrated.",
     default: 40,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "mbos.health.strongAtOrAbove",
+    type: "integer",
+    category: "mbos-health",
+    label: "Strong at or above this score",
+    description:
+      "At or above this a customer's score reads as strong. It existed as a literal 70 inside the handset's health pill, with 50 beside it, which made two business thresholds invisible to the one screen a manager would go to change them. Nothing business-critical is a constant.",
+    default: 70,
     min: 0,
     max: 100,
   },
@@ -2577,6 +2588,21 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
  */
 export function checkConsistency(config: Config): string[] {
   const problems: string[] = [];
+
+  /*
+   * A score cannot be both strong and worth watching. Set the strong threshold
+   * at or below the watch one and every score in the overlap is rendered green
+   * by one rule and red by the other on two screens that both claim to show
+   * health — which is the shape of the confusion B3-16 was raised about, one
+   * level down. Refused here rather than resolved by ordering the branches in
+   * `healthView`, because a rule the code silently works around is a rule
+   * nobody knows is broken.
+   */
+  if (config["mbos.health.strongAtOrAbove"] <= config["mbos.health.atRiskBelow"]) {
+    problems.push(
+      `Health: "strong at or above" (${config["mbos.health.strongAtOrAbove"]}) must sit above "watch below" (${config["mbos.health.atRiskBelow"]}), or a score between them is both at once.`,
+    );
+  }
 
   /*
    * Sarvam's synchronous endpoint refuses audio over 30 seconds. With the
@@ -3136,6 +3162,7 @@ export type Config = {
 
   "mbos.health.componentWeights": Record<MbosHealthComponent, number>;
   "mbos.health.atRiskBelow": number;
+  "mbos.health.strongAtOrAbove": number;
   "mbos.health.staleAfterHours": number;
 
   "mbos.sync.imageMaxDimensionPx": number;

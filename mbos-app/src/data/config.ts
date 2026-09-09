@@ -70,6 +70,15 @@ const DEFAULTS: Record<string, unknown> = {
   'mbos.attendance.halfDayHours': 4,
   'mbos.attendance.fullDayHours': 8,
 
+  /* health — the two thresholds the pill colours by, and the two words it
+     must not confuse. `atRiskBelow` is a SCORE threshold and says a customer
+     is worth a look; "at risk" itself is the retention BAND, which the server
+     computes from the customer's own cycles and sends on the wire. Two
+     settings using one phrase for two questions is what B3-16 was raised
+     about. */
+  'mbos.health.atRiskBelow': 40,
+  'mbos.health.strongAtOrAbove': 70,
+
   /* health score — weights, normalised at use */
   'mbos.health.componentWeights': {
     orderRecency: 25,

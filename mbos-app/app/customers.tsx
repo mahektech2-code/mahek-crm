@@ -7,6 +7,7 @@ import { Card, HealthPill, PrimaryButton } from '../src/components/ui/primitives
 import { BottomSheet } from '../src/components/ui/overlays';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
+import { getConfig } from '../src/data/config';
 import { distanceLabel, inr, isoDate, plural, pretty, shopName } from '../src/lib/format';
 import { reorderLabel, reorderState } from '../src/engines/leads';
 import { callNumber, openMaps, openWhatsApp } from '../src/lib/messaging';
@@ -49,6 +50,26 @@ export default function Customers() {
   const beginVisit = useStore((s) => s.beginVisit);
   const sheet = useStore((s) => s.sheet);
 
+  /* The two health thresholds. Read from configuration, never typed here —
+     they used to be a literal 70 and 50 inside the pill, which put two
+     business numbers where the one screen a manager would change them on
+     could not see them. */
+  const [healthWatch, setHealthWatch] = React.useState(40);
+  const [healthStrong, setHealthStrong] = React.useState(70);
+  React.useEffect(() => {
+    let live = true;
+    void Promise.all([
+      getConfig<number>('mbos.health.atRiskBelow', 40),
+      getConfig<number>('mbos.health.strongAtOrAbove', 70),
+    ]).then(([w, st]) => {
+      if (!live) return;
+      setHealthWatch(w);
+      setHealthStrong(st);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
   const [rowMore, setRowMore] = React.useState<Customer | null>(null);
 
   /* ------------------------------------- a shop that is not on the book yet
@@ -450,9 +471,18 @@ export default function Customers() {
                     {[x.contactPerson, x.city].filter(Boolean).join(' · ')}
                   </Text>
                 </View>
-                {/* A customer the office has not scored yet gets no pill at all —
-                    a zero would read as the worst score there is. */}
-                {x.healthScore != null ? <HealthPill value={x.healthScore} /> : null}
+                {/* A customer the office has not scored yet gets no NUMBER —
+                    a zero would read as the worst score there is — but a band
+                    can still stand on its own, because it needs only the last
+                    order date and the cycle. Both absent draws nothing. */}
+                {x.healthScore != null || x.healthBand ? (
+                  <HealthPill
+                    value={x.healthScore ?? null}
+                    band={x.healthBand ?? null}
+                    strongAtOrAbove={healthStrong}
+                    watchBelow={healthWatch}
+                  />
+                ) : null}
               </View>
 
               <Text
@@ -504,7 +534,15 @@ export default function Customers() {
                       width: 8,
                       height: 8,
                       borderRadius: 4,
-                      backgroundColor: stage === 'Overdue' ? C.danger : stage === 'At risk' ? C.warn : C.success,
+                      /* Dormant and Lost are the far end of the same scale
+                         and must not fall through to green, which is what the
+                         old 'Overdue' check did the moment the words changed. */
+                      backgroundColor:
+                        stage === 'Dormant' || stage === 'Lost'
+                          ? C.danger
+                          : stage === 'At risk'
+                            ? C.warn
+                            : C.success,
                     }}
                   />
                   <Text style={{ fontSize: 14, color: C.body }}>{stage}</Text>
