@@ -128,7 +128,7 @@ beforeEach(async () => {
       sales_performance_categories, sales_performance, sales_target_revisions,
       sales_target_categories, sales_targets,
       audit_log, job_runs, notifications, payments, payment_receipts, bills,
-      complaints, mbos_leads, interaction_product_lines, orders, calls,
+      complaints, interaction_product_lines, orders, calls,
       app_access, sessions, customers, users, app_settings
     restart identity cascade
   `);
