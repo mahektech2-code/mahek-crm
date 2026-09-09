@@ -220,6 +220,21 @@ export const CAPABILITIES = [
    */
   "expense.policy.write",
   "expense.policy.publish",
+  /*
+   * THE LEAD FUNNEL, §28.
+   *
+   * `lead.work` is in none of the sets below, which is how a capability is
+   * given to "everybody who works the book": a telecaller holds anything not
+   * named in `MANAGER_ONLY`, and a field salesman signs in as one. That is the
+   * right shape here rather than an accident — moving a lead up its ladder is
+   * the ordinary work of the person standing in the shop, and a funnel only a
+   * manager can advance is a funnel nobody updates. Accounts fall out of it for
+   * free: they do not work the calling book and they do not work this one.
+   */
+  "lead.work",
+  "lead.override",
+  "lead.verify",
+  "distributor.approve",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -249,6 +264,30 @@ const MANAGER_ONLY: ReadonlySet<Capability> = new Set<Capability>([
    * "everything Rahul had" is a hundred accounts in one press.
    */
   "customer.assignSalesManager",
+  /*
+   * §28 — passing a gate that is shut, and it is a manager's alone.
+   *
+   * A system that refuses everything is defeated in a week by people recording
+   * the work after the event, and the record then says the process was followed
+   * when it was not — which is worse than the gate being open. So the escape
+   * hatch exists, it demands a reason code, it stores exactly which conditions
+   * were still missing, and it is held by the one person who can be asked about
+   * it afterwards. It is also what a downward move needs: putting a lead back
+   * down its ladder undoes work somebody recorded, and the ladder engine's own
+   * `previousStage` says in as many words that it is for a manager reverting
+   * one.
+   */
+  "lead.override",
+  /*
+   * §8 — the verification call, which is the whole point of §7.
+   *
+   * The sales manager rings the customer to establish that the salesman was
+   * there and that Mahek was explained. Two of the twelve questions are about
+   * the salesman rather than the sale, which is exactly why the salesman may
+   * not be the person who records the answers — a check somebody performs on
+   * their own work is not a check.
+   */
+  "lead.verify",
 ]);
 
 /**
@@ -312,6 +351,21 @@ const ACCOUNTS_ONLY: ReadonlySet<Capability> = new Set<Capability>([
  */
 const ADMIN_ONLY: ReadonlySet<Capability> = new Set<Capability>([
   "expense.policy.publish",
+  /*
+   * §12 — appointing a distributor, which is the SECOND step of that chain and
+   * not the manager's own recommendation.
+   *
+   * The specification calls this step "Management", and the distinction it is
+   * drawing is the one `order.approve` already draws one level down: a special
+   * discount, a credit limit and territory exclusivity are decisions with a
+   * cost attached, and the person carrying the target must not be the person
+   * allowing them. A sales manager may put a candidate forward — that is
+   * `stepIndex` 0 and it needs nothing but their own hat — and may not appoint
+   * one. There is no "management" role in MahekOne, and inventing a fifth would
+   * mean teaching scope, the console and every switcher about it; admin is who
+   * actually holds that seat here.
+   */
+  "distributor.approve",
 ]);
 
 /**

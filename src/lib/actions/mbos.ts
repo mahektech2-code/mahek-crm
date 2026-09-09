@@ -38,7 +38,14 @@ import {
   type OrderLine,
 } from "@/db/schema";
 import { writeTimelineEvent, type TimelineWriter } from "../timeline";
-import { scopedToUsers} from "../access-control";
+import { canAny, grantingRole, rolesFor, scopedToUsers } from "../access-control";
+import {
+  applyLeadStageMove,
+  evaluateLeadStageMove,
+  leadGateInput,
+  leadRow,
+} from "../services/lead-service";
+import type { LeadSalesType, LeadStage } from "../lead-labels";
 import { getConfig } from "../config/store";
 import { financialYearOf } from "../financial-year";
 import { metresBetween } from "../geo";
@@ -1798,7 +1805,85 @@ const leadSchema = z.object({
     .enum(["manual", "website", "referral", "exhibition", "cold_call", "whatsapp", "campaign"])
     .nullish(),
   estimatedPotentialPaise: z.number().int().nonnegative().nullish(),
-  stage: z.enum(["new", "contacted", "qualified", "negotiation", "won", "lost"]).nullish(),
+  /*
+   * THE FUNNEL'S RUNGS, and the original six are still first.
+   *
+   * An APK cannot be recalled, so the wire has to keep meaning what it meant:
+   * a handset that has never heard of the funnel goes on sending `new` and
+   * `contacted` against a lead carrying no sales type, and that lead goes on
+   * climbing `LEGACY_LADDER` exactly as it did. What is added is the
+   * seventeen new values, which only a build that knows about them can send.
+   */
+  stage: z
+    .enum([
+      "new",
+      "contacted",
+      "qualified",
+      "negotiation",
+      "won",
+      "lost",
+      "suspect",
+      "prospect",
+      "qualification",
+      "sample_trial",
+      "sample_received",
+      "sample_review",
+      "first_order",
+      "delivery",
+      "payment",
+      "second_order",
+      "customer",
+      "management_review",
+      "commercial_discussion",
+      "distributor_approval",
+      "distributor_agreement",
+      "initial_stock_order",
+      "active_distributor",
+    ])
+    .nullish(),
+  /* §2 — which of the three ways we are selling, and therefore which ladder. */
+  salesType: z.enum(["direct", "distributor", "third_party"]).nullish(),
+  /*
+   * §26 §5 §28 — the CODE behind a move, from the matching configured list.
+   *
+   * Distinct from `lostReason` below, which is the free text this schema has
+   * always carried and which older builds still send. Both are read: a code is
+   * countable and a sentence is not, but refusing a loss because the handset in
+   * somebody's pocket predates the list would lose the loss.
+   */
+  reasonCode: z.string().max(80).nullish(),
+  /* §6 — the eight answers a Suspect owes before it may be a Prospect. */
+  customerType: z
+    .enum(["dealer", "manufacturer", "distributor", "retailer"])
+    .nullish(),
+  monthlyLitres: z.number().int().nonnegative().nullish(),
+  competitor: z.string().max(200).nullish(),
+  requiredProductId: z.string().nullish(),
+  contactPerson: z.string().max(200).nullish(),
+  decisionMaker: z.string().max(200).nullish(),
+  creditDaysWanted: z.number().int().min(0).max(365).nullish(),
+  application: z.string().max(500).nullish(),
+  gstin: z.string().max(20).nullish(),
+  /* §9 §11 — the checklist, keyed by condition id. Merged, never replaced. */
+  qualification: z.record(z.string(), z.union([z.boolean(), z.string()])).nullish(),
+  /* §24 — what happens next, on what day, and who is doing it. */
+  nextAction: z
+    .object({
+      action: z.string().min(1).max(300),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      ownerId: z.string().min(1),
+      outcome: z.string().max(500).nullish(),
+    })
+    .nullish(),
+  /*
+   * §4 — that the Suspect question has been answered.
+   *
+   * Epoch milliseconds, like every other instant on this wire. It is sent
+   * rather than derived because the salesman answers it standing in the shop
+   * and the answer is his, not the server's guess from a stage that may have
+   * arrived hours later.
+   */
+  suspectDecidedAt: z.number().nullish(),
   nextFollowUpDate: z.string().nullish(),
   notes: z.string().max(4000).nullish(),
   gpsLat: z.number().nullish(),
@@ -1825,11 +1910,7 @@ async function handleLeadUpdate(
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;
 
-  const [existing] = await db
-    .select({ id: customers.id, name: customers.name })
-    .from(customers)
-    .where(eq(customers.id, item.entityId))
-    .limit(1);
+  const existing = await leadRow(item.entityId);
 
   if (!existing) {
     return {
@@ -1839,7 +1920,7 @@ async function handleLeadUpdate(
     };
   }
 
-  if (p.stage === "lost" && !p.lostReason) {
+  if (p.stage === "lost" && !p.lostReason && !p.reasonCode) {
     return {
       kind: "rejected",
       value: reject(
@@ -1848,6 +1929,31 @@ async function handleLeadUpdate(
       ),
     };
   }
+
+  /*
+   * WHICH LADDER THIS LEAD IS ON DECIDES WHICH PATH IT TAKES, and that is what
+   * lets the funnel land without touching a single lead raised before it.
+   *
+   * A lead carrying a sales type — one raised on a build that asks the §2
+   * question, or one an office screen has since set — goes through the gates.
+   * A lead carrying none is on `LEGACY_LADDER`, predates every rule in §28, and
+   * takes exactly the path it has always taken: the stage is written, nothing
+   * is asked. Demanding a next action to move a four-year-old lead would freeze
+   * the book the rule was meant to unstick, which is the same reasoning
+   * `gateTo` itself uses when it skips §24 for a lead with no sales type.
+   */
+  const salesType = (p.salesType ?? existing.leadSalesType) as LeadSalesType | null;
+  const onTheFunnel = Boolean(salesType);
+  /*
+   * `convertedCustomerId` is the ONE LEAD promotion path and it takes
+   * precedence over the ladder. It is what an older build sends to say "this
+   * lead is won", and the branch below moves `kind` and parks the stage at
+   * `won` — which is off every real ladder. Asking the gate about a rung after
+   * that has happened would refuse the item as off-ladder and report a
+   * conversion that in fact landed, so the funnel stands aside for it.
+   */
+  const movingStage =
+    p.stage != null && p.stage !== existing.leadStage && p.convertedCustomerId == null;
 
   const changed: Partial<typeof customers.$inferInsert> = {
     /* Any edit is contact, and staleness is measured from the last thing that
@@ -1860,7 +1966,11 @@ async function handleLeadUpdate(
   if (p.mobile != null) changed.phone = p.mobile;
   if (p.city != null) changed.city = p.city;
   if (p.area != null) changed.area = p.area;
-  if (p.stage != null) changed.leadStage = p.stage;
+  /* A stage on a funnel lead is NOT written here — it is written by
+     `applyLeadStageMove` below, after the gate has been asked, and only if it
+     said yes. Writing it here as well would move the rung whatever the gate
+     answered, which is §28 defeated by an assignment. */
+  if (p.stage != null && !onTheFunnel) changed.leadStage = p.stage;
   if (p.nextFollowUpDate != null) changed.leadNextFollowUpDate = p.nextFollowUpDate;
   if (p.notes != null) changed.leadNotes = p.notes;
   if (p.estimatedPotentialPaise != null) {
@@ -1868,6 +1978,42 @@ async function handleLeadUpdate(
   }
   if (p.lostReason != null) changed.leadLostReason = p.lostReason;
   if (p.archived != null) changed.leadArchived = p.archived;
+
+  /*
+   * THE ANSWERS LAND WHETHER OR NOT THE MOVE DOES, and that is deliberate.
+   *
+   * A salesman standing in a shop fills in the eight prospect answers and taps
+   * the rung in one gesture; if the gate then refuses because one of them is
+   * still blank, throwing away the seven he typed would be the worst possible
+   * response — he is outside the shop by the time the outbox drains, and he
+   * would have to go back. The answers are facts he established, the move is a
+   * request, and only the request is refused.
+   */
+  if (p.salesType != null) changed.leadSalesType = p.salesType;
+  if (p.customerType != null) changed.customerType = p.customerType;
+  if (p.monthlyLitres != null) changed.leadMonthlyLitres = p.monthlyLitres;
+  if (p.competitor != null) changed.leadCompetitor = p.competitor;
+  if (p.requiredProductId != null) changed.leadRequiredProductId = p.requiredProductId;
+  if (p.contactPerson != null) changed.contactPerson = p.contactPerson;
+  if (p.decisionMaker != null) changed.leadDecisionMaker = p.decisionMaker;
+  if (p.creditDaysWanted != null) changed.leadCreditDaysWanted = p.creditDaysWanted;
+  if (p.application != null) changed.leadApplication = p.application;
+  if (p.gstin != null) changed.gstin = p.gstin;
+  /* Merged, not replaced: twelve questions are not answered in one sitting, and
+     a handset posting only what was on screen would erase the four somebody
+     established last week. */
+  if (p.qualification != null) {
+    changed.leadQualification = { ...(existing.leadQualification ?? {}), ...p.qualification };
+  }
+  if (p.nextAction != null) {
+    changed.leadNextAction = p.nextAction.action;
+    changed.leadNextActionDate = p.nextAction.date;
+    changed.leadNextActionOwnerId = p.nextAction.ownerId;
+    changed.leadNextActionOutcome = p.nextAction.outcome ?? null;
+  }
+  if (p.suspectDecidedAt != null) {
+    changed.leadSuspectDecidedAt = new Date(p.suspectDecidedAt);
+  }
   /*
    * ONE LEAD, so winning one is this row becoming a customer rather than a
    * second row being written and pointed at. The handset still sends
@@ -1883,7 +2029,136 @@ async function handleLeadUpdate(
 
   await db.update(customers).set(changed).where(eq(customers.id, item.entityId));
 
+  /*
+   * §28 — THE PHONE IS NOT TRUSTED, IT IS MERELY INFORMED.
+   *
+   * The handset compiles `lead-gates.ts` and draws the rung disabled with the
+   * missing list underneath it, which is what lets a salesman with no signal
+   * know why he cannot move a lead. That is a courtesy to him and not a
+   * permission: an outbox drains hours later against a book that has moved, and
+   * a handset one build behind knows a shorter list of conditions than the
+   * server does. So the same function is asked again here, over the row as it
+   * now stands, and a refusal is a REJECTION rather than a retry — the gate
+   * will not open by itself, so resending for ever is the one answer that
+   * cannot help.
+   */
+  if (onTheFunnel && movingStage) {
+    const moved = await moveLeadFromHandset(principal, item, p.stage as LeadStage);
+    if (moved) return moved;
+  }
+
   return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/**
+ * A stage move arriving from a salesman's outbox.
+ *
+ * Returns a refusal, or null where the move was made — the caller has already
+ * accepted the answers that came with it, and a move it does not refuse is one
+ * that has been written.
+ */
+async function moveLeadFromHandset(
+  principal: MbosPrincipal,
+  item: SyncItem,
+  to: LeadStage,
+): Promise<Handled | null> {
+  /*
+   * The capability is checked HERE and not by the handset drawing a button.
+   * `lead.work` is held by every telecaller and every field salesman, so this
+   * refuses almost nobody — which is exactly why it has to be written down: a
+   * check that never fires is one somebody deletes as dead code, and the day an
+   * accounts clerk is given a handset it is the only thing standing between
+   * them and the funnel.
+   */
+  const roles = await rolesFor(principal.user);
+  if (!canAny(roles, "lead.work")) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "not_permitted",
+        "Your MahekOne account is not set up to work leads, so the stage was not changed. Ask your manager.",
+      ),
+    };
+  }
+
+  /* Re-read, because the answers that arrived with this item have just landed
+     and the gate has to see the row as it now stands rather than as it was when
+     the handset queued this. */
+  const [lead, gate] = await Promise.all([
+    leadRow(item.entityId),
+    leadGateInput(item.entityId),
+  ]);
+  if (!lead || !gate) {
+    return {
+      kind: "retry",
+      message: "That lead has not reached the office yet. It will be tried again once it has.",
+    };
+  }
+
+  const payload = (item.payload ?? {}) as Record<string, unknown>;
+  const reasonCode =
+    typeof payload.reasonCode === "string" && payload.reasonCode
+      ? payload.reasonCode
+      : typeof payload.lostReason === "string" && payload.lostReason
+        ? payload.lostReason
+        : null;
+
+  const decision = await evaluateLeadStageMove({
+    lead,
+    gate,
+    to,
+    reasonCode,
+    /*
+     * A handset never overrides. §28's escape hatch is a manager's, it demands
+     * a reason from a configured list, and it stores what was still missing —
+     * none of which is a thing to do standing in a shop with the customer
+     * waiting. A manager passes the gate from the console, and the move then
+     * reaches the phone on the next pull.
+     */
+    override: null,
+    canOverride: false,
+  });
+
+  if (!decision.ok) {
+    /* The missing conditions are NAMED, because a refusal that does not say
+       what is missing teaches a salesman to press the button again rather than
+       to do the work — which is the whole reason the gate returns a list. */
+    const missing = decision.missing.map((c) => c.says).join("; ");
+    return {
+      kind: "rejected",
+      value: reject(
+        decision.code === "revert_not_permitted" ||
+          decision.code === "override_not_permitted"
+          ? "not_permitted"
+          : "validation",
+        missing
+          ? `${decision.message} Still to do: ${missing}.`
+          : decision.message,
+      ),
+    };
+  }
+
+  await applyLeadStageMove(
+    {
+      userId: principal.user.id,
+      /* The narrowest hat that carries it, exactly as `requireCapability`
+         resolves it on the console side — so `audit_log.actor_role` reads the
+         same whichever door the move came through. */
+      role: grantingRole(roles, "lead.work"),
+      sourceApp: "mbos",
+    },
+    lead,
+    to,
+    {
+      decision,
+      reasonCode,
+      note: typeof payload.notes === "string" ? payload.notes : null,
+      nextAction: null,
+      day: await today(),
+    },
+  );
+
+  return null;
 }
 
 async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
@@ -1931,6 +2206,35 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
    */
   const city = p.city ?? p.area ?? "Unknown";
 
+  /*
+   * WHERE A NEW LEAD STARTS DEPENDS ON WHETHER IT NAMES A SALES TYPE.
+   *
+   * A build that asks the §2 question raises a lead at `suspect`, the foot of
+   * all three real ladders. A build that does not goes on raising it at `new`,
+   * the foot of `LEGACY_LADDER`, exactly as it always has — an APK cannot be
+   * recalled, so the server moves first and the phone catches up.
+   */
+  const foot = p.salesType ? "suspect" : "new";
+  /* §6 and §9's answers, sent with the lead where the form asked them. */
+  const funnelFields = {
+    leadSalesType: p.salesType ?? null,
+    customerType: p.customerType ?? null,
+    leadMonthlyLitres: p.monthlyLitres ?? null,
+    leadCompetitor: p.competitor ?? null,
+    leadRequiredProductId: p.requiredProductId ?? null,
+    contactPerson: p.contactPerson ?? null,
+    leadDecisionMaker: p.decisionMaker ?? null,
+    leadCreditDaysWanted: p.creditDaysWanted ?? null,
+    leadApplication: p.application ?? null,
+    gstin: p.gstin ?? null,
+    leadQualification: p.qualification ?? {},
+    leadNextAction: p.nextAction?.action ?? null,
+    leadNextActionDate: p.nextAction?.date ?? null,
+    leadNextActionOwnerId: p.nextAction?.ownerId ?? null,
+    leadNextActionOutcome: p.nextAction?.outcome ?? null,
+    leadSuspectDecidedAt: p.suspectDecidedAt ? new Date(p.suspectDecidedAt) : null,
+  } as const;
+
   await db
     .insert(customers)
     .values({
@@ -1946,7 +2250,10 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
        * handset AND in the scoped lists the office reads — `ASSIGNED_TO_SQL`
        * resolves a lead through `owner_id`. One column, three screens. */
       ownerId: principal.user.id,
-      leadStage: p.stage ?? "new",
+      leadStage: p.stage ?? foot,
+      /* The rung it is standing on, dated — the console ages every list by this
+         and a null would read as a lead that has been there since the epoch. */
+      leadStageSince: day,
       leadEstimatedPotentialPaise: p.estimatedPotentialPaise ?? null,
       leadNextFollowUpDate: p.nextFollowUpDate ?? null,
       leadNotes: p.notes ?? null,
@@ -1954,6 +2261,7 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
       gpsLng: p.gpsLng ?? null,
       leadLostReason: p.lostReason ?? null,
       leadLastActivityDate: day,
+      ...funnelFields,
     })
     .onConflictDoUpdate({
       target: customers.id,
@@ -1963,12 +2271,13 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
         phone: p.mobile,
         city,
         area: p.area ?? null,
-        leadStage: p.stage ?? "new",
+        leadStage: p.stage ?? foot,
         leadNextFollowUpDate: p.nextFollowUpDate ?? null,
         leadNotes: p.notes ?? null,
         leadLostReason: p.lostReason ?? null,
         leadLastActivityDate: day,
         updatedAt: new Date(),
+        ...funnelFields,
       },
     });
 
