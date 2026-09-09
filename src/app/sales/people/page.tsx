@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { stamp } from "@/lib/format";
 import { fieldTeam, knownPlaces, knownRegions, managers } from "@/lib/services/sales-service";
+import { getCurrentUser, isManager } from "@/lib/auth";
+import { Credentials } from "./credentials";
 import { Managers } from "./managers";
 import { Territories, WorksCell } from "./territories";
 import { Cell, Empty, HeadCell, Pill, Row, ScreenHeader, Table } from "../parts";
@@ -21,12 +23,20 @@ export const metadata = { title: "The team — Sales Dashboard — MahekOne" };
  * reads as a broken list.
  */
 export default async function Page() {
-  const [team, managerRows, regions, places] = await Promise.all([
+  const [team, managerRows, regions, places, me] = await Promise.all([
     fieldTeam(),
     managers(),
     knownRegions(),
     knownPlaces(),
+    getCurrentUser(),
   ]);
+
+  /* Handing out credentials is guarded by `isManager` in `people.ts`, not by
+     holding the Sales Dashboard, and that boundary is deliberate: a sign-in is
+     an account decision rather than a sales one. Resolved here so the control
+     can be drawn disabled with the reason on it, rather than as a button that
+     fails when it is pressed. */
+  const canManageAccounts = !!me && isManager(me);
 
   return (
     <div className="p-6">
@@ -108,13 +118,19 @@ export default async function Page() {
               </Cell>
               <Cell align="right">
                 <span className="inline-flex items-center gap-2">
-                  <Territories salesman={t} cities={places.cities} beats={places.beats} />
+                  <Territories
+                    salesman={t}
+                    states={regions}
+                    cities={places.cities}
+                    beats={places.beats}
+                  />
                   <Link
                     href={`/sales/journeys?salesman=${t.id}`}
                     className="text-[13px] text-[#5223E0] no-underline"
                   >
                     Plan a route
                   </Link>
+                  <Credentials salesman={t} canManageAccounts={canManageAccounts} />
                 </span>
               </Cell>
             </Row>

@@ -1,4 +1,5 @@
 import "server-only";
+import { geocodeCustomers } from "./services/geocode-job-service";
 import { randomUUID } from "node:crypto";
 import { and, eq, gt, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -110,6 +111,8 @@ export type JobName =
   | "field-activity-project"
   | "customer-master-sync"
   | "customer-master-project"
+  /** Address to a coordinate, for the shops nobody has stood in. */
+  | "geocode-customers"
   | "sheet-payments"
   | "taken-order-sync"
   | "taken-order-reparse"
@@ -669,6 +672,24 @@ export async function runJob(
                 `${r.linked} orders linked to a delivery party, ${r.cleared} cleared` +
                 `; ${r.unresolved} names match no record, ${r.ambiguous} match more than one`,
             };
+          },
+          triggeredById,
+        ),
+      ];
+    case "geocode-customers":
+      /*
+       * Hand-triggerable and NOT in the nightly, deliberately. It spends
+       * somebody else's rate limit, and a job that quietly makes external
+       * requests every night is one nobody remembers is running when the bill
+       * or the 429 arrives. It is bounded per run and a shop is tried once, so
+       * running it repeatedly is safe — it simply finds nothing left to do.
+       */
+      return [
+        await run(
+          "geocode-customers",
+          async () => {
+            const out = await geocodeCustomers();
+            return { recordsAffected: out.located, detail: out.detail };
           },
           triggeredById,
         ),

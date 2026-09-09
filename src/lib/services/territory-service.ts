@@ -2,6 +2,10 @@ import "server-only";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { mbosUserTerritories } from "@/db/schema";
+import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "@/lib/territory-sql";
+import { stateVariants } from "@/lib/india-states";
+
+export { TERRITORY_REGION_SQL, qualify };
 
 /* ---------------------------------------------------------------------------
  * WHERE A PERSON WORKS, and what that does and does not mean.
@@ -29,22 +33,25 @@ export const TERRITORY_KINDS = ["state", "region", "city", "beat"] as const;
 export type TerritoryKind = (typeof TERRITORY_KINDS)[number];
 
 /**
- * Which customer column each kind is matched against.
+ * Which customer expression each kind is matched against.
  *
- * `state` has no column of its own — MahekOne has never stored one, and
- * inventing it here would mean a field nothing fills. It matches
- * `territory_region`, which is the widest geography the customer master
- * actually carries, and the label on the console says so rather than offering a
- * state picker that quietly behaves like a region one.
+ * `state` and `region` read the same geography and are two kinds rather than
+ * one because they are allocated by different people for different reasons: a
+ * `region` row is a MANAGER's oversight patch, read by `managerScope`, and a
+ * `state` row is a salesman's own working area, read by `territoryClause`.
+ * Folding them into one kind would mean allocating a salesman his state
+ * silently widened or narrowed somebody's console — which is exactly what
+ * `setWorkingTerritories` refuses to allow by never touching `region` rows.
  */
 const COLUMN: Record<TerritoryKind, string> = {
-  state: "territory_region",
-  region: "territory_region",
+  state: TERRITORY_REGION_SQL,
+  region: TERRITORY_REGION_SQL,
   city: "city",
   beat: "beat",
 };
 
 export type Territory = { kind: TerritoryKind; value: string };
+
 
 /** What this person works. Empty means everywhere they already had. */
 export async function territoriesFor(userId: string): Promise<Territory[]> {
@@ -75,10 +82,31 @@ export async function territoriesFor(userId: string): Promise<Territory[]> {
 export function territoryClause(territories: Territory[]): SQL | undefined {
   if (!territories.length) return undefined;
 
-  const parts = territories.map(
-    (t) =>
-      sql`lower(trim(coalesce(customers.${sql.raw(COLUMN[t.kind])}, ''))) = ${t.value.trim().toLowerCase()}`,
-  );
+  /* Each column inside the expression is qualified, not just the first. A bare
+     column name inside a correlated subquery binds to the INNER table and the
+     condition silently becomes false — the rule AGENTS.md records under "in raw
+     SQL, qualify every column of the outer table", which shipped once already
+     and passes both types and unit tests when it is wrong. */
+  const parts = territories.map((t) => {
+    const column = sql.raw(qualify(COLUMN[t.kind], "customers"));
+
+    /* A STATE IS MATCHED ON EVERY SPELLING OF IT, not on the one somebody
+       clicked. The sheet writes this column and holds Gujrat 97 beside Gujarat
+       31, so comparing the text made each spelling its own territory and a
+       chip saying "Gujarat" covered a quarter of Gujarat with nothing on the
+       screen saying so. The other kinds have no such list and stay a plain
+       comparison. */
+    if (t.kind === "state" || t.kind === "region") {
+      const keys = stateVariants(t.value);
+      if (!keys.length) return sql`false`;
+      return sql`${sql.raw(stateKeySql(qualify(COLUMN[t.kind], "customers")))} in ${sql`(${sql.join(
+        keys.map((k) => sql`${k}`),
+        sql`, `,
+      )})`}`;
+    }
+
+    return sql`lower(trim(coalesce(${column}, ''))) = ${t.value.trim().toLowerCase()}`;
+  });
 
   return sql`(${sql.join(parts, sql` or `)})`;
 }

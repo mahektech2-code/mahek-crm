@@ -1,4 +1,4 @@
-import { all, one, run } from '../db';
+import { all, newId, one, run } from '../db';
 import { isoDate } from '../lib/format';
 import { enqueue } from '../sync/queue';
 import { pickOrigin } from '../engines/route';
@@ -143,6 +143,71 @@ export async function daysAwaitingAnswer(from = today()): Promise<number> {
  * shops, which is an ordinary stop write. Keeping those two apart is what
  * stops an empty day claiming to be a route.
  */
+/**
+ * Planning a day nobody proposed.
+ *
+ * The negotiation runs one way — the office proposes a city, you agree or
+ * refuse — and until this existed that was the ONLY way a day could come into
+ * being. A Tuesday the office had not thought about could not be worked at
+ * all, which is most Tuesdays.
+ *
+ * The day is born `agreed`, because there is nobody to agree with: `agreed`
+ * means the city is settled and the shops are next, which is exactly true of a
+ * day you chose. It is not `planned` — that means the shops are picked, and
+ * picking is the next screen.
+ *
+ * **The city is required and the server refuses without one.** `pickCandidates`
+ * filters the shop list by it and applies no clause at all when it is empty, so
+ * a day with no city would open the picker on your entire book rather than the
+ * town you are standing in.
+ */
+export async function createDay(
+  planDate: string,
+  city: string,
+): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
+  const where = city.trim();
+  if (!where) {
+    return { ok: false, message: 'Which city are you working? The shop list is filtered by it.' };
+  }
+  if (planDate < today()) {
+    return { ok: false, message: 'That day has already gone. Pick today or a day ahead.' };
+  }
+
+  /* One row per day, here as well as on the server's unique index: a second
+     row for a date would show the same day twice on the Journey tab, and only
+     one of them would ever get its shops. */
+  const clash = await one<{ id: string }>(
+    'SELECT id FROM journey_days WHERE planDate = ? LIMIT 1',
+    [planDate],
+  );
+  if (clash) {
+    return {
+      ok: false,
+      message: 'That day is already on your plan. Open it from the Journey tab.',
+    };
+  }
+
+  const id = newId('plan');
+  await run(
+    `INSERT INTO journey_days (id, planDate, city, dayState, picked, selfPlanned, syncState)
+     VALUES (?, ?, ?, 'agreed', 0, 1, 'queued')`,
+    [id, planDate, where],
+  );
+
+  await enqueue({
+    entityType: 'plan_day',
+    entityId: id,
+    op: 'create',
+    /* Paperwork, like answering a proposed day. He plans tomorrow at home in
+       the evening as often as anywhere, and where a form was filled in answers
+       no question worth holding a coordinate for. */
+    location: false,
+    payload: { id, answer: 'agreed', planDate, city: where },
+  });
+
+  return { ok: true, id };
+}
+
 export async function agreeDay(id: string): Promise<void> {
   await answer(id, { answer: 'agreed' });
 }

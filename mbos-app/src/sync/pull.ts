@@ -27,6 +27,7 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertTimeline(pull.timeline);
     touched += await upsertCustomerOrders(pull.customerOrders, now);
     touched += await upsertCustomerPayments(pull.customerPayments, now);
+    touched += await upsertCustomerBills(pull.customerBills, now);
     touched += await upsertStops(pull.journeyStops, now);
     touched += await upsertPlanDays(pull.planDays, now);
     touched += await upsertConfig(pull.config, now);
@@ -220,6 +221,28 @@ async function upsertPriceList(rows: unknown[] | undefined) {
     await run('INSERT INTO price_list (priceTag, productId, ratePaise) VALUES (?, ?, ?)', [r.priceTag, r.productId, r.ratePaise]);
   }
   return rows.length;
+}
+
+/**
+ * The open bills, REPLACED WHOLESALE — the price list's rule, for the same
+ * reason it has it.
+ *
+ * A rate that was withdrawn has to disappear; so does a bill that has been
+ * settled. A per-row upsert leaves it behind, and a bill left behind is one
+ * the picker goes on offering — so a salesman names it, the server refuses the
+ * allocation with `bill_settled`, and the refusal looks like the app being
+ * wrong rather than the phone being stale. The server sends the CURRENT open
+ * set for every customer on this handset on every pass, never a delta, which
+ * is what makes replacing correct.
+ *
+ * `!rows?.length` guards it exactly as the price list does: an empty payload
+ * is the no-cursor pull saying nothing, not the office saying every bill in
+ * the book has been paid.
+ */
+async function upsertCustomerBills(rows: unknown[] | undefined, now: number) {
+  if (!rows?.length) return 0;
+  await run('DELETE FROM customer_bills');
+  return upsert('customer_bills', 'id', rows, { lastSyncedAt: now });
 }
 
 function upsertSchemes(rows: unknown[] | undefined) {

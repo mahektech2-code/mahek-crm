@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dataSize, dayLabel, dayLabelRelative, distanceLabel, inr, shopName } from './format';
+import {
+  dataSize,
+  dayLabel,
+  dayLabelRelative,
+  distanceLabel,
+  hoursInWords,
+  inr,
+  shopName,
+} from './format';
 
 /**
  * Every example here is a real customer name off the production book, or the
@@ -144,4 +152,26 @@ test('a size nobody could work out reads as an em dash, never as zero', () => {
   assert.equal(dataSize(null), '—');
   assert.equal(dataSize(undefined), '—');
   assert.equal(dataSize(NaN), '—');
+});
+
+/* --------------------------------------------------------- a span of hours */
+
+test('a retention window is said in days where it is whole days', () => {
+  /* This is read by the salesman being photographed, so it has to be the
+     sentence he would say, not the number the office typed. */
+  assert.equal(hoursInWords(72), '3 days');
+  assert.equal(hoursInWords(24), '24 hours');
+  assert.equal(hoursInWords(168), '7 days');
+});
+
+test('and stays in hours where it is not, rather than rounding to a lie', () => {
+  /* 36 hours is not "2 days", and being approximate about how long somebody's
+     photograph is kept is exactly the wrong place to be approximate. */
+  assert.equal(hoursInWords(36), '36 hours');
+  assert.equal(hoursInWords(1), '1 hour');
+});
+
+test('a nonsense window says nothing rather than something confident', () => {
+  assert.equal(hoursInWords(0), '0 hours');
+  assert.equal(hoursInWords(NaN), '0 hours');
 });

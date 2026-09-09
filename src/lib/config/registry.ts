@@ -2037,6 +2037,17 @@ export const SETTINGS = [
       "A photograph at check-in. Off where the team finds it intrusive and the geofence is enough; it changes what the check-in asks for, never whether it is allowed.",
     default: true,
   },
+  {
+    key: "mbos.attendance.selfieRetentionHours",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Keep an attendance photograph for",
+    description:
+      "Hours before a check-in or check-out photograph is deleted. It is EVIDENCE OF A MOMENT, not a record to keep: it exists so a manager can verify that the person who marked the day is the person who worked it, and that question is asked within a day or two or not at all. Held longer it stops being verification and becomes a collection of photographs of employees, which is a different thing to hold and a worse one to lose. Only the image goes — the check-in, its time, its place and the fact that a photograph was taken are all kept for ever. This is ALSO how far back the Attendance screen can show one, because they are the same fact: a screen offering a photograph the sweep has already destroyed is a screen that appears broken.",
+    default: 72,
+    min: 1,
+    max: 8760,
+  },
 
   /* --------------------------------------------------------------- leave */
   {
@@ -3318,6 +3329,7 @@ export type Config = {
   "mbos.attendance.halfDayHours": number;
   "mbos.attendance.autoCheckOutHour": number;
   "mbos.attendance.selfieRequired": boolean;
+  "mbos.attendance.selfieRetentionHours": number;
 
   "mbos.leave.noticeDays": number;
   "mbos.leave.allowLossOfPay": boolean;

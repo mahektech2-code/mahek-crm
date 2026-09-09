@@ -2418,3 +2418,108 @@ export async function bulkAssignTask(input: {
     return fromThrown(e);
   }
 }
+
+/* --------------------------------------------------- leave, for one person */
+
+/**
+ * Give somebody terms of their own, or put them back on everybody's.
+ *
+ * `mbos.leave.annualEntitlementDays` is what a person gets unless a row in
+ * `mbos_leave_balances` says otherwise. That override already worked and there
+ * was NO WAY TO WRITE ONE — nothing in MahekOne created such a row, so it was
+ * a mechanism with no door, and a salesman hired on different terms could not
+ * be given them from any screen.
+ *
+ * NULL CLEARS rather than sets zero, and the two are genuinely different: a
+ * cleared kind falls back to the company figure, and a stored zero is somebody
+ * deciding this person gets none — which is a real answer for a probationer.
+ * Clearing DELETES the row rather than storing a sentinel, because the engine
+ * reads a present row as an override and the absence of one as "use the
+ * default"; a row meaning "no override" would be a third state nothing reads.
+ *
+ * `used_days` is never touched. What somebody has taken is counted from their
+ * approved requests, and a column that could be edited here would let days be
+ * handed back by typing over the record of them being taken.
+ */
+export async function setLeaveEntitlement(input: {
+  userId: string;
+  year: number;
+  /** Kind to days, or null to fall back to the company figure. */
+  days: Record<string, number | null>;
+}): Promise<Result> {
+  try {
+    const me = await requireSales();
+
+    const [person] = await db
+      .select({ id: users.id, name: users.name })
+      .from(users)
+      .where(eq(users.id, input.userId))
+      .limit(1);
+    if (!person) return err("That account no longer exists.", "not_found");
+
+    if (!Number.isInteger(input.year) || input.year < 2000 || input.year > 2100) {
+      return err("That is not a year.", "validation");
+    }
+
+    for (const [kind, value] of Object.entries(input.days)) {
+      if (value === null) continue;
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        return err(`${kind} has to be a number of days, and not a negative one.`, "validation");
+      }
+      /* Half days, because leave is taken in them — and nothing finer, because
+         a quarter day is not a thing anybody applies for and would print as a
+         balance nobody could act on. */
+      if (value * 2 !== Math.round(value * 2)) {
+        return err(`${kind} has to be a whole number of days or a half.`, "validation");
+      }
+      if (value > 365) return err(`${kind} cannot be more than a year.`, "validation");
+    }
+
+    await db.transaction(async (tx) => {
+      for (const [kind, value] of Object.entries(input.days)) {
+        /* Loss of pay is what leave BECOMES when a balance runs out. There is
+           no balance of unpaid days to hold, so there is nothing to override. */
+        if (kind === "loss_of_pay") continue;
+
+        if (value === null) {
+          await tx.execute(sql`
+            delete from mbos_leave_balances
+             where user_id = ${person.id} and year = ${input.year}
+               and leave_type = ${kind}::mbos_leave_type
+          `);
+          continue;
+        }
+
+        await tx.execute(sql`
+          insert into mbos_leave_balances
+            (id, user_id, year, leave_type, entitled_days, used_days,
+             created_at, updated_at, created_by_id, updated_by_id)
+          values (${gen("mbos_lbal")}, ${person.id}, ${input.year},
+                  ${kind}::mbos_leave_type, ${value}, 0, now(), now(), ${me.id}, ${me.id})
+          on conflict (user_id, year, leave_type) do update
+            set entitled_days = excluded.entitled_days,
+                updated_at = now(),
+                updated_by_id = ${me.id}
+        `);
+      }
+    });
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: me.id,
+      action: "leave.entitlement.set",
+      entityType: "user",
+      entityId: person.id,
+      afterState: { year: input.year, days: input.days } as never,
+    });
+
+    refresh();
+    revalidatePath("/sales/leave");
+    return ok(
+      undefined,
+      `${person.name}'s leave for ${input.year} is set. It reaches their handset on the next sync.`,
+    );
+  } catch (e) {
+    return err(e instanceof Error ? e.message : "That did not work.", "not_permitted");
+  }
+}

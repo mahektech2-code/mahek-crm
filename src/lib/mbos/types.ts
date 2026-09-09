@@ -410,6 +410,12 @@ export type PullDelta = {
    */
   customerOrders: unknown[];
   customerPayments: unknown[];
+  /**
+   * The open bills behind `outstandingPaise`, read off the Accounts ledger.
+   * Read-only here, like the two above it — what the salesman collects is
+   * still his own `payments` row, and still `reported` until accounts find it.
+   */
+  customerBills: unknown[];
 };
 
 export type SyncResponse = {

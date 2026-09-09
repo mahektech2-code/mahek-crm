@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { shortDate } from "@/lib/format";
-import { leaveRequests } from "@/lib/services/sales-service";
+import { leaveEntitlements, leaveRequests } from "@/lib/services/sales-service";
+import { getConfig } from "@/lib/config/store";
+import { today } from "@/lib/recompute";
+import { Entitlements } from "./entitlements";
 import { Decide } from "../decide";
 import {
   Banner,
@@ -41,7 +44,14 @@ export default async function Page({
   searchParams: Promise<{ show?: string }>;
 }) {
   const params = await searchParams;
-  const all = await leaveRequests();
+  const now = await today();
+  const year = Number(now.slice(0, 4));
+  const [all, entitlements, config] = await Promise.all([
+    leaveRequests(),
+    leaveEntitlements(year),
+    getConfig(),
+  ]);
+  const defaults = config["mbos.leave.annualEntitlementDays"] ?? {};
 
   const show = ["all", "waiting", "approved"].includes(params.show ?? "")
     ? params.show!
@@ -93,6 +103,27 @@ export default async function Page({
           { key: "all", href: `/sales/leave?show=all`, label: "Everything", count: all.length },
         ]}
       />
+
+      {/*
+        WHAT EACH PERSON IS ALLOWED, under the requests rather than on a page
+        of its own, because "how much has he got left" is the question somebody
+        is already holding while deciding one.
+
+        The entitlement is configuration with a per-person override, and the
+        override had no door: nothing in MahekOne ever wrote one of those rows,
+        so a salesman on different terms could not be given them anywhere.
+      */}
+      <div className="mt-8">
+        <h2 className="text-[15px] font-medium text-ink">Days a year</h2>
+        <p className="mt-1 max-w-[70ch] text-[13px] leading-[20px] text-muted">
+          What each salesman may take, and what is left of it. Everybody gets
+          the company figure until somebody is given terms of their own here.
+        </p>
+        <div className="mt-3">
+          <Entitlements year={year} rows={entitlements} defaults={defaults} />
+        </div>
+      </div>
+
 
       {rows.length === 0 ? (
         <Empty

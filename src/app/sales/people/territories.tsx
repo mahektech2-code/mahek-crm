@@ -29,10 +29,21 @@ import { Button, Pill } from "../parts";
  */
 export function Territories({
   salesman,
+  states,
   cities,
   beats,
 }: {
   salesman: Salesman;
+  /**
+   * The widest geography, and the only one this book actually carries.
+   *
+   * They are `state` rows rather than `region` ones on purpose: a `region` row
+   * is a MANAGER's oversight patch, read by `managerScope`, and allocating a
+   * salesman his state must not widen or narrow somebody's console as a side
+   * effect. `setWorkingTerritories` already refuses to touch `region` rows,
+   * which is what keeps the two apart.
+   */
+  states: string[];
   cities: string[];
   beats: string[];
 }) {
@@ -127,14 +138,17 @@ export function Territories({
           it is in, and nothing here changes that.
         </p>
 
-        {cities.length === 0 && beats.length === 0 ? (
+        {states.length === 0 && cities.length === 0 && beats.length === 0 ? (
           <p className="mt-4 text-[13px] text-muted">
-            No customer record names a city or a beat yet, so there is nothing to divide up.
+            No customer record names a state, a city or a beat yet, so there is nothing to divide up.
             Places come from the book itself rather than a list of their own — a separate list
             would offer somewhere no customer is.
           </p>
         ) : (
           <>
+            {/* Coarsest first, because that is the order somebody allocates
+                in: a state, then the cities inside it worth walking. */}
+            {chips("state", states, "States")}
             {chips("city", cities, "Cities")}
             {chips("beat", beats, "Beats")}
 

@@ -29,6 +29,10 @@ import {
   leaveDebitDays,
 } from "../engines/leave";
 import { LEAVE_LABELS, type LeaveType, type PullDelta } from "../mbos/types";
+import { employeeJoinOn } from "../employee-link";
+/* The Accounts ledger's own read. See `customerBills` — the handset must not
+   have a second opinion about what a shop owes. */
+import { listBills } from "./payment-service";
 
 /* ---------------------------------------------------------------------------
  * MBOS — every read the handset makes.
@@ -622,6 +626,8 @@ export type BootstrapPayload = {
   timeline: unknown[];
   customerOrders: unknown[];
   customerPayments: unknown[];
+  /** The open bills behind `outstandingPaise`. See `customerBills`. */
+  customerBills: unknown[];
   leaveBalances: unknown[];
   /**
    * TODAY'S ATTENDANCE, so a fresh install is not blind about a day it already
@@ -743,6 +749,7 @@ export async function buildBootstrap(
     timelineRows,
     orderHistoryRows,
     paymentHistoryRows,
+    billRows,
     leaveRows,
     attendanceRow,
     holidayRows,
@@ -767,6 +774,7 @@ export async function buildBootstrap(
     recentTimeline(ids, TIMELINE_PER_CUSTOMER),
     recentOrders(ids, HISTORY_PER_CUSTOMER),
     recentPayments(ids, HISTORY_PER_CUSTOMER),
+    customerBills(principal, ids, HISTORY_PER_CUSTOMER),
     leaveBalances(principal.user.id, Number(day.slice(0, 4))),
     attendanceToday(principal.user.id, day),
     holidaysFor(),
@@ -803,6 +811,7 @@ export async function buildBootstrap(
     timeline: timelineRows,
     customerOrders: orderHistoryRows,
     customerPayments: paymentHistoryRows,
+    customerBills: billRows,
     leaveBalances: leaveRows,
     attendanceToday: attendanceRow,
     holidays: holidayRows,
@@ -1025,6 +1034,7 @@ async function planDaysFor(userId: string, since: string | null) {
            p.day_state::text as "dayState",
            p.refusal_reason as "refusalReason",
            p.counter_city as "counterCity",
+           p.self_planned as "selfPlanned",
            (extract(epoch from p.proposed_at) * 1000)::double precision as "proposedAt",
            m.name as "proposedBy",
            (select count(*)::int from mbos_journey_stops s where s.plan_id = p.id)
@@ -1265,6 +1275,77 @@ async function recentPayments(ids: string[], perCustomer: number) {
      where rn <= ${perCustomer}
      order by "customerId" asc, "receivedAt" desc
   `);
+}
+
+/**
+ * WHAT THE MONEY IS AGAINST — the open bills, read off the Accounts ledger.
+ *
+ * The handset has always carried `outstandingPaise`, one number, and a
+ * salesman could tell a shop it owed ₹47,000 without being able to say which
+ * invoices that was. Worse, `handlePayment` has accepted `billIds` since it
+ * was written — it validates each against the customer's open bills and runs
+ * the same pure `allocate` the record form runs — and nothing on the handset
+ * ever filled it. So every rupee collected in the field was spread OLDEST
+ * FIRST, including from the customer standing there paying against the
+ * invoice in his hand. AGENTS.md says newest-first exists for exactly that
+ * person; the field was the one place it could not be expressed.
+ *
+ * IT IS THE ACCOUNTS READ, not a second one. `listBills` is what the ledger,
+ * the Outstanding screen and `listOutstandingByCustomer` all go through, so
+ * the due date resolved from the customer's term, the aging and
+ * `paymentPosition` are worked out once. A handset totalling a debt from its
+ * own query is how a salesman and an accounts clerk come to disagree about a
+ * bill in front of the customer.
+ *
+ * `openOnly` is deliberate and it is the collections question rather than the
+ * ledger one: a settled bill is most of a year and none of it is collectable.
+ * It is also NOT cut by financial year — the oldest debt on an account is
+ * usually last year's, and it is the first thing anybody chases.
+ *
+ * The payload is TRIMMED rather than forwarded. `listBills` returns the
+ * customer's name, the status and the bucket, none of which the handset has a
+ * column for, and one extra key on the wire empties the phone.
+ */
+async function customerBills(
+  principal: MbosPrincipal,
+  ids: string[],
+  perCustomer: number,
+) {
+  if (!ids.length) return [];
+
+  const rows = await listBills({ openOnly: true, customerIds: ids }, principal);
+
+  /* Oldest first within each customer: that is the order they get chased in,
+     and it is the order the automatic spread would settle them in. */
+  const byCustomer = new Map<string, typeof rows>();
+  for (const b of [...rows].sort((a, z) => a.billDate.localeCompare(z.billDate))) {
+    const held = byCustomer.get(b.customerId) ?? [];
+    if (held.length >= perCustomer) continue;
+    held.push(b);
+    byCustomer.set(b.customerId, held);
+  }
+
+  return [...byCustomer.values()].flat().map((b) => ({
+    id: b.id,
+    customerId: b.customerId,
+    billNo: b.billNo,
+    billDate: b.billDate,
+    dueDate: b.dueDate,
+    amountPaise: b.amount,
+    paidPaise: b.paid,
+    balancePaise: b.balance,
+    overdueDays: b.overdueDays,
+    disputed: b.disputed ? 1 : 0,
+    /*
+     * Whether anybody has spoken for this bill, carried so the screen can say
+     * which kind of number the balance is. On an `unstated` bill it is the
+     * full amount purely because nothing has been recorded against it either
+     * way — it is not a debt, `recomputeOutstanding` keeps it out of the
+     * figure above it, and drawing it as one would be the imported-book
+     * mistake arriving on a phone.
+     */
+    paymentPosition: b.paymentPosition,
+  }));
 }
 
 async function recentTimeline(ids: string[], perCustomer: number) {
@@ -1545,9 +1626,11 @@ async function salaryFor(userId: string): Promise<Record<string, unknown>[]> {
 
       from periods p
       left join users u on u.id = ${userId}
-      left join employees e
-             on lower(e.email) = lower(u.email)
-             or (e.company_mobile is not null and e.company_mobile = u.phone)
+      /* The same join the Sales Dashboard's Salary screen makes, from the same
+         file, so the figure on a handset and the figure in the office cannot
+         come from two different readings of who this person is. See
+         lib/employee-link.ts. */
+      left join employees e on ${employeeJoinOn("u", "e")}
      order by p."from" desc
   `);
 }
@@ -1749,6 +1832,7 @@ export async function buildPull(
       samples: [],
       customerOrders: [],
       customerPayments: [],
+      customerBills: [],
       deletions: [],
     };
   }
@@ -1799,6 +1883,7 @@ export async function buildPull(
     sampleChanges,
     orderHistoryChanges,
     paymentHistoryChanges,
+    billChanges,
   ] = await Promise.all([
       idList
         ? db.execute<Record<string, unknown>>(sql`
@@ -1992,6 +2077,13 @@ export async function buildPull(
          query that would work out which ten changed. */
       recentOrders(ids, HISTORY_PER_CUSTOMER),
       recentPayments(ids, HISTORY_PER_CUSTOMER),
+
+      /* Not `since`-gated either, and for a second reason on top of the one
+         above: a bill's balance changes when a RECEIPT is confirmed, and that
+         touches `bills.updated_at` — but a bill leaving the open set because
+         it was settled has no row left to carry a cursor. Sending the current
+         open set is the only reading that lets a settled bill disappear. */
+      customerBills(principal, ids, HISTORY_PER_CUSTOMER),
     ]);
 
   return {
@@ -2025,5 +2117,6 @@ export async function buildPull(
     samples: sampleChanges as unknown[],
     customerOrders: orderHistoryChanges as unknown[],
     customerPayments: paymentHistoryChanges as unknown[],
+    customerBills: billChanges as unknown[],
   };
 }

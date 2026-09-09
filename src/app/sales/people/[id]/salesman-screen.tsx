@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { money, shortDate, stamp } from "@/lib/format";
-import type { SalesmanRecord } from "@/lib/services/sales-service";
+import type { PerformanceRow, SalesmanRecord } from "@/lib/services/sales-service";
 import {
   Cell,
   Empty,
@@ -11,6 +11,7 @@ import {
   LEAVE_LABEL,
   Pill,
   Row,
+  MetricRow,
   ScreenHeader,
   Table,
   VISIT_OUTCOME_LABEL,
@@ -44,7 +45,18 @@ const TABS = [
 
 type Tab = (typeof TABS)[number];
 
-export function SalesmanScreen({ record }: { record: SalesmanRecord }) {
+export function SalesmanScreen({
+  record,
+  month,
+  thisMonth,
+  lastMonth,
+}: {
+  record: SalesmanRecord;
+  month: string;
+  /** Null where he did nothing at all in the month, which is a real answer. */
+  thisMonth: PerformanceRow | null;
+  lastMonth: PerformanceRow | null;
+}) {
   const [tab, setTab] = React.useState<Tab>("Visits");
   const { salesman: s } = record;
 
@@ -85,6 +97,66 @@ export function SalesmanScreen({ record }: { record: SalesmanRecord }) {
             Plan a route
           </Link>
         }
+      />
+
+      {/*
+        WHAT HE HAS ACTUALLY DONE THIS MONTH, above the tabs.
+
+        The nine tabs below are a record to look THROUGH — every visit, every
+        order, one row at a time. They answer "what happened" and cannot answer
+        "how is he doing", which is the question somebody opening a salesman's
+        page is usually holding, and which was on no screen that named him: the
+        team's Performance list has these figures and does not link here.
+
+        Last month sits beside each one rather than a percentage change. A
+        change needs a denominator, and on a two-person team in a month with
+        four working days gone, a percentage swings wildly on one order and
+        reads as a trend. Two numbers side by side say the same thing and
+        cannot be wrong.
+
+        There is no target and no score here. `sales_targets` sets one for
+        SOME field salesmen and not others, so a percentage would appear for
+        some people and not for others on the same screen with nothing saying
+        why -- and an achievement figure against a target nobody set is a
+        number invented on this page. The Performance screen is where a target
+        is read against.
+      */}
+      <MetricRow
+        metrics={[
+          {
+            label: "Orders taken",
+            value: thisMonth ? String(thisMonth.orders) : "0",
+            sub: lastMonth ? `${lastMonth.orders} last month` : undefined,
+          },
+          {
+            label: "Order value",
+            value: thisMonth?.orderValuePaise ? money(thisMonth.orderValuePaise) : "—",
+            /* Captured, not booked: an MBOS order waits on accounts. */
+            sub: "captured in the field, before approval",
+          },
+          {
+            label: "Collected",
+            value: thisMonth?.collectedPaise ? money(thisMonth.collectedPaise) : "—",
+            sub: "what he says he took in",
+          },
+          {
+            label: "Visits",
+            value: thisMonth ? String(thisMonth.visits) : "0",
+            sub: thisMonth
+              ? `${thisMonth.verifiedVisits} verified`
+              : undefined,
+          },
+          {
+            label: "New shops",
+            value: thisMonth ? String(thisMonth.newCustomers) : "0",
+            sub: lastMonth ? `${lastMonth.newCustomers} last month` : undefined,
+          },
+          {
+            label: "Days worked",
+            value: thisMonth ? String(thisMonth.daysWorked) : "0",
+            sub: month,
+          },
+        ]}
       />
 
       <div className="mb-4 flex flex-wrap gap-1 border-b border-line">

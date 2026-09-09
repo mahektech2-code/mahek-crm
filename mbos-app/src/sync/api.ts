@@ -5,6 +5,7 @@ import * as Application from 'expo-application';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { getKv, setKv } from '../db';
+import { buildLabel } from '../native/updates';
 
 /**
  * The one place a request leaves this app.
@@ -220,7 +221,17 @@ export async function login(args: { mobile: string; password?: string; otp?: str
   return request('/api/mbos/auth/login', {
     method: 'POST',
     auth: false,
-    body: JSON.stringify({ ...args, deviceId: await deviceId(), deviceLabel: await deviceLabel() }),
+    /* `platform` and `appVersion` have been accepted by the login since MBOS
+       shipped and were never sent, so `mbos_devices` recorded neither for any
+       handset — and those are the two columns somebody reaches for the moment
+       something is wrong in the field. See `buildLabel`. */
+    body: JSON.stringify({
+      ...args,
+      deviceId: await deviceId(),
+      deviceLabel: await deviceLabel(),
+      platform: Platform.OS,
+      appVersion: buildLabel(),
+    }),
   });
 }
 
@@ -244,6 +255,10 @@ export type PullPayload = {
   /** The office's order and receipt history, ten of each per customer. */
   customerOrders?: unknown[];
   customerPayments?: unknown[];
+  /** The open bills behind the shop's outstanding, so a collection can name
+      one instead of being spread oldest-first. Optional like every other
+      channel: an older server simply does not send it. */
+  customerBills?: unknown[];
   leads?: unknown[];
   notifications?: unknown[];
   documents?: unknown[];

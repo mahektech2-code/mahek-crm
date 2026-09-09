@@ -1263,6 +1263,66 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE customers ADD COLUMN healthBand TEXT;`,
   ],
 
+  /* ---- v(next) · WHAT THE MONEY IS AGAINST ------------------------------ */
+  [
+    /*
+     * B3-14 §O. The open bills behind `customers.outstandingPaise`.
+     *
+     * The handset has always carried that ONE number, so a salesman could tell
+     * a shop it owed 47,000 and not which invoices that was. And
+     * `collectPayment` has always taken a `billRefs` argument that reaches the
+     * server as `billIds` — which `handlePayment` validates and allocates in
+     * `settle` mode — but no screen ever filled it. So every rupee collected in
+     * the field spread OLDEST FIRST, including from the customer standing there
+     * paying against the invoice in his hand.
+     *
+     * Read-only, like `customer_orders` and `customer_payments` beside it: the
+     * office's ledger as it stands, never something this app writes back. The
+     * salesman's own collection is still a `payments` row in the outbox, and it
+     * is still `reported` until accounts find the money in the bank.
+     *
+     * `paymentPosition` rides along because a balance here is not always a
+     * debt: on an `unstated` bill it is the full amount purely because nobody
+     * has recorded anything against it either way, and `recomputeOutstanding`
+     * keeps it out of the figure above. Drawing it as money owed would be the
+     * imported-book mistake arriving on a phone.
+     */
+    `CREATE TABLE IF NOT EXISTS customer_bills (
+      id TEXT PRIMARY KEY,
+      customerId TEXT NOT NULL,
+      billNo TEXT,
+      billDate TEXT,
+      dueDate TEXT,
+      amountPaise INTEGER,
+      paidPaise INTEGER,
+      balancePaise INTEGER,
+      overdueDays INTEGER,
+      disputed INTEGER NOT NULL DEFAULT 0,
+      paymentPosition TEXT,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+    /* Oldest first within a customer: the order they are chased in, and the
+       order the automatic spread would settle them in. */
+    `CREATE INDEX IF NOT EXISTS idx_customer_bills_cust
+       ON customer_bills(customerId, billDate ASC);`,
+  ],
+
+  /*
+   * v(next) — a day he started himself.
+   *
+   * The pull sends this for every day now, so the column has to exist or the
+   * generic upsert throws on an unknown column and takes the WHOLE pull down
+   * with it — customers, products, the price list, all of it. That is the one
+   * failure this schema can produce on its own, and the test at the top of
+   * `src/lib/mbos-wire.test.ts` is what catches it before an APK carries it.
+   *
+   * 0 for every day that already exists, which is all of them: until now the
+   * office proposed every day there was.
+   */
+  [
+    `ALTER TABLE journey_days ADD COLUMN selfPlanned INTEGER NOT NULL DEFAULT 0;`,
+  ],
+
   /*
    * v(next) — a lead's locality, which the office has had all along.
    *
@@ -1314,7 +1374,7 @@ export const REFERENCE_TABLES = [
   'customers', 'products', 'price_list', 'schemes', 'timeline_events',
   'journey_stops', 'leave_balances', 'holidays', 'documents', 'courses',
   'notifications', 'performance', 'salary',
-  'customer_orders', 'customer_payments',
+  'customer_orders', 'customer_payments', 'customer_bills',
   /* The policy and the modes are the office's, wholly. `expense_exceptions`
      is too: they are the office's questions about his day, and a question he
      has already answered comes back answered rather than being kept here. */

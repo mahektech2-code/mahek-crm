@@ -158,6 +158,26 @@ export function dataSize(bytes: number | null | undefined): string {
 }
 
 /**
+ * A span of hours, said the way somebody would say it out loud.
+ *
+ * Used where a retention window is stated to the person it applies to, so it
+ * has to read as a promise rather than as a configuration value: "3 days" is
+ * something a salesman can hold in his head and "72 hours" is arithmetic he
+ * has to do. A window that is not a round number of days stays in hours rather
+ * than being rounded into a figure that disagrees with what the office set —
+ * being approximate about how long a photograph of somebody's face is kept is
+ * exactly the wrong place to be approximate.
+ */
+export function hoursInWords(hours: number): string {
+  if (!Number.isFinite(hours) || hours <= 0) return '0 hours';
+  if (hours % 24 === 0) {
+    const days = hours / 24;
+    return days === 1 ? '24 hours' : `${days} days`;
+  }
+  return plural(Math.round(hours), 'hour');
+}
+
+/**
  * A SHOP'S NAME AS IT SHOULD BE READ, not as it was typed.
  *
  * Half this book is shouted and a third of it is whispered: of 5,915 customers,
