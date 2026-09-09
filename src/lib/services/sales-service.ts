@@ -2484,6 +2484,17 @@ export type ShopPin = {
   beat: string | null;
   lat: number;
   lng: number;
+  /**
+   * True where the pin was looked up from an address rather than captured by
+   * standing in the shop.
+   *
+   * It is on the row rather than derived on the map because the difference is
+   * real and often large: an Indian address outside a metro geocodes to the
+   * locality centre, which can be several hundred metres from the door.
+   * Drawing it identically to a field fix would present a guess as a
+   * measurement on the screen a territory is planned from.
+   */
+  approximate: boolean;
   salesmanId: string | null;
   salesmanName: string | null;
 };
@@ -2498,13 +2509,23 @@ export async function shopPins(): Promise<ShopPin[]> {
   const scope = await managerScope();
   return db.execute<ShopPin>(sql`
     select c.id, c.name, c.city, c.area, c.beat,
-           c.gps_lat as lat, c.gps_lng as lng,
+           /* The field pin first, then the looked-up one. 503 shops carry an
+              address and no pin, and they were absent from this map entirely
+              — a shop nobody can see is a shop nobody plans a day around. */
+           coalesce(c.gps_lat, c.geocoded_lat) as lat,
+           coalesce(c.gps_lng, c.geocoded_lng) as lng,
+           /* WHICH KIND OF PIN THIS IS. A geocode is a locality centre often
+              enough that drawing it identically to a fix taken in the doorway
+              would present a guess as a measurement. The map draws it hollow,
+              the same way a stale activity fix is drawn. */
+           (c.gps_lat is null) as "approximate",
            coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
            u.name as "salesmanName"
       from customers c
       left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
      where c.status = 'active' and c.kind = 'customer'
-       and c.gps_lat is not null and c.gps_lng is not null
+       and coalesce(c.gps_lat, c.geocoded_lat) is not null
+       and coalesce(c.gps_lng, c.geocoded_lng) is not null
        ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
   `) as unknown as ShopPin[];
 }

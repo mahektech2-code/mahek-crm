@@ -191,7 +191,10 @@ export function ShopMap({
                 type: "Feature" as const,
                 properties: {
                   shopId: s.id,
-                  label: `${s.name} · ${s.city}${s.salesmanName ? ` · ${s.salesmanName}` : ""}`,
+                  approximate: s.approximate,
+                  label:
+                    `${s.name} · ${s.city}${s.salesmanName ? ` · ${s.salesmanName}` : ""}` +
+                    (s.approximate ? " · approximate, from the address" : ""),
                 },
                 geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] },
               })),
@@ -223,9 +226,16 @@ export function ShopMap({
             filter: ["!", ["has", "point_count"]],
             paint: {
               "circle-radius": 5,
-              "circle-color": "#5223E0",
+              /* A LOOKED-UP PIN IS DRAWN HOLLOW, the same way a stale activity
+                 fix is. An address outside a metro geocodes to the locality
+                 centre, which can be a few hundred metres from the door — so
+                 the shop is certainly somewhere near here and this is not a
+                 measurement of where it is. Filled and hollow says that
+                 without a legend; drawing both alike would make a guess look
+                 like a fix taken in the doorway. */
+              "circle-color": ["case", ["get", "approximate"], "#FFFFFF", "#5223E0"],
               "circle-stroke-width": 2,
-              "circle-stroke-color": "#FFFFFF",
+              "circle-stroke-color": "#5223E0",
             },
           });
           for (const id of ["shops-clusters", "shops-cluster-count", "shops-points"]) {
