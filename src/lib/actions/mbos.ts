@@ -59,12 +59,19 @@ import {
   buildBootstrap,
   type MbosPrincipal,
 } from "../services/mbos-service";
-import type {
-  RejectionCode,
-  SyncEntityType,
-  SyncItem,
-  SyncResult,
+import {
+  LEAVE_TYPES,
+  type LeaveType,
+  type RejectionCode,
+  type SyncEntityType,
+  type SyncItem,
+  type SyncResult,
 } from "../mbos/types";
+import {
+  leaveWorkingDays,
+  MAX_LEAVE_SPAN_DAYS,
+  type LeaveCalendar,
+} from "../engines/leave";
 import { notifyUsers } from "../notify";
 
 /* ---------------------------------------------------------------------------
@@ -2690,9 +2697,6 @@ function round(value: number | null | undefined): number | null {
  * something adjacent, because "we recorded your sick leave as casual" is a
  * conversation about somebody's pay.
  */
-const LEAVE_TYPES = ["casual", "sick", "earned", "loss_of_pay"] as const;
-type LeaveType = (typeof LEAVE_TYPES)[number];
-
 function leaveTypeOf(kind: string): LeaveType | null {
   const key = kind.trim().toLowerCase().replace(/[\s-]+/g, "_");
   const direct = LEAVE_TYPES.find((t) => t === key);
@@ -2722,6 +2726,30 @@ function inclusiveDays(from: string, to: string): number {
   const b = Date.parse(`${to}T00:00:00Z`);
   if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
   return Math.floor((b - a) / 86_400_000) + 1;
+}
+
+/**
+ * The working week and the holidays it excludes, for the span being asked for.
+ *
+ * Only the holidays inside the request are fetched. The table is small, but the
+ * query is per leave request and a `select *` here would grow with the years
+ * rather than with the request.
+ *
+ * A regionally-scoped holiday counts the same as a universal one: a day the
+ * office is shut is a day nobody was going to work, and the handset's own
+ * caution about scoped holidays is about which days it may auto-apply, not
+ * about what somebody's leave costs them.
+ */
+async function leaveCalendarFor(from: string, to: string): Promise<LeaveCalendar> {
+  const config = await getConfig();
+  const rows = await db.execute<{ onDate: string }>(
+    sql`select on_date::text as "onDate" from mbos_holidays
+         where on_date between ${from}::date and ${to}::date`,
+  );
+  return {
+    workingDays: config["workingDay.workingDays"],
+    holidays: new Set(rows.map((r) => r.onDate)),
+  };
 }
 
 /**
@@ -2826,11 +2854,39 @@ async function handleLeave(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     };
   }
 
-  const days = inclusiveDays(from, to);
-  if (days < 1) {
+  const spanned = inclusiveDays(from, to);
+  if (spanned < 1) {
     return {
       kind: "rejected",
       value: reject("validation", "Those are not two dates this can count days between."),
+    };
+  }
+  if (spanned > MAX_LEAVE_SPAN_DAYS) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `That request covers ${spanned} days. Leave is applied for a stretch at a time — if this is right, it is a conversation with your manager rather than a form.`,
+      ),
+    };
+  }
+
+  /* A day nobody works is not a day of leave.
+   *
+   * This counted plain calendar days until now, so a Friday-to-Monday request
+   * spent four days of somebody's balance to be absent for two — and the
+   * column's own comment has said "derived from the dates and the working
+   * calendar" since the table was written. See `engines/leave.ts`. */
+  const days = leaveWorkingDays(from, to, await leaveCalendarFor(from, to));
+  if (days < 1) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        from === to
+          ? "That day is a holiday or a day the company does not work, so there is no leave to take. Nothing was saved."
+          : "Every day in that range is a holiday or a non-working day, so there is no leave to take. Nothing was saved.",
+      ),
     };
   }
 

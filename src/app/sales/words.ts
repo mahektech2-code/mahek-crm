@@ -44,12 +44,11 @@ export const VISIT_OUTCOME_LABEL: Record<string, string> = {
   closed: "Shop closed",
 };
 
-export const LEAVE_LABEL: Record<string, string> = {
-  casual: "Casual",
-  sick: "Sick",
-  earned: "Earned",
-  loss_of_pay: "Loss of pay",
-};
+/* The same words the handset's leave form draws its buttons from — one map,
+   in `lib/mbos/types.ts`, because a second copy here would be the half that
+   drifts and this screen and that form are read by the same two people about
+   the same request. */
+export { LEAVE_LABELS as LEAVE_LABEL } from "@/lib/mbos/types";
 
 export function label(map: Record<string, string>, value: string): string {
   return map[value] ?? value.replace(/_/g, " ");
