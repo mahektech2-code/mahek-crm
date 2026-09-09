@@ -334,7 +334,20 @@ src/
                            and both list pages
     config/                registry.ts (every setting + validation) and
                            store.ts (cached reads, audited writes)
+    lead-labels.ts         the funnel's whole vocabulary — the three sales
+                           types, every rung's two names, the four coded reason
+                           lists, §8's twelve questions, §16's seven feedback
+                           fields, §13's fifteen nurture rows, §14's eleven
+                           buttons and §18's eight. PURE and client-safe,
+                           because the forms that write these run in a browser
+                           and on a handset while the services that read them
+                           are `server-only`
     engines/               the derived-state engines — PURE, no I/O:
+                           lead-ladder — the three ladders, which rung follows
+                           which, and the four funnel bands every new rung maps
+                           onto; lead-gates — §28 itself, what each rung
+                           demands and which of it is missing; lead-nurture —
+                           an event in, the manager's tasks out,
                            buying-cycle, queue, escalation, inactivity,
                            targets, eod, payment-followup, allocation,
                            next-step — when this customer comes back, and why,
@@ -648,6 +661,183 @@ four hundred rows. The type filter carries two options that are not types: the
 evidence list, and third parties with nobody billing them, which should be
 empty and is not on a book converted before distributors were recorded. A row
 nobody can account for is worse than one that says why it is there.
+
+**A LEAD CLIMBS A LADDER, AND WHICH LADDER IS THE FIRST THING ASKED.** Mahek
+sells three ways and they are not the same job: a direct customer is worked
+towards a first order, a distributor towards an appointment, and a third-party
+shop towards an order somebody else invoices. `customers.lead_sales_type` picks
+between them and is chosen before anything else is typed, because it decides
+which questions the rest of the form asks. `lib/engines/lead-ladder.ts` holds
+the three, and no screen writes a stage list out.
+
+**NULL is the fourth answer, and it is what let this ship.** A lead raised
+before the funnel existed carries no sales type and climbs the six rungs this
+product shipped with — `new · contacted · qualified · negotiation · won · lost`,
+kept whole and kept first in the enum. Nothing backfills one. Guessing which of
+three ladders somebody was on is a decision dressed up as a migration, and the
+ladder decides which GATES apply, so a wrong guess would not merely mislabel a
+record: it would block the salesman working it.
+
+**`bandOf` is why seventeen new rungs moved no figure.** The console funnel
+draws four bands and the owner's cohort conversion counts by them, both reading
+`lead_stage`. Adding rungs without mapping them would have dropped every lead on
+a new one out of the bands entirely — a pipeline that silently shrinks as the
+team works it, which is the worst possible direction for that bug. The map is in
+the ladder engine and there is a test that walks every enum value through it, so
+a twenty-fourth rung added without a band fails the build rather than a report.
+
+**§28 IS THE WHOLE POINT: no lead moves forward because somebody pressed a
+button.** `lib/engines/lead-gates.ts` answers whether a rung may be entered and,
+where it may not, WHICH conditions are missing — because a refusal that does not
+say what it wants teaches a salesman to press the button again rather than to do
+the work. Three callers, one answer: the handset draws the next rung disabled
+with the missing list underneath, the server action refuses on the same function
+before it writes, and the console shows a manager what a lead is stuck behind. A
+second copy typed into a screen would drift inside one release, and the half that
+drifts is the half somebody is reading.
+
+**The gate engine is pure because it has to run with no signal.** The salesman
+deciding whether he can request a sample is standing in a shop, and a rule that
+only exists on the server is a rule he finds out about on the drive home. It
+takes configuration and its inputs as arguments and performs no I/O, like every
+engine here, and the handset compiles the same file.
+
+**A tick is not an answer where a column exists.** Four of the twelve
+qualification conditions — the monthly requirement, the potential, the product
+and the competitor — are satisfied by the VALUE and not by the checkbox beside
+it. A ticked box beside an empty field is precisely the state the gates exist to
+prevent, and a checklist that can be completed without answering anything is a
+checklist people learn to complete.
+
+**The map and the toll are two files on purpose.** `lead-ladder.ts` answers
+"what comes next"; `lead-gates.ts` answers "may we". Folding them together would
+put the reason a lead is stuck inside the function that draws its progress, and
+the console needs the second without the first.
+
+**§22 SAYS CUSTOMER AT THE SECOND ORDER AND THIS CODEBASE SAYS OTHERWISE, so
+the two words are separated rather than reconciled.** A lead here IS an account
+that has never ordered, and about thirty places read `customers.kind` on exactly
+that understanding — the Call Log's prospect cadence, sales attribution, the
+buying cycle, the owner's funnel. Honouring §22 literally would leave an account
+with one order, one bill and one confirmed payment sitting at `kind = 'lead'`,
+and every one of those readers would get it wrong. So `kind` flips at the FIRST
+order — `promotesToCustomerAt` is the one place that is decided — and the ladder
+keeps its own `second_order` and `customer` rungs, which are the funnel's
+statement about the relationship rather than the ledger's about the account.
+
+**A working lead is held back from the Call Log, and SHOWN.** A lead that stays
+a lead through eleven rungs would otherwise sit on the telecaller's prospect
+cadence for months, so the office rings a shop a salesman is actively working to
+ask for a first order — two people chasing one customer, neither knowing about
+the other. A lead carrying a sales type is suppressed from the prospect reason,
+and suppression is a return value rather than a filter, so it appears in the
+held-back strip with the reason said in words. A lead with no sales type is
+untouched.
+
+**§24: an active lead may not sit with nothing owed by anybody.** The action,
+the day, the person and what that person is expected to come back with — four
+answers, not a date. A date alone is what this had, and a date alone is how a
+lead sits for six weeks with everybody assuming somebody else is holding it. It
+is enforced on every upward move by the gate engine rather than by a required
+field on one form, and legacy leads are exempt: demanding a next action to move
+a four-year-old lead would freeze the book the rule exists to unstick.
+
+**§4 pushes rather than holds.** Two visits to decide whether a Suspect is worth
+anything, three at the outside — and past the cap nothing is refused, a decision
+is DEMANDED. The lead turns into one question, Prospect or Not Prospect, and
+both answers are moves the engine allows. How many visits a suspect has had is
+counted from `mbos_visits` and is deliberately not a column: a counter would
+drift the first time a visit arrived late from a handset.
+
+**A REASON IS A CODE, NEVER A LABEL.** Why a Suspect became a Prospect (§5), why
+the customer wants a trial (§10), why a lead was lost (§26) and why a manager
+overrode a gate — four lists, all in `lib/config/registry.ts` because a manager
+should be able to reword one without a deploy, and all stored as codes because a
+stored label stops resolving the moment they do. It is also what makes "how many
+did we lose on credit terms this quarter" a question somebody can ask rather
+than a grep over free text.
+
+**The override exists so the rule survives contact with a Tuesday.** A system
+that refuses everything is defeated in a week by people recording the work after
+the event, and the record then says the process was followed when it was not —
+which is worse than the gate being open. So a manager may pass a shut gate, it
+demands a reason, and `lead_stage_transitions.overridden_conditions` stores
+exactly what was still missing. `leads.allowManagerOverride` turns it off for a
+team that would rather be stuck.
+
+**Every move is a row, and the row is the timeline.** `lead_stage_transitions`
+is append-only: a transition recorded wrongly is corrected by a further
+transition, never by an edit, for the same reason `calls.next_step_*` is never
+rebuilt — it records what somebody decided on a day, and a rewrite destroys the
+question rather than answering it. §25's timeline is that table joined to the
+manager's calls, the samples, the orders and the receipts, and every lead write
+also lands a `timeline_events` row so the story reaches the customer record it
+becomes.
+
+**§8 stores the ANSWERS, not the verdict.** The sales manager rings the customer
+to establish that the visit happened, that Mahek was explained and that the
+opportunity is real. A verdict on its own would be worth very little a month
+later; the value is the twelve answers, because "whose product did he say he was
+using" is exactly what somebody needs before the negotiation call. Two of the
+twelve are about the salesman rather than the sale, and they are why the call
+exists at all — no amount of GPS proves that Mahek was explained properly.
+
+**§13's fifteen tasks are a table, not fifteen conditionals.**
+`NURTURE_SEQUENCE` in `lib/lead-labels.ts` names the trigger, the delay, the
+owner and the sentence; `lib/engines/lead-nurture.ts` turns an event into the
+tasks that should exist, keyed on `mbos_tasks.sourceType`/`sourceId` so a second
+pass raises nothing twice. `owner` matters: the salesman and the manager are
+chased for different things about the same lead, and one list would read as one
+person being nagged twice.
+
+**§16 does not stop.** A sample review is chased on day 2, then 4, then 6 — and
+the LAST interval repeats until there is an answer, because a trial nobody
+reviewed is stock given away for nothing. `mbos_samples.review_chase_count` is
+what lets a screen say "asked three times", which is the number that tells a
+manager to pick up the phone themselves.
+
+**A sample's STATE and its VERDICT are different questions.**
+`mbos_samples.state` is the journey — requested, approved, dispatched, received,
+tried, reviewed — and `trial_outcome` is what the customer thought. With one
+column, a sample approved three weeks ago and never dispatched looked identical
+to one under evaluation; it is stock nobody gave away and an opportunity nobody
+took. `more_testing` is a real third verdict rather than a shrug: "they want to
+try it again on a different substrate" is neither approval nor rejection, and
+recording it as pending loses the fact that a trial happened at all.
+
+**§16's feedback is seven answers because "good" cannot be read back.** Quality,
+performance, application, drying, the comparison, price, and one open box. The
+whole point of a trial is the comparison, and a note field cannot later be read
+as "better drying than the incumbent, price is the problem".
+
+**§12: a salesman may never appoint a distributor, and a manager may not do it
+alone.** It routes through `mbos_approvals` — the same table and the same
+two-step chain every other MBOS decision uses — with `stepIndex` 0 the sales
+manager and 1 management, which is the `distributor.approve` capability and
+admin's alone. What forces the second step is named rather than judged:
+exclusivity always, a discount above
+`leads.distributorDiscountApprovalPercent`, a credit limit above
+`leads.distributorCreditLimitApprovalPaise`. The person carrying the target must
+not be the person allowing the discount that hits it — the same reasoning that
+keeps `order.approve` away from managers entirely.
+
+**The distributor's own salesman is a name, not an account.** Rahul, in §23's
+example, works for the distributor, has no MahekOne login and never will.
+`distributor_salesmen` is that fact, and `customer_distributors` points at it, so
+the chain Mahek → distributor → his salesman → the shop is recorded from the
+first visit rather than reconstructed at conversion. Giving him a `users` row
+would put him in every person picker in the product.
+
+**§20 is RENDERED, never re-implemented.** Order Received → Confirmed →
+Dispatched → In Transit → Delivered is a second status ladder for a row whose
+status already comes from the Order Details tab and from accounts' approval. A
+parallel one would be overwritten every thirty minutes by the sheet projection
+or would fight it into `sync_conflicts`. The lead page shows the orders and the
+receipts that exist; it writes neither.
+
+**§21 already existed and is called rather than rebuilt.** The reorder cycle is
+`engines/buying-cycle.ts`, measured from real approved orders and discounted by
+`cycle_confidence`. The repeat-order call is a nurture task dated from it.
 
 **The Call Log chases orders, not contact.** A customer with a measured buying
 cycle gets a stock-check call at a percentage of their own cycle — 70% of 30
