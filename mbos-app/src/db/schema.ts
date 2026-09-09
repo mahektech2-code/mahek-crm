@@ -1020,6 +1020,44 @@ export const MIGRATIONS: string[][] = [
     `CREATE INDEX IF NOT EXISTS idx_customer_payments_cust
        ON customer_payments(customerId, receivedAt DESC);`,
   ],
+
+  /* ---- v14 · the column every accepted plan_day was written to ----------- */
+  [
+    /*
+     * `setEntityState` writes `serverCreatedAt` on ACCEPT, for whatever table
+     * the entity type maps to — and an accept always carries a
+     * `serverReceivedAt`, so that branch is not the exception, it is the
+     * ordinary path. Every other table in `ENTITY_TABLE` has the column.
+     * `journey_days` did not, so agreeing a day threw
+     * `no such column: serverCreatedAt` INSIDE the push loop: after the queue
+     * row had been marked synced, before the rest of the batch had been read,
+     * and before `applyPull` ran at all. The results behind it stayed
+     * `syncing`, the whole delta was discarded, and the day itself was left
+     * reading "waiting for signal" for ever with the answer already on the
+     * server.
+     *
+     * Nothing writes a plan day's own `createdAt` — the office owns the row —
+     * so this is only ever the office's acknowledgement, which is exactly what
+     * the column means everywhere else.
+     */
+    `ALTER TABLE journey_days ADD COLUMN serverCreatedAt INTEGER;`,
+    /*
+     * WHICH shops were picked, as well as how many.
+     *
+     * `pickShops` writes the count and enqueues the ids, and `pickedFor` read
+     * them back out of `journey_stops` — which the office mints, so they
+     * arrive on the next pull and not before. Reopening the pick screen in
+     * between showed nothing ticked at all, on a screen whose own comment
+     * promises that reopening it is a correction rather than starting again.
+     * Twelve shops chosen in a shop doorway, gone the moment somebody backed
+     * out to check the date.
+     *
+     * The stops still WIN wherever they exist: this is what was asked for and
+     * they are what the office issued, and the second is the one to walk.
+     */
+    `ALTER TABLE journey_days ADD COLUMN pickedIds TEXT;`,
+  ],
+
 ];
 
 /**

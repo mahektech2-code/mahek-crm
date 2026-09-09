@@ -101,6 +101,10 @@ export type PlanDay = {
   proposedBy: string | null;
   picked: number;
   syncState: string;
+  /* What the office SAID when it refused an answer, written onto the row by
+     `setEntityState`. The card reads it, because "the shops were not accepted"
+     with no reason attached sends somebody back to pick the same ones. */
+  syncMessage: string | null;
 };
 
 /**
@@ -217,6 +221,18 @@ export type Candidate = {
 };
 
 /**
+ * How many shops the pick list offers unprompted.
+ *
+ * The whole book was, which on this handset is thousands of rows — every one
+ * of them a card in a list, and the buttons that save the day sat underneath
+ * the last of them. Nobody scrolls a book to find a button. A day is twenty
+ * stops at the very outside, so what a cap costs is the shop somebody was
+ * going to reach by scrolling rather than by typing its name, and the search
+ * box is right above it.
+ */
+export const PICK_PAGE = 60;
+
+/**
  * Who there is to pick from, for a day in a given city.
  *
  * **The city NARROWS rather than filters.** Everything is offered, with the
@@ -229,8 +245,21 @@ export type Candidate = {
  * not seen", and a customer visited yesterday is the last one to put on
  * tomorrow — a name that has never been visited sorts to the very top, because
  * that is the strongest version of the same answer.
+ *
+ * **Capped, and the screen says what it is a slice of.** `total` is a
+ * `count(*)` rather than the length of what came back, for the reason the
+ * web app's timeline pills carry: a capped list that counts itself reports
+ * sixty shops on a book of five thousand and nothing on the screen says so.
+ *
+ * **Already-picked shops are never cut.** They are read by id alongside the
+ * page, because a shop ticked, then searched past, then found again outside
+ * the cap would come back with its number gone — and the number IS the plan.
  */
-export async function pickCandidates(city: string | null, query = ''): Promise<Candidate[]> {
+export async function pickCandidates(
+  city: string | null,
+  query = '',
+  keep: string[] = [],
+): Promise<{ rows: Candidate[]; total: number }> {
   const q = query.trim().toLowerCase();
   const like = `%${q}%`;
   const where = q
@@ -238,24 +267,53 @@ export async function pickCandidates(city: string | null, query = ''): Promise<C
     : '';
   const args: string[] = q ? [like, like, like] : [];
 
-  const rows = await all<Candidate>(
-    `SELECT id, name, area, city, beat, outstandingPaise, lastVisitDate, lastOrderDate, gpsLat, gpsLng
+  const COLS = `id, name, area, city, beat, outstandingPaise, lastVisitDate, lastOrderDate, gpsLat, gpsLng`;
+
+  const counted = await one<{ n: number }>(`SELECT COUNT(*) AS n FROM customers ${where}`, args);
+
+  const page = await all<Candidate>(
+    `SELECT ${COLS}
        FROM customers ${where}
-      ORDER BY lastVisitDate IS NULL DESC, lastVisitDate ASC, name ASC`,
+      ORDER BY lastVisitDate IS NULL DESC, lastVisitDate ASC, name ASC
+      LIMIT ${PICK_PAGE}`,
     args,
   );
 
-  if (!city) return rows;
+  /* The ticked ones, whether or not the page or the search reached them. */
+  const missing = keep.filter((id) => !page.some((r) => r.id === id));
+  const held = missing.length
+    ? await all<Candidate>(
+        `SELECT ${COLS} FROM customers WHERE id IN (${missing.map(() => '?').join(',')})`,
+        missing,
+      )
+    : [];
+
+  const rows = [...held, ...page];
+  const total = counted?.n ?? rows.length;
+
+  if (!city) return { rows, total };
   const here = city.trim().toLowerCase();
   /* Sorted in JavaScript rather than in SQL, so the ordering above is stated
      once and the city only lifts a group of it. */
-  return [
-    ...rows.filter((r) => (r.city ?? '').trim().toLowerCase() === here),
-    ...rows.filter((r) => (r.city ?? '').trim().toLowerCase() !== here),
-  ];
+  return {
+    rows: [
+      ...rows.filter((r) => (r.city ?? '').trim().toLowerCase() === here),
+      ...rows.filter((r) => (r.city ?? '').trim().toLowerCase() !== here),
+    ],
+    total,
+  };
 }
 
-/** The shops already picked for a day, so reopening the screen shows them. */
+/**
+ * The shops already picked for a day, so reopening the screen shows them.
+ *
+ * Two sources, in this order, and the order is the point. `journey_stops` is
+ * what the OFFICE issued — the real route, and the one to walk. `pickedIds` is
+ * what this handset ASKED for, held on the day row because the stops are
+ * minted server-side and arrive on the next pull: without it, backing out of
+ * this screen and returning before that pull showed nothing ticked, and twelve
+ * shops chosen in a doorway had to be chosen again.
+ */
 export async function pickedFor(planDayId: string): Promise<string[]> {
   /* Stops are keyed by the DATE here rather than by the day's id — the handset
      table came down flat, one row per stop with its `planDate`, and adding a
@@ -266,7 +324,21 @@ export async function pickedFor(planDayId: string): Promise<string[]> {
       WHERE d.id = ? ORDER BY s.seq`,
     [planDayId],
   );
-  return rows.map((r) => r.customerId);
+  if (rows.length) return rows.map((r) => r.customerId);
+
+  const day = await one<{ pickedIds: string | null }>(
+    'SELECT pickedIds FROM journey_days WHERE id = ?',
+    [planDayId],
+  );
+  if (!day?.pickedIds) return [];
+  try {
+    const parsed: unknown = JSON.parse(day.pickedIds);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    /* A row nobody can parse is a row nobody picked. Losing the ticks is bad;
+       failing the screen that would let somebody re-tick them is worse. */
+    return [];
+  }
 }
 
 export async function planDay(id: string): Promise<PlanDay | null> {
@@ -296,8 +368,10 @@ export async function pickShops(
   }
 
   await run(
-    `UPDATE journey_days SET dayState = 'planned', picked = ?, syncState = 'queued' WHERE id = ?`,
-    [customerIds.length, planDayId],
+    `UPDATE journey_days
+        SET dayState = 'planned', picked = ?, pickedIds = ?, syncState = 'queued'
+      WHERE id = ?`,
+    [customerIds.length, JSON.stringify(customerIds), planDayId],
   );
 
   await enqueue({
