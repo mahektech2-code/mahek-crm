@@ -3019,6 +3019,41 @@ every customer would make the figure fall every time somebody added a prospect.
 "A thousand transactions" says nothing without the number of customers behind
 it — a thousand from 250 is a different business to a thousand from 900.
 
+**THE BAND OWNS THE PHRASE "AT RISK", AND THE SCORE MAY NOT BORROW IT.**
+There are two health models and both are worth having — the BAND asks whether
+somebody has stopped buying, from one fact, their own cycles elapsed; the SCORE
+asks how the relationship is doing, from five. They were being rendered in five
+places with four different sets of thresholds, and two of those five used the
+same two words for different questions: `/sales/leads` called a customer "At
+risk" below a SCORE of 40, and the owner's report called one "At risk" at 1.25
+CYCLES overdue. A manager and an owner could read that phrase about one shop on
+one afternoon and mean different things, which is what B3-16 was raised about.
+The handset's `customerStage` was the worst of the five — `< 40 ? 'Overdue' :
+< 60 ? 'At risk'`, a third pair of thresholds, neither of them configuration,
+and an unscored customer falling through to "Active", which is a verdict about
+somebody nothing had measured.
+
+`lib/customer-health.ts` is the one place either becomes words, pure and
+client-safe like `account-types` and `seat-labels` beside it. The band gets the
+retention word; a low score says `watch` and NAMES the components dragging it,
+because "paying late, two complaints open" is both truer than "at risk" and
+tells somebody what to do. There is a test asserting a score can never produce
+the phrase.
+
+**And its two thresholds are configuration now.** They were a literal 70 and 50
+inside the handset's health pill — two business numbers invisible to the one
+screen a manager would change them on. `mbos.health.strongAtOrAbove` joins
+`mbos.health.atRiskBelow`, and `checkConsistency` refuses a strong threshold at
+or below the watch one, because a score between them would be both at once.
+The old key keeps its name so no stored setting has to be migrated; what
+changed is its label, which is what a manager actually reads.
+
+**The band reaches the handset on the wire, computed once.** Like the score
+beside it: a phone deriving its own would derive it from a book hours old, and
+two salesmen standing in one shop would read different words about it. It is
+filled in JS by `bandFor` — never as a CASE in the query — because a second
+copy of that rule drifts the day somebody changes a multiplier.
+
 **CUSTOMER HEALTH IS FOUR BANDS OF ONE EXISTING RULE, not a second one.** Active,
 at risk, dormant and lost, measured in multiples of the customer's OWN buying
 cycle — a fortnightly buyer and a twice-a-year buyer are both a quarter late at
