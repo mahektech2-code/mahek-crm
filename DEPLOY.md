@@ -317,21 +317,24 @@ on your own phone.
 JavaScript, assets, copy and engine rules travel over the air, and a handset
 picks the new bundle up in the background and runs it the next time it opens.
 
-**It is switched OFF until somebody runs `eas init`.** `app.json` carries
-`updates.enabled: false`, so `Updates.isEnabled` is false and the check returns
-immediately. That is deliberate: an update channel pointed at nothing fails on
-every launch, in the background, silently. `eas init` writes the project id and
-the update URL, and the same step is what makes PUSH NOTIFICATIONS work —
-`registerForPush` needs `extra.eas.projectId` and currently returns early
-without it, which is why nine devices hold zero push tokens between them.
-
-After `eas init`, set `updates.enabled: true`, build ONE more APK through the
-`MBOS APK` workflow so the field is running a build that knows how to update
-itself, and from then on:
+The project is `@dasabhinaba34/mbos`
+(`713eb7ff-b462-48c8-9b6a-b89d60bc9bbd`), and the same project id is what makes
+PUSH NOTIFICATIONS work — `registerForPush` reads `extra.eas.projectId` and
+returned early for as long as it was missing, which is why nine devices held
+zero push tokens between them.
 
 ```bash
-eas update --branch production --message "what changed"
+cd mbos-app && npx eas-cli@latest update --branch production --message "what changed"
 ```
+
+**THE CHANNEL IS PINNED IN `app.json`, and it has to be.** A build made by
+`eas build` gets its channel stamped in by EAS; ours are built by gradle in the
+`MBOS APK` workflow, so nothing stamps anything. Without
+`updates.requestHeaders["expo-channel-name"]` the handset asks for updates on no
+channel at all and quietly receives none — a publish that goes green and
+reaches nobody, which is the same failure mode as a run dispatched with
+`publish: false`. It is set to `production`, and `eas update --branch
+production` is what feeds it.
 
 **What can never go over the air:** anything native — a new native module, a
 permission, an Expo SDK bump, and `EXPO_PUBLIC_API_BASE`, which is inlined into

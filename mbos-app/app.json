@@ -71,9 +71,20 @@
       "policy": "fingerprint"
     },
     "updates": {
-      "enabled": false,
+      "enabled": true,
       "fallbackToCacheTimeout": 0,
-      "checkAutomatically": "ON_LOAD"
-    }
+      "checkAutomatically": "ON_LOAD",
+      "url": "https://u.expo.dev/713eb7ff-b462-48c8-9b6a-b89d60bc9bbd",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "713eb7ff-b462-48c8-9b6a-b89d60bc9bbd"
+      }
+    },
+    "owner": "dasabhinaba34"
   }
 }
