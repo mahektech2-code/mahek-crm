@@ -43,7 +43,11 @@ import { markMissedCheckouts } from "@/lib/mbos-jobs";
 import { mbosAttendanceDays, mbosPositions } from "@/db/schema";
 import { auditLog, notifications as notificationsTable } from "@/db/schema";
 import { ingestSyncBatch, storeMbosMedia } from "@/lib/actions/mbos";
-import { canRead, sweepOrphans } from "@/lib/services/attachment-service";
+import {
+  canRead,
+  sweepAttendanceSelfies,
+  sweepOrphans,
+} from "@/lib/services/attachment-service";
 import {
   buildBootstrap,
   buildPull,
@@ -483,6 +487,142 @@ describe("An attendance photograph survives the night and can be opened", () => 
     const byId = new Map(rows.map((r) => [r.id, r.status]));
     assert.equal(byId.get(parented), "available", "the selfie was swept away with the orphans");
     assert.equal(byId.get(orphan), "removed", "the sweep must still remove what belongs to nothing");
+  });
+
+  /*
+   * AND IT DOES NOT LIVE FOR EVER.
+   *
+   * The opposite failure to the one above, and the reason this file now pins
+   * both ends: a photograph of an employee's face is evidence of a moment, and
+   * a moment nobody asks about within a day or two is a moment nobody will ask
+   * about at all. Kept indefinitely it stops being verification and becomes a
+   * standing collection of photographs of staff — worse to hold, worse to
+   * leak, and not what anybody asked for.
+   *
+   * `mbos.attendance.selfieRetentionHours` is the window and the sweep runs
+   * hourly, so the number on the screen means roughly what it says rather than
+   * "some time in the next day or so".
+   */
+  test("a selfie past its window has its image deleted", async () => {
+    const attendanceId = id("mbos_att");
+    await db.execute(sql`
+      insert into mbos_attendance_days (id, user_id, day, check_in_at, status)
+      values (${attendanceId}, ${salesman.id},
+              (now() at time zone 'Asia/Kolkata')::date, now(), 'present')
+    `);
+
+    const old = `mbos_media_${randomUUID()}`;
+    const fresh = `mbos_media_${randomUUID()}`;
+    for (const clientId of [old, fresh]) {
+      await storeMbosMedia(principal, {
+        clientId,
+        kind: "selfie",
+        parentType: "attendance",
+        parentId: attendanceId,
+        filename: "selfie.jpg",
+        bytes: JPEG,
+      });
+    }
+
+    /* The window is 72 hours by default; four days back clears it and one hour
+       back plainly does not. The clock is moved rather than the test waiting. */
+    await db.execute(sql`
+      update attachments set uploaded_at = now() - interval '4 days' where id = ${old}
+    `);
+
+    await sweepAttendanceSelfies();
+
+    const rows = await db
+      .select({ id: attachments.id, status: attachments.status })
+      .from(attachments)
+      .where(inArray(attachments.id, [old, fresh]));
+    const byId = new Map(rows.map((r) => [r.id, r.status]));
+
+    assert.equal(byId.get(old), "removed", "a photograph past its window is still openable");
+    assert.equal(
+      byId.get(fresh),
+      "available",
+      "a photograph inside its window was deleted early — the manager never got to look",
+    );
+  });
+
+  /*
+   * The distinction the whole design rests on. "A photograph was taken at
+   * 09:04 and has since been deleted" and "no photograph was taken" are
+   * different facts about somebody's attendance, and the second is the one
+   * that looks like a person cutting a corner. A sweep that nulled the column
+   * would rewrite the first into the second on the record a payslip is read
+   * against — months later, silently, with nobody able to tell.
+   */
+  test("and the day keeps the id, so a deleted photograph is not a missing one", async () => {
+    const attendanceId = id("mbos_att");
+    const clientId = `mbos_media_${randomUUID()}`;
+    await db.execute(sql`
+      insert into mbos_attendance_days (id, user_id, day, check_in_at, status,
+                                        check_in_selfie_id)
+      values (${attendanceId}, ${salesman.id},
+              (now() at time zone 'Asia/Kolkata')::date, now(), 'present', null)
+    `);
+    await storeMbosMedia(principal, {
+      clientId,
+      kind: "selfie",
+      parentType: "attendance",
+      parentId: attendanceId,
+      filename: "selfie.jpg",
+      bytes: JPEG,
+    });
+    await db.execute(sql`
+      update mbos_attendance_days set check_in_selfie_id = ${clientId}
+       where id = ${attendanceId}
+    `);
+    await db.execute(sql`
+      update attachments set uploaded_at = now() - interval '4 days' where id = ${clientId}
+    `);
+
+    await sweepAttendanceSelfies();
+
+    const [day] = await db
+      .select({ selfie: mbosAttendanceDays.checkInSelfieId })
+      .from(mbosAttendanceDays)
+      .where(eq(mbosAttendanceDays.id, attendanceId));
+    assert.equal(
+      day.selfie,
+      clientId,
+      "the day forgot it was ever photographed — an honest check-in now reads as a skipped one",
+    );
+  });
+
+  /*
+   * A cheque, a shop front and a damaged can are photographs OF something,
+   * attached to records that outlive them. Only the selfie has a clock on it,
+   * and a sweep that reached the others would be destroying evidence of a
+   * payment to enforce a privacy rule about faces.
+   */
+  test("a visit photograph is not touched by the selfie sweep", async () => {
+    const visitPhoto = `mbos_media_${randomUUID()}`;
+    await storeMbosMedia(principal, {
+      clientId: visitPhoto,
+      kind: "shopfront",
+      parentType: "visit",
+      parentId: id("mbos_visit"),
+      filename: "shop.jpg",
+      bytes: JPEG,
+    });
+    await db.execute(sql`
+      update attachments set uploaded_at = now() - interval '90 days' where id = ${visitPhoto}
+    `);
+
+    await sweepAttendanceSelfies();
+
+    const [row] = await db
+      .select({ status: attachments.status })
+      .from(attachments)
+      .where(eq(attachments.id, visitPhoto));
+    assert.equal(
+      row.status,
+      "available",
+      "the selfie retention window reached a photograph that is not a selfie",
+    );
   });
 
   /*

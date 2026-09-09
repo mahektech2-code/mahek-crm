@@ -1432,6 +1432,34 @@ export type AttendanceRow = {
   autoCheckedOut: boolean;
   workedSeconds: number | null;
   visits: number;
+  /**
+   * Every arrival and departure of the day, with the photograph taken at each.
+   *
+   * The day-level `check_in_selfie_id`/`check_out_selfie_id` are the first-in
+   * and last-out mirrors and are deliberately NOT what this screen reads: a
+   * salesman who breaks for lunch and comes out again in the evening has three
+   * arrivals, and showing one photograph for the day would verify the first and
+   * assert nothing whatever about the other two.
+   *
+   */
+  sessions: {
+    inAt: string | null;
+    outAt: string | null;
+    inSelfieId: string | null;
+    outSelfieId: string | null;
+  }[];
+  /**
+   * Which of those ids can still be opened.
+   *
+   * Asked of the attachments table rather than worked out from the retention
+   * window, because the two can honestly differ: a photograph taken on a Monday
+   * with no signal and synced on Wednesday is younger than the day it belongs
+   * to, and the window runs from when it arrived. An id present in a session
+   * and absent from this list is a photograph that WAS taken and has since been
+   * deleted — which is a different thing to say than "none was taken", and the
+   * screen says it differently.
+   */
+  availableSelfieIds: string[];
 };
 
 /**
@@ -1462,7 +1490,22 @@ export async function attendanceForDay(day: string): Promise<AttendanceRow[]> {
            d.worked_seconds as "workedSeconds",
            (select count(*)::int from mbos_visits v
              where v.salesman_id = u.id
-               and (v.check_in_at ${IST_DAY})::date = ${day}::date) as "visits"
+               and (v.check_in_at ${IST_DAY})::date = ${day}::date) as "visits",
+           /* The day as the handset reported it. Null on a row written before
+              sessions existed, which the screen falls back from rather than
+              drawing an empty list. */
+           coalesce(d.sessions, '[]'::jsonb) as "sessions",
+           /* Which photographs are still openable, asked of the attachments
+              table itself. The sessions column names its ids for ever — that
+              is the point of keeping them — so an id present there says a
+              photograph was TAKEN and says nothing about whether it still
+              exists. (No backticks in here: this is inside a sql template and
+              one would end it.) */
+           coalesce((select jsonb_agg(a.id) from attachments a
+                      where a.parent_type = 'mbos_attendance'
+                        and a.parent_id = d.id
+                        and a.status = 'available'), '[]'::jsonb)
+             as "availableSelfieIds"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date

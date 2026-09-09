@@ -502,6 +502,69 @@ async function customerBehind(
  * configured window — long enough that a telecaller interrupted mid-call still
  * finds their file when they come back to it.
  */
+/**
+ * THE ATTENDANCE PHOTOGRAPHS, DELETED ON A CLOCK.
+ *
+ * The one file in this product with a life of its own. Everything else here is
+ * a photograph OF something — a damaged can, a cheque, a shop front — attached
+ * to a record that stands without it, and it is kept as long as the record is.
+ * A check-in selfie is not that: it is evidence that the person who marked the
+ * day is the person who worked it, and that is a question asked within a day or
+ * two of the day or never. Held beyond it, it stops being verification and
+ * becomes a standing collection of photographs of employees — a different thing
+ * to hold, a worse thing to leak, and one nobody asked for.
+ *
+ * WHAT GOES IS THE IMAGE AND NOTHING ELSE. The attachment row stays, the day
+ * keeps its `check_in_selfie_id`, and every `sessions` entry keeps the ids it
+ * was written with. That is deliberate: "a photograph was taken at 09:04 and
+ * has since been deleted" and "no photograph was ever taken" are different
+ * facts about somebody's attendance, and a sweep that nulled the columns would
+ * turn the first into the second — retrospectively making an honest day look
+ * like a skipped one, on the record a payslip is read against. The same
+ * distinction `removeAttachment` keeps, for the same reason.
+ *
+ * MEASURED FROM WHEN IT ARRIVED, not from when it was taken. A salesman in a
+ * district with no signal photographs himself on Monday and syncs on
+ * Wednesday; anchored to the check-in, that file would be swept within hours of
+ * landing and the manager would never once have been able to open it. The
+ * window is a promise about how long somebody has to LOOK, so it runs from the
+ * first moment there was anything to look at.
+ *
+ * Hourly rather than nightly, so "72 hours" means about seventy-three and not
+ * up to ninety-six. The number is on a screen; a nightly sweep would make it
+ * wrong by a day for everybody who checked in during the morning.
+ */
+export async function sweepAttendanceSelfies(): Promise<{ swept: number }> {
+  const config = await getConfig();
+  const cutoff = new Date(
+    Date.now() - config["mbos.attendance.selfieRetentionHours"] * 60 * 60 * 1000,
+  );
+
+  const expired = await db
+    .select({ id: attachments.id, storedRef: attachments.storedRef })
+    .from(attachments)
+    .where(
+      and(
+        eq(attachments.parentType, "mbos_attendance"),
+        eq(attachments.status, "available"),
+        lt(attachments.uploadedAt, cutoff),
+      ),
+    );
+
+  for (const row of expired) {
+    /* The bytes first, the row second. The other order leaves a row saying
+       "removed" over a file still sitting in storage, which is the one state
+       nothing later would ever go back and tidy. */
+    if (row.storedRef) await fileStorage.remove(row.storedRef).catch(() => {});
+    await db
+      .update(attachments)
+      .set({ status: "removed", removedAt: new Date(), updatedAt: new Date() })
+      .where(eq(attachments.id, row.id));
+  }
+
+  return { swept: expired.length };
+}
+
 export async function sweepOrphans(): Promise<{ swept: number }> {
   const config = await getConfig();
   const cutoff = new Date(

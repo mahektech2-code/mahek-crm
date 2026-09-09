@@ -81,6 +81,19 @@ const DEFAULTS: Record<string, unknown> = {
   /* attendance and leave */
   'mbos.attendance.halfDayHours': 4,
   'mbos.attendance.fullDayHours': 8,
+  /*
+   * `mbos.attendance.selfieRetentionHours` is DELIBERATELY ABSENT, and it is
+   * the one key here that should stay absent.
+   *
+   * Every default above is a number the app falls back to so a salesman on a
+   * handset that has never bootstrapped can still work. That reasoning does
+   * not carry to this one: it is not used to decide anything, it is PRINTED —
+   * the selfie camera tells the person being photographed how long his own
+   * face is kept. A default would make the screen promise 72 hours on a phone
+   * that has never heard from an office which may have set 24, and a wrong
+   * promise about that is worse than no promise. Absent, the sentence is left
+   * out until the real figure arrives, which is one sync away.
+   */
 
   /* health — the two thresholds the pill colours by, and the two words it
      must not confuse. `atRiskBelow` is a SCORE threshold and says a customer

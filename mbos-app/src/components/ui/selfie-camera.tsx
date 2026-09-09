@@ -6,6 +6,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color as C, HIT, radius, weight } from '../../theme/tokens';
 import { Icon } from './Icon';
 import { PrimaryButton, SecondaryButton, T } from './primitives';
+import { getConfig } from '../../data/config';
+import { hoursInWords } from '../../lib/format';
 
 /**
  * The attendance selfie, taken inside the app.
@@ -51,6 +53,21 @@ import { PrimaryButton, SecondaryButton, T } from './primitives';
  * it takes its own words: "Start your day" and "Close your day" are different
  * things to be photographed for, and a camera that said the first one while
  * closing the day would read as the app having lost its place.
+ *
+ * **AND IT SAYS WHO SEES IT AND FOR HOW LONG.** A photograph of somebody's own
+ * face, taken because the app insists, is the one file in this product where
+ * the person handing it over is entitled to know what happens to it — and this
+ * screen is the only place they will ever be standing when the question occurs
+ * to them. Both halves are said, because either alone is worse than neither:
+ * "kept for 3 days" without naming the manager hides who is looking, and
+ * "your manager can see it" without the window reads as for ever.
+ *
+ * The window is READ, never written into this sentence.
+ * `mbos.attendance.selfieRetentionHours` is what the sweep on the server
+ * actually enforces and it arrives on the handset with the rest of the
+ * configuration, so the screen cannot promise a number the office has since
+ * changed. Where it has not arrived yet the sentence is left out rather than
+ * guessed at — a wrong promise about this is worse than no promise.
  */
 
 export type SelfieResult = { uri: string } | null;
@@ -79,6 +96,21 @@ export function SelfieCamera({
   /* What was taken, held for the person to look at before it becomes the
      record of their attendance. */
   const [shot, setShot] = React.useState<string | null>(null);
+  /* How long it is kept, from the office's own setting. `null` until it has
+     been read, and it stays null on a handset that has never bootstrapped —
+     the sentence is then absent rather than invented. */
+  const [keptFor, setKeptFor] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    let live = true;
+    void getConfig<number>('mbos.attendance.selfieRetentionHours')
+      .then((h) => live && setKeptFor(h > 0 ? hoursInWords(h) : null))
+      .catch(() => live && setKeptFor(null));
+    return () => {
+      live = false;
+    };
+  }, [open]);
 
   /* Fresh camera every time it opens, so a retake from yesterday is never on
      screen and `onCameraReady` fires again for the new mount. */
@@ -170,6 +202,28 @@ export function SelfieCamera({
 
         {/* ---- the shutter, or the two answers about what it took ---- */}
         <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 16, gap: 10 }}>
+          {/*
+            WHAT HAPPENS TO IT, above the button that commits it.
+
+            Here rather than in the header, because this is where the decision
+            is: it is read once before the shutter and again before "Use this
+            photo", which are the two moments somebody might wonder. In the
+            header it would be a line of grey text under a title, which is
+            furniture — the same mistake the microphone made before it was
+            given a colour.
+          */}
+          {keptFor ? (
+            <T
+              style={{
+                fontSize: 13,
+                lineHeight: 18,
+                color: 'rgba(255,255,255,0.65)',
+                textAlign: 'center',
+              }}>
+              {`Your manager can see this photo for ${keptFor}. It is deleted after that.`}
+            </T>
+          ) : null}
+
           {shot ? (
             <>
               <PrimaryButton label="Use this photo" onPress={() => onDone({ uri: shot })} />

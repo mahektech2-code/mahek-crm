@@ -1402,6 +1402,58 @@ rather than a second opinion about it. Not "anybody holding the field app": a
 salesman must not be able to fetch a colleague's photograph by id, and these
 ids travel in payloads.
 
+**AND IT IS THE ONE FILE HERE WITH A CLOCK ON IT.** Everything else in this
+subsystem is a photograph OF something — a damaged can, a cheque, a shop
+front — attached to a record that stands without it, and it is kept as long as
+the record is. A check-in selfie is not that. It is evidence that the person
+who marked the day is the person who worked it, and that question is asked
+within a day or two of the day or it is never asked at all. Held beyond that it
+stops being verification and becomes a standing collection of photographs of
+employees: worse to hold, worse to leak, and nothing anybody asked for.
+`mbos.attendance.selfieRetentionHours` is the window — 72 hours — and
+`sweepAttendanceSelfies` is what enforces it.
+
+**HOURLY, not nightly, because the number is on a screen.** Swept once a night,
+"72 hours" would mean up to ninety-six for everybody who checked in during the
+morning, and the gap between what a setting says and what it does is the kind
+of thing nobody notices until it is the subject of an argument about somebody's
+pay. It rides `mbosHourly` beside the escalations.
+
+**Measured from when it ARRIVED, never from when it was taken.** A salesman in
+a district with no signal photographs himself on Monday and syncs on Wednesday;
+anchored to the check-in, that file would be swept within hours of landing and
+the manager would never once have been able to open it. The window is a promise
+about how long somebody has to LOOK, so it runs from the first moment there was
+anything to look at. The consequence is that the screen and the window can
+honestly differ — a photograph on an old day may still be there — so the screen
+shows what EXISTS rather than computing a window of its own. One number, one
+enforcer.
+
+**What goes is the image and nothing else.** The attachment row stays, the day
+keeps its `check_in_selfie_id`, and every `sessions` entry keeps the ids it was
+written with. "A photograph was taken at 09:04 and has since been deleted" and
+"no photograph was taken" are different facts about somebody's attendance, and
+the second is the one that reads as a person cutting a corner. A sweep that
+nulled the columns would rewrite the first into the second, months later,
+silently, on the record a payslip is read against. There is a test for it.
+
+**The manager sees them on the Attendance screen, ONE PER MARK.** A day is a
+list of arrivals and departures — a salesman breaks for lunch and comes out
+again in the evening — so both ends of every session carry a photograph and all
+of them are drawn. Showing the day's first selfie alone would verify that he
+arrived in the morning and assert nothing whatever about the two marks that
+decide the hours. Three things are drawn differently and they are three
+different facts: a photograph you can open, one that was taken and has since
+been deleted, and a mark with no photograph against it at all. `canRead` is
+still what gates every image, so a manager sees his own team's and nobody
+else's.
+
+**A swept file answers 410, not 502.** `/api/attachments/[id]` used to reach
+storage for a `removed` row, find nothing and report a read failure — which
+reads as a broken backend and sends somebody looking for a fault that is not
+there. The row is deliberately kept, so "it existed and is gone" is a thing the
+endpoint can actually say.
+
 **Removing an attachment is a status, not a delete.** It detaches from the
 parent and moves to `removed`; the bytes go only when retention says so. A
 payment proof outlives whoever tidied it off a screen.
