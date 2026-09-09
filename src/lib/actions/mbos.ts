@@ -1929,7 +1929,258 @@ const sampleSchema = z.object({
   visitId: z.string().nullish(),
 });
 
+/**
+ * §I, §J and §K — moving a sample along after it was requested.
+ *
+ * Partial like every other update. What is NOT partial is the rule below it: a
+ * rejection has to say why, because a sample rejected with nothing written down
+ * teaches nobody anything and the next one goes out exactly the same.
+ */
+const sampleUpdateSchema = z.object({
+  dispatchedAt: z.number().nullish(),
+  courierName: z.string().max(200).nullish(),
+  trackingNumber: z.string().max(120).nullish(),
+  deliveredAt: z.number().nullish(),
+  deliveryPhotoId: z.string().nullish(),
+  /** The CUSTOMER's word that it arrived — see the column comment. */
+  receivedAt: z.number().nullish(),
+  trialStartedAt: z.number().nullish(),
+  trialCompletedAt: z.number().nullish(),
+  trialOutcome: z.enum(["pending", "approved", "rejected"]).nullish(),
+  satisfaction: z.string().max(200).nullish(),
+  additionalRequirement: z.string().max(1000).nullish(),
+  rejectionReason: z.string().max(500).nullish(),
+  followUpDate: z.string().nullish(),
+  feedbackNotes: z.string().max(2000).nullish(),
+});
+
+async function handleSampleUpdate(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const parsed = sampleUpdateSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const [existing] = await db
+    .select({
+      id: mbosSamples.id,
+      customerId: mbosSamples.customerId,
+      salesmanId: mbosSamples.salesmanId,
+      receivedAt: mbosSamples.receivedAt,
+      trialOutcome: mbosSamples.trialOutcome,
+      rejectionReason: mbosSamples.rejectionReason,
+    })
+    .from(mbosSamples)
+    .where(eq(mbosSamples.id, item.entityId))
+    .limit(1);
+
+  if (!existing) {
+    return {
+      kind: "retry",
+      message:
+        "That sample has not reached the office yet, so there is nothing to move along. It will be tried again once it has.",
+    };
+  }
+
+  const found = await scopedCustomer(principal, existing.customerId);
+  if (!found.ok) return { kind: "rejected", value: found.value };
+  const customer = found.customer;
+
+  /*
+   * §K — A REJECTION HAS TO SAY WHY.
+   *
+   * The same rule as a lost lead and an On Hold, and for the same reason: a
+   * sample turned down with nothing written down teaches nobody anything, and
+   * the next one goes out exactly the same. It reads what is already stored as
+   * well as what arrived, so a verdict recorded a second time does not demand
+   * the reason again.
+   */
+  if (
+    p.trialOutcome === "rejected" &&
+    !(p.rejectionReason ?? existing.rejectionReason)?.trim()
+  ) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `The sample to ${customer.name} was marked rejected with no reason. Say what was wrong with it — the next one goes out the same otherwise.`,
+      ),
+    };
+  }
+
+  const changed: Partial<typeof mbosSamples.$inferInsert> = { updatedAt: new Date() };
+  if (p.dispatchedAt != null) changed.dispatchedAt = new Date(p.dispatchedAt);
+  if (p.courierName != null) changed.courierName = p.courierName;
+  if (p.trackingNumber != null) changed.trackingNumber = p.trackingNumber;
+  if (p.deliveredAt != null) changed.deliveredAt = new Date(p.deliveredAt);
+  if (p.deliveryPhotoId != null) changed.deliveryPhotoId = p.deliveryPhotoId;
+  if (p.trialStartedAt != null) changed.trialStartedAt = new Date(p.trialStartedAt);
+  if (p.trialCompletedAt != null) changed.trialCompletedAt = new Date(p.trialCompletedAt);
+  if (p.trialOutcome != null) changed.trialOutcome = p.trialOutcome;
+  if (p.satisfaction != null) changed.satisfaction = p.satisfaction;
+  if (p.additionalRequirement != null) {
+    changed.additionalRequirement = p.additionalRequirement;
+  }
+  if (p.rejectionReason != null) changed.rejectionReason = p.rejectionReason;
+  if (p.followUpDate != null) changed.followUpDate = p.followUpDate;
+  if (p.feedbackNotes != null) changed.feedbackNotes = p.feedbackNotes;
+  /* Who said it arrived, recorded with the fact. A confirmation with nobody
+     behind it is the same shape as a payment nobody vouched for. */
+  if (p.receivedAt != null) {
+    changed.receivedAt = new Date(p.receivedAt);
+    changed.receivedReportedById = principal.user.id;
+  }
+
+  await db.update(mbosSamples).set(changed).where(eq(mbosSamples.id, item.entityId));
+
+  /* Confirmed received starts the review clock — §K's "review call every 2–3
+     days". Raised once, on the transition, so a re-sent confirmation does not
+     stack a second task on somebody's list. */
+  if (p.receivedAt != null && !existing.receivedAt) {
+    await afterSampleReceived(principal, existing.id, customer.id, customer.name).catch(
+      () => {},
+    );
+  }
+
+  /* A verdict, and both people who care are told. */
+  if (p.trialOutcome && p.trialOutcome !== "pending" && existing.trialOutcome === "pending") {
+    await afterSampleVerdict(
+      existing.id,
+      customer.id,
+      customer.name,
+      existing.salesmanId,
+      p.trialOutcome,
+      p.rejectionReason ?? null,
+    ).catch(() => {});
+  }
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/**
+ * §K — the review call, once the shop actually has the sample.
+ *
+ * Dated from CONFIRMED RECEIPT and not from dispatch, which is the whole reason
+ * `received_at` exists: a review call timed from the day we posted it rings a
+ * customer who is still waiting for the parcel, and that call teaches them we
+ * do not know where our own stock is.
+ *
+ * It goes to the Lead Manager, who runs the conversion — §K says so — falling
+ * back to the salesman where a lead has no manager yet.
+ */
+async function afterSampleReceived(
+  principal: MbosPrincipal,
+  sampleId: string,
+  customerId: string,
+  customerName: string,
+): Promise<void> {
+  const config = await getConfig();
+  const [lead] = await db
+    .select({ leadManagerId: customers.leadManagerId, ownerId: customers.ownerId })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
+
+  const assignee = lead?.leadManagerId ?? lead?.ownerId;
+  if (!assignee) return;
+
+  const days = config["mbos.samples.reviewAfterDays"];
+  const due = new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+
+  await db
+    .insert(mbosTasks)
+    .values({
+      id: gen("mbos_task"),
+      title: `Sample review — ${customerName}`,
+      description:
+        "Have they started the trial? How did it perform, and what did they make of the quality? Anything wrong with it, and is there anything else they need. Then say approved or rejected — a rejection has to say why.",
+      assignedToUserId: assignee,
+      priority: "medium",
+      dueDate: due,
+      customerId,
+      status: "open",
+      sourceType: "sample_review",
+      sourceId: sampleId,
+      createdById: principal.user.id,
+      updatedById: principal.user.id,
+    })
+    .onConflictDoNothing();
+
+  await db
+    .insert(notifications)
+    .values({
+      id: gen("ntf"),
+      userId: assignee,
+      title: "A sample reached the customer",
+      body: `${customerName} has the sample. A review call is on your list for ${due}.`,
+      kind: "info",
+    })
+    .catch(() => {});
+}
+
+/**
+ * §K — the verdict, and the two people it changes work for.
+ *
+ * The Lead Manager decided it and the salesman has to act on it: approved sends
+ * him back to negotiate, rejected tells him why before he hears it from the
+ * shop. Notifying only one of them is how a salesman turns up to a shop that
+ * turned us down last week.
+ */
+async function afterSampleVerdict(
+  sampleId: string,
+  customerId: string,
+  customerName: string,
+  salesmanId: string,
+  outcome: string,
+  reason: string | null,
+): Promise<void> {
+  const [lead] = await db
+    .select({ leadManagerId: customers.leadManagerId })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
+
+  const approved = outcome === "approved";
+  const title = approved ? "A sample was approved" : "A sample was rejected";
+  const body = approved
+    ? `${customerName} is happy with the trial. Negotiation is open — price, discount, credit and delivery are on the table now.`
+    : `${customerName} turned the sample down: ${reason ?? "no reason recorded"}.`;
+
+  const targets = [salesmanId, lead?.leadManagerId].filter(
+    (id, i, all): id is string => Boolean(id) && all.indexOf(id) === i,
+  );
+  if (targets.length) {
+    await db
+      .insert(notifications)
+      .values(
+        targets.map((userId) => ({
+          id: gen("ntf"),
+          userId,
+          title,
+          body,
+          kind: "info",
+        })),
+      )
+      .catch(() => {});
+  }
+
+  /*
+   * §L — an approved sample OPENS negotiation, which is what unlocks the order
+   * gate in `handleOrder`. It is the sample review that authorises a commercial
+   * conversation, not the salesman deciding he is ready for one.
+   */
+  if (approved) {
+    await db
+      .update(customers)
+      .set({ leadStage: "negotiation", updatedAt: new Date() })
+      .where(and(eq(customers.id, customerId), eq(customers.leadStage, "qualified")));
+  }
+}
+
 async function handleSample(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  if (item.op === "update") return handleSampleUpdate(principal, item);
+
   const parsed = sampleSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;

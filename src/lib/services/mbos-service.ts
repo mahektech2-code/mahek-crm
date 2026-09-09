@@ -909,8 +909,20 @@ async function openSamples(userId: string, customerIds: string[], since?: string
            pr.name as "productName",
            s.quantity_cans as "quantityCans",
            s.requested_date::text as "requestedDate",
+           -- Three assertions by three parties, and never collapsed: we sent
+           -- it, the carrier says it arrived, the shop says it has it. Only
+           -- the third starts the review clock.
+           s.dispatched_at as "dispatchedAt",
+           s.courier_name as "courierName",
+           s.tracking_number as "trackingNumber",
            s.delivered_at as "deliveredAt",
            s.delivery_photo_id as "deliveryPhotoId",
+           s.received_at as "receivedAt",
+           s.trial_started_at as "trialStartedAt",
+           s.trial_completed_at as "trialCompletedAt",
+           s.satisfaction,
+           s.additional_requirement as "additionalRequirement",
+           s.rejection_reason as "rejectionReason",
            s.trial_outcome as "trialOutcome",
            s.follow_up_date::text as "followUpDate",
            s.feedback_notes as "feedbackNotes",

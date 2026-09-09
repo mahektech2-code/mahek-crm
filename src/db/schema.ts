@@ -4221,10 +4221,55 @@ export const mbosSamples = pgTable(
     /** CANS, like every other quantity in MahekOne. See `products`. */
     quantityCans: integer("quantity_cans"),
     requestedDate: date("requested_date"),
+    /**
+     * WE SENT IT — our own claim, and the first of three.
+     *
+     * Equal to `deliveredAt` where the salesman handed it over standing in the
+     * shop. Two days apart where it went on a lorry, and the gap between them
+     * is the only thing that says whether the transport is the problem. One
+     * column could not tell a sample in transit from one nobody had picked up.
+     */
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    courierName: text("courier_name"),
+    trackingNumber: text("tracking_number"),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    /**
+     * THEY CONFIRMED IT — the customer's word, and the third of three.
+     *
+     * The same discipline `payment_receipts` keeps for money: what we did, what
+     * the carrier says and what the other party confirms are three assertions
+     * by three parties, and no two are the same fact. §J turns entirely on this
+     * one — "sample received Yes/No; if No the follow-up remains pending" — and
+     * a single delivery date could never answer it.
+     *
+     * Null means the follow-up is still open, which is a real answer. It is
+     * never defaulted from `deliveredAt`: a default would quietly assert
+     * something nobody has asked the customer.
+     */
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    receivedReportedById: text("received_reported_by_id").references(() => users.id),
     /** Proof of handover — an `attachments` id, never a URL. */
     deliveryPhotoId: text("delivery_photo_id").references(() => attachments.id),
+    /**
+     * §K — the trial itself, which is what the sample was for.
+     *
+     * Two dates because the gap between them IS the review window: a trial
+     * started and never finished is the commonest way a sample goes quiet, and
+     * it is invisible where the only column is an outcome.
+     */
+    trialStartedAt: timestamp("trial_started_at", { withTimezone: true }),
+    trialCompletedAt: timestamp("trial_completed_at", { withTimezone: true }),
     trialOutcome: mbosSampleOutcomeEnum("trial_outcome").notNull().default("pending"),
+    /** How the shop found it, in their own words rather than a score. */
+    satisfaction: text("satisfaction"),
+    /** What else they asked for while we had their attention. */
+    additionalRequirement: text("additional_requirement"),
+    /**
+     * Mandatory on a rejection, enforced in the handler rather than by a check
+     * constraint: the column is null on every sample nobody has decided yet,
+     * and a constraint would have to encode the outcome as well as the reason.
+     */
+    rejectionReason: text("rejection_reason"),
     followUpDate: date("follow_up_date"),
     feedbackNotes: text("feedback_notes"),
     /** Set when the trial became a sale. The conversion report is this column. */

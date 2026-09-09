@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Pressable } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, DashedButton, T } from '../src/components/ui/primitives';
 import { color as C, weight, type BadgeTone } from '../src/theme/tokens';
@@ -90,7 +90,7 @@ export default function SamplesScreen() {
           const days = Math.max(0, Math.round((now - x.requestedAt) / 86_400_000));
           const name = names[x.customerId] ?? 'Unknown customer';
           return (
-            <Pressable key={x.id} onPress={() => notify(name + ' · ' + (x.productName ?? ''))} accessibilityRole="button">
+            <Pressable key={x.id} onPress={() => router.push(`/sample?id=${x.id}&from=samples`)} accessibilityRole="button">
               <Card>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
                   <View style={{ flex: 1, minWidth: 0 }}>

@@ -421,19 +421,40 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
       followUpDate?: string | null;
       feedbackNotes?: string | null;
       convertedOrderId?: string | null;
+      /* The lifecycle, §I–§K. `receivedAt` is the shop's own word and is what
+         the review call is dated from — never inferred from `deliveredAt`. */
+      dispatchedAt?: string | null;
+      courierName?: string | null;
+      trackingNumber?: string | null;
+      receivedAt?: string | null;
+      trialStartedAt?: string | null;
+      trialCompletedAt?: string | null;
+      satisfaction?: string | null;
+      additionalRequirement?: string | null;
+      rejectionReason?: string | null;
     };
     await run(
       `INSERT INTO samples (id, customerId, productId, productName, cans, reason,
                             requestedAt, state, deliveredAt, deliveryPhotoId, trialOutcome,
-                            followUpDate, convertedOrderId, clientCreatedAt, serverCreatedAt,
-                            deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
+                            followUpDate, convertedOrderId,
+                            dispatchedAt, courierName, trackingNumber, receivedAt,
+                            trialStartedAt, trialCompletedAt, satisfaction,
+                            additionalRequirement, rejectionReason,
+                            clientCreatedAt, serverCreatedAt, deviceId, syncState)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          productId = excluded.productId, productName = excluded.productName,
          cans = excluded.cans, reason = excluded.reason, state = excluded.state,
          deliveredAt = excluded.deliveredAt, deliveryPhotoId = excluded.deliveryPhotoId,
          trialOutcome = excluded.trialOutcome, followUpDate = excluded.followUpDate,
-         convertedOrderId = excluded.convertedOrderId
+         convertedOrderId = excluded.convertedOrderId,
+         dispatchedAt = excluded.dispatchedAt, courierName = excluded.courierName,
+         trackingNumber = excluded.trackingNumber, receivedAt = excluded.receivedAt,
+         trialStartedAt = excluded.trialStartedAt,
+         trialCompletedAt = excluded.trialCompletedAt,
+         satisfaction = excluded.satisfaction,
+         additionalRequirement = excluded.additionalRequirement,
+         rejectionReason = excluded.rejectionReason
        WHERE samples.syncState = 'synced'`,
       [
         s.id,
@@ -454,6 +475,18 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
         s.trialOutcome ?? null,
         s.followUpDate ?? null,
         s.convertedOrderId ?? null,
+        /* Instants off the wire. `localInstant` is already imported here for
+           `deliveredAt` — a date-only string parses as UTC and lands five and a
+           half hours before the day it names. */
+        s.dispatchedAt ? localInstant(s.dispatchedAt) : null,
+        s.courierName ?? null,
+        s.trackingNumber ?? null,
+        s.receivedAt ? localInstant(s.receivedAt) : null,
+        s.trialStartedAt ? localInstant(s.trialStartedAt) : null,
+        s.trialCompletedAt ? localInstant(s.trialCompletedAt) : null,
+        s.satisfaction ?? null,
+        s.additionalRequirement ?? null,
+        s.rejectionReason ?? null,
         now,
         now,
       ],

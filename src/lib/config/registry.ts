@@ -2302,6 +2302,18 @@ export const SETTINGS = [
     },
   },
 
+  {
+    key: "mbos.samples.reviewAfterDays",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Sample review call after",
+    description:
+      "Days after the customer CONFIRMS they have the sample before the review call is due. Dated from confirmed receipt and never from dispatch: a review timed from the day we posted it rings somebody still waiting for the parcel, and that call teaches them we do not know where our own stock is.",
+    default: 3,
+    min: 1,
+    max: 30,
+  },
+
   /* --------------------------------------------------------------- tasks */
   {
     key: "mbos.tasks.escalationHours",
@@ -3018,6 +3030,7 @@ export type Config = {
   "mbos.leads.escalateAfterDays": number;
   "mbos.leads.visitsBeforeDecision": number;
   "mbos.leads.maxSuspectVisits": number;
+  "mbos.samples.reviewAfterDays": number;
   "mbos.leads.validationScript": {
     sections: { heading: string; lines: string[] }[];
   };

@@ -1098,6 +1098,35 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE tasks ADD COLUMN sourceType TEXT;`,
     `ALTER TABLE tasks ADD COLUMN sourceId TEXT;`,
   ],
+
+  /* ---- v17 · a sample, from the lorry to the verdict -------------------- */
+  [
+    /*
+     * §I, §J and §K. Three dates rather than one, because they are three
+     * assertions by three different parties and no two are the same fact:
+     * `dispatchedAt` is us saying it went, `deliveredAt` is the carrier or our
+     * own man saying it arrived, and `receivedAt` is the SHOP saying it is in
+     * their hands. §J turns entirely on the third — "sample received Yes/No; if
+     * No the follow-up remains pending" — and it is never defaulted from the
+     * second, because a default would quietly assert something nobody asked
+     * the customer.
+     *
+     * It is the same discipline `payment_receipts` keeps for money, one module
+     * over.
+     */
+    `ALTER TABLE samples ADD COLUMN dispatchedAt INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN courierName TEXT;`,
+    `ALTER TABLE samples ADD COLUMN trackingNumber TEXT;`,
+    `ALTER TABLE samples ADD COLUMN receivedAt INTEGER;`,
+    /* The gap between these two IS the review window. A trial started and never
+       finished is the commonest way a sample goes quiet, and it is invisible
+       where the only column is an outcome. */
+    `ALTER TABLE samples ADD COLUMN trialStartedAt INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN trialCompletedAt INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN satisfaction TEXT;`,
+    `ALTER TABLE samples ADD COLUMN additionalRequirement TEXT;`,
+    `ALTER TABLE samples ADD COLUMN rejectionReason TEXT;`,
+  ],
 ];
 
 /**

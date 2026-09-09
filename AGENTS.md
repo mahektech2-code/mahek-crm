@@ -143,6 +143,38 @@ holding the whole app and nobody who was deliberately narrowed.
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
 
+**A SAMPLE HAS THREE DATES BECAUSE THREE PARTIES ASSERT THREE THINGS.**
+`dispatched_at` is us saying it went. `delivered_at` is the carrier, or our own
+man, saying it arrived. `received_at` is the SHOP saying it is in their hands.
+No two of those are the same fact, and §J turns entirely on the third — "sample
+received Yes/No; if No the follow-up remains pending" — which a single delivery
+date could never answer. It is the same discipline `payment_receipts` keeps for
+money, one module over, and `received_at` is NEVER defaulted from
+`delivered_at`: a default would quietly assert something nobody asked the
+customer.
+
+**The review call is dated from CONFIRMED RECEIPT.** Not from dispatch, which is
+the whole reason the third date exists: a review timed from the day we posted it
+rings a customer still waiting for the parcel, and that call teaches them we do
+not know where our own stock is. `mbos.samples.reviewAfterDays` is the window,
+and the task is raised once, on the transition, so a re-sent confirmation cannot
+stack a second one on somebody's list.
+
+**Trial STARTED and trial COMPLETED are two columns, and the gap is the point.**
+A trial started and never finished is the commonest way a sample goes quiet, and
+it is invisible where the only column is an outcome.
+
+**A REJECTED SAMPLE HAS TO SAY WHY.** The same rule as a lost lead and an On
+Hold, for the same reason: the next sample goes out exactly the same otherwise.
+Enforced in the handler and stated on the screen before the button is pressed,
+because being refused after the fact loses the sentence somebody had in mind.
+
+**AN APPROVED SAMPLE OPENS NEGOTIATION, and that is what unlocks the order.**
+§L follows §K deliberately: the sample review is what authorises a commercial
+conversation, not the salesman deciding he is ready for one. `afterSampleVerdict`
+moves the lead to `negotiation`, which is the stage `handleOrder` requires — so
+the gate and the thing that opens it are one mechanism rather than two.
+
 **QUALIFYING A LEAD IS WHAT STARTS THE WORKFLOW.** `qualifyLead` fills the Lead
 Manager seat from the ORG CHART — the same `managerNameByEmployeeName` that
 `recomputeSalesManagers` reads nightly, asked about one person, so the seat a
