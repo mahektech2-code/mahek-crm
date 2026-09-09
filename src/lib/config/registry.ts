@@ -2368,6 +2368,18 @@ export const SETTINGS = [
   },
 
   {
+    key: "mbos.samples.transitChaseAfterDays",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Chase a sample in transit after",
+    description:
+      "Days after DISPATCH before somebody is asked to find out where the sample got to. It is the mirror of the review call: that one is dated from confirmed receipt because the customer has it, and this one from dispatch because they do not. A sample that never arrives is the quietest way a lead dies - the salesman assumes it is being tried, the shop assumes we forgot, and nothing on either screen says otherwise.",
+    default: 4,
+    min: 1,
+    max: 30,
+  },
+
+  {
     key: "mbos.location.nearbyRadiusOptions",
     type: "structured",
     category: "mbos-location",
@@ -3147,6 +3159,7 @@ export type Config = {
   "mbos.leads.visitsBeforeDecision": number;
   "mbos.leads.maxSuspectVisits": number;
   "mbos.samples.reviewAfterDays": number;
+  "mbos.samples.transitChaseAfterDays": number;
   "mbos.location.nearbyRadiusOptions": { metres: number[] };
   "mbos.location.nearbyPerKilometreCost": number;
   "mbos.leads.validationScript": {

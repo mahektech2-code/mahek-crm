@@ -48,6 +48,7 @@ const files = [
   "src/lib/expense-policy.test.ts",
   "src/lib/storage-fallback.test.ts",
   "src/lib/relationship-handover.test.ts",
+  "src/lib/sample-logistics.test.ts",
 ];
 
 let failed = 0;
