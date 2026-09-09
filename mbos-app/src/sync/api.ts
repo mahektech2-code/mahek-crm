@@ -244,6 +244,10 @@ export type PullPayload = {
   /** The office's order and receipt history, ten of each per customer. */
   customerOrders?: unknown[];
   customerPayments?: unknown[];
+  /** The open bills behind the shop's outstanding, so a collection can name
+      one instead of being spread oldest-first. Optional like every other
+      channel: an older server simply does not send it. */
+  customerBills?: unknown[];
   leads?: unknown[];
   notifications?: unknown[];
   documents?: unknown[];

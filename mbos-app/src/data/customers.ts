@@ -173,6 +173,29 @@ export type CustomerPayment = {
 };
 
 /**
+ * One open bill, as Accounts holds it.
+ *
+ * `balancePaise` is what is still open. On an `unstated` bill that is the full
+ * amount purely because nobody has recorded anything against it either way —
+ * it is NOT a debt, the office keeps it out of the outstanding figure, and the
+ * screen has to say which kind of number it is rather than printing it beside
+ * real balances.
+ */
+export type CustomerBill = {
+  id: string;
+  customerId: string;
+  billNo: string | null;
+  billDate: string | null;
+  dueDate: string | null;
+  amountPaise: number | null;
+  paidPaise: number | null;
+  balancePaise: number | null;
+  overdueDays: number | null;
+  disputed: number | null;
+  paymentPosition: string | null;
+};
+
+/**
  * What the office knows this shop bought and paid.
  *
  * Read-only, and capped at ten of each by the server. The screen says so —
@@ -189,6 +212,23 @@ export async function customerOrders(id: string): Promise<CustomerOrder[]> {
 export async function customerPayments(id: string): Promise<CustomerPayment[]> {
   return all<CustomerPayment>(
     'SELECT * FROM customer_payments WHERE customerId = ? ORDER BY receivedAt DESC, id DESC',
+    [id],
+  );
+}
+
+/**
+ * The open bills behind the shop's outstanding, oldest first.
+ *
+ * Oldest first because that is the order they are chased in and the order the
+ * automatic spread settles them in — so the list a salesman reads and the
+ * allocation the server would make on its own tell the same story.
+ *
+ * These are the office's, read-only, and replaced wholesale on every pull. A
+ * settled bill is gone from the next pass rather than left here to be offered.
+ */
+export async function customerBills(id: string): Promise<CustomerBill[]> {
+  return all<CustomerBill>(
+    'SELECT * FROM customer_bills WHERE customerId = ? ORDER BY billDate ASC, id ASC',
     [id],
   );
 }

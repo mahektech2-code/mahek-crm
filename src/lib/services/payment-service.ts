@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { cache } from "react";
-import { and, asc, desc, eq, gte, isNotNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -17,7 +17,9 @@ import {
   ASSIGNED_TO_SQL,
   resolveScope,
   scopedUserIds,
-  assertCustomerInScope, scopedToUsers,} from "../access-control";
+  assertCustomerInScope, scopedToUsers,
+  type RequestScope,
+} from "../access-control";
 import { getConfig } from "../config/store";
 import { isAttemptAllowed, agingBucket, effectiveDueDate } from "../engines/escalation";
 import {
@@ -616,6 +618,24 @@ export type BillFilters = {
    * hide exactly the rows it exists to show.
    */
   openOnly?: boolean;
+  /**
+   * A SET of customers, for a caller that has already worked out which.
+   *
+   * `customerId` answers "this one shop", which is what every screen asks.
+   * MBOS asks the other question — the whole book on one handset — and it has
+   * already narrowed that book itself. Reading the bills through here rather
+   * than through a query of its own is the same rule
+   * `listOutstandingByCustomer` follows and for the same reason: the due date
+   * resolved from the term, the aging bucket and `paymentPosition` are worked
+   * out in ONE place, so a salesman standing in the shop and the accounts
+   * clerk on the ledger cannot be looking at two different answers about one
+   * bill.
+   *
+   * An EMPTY array means no customers, not every customer. A caller that has
+   * narrowed to nothing must get nothing — falling through to the whole book
+   * is how a handset receives a ledger it was never entitled to.
+   */
+  customerIds?: string[];
 };
 
 /** 1 April to 31 March, as SQL. The end is exclusive — see financial-year.ts. */
@@ -637,8 +657,17 @@ export async function earliestBillDate(): Promise<string | null> {
   return row?.d ?? null;
 }
 
-export async function listBills(filters?: BillFilters) {
-  const ctx = await resolveScope();
+/**
+ * `context` is for a caller with no session cookie to resolve a scope FROM.
+ *
+ * MBOS authenticates a handset with a bearer token and has already resolved
+ * the salesman's scope through `scopeForUser` — the single statement of what
+ * "mine" means. Passing it in narrows this read exactly as the cookie path
+ * narrows it, without a second opinion about who may see which book. A caller
+ * that omits it gets `resolveScope()`, which is every screen.
+ */
+export async function listBills(filters?: BillFilters, context?: RequestScope) {
+  const ctx = context ?? (await resolveScope());
   const ids = scopedUserIds(ctx.scope);
   const config = await getConfig();
   const day = await today();
@@ -656,6 +685,14 @@ export async function listBills(filters?: BillFilters) {
       and(
         scopedToUsers(ids),
         filters?.customerId ? eq(bills.customerId, filters.customerId) : undefined,
+        /* An empty set is "no customers", never "all of them" — see the note
+           on the filter. `inArray` with nothing is false, which is what we
+           want, but it is spelled out rather than left to the driver. */
+        filters?.customerIds
+          ? filters.customerIds.length
+            ? inArray(bills.customerId, filters.customerIds)
+            : sql`false`
+          : undefined,
         financialYearWhere(filters?.financialYear),
         filters?.openOnly
           ? sql`${bills.amount} > ${bills.paidAmount}`
