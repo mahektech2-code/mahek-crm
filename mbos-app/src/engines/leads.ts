@@ -25,6 +25,23 @@ export type LeadFilter = (typeof LEAD_FILTERS)[number];
 export const LEAD_SOURCES = ['Walked past', 'Referral', 'Market enquiry', 'Exhibition', 'Office'] as const;
 
 /**
+ * What the account IS in the trade.
+ *
+ * The values are the server's `customer_type` enum verbatim, so a converted
+ * lead needs no translation on the way through — this is the one field on the
+ * lead form that is already a column on `customers` and will still be one
+ * after the account is opened. The LABELS are separate because "manufacturer"
+ * is a database word and "makes things, buys to use" is what a salesman is
+ * actually deciding between outside a shop.
+ */
+export const CUSTOMER_TYPES = [
+  { value: 'dealer', label: 'Dealer' },
+  { value: 'retailer', label: 'Retailer' },
+  { value: 'distributor', label: 'Distributor' },
+  { value: 'manufacturer', label: 'Manufacturer' },
+] as const;
+
+/**
  * A mobile number as it will be compared, not as it was typed.
  *
  * The same shop is written `98220 11001`, `+91 9822011001` and `09822011001`

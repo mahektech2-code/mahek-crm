@@ -1804,6 +1804,26 @@ const leadSchema = z.object({
   notes: z.string().max(4000).nullish(),
   gpsLat: z.number().nullish(),
   gpsLng: z.number().nullish(),
+  /* Where the shop is, in words. `city`/`area` are the filters; this is what
+     somebody reads to find the door. */
+  address: z.string().max(500).nullish(),
+  /* What the account IS in the trade. The same enum the customer master uses,
+     so a converted lead needs no translation. */
+  customerType: z.enum(["dealer", "manufacturer", "distributor", "retailer"]).nullish(),
+  /* §C — asked at the Prospect transition, not at capture. */
+  gstin: z.string().max(20).nullish(),
+  requirement: z.string().max(1000).nullish(),
+  /* LITRES. See the column comment — there is no SKU at this point, so cans
+     would be a unit nobody has agreed the size of. */
+  monthlyVolumeLitres: z.number().int().nonnegative().nullish(),
+  decisionMaker: z.string().max(200).nullish(),
+  /* An `attachments` id the media queue will fill in later — see
+     `bindMbosMedia`. It routinely names a file whose bytes are still on the
+     phone, which is why nothing here checks that it exists. */
+  shopPhotoId: z.string().max(80).nullish(),
+  /* The one competitor question worth asking cold. The full record — price,
+     credit days, strengths — is `mbos_competitor_records`, asked on a visit. */
+  competitorName: z.string().max(200).nullish(),
   lostReason: z.string().max(500).nullish(),
   /** Out of the way, not gone — a filter on every read, never a delete. */
   archived: z.boolean().nullish(),
@@ -1827,7 +1847,7 @@ async function handleLeadUpdate(
   const p = parsed.data;
 
   const [existing] = await db
-    .select({ id: customers.id, name: customers.name })
+    .select({ id: customers.id, name: customers.name, gstin: customers.gstin })
     .from(customers)
     .where(eq(customers.id, item.entityId))
     .limit(1);
@@ -1850,6 +1870,35 @@ async function handleLeadUpdate(
     };
   }
 
+  /*
+   * QUALIFYING A LEAD ASKS FOR THE GST NUMBER, and it is asked HERE.
+   *
+   * §C of the brief makes GST mandatory at the Prospect transition, and the
+   * form on the handset asks for it. A form is not a rule: this is a sync
+   * endpoint, it accepts a payload from a device somebody owns, and an older
+   * build that never learned to ask would otherwise qualify leads without one.
+   *
+   * Mandatory at the STAGE CHANGE and never on the column. 5,292 shops came in
+   * from the EMP 2.0 master with no GSTIN between them, so a NOT NULL would
+   * refuse the entire imported book — the constraint belongs on the moment
+   * somebody asserts this is a real commercial prospect, not on the record.
+   *
+   * It reads what is already stored as well as what arrived, so a lead that was
+   * given its number last week qualifies today without retyping it.
+   */
+  if (p.stage === "qualified") {
+    const gstin = (p.gstin ?? existing.gstin ?? "").trim();
+    if (!gstin) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          `${existing.name} cannot be qualified without a GST number. That is what makes them a business we can invoice — add it and try again.`,
+        ),
+      };
+    }
+  }
+
   const changed: Partial<typeof customers.$inferInsert> = {
     /* Any edit is contact, and staleness is measured from the last thing that
      * happened — so working a lead moves the clock whatever else it changed. */
@@ -1869,6 +1918,19 @@ async function handleLeadUpdate(
   }
   if (p.lostReason != null) changed.leadLostReason = p.lostReason;
   if (p.archived != null) changed.leadArchived = p.archived;
+  if (p.address != null) changed.address = p.address;
+  if (p.customerType != null) changed.customerType = p.customerType;
+  if (p.gstin != null) changed.gstin = p.gstin;
+  if (p.requirement != null) changed.leadRequirement = p.requirement;
+  if (p.monthlyVolumeLitres != null) {
+    changed.leadMonthlyVolumeLitres = p.monthlyVolumeLitres;
+  }
+  if (p.decisionMaker != null) changed.leadDecisionMaker = p.decisionMaker;
+  if (p.gpsLat != null && p.gpsLng != null) {
+    changed.gpsLat = p.gpsLat;
+    changed.gpsLng = p.gpsLng;
+    changed.gpsCapturedAt = new Date();
+  }
   /*
    * ONE LEAD, so winning one is this row becoming a customer rather than a
    * second row being written and pointed at. The handset still sends
@@ -1953,6 +2015,16 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
       leadNotes: p.notes ?? null,
       gpsLat: p.gpsLat ?? null,
       gpsLng: p.gpsLng ?? null,
+      /* Captured standing in the shop. `gpsCapturedAt` is what tells a later
+         reader whether the pin is the salesman's own or something an import
+         guessed, so it is written with the fix rather than left null. */
+      gpsCapturedAt: p.gpsLat != null && p.gpsLng != null ? new Date() : null,
+      address: p.address ?? null,
+      customerType: p.customerType ?? null,
+      gstin: p.gstin ?? null,
+      leadRequirement: p.requirement ?? null,
+      leadMonthlyVolumeLitres: p.monthlyVolumeLitres ?? null,
+      leadDecisionMaker: p.decisionMaker ?? null,
       leadLostReason: p.lostReason ?? null,
       leadLastActivityDate: day,
     })
@@ -1967,11 +2039,52 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
         leadStage: p.stage ?? "new",
         leadNextFollowUpDate: p.nextFollowUpDate ?? null,
         leadNotes: p.notes ?? null,
+        address: p.address ?? null,
+        customerType: p.customerType ?? null,
+        gstin: p.gstin ?? null,
+        leadRequirement: p.requirement ?? null,
+        leadMonthlyVolumeLitres: p.monthlyVolumeLitres ?? null,
+        leadDecisionMaker: p.decisionMaker ?? null,
         leadLostReason: p.lostReason ?? null,
         leadLastActivityDate: day,
         updatedAt: new Date(),
       },
     });
+
+  /*
+   * The shop front, now that there is a record to hang it on.
+   *
+   * The photograph was taken before this row existed — the salesman shoots the
+   * shop while he is standing in front of it and types the rest afterwards —
+   * so the handset queued it under the literal parent `pending`. Binding it
+   * here is what makes it readable and what keeps the nightly orphan sweep off
+   * it. After the record, deliberately: a lead is never lost to a photograph.
+   */
+  await bindMbosMedia(p.shopPhotoId, "mbos_lead", item.entityId);
+
+  /*
+   * And the competitor, if he got one.
+   *
+   * It goes in `mbos_competitor_records` rather than a column on the lead,
+   * because that is where every other competitor sighting in this product
+   * lives and a second home for the same fact is how the two disagree. `visitId`
+   * is null: there is no visit behind a lead being raised, which is precisely
+   * why that column is nullable.
+   */
+  if (p.competitorName?.trim()) {
+    await db
+      .insert(mbosCompetitorRecords)
+      .values({
+        id: gen("mbos_comp"),
+        customerId: item.entityId,
+        visitId: null,
+        competitorName: p.competitorName.trim(),
+        recordedOn: day,
+        createdById: principal.user.id,
+        updatedById: principal.user.id,
+      })
+      .onConflictDoNothing();
+  }
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }
@@ -4049,12 +4162,44 @@ const MBOS_PARENTS: Record<string, (typeof attachmentParentEnum.enumValues)[numb
   expense: "mbos_expense",
   sample: "mbos_sample",
   task: "mbos_task",
+  /* A shop front photographed while raising a lead. A lead IS a `customers`
+     row, so `canRead` resolves this straight through the customer's scope. */
+  lead: "mbos_lead",
   /* Not `mbos_payment`: a field collection is written into `payment_receipts`,
      the same table the CRM's own receipts use, so this is that parent and
      `canRead` resolves it through the customer exactly as it does for one
      captured at a desk. */
   payment: "payment_receipt",
 };
+
+/**
+ * BIND A FILE TO THE RECORD THAT NOW EXISTS.
+ *
+ * Media syncs AFTER its parent — that is the whole point of a separate queue —
+ * so the handset uploads a photograph naming `parentId: 'pending'`, because at
+ * the moment the camera closed the record it belongs to had not been written
+ * yet. Something has to go back and say what it was, and until now nothing did:
+ * the attachment kept the literal string `pending` as its parent for ever, so
+ * `canRead` looked for a record with that id, found none, and refused the file
+ * to everybody.
+ *
+ * Called from the handler that writes the parent, in the same pass, and
+ * deliberately unable to fail it — the record is the thing that matters and a
+ * photograph that stays unbound for another sync is recoverable. It is the
+ * MBOS half of what `bindAttachments` does for the CRM's own forms.
+ */
+async function bindMbosMedia(
+  attachmentId: string | null | undefined,
+  parentType: (typeof attachmentParentEnum.enumValues)[number],
+  parentId: string,
+): Promise<void> {
+  if (!attachmentId) return;
+  await db
+    .update(attachments)
+    .set({ parentType, parentId, updatedAt: new Date() })
+    .where(eq(attachments.id, attachmentId))
+    .catch(() => {});
+}
 
 export async function storeMbosMedia(
   principal: MbosPrincipal,

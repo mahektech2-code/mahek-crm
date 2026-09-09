@@ -143,6 +143,34 @@ holding the whole app and nobody who was deliberately narrowed.
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
 
+**A LEAD'S CONSUMPTION IS IN LITRES, and it is the one place cans do not win.**
+Every other quantity in MahekOne is cans, because cans are what the customer
+says when ordering and litres are derived from the SKU's own packing. There is
+no SKU at capture: a prospect says "about two hundred litres a month" long
+before anybody knows what pack they will buy it in, so cans would be a unit
+nobody has agreed the size of. `lead_monthly_volume_litres` is that number, and
+`lead_requirement` is what they want in their own words — free text rather than
+a product id, because resolving "thinner for a spray booth" to a SKU at capture
+is the salesman guessing on the customer's behalf.
+
+**GST IS ASKED AT THE QUALIFY TRANSITION, and never on the column.** Making a
+prospect real means we could invoice them, and that is what the number is for —
+so `handleLead` refuses `stage = 'qualified'` without one, reading what is
+already stored as well as what arrived so a lead given its number last week
+qualifies today without retyping. NOT NULL on `customers.gstin` would refuse the
+entire imported book: 5,292 shops came from the EMP 2.0 master with no GSTIN
+between them. The constraint belongs on the moment somebody asserts this is a
+business we can bill, not on the record.
+
+**A PHOTOGRAPH IS BOUND WHEN ITS PARENT IS WRITTEN, by `bindMbosMedia`.** Media
+syncs AFTER its parent — that is the whole point of a separate queue — so the
+handset uploads naming `parentId: 'pending'`, because at the moment the camera
+closed the record did not exist. Something has to go back and say what it was,
+and nothing did: the attachment kept the literal string `pending` for ever, so
+`canRead` looked for a record with that id and refused the file to everybody.
+It is called after the record is safe and cannot fail the write — a lead is
+never lost to a photograph.
+
 **A LEAD HAS TWO SEATS, and only one of them is the book.** The office asks that
 the sales manager over a salesman picks up a lead once it is qualified, while
 the salesman goes on making the visits — two people on one record, so two

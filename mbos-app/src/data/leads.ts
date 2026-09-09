@@ -57,6 +57,16 @@ export type Lead = {
    */
   leadManagerId: string | null;
   leadManagerName: string | null;
+  /* §A and §C — what he learns in the shop. See the v14 migration for why
+     consumption is in litres and not in cans. */
+  address: string | null;
+  customerType: string | null;
+  gstin: string | null;
+  requirement: string | null;
+  monthlyVolumeLitres: number | null;
+  decisionMaker: string | null;
+  shopPhotoId: string | null;
+  competitorName: string | null;
   clientCreatedAt: number;
   syncState: string;
 };
@@ -158,6 +168,16 @@ export async function createLead(args: {
   assigneeId?: string | null;
   nextFollowUpDate?: string | null;
   note?: string | null;
+  /* §A. All optional: a salesman who has a name and a number outside a closed
+     shop must still be able to write the lead down. What he could not do
+     before was come back and add the rest. */
+  address?: string | null;
+  customerType?: string | null;
+  requirement?: string | null;
+  monthlyVolumeLitres?: number | null;
+  decisionMaker?: string | null;
+  shopPhotoId?: string | null;
+  competitorName?: string | null;
   today?: string;
 }): Promise<LeadResult<string>> {
   const today = args.today ?? isoDate(new Date());
@@ -179,6 +199,15 @@ export async function createLead(args: {
   }
 
   const base = await stamp('lead');
+  /*
+   * The freshest fix already known, which is almost always one the day's trail
+   * took minutes ago — so this costs no battery and, more importantly, no
+   * TIME. `whereNow()` never waits on the radio: a salesman outside a shop with
+   * the customer waiting must not watch a spinner while the GPS settles, and a
+   * lead with no pin is far better than a lead nobody wrote down.
+   */
+  const { whereNow } = await import('../native/where');
+  const fix = await whereNow().catch(() => null);
   const notes: LeadNote[] = args.note?.trim() ? [{ at: Date.now(), text: args.note.trim() }] : [];
 
   const id = await insertAndQueue({
@@ -192,6 +221,20 @@ export async function createLead(args: {
       companyName: args.company?.trim() || undefined,
       stage: 'new',
       notes: wireNotes(notes),
+      /* WHERE HE IS STANDING, which is the whole of the lead map.
+         `enqueue` already attaches a position to the sync ITEM — that records
+         where the act happened. This is different and both are wanted: this is
+         where the SHOP is, and it goes on the customer row, where a pin is
+         read from. A lead captured at the shop door has them equal; one typed
+         up in the evening has an activity location and no shop pin, which is
+         the honest answer rather than a guess. */
+      gpsLat: fix?.lat ?? undefined,
+      gpsLng: fix?.lng ?? undefined,
+      address: args.address?.trim() || undefined,
+      customerType: args.customerType ?? undefined,
+      requirement: args.requirement?.trim() || undefined,
+      monthlyVolumeLitres: args.monthlyVolumeLitres ?? undefined,
+      decisionMaker: args.decisionMaker?.trim() || undefined,
     },
     row: {
       ...base,
@@ -206,6 +249,18 @@ export async function createLead(args: {
       nextFollowUpDate: args.nextFollowUpDate ?? null,
       notes,
       archived: 0,
+      address: args.address?.trim() || null,
+      customerType: args.customerType ?? null,
+      gstin: null,
+      requirement: args.requirement?.trim() || null,
+      monthlyVolumeLitres: args.monthlyVolumeLitres ?? null,
+      decisionMaker: args.decisionMaker?.trim() || null,
+      shopPhotoId: args.shopPhotoId ?? null,
+      competitorName: args.competitorName?.trim() || null,
+      gpsLat: fix?.lat ?? null,
+      gpsLng: fix?.lng ?? null,
+      leadManagerId: null,
+      leadManagerName: null,
       /* Staleness is measured from here, so it starts today rather than null —
          a lead created this morning has not gone quiet. */
       lastActivityDate: today,

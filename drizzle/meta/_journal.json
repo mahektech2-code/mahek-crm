@@ -680,6 +680,13 @@
       "when": 1787502220000,
       "tag": "0096_lead_manager_seat",
       "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1787502280000,
+      "tag": "0097_lead_capture_fields",
+      "breakpoints": true
     }
   ]
 }

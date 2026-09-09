@@ -994,6 +994,43 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE leads ADD COLUMN leadManagerId TEXT;`,
     `ALTER TABLE leads ADD COLUMN leadManagerName TEXT;`,
   ],
+
+  /* ---- v14 · what the salesman actually learns in the shop --------------- */
+  [
+    /*
+     * §A and §C of the brief. The form asked for a name, a company, a mobile,
+     * a town and a guess at the money; these are the nine other things a
+     * salesman finds out while he is standing there, and had nowhere to write.
+     *
+     * `monthlyVolumeLitres` is LITRES and not cans, which is the one place
+     * this app departs from "a quantity is cans". There is no SKU at capture —
+     * a prospect says "about two hundred litres a month" before anybody knows
+     * what pack they will buy it in — so cans would be a unit nobody has
+     * agreed the size of.
+     */
+    `ALTER TABLE leads ADD COLUMN address TEXT;`,
+    `ALTER TABLE leads ADD COLUMN customerType TEXT;`,
+    `ALTER TABLE leads ADD COLUMN gstin TEXT;`,
+    `ALTER TABLE leads ADD COLUMN requirement TEXT;`,
+    `ALTER TABLE leads ADD COLUMN monthlyVolumeLitres INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN decisionMaker TEXT;`,
+    /*
+     * The shop front. An `attachments` id, never a path — the file goes up the
+     * media queue AFTER this row, exactly like a visit's shop photo, so this
+     * names a file whose bytes may still be on the phone.
+     */
+    `ALTER TABLE leads ADD COLUMN shopPhotoId TEXT;`,
+    /*
+     * A competitor, captured at the lead rather than only on a visit.
+     *
+     * The office holds this properly in `mbos_competitor_records`, with a
+     * price, credit days, strengths and weaknesses. Asking for all of that
+     * outside a shop with the customer waiting is how none of it gets typed —
+     * so the lead form asks the one question worth asking cold, and the visit
+     * form asks the rest.
+     */
+    `ALTER TABLE leads ADD COLUMN competitorName TEXT;`,
+  ],
 ];
 
 /**

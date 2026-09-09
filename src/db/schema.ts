@@ -446,6 +446,15 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
    * against the thing they were typed from.
    */
   "expense_policy",
+  /**
+   * A photograph of the shop, taken while raising a lead.
+   *
+   * Its own kind rather than `mbos_visit`, because `canRead` decides who may
+   * open a file FROM the parent kind and there is no visit behind a lead at
+   * the moment the picture is taken. A lead IS a `customers` row, so this one
+   * resolves straight through the customer's own scope.
+   */
+  "mbos_lead",
 ]);
 
 /**
@@ -882,6 +891,32 @@ export const customers = pgTable(
     leadManagerDecidedAt: timestamp("lead_manager_decided_at", {
       withTimezone: true,
     }),
+
+    /**
+     * What they want to buy, in the customer's own words.
+     *
+     * Free text and deliberately not a product id: a shop says "thinner for a
+     * spray booth", and resolving that to a SKU at capture would be the
+     * salesman guessing on their behalf. It becomes a real order line later,
+     * when somebody has asked which pack.
+     */
+    leadRequirement: text("lead_requirement"),
+    /**
+     * How much they get through in a month, in LITRES.
+     *
+     * Every other quantity in MahekOne is cans, because cans are what a
+     * customer says when ordering and litres are derived from the SKU's own
+     * packing. There is no SKU here — a prospect says "about two hundred
+     * litres a month" long before anybody knows what they will buy it as, and
+     * litres is the only unit that sentence survives in.
+     */
+    leadMonthlyVolumeLitres: integer("lead_monthly_volume_litres"),
+    /**
+     * Who signs. Distinct from `contactPerson`, who is whoever answers the
+     * phone — on the accounts where this matters they are routinely different
+     * people, and negotiating with the wrong one is the visit wasted.
+     */
+    leadDecisionMaker: text("lead_decision_maker"),
 
     /*
      * A shop we deliver to, served through a distributor.
