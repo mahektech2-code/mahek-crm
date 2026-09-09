@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { stageRefusal, visitCapLabel, visitCapState } from './leads';
+import { reorderLabel, reorderState, stageRefusal, visitCapLabel, visitCapState } from './leads';
 
 /**
  * The visit cap, and why it is a question rather than a gate.
@@ -79,4 +79,45 @@ test('On hold asks for a reason, and for the opposite reason to Lost', () => {
   /* Lost still asks, and everything else still does not. */
   assert.ok(stageRefusal('Lost', '  '));
   assert.equal(stageRefusal('Qualified', ''), null);
+});
+
+/* -------------------------------------------------------- the reorder due */
+
+test('a customer who has never ordered is in no reorder state at all', () => {
+  /* Not "due", not "overdue", nothing. They have no cycle to be late against,
+     and saying "due" about them would be an invention the salesman has no way
+     to check. The same reasoning as `decide` and `none` carrying no date in
+     the CRM's next-step labels. */
+  assert.equal(reorderState(null, 30, '2026-09-09'), null);
+  assert.equal(reorderState('2026-08-10', null, '2026-09-09'), null);
+  assert.equal(reorderState('2026-08-10', 0, '2026-09-09'), null);
+});
+
+test('due at one cycle, overdue at two', () => {
+  const today = '2026-09-09';
+  /* 29 days on a 30-day cycle: not yet. */
+  assert.equal(reorderState('2026-08-11', 30, today), null);
+  /* 30 days exactly: due. */
+  assert.equal(reorderState('2026-08-10', 30, today), 'due');
+  /* 60 days: twice the cycle, and the word changes. */
+  assert.equal(reorderState('2026-07-11', 30, today), 'overdue');
+});
+
+test('the cycle is the customer\'s own, and the label says so', () => {
+  /* "Due" alone invites "due by whose reckoning". The cycle is measured from
+     this shop's own gaps rather than a company default, which is the part
+     worth saying out loud. */
+  const label = reorderLabel('2026-08-10', 30, '2026-09-09');
+  assert.match(label ?? '', /Due to reorder/);
+  assert.match(label ?? '', /buys every 30/);
+  assert.match(label ?? '', /30 days/);
+});
+
+test('a fortnightly buyer and a quarterly one are judged on their own rhythm', () => {
+  const today = '2026-09-09';
+  /* 20 days. Late for the fortnightly shop, nowhere near for the quarterly
+     one — which is the whole reason this reads `cycleDays` rather than a flat
+     30/60/90. */
+  assert.equal(reorderState('2026-08-20', 14, today), 'due');
+  assert.equal(reorderState('2026-08-20', 90, today), null);
 });

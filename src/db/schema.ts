@@ -159,6 +159,16 @@ export const orderStatusEnum = pgEnum("order_status", [
   "declined",
   "confirmed",
   "dispatched",
+  /**
+   * §N — after the godown and before the shop.
+   *
+   * `dispatched` is us saying it left. These two are where it got to, and both
+   * count as a sale exactly as `dispatched` does: goods on a lorry are goods
+   * sold. See `PURCHASE_STATUSES`, which is the ONE list that decides that and
+   * which the SQL is now derived from rather than restating.
+   */
+  "in_transit",
+  "delivered",
   "cancelled",
 ]);
 
@@ -927,6 +937,17 @@ export const customers = pgTable(
      * people, and negotiating with the wrong one is the visit wasted.
      */
     leadDecisionMaker: text("lead_decision_maker"),
+    /**
+     * §L — what was agreed once negotiation opened.
+     *
+     * On the customer rather than the order, because terms are the standing
+     * arrangement a salesman negotiated and the first order is priced UNDER
+     * them rather than carrying them. A discount that needs authorising still
+     * goes through `mbos_approvals`, which exists for exactly that: this is the
+     * record of the position, not a second approval path.
+     */
+    leadDeliveryTerms: text("lead_delivery_terms"),
+    leadAgreedTerms: text("lead_agreed_terms"),
     /**
      * WHY IT IS NOT MOVING — one column for two questions that are the same
      * question.
@@ -1719,6 +1740,31 @@ export const orders = pgTable(
     /* ---- approval, §order-approval ---- */
     approvedById: text("approved_by_id"),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
+    /**
+     * THE CUSTOMER'S OWN CONFIRMATION, which is not our approval.
+     *
+     * `status = 'confirmed'` is ACCOUNTS accepting the order — they checked the
+     * credit and said we will supply it. This is the other party agreeing to
+     * what was written down. They are routinely days apart and either can come
+     * first, so one column could never have carried both.
+     */
+    customerConfirmedAt: timestamp("customer_confirmed_at", { withTimezone: true }),
+    /** Read back on the call, a WhatsApp reply, a signature on the copy. */
+    customerConfirmedNote: text("customer_confirmed_note"),
+    /**
+     * And their confirmation that the goods came — the third assertion, exactly
+     * as on a sample. We dispatched it, the carrier says it arrived, the SHOP
+     * says it has it. Never inferred from the status.
+     */
+    deliveryConfirmedAt: timestamp("delivery_confirmed_at", { withTimezone: true }),
+    deliveryConfirmedById: text("delivery_confirmed_by_id").references(() => users.id),
+    /**
+     * What actually turned up, where it was not what was sent. Null means
+     * nobody reported a discrepancy, which is NOT the same as "it was correct"
+     * — nobody was asked. A short delivery is a fact about the delivery and
+     * belongs beside it rather than only inside a complaint somebody raised.
+     */
+    deliveryDiscrepancy: text("delivery_discrepancy"),
     /** Required when declining — a refusal the telecaller cannot read is a row nobody can act on. */
     declineReason: text("decline_reason"),
     orderedAt: timestamp("ordered_at", { withTimezone: true }).notNull(),

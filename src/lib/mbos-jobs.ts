@@ -287,6 +287,85 @@ export async function flagOverdueSamples(): Promise<Counted> {
   return { recordsAffected: rows.length, detail: `${rows.length} samples past their follow-up` };
 }
 
+/**
+ * §P — a customer past their own reorder date gets a task, once.
+ *
+ * The CYCLE is the customer's own measured rhythm and not a company default, so
+ * a fortnightly shop is chased at a fortnight and a quarterly one is left alone
+ * — which is the whole reason this reads `cycle_days` rather than a flat number.
+ *
+ * ONCE is the load-bearing word. A nightly pass that raised a task every night
+ * would put thirty rows on a salesman's list for one shop that has gone quiet,
+ * and a list like that is one people stop reading — which costs far more than
+ * the reminder was worth. The guard is the open task itself: while one is
+ * standing for this customer nothing new is raised, so the reminder returns
+ * only after somebody has dealt with the last one.
+ *
+ * Only accounts with a MEASURED cycle. `cycle_is_default` means nobody has seen
+ * enough orders to know their rhythm, and chasing on the strength of a default
+ * is chasing on the strength of a guess — the same rule the Call Log's quiet
+ * window already follows.
+ */
+export async function raiseReorderFollowUps(): Promise<Counted> {
+  const day = await today();
+
+  const due = await db.execute<{
+    id: string;
+    name: string;
+    salesmanId: string;
+    days: number;
+    cycleDays: number;
+  }>(sql`
+    select c.id, c.name,
+           coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
+           (${day}::date - c.last_order_date)::int as days,
+           c.cycle_days as "cycleDays"
+      from customers c
+     where c.kind = 'customer'
+       and c.status = 'active'
+       and c.do_not_contact = false
+       and c.last_order_date is not null
+       -- A measured cycle only. A default is a guess, and chasing on a guess
+       -- is how a quarterly buyer gets rung every month.
+       and c.cycle_is_default = false
+       and c.cycle_days > 0
+       and (${day}::date - c.last_order_date) >= c.cycle_days
+       and coalesce(c.sales_am_id, c.owner_id) is not null
+       -- Raised ONCE. While a reorder task is standing for this shop nothing
+       -- new is raised, so the reminder comes back only after somebody has
+       -- dealt with the last one rather than every night for a month.
+       and not exists (
+         select 1 from mbos_tasks t
+          where t.customer_id = c.id
+            and t.source_type = 'reorder'
+            and t.status in ('open', 'in_progress')
+       )
+     limit 200
+  `);
+
+  for (const row of due) {
+    await db
+      .insert(mbosTasks)
+      .values({
+        id: `mbos_task_${randomUUID().slice(0, 12)}`,
+        title: `Due to reorder — ${row.name}`,
+        description: `Last ordered ${row.days} days ago and they buy about every ${row.cycleDays}. Worth a call or a stop.`,
+        assignedToUserId: row.salesmanId,
+        priority: row.days >= row.cycleDays * 2 ? "high" : "medium",
+        dueDate: day,
+        customerId: row.id,
+        status: "open",
+        sourceType: "reorder",
+        sourceId: row.id,
+        createdById: row.salesmanId,
+        updatedById: row.salesmanId,
+      })
+      .catch(() => {});
+  }
+
+  return { recordsAffected: due.length, detail: `${due.length} due to reorder` };
+}
+
 /* ----------------------------------------------------------- composites */
 
 export async function mbosNightly(): Promise<Counted> {
@@ -294,6 +373,7 @@ export async function mbosNightly(): Promise<Counted> {
     await closeOpenVisits(),
     await markMissedCheckouts(),
     await ageLeads(),
+    await raiseReorderFollowUps(),
     await countCustomersWithoutGps(),
   ];
   return {

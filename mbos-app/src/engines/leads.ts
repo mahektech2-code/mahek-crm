@@ -217,3 +217,61 @@ export function leadAlert(lead: LeadTiming, today: string, cfg: LeadThresholds):
   }
   return null;
 }
+
+/* ------------------------------------------------------- the reorder due */
+
+/**
+ * Is this customer due to order again?
+ *
+ * §P asks for a reorder reminder, and the office already answers this question
+ * for the telecallers' Call Log. The handset cannot ask it: there is no reorder
+ * channel on the pull, and a salesman in a market lane has no connection to ask
+ * over. So it is derived here from two columns every customer row already
+ * carries — `lastOrderDate` and `cycleDays` — which is what makes it work with
+ * the phone in flight mode.
+ *
+ * It deliberately does NOT restate the Call Log's ranking. That engine weighs a
+ * reorder against a promise, a debt and a stock check to decide who to ring
+ * FIRST out of four hundred; this answers one question about one shop the
+ * salesman is already standing outside. Copying the ranking here would be a
+ * second scoring system drifting from the first — and the half that drifts is
+ * always the half somebody reads.
+ *
+ * Null where there is nothing to say: a customer who has never ordered has no
+ * cycle to be late against, and saying "due" about them would be an invention.
+ */
+export type ReorderState = 'due' | 'overdue' | null;
+
+export function reorderState(
+  lastOrderDate: string | null,
+  cycleDays: number | null,
+  today: string,
+): ReorderState {
+  if (!lastOrderDate || !cycleDays || cycleDays <= 0) return null;
+  const since = daysBetween(lastOrderDate, today);
+  if (since == null) return null;
+  if (since >= cycleDays * 2) return 'overdue';
+  if (since >= cycleDays) return 'due';
+  return null;
+}
+
+/**
+ * The one line a customer card carries about it, or none.
+ *
+ * It says the CYCLE as well as the verdict, because "due" on its own invites
+ * the reply "due by whose reckoning" — and the cycle is the customer's own
+ * measured rhythm rather than a company default, which is exactly the thing
+ * worth saying out loud.
+ */
+export function reorderLabel(
+  lastOrderDate: string | null,
+  cycleDays: number | null,
+  today: string,
+): string | null {
+  const state = reorderState(lastOrderDate, cycleDays, today);
+  if (!state) return null;
+  const since = daysBetween(lastOrderDate, today) ?? 0;
+  return state === 'overdue'
+    ? 'Overdue to reorder — ' + since + ' days, buys every ' + cycleDays
+    : 'Due to reorder — ' + since + ' days, buys every ' + cycleDays;
+}

@@ -8,6 +8,7 @@ import { BottomSheet } from '../src/components/ui/overlays';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
 import { inr, isoDate, plural, pretty } from '../src/lib/format';
+import { reorderLabel, reorderState } from '../src/engines/leads';
 import { callNumber, openWhatsApp } from '../src/lib/messaging';
 import {
   addFieldShop,
@@ -348,6 +349,27 @@ export default function Customers() {
                   ' · ordered ' +
                   pretty(x.lastOrderDate)}
               </Text>
+
+              {/* §P — due to reorder, on the customer's OWN measured rhythm.
+                  Derived on the phone from two columns every row already
+                  carries, so it is right in a market lane with no signal. */}
+              {reorderLabel(x.lastOrderDate, x.cycleDays, today) ? (
+                <Text
+                  style={[
+                    {
+                      fontSize: 14,
+                      lineHeight: 20,
+                      marginTop: 4,
+                      color:
+                        reorderState(x.lastOrderDate, x.cycleDays, today) === 'overdue'
+                          ? C.danger
+                          : C.warnInk,
+                    },
+                    weight(500),
+                  ]}>
+                  {reorderLabel(x.lastOrderDate, x.cycleDays, today)}
+                </Text>
+              ) : null}
 
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
                 <View

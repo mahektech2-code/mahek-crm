@@ -1160,6 +1160,114 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
 
 /* ------------------------------------------------------------------ orders */
 
+/**
+ * §M and §N — an order after somebody has agreed to it.
+ *
+ * Three parties again, and none of their words is another's: `status` is OURS
+ * (accounts accepted it, the godown sent it, the lorry has it),
+ * `customerConfirmedAt` is the SHOP agreeing to what was written down, and
+ * `deliveryConfirmedAt` is the shop saying the goods came. They are routinely
+ * days apart and either confirmation can precede the other.
+ */
+const orderProgressSchema = z.object({
+  /** Ours. `captured`/`pending_approval` are not settable from a handset. */
+  status: z.enum(["dispatched", "in_transit", "delivered"]).nullish(),
+  customerConfirmedAt: z.number().nullish(),
+  customerConfirmedNote: z.string().max(500).nullish(),
+  deliveryConfirmedAt: z.number().nullish(),
+  /** What actually turned up, where it was not what was sent. */
+  deliveryDiscrepancy: z.string().max(1000).nullish(),
+});
+
+async function handleOrderProgress(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const parsed = orderProgressSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const [existing] = await db
+    .select({
+      id: orders.id,
+      customerId: orders.customerId,
+      status: orders.status,
+      approvedAt: orders.approvedAt,
+    })
+    .from(orders)
+    .where(eq(orders.id, item.entityId))
+    .limit(1);
+
+  if (!existing) {
+    return {
+      kind: "retry",
+      message:
+        "That order has not reached the office yet, so there is nothing to move along. It will be tried again once it has.",
+    };
+  }
+
+  const found = await scopedCustomer(principal, existing.customerId);
+  if (!found.ok) return { kind: "rejected", value: found.value };
+  const customer = found.customer;
+
+  /*
+   * A DECLINED OR CANCELLED ORDER IS NOT DISPATCHED, whatever a handset that
+   * has not caught up believes.
+   *
+   * The salesman's phone may still be showing an order accounts turned down
+   * ten minutes ago — the rejection reaches it on the next pull — and marking
+   * it delivered would resurrect a sale the business refused into every figure
+   * `PURCHASE_STATUSES` feeds. The mark is the office's decision, so the
+   * office's decision wins.
+   */
+  if (p.status && (existing.status === "declined" || existing.status === "cancelled")) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `That order for ${customer.name} was ${existing.status === "declined" ? "declined by accounts" : "cancelled"}, so it cannot be marked ${p.status.replace("_", " ")}. Ring them before anything is delivered.`,
+      ),
+    };
+  }
+
+  const changed: Partial<typeof orders.$inferInsert> = { updatedAt: new Date() };
+  if (p.status != null) changed.status = p.status;
+  if (p.customerConfirmedAt != null) {
+    changed.customerConfirmedAt = new Date(p.customerConfirmedAt);
+  }
+  if (p.customerConfirmedNote != null) {
+    changed.customerConfirmedNote = p.customerConfirmedNote;
+  }
+  if (p.deliveryDiscrepancy != null) {
+    changed.deliveryDiscrepancy = p.deliveryDiscrepancy;
+  }
+  /* Who reported the arrival, stored with the fact — a confirmation with
+     nobody behind it is the same shape as a payment nobody vouched for. */
+  if (p.deliveryConfirmedAt != null) {
+    changed.deliveryConfirmedAt = new Date(p.deliveryConfirmedAt);
+    changed.deliveryConfirmedById = principal.user.id;
+  }
+
+  await db.update(orders).set(changed).where(eq(orders.id, item.entityId));
+
+  /*
+   * A short or damaged delivery is told to the people who can do something
+   * about it, rather than sitting in a column somebody reads next month. It is
+   * NOT auto-raised as a complaint: a complaint is the customer's, with a
+   * category and photographs, and inventing one on their behalf from a note
+   * would put words in their mouth on a record they can dispute.
+   */
+  if (p.deliveryDiscrepancy?.trim()) {
+    await notifyManagers(
+      principal.user.id,
+      "A delivery did not match the order",
+      `${customer.name}: ${p.deliveryDiscrepancy.trim()}`,
+    ).catch(() => {});
+  }
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
 const orderSchema = z.object({
   customerId: z.string(),
   orderedAt: z.number().nullish(),
@@ -1196,6 +1304,8 @@ const orderSchema = z.object({
 });
 
 async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  if (item.op === "update") return handleOrderProgress(principal, item);
+
   const parsed = orderSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;
@@ -2175,6 +2285,31 @@ async function afterSampleVerdict(
       .update(customers)
       .set({ leadStage: "negotiation", updatedAt: new Date() })
       .where(and(eq(customers.id, customerId), eq(customers.leadStage, "qualified")));
+
+    /*
+     * And the visit that spends it. A stage that opens and no work attached to
+     * it is a lead that sits at `negotiation` for a month — the salesman was
+     * told he may negotiate and nothing told him to go.
+     */
+    const day = await today();
+    await db
+      .insert(mbosTasks)
+      .values({
+        id: gen("mbos_task"),
+        title: `Negotiation visit — ${customerName}`,
+        description:
+          "The sample came through, so price, discount, credit and delivery are open now. Anything past your approved discount goes up as an approval before you agree it.",
+        assignedToUserId: salesmanId,
+        priority: "high",
+        dueDate: day,
+        customerId,
+        status: "open",
+        sourceType: "negotiation_visit",
+        sourceId: sampleId,
+        createdById: salesmanId,
+        updatedById: salesmanId,
+      })
+      .onConflictDoNothing();
   }
 }
 
@@ -2286,6 +2421,11 @@ const leadSchema = z.object({
   /* The one competitor question worth asking cold. The full record — price,
      credit days, strengths — is `mbos_competitor_records`, asked on a visit. */
   competitorName: z.string().max(200).nullish(),
+  /* §L — what was agreed once negotiation opened. On the customer rather than
+     the order: terms are the standing arrangement, and the first order is
+     priced under them rather than carrying them. */
+  deliveryTerms: z.string().max(1000).nullish(),
+  agreedTerms: z.string().max(2000).nullish(),
   lostReason: z.string().max(500).nullish(),
   /* Why a held or stuck lead is not moving. Demanded for `on_hold`, and for a
      lead the salesman is keeping as a Suspect past the decision visit. */
@@ -2417,6 +2557,8 @@ async function handleLeadUpdate(
   }
   if (p.decisionMaker != null) changed.leadDecisionMaker = p.decisionMaker;
   if (p.holdReason != null) changed.leadHoldReason = p.holdReason;
+  if (p.deliveryTerms != null) changed.leadDeliveryTerms = p.deliveryTerms;
+  if (p.agreedTerms != null) changed.leadAgreedTerms = p.agreedTerms;
   /*
    * A lead that starts moving again is no longer explaining itself. Clearing
    * the reason on the way out of a hold is what stops "waiting for their

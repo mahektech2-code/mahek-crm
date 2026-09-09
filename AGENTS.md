@@ -143,6 +143,48 @@ holding the whole app and nobody who was deliberately narrowed.
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
 
+**"DID WE SELL ANYTHING" IS DERIVED FROM ONE LIST, not restated in SQL.**
+`orderCountsSql` used to spell the three counting statuses out as a literal
+beside `PURCHASE_STATUSES`, which held the same three — two definitions waiting
+to disagree. Adding §N's `in_transit` and `delivered` is precisely the change
+that would have split them, and the half that drifts is the SQL: it is read by
+the eight money queries and checked by nothing. It is built from the array now,
+and `order-status.test.ts` pins the pair against the ENUM as well, so a status
+in neither list fails the build rather than silently not counting.
+
+Goods on a lorry are goods sold. An order that reached the customer must not
+stop counting towards EOD value, the buying cycle, the product history and
+outstanding merely because somebody recorded that it arrived.
+
+**AN ORDER CARRIES THREE PARTIES' WORDS TOO.** `status` is OURS — accounts
+accepted it, the godown sent it, the lorry has it. `customer_confirmed_at` is
+the SHOP agreeing to what was written down; `delivery_confirmed_at` is the shop
+saying the goods came. They are routinely days apart and either confirmation can
+come first, so no one column could carry them. `delivery_discrepancy` null means
+nobody REPORTED a mismatch, which is not the same as "it was correct" — nobody
+was asked.
+
+**A discrepancy notifies and does NOT raise a complaint.** A complaint is the
+customer's, with a category and photographs, and inventing one on their behalf
+from a delivery note would put words in their mouth on a record they can
+dispute.
+
+**A DECLINED ORDER CANNOT BE DELIVERED, whatever a stale handset believes.** The
+phone may still be showing an order accounts turned down ten minutes ago —
+rejections reach it on the next pull — and marking that delivered would
+resurrect a refused sale into every figure `PURCHASE_STATUSES` feeds.
+
+**THE REORDER DUE IS DERIVED ON THE PHONE, from the customer's own cycle.**
+There is no reorder channel on the pull and no connection in a market lane, so
+`reorderState` reads `lastOrderDate` and `cycleDays`, which every customer row
+already carries. It deliberately does NOT restate the Call Log's ranking: that
+engine weighs a reorder against a promise, a debt and a stock check to decide
+who to ring first out of four hundred, and this answers one question about one
+shop the salesman is already outside. The nightly `raiseReorderFollowUps` raises
+a task ONCE — the standing open task is the guard — because thirty rows for one
+quiet shop is a list people stop reading. Measured cycles only: a default is a
+guess, and chasing on a guess rings a quarterly buyer every month.
+
 **A SAMPLE HAS THREE DATES BECAUSE THREE PARTIES ASSERT THREE THINGS.**
 `dispatched_at` is us saying it went. `delivered_at` is the carrier, or our own
 man, saying it arrived. `received_at` is the SHOP saying it is in their hands.
