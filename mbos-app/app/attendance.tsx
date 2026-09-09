@@ -4,7 +4,17 @@ import { useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, DashedButton, ListCard, T } from '../src/components/ui/primitives';
-import { recentDays, requestRegularisation, sessionsOf, todayRow, workedMinutes, type AttendanceDay } from '../src/data/attendance';
+import {
+  openSession,
+  recentDays,
+  requestRegularisation,
+  sessionsOf,
+  todayRow,
+  workedLabel,
+  workedMs,
+  type AttendanceDay,
+} from '../src/data/attendance';
+import { useTicker } from '../src/components/ui/use-ticker';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { dmy } from '../src/lib/format';
@@ -41,13 +51,6 @@ export default function AttendanceScreen() {
 
   const [days, setDays] = React.useState<AttendanceDay[]>([]);
   const [today, setToday] = React.useState<AttendanceDay | null>(null);
-  /* Read in an interval rather than during render — a render that reads the
-     clock answers differently every time React happens to re-run it. */
-  const [now, setNow] = React.useState(() => Date.now());
-  React.useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(t);
-  }, []);
 
   const load = React.useCallback(() => {
     if (!userId) return;
@@ -61,9 +64,16 @@ export default function AttendanceScreen() {
 
   /* The clock ticks while he is on the road, so "so far" counts against now
      rather than the last write — and it SUMS the sessions, because the day may
-     be two or three stretches with gaps that are not work. */
+     be two or three stretches with gaps that are not work.
+
+     Once a second WHILE A SESSION IS OPEN, and not at all otherwise: a closed
+     day is a finished number, and the ticker draws no timer when handed null.
+     It was a flat sixty seconds before, which is a counter that looks
+     identical to a frozen one for fifty-nine of them. */
   const todaySessions = sessionsOf(today);
-  const workedSoFar = todaySessions.length ? workedMinutes(todaySessions, now) : null;
+  const running = openSession(todaySessions) != null;
+  const now = useTicker(running ? 1000 : null);
+  const workedSoFar = todaySessions.length ? workedMs(todaySessions, now) : null;
 
   const present = days.filter((d) => d.status === 'Present').length;
   const onLeave = days.filter((d) => d.status === 'On Leave').length;
@@ -86,7 +96,7 @@ export default function AttendanceScreen() {
           {today?.checkInAt != null ? 'Checked in ' + hhmm(today.checkInAt) : 'Not checked in'}
         </T>
         <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-          {workedSoFar != null ? hoursLabel(workedSoFar) + ' so far' : 'Start the day from Home.'}
+          {workedSoFar != null ? workedLabel(workedSoFar, running) + ' so far' : 'Start the day from Home.'}
         </T>
 
         {/*

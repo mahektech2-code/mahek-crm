@@ -8,6 +8,10 @@ import type { Fix } from '../native/location';
 import { isoDate } from '../lib/format';
 import * as trail from '../sync/trail';
 
+/* Re-exported so the screens keep one import for the day's figures, while the
+   formatting rule itself stays pure and tested in the engine. */
+export { workedLabel } from '../engines/attendance';
+
 /**
  * Attendance.
  *
@@ -68,6 +72,23 @@ export function workedMinutes(sessions: Session[], now = Date.now()): number {
     ),
   );
 }
+
+/**
+ * The same sum, to the MILLISECOND, for a counter that has to move.
+ *
+ * `workedMinutes` rounds, which is right for everything that is filed,
+ * compared or paid on — and useless for a clock, because a rounded minute
+ * changes once every sixty seconds and a salesman watching it cannot tell a
+ * running day from a frozen screen. This is the display's answer; that one
+ * remains the record's.
+ */
+export function workedMs(sessions: Session[], now = Date.now()): number {
+  return Math.max(
+    0,
+    sessions.reduce((total, x) => total + Math.max(0, (x.outAt ?? now) - x.inAt), 0),
+  );
+}
+
 
 /**
  * Was this calendar day a holiday — the input `deriveStatus` has always
@@ -313,6 +334,17 @@ export async function dayState(userId: string): Promise<{
   workedMinutes: number;
   firstInAt: number | null;
   sessionCount: number;
+  /**
+   * The stretches themselves, so a screen can keep counting without asking
+   * the database again.
+   *
+   * `workedMinutes` above is a figure taken at the moment this ran, and Home
+   * rendered it for as long as the screen stayed open — a duration that was
+   * correct once and then silently stopped, which reads exactly like a day
+   * that is not being recorded. A caller that holds the sessions can tick
+   * against its own clock instead.
+   */
+  sessions: Session[];
 }> {
   const row = await todayRow(userId);
   const sessions = sessionsOf(row);
@@ -322,6 +354,7 @@ export async function dayState(userId: string): Promise<{
     workedMinutes: workedMinutes(sessions),
     firstInAt: sessions[0]?.inAt ?? null,
     sessionCount: sessions.length,
+    sessions,
   };
 }
 

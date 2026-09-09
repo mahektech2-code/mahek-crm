@@ -12,7 +12,7 @@ import { assessOrder } from './credit';
 import { healthScore, type HealthInputs, type HealthThresholds, type HealthWeights } from './health';
 import { applySchemes, matches, type Scheme } from './schemes';
 import { cashPosition, type Collection } from './cash';
-import { deriveStatus } from './attendance';
+import { deriveStatus, workedLabel } from './attendance';
 import { balanceAfter, leaveDays, overlaps } from './leave';
 import { canValueOrders, derivedQuantities, lineValuePaise } from './order';
 
@@ -588,4 +588,58 @@ test('nothing may be valued until a price source is confirmed', () => {
   assert.equal(lineValuePaise('product', 10, { sellingPricePaise: null }, 9_999_00), null);
   assert.equal(lineValuePaise('manual', 10, { sellingPricePaise: 500_00 }, 4_200_00), 4_200_00);
   assert.equal(lineValuePaise('pricelist', 10, { sellingPricePaise: 500_00 }, 4_200_00), 4_200_00);
+});
+
+/* ---------------------------------------------------------------- the clock */
+
+/**
+ * The counter on the attendance card, which has to look alive.
+ *
+ * It stood still for a minute at a time on one screen and for ever on the
+ * other, and a duration that does not move is indistinguishable from a day
+ * that is not being recorded — the one thing an attendance screen must never
+ * be ambiguous about.
+ */
+test('a running day counts in seconds, so the screen is visibly alive', () => {
+  assert.equal(workedLabel(0, true), '0h 00m 00s');
+  assert.equal(workedLabel(1_000, true), '0h 00m 01s');
+  assert.equal(workedLabel(59_000, true), '0h 00m 59s');
+  assert.equal(workedLabel(60_000, true), '0h 01m 00s');
+});
+
+test('a closed day drops the seconds, because it is a total and not a clock', () => {
+  assert.equal(workedLabel(5 * 3_600_000 + 48 * 60_000 + 12_000, false), '5h 48m');
+  assert.equal(workedLabel(5 * 3_600_000 + 48 * 60_000 + 12_000, true), '5h 48m 12s');
+});
+
+test('minutes and seconds are padded, hours are not', () => {
+  /* 9h 05m 03s, never 9h 5m 3s — a column of times that changes width as it
+     ticks is the thing the eye reads as flicker. Hours are unpadded because
+     a day is not a wall clock and "09h" would be claiming otherwise. */
+  assert.equal(workedLabel(9 * 3_600_000 + 5 * 60_000 + 3_000, true), '9h 05m 03s');
+  assert.equal(workedLabel(10 * 3_600_000, true), '10h 00m 00s');
+});
+
+test('a day over twelve hours keeps counting rather than wrapping', () => {
+  /* The obvious mistake is a modulo on the hours, which would turn a long
+     day into a short one — and a salesman who worked thirteen hours reading
+     "1h 00m" would be right to stop trusting the screen. */
+  assert.equal(workedLabel(13 * 3_600_000 + 7 * 60_000, true), '13h 07m 00s');
+  assert.equal(workedLabel(25 * 3_600_000, false), '25h 00m');
+});
+
+test('a negative span reads as zero rather than as a minus sign', () => {
+  /* Reachable: a check-out before its check-in is a clock somebody changed,
+     and `deriveStatus` already treats that as unreadable rather than as
+     negative time. The label agrees rather than printing "-0h 01m". */
+  assert.equal(workedLabel(-5_000, true), '0h 00m 00s');
+  assert.equal(workedLabel(-5_000, false), '0h 00m');
+});
+
+test('a fraction of a second never rounds a minute up early', () => {
+  /* 59.9 seconds is still 59 seconds. Rounding here would make the counter
+     skip from 58s to 00s and look like it had lost a second. */
+  assert.equal(workedLabel(59_900, true), '0h 00m 59s');
+  assert.equal(workedLabel(3_599_999, true), '0h 59m 59s');
+  assert.equal(workedLabel(3_600_000, true), '1h 00m 00s');
 });

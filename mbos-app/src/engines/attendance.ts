@@ -150,3 +150,23 @@ function describe(minutes: number): string {
   if (h === 0) return `${m}m`;
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
+
+/**
+ * `5h 48m 12s` while the day is open, `5h 48m` once it is closed.
+ *
+ * Here rather than beside the screen that draws it, because it is pure and
+ * everything pure in this app is testable without a handset — and because the
+ * seconds are a rule rather than a flourish. They are not precision anybody
+ * needs; they are the only thing on the screen that proves the number is
+ * live. A closed day drops them deliberately: a total that ticks would
+ * suggest the clock is still running when it is not, which is the more
+ * expensive of the two lies.
+ */
+export function workedLabel(ms: number, running: boolean): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const hm = `${h}h ${String(m).padStart(2, '0')}m`;
+  return running ? `${hm} ${String(s).padStart(2, '0')}s` : hm;
+}
