@@ -8,6 +8,7 @@ import { BottomSheet } from '../src/components/ui/overlays';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
 import { distanceLabel, inr, isoDate, plural, pretty, shopName } from '../src/lib/format';
+import { reorderLabel, reorderState } from '../src/engines/leads';
 import { callNumber, openMaps, openWhatsApp } from '../src/lib/messaging';
 import {
   accountType,
@@ -19,7 +20,13 @@ import {
   listCustomersPage,
   type Customer,
 } from '../src/data/customers';
-import { CUSTOMER_PAGE, metresFromDist2, type Origin } from '../src/data/customer-query';
+import {
+  CUSTOMER_PAGE,
+  metresFromDist2,
+  type BookView,
+  type Origin,
+} from '../src/data/customer-query';
+import { ShopMap } from '../src/components/ui/shop-map';
 import { whereNow } from '../src/native/where';
 
 /**
@@ -68,6 +75,21 @@ export default function Customers() {
   const [hasMore, setHasMore] = React.useState(false);
   const [loadingMore, setLoadingMore] = React.useState(false);
   const [today] = React.useState(() => isoDate(new Date()));
+  /*
+   * WHICH HALF OF THE BOOK. Customers, leads, or both.
+   *
+   * It is a VIEW and not a scope: all three show only his own, and a territory
+   * has already narrowed them to where he works. Nothing here reaches another
+   * salesman's book.
+   */
+  const [view, setView] = React.useState<BookView>('all');
+  /*
+   * LIST OR MAP, and the tap means a different thing on each SCREEN rather than
+   * on each mode: here it opens the record, and on the journey screen the same
+   * component adds a stop. The component takes the handler rather than deciding,
+   * so neither screen has to know about the other.
+   */
+  const [asMap, setAsMap] = React.useState(false);
 
   /* ------------------------------------------------- where to measure from
    *
@@ -128,7 +150,7 @@ export default function Customers() {
   useFocusEffect(
     React.useCallback(() => {
       let live = true;
-      void listCustomersPage({ query: custQ, origin }).then((p) => {
+      void listCustomersPage({ query: custQ, origin, view }).then((p) => {
         if (!live) return;
         setRows(p.rows);
         setTotal(p.total);
@@ -137,7 +159,7 @@ export default function Customers() {
       return () => {
         live = false;
       };
-    }, [custQ, origin]),
+    }, [custQ, origin, view]),
   );
 
   /* Load more APPENDS, and asks for the page after what is on screen — never
@@ -147,7 +169,7 @@ export default function Customers() {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     try {
-      const p = await listCustomersPage({ query: custQ, origin, offset: rows.length });
+      const p = await listCustomersPage({ query: custQ, origin, view, offset: rows.length });
       setRows((prev) => [...prev, ...p.rows]);
       setTotal(p.total);
       setHasMore(p.hasMore);
@@ -237,6 +259,66 @@ export default function Customers() {
         </Pressable>
       </View>
 
+      {/* LIST OR MAP. One tap, always visible, and the state is obvious from
+          which side is filled — a map hidden behind a menu is one nobody finds. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
+        {([
+          { key: false, label: 'List' },
+          { key: true, label: 'Map' },
+        ] as const).map((chip) => {
+          const on = asMap === chip.key;
+          return (
+            <Pressable
+              key={String(chip.key)}
+              onPress={() => setAsMap(chip.key)}
+              style={{
+                paddingHorizontal: 14,
+                paddingVertical: 7,
+                borderRadius: radius.sm,
+                borderWidth: 1,
+                borderColor: on ? C.ink : C.border,
+                backgroundColor: on ? C.ink : C.surface,
+              }}>
+              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
+                {chip.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {/* WHICH HALF. A view, never a scope — all three show only his own book,
+          already narrowed to the territory he works. Drawn beside "where from"
+          rather than buried in the filter sheet because it changes what the
+          list IS, and a list whose subject is hidden behind a menu is one people
+          misread. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
+        {([
+          { key: 'all', label: 'Everything' },
+          { key: 'customers', label: 'Customers' },
+          { key: 'leads', label: 'Leads' },
+        ] as const).map((chip) => {
+          const on = view === chip.key;
+          return (
+            <Pressable
+              key={chip.key}
+              onPress={() => setView(chip.key)}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 7,
+                borderRadius: radius.sm,
+                borderWidth: 1,
+                borderColor: on ? C.ink : C.border,
+                backgroundColor: on ? C.ink : C.surface,
+              }}>
+              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
+                {chip.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       {/* WHERE FROM. Three chips rather than a menu: it is one tap, it is
           always visible, and the one in use is the answer to "why is this shop
           at the top". */}
@@ -309,8 +391,32 @@ export default function Customers() {
         </Card>
       ) : null}
 
+      {/* THE MAP. Only the loaded page is drawn, deliberately: the list pages
+          fifteen at a time and a map that quietly showed the whole book would
+          disagree with the count above it. The sentence under the map says what
+          could not be placed. */}
+      {asMap && rows.length ? (
+        <View style={{ marginTop: 12 }}>
+          <ShopMap
+            pins={rows.map((x) => ({
+              id: x.id,
+              name: x.name,
+              lat: x.gpsLat ?? NaN,
+              lng: x.gpsLng ?? NaN,
+            }))}
+            /* HERE a tap opens the record. On the journey screen the same
+               component adds a stop — the difference lives in the caller, so
+               neither screen knows about the other. */
+            onPress={(pin) => {
+              set({ custId: pin.id, pTab: 0 });
+              router.push('/customer');
+            }}
+          />
+        </View>
+      ) : null}
+
       <View style={{ gap: 12, marginTop: 8 }}>
-        {rows.map((x) => {
+        {asMap ? null : rows.map((x) => {
           /* Rupees at the point of display, paise everywhere behind it. */
           const dues = x.outstandingPaise / 100;
           const stage = customerStage(x);
@@ -361,6 +467,29 @@ export default function Customers() {
                   ' · ordered ' +
                   pretty(x.lastOrderDate)}
               </Text>
+
+              {/* §P — due to reorder, on the customer's OWN measured rhythm.
+                  Derived on the phone from two columns every row already
+                  carries, so it is right in a market lane with no signal.
+                  Above the status row rather than inside it: the status is what
+                  the account IS, this is what to do about it today. */}
+              {reorderLabel(x.lastOrderDate, x.cycleDays, today) ? (
+                <Text
+                  style={[
+                    {
+                      fontSize: 14,
+                      lineHeight: 20,
+                      marginTop: 4,
+                      color:
+                        reorderState(x.lastOrderDate, x.cycleDays, today) === 'overdue'
+                          ? C.danger
+                          : C.warnInk,
+                    },
+                    weight(500),
+                  ]}>
+                  {reorderLabel(x.lastOrderDate, x.cycleDays, today)}
+                </Text>
+              ) : null}
 
               <View
                 style={{

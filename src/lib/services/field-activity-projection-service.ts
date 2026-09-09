@@ -2,7 +2,7 @@ import "server-only";
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { sheetFieldActivityRows } from "@/db/schema";
-import { writeTimelineEvents, type TimelineEventInput } from "@/lib/timeline";
+import { MBOS_EVENT, writeTimelineEvents, type TimelineEventInput } from "@/lib/timeline";
 
 /* ---------------------------------------------------------------------------
  * Matched rows -> `timeline_events`, which is how this backfill reaches a
@@ -18,7 +18,14 @@ import { writeTimelineEvents, type TimelineEventInput } from "@/lib/timeline";
  * sentence is what actually discloses this is history, not a live check-in.
  * ------------------------------------------------------------------------- */
 
-const EVENT_TYPE = "visit";
+/*
+ * Through the constant, not as a second copy of the string. The comment above
+ * turns on this being the SAME value MBOS check-ins write, and two literals
+ * that must match is exactly the pair a rename splits — silently, since the
+ * natural key would then never collide and the backfill would grow a duplicate
+ * stream nothing deduplicates.
+ */
+const EVENT_TYPE = MBOS_EVENT.visit;
 const SOURCE_APP = "mbos" as const;
 const BATCH = 500;
 

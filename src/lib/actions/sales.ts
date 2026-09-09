@@ -15,7 +15,7 @@ import {
   mbosDocuments,
   mbosHolidays,
   mbosLeaveRequests,
-  mbosManagerTerritories,
+  mbosUserTerritories,
   mbosJourneyPlans,
   mbosJourneyStops,
   mbosPriceList,
@@ -33,6 +33,12 @@ import { calendarDate } from "@/lib/business-date";
 import { fieldBook, managerScope, onlyMine } from "@/lib/services/sales-service";
 import type { DocumentCategory } from "@/lib/mbos/library-labels";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
+import {
+  setWorkingTerritories,
+  territoriesFor,
+  TERRITORY_KINDS,
+  type TerritoryKind,
+} from "@/lib/services/territory-service";
 import { notifyUsers } from "../notify";
 
 /** Count, noun and verb agree at every value. */
@@ -1184,6 +1190,92 @@ export async function withdrawScheme(id: string): Promise<Result> {
  * widest scope there is, so it is stated rather than arrived at by unticking
  * the last box without noticing.
  */
+/**
+ * Where a salesman WORKS — the cities and beats his book narrows to.
+ *
+ * A different act from `setManagerTerritories` below, and deliberately its own
+ * action rather than a mode of it. That one sets a manager's oversight patch,
+ * which decides which SALESMEN a console shows; this narrows which CUSTOMERS a
+ * handset shows. One function behind one capability doing two jobs is how the
+ * more generous answer ends up applying to both.
+ *
+ * `people.manage` rather than a new capability: deciding where somebody works
+ * is the same kind of act as deciding who they report to, and it is already the
+ * gate on this screen.
+ */
+export async function setSalesmanTerritories(input: {
+  salesmanId: string;
+  territories: { kind: string; value: string }[];
+}): Promise<Result<void>> {
+  try {
+    const user = await requireSales();
+
+    const [person] = await db
+      .select({ id: users.id, name: users.name })
+      .from(users)
+      .where(eq(users.id, input.salesmanId))
+      .limit(1);
+    if (!person) return err("That account is not on MahekOne.", "not_found");
+
+    /* Only the kinds this screen owns. A `region` arriving here would clear a
+       manager's patch as a side effect of allocating a salesman a city — see
+       `setWorkingTerritories`, which refuses them for the same reason. */
+    const wanted = input.territories
+      .filter((t) => t.kind !== "region" && t.value.trim())
+      .map((t) => ({ kind: t.kind as TerritoryKind, value: t.value.trim() }));
+
+    const bad = wanted.filter(
+      (t) => !(TERRITORY_KINDS as readonly string[]).includes(t.kind),
+    );
+    if (bad.length) {
+      return err(`Not a kind of place: ${bad.map((b) => b.kind).join(", ")}.`, "validation");
+    }
+
+    const before = await territoriesFor(input.salesmanId);
+    const key = (t: { kind: string; value: string }) => `${t.kind}:${t.value.toLowerCase()}`;
+    const had = before.filter((t) => t.kind !== "region").map(key).sort();
+    const now = wanted.map(key).sort();
+    if (JSON.stringify(had) === JSON.stringify(now)) return okVoid("Nothing changed.");
+
+    await setWorkingTerritories(input.salesmanId, wanted, user.id);
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.salesman.territories",
+      entityType: "user",
+      entityId: input.salesmanId,
+      beforeState: { territories: had } as never,
+      afterState: { territories: now } as never,
+    });
+
+    /*
+     * His book changes under him, and a book that shrinks silently reads as a
+     * broken sync — which is the report the office gets rather than a question
+     * about territory.
+     */
+    await tell(
+      input.salesmanId,
+      wanted.length ? "Where you work has changed" : "You now see your whole book",
+      wanted.length
+        ? `Your handset now shows your customers in ${wanted.map((t) => t.value).join(", ")}. Everything else is still yours — it is just not on this list.`
+        : "No territory is set for you any more, so your handset shows every customer of yours again.",
+    );
+
+    revalidatePath("/sales/people");
+    return okVoid(
+      wanted.length
+        ? `${person.name} works ${wanted.map((t) => t.value).join(", ")}.`
+        : `${person.name} sees their whole book.`,
+    );
+  } catch (e) {
+    return err(
+      e instanceof Error ? e.message : "That could not be saved.",
+      "validation",
+    );
+  }
+}
+
 export async function setManagerTerritories(input: {
   managerId: string;
   regions: string[];
@@ -1200,10 +1292,18 @@ export async function setManagerTerritories(input: {
 
     const wanted = [...new Set(input.regions.map((r) => r.trim()).filter(Boolean))].sort();
 
+    /* REGIONS ONLY. This action sets a manager's oversight patch, and the
+       table now also holds a salesman's working cities — deleting by user id
+       alone would wipe those as a side effect of editing a region. */
     const before = await db
-      .select({ region: mbosManagerTerritories.region })
-      .from(mbosManagerTerritories)
-      .where(eq(mbosManagerTerritories.userId, input.managerId));
+      .select({ region: mbosUserTerritories.region })
+      .from(mbosUserTerritories)
+      .where(
+        and(
+          eq(mbosUserTerritories.userId, input.managerId),
+          eq(mbosUserTerritories.kind, "region"),
+        ),
+      );
     const had = before.map((b) => b.region).sort();
 
     if (JSON.stringify(had) === JSON.stringify(wanted)) {
@@ -1212,13 +1312,19 @@ export async function setManagerTerritories(input: {
 
     await db.transaction(async (tx) => {
       await tx
-        .delete(mbosManagerTerritories)
-        .where(eq(mbosManagerTerritories.userId, input.managerId));
+        .delete(mbosUserTerritories)
+        .where(
+          and(
+            eq(mbosUserTerritories.userId, input.managerId),
+            eq(mbosUserTerritories.kind, "region"),
+          ),
+        );
       if (wanted.length) {
-        await tx.insert(mbosManagerTerritories).values(
+        await tx.insert(mbosUserTerritories).values(
           wanted.map((region) => ({
             id: gen("mt"),
             userId: input.managerId,
+            kind: "region",
             region,
             createdById: user.id,
           })),

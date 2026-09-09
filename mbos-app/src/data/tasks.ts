@@ -14,6 +14,10 @@ export type Task = {
   completionNote: string | null;
   snoozeHistory: string | null;
   escalated: number;
+  /** What KIND of work this is — `lead_validation`, `requirement_visit`,
+   *  `rejected_order` — so the list can open the screen that answers it. */
+  sourceType: string | null;
+  sourceId: string | null;
   syncState: string;
 };
 

@@ -1,6 +1,8 @@
 import { all, one, run } from '../db';
 import { isoDate } from '../lib/format';
 import { enqueue } from '../sync/queue';
+import { pickOrigin } from '../engines/route';
+import { haversineMetres } from '../engines/geo';
 
 /**
  * The day's route.
@@ -255,20 +257,70 @@ export const PICK_PAGE = 60;
  * page, because a shop ticked, then searched past, then found again outside
  * the cap would come back with its number gone — and the number IS the plan.
  */
+/**
+ * The shops a salesman may pick for an agreed day.
+ *
+ * THIS FUNCTION CARRIES TWO SEPARATE PIECES OF WORK and they meet here.
+ *
+ * From the cap: the read is LIMITed. The whole book drawn at once is what
+ * stopped this screen answering — 1,076 shops mounted as native views in one
+ * pass — so `PICK_PAGE` bounds it, `total` says what the list is a slice of,
+ * and already-ticked shops are fetched separately so one ticked, searched past
+ * and found again never comes back with its number gone. The number IS the
+ * plan: it is the order he means to walk.
+ *
+ * From the day's picking, on Mahek's instruction, reversing two things this
+ * file used to argue for:
+ *
+ *   The agreed city is a HARD FILTER. It used to rise to the top without
+ *   filtering, on the reasoning that a man going to Nagpur often has one call
+ *   to make on the way. A day is a city; that call is added from the customers
+ *   list or made unplanned with a deviation reason, which is what that field
+ *   exists for.
+ *
+ *   The sort is NEAREST. It was "who you have not seen longest", which answers
+ *   a real question — but a man filling a Tuesday morning in one town is
+ *   choosing a walking order.
+ *
+ * THE FILTER MOVED INTO SQL because of the cap. Filtering by city in JavaScript
+ * after a LIMIT of sixty would page the wrong sixty: the read would take the
+ * sixty least-recently-seen shops in the BOOK and then discard whichever were
+ * not in the city, so a salesman could open a Nagpur day and be shown four
+ * shops out of the eighty there are. The two changes are only compatible in
+ * this order.
+ *
+ * WHAT NEAREST IS MEASURED FROM is `pickOrigin`: today, where he stands; any
+ * other day, the middle of our shops in that city — he plans tomorrow at home,
+ * and sorting Wardha from a sofa in Nagpur puts the list upside down. With no
+ * origin at all it keeps the query's own ordering rather than inventing a
+ * point, because a list sorted around a made-up origin looks right and is
+ * wrong.
+ */
 export async function pickCandidates(
   city: string | null,
   query = '',
   keep: string[] = [],
+  opts: { forToday?: boolean; fix?: { lat: number; lng: number } | null } = {},
 ): Promise<{ rows: Candidate[]; total: number }> {
   const q = query.trim().toLowerCase();
-  const like = `%${q}%`;
-  const where = q
-    ? `WHERE lower(name) LIKE ? OR lower(COALESCE(area,'')) LIKE ? OR lower(COALESCE(city,'')) LIKE ?`
-    : '';
-  const args: string[] = q ? [like, like, like] : [];
+  const here = (city ?? '').trim().toLowerCase();
+
+  const clauses: string[] = [];
+  const args: string[] = [];
+  if (here) {
+    clauses.push(`lower(trim(COALESCE(city,''))) = ?`);
+    args.push(here);
+  }
+  if (q) {
+    clauses.push(`(lower(name) LIKE ? OR lower(COALESCE(area,'')) LIKE ?)`);
+    args.push(`%${q}%`, `%${q}%`);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
   const COLS = `id, name, area, city, beat, outstandingPaise, lastVisitDate, lastOrderDate, gpsLat, gpsLng`;
 
+  /* Asked of SQLite rather than of the array. A capped list that counts itself
+     reports sixty shops on a book of a thousand and nothing says otherwise. */
   const counted = await one<{ n: number }>(`SELECT COUNT(*) AS n FROM customers ${where}`, args);
 
   const page = await all<Candidate>(
@@ -279,7 +331,9 @@ export async function pickCandidates(
     args,
   );
 
-  /* The ticked ones, whether or not the page or the search reached them. */
+  /* Already-ticked shops are never cut. A shop ticked, then searched past, then
+     found again outside the cap would come back with its number gone — and the
+     number IS the plan, because it is the order he means to walk. */
   const missing = keep.filter((id) => !page.some((r) => r.id === id));
   const held = missing.length
     ? await all<Candidate>(
@@ -291,17 +345,26 @@ export async function pickCandidates(
   const rows = [...held, ...page];
   const total = counted?.n ?? rows.length;
 
-  if (!city) return { rows, total };
-  const here = city.trim().toLowerCase();
-  /* Sorted in JavaScript rather than in SQL, so the ordering above is stated
-     once and the city only lifts a group of it. */
-  return {
-    rows: [
-      ...rows.filter((r) => (r.city ?? '').trim().toLowerCase() === here),
-      ...rows.filter((r) => (r.city ?? '').trim().toLowerCase() !== here),
-    ],
-    total,
-  };
+  const origin = pickOrigin({
+    fix: opts.fix ?? null,
+    forToday: opts.forToday ?? false,
+    cityShops: rows
+      .filter((r) => r.gpsLat != null && r.gpsLng != null)
+      .map((r) => ({ lat: r.gpsLat as number, lng: r.gpsLng as number })),
+  });
+
+  if (!origin) return { rows, total };
+
+  /* A shop with no pin cannot be measured and sorts LAST rather than being
+     dropped — the route engine's rule, for its reason: a shop missing from the
+     day's list is a shop nobody visits and nobody ever finds out why. */
+  const far = Number.POSITIVE_INFINITY;
+  const away = (r: Candidate) =>
+    r.gpsLat != null && r.gpsLng != null
+      ? haversineMetres(origin, { lat: r.gpsLat, lng: r.gpsLng })
+      : far;
+
+  return { rows: [...rows].sort((x, y) => away(x) - away(y)), total };
 }
 
 /**

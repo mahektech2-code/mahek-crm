@@ -353,20 +353,38 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       notes?: string | null;
       convertedCustomerId?: string | null;
       lastActivityDate?: string | null;
+      /* Sent since leads existed and dropped on the floor until v13 gave this
+         table somewhere to put them — a lead map with no coordinates. */
+      gpsLat?: number | null;
+      gpsLng?: number | null;
+      /* The coordinating seat, and the name beside it. Reference data: it does
+         not move the lead out of this salesman's book. */
+      leadManagerId?: string | null;
+      leadManagerName?: string | null;
+      /* Counted by the office over every visit, not just this phone's — see
+         `visitsHere`, which adds what has not synced yet. */
+      visitCount?: number | null;
+      holdReason?: string | null;
     };
     await run(
       `INSERT INTO leads (id, name, company, mobile, city, source, estimatedPotentialPaise,
                           assigneeId, stage, nextFollowUpDate, notes, convertedCustomerId,
-                          archived, lastActivityDate, clientCreatedAt, serverCreatedAt,
-                          deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, 'server', 'synced')
+                          archived, lastActivityDate, gpsLat, gpsLng,
+                          leadManagerId, leadManagerName, visitCount, holdReason,
+                          clientCreatedAt, serverCreatedAt, deviceId, syncState)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name, company = excluded.company, mobile = excluded.mobile,
          city = excluded.city, source = excluded.source,
          estimatedPotentialPaise = excluded.estimatedPotentialPaise,
          stage = excluded.stage, nextFollowUpDate = excluded.nextFollowUpDate,
          convertedCustomerId = excluded.convertedCustomerId,
-         lastActivityDate = excluded.lastActivityDate
+         lastActivityDate = excluded.lastActivityDate,
+         gpsLat = excluded.gpsLat, gpsLng = excluded.gpsLng,
+         leadManagerId = excluded.leadManagerId,
+         leadManagerName = excluded.leadManagerName,
+         visitCount = excluded.visitCount,
+         holdReason = excluded.holdReason
        WHERE leads.syncState = 'synced'`,
       [
         l.id,
@@ -384,6 +402,12 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         localNotes(l.notes, now),
         l.convertedCustomerId ?? null,
         l.lastActivityDate ?? null,
+        l.gpsLat ?? null,
+        l.gpsLng ?? null,
+        l.leadManagerId ?? null,
+        l.leadManagerName ?? null,
+        l.visitCount ?? 0,
+        l.holdReason ?? null,
         now,
         now,
       ],
@@ -409,19 +433,40 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
       followUpDate?: string | null;
       feedbackNotes?: string | null;
       convertedOrderId?: string | null;
+      /* The lifecycle, §I–§K. `receivedAt` is the shop's own word and is what
+         the review call is dated from — never inferred from `deliveredAt`. */
+      dispatchedAt?: string | null;
+      courierName?: string | null;
+      trackingNumber?: string | null;
+      receivedAt?: string | null;
+      trialStartedAt?: string | null;
+      trialCompletedAt?: string | null;
+      satisfaction?: string | null;
+      additionalRequirement?: string | null;
+      rejectionReason?: string | null;
     };
     await run(
       `INSERT INTO samples (id, customerId, productId, productName, cans, reason,
                             requestedAt, state, deliveredAt, deliveryPhotoId, trialOutcome,
-                            followUpDate, convertedOrderId, clientCreatedAt, serverCreatedAt,
-                            deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
+                            followUpDate, convertedOrderId,
+                            dispatchedAt, courierName, trackingNumber, receivedAt,
+                            trialStartedAt, trialCompletedAt, satisfaction,
+                            additionalRequirement, rejectionReason,
+                            clientCreatedAt, serverCreatedAt, deviceId, syncState)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          productId = excluded.productId, productName = excluded.productName,
          cans = excluded.cans, reason = excluded.reason, state = excluded.state,
          deliveredAt = excluded.deliveredAt, deliveryPhotoId = excluded.deliveryPhotoId,
          trialOutcome = excluded.trialOutcome, followUpDate = excluded.followUpDate,
-         convertedOrderId = excluded.convertedOrderId
+         convertedOrderId = excluded.convertedOrderId,
+         dispatchedAt = excluded.dispatchedAt, courierName = excluded.courierName,
+         trackingNumber = excluded.trackingNumber, receivedAt = excluded.receivedAt,
+         trialStartedAt = excluded.trialStartedAt,
+         trialCompletedAt = excluded.trialCompletedAt,
+         satisfaction = excluded.satisfaction,
+         additionalRequirement = excluded.additionalRequirement,
+         rejectionReason = excluded.rejectionReason
        WHERE samples.syncState = 'synced'`,
       [
         s.id,
@@ -442,6 +487,18 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
         s.trialOutcome ?? null,
         s.followUpDate ?? null,
         s.convertedOrderId ?? null,
+        /* Instants off the wire. `localInstant` is already imported here for
+           `deliveredAt` — a date-only string parses as UTC and lands five and a
+           half hours before the day it names. */
+        s.dispatchedAt ? localInstant(s.dispatchedAt) : null,
+        s.courierName ?? null,
+        s.trackingNumber ?? null,
+        s.receivedAt ? localInstant(s.receivedAt) : null,
+        s.trialStartedAt ? localInstant(s.trialStartedAt) : null,
+        s.trialCompletedAt ? localInstant(s.trialCompletedAt) : null,
+        s.satisfaction ?? null,
+        s.additionalRequirement ?? null,
+        s.rejectionReason ?? null,
         now,
         now,
       ],
@@ -465,6 +522,9 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
       customerId?: string | null;
       status: string;
       completionNote?: string | null;
+      /* What KIND of work this is, so the list can open the right screen. */
+      sourceType?: string | null;
+      sourceId?: string | null;
       completionPhotoId?: string | null;
       snoozedTo?: string | null;
       snoozeReason?: string | null;
@@ -477,13 +537,15 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
     await run(
       `INSERT INTO tasks (id, title, description, assigneeId, assignerId, priority, dueDate,
                           customerId, status, completionNote, completionPhotoId, snoozeHistory,
+                          sourceType, sourceId,
                           escalated, clientCreatedAt, serverCreatedAt, deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'server', 'synced')
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          title = excluded.title, description = excluded.description,
          priority = excluded.priority, dueDate = excluded.dueDate, customerId = excluded.customerId,
          status = excluded.status, completionNote = excluded.completionNote,
          completionPhotoId = excluded.completionPhotoId, escalated = excluded.escalated,
+         sourceType = excluded.sourceType, sourceId = excluded.sourceId,
          syncState = 'synced'`,
       [
         t.id,
@@ -498,6 +560,8 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
         t.completionNote ?? null,
         t.completionPhotoId ?? null,
         snoozeHistory,
+        t.sourceType ?? null,
+        t.sourceId ?? null,
         t.escalatedAt ? 1 : 0,
         now,
       ],

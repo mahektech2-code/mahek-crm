@@ -2287,6 +2287,106 @@ export const SETTINGS = [
     min: 1,
     max: 90,
   },
+  {
+    key: "mbos.leads.visitsBeforeDecision",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Warn about a Suspect after",
+    description:
+      "Visits to a lead that is still a Suspect before the handset starts asking the salesman to decide. A warning, never a refusal — he is told the next visit needs an answer, and the visit itself is never blocked.",
+    default: 2,
+    min: 1,
+    max: 10,
+  },
+  {
+    key: "mbos.leads.maxSuspectVisits",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Suspect decision required at",
+    description:
+      "The visit on which a Prospect-or-not answer becomes mandatory before the visit can be closed. It does NOT stop the visit being made or recorded — a cap that refuses the save is a cap that produces unlogged visits, and the company loses the GPS, the competitor note and the reason to prevent a number reaching four. Beyond it the lead is escalated to the manager instead.",
+    default: 3,
+    min: 1,
+    max: 10,
+  },
+
+  {
+    key: "mbos.leads.validationScript",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Validation call script",
+    description:
+      "What the caller reads out and asks on the Prospect validation call. Configuration rather than code because it is CONTENT — the wording will be argued about, improved after a bad call, and translated, and none of that should need a deploy. Each section is a heading and the lines under it; the caller sees them in this order, on the handset and in the console.",
+    default: {
+      sections: [
+        {
+          heading: "Introduce yourself — 30 seconds",
+          lines: [
+            "Good morning, my name is ___ from Mahek Marketing India.",
+            "I look after this area with ___, who came to see you on ___.",
+            "Is this a good moment, or shall I call back?",
+          ],
+        },
+        {
+          heading: "Introduce the company — 30 seconds",
+          lines: [
+            "We make thinners and coatings and supply shops and factories across the region.",
+            "We deliver ourselves, and we can hold stock for a regular customer.",
+          ],
+        },
+        {
+          heading: "Check the visit",
+          lines: [
+            "Did our man explain the products clearly?",
+            "What did you make of the quality?",
+            "Any thoughts on how we dispatch and how quickly?",
+            "And was he alright with you — anything we should know?",
+          ],
+        },
+        {
+          heading: "Confirm what they need",
+          lines: [
+            "What is it you are actually looking for?",
+            "Roughly how much do you get through in a month?",
+            "Who are you buying from at the moment?",
+          ],
+        },
+      ],
+    },
+  },
+
+  {
+    key: "mbos.samples.reviewAfterDays",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Sample review call after",
+    description:
+      "Days after the customer CONFIRMS they have the sample before the review call is due. Dated from confirmed receipt and never from dispatch: a review timed from the day we posted it rings somebody still waiting for the parcel, and that call teaches them we do not know where our own stock is.",
+    default: 3,
+    min: 1,
+    max: 30,
+  },
+
+  {
+    key: "mbos.location.nearbyRadiusOptions",
+    type: "structured",
+    category: "mbos-location",
+    label: "Nearby search radii",
+    description:
+      "The distances the handset offers when a salesman asks what is near him, in metres. Configuration because a city beat and a district tour do not mean the same thing by 'nearby' — five kilometres is the next lane in Nagpur and half a day in Vidarbha.",
+    default: { metres: [1000, 3000, 5000, 10000, 25000] },
+  },
+  {
+    key: "mbos.location.nearbyPerKilometreCost",
+    type: "integer",
+    category: "mbos-location",
+    label: "What a kilometre is worth",
+    description:
+      "How much a kilometre of travel counts AGAINST a reason to visit, when the handset orders what is nearby. This is the whole trade-off in one number: raise it and the list stays local, lower it and a good reason will send somebody across town. It is configuration and not a constant because a kilometre on a two-wheeler through a market and a kilometre on a district tour are not the same kilometre.",
+    default: 12,
+    min: 0,
+    max: 200,
+  },
 
   /* --------------------------------------------------------------- tasks */
   {
@@ -2711,6 +2811,18 @@ export function checkConsistency(config: Config): string[] {
   const staleDays = config["mbos.leads.staleDays"];
   const archiveDays = config["mbos.leads.archiveDays"];
   const escalateDays = config["mbos.leads.escalateAfterDays"];
+  /*
+   * The warning has to come BEFORE the decision is demanded, or it is not a
+   * warning. Equal is allowed and means "no warning" — a team that wants the
+   * answer on the second visit with no build-up can say so.
+   */
+  const warnAt = config["mbos.leads.visitsBeforeDecision"];
+  const decideAt = config["mbos.leads.maxSuspectVisits"];
+  if (warnAt > decideAt) {
+    problems.push(
+      `A Suspect decision is demanded on visit ${decideAt} but the warning does not start until visit ${warnAt}. The salesman would be asked for an answer he was never told was coming.`,
+    );
+  }
   if (archiveDays <= staleDays) {
     problems.push(
       `Leads archive after ${archiveDays} days but only go stale at ${staleDays}. Archiving must come later, or a lead is filed away before anybody is told it needs working.`,
@@ -3032,6 +3144,14 @@ export type Config = {
   "mbos.leads.staleDays": number;
   "mbos.leads.archiveDays": number;
   "mbos.leads.escalateAfterDays": number;
+  "mbos.leads.visitsBeforeDecision": number;
+  "mbos.leads.maxSuspectVisits": number;
+  "mbos.samples.reviewAfterDays": number;
+  "mbos.location.nearbyRadiusOptions": { metres: number[] };
+  "mbos.location.nearbyPerKilometreCost": number;
+  "mbos.leads.validationScript": {
+    sections: { heading: string; lines: string[] }[];
+  };
 
   "mbos.tasks.escalationHours": number;
   "mbos.tasks.requireCompletionNote": boolean;

@@ -1077,6 +1077,169 @@ export const MIGRATIONS: string[][] = [
      */
     `ALTER TABLE attendance_days ADD COLUMN checkOutSelfieId TEXT;`,
   ],
+
+  /* ---- v16 · a lead has a place, and somebody running it ----------------- */
+  [
+    /*
+     * THE SERVER HAS BEEN SENDING THESE ALL ALONG.
+     *
+     * `openLeads` selects `gps_lat` and `gps_lng` on every bootstrap and every
+     * delta, and this table had nowhere to put them — so `upsert` dropped both
+     * columns on arrival, silently, exactly as it is designed to. That is the
+     * right trade in general: a field the screens cannot read costs nothing,
+     * and refusing the row would cost the book. Here it cost the one thing a
+     * lead map is made of. Every lead this handset holds has a coordinate on
+     * the server and none on the phone.
+     *
+     * Nothing else had to change for these to start landing. The generic
+     * upsert writes whatever it recognises; recognising it is the whole fix.
+     */
+    `ALTER TABLE leads ADD COLUMN gpsLat REAL;`,
+    `ALTER TABLE leads ADD COLUMN gpsLng REAL;`,
+    /*
+     * Who is running the conversion, once a lead is qualified.
+     *
+     * The salesman keeps the lead — it is still his to visit and it stays in
+     * his book — so this is read as information rather than as ownership. It
+     * is here so the card can say WHO to ring about a commercial question,
+     * offline, which is the only moment the answer is worth anything.
+     */
+    `ALTER TABLE leads ADD COLUMN leadManagerId TEXT;`,
+    `ALTER TABLE leads ADD COLUMN leadManagerName TEXT;`,
+  ],
+
+  /* ---- v17 · what the salesman actually learns in the shop --------------- */
+  [
+    /*
+     * §A and §C of the brief. The form asked for a name, a company, a mobile,
+     * a town and a guess at the money; these are the nine other things a
+     * salesman finds out while he is standing there, and had nowhere to write.
+     *
+     * `monthlyVolumeLitres` is LITRES and not cans, which is the one place
+     * this app departs from "a quantity is cans". There is no SKU at capture —
+     * a prospect says "about two hundred litres a month" before anybody knows
+     * what pack they will buy it in — so cans would be a unit nobody has
+     * agreed the size of.
+     */
+    `ALTER TABLE leads ADD COLUMN address TEXT;`,
+    `ALTER TABLE leads ADD COLUMN customerType TEXT;`,
+    `ALTER TABLE leads ADD COLUMN gstin TEXT;`,
+    `ALTER TABLE leads ADD COLUMN requirement TEXT;`,
+    `ALTER TABLE leads ADD COLUMN monthlyVolumeLitres INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN decisionMaker TEXT;`,
+    /*
+     * The shop front. An `attachments` id, never a path — the file goes up the
+     * media queue AFTER this row, exactly like a visit's shop photo, so this
+     * names a file whose bytes may still be on the phone.
+     */
+    `ALTER TABLE leads ADD COLUMN shopPhotoId TEXT;`,
+    /*
+     * A competitor, captured at the lead rather than only on a visit.
+     *
+     * The office holds this properly in `mbos_competitor_records`, with a
+     * price, credit days, strengths and weaknesses. Asking for all of that
+     * outside a shop with the customer waiting is how none of it gets typed —
+     * so the lead form asks the one question worth asking cold, and the visit
+     * form asks the rest.
+     */
+    `ALTER TABLE leads ADD COLUMN competitorName TEXT;`,
+  ],
+
+  /* ---- v18 · a Suspect cannot be visited for ever ----------------------- */
+  [
+    /*
+     * How many times anybody has stood in this shop, as the server counts it.
+     *
+     * Not derived on the handset: this phone holds only the visits IT authored
+     * — there is no visits channel on the pull — so after a reinstall, or for a
+     * lead somebody else has been to, a local count would read zero and the cap
+     * would never fire. The office counts, the handset adds whatever it has not
+     * managed to send yet, and that sum is the honest answer offline.
+     */
+    `ALTER TABLE leads ADD COLUMN visitCount INTEGER NOT NULL DEFAULT 0;`,
+    /*
+     * Why a held or stuck lead is not moving. One column for two questions
+     * that are the same question — see `customers.lead_hold_reason`.
+     */
+    `ALTER TABLE leads ADD COLUMN holdReason TEXT;`,
+  ],
+
+  /* ---- v19 · the validation call, and the script it is made from -------- */
+  [
+    /*
+     * §E. Its own table rather than columns on `leads`, for the reason the
+     * server gives at length: what the salesman was told and what the office
+     * was told on the phone are two readings of one shop, and the difference
+     * between them is the only thing this call produces that nothing else
+     * could. Writing the second over the first destroys exactly that.
+     */
+    `CREATE TABLE IF NOT EXISTS lead_validations (
+      id TEXT PRIMARY KEY,
+      customerId TEXT NOT NULL,
+      calledAt INTEGER NOT NULL,
+      reached INTEGER NOT NULL DEFAULT 1,
+      productFeedback TEXT,
+      qualityFeedback TEXT,
+      dispatchFeedback TEXT,
+      salesmanFeedback TEXT,
+      confirmedRequirement TEXT,
+      confirmedMonthlyVolumeLitres INTEGER,
+      confirmedCompetitor TEXT,
+      confirmedPotentialPaise INTEGER,
+      verdict TEXT NOT NULL DEFAULT 'pending',
+      verdictReason TEXT,
+      notes TEXT,
+      taskId TEXT,
+      clientCreatedAt INTEGER NOT NULL,
+      serverCreatedAt INTEGER,
+      deviceId TEXT NOT NULL,
+      syncState TEXT NOT NULL DEFAULT 'local',
+      syncMessage TEXT
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_lead_val_cust ON lead_validations(customerId, calledAt DESC);`,
+    /*
+     * WHY a task exists, which the handset had no way to know.
+     *
+     * The server has sent `sourceType`/`sourceId` on every task since the
+     * rejected-order rule was written, and `upsertTasks` — a hand-rolled
+     * handler that types its columns out — never read them, so they were
+     * dropped in silence. Harmless while every task was just a line of text;
+     * not harmless now, because a validation call and a requirement visit are
+     * tasks that have to OPEN something, and a task list with no idea what kind
+     * of work a row is can only ever show its title.
+     */
+    `ALTER TABLE tasks ADD COLUMN sourceType TEXT;`,
+    `ALTER TABLE tasks ADD COLUMN sourceId TEXT;`,
+  ],
+
+  /* ---- v20 · a sample, from the lorry to the verdict -------------------- */
+  [
+    /*
+     * §I, §J and §K. Three dates rather than one, because they are three
+     * assertions by three different parties and no two are the same fact:
+     * `dispatchedAt` is us saying it went, `deliveredAt` is the carrier or our
+     * own man saying it arrived, and `receivedAt` is the SHOP saying it is in
+     * their hands. §J turns entirely on the third — "sample received Yes/No; if
+     * No the follow-up remains pending" — and it is never defaulted from the
+     * second, because a default would quietly assert something nobody asked
+     * the customer.
+     *
+     * It is the same discipline `payment_receipts` keeps for money, one module
+     * over.
+     */
+    `ALTER TABLE samples ADD COLUMN dispatchedAt INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN courierName TEXT;`,
+    `ALTER TABLE samples ADD COLUMN trackingNumber TEXT;`,
+    `ALTER TABLE samples ADD COLUMN receivedAt INTEGER;`,
+    /* The gap between these two IS the review window. A trial started and never
+       finished is the commonest way a sample goes quiet, and it is invisible
+       where the only column is an outcome. */
+    `ALTER TABLE samples ADD COLUMN trialStartedAt INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN trialCompletedAt INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN satisfaction TEXT;`,
+    `ALTER TABLE samples ADD COLUMN additionalRequirement TEXT;`,
+    `ALTER TABLE samples ADD COLUMN rejectionReason TEXT;`,
+  ],
 ];
 
 /**

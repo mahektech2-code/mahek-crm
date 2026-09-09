@@ -24,6 +24,8 @@ import {
   mbosJourneyPlans,
   mbosJourneyStops,
   mbosCompetitorRecords,
+  mbosInternalNotes,
+  mbosLeadValidations,
   mbosLeaveRequests,
   mbosTours,
   mbosSamples,
@@ -38,7 +40,10 @@ import {
   users,
   type OrderLine,
 } from "@/db/schema";
-import { writeTimelineEvent, type TimelineWriter } from "../timeline";
+import { MBOS_EVENT, writeTimelineEvent, type TimelineWriter } from "../timeline";
+import { APP_TIMEZONE, calendarDate } from "../business-date";
+import { qualifyLead } from "../services/lead-qualification-service";
+import { convertLeadOnFirstOrder } from "../services/lead-conversion-service";
 import { scopedToUsers} from "../access-control";
 import { getConfig } from "../config/store";
 import { financialYearOf } from "../financial-year";
@@ -545,6 +550,8 @@ const DEPENDENCY_TABLES: Record<string, string> = {
    * every visit or order queued against a lead wait for a row that is never
    * written again — a retry loop with nothing at either end to explain it. */
   lead: "customers",
+  lead_validation: "mbos_lead_validations",
+  internal_note: "mbos_internal_notes",
   task: "mbos_tasks",
   expense: "mbos_expenses",
   attendance: "mbos_attendance_days",
@@ -719,6 +726,10 @@ async function dispatchItem(
       return handleTour(principal, item);
     case "competitor":
       return handleCompetitor(principal, item);
+    case "lead_validation":
+      return handleLeadValidation(principal, item);
+    case "internal_note":
+      return handleInternalNote(principal, item);
     case "approval":
       return handleApproval(principal, item);
     case "plan_day":
@@ -747,6 +758,10 @@ async function dispatchItem(
 type ScopedCustomer = {
   id: string;
   name: string;
+  /** Null on a real customer. Non-null means this record is still a lead. */
+  leadStage: string | null;
+  ownerId: string | null;
+  salesAmId: string | null;
   creditBlocked: boolean;
   creditBlockReason: string | null;
   creditLimitPaise: number | null;
@@ -778,6 +793,11 @@ async function scopedCustomer(
     .select({
       id: customers.id,
       name: customers.name,
+      leadStage: customers.leadStage,
+      /* Whose book it is, carried so a conversion can move the sales seat
+         through `assignedUserId` rather than re-deriving a fallback. */
+      ownerId: customers.ownerId,
+      salesAmId: customers.salesAmId,
       creditBlocked: customers.creditBlocked,
       creditBlockReason: customers.creditBlockReason,
       creditLimitPaise: customers.creditLimitPaise,
@@ -854,6 +874,32 @@ const visitSchema = z.object({
   wasPlanned: z.boolean().nullish(),
   deviationReason: z.string().max(500).nullish(),
   nextFollowUpDate: z.string().nullish(),
+  /*
+   * THE SUSPECT DECISION, answered on the visit that demanded it.
+   *
+   * `suspectDecision` is what the salesman chose — moving the lead on, or
+   * keeping it a Suspect — and `suspectReason` is why, which is mandatory for
+   * the second. They ride on the visit rather than on a separate lead update
+   * because the answer and the visit that prompted it are one act: sending
+   * them apart is how a visit lands with the decision lost to a failed second
+   * request.
+   */
+  suspectDecision: z
+    .enum(["contacted", "qualified", "on_hold", "lost", "still_suspect"])
+    .nullish(),
+  suspectReason: z.string().max(500).nullish(),
+  /*
+   * §G — what the requirement visit is FOR.
+   *
+   * The same three facts the lead form asks for, asked again by somebody
+   * standing in the shop with the price list in his hand. They overwrite the
+   * lead's own columns deliberately, unlike the validation call's `confirmed*`
+   * answers: this is the same person asking the same question better informed,
+   * not a second party's account of it.
+   */
+  requirement: z.string().max(1000).nullish(),
+  monthlyVolumeLitres: z.number().int().nonnegative().nullish(),
+  quantityCans: z.number().int().nonnegative().nullish(),
 });
 
 async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
@@ -866,6 +912,64 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   const customer = found.customer;
 
   const config = await getConfig();
+
+  /*
+   * A SUSPECT CANNOT BE VISITED FOR EVER, and the cap is a QUESTION rather
+   * than a refusal.
+   *
+   * §B asks for a maximum of three visits "enforced". Enforced as a block is
+   * the one shape this app must not use: `engines/geo.ts` states the principle
+   * the whole field product rests on — a reading is evidence, never a gate —
+   * because a salesman whose visit is refused stops recording visits, and the
+   * company loses the GPS, the competitor note and the reason in order to stop
+   * a number reaching four. The business outcome §B actually wants is that
+   * nobody keeps visiting a shop nobody has decided about, and that is bought
+   * by demanding an ANSWER, not by refusing the work.
+   *
+   * So: the visit is always saved. What is required at the cap is that the
+   * salesman says which way it goes — and if the answer is "still a Suspect",
+   * that he says why. Beyond the cap the lead escalates to the manager, which
+   * is where an undecidable lead belongs anyway.
+   *
+   * Only leads, and only leads still at the top of the ladder. A qualified
+   * prospect being visited a fourth time is a negotiation, not a stall.
+   */
+  const suspectStages = ["new", "contacted"];
+  /* The working day in Asia/Kolkata, for the lead's own staleness clock — a
+     visit is activity, so it has to move that date whichever way the decision
+     went. Read once here rather than inside the transaction. */
+  const day = await today();
+  if (customer.leadStage && suspectStages.includes(customer.leadStage)) {
+    const [seen] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(mbosVisits)
+      .where(eq(mbosVisits.customerId, customer.id));
+    /* The visit being saved is not in the table yet, so it is the next one. */
+    const thisVisit = Number(seen?.n ?? 0) + 1;
+    const decideAt = config["mbos.leads.maxSuspectVisits"];
+
+    if (thisVisit >= decideAt && !p.suspectDecision) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          `This is visit ${thisVisit} to ${customer.name} and they are still a Suspect. Say which way it goes before closing the visit — a prospect, on hold, or lost. The visit itself is recorded either way.`,
+        ),
+      };
+    }
+    if (
+      p.suspectDecision === "still_suspect" &&
+      !p.suspectReason?.trim()
+    ) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          `Keeping ${customer.name} as a Suspect after ${thisVisit} visits needs a reason. Somebody will ask why we are still going.`,
+        ),
+      };
+    }
+  }
 
   /* Verification is recorded, never enforced. A check-in 400 metres from the
    * shop's pin is not proof of anything — the pin may be wrong, the fix may be
@@ -957,7 +1061,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
 
     await writeTimeline(tx, {
       customerId: customer.id,
-      eventType: "visit",
+      eventType: MBOS_EVENT.visit,
       sourceRecordId: item.entityId,
       occurredAt: checkInAt,
       actorUserId: principal.user.id,
@@ -983,12 +1087,241 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
          where id = ${p.journeyPlanStopId}
       `);
     }
+
+    /*
+     * THE DECISION IS PART OF THE VISIT, so it is written in the visit's own
+     * transaction.
+     *
+     * A visit that saved and a decision that failed a moment later would leave
+     * the lead exactly where it was and the salesman believing he had answered
+     * — and the next visit would demand the same answer again. Half-saved
+     * calls are how telecaller data goes wrong; this is the same rule one app
+     * over.
+     */
+    /* §G. Written in the visit's own transaction for the same reason the
+       decision below is: a visit that saved and a requirement that did not
+       would send the salesman back for something he had already asked. */
+    if (
+      p.requirement != null ||
+      p.monthlyVolumeLitres != null ||
+      p.quantityCans != null
+    ) {
+      await tx
+        .update(customers)
+        .set({
+          ...(p.requirement != null ? { leadRequirement: p.requirement } : {}),
+          ...(p.monthlyVolumeLitres != null
+            ? { leadMonthlyVolumeLitres: p.monthlyVolumeLitres }
+            : {}),
+          leadLastActivityDate: day,
+          updatedAt: new Date(),
+        })
+        .where(eq(customers.id, customer.id));
+
+      /* §R. Keyed on the VISIT, so a requirement asked again on a later visit
+         is a second entry rather than one that overwrites the first — what they
+         said in March and what they say in September is a change worth seeing. */
+      await writeTimeline(tx, {
+        customerId: customer.id,
+        eventType: MBOS_EVENT.requirement,
+        sourceRecordId: item.entityId,
+        occurredAt: checkInAt,
+        actorUserId: principal.user.id,
+        summary: [
+          p.requirement?.trim(),
+          p.monthlyVolumeLitres ? `${p.monthlyVolumeLitres} litres a month` : null,
+          p.quantityCans ? `${p.quantityCans} cans to start` : null,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      });
+    }
+
+    if (p.suspectDecision) {
+      const stays = p.suspectDecision === "still_suspect";
+      await tx
+        .update(customers)
+        .set({
+          /* Staying a Suspect does not move the stage — it records why not.
+             Everything else is a real move along the ladder. */
+          ...(stays ? {} : { leadStage: p.suspectDecision as "contacted" }),
+          ...(p.suspectReason?.trim()
+            ? p.suspectDecision === "lost"
+              ? { leadLostReason: p.suspectReason.trim() }
+              : { leadHoldReason: p.suspectReason.trim() }
+            : {}),
+          leadLastActivityDate: day,
+          updatedAt: new Date(),
+        })
+        .where(eq(customers.id, customer.id));
+    }
   });
+
+  /*
+   * PAST THE CAP, THE MANAGER IS TOLD.
+   *
+   * This is the half of §B that a refusal was standing in for. A lead being
+   * visited a fourth time while still a Suspect is not a salesman to be
+   * blocked, it is a judgement somebody senior should look at — the shop may
+   * be worth the persistence, or the salesman may be walking a comfortable
+   * beat. Either way it is a conversation, and a conversation needs somebody
+   * to have been told.
+   *
+   * Outside the transaction and unable to fail the visit: a notification is a
+   * courtesy on top of a completed write, never a reason to lose one.
+   */
+  /* The same hook, from the other door. A lead qualified by answering the
+   * visit's own decision must start §D and §E exactly as one qualified from the
+   * lead screen does — a workflow that fires on one of two paths is a workflow
+   * salesmen learn not to rely on. */
+  if (p.suspectDecision === "qualified") {
+    await qualifyLead(customer.id, principal.user.id, customer.name).catch(() => {});
+  }
+
+  if (customer.leadStage && suspectStages.includes(customer.leadStage)) {
+    const decideAt = config["mbos.leads.maxSuspectVisits"];
+    const [after] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(mbosVisits)
+      .where(eq(mbosVisits.customerId, customer.id));
+    if (Number(after?.n ?? 0) > decideAt) {
+      await notifyManagers(
+        principal.user.id,
+        "A Suspect is still being visited",
+        `${principal.user.name} has now visited ${customer.name} ${after.n} times and it is still a Suspect. Worth a look — either the shop is worth the persistence or the beat is.`,
+      ).catch(() => {});
+    }
+  }
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }
 
 /* ------------------------------------------------------------------ orders */
+
+/**
+ * §M and §N — an order after somebody has agreed to it.
+ *
+ * Three parties again, and none of their words is another's: `status` is OURS
+ * (accounts accepted it, the godown sent it, the lorry has it),
+ * `customerConfirmedAt` is the SHOP agreeing to what was written down, and
+ * `deliveryConfirmedAt` is the shop saying the goods came. They are routinely
+ * days apart and either confirmation can precede the other.
+ */
+const orderProgressSchema = z.object({
+  /** Ours. `captured`/`pending_approval` are not settable from a handset. */
+  status: z.enum(["dispatched", "in_transit", "delivered"]).nullish(),
+  customerConfirmedAt: z.number().nullish(),
+  customerConfirmedNote: z.string().max(500).nullish(),
+  deliveryConfirmedAt: z.number().nullish(),
+  /** What actually turned up, where it was not what was sent. */
+  deliveryDiscrepancy: z.string().max(1000).nullish(),
+});
+
+async function handleOrderProgress(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const parsed = orderProgressSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const [existing] = await db
+    .select({
+      id: orders.id,
+      customerId: orders.customerId,
+      status: orders.status,
+      approvedAt: orders.approvedAt,
+    })
+    .from(orders)
+    .where(eq(orders.id, item.entityId))
+    .limit(1);
+
+  if (!existing) {
+    return {
+      kind: "retry",
+      message:
+        "That order has not reached the office yet, so there is nothing to move along. It will be tried again once it has.",
+    };
+  }
+
+  const found = await scopedCustomer(principal, existing.customerId);
+  if (!found.ok) return { kind: "rejected", value: found.value };
+  const customer = found.customer;
+
+  /*
+   * A DECLINED OR CANCELLED ORDER IS NOT DISPATCHED, whatever a handset that
+   * has not caught up believes.
+   *
+   * The salesman's phone may still be showing an order accounts turned down
+   * ten minutes ago — the rejection reaches it on the next pull — and marking
+   * it delivered would resurrect a sale the business refused into every figure
+   * `PURCHASE_STATUSES` feeds. The mark is the office's decision, so the
+   * office's decision wins.
+   */
+  if (p.status && (existing.status === "declined" || existing.status === "cancelled")) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `That order for ${customer.name} was ${existing.status === "declined" ? "declined by accounts" : "cancelled"}, so it cannot be marked ${p.status.replace("_", " ")}. Ring them before anything is delivered.`,
+      ),
+    };
+  }
+
+  const changed: Partial<typeof orders.$inferInsert> = { updatedAt: new Date() };
+  if (p.status != null) changed.status = p.status;
+  if (p.customerConfirmedAt != null) {
+    changed.customerConfirmedAt = new Date(p.customerConfirmedAt);
+  }
+  if (p.customerConfirmedNote != null) {
+    changed.customerConfirmedNote = p.customerConfirmedNote;
+  }
+  if (p.deliveryDiscrepancy != null) {
+    changed.deliveryDiscrepancy = p.deliveryDiscrepancy;
+  }
+  /* Who reported the arrival, stored with the fact — a confirmation with
+     nobody behind it is the same shape as a payment nobody vouched for. */
+  if (p.deliveryConfirmedAt != null) {
+    changed.deliveryConfirmedAt = new Date(p.deliveryConfirmedAt);
+    changed.deliveryConfirmedById = principal.user.id;
+  }
+
+  await db.update(orders).set(changed).where(eq(orders.id, item.entityId));
+
+  /* §R — the delivery, which B3-09 also named as unbuildable and which Phase 5
+     gave a record to project from. Written on the SHOP's confirmation rather
+     than on our own status, because that is the assertion worth a line in a
+     history somebody reads before ringing them. */
+  if (p.deliveryConfirmedAt != null) {
+    await writeTimeline(db, {
+      customerId: customer.id,
+      eventType: MBOS_EVENT.delivery,
+      sourceRecordId: item.entityId,
+      occurredAt: new Date(p.deliveryConfirmedAt),
+      actorUserId: principal.user.id,
+      summary: p.deliveryDiscrepancy?.trim()
+        ? `Delivery confirmed, with a problem: ${p.deliveryDiscrepancy.trim()}`
+        : "Delivery confirmed by the customer",
+    }).catch(() => {});
+  }
+
+  /*
+   * A short or damaged delivery is told to the people who can do something
+   * about it, rather than sitting in a column somebody reads next month. It is
+   * NOT auto-raised as a complaint: a complaint is the customer's, with a
+   * category and photographs, and inventing one on their behalf from a note
+   * would put words in their mouth on a record they can dispute.
+   */
+  if (p.deliveryDiscrepancy?.trim()) {
+    await notifyManagers(
+      principal.user.id,
+      "A delivery did not match the order",
+      `${customer.name}: ${p.deliveryDiscrepancy.trim()}`,
+    ).catch(() => {});
+  }
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
 
 const orderSchema = z.object({
   customerId: z.string(),
@@ -1026,6 +1359,8 @@ const orderSchema = z.object({
 });
 
 async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  if (item.op === "update") return handleOrderProgress(principal, item);
+
   const parsed = orderSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;
@@ -1039,6 +1374,26 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   if (!found.ok) return { kind: "rejected", value: found.value };
   const customer = found.customer;
   const config = await getConfig();
+
+  /*
+   * AN ORDER ON A LEAD CONVERTS IT. It does not refuse it.
+   *
+   * This gate used to reject an order against a lead below `negotiation`,
+   * reading §G's "no price negotiation at the requirement stage" as "no order
+   * until the ladder says so". Mahek's answer is the opposite and it is theirs
+   * to give: a shop that is ready to buy is a customer, whatever rung somebody
+   * had filed it under, and a salesman standing in front of one with an order
+   * in his hand must not be told to come back later.
+   *
+   * The stage machinery is not wasted by that. §L still opens negotiation off
+   * an approved sample, the tasks still fire, and `lead_stage` still records
+   * how the account was won — what has gone is only the refusal.
+   *
+   * The conversion itself is `lead-conversion-service`, the SAME function the
+   * CRM's interaction save uses. Two copies of "what happens when a lead
+   * orders" would drift within a release, and the half that drifts is the one
+   * nobody is watching — which here is the handset.
+   */
 
   /*
    * The delivery party, which is NOT scope-checked and must not be.
@@ -1291,6 +1646,40 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       updatedById: principal.user.id,
     });
 
+    /*
+     * AND IF THIS WAS A LEAD, IT IS A CUSTOMER NOW.
+     *
+     * Inside the order's own transaction, deliberately: an order that landed
+     * against a record still reading `kind = 'lead'` is an invoice on an
+     * account with no buying cycle, no outstanding and no target — five
+     * subsystems reading a column that has stopped meaning what it says. The
+     * two either both happen or neither does.
+     *
+     * On the FIRST order, which is the answer to §Q. `customerSince` is the day
+     * the order is FOR rather than today, because a salesman may state a past
+     * date and the account began when it began.
+     */
+    const convertedOn = (
+      await tx.execute<{ d: string }>(sql`
+        select ((${orderedAtIso}::timestamptz at time zone ${APP_TIMEZONE})::date)::text as d
+      `)
+    )[0]?.d;
+    if (customer.leadStage !== null && convertedOn) {
+      await convertLeadOnFirstOrder(
+        tx,
+        {
+          id: customer.id,
+          kind: "lead",
+          ownerId: customer.ownerId ?? null,
+          salesAmId: customer.salesAmId ?? null,
+          leadSource: null,
+        },
+        convertedOn,
+        principal.user.id,
+        `ordered in the field (${serverNumber})`,
+      );
+    }
+
     // `lastOrderDate` moves on CAPTURE, not on approval: it is the signal that
     // stops the queue chasing somebody who ordered this morning, and a
     // telecaller must not ring them because approval is slow.
@@ -1329,7 +1718,7 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
 
     await writeTimeline(tx, {
       customerId: customer.id,
-      eventType: "order",
+      eventType: MBOS_EVENT.order,
       sourceRecordId: item.entityId,
       occurredAt: orderedAt,
       actorUserId: principal.user.id,
@@ -1605,7 +1994,7 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
 
     await writeTimeline(tx, {
       customerId: customer.id,
-      eventType: "payment",
+      eventType: MBOS_EVENT.payment,
       sourceRecordId: item.entityId,
       occurredAt: new Date(item.clientCreatedAt),
       actorUserId: principal.user.id,
@@ -1696,7 +2085,7 @@ async function handleComplaint(
 
     await writeTimeline(tx, {
       customerId: customer.id,
-      eventType: "complaint",
+      eventType: MBOS_EVENT.complaint,
       sourceRecordId: item.entityId,
       occurredAt,
       actorUserId: principal.user.id,
@@ -1728,7 +2117,344 @@ const sampleSchema = z.object({
   visitId: z.string().nullish(),
 });
 
+/**
+ * §I, §J and §K — moving a sample along after it was requested.
+ *
+ * Partial like every other update. What is NOT partial is the rule below it: a
+ * rejection has to say why, because a sample rejected with nothing written down
+ * teaches nobody anything and the next one goes out exactly the same.
+ */
+const sampleUpdateSchema = z.object({
+  dispatchedAt: z.number().nullish(),
+  courierName: z.string().max(200).nullish(),
+  trackingNumber: z.string().max(120).nullish(),
+  deliveredAt: z.number().nullish(),
+  deliveryPhotoId: z.string().nullish(),
+  /** The CUSTOMER's word that it arrived — see the column comment. */
+  receivedAt: z.number().nullish(),
+  trialStartedAt: z.number().nullish(),
+  trialCompletedAt: z.number().nullish(),
+  trialOutcome: z.enum(["pending", "approved", "rejected"]).nullish(),
+  satisfaction: z.string().max(200).nullish(),
+  additionalRequirement: z.string().max(1000).nullish(),
+  rejectionReason: z.string().max(500).nullish(),
+  followUpDate: z.string().nullish(),
+  feedbackNotes: z.string().max(2000).nullish(),
+});
+
+async function handleSampleUpdate(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const parsed = sampleUpdateSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const [existing] = await db
+    .select({
+      id: mbosSamples.id,
+      customerId: mbosSamples.customerId,
+      salesmanId: mbosSamples.salesmanId,
+      receivedAt: mbosSamples.receivedAt,
+      trialOutcome: mbosSamples.trialOutcome,
+      rejectionReason: mbosSamples.rejectionReason,
+    })
+    .from(mbosSamples)
+    .where(eq(mbosSamples.id, item.entityId))
+    .limit(1);
+
+  if (!existing) {
+    return {
+      kind: "retry",
+      message:
+        "That sample has not reached the office yet, so there is nothing to move along. It will be tried again once it has.",
+    };
+  }
+
+  const found = await scopedCustomer(principal, existing.customerId);
+  if (!found.ok) return { kind: "rejected", value: found.value };
+  const customer = found.customer;
+
+  /*
+   * §K — A REJECTION HAS TO SAY WHY.
+   *
+   * The same rule as a lost lead and an On Hold, and for the same reason: a
+   * sample turned down with nothing written down teaches nobody anything, and
+   * the next one goes out exactly the same. It reads what is already stored as
+   * well as what arrived, so a verdict recorded a second time does not demand
+   * the reason again.
+   */
+  if (
+    p.trialOutcome === "rejected" &&
+    !(p.rejectionReason ?? existing.rejectionReason)?.trim()
+  ) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `The sample to ${customer.name} was marked rejected with no reason. Say what was wrong with it — the next one goes out the same otherwise.`,
+      ),
+    };
+  }
+
+  const changed: Partial<typeof mbosSamples.$inferInsert> = { updatedAt: new Date() };
+  if (p.dispatchedAt != null) changed.dispatchedAt = new Date(p.dispatchedAt);
+  if (p.courierName != null) changed.courierName = p.courierName;
+  if (p.trackingNumber != null) changed.trackingNumber = p.trackingNumber;
+  if (p.deliveredAt != null) changed.deliveredAt = new Date(p.deliveredAt);
+  if (p.deliveryPhotoId != null) changed.deliveryPhotoId = p.deliveryPhotoId;
+  if (p.trialStartedAt != null) changed.trialStartedAt = new Date(p.trialStartedAt);
+  if (p.trialCompletedAt != null) changed.trialCompletedAt = new Date(p.trialCompletedAt);
+  if (p.trialOutcome != null) changed.trialOutcome = p.trialOutcome;
+  if (p.satisfaction != null) changed.satisfaction = p.satisfaction;
+  if (p.additionalRequirement != null) {
+    changed.additionalRequirement = p.additionalRequirement;
+  }
+  if (p.rejectionReason != null) changed.rejectionReason = p.rejectionReason;
+  if (p.followUpDate != null) changed.followUpDate = p.followUpDate;
+  if (p.feedbackNotes != null) changed.feedbackNotes = p.feedbackNotes;
+  /* Who said it arrived, recorded with the fact. A confirmation with nobody
+     behind it is the same shape as a payment nobody vouched for. */
+  if (p.receivedAt != null) {
+    changed.receivedAt = new Date(p.receivedAt);
+    changed.receivedReportedById = principal.user.id;
+  }
+
+  await db.update(mbosSamples).set(changed).where(eq(mbosSamples.id, item.entityId));
+
+  /*
+   * §R — B3-09 named these as unbuildable because there was no record to
+   * project from. There is now: Phase 4 gave a sample a dispatch and a
+   * confirmed receipt, so the two entries the brief asks for have sources.
+   *
+   * `sourceRecordId` carries the STAGE as well as the id, because the natural
+   * key is (app, kind, source row) and three events about one sample would
+   * otherwise collapse onto one row — the first written would win and the
+   * receipt would never appear.
+   */
+  if (p.dispatchedAt != null) {
+    await writeTimeline(db, {
+      customerId: customer.id,
+      eventType: MBOS_EVENT.sampleDispatched,
+      sourceRecordId: `${item.entityId}:dispatched`,
+      occurredAt: new Date(p.dispatchedAt),
+      actorUserId: principal.user.id,
+      summary: `Sample sent${p.courierName ? ` by ${p.courierName}` : ""}${p.trackingNumber ? ` (${p.trackingNumber})` : ""}`,
+    }).catch(() => {});
+  }
+  if (p.receivedAt != null && !existing.receivedAt) {
+    await writeTimeline(db, {
+      customerId: customer.id,
+      eventType: MBOS_EVENT.sampleReceived,
+      sourceRecordId: `${item.entityId}:received`,
+      occurredAt: new Date(p.receivedAt),
+      actorUserId: principal.user.id,
+      summary: "Customer confirmed the sample arrived",
+    }).catch(() => {});
+  }
+  if (p.trialOutcome && p.trialOutcome !== "pending") {
+    await writeTimeline(db, {
+      customerId: customer.id,
+      eventType: MBOS_EVENT.sampleReview,
+      sourceRecordId: `${item.entityId}:review`,
+      occurredAt: new Date(),
+      actorUserId: principal.user.id,
+      summary:
+        p.trialOutcome === "approved"
+          ? `Sample approved${p.satisfaction ? ` — ${p.satisfaction}` : ""}`
+          : `Sample rejected: ${p.rejectionReason ?? existing.rejectionReason ?? "no reason recorded"}`,
+    }).catch(() => {});
+  }
+
+  /* Confirmed received starts the review clock — §K's "review call every 2–3
+     days". Raised once, on the transition, so a re-sent confirmation does not
+     stack a second task on somebody's list. */
+  if (p.receivedAt != null && !existing.receivedAt) {
+    await afterSampleReceived(principal, existing.id, customer.id, customer.name).catch(
+      () => {},
+    );
+  }
+
+  /* A verdict, and both people who care are told. */
+  if (p.trialOutcome && p.trialOutcome !== "pending" && existing.trialOutcome === "pending") {
+    await afterSampleVerdict(
+      existing.id,
+      customer.id,
+      customer.name,
+      existing.salesmanId,
+      p.trialOutcome,
+      p.rejectionReason ?? null,
+    ).catch(() => {});
+  }
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/**
+ * §K — the review call, once the shop actually has the sample.
+ *
+ * Dated from CONFIRMED RECEIPT and not from dispatch, which is the whole reason
+ * `received_at` exists: a review call timed from the day we posted it rings a
+ * customer who is still waiting for the parcel, and that call teaches them we
+ * do not know where our own stock is.
+ *
+ * It goes to the Lead Manager, who runs the conversion — §K says so — falling
+ * back to the salesman where a lead has no manager yet.
+ */
+async function afterSampleReceived(
+  principal: MbosPrincipal,
+  sampleId: string,
+  customerId: string,
+  customerName: string,
+): Promise<void> {
+  const config = await getConfig();
+  const [lead] = await db
+    .select({ leadManagerId: customers.leadManagerId, ownerId: customers.ownerId })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
+
+  const assignee = lead?.leadManagerId ?? lead?.ownerId;
+  if (!assignee) return;
+
+  const days = config["mbos.samples.reviewAfterDays"];
+  /*
+   * `calendarDate`, not `toISOString().slice(0, 10)`.
+   *
+   * That spelling answers in UTC, so a review scheduled at 2am IST lands on the
+   * previous day — and unlike the SQL version of this mistake it is wrong on
+   * every machine equally, so it never looks like a timezone bug. The §11 grep
+   * test caught this one.
+   */
+  const due = calendarDate(new Date(Date.now() + days * 86_400_000));
+
+  await db
+    .insert(mbosTasks)
+    .values({
+      id: gen("mbos_task"),
+      title: `Sample review — ${customerName}`,
+      description:
+        "Have they started the trial? How did it perform, and what did they make of the quality? Anything wrong with it, and is there anything else they need. Then say approved or rejected — a rejection has to say why.",
+      assignedToUserId: assignee,
+      priority: "medium",
+      dueDate: due,
+      customerId,
+      status: "open",
+      sourceType: "sample_review",
+      sourceId: sampleId,
+      createdById: principal.user.id,
+      updatedById: principal.user.id,
+    })
+    .onConflictDoNothing();
+
+  await db
+    .insert(notifications)
+    .values({
+      id: gen("ntf"),
+      userId: assignee,
+      title: "A sample reached the customer",
+      body: `${customerName} has the sample. A review call is on your list for ${due}.`,
+      kind: "info",
+    })
+    .catch(() => {});
+}
+
+/**
+ * §K — the verdict, and the two people it changes work for.
+ *
+ * The Lead Manager decided it and the salesman has to act on it: approved sends
+ * him back to negotiate, rejected tells him why before he hears it from the
+ * shop. Notifying only one of them is how a salesman turns up to a shop that
+ * turned us down last week.
+ */
+async function afterSampleVerdict(
+  sampleId: string,
+  customerId: string,
+  customerName: string,
+  salesmanId: string,
+  outcome: string,
+  reason: string | null,
+): Promise<void> {
+  const [lead] = await db
+    .select({ leadManagerId: customers.leadManagerId })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
+
+  const approved = outcome === "approved";
+  const title = approved ? "A sample was approved" : "A sample was rejected";
+  const body = approved
+    ? `${customerName} is happy with the trial. Negotiation is open — price, discount, credit and delivery are on the table now.`
+    : `${customerName} turned the sample down: ${reason ?? "no reason recorded"}.`;
+
+  const targets = [salesmanId, lead?.leadManagerId].filter(
+    (id, i, all): id is string => Boolean(id) && all.indexOf(id) === i,
+  );
+  if (targets.length) {
+    await db
+      .insert(notifications)
+      .values(
+        targets.map((userId) => ({
+          id: gen("ntf"),
+          userId,
+          title,
+          body,
+          kind: "info",
+        })),
+      )
+      .catch(() => {});
+  }
+
+  /*
+   * §L — an approved sample OPENS negotiation, which is what unlocks the order
+   * gate in `handleOrder`. It is the sample review that authorises a commercial
+   * conversation, not the salesman deciding he is ready for one.
+   */
+  if (approved) {
+    await db
+      .update(customers)
+      .set({ leadStage: "negotiation", updatedAt: new Date() })
+      .where(and(eq(customers.id, customerId), eq(customers.leadStage, "qualified")));
+
+    await writeTimeline(db, {
+      customerId,
+      eventType: MBOS_EVENT.negotiation,
+      sourceRecordId: sampleId,
+      occurredAt: new Date(),
+      actorUserId: salesmanId,
+      summary: "Negotiation opened — the sample came through",
+    }).catch(() => {});
+
+    /*
+     * And the visit that spends it. A stage that opens and no work attached to
+     * it is a lead that sits at `negotiation` for a month — the salesman was
+     * told he may negotiate and nothing told him to go.
+     */
+    const day = await today();
+    await db
+      .insert(mbosTasks)
+      .values({
+        id: gen("mbos_task"),
+        title: `Negotiation visit — ${customerName}`,
+        description:
+          "The sample came through, so price, discount, credit and delivery are open now. Anything past your approved discount goes up as an approval before you agree it.",
+        assignedToUserId: salesmanId,
+        priority: "high",
+        dueDate: day,
+        customerId,
+        status: "open",
+        sourceType: "negotiation_visit",
+        sourceId: sampleId,
+        createdById: salesmanId,
+        updatedById: salesmanId,
+      })
+      .onConflictDoNothing();
+  }
+}
+
 async function handleSample(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
+  if (item.op === "update") return handleSampleUpdate(principal, item);
+
   const parsed = sampleSchema.safeParse(item.payload);
   if (!parsed.success) return validationRejection(parsed.error);
   const p = parsed.data;
@@ -1777,7 +2503,7 @@ async function handleSample(principal: MbosPrincipal, item: SyncItem): Promise<H
 
     await writeTimeline(tx, {
       customerId: customer.id,
-      eventType: "sample",
+      eventType: MBOS_EVENT.sample,
       sourceRecordId: item.entityId,
       occurredAt: new Date(item.clientCreatedAt),
       actorUserId: principal.user.id,
@@ -1807,12 +2533,42 @@ const leadSchema = z.object({
     .enum(["manual", "website", "referral", "exhibition", "cold_call", "whatsapp", "campaign"])
     .nullish(),
   estimatedPotentialPaise: z.number().int().nonnegative().nullish(),
-  stage: z.enum(["new", "contacted", "qualified", "negotiation", "won", "lost"]).nullish(),
+  stage: z
+    .enum(["new", "contacted", "qualified", "negotiation", "on_hold", "won", "lost"])
+    .nullish(),
   nextFollowUpDate: z.string().nullish(),
   notes: z.string().max(4000).nullish(),
   gpsLat: z.number().nullish(),
   gpsLng: z.number().nullish(),
+  /* Where the shop is, in words. `city`/`area` are the filters; this is what
+     somebody reads to find the door. */
+  address: z.string().max(500).nullish(),
+  /* What the account IS in the trade. The same enum the customer master uses,
+     so a converted lead needs no translation. */
+  customerType: z.enum(["dealer", "manufacturer", "distributor", "retailer"]).nullish(),
+  /* §C — asked at the Prospect transition, not at capture. */
+  gstin: z.string().max(20).nullish(),
+  requirement: z.string().max(1000).nullish(),
+  /* LITRES. See the column comment — there is no SKU at this point, so cans
+     would be a unit nobody has agreed the size of. */
+  monthlyVolumeLitres: z.number().int().nonnegative().nullish(),
+  decisionMaker: z.string().max(200).nullish(),
+  /* An `attachments` id the media queue will fill in later — see
+     `bindMbosMedia`. It routinely names a file whose bytes are still on the
+     phone, which is why nothing here checks that it exists. */
+  shopPhotoId: z.string().max(80).nullish(),
+  /* The one competitor question worth asking cold. The full record — price,
+     credit days, strengths — is `mbos_competitor_records`, asked on a visit. */
+  competitorName: z.string().max(200).nullish(),
+  /* §L — what was agreed once negotiation opened. On the customer rather than
+     the order: terms are the standing arrangement, and the first order is
+     priced under them rather than carrying them. */
+  deliveryTerms: z.string().max(1000).nullish(),
+  agreedTerms: z.string().max(2000).nullish(),
   lostReason: z.string().max(500).nullish(),
+  /* Why a held or stuck lead is not moving. Demanded for `on_hold`, and for a
+     lead the salesman is keeping as a Suspect past the decision visit. */
+  holdReason: z.string().max(500).nullish(),
   /** Out of the way, not gone — a filter on every read, never a delete. */
   archived: z.boolean().nullish(),
   /** The shop this lead became, so the two records stay joined up. */
@@ -1835,7 +2591,12 @@ async function handleLeadUpdate(
   const p = parsed.data;
 
   const [existing] = await db
-    .select({ id: customers.id, name: customers.name })
+    .select({
+      id: customers.id,
+      name: customers.name,
+      gstin: customers.gstin,
+      leadHoldReason: customers.leadHoldReason,
+    })
     .from(customers)
     .where(eq(customers.id, item.entityId))
     .limit(1);
@@ -1858,6 +2619,55 @@ async function handleLeadUpdate(
     };
   }
 
+  /*
+   * ON HOLD IS AN ANSWER, so it has to say something.
+   *
+   * Held and lost are different and that is the whole reason the status exists
+   * — but they are alike in this: both are somebody deciding a lead is not
+   * progressing, and a decision with no reason on it teaches the next person
+   * nothing. Unlike lost, this one is reversible, which is exactly why the
+   * reason matters: "back after Diwali" is what tells somebody when to look
+   * again.
+   */
+  if (p.stage === "on_hold" && !(p.holdReason ?? existing.leadHoldReason)?.trim()) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `${existing.name} was put on hold with no reason. Say what you are waiting for — that is what tells anybody when to pick it up again.`,
+      ),
+    };
+  }
+
+  /*
+   * QUALIFYING A LEAD ASKS FOR THE GST NUMBER, and it is asked HERE.
+   *
+   * §C of the brief makes GST mandatory at the Prospect transition, and the
+   * form on the handset asks for it. A form is not a rule: this is a sync
+   * endpoint, it accepts a payload from a device somebody owns, and an older
+   * build that never learned to ask would otherwise qualify leads without one.
+   *
+   * Mandatory at the STAGE CHANGE and never on the column. 5,292 shops came in
+   * from the EMP 2.0 master with no GSTIN between them, so a NOT NULL would
+   * refuse the entire imported book — the constraint belongs on the moment
+   * somebody asserts this is a real commercial prospect, not on the record.
+   *
+   * It reads what is already stored as well as what arrived, so a lead that was
+   * given its number last week qualifies today without retyping it.
+   */
+  if (p.stage === "qualified") {
+    const gstin = (p.gstin ?? existing.gstin ?? "").trim();
+    if (!gstin) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          `${existing.name} cannot be qualified without a GST number. That is what makes them a business we can invoice — add it and try again.`,
+        ),
+      };
+    }
+  }
+
   const changed: Partial<typeof customers.$inferInsert> = {
     /* Any edit is contact, and staleness is measured from the last thing that
      * happened — so working a lead moves the clock whatever else it changed. */
@@ -1877,6 +2687,30 @@ async function handleLeadUpdate(
   }
   if (p.lostReason != null) changed.leadLostReason = p.lostReason;
   if (p.archived != null) changed.leadArchived = p.archived;
+  if (p.address != null) changed.address = p.address;
+  if (p.customerType != null) changed.customerType = p.customerType;
+  if (p.gstin != null) changed.gstin = p.gstin;
+  if (p.requirement != null) changed.leadRequirement = p.requirement;
+  if (p.monthlyVolumeLitres != null) {
+    changed.leadMonthlyVolumeLitres = p.monthlyVolumeLitres;
+  }
+  if (p.decisionMaker != null) changed.leadDecisionMaker = p.decisionMaker;
+  if (p.holdReason != null) changed.leadHoldReason = p.holdReason;
+  if (p.deliveryTerms != null) changed.leadDeliveryTerms = p.deliveryTerms;
+  if (p.agreedTerms != null) changed.leadAgreedTerms = p.agreedTerms;
+  /*
+   * A lead that starts moving again is no longer explaining itself. Clearing
+   * the reason on the way out of a hold is what stops "waiting for their
+   * budget quarter" sitting on a lead that has since ordered.
+   */
+  if (p.stage != null && p.stage !== "on_hold" && p.stage !== "new") {
+    changed.leadHoldReason = null;
+  }
+  if (p.gpsLat != null && p.gpsLng != null) {
+    changed.gpsLat = p.gpsLat;
+    changed.gpsLng = p.gpsLng;
+    changed.gpsCapturedAt = new Date();
+  }
   /*
    * ONE LEAD, so winning one is this row becoming a customer rather than a
    * second row being written and pointed at. The handset still sends
@@ -1890,7 +2724,27 @@ async function handleLeadUpdate(
     changed.leadConvertedAt = new Date();
   }
 
+  /* §R — an internal note is a fact about the account and belongs in its
+     history. The BODY is not repeated here: `mbos_internal_notes` carries a
+     role list deciding who may read it, and the timeline has no such gate, so
+     copying the words in would route a restricted note around its own
+     restriction. The entry says one was written and where to find it. */
+
   await db.update(customers).set(changed).where(eq(customers.id, item.entityId));
+
+  /*
+   * QUALIFYING IS WHAT STARTS §D AND §E: the Lead Manager seat is filled from
+   * the org chart, they are told, and a validation call lands on their list for
+   * the next working day.
+   *
+   * After the write and unable to fail it. `qualifyLead` is idempotent — a
+   * handset that never saw the response sends the same qualification again, and
+   * the seat itself is the guard — so a retry costs nothing and produces no
+   * second task.
+   */
+  if (p.stage === "qualified") {
+    await qualifyLead(item.entityId, principal.user.id, existing.name).catch(() => {});
+  }
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }
@@ -1961,6 +2815,16 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
       leadNotes: p.notes ?? null,
       gpsLat: p.gpsLat ?? null,
       gpsLng: p.gpsLng ?? null,
+      /* Captured standing in the shop. `gpsCapturedAt` is what tells a later
+         reader whether the pin is the salesman's own or something an import
+         guessed, so it is written with the fix rather than left null. */
+      gpsCapturedAt: p.gpsLat != null && p.gpsLng != null ? new Date() : null,
+      address: p.address ?? null,
+      customerType: p.customerType ?? null,
+      gstin: p.gstin ?? null,
+      leadRequirement: p.requirement ?? null,
+      leadMonthlyVolumeLitres: p.monthlyVolumeLitres ?? null,
+      leadDecisionMaker: p.decisionMaker ?? null,
       leadLostReason: p.lostReason ?? null,
       leadLastActivityDate: day,
     })
@@ -1975,13 +2839,376 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
         leadStage: p.stage ?? "new",
         leadNextFollowUpDate: p.nextFollowUpDate ?? null,
         leadNotes: p.notes ?? null,
+        address: p.address ?? null,
+        customerType: p.customerType ?? null,
+        gstin: p.gstin ?? null,
+        leadRequirement: p.requirement ?? null,
+        leadMonthlyVolumeLitres: p.monthlyVolumeLitres ?? null,
+        leadDecisionMaker: p.decisionMaker ?? null,
         leadLostReason: p.lostReason ?? null,
         leadLastActivityDate: day,
         updatedAt: new Date(),
       },
     });
 
+  /*
+   * The shop front, now that there is a record to hang it on.
+   *
+   * The photograph was taken before this row existed — the salesman shoots the
+   * shop while he is standing in front of it and types the rest afterwards —
+   * so the handset queued it under the literal parent `pending`. Binding it
+   * here is what makes it readable and what keeps the nightly orphan sweep off
+   * it. After the record, deliberately: a lead is never lost to a photograph.
+   */
+  await bindMbosMedia(p.shopPhotoId, "mbos_lead", item.entityId);
+
+  /*
+   * §R — where the account began. Outside the insert's own transaction and
+   * unable to fail it: a lead is never lost to its own timeline entry, and the
+   * natural key makes a retry write nothing rather than a second row.
+   */
+  await writeTimeline(db, {
+    customerId: item.entityId,
+    eventType: MBOS_EVENT.leadCreated,
+    sourceRecordId: item.entityId,
+    occurredAt: new Date(item.clientCreatedAt),
+    actorUserId: principal.user.id,
+    summary: `Lead raised in the field${p.city ? ` — ${p.city}` : ""}${p.source ? ` (${p.source.replace("_", " ")})` : ""}`,
+  }).catch(() => {});
+
+  /*
+   * And the pin, which is its own event because it is its own fact: somebody
+   * stood in this shop and recorded where it is. Written only where there IS a
+   * fix — "no GPS" is not an event, it is the absence of one, and a row saying
+   * so would be a timeline entry about nothing having happened.
+   */
+  if (p.gpsLat != null && p.gpsLng != null) {
+    await writeTimeline(db, {
+      customerId: item.entityId,
+      eventType: MBOS_EVENT.gps,
+      sourceRecordId: `${item.entityId}:gps`,
+      occurredAt: new Date(item.clientCreatedAt),
+      actorUserId: principal.user.id,
+      summary: "Shop location captured on the spot",
+    }).catch(() => {});
+  }
+
+  /*
+   * And the competitor, if he got one.
+   *
+   * It goes in `mbos_competitor_records` rather than a column on the lead,
+   * because that is where every other competitor sighting in this product
+   * lives and a second home for the same fact is how the two disagree. `visitId`
+   * is null: there is no visit behind a lead being raised, which is precisely
+   * why that column is nullable.
+   */
+  if (p.competitorName?.trim()) {
+    await db
+      .insert(mbosCompetitorRecords)
+      .values({
+        id: gen("mbos_comp"),
+        customerId: item.entityId,
+        visitId: null,
+        competitorName: p.competitorName.trim(),
+        recordedOn: day,
+        createdById: principal.user.id,
+        updatedById: principal.user.id,
+      })
+      .onConflictDoNothing();
+
+    await writeTimeline(db, {
+      customerId: item.entityId,
+      eventType: MBOS_EVENT.competitor,
+      sourceRecordId: item.entityId,
+      occurredAt: new Date(item.clientCreatedAt),
+      actorUserId: principal.user.id,
+      summary: `Buying from ${p.competitorName.trim()} at the moment`,
+    }).catch(() => {});
+  }
+
   return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/* ------------------------------------------------------- internal notes */
+
+const internalNoteSchema = z.object({
+  customerId: z.string(),
+  body: z.string().min(1).max(4000),
+  /**
+   * Who may read it. Empty means everybody who can see the customer — which is
+   * what a note with no list has always meant on the read side.
+   */
+  visibleToRoles: z.array(z.string().max(40)).max(8).nullish(),
+});
+
+/**
+ * §R — a note about a customer that the customer must never see, and that a
+ * field salesman is never sent either.
+ *
+ * The table, the role list and the bootstrap's narrowing have existed since the
+ * module shipped. What did not exist was any way to WRITE one, so the feature
+ * was a read path over an empty table — the same shape `mbos_competitor_records`
+ * was in before it got a write path.
+ *
+ * The timeline entry deliberately does NOT carry the body. `visibleToRoles`
+ * decides who may read a note and the timeline has no such gate, so copying the
+ * words into it would route a restricted note straight around its own
+ * restriction. The entry records that one was written; the note itself stays
+ * where the rule about reading it lives.
+ */
+async function handleInternalNote(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const parsed = internalNoteSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const found = await scopedCustomer(principal, p.customerId);
+  if (!found.ok) return { kind: "rejected", value: found.value };
+  const customer = found.customer;
+
+  await db
+    .insert(mbosInternalNotes)
+    .values({
+      id: item.entityId,
+      customerId: customer.id,
+      authorId: principal.user.id,
+      body: p.body,
+      visibleToRoles: p.visibleToRoles ?? [],
+      createdById: principal.user.id,
+      updatedById: principal.user.id,
+      deviceId: principal.deviceId,
+      clientCreatedAt: new Date(item.clientCreatedAt),
+    })
+    .onConflictDoNothing({ target: mbosInternalNotes.id });
+
+  await writeTimeline(db, {
+    customerId: customer.id,
+    eventType: MBOS_EVENT.internalNote,
+    sourceRecordId: item.entityId,
+    occurredAt: new Date(item.clientCreatedAt),
+    actorUserId: principal.user.id,
+    summary: "An internal note was added",
+  }).catch(() => {});
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/* -------------------------------------------------- lead validation call */
+
+const leadValidationSchema = z.object({
+  customerId: z.string(),
+  calledAt: z.number().nullish(),
+  /** A call nobody answered is still a call that was made. */
+  reached: z.boolean().nullish(),
+  productFeedback: z.string().max(2000).nullish(),
+  qualityFeedback: z.string().max(2000).nullish(),
+  dispatchFeedback: z.string().max(2000).nullish(),
+  salesmanFeedback: z.string().max(2000).nullish(),
+  confirmedRequirement: z.string().max(1000).nullish(),
+  confirmedMonthlyVolumeLitres: z.number().int().nonnegative().nullish(),
+  confirmedCompetitor: z.string().max(200).nullish(),
+  confirmedPotentialPaise: z.number().int().nonnegative().nullish(),
+  /** §F — the Lead Manager's decision, or `pending` where they left it open. */
+  verdict: z.enum(["pending", "confirmed", "not_qualified", "on_hold"]).nullish(),
+  verdictReason: z.string().max(500).nullish(),
+  notes: z.string().max(4000).nullish(),
+  /** The task this answered, so it can be closed in the same pass. */
+  taskId: z.string().nullish(),
+});
+
+/**
+ * §E and §F — the validation call, and what it sets in motion.
+ *
+ * The answers are stored on their OWN row and never written over the lead's
+ * columns. That is the whole design: `lead_requirement` is what the salesman
+ * was told standing in the shop, `confirmed_requirement` is what the office was
+ * told on the phone, and the two disagreeing is the single most useful thing
+ * this call produces. Collapsing them would overwrite the first reading with
+ * the second and destroy the comparison the call exists to make.
+ */
+async function handleLeadValidation(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const parsed = leadValidationSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const found = await scopedCustomer(principal, p.customerId);
+  if (!found.ok) return { kind: "rejected", value: found.value };
+  const customer = found.customer;
+
+  /* §F: a rejection has to say why. The same rule as a lost lead and for the
+     same reason — a Prospect turned down with no reason teaches the salesman
+     who raised it nothing, and he will raise the next one exactly like it. */
+  if (
+    (p.verdict === "not_qualified" || p.verdict === "on_hold") &&
+    !p.verdictReason?.trim()
+  ) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `${customer.name} was turned down with no reason given. Say what was wrong — the salesman who raised it will raise the next one just like it otherwise.`,
+      ),
+    };
+  }
+
+  const calledAt = p.calledAt ? new Date(p.calledAt) : new Date(item.clientCreatedAt);
+  const day = await today();
+
+  await db
+    .insert(mbosLeadValidations)
+    .values({
+      id: item.entityId,
+      customerId: customer.id,
+      calledByUserId: principal.user.id,
+      calledAt,
+      reached: p.reached ?? true,
+      productFeedback: p.productFeedback ?? null,
+      qualityFeedback: p.qualityFeedback ?? null,
+      dispatchFeedback: p.dispatchFeedback ?? null,
+      salesmanFeedback: p.salesmanFeedback ?? null,
+      confirmedRequirement: p.confirmedRequirement ?? null,
+      confirmedMonthlyVolumeLitres: p.confirmedMonthlyVolumeLitres ?? null,
+      confirmedCompetitor: p.confirmedCompetitor ?? null,
+      confirmedPotentialPaise: p.confirmedPotentialPaise ?? null,
+      verdict: p.verdict ?? "pending",
+      verdictReason: p.verdictReason ?? null,
+      notes: p.notes ?? null,
+      createdById: principal.user.id,
+      updatedById: principal.user.id,
+    })
+    .onConflictDoNothing({ target: mbosLeadValidations.id });
+
+  /* A call is activity on the lead whatever it concluded. */
+  await db
+    .update(customers)
+    .set({ leadLastActivityDate: day, updatedAt: new Date() })
+    .where(eq(customers.id, customer.id));
+
+  /* The task that asked for this call is answered. Closed here rather than by
+     the handset sending a second item: two writes for one act is how the call
+     lands and the task stays open on somebody's list for ever. */
+  if (p.taskId) {
+    await db
+      .update(mbosTasks)
+      .set({
+        status: "done",
+        completedAt: new Date(),
+        completionNote: p.verdictReason ?? p.notes ?? null,
+        updatedAt: new Date(),
+      })
+      .where(eq(mbosTasks.id, p.taskId));
+  }
+
+  /* §R — the office's own reading of the shop, beside the salesman's. */
+  await writeTimeline(db, {
+    customerId: customer.id,
+    eventType: MBOS_EVENT.validation,
+    sourceRecordId: item.entityId,
+    occurredAt: calledAt,
+    actorUserId: principal.user.id,
+    summary: p.reached
+      ? `Validation call — ${p.verdict === "confirmed" ? "confirmed as a prospect" : p.verdict === "not_qualified" ? "not qualified" : p.verdict === "on_hold" ? "put on hold" : "no verdict yet"}${p.verdictReason ? `: ${p.verdictReason}` : ""}`
+      : "Validation call — no answer",
+  }).catch(() => {});
+
+  await afterValidationVerdict(principal, customer.id, customer.name, p.verdict ?? "pending", p.verdictReason ?? null);
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/**
+ * §F and §G — what the verdict starts.
+ *
+ * Confirmed sends the salesman back with a requirement visit; the other two
+ * move the lead and tell him why. Every branch notifies the person whose work
+ * it changes, because a lead that quietly stops being worked is one nobody
+ * chases and nobody closes.
+ *
+ * Best-effort on top of a completed write, like every other notification in
+ * this file.
+ */
+async function afterValidationVerdict(
+  principal: MbosPrincipal,
+  customerId: string,
+  customerName: string,
+  verdict: string,
+  reason: string | null,
+): Promise<void> {
+  const [lead] = await db
+    .select({ ownerId: customers.ownerId })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
+  const salesmanId = lead?.ownerId;
+
+  if (verdict === "confirmed") {
+    if (!salesmanId) return;
+    const day = await today();
+    await db
+      .insert(mbosTasks)
+      .values({
+        id: gen("mbos_task"),
+        title: `Requirement visit — ${customerName}`,
+        description:
+          "Take the price list and the approved discount. Get the product, the quantity and the monthly consumption in writing. No price or delivery commitments at this stage — anything commercial goes to the Lead Manager as a note.",
+        assignedToUserId: salesmanId,
+        priority: "high",
+        dueDate: day,
+        customerId,
+        status: "open",
+        sourceType: "requirement_visit",
+        sourceId: customerId,
+        createdById: principal.user.id,
+        updatedById: principal.user.id,
+      })
+      .onConflictDoNothing();
+
+    await db
+      .insert(notifications)
+      .values({
+        id: gen("ntf"),
+        userId: salesmanId,
+        title: "A Prospect was confirmed",
+        body: `${customerName} came through the validation call. There is a requirement visit on your list — take the price list.`,
+        kind: "info",
+      })
+      .catch(() => {});
+    return;
+  }
+
+  if (verdict === "not_qualified" || verdict === "on_hold") {
+    await db
+      .update(customers)
+      .set({
+        leadStage: verdict === "on_hold" ? "on_hold" : "lost",
+        ...(verdict === "on_hold"
+          ? { leadHoldReason: reason }
+          : { leadLostReason: reason }),
+        updatedAt: new Date(),
+      })
+      .where(eq(customers.id, customerId));
+
+    if (salesmanId) {
+      await db
+        .insert(notifications)
+        .values({
+          id: gen("ntf"),
+          userId: salesmanId,
+          title:
+            verdict === "on_hold"
+              ? "A Prospect was put on hold"
+              : "A Prospect was not qualified",
+          body: `${customerName}: ${reason ?? "no reason recorded"}.`,
+          kind: "info",
+        })
+        .catch(() => {});
+    }
+  }
 }
 
 /* ------------------------------------------------------------------- tasks */
@@ -3560,6 +4787,9 @@ const customerEditSchema = z.object({
   dealerCode: z.string().max(60).optional(),
   customerType: z.enum(["dealer", "manufacturer", "distributor", "retailer"]).optional(),
   potential: z.enum(["high", "medium", "low"]).optional(),
+  /* 2-§P — the figure the band cannot give you. A judgement, so who made it and
+     when are written with it: an estimate with no date is one nobody can weigh. */
+  potentialMonthlyPaise: z.number().int().nonnegative().optional(),
   visitFrequencyDays: z.number().int().positive().optional(),
   gpsLat: z.number().optional(),
   gpsLng: z.number().optional(),
@@ -3789,6 +5019,15 @@ async function handleCustomerCreate(
           .onConflictDoNothing();
       }
 
+      await writeTimeline(db, {
+        customerId: lead.id,
+        eventType: MBOS_EVENT.leadConverted,
+        sourceRecordId: `${lead.id}:converted`,
+        occurredAt: new Date(),
+        actorUserId: principal.user.id,
+        summary: `Became a customer — opened in the field${distributor ? `, billed through ${distributor.name}` : ""}`,
+      }).catch(() => {});
+
       await notifyManagers(
         principal.user.id,
         "A new account was opened in the field",
@@ -3904,6 +5143,15 @@ async function handleCustomerEdit(
   if (p.dealerCode !== undefined) changed.dealerCode = p.dealerCode;
   if (p.customerType !== undefined) changed.customerType = p.customerType;
   if (p.potential !== undefined) changed.potential = p.potential;
+  /* 2-§P. Stamped with WHO and WHEN in the same breath, because this is a
+     judgement rather than a measurement — nothing in MahekOne can derive what
+     a shop could spend while `products.priceSource` is unset, and a figure with
+     no author and no date is one a reader cannot weigh. */
+  if (p.potentialMonthlyPaise !== undefined) {
+    changed.potentialMonthlyPaise = p.potentialMonthlyPaise;
+    changed.potentialEstimatedAt = new Date();
+    changed.potentialEstimatedById = principal.user.id;
+  }
   if (p.visitFrequencyDays !== undefined) changed.visitFrequencyDays = p.visitFrequencyDays;
   if (p.gpsLat !== undefined) changed.gpsLat = p.gpsLat;
   if (p.gpsLng !== undefined) changed.gpsLng = p.gpsLng;
@@ -4244,12 +5492,44 @@ const MBOS_PARENTS: Record<string, (typeof attachmentParentEnum.enumValues)[numb
   expense: "mbos_expense",
   sample: "mbos_sample",
   task: "mbos_task",
+  /* A shop front photographed while raising a lead. A lead IS a `customers`
+     row, so `canRead` resolves this straight through the customer's scope. */
+  lead: "mbos_lead",
   /* Not `mbos_payment`: a field collection is written into `payment_receipts`,
      the same table the CRM's own receipts use, so this is that parent and
      `canRead` resolves it through the customer exactly as it does for one
      captured at a desk. */
   payment: "payment_receipt",
 };
+
+/**
+ * BIND A FILE TO THE RECORD THAT NOW EXISTS.
+ *
+ * Media syncs AFTER its parent — that is the whole point of a separate queue —
+ * so the handset uploads a photograph naming `parentId: 'pending'`, because at
+ * the moment the camera closed the record it belongs to had not been written
+ * yet. Something has to go back and say what it was, and until now nothing did:
+ * the attachment kept the literal string `pending` as its parent for ever, so
+ * `canRead` looked for a record with that id, found none, and refused the file
+ * to everybody.
+ *
+ * Called from the handler that writes the parent, in the same pass, and
+ * deliberately unable to fail it — the record is the thing that matters and a
+ * photograph that stays unbound for another sync is recoverable. It is the
+ * MBOS half of what `bindAttachments` does for the CRM's own forms.
+ */
+async function bindMbosMedia(
+  attachmentId: string | null | undefined,
+  parentType: (typeof attachmentParentEnum.enumValues)[number],
+  parentId: string,
+): Promise<void> {
+  if (!attachmentId) return;
+  await db
+    .update(attachments)
+    .set({ parentType, parentId, updatedAt: new Date() })
+    .where(eq(attachments.id, attachmentId))
+    .catch(() => {});
+}
 
 export async function storeMbosMedia(
   principal: MbosPrincipal,
@@ -4357,6 +5637,10 @@ export async function storeMbosMedia(
           sizeBytes: stored.sizeBytes,
           contentHash: createHash("sha256").update(input.bytes).digest("hex"),
           status: "available",
+          /* Re-parented on a re-upload only where this one names a parent: a
+             retry that has lost the name must not orphan a file that was
+             already filed correctly. */
+          ...(parentType ? { parentType, parentId } : {}),
           updatedAt: new Date(),
         },
       });

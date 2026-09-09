@@ -120,6 +120,25 @@ export const SYNC_ENTITY_TYPES = [
    * a table and a read query and no write path anywhere.
    */
   "competitor",
+  /**
+   * §E — the Prospect validation call: what the SHOP said, as against what the
+   * salesman reported.
+   *
+   * Its own entity rather than a lead update, because the two answers are meant
+   * to be able to differ and the difference is the only thing this call
+   * produces that nothing else could. Writing it onto the lead would overwrite
+   * the salesman's account with the office's and destroy exactly that.
+   */
+  "lead_validation",
+  /**
+   * §R — a note about a customer that the customer must never see.
+   *
+   * `mbos_internal_notes` has had a table and a read path since the module
+   * shipped, and no write anywhere: the bootstrap narrowed them by role and
+   * sent nothing, because nothing could put one there. The same shape
+   * `mbos_competitor_records` was in.
+   */
+  "internal_note",
   "approval",
   /**
    * The salesman's answer to a proposed day: agreed, or refused with a reason

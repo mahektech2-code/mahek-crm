@@ -561,7 +561,10 @@ describe("An attendance photograph survives the night and can be opened", () => 
       .returning();
     await db.insert(appAccess).values({ id: id("acc"), userId: other.id, app: "field" });
     await db.execute(sql`
-      insert into mbos_manager_territories (id, user_id, region)
+      -- Renamed: the table stopped being managers-only. A salesman's working
+      -- cities live here too, told apart by kind, which defaults to region --
+      -- the value managerScope asks for.
+      insert into mbos_user_territories (id, user_id, region)
       values (${id("terr")}, ${other.id}, 'Nowhere')
     `);
 

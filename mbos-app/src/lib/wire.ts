@@ -44,6 +44,11 @@ const STAGES: Record<string, string> = {
   contacted: 'contacted',
   qualified: 'qualified',
   negotiation: 'negotiation',
+  /* The screen says "On hold" and the enum says `on_hold`. Both spellings are
+     accepted on the way out, because the value reaches here from a stage
+     constant AND from a decision the visit screen picked. */
+  'on hold': 'on_hold',
+  on_hold: 'on_hold',
   converted: 'won',
   won: 'won',
   lost: 'lost',
@@ -96,8 +101,9 @@ const LOCAL_STAGES: Record<string, string> = {
   contacted: 'Contacted',
   qualified: 'Qualified',
   negotiation: 'Negotiation',
-  won: 'Converted',
+  on_hold: 'On hold',
   converted: 'Converted',
+  won: 'Converted',
   lost: 'Lost',
 };
 

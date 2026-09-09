@@ -226,3 +226,48 @@ function reverse(order: number[], i: number, k: number): void {
     k--;
   }
 }
+
+/* ------------------------------------------------- where to measure from */
+
+/**
+ * The point a day's picking is sorted around.
+ *
+ * "Nearest" needs an origin, and the obvious one is wrong most of the time a
+ * salesman uses this screen. He picks tomorrow's shops in the evening, sitting
+ * at home — so his GPS fix is his house, and sorting Wardha's shops by distance
+ * from a sofa in Nagpur puts the list very nearly upside down.
+ *
+ * So the origin is his own position ONLY when he is planning today's day and
+ * the phone actually knows where he is. Otherwise it is the CENTROID of the
+ * shops in the city he agreed to — which needs no geocoding service, no
+ * connection and no city-centre table, and is a better answer than a map's
+ * would be anyway: it is the middle of our business in that town rather than
+ * the middle of the town.
+ *
+ * Null where neither is available — no fix and no pinned shop in the city — and
+ * the caller must fall back to a sort that needs no distance rather than
+ * inventing a point. A list ordered around a made-up origin is worse than one
+ * that admits it cannot measure.
+ */
+export function pickOrigin(args: {
+  /** The handset's freshest fix, or null. */
+  fix: Coords | null;
+  /** True when the day being planned is today. */
+  forToday: boolean;
+  /** Every pinned shop in the agreed city. */
+  cityShops: Coords[];
+}): Coords | null {
+  if (args.forToday && args.fix) return args.fix;
+  if (!args.cityShops.length) return args.fix ?? null;
+
+  /* A plain mean. The shops of one town span a few kilometres, so the error
+     from not projecting the latitudes is metres — far below the error in the
+     pins themselves, and precision theatre to correct. */
+  let lat = 0;
+  let lng = 0;
+  for (const c of args.cityShops) {
+    lat += c.lat;
+    lng += c.lng;
+  }
+  return { lat: lat / args.cityShops.length, lng: lng / args.cityShops.length };
+}

@@ -471,6 +471,17 @@ async function customerBehind(
   parentType: string,
   parentId: string,
 ): Promise<string | null> {
+  /*
+   * A LEAD IS THE CUSTOMER ROW, so there is nothing to look up.
+   *
+   * `mbos_lead` parents a shop photograph taken while raising a lead, and its
+   * `parentId` is already a `customers.id` — the whole point of collapsing the
+   * two tables into one. Falling through to the switch below would look it up
+   * among `calls`, find nothing, and refuse the file to everybody, which is
+   * exactly the bug `mbos_attendance` was fixed for one branch above.
+   */
+  if (parentType === "mbos_lead") return parentId;
+
   const table =
     parentType === "complaint"
       ? complaints

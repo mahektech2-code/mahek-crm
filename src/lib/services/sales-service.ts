@@ -74,7 +74,11 @@ export const managerScope = cache(async function managerScope(): Promise<Manager
   }
 
   const rows = await db.execute<{ region: string }>(sql`
-    select region from mbos_manager_territories where user_id = ${userId}
+    -- REGIONS ONLY. The table also holds a salesman's working cities now, and
+    -- reading one of those as an oversight region would narrow a manager's
+    -- console to a city on the day somebody allocated him one.
+    select region from mbos_user_territories
+     where user_id = ${userId} and kind = 'region'
   `);
 
   if (!rows.length) return { national: true, regions: [], salesmanIds: null };
@@ -147,6 +151,15 @@ export type Salesman = {
   lastSeenAt: Date | null;
   lastLoginAt: Date | null;
   customerCount: number;
+  /**
+   * Where he WORKS. Empty means his whole book, which is the safe default and
+   * a deliberate one — allocating cities to eight people and forgetting the
+   * ninth must not empty her handset.
+   *
+   * Regions are excluded: those are a manager's oversight patch, set on its own
+   * screen, and a salesman's dialog must not appear able to change them.
+   */
+  territories: { kind: string; value: string }[];
 };
 
 /**
@@ -172,7 +185,17 @@ export async function fieldTeam(): Promise<Salesman[]> {
              where d.user_id = u.id and d.active) as "lastSeenAt",
            (select count(*)::int from customers c
              where coalesce(c.sales_am_id, c.owner_id) = u.id
-               and c.status = 'active') as "customerCount"
+               and c.status = 'active') as "customerCount",
+           -- Where he WORKS, which narrows the book above rather than being
+           -- part of it. Regions are excluded: those are a manager's oversight
+           -- patch, set on its own screen, and showing them here would read as
+           -- something this dialog can change.
+           coalesce((
+             select json_agg(json_build_object('kind', t.kind, 'value', t.region)
+                             order by t.kind, t.region)
+               from mbos_user_territories t
+              where t.user_id = u.id and t.kind <> 'region'
+           ), '[]'::json) as "territories"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
      where true ${onlyMine(scope, "u.id")}
@@ -851,6 +874,17 @@ export type LeadRow = {
   salesmanId: string | null;
   salesmanName: string | null;
   initials: string | null;
+  /**
+   * Who coordinates the conversion, once the lead is qualified. Distinct from
+   * the salesman above, who keeps the book and keeps making the visits — see
+   * `customers.leadManagerId`. Null until a lead is qualified.
+   */
+  leadManagerId: string | null;
+  leadManagerName: string | null;
+  /** Why a held or stuck lead is not moving. Null while it is progressing. */
+  holdReason: string | null;
+  /** How many times anybody has stood in this shop. Counted, never cached. */
+  visitCount: number;
   nextFollowUpDate: string | null;
   lastActivityDate: string | null;
   /** Days since anything happened. What "stale" is measured from. */
@@ -913,6 +947,18 @@ const LEAD_ROW_SELECT = sql`
            c.lead_stage::text as stage,
            c.owner_id as "salesmanId",
            u.name as "salesmanName", u.initials,
+           /* The coordinating seat. It is NOT the owner and must not be drawn
+            * as one: the salesman above still holds the book and still makes
+            * the visits. This is who runs the conversation about price, terms
+            * and samples once the lead is qualified. */
+           c.lead_manager_id as "leadManagerId",
+           lm.name as "leadManagerName",
+           c.lead_hold_reason as "holdReason",
+           /* The same count the handset is sent, from the same expression, so
+            * the office and the salesman cannot disagree about how many times
+            * somebody has been to a shop. */
+           (select count(*)::int from mbos_visits v
+             where v.customer_id = c.id) as "visitCount",
            c.lead_next_follow_up_date::text as "nextFollowUpDate",
            c.lead_last_activity_date::text as "lastActivityDate",
            c.lead_notes as notes,
@@ -939,6 +985,7 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
            (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
       from customers c
       left join users u on u.id = c.owner_id
+      left join users lm on lm.id = c.lead_manager_id
      where c.lead_stage is not null
        and c.lead_archived = false
        ${onlyMine(scope, "c.owner_id")}
@@ -964,6 +1011,7 @@ export async function archivedLeadsList(day: string): Promise<LeadRow[]> {
            (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
       from customers c
       left join users u on u.id = c.owner_id
+      left join users lm on lm.id = c.lead_manager_id
      where c.lead_stage is not null
        and c.lead_archived = true
        ${onlyMine(scope, "c.owner_id")}
@@ -2724,8 +2772,12 @@ export async function managers(): Promise<ManagerRow[]> {
   return db.execute<ManagerRow>(sql`
     select u.id, u.name, u.email, u.role::text as role, u.active,
            coalesce(
+             -- REGIONS ONLY, and from the renamed table. It also holds a
+             -- salesman's working cities now, and listing one of those as a
+             -- manager's patch would show "Nagpur" as somewhere they oversee.
              (select array_agg(t.region order by t.region)
-                from mbos_manager_territories t where t.user_id = u.id),
+                from mbos_user_territories t
+               where t.user_id = u.id and t.kind = 'region'),
              '{}'
            ) as regions
       from users u
@@ -2749,6 +2801,41 @@ export async function knownRegions(): Promise<string[]> {
      order by 1
   `);
   return rows.map((r) => r.region);
+}
+
+/**
+ * The cities and beats the BOOK actually uses.
+ *
+ * Read off `customers` rather than kept as a list of their own, exactly as
+ * `knownRegions` is and for the same reason: a separate list would offer places
+ * no customer is in, and a territory that matches nothing is a book that goes
+ * quietly empty.
+ *
+ * Trimmed and deduplicated case-insensitively, because "Nagpur", "nagpur " and
+ * "NAGPUR" are one city typed by three people — and the filter that reads these
+ * compares the same way, so the dialog must not offer three chips that behave
+ * as one.
+ */
+export async function knownPlaces(): Promise<{ cities: string[]; beats: string[] }> {
+  const rows = await db.execute<{ city: string | null; beat: string | null }>(sql`
+    select distinct
+           nullif(trim(c.city), '') as city,
+           nullif(trim(c.beat), '') as beat
+      from customers c
+  `);
+
+  const pick = (get: (r: { city: string | null; beat: string | null }) => string | null) => {
+    const seen = new Map<string, string>();
+    for (const r of rows) {
+      const v = get(r);
+      if (!v) continue;
+      const key = v.toLowerCase();
+      if (!seen.has(key)) seen.set(key, v);
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  };
+
+  return { cities: pick((r) => r.city), beats: pick((r) => r.beat) };
 }
 
 /* ══════════════════════════════════════════════════ one salesman's record */

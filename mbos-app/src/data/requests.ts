@@ -372,10 +372,22 @@ export async function logComplaint(args: {
 export type Sample = {
   id: string; customerId: string; productName: string | null; state: string;
   requestedAt: number; followUpDate: string | null; trialOutcome: string | null; syncState: string;
+  /* The three assertions, in the order they happen. See `SampleProgress`. */
+  dispatchedAt: number | null;
+  courierName: string | null;
+  trackingNumber: string | null;
+  deliveredAt: number | null;
+  receivedAt: number | null;
+  trialStartedAt: number | null;
+  trialCompletedAt: number | null;
+  satisfaction: string | null;
+  additionalRequirement: string | null;
+  rejectionReason: string | null;
   /* The row has carried these since the table was written; the type simply
      never named them, so the one screen that wants them could not read them. */
-  cans: number | null; reason: string | null;
-  deliveredAt: number | null; convertedOrderId: string | null;
+  cans: number | null;
+  reason: string | null;
+  convertedOrderId: string | null;
 };
 
 /**
@@ -449,4 +461,83 @@ export async function overdueSamples(today: string): Promise<Sample[]> {
     `SELECT * FROM samples WHERE state NOT IN ('Converted','Rejected') AND followUpDate IS NOT NULL AND followUpDate < ?`,
     [today],
   );
+}
+
+/* ------------------------------------------------- a sample, moved along */
+
+/**
+ * §I, §J and §K — what happens to a sample after it is asked for.
+ *
+ * Three dates and never one, because they are three assertions by three
+ * parties: `dispatchedAt` is us saying it went, `deliveredAt` is the carrier or
+ * our own man saying it arrived, and `receivedAt` is the SHOP saying it is in
+ * their hands. §J turns entirely on the third, and the review call is dated
+ * from it — a review timed from dispatch rings a customer still waiting for the
+ * parcel, which teaches them we do not know where our own stock is.
+ */
+export type SampleProgress = {
+  dispatchedAt?: number | null;
+  courierName?: string | null;
+  trackingNumber?: string | null;
+  deliveredAt?: number | null;
+  deliveryPhotoId?: string | null;
+  /** The CUSTOMER's word. Never inferred from a delivery. */
+  receivedAt?: number | null;
+  trialStartedAt?: number | null;
+  trialCompletedAt?: number | null;
+  trialOutcome?: 'pending' | 'approved' | 'rejected' | null;
+  satisfaction?: string | null;
+  additionalRequirement?: string | null;
+  rejectionReason?: string | null;
+  followUpDate?: string | null;
+  feedbackNotes?: string | null;
+};
+
+/**
+ * Why this cannot be saved, or null.
+ *
+ * The same rule the server enforces, and stated here so the salesman is told
+ * before he loses the screen rather than by a rejection hours later. A sample
+ * turned down with nothing written down teaches nobody anything, and the next
+ * one goes out exactly the same.
+ */
+export function sampleRefusal(p: SampleProgress): string | null {
+  if (p.trialOutcome === 'rejected' && !String(p.rejectionReason ?? '').trim()) {
+    return 'Say what was wrong with it — the next one goes out the same otherwise.';
+  }
+  return null;
+}
+
+export async function updateSample(
+  id: string,
+  p: SampleProgress,
+): Promise<{ ok: boolean; message?: string }> {
+  const refusal = sampleRefusal(p);
+  if (refusal) return { ok: false, message: refusal };
+
+  /* Only what actually changed. `updateAndQueue` writes the local row and the
+     wire payload from one object, so a column named here and not on the wire is
+     a column the office never hears about. */
+  const patch: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(p)) if (v != null) patch[k] = v;
+  if (!Object.keys(patch).length) return { ok: true };
+
+  /* The handset's own state word, so the list reads correctly before the sync
+     lands. `state` is this app's column and the office has no such field —
+     PROTOCOL.md §4.1 — so it is set locally and deliberately not sent. */
+  const localState =
+    p.trialOutcome === 'approved'
+      ? 'Approved'
+      : p.trialOutcome === 'rejected'
+        ? 'Rejected'
+        : p.receivedAt
+          ? 'Received'
+          : p.dispatchedAt
+            ? 'Dispatched'
+            : null;
+
+  await updateAndQueue({ table: 'samples', entityType: 'sample', id, patch });
+  if (localState) await run('UPDATE samples SET state = ? WHERE id = ?', [localState, id]);
+
+  return { ok: true };
 }

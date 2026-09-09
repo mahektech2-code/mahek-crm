@@ -4,6 +4,7 @@ import {
   cityOriginsQuery,
   customerCountQuery,
   customerPageQuery,
+  type BookView,
   type Origin,
 } from './customer-query';
 import { enqueue } from '../sync/queue';
@@ -80,12 +81,16 @@ export type CustomerPage = {
 export async function listCustomersPage(args: {
   query?: string;
   origin?: Origin;
+  /** Customers, leads, or the whole book. See `BookView`. */
+  view?: BookView;
   offset?: number;
   limit?: number;
 } = {}): Promise<CustomerPage> {
   const offset = args.offset ?? 0;
 
-  const count = customerCountQuery(args.query);
+  /* The SAME view goes to both, or the screen prints a total over a list that
+     does not match it. */
+  const count = customerCountQuery(args.query, args.view);
   const totalRow = await one<{ n: number }>(count.sql, count.params);
   const total = totalRow?.n ?? 0;
 

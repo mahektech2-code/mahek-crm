@@ -273,6 +273,11 @@ const ENTITY_TABLE: Record<string, string> = {
   leave: 'leave_requests',
   tour: 'tours',
   competitor: 'competitor_records',
+  /* Without this the row would sync and its own syncState would stay 'queued'
+     for ever — the sync screen would show a call that never landed, and the
+     salesman would make it again. A table missing from this map fails silently
+     and looks exactly like a broken connection. */
+  lead_validation: 'lead_validations',
   approval: 'approvals',
   plan_day: 'journey_days',
   /*

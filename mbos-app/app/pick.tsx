@@ -15,6 +15,9 @@ import {
 } from '../src/data/journey';
 import { dayLabel, inr, isoDate, plural } from '../src/lib/format';
 import { daysSince } from '../src/data/customers';
+import { pickOrigin } from '../src/engines/route';
+import { haversineMetres } from '../src/engines/geo';
+import { ShopMap } from '../src/components/ui/shop-map';
 import { useStore } from '../src/state/store';
 
 /**
@@ -31,14 +34,23 @@ import { useStore } from '../src/state/store';
  * morning, which is not knowable the evening before. The number on each ticked
  * row says where it sits, so the list is the plan rather than a set.
  *
- * **The proposed city rises to the top; it does not filter.** A man going to
- * Nagpur often has one call to make on the way, and a list that hid it would
- * send him back to the office to ask. The row says "elsewhere" so nothing is
- * picked by accident.
+ * **The agreed city is a HARD FILTER**, on Mahek's instruction. It used to rise
+ * to the top without filtering, on the reasoning that a man going to Nagpur
+ * often has one call to make on the way — that reasoning was not wrong, it was
+ * overruled: a day is a city, and the call on the road is added from the
+ * customers list or made unplanned with a deviation reason, which is what that
+ * field exists for.
  *
- * **Who you have not seen sorts first.** The question a plan answers is which
- * shops are going without a visit, and a customer seen yesterday is the last
- * one to put on tomorrow.
+ * **Nearest sorts first**, also on instruction, and it replaced "who you have
+ * not seen longest". Both answer real questions; a man filling a Tuesday
+ * morning in one town is choosing a walking order, and distance is what he is
+ * deciding on.
+ *
+ * **What it is measured FROM is the part worth knowing.** For today it is where
+ * he is standing. For any other day it is the middle of our shops in that city,
+ * because he picks tomorrow's doors at home — and sorting Wardha by distance
+ * from a sofa in Nagpur puts the list very nearly upside down. With neither, it
+ * keeps the old order rather than inventing a point.
  *
  * **The list is CAPPED and the save bar is pinned to the frame.** Those two
  * are the same bug from either end: the read had no LIMIT, so a book of
@@ -51,8 +63,7 @@ import { useStore } from '../src/state/store';
  * **Also: the day is named, and the money is in rupees.** The card printed the
  * raw `2026-09-09` while the route screen one tap away said `Wed 9 Sep`, and
  * `inr` — which takes rupees — was handed paise, so a shop owing ₹2,360 was
- * listed as owing ₹2,36,000.
- */
+ * listed as owing ₹2,36,000. */
 export default function PickScreen() {
   const params = useLocalSearchParams<{ day?: string }>();
   const planDayId = typeof params.day === 'string' ? params.day : '';
@@ -74,7 +85,28 @@ export default function PickScreen() {
   const [picked, setPicked] = React.useState<string[]>([]);
   const [q, setQ] = React.useState('');
   const [saving, setSaving] = React.useState(false);
+  /* The same two ways of looking at the same list the customers screen offers.
+     The tap means something different HERE — it picks a stop rather than opening
+     a record — and that difference lives in this caller rather than in the map. */
+  const [asMap, setAsMap] = React.useState(false);
   const [today] = React.useState(() => isoDate(new Date()));
+  /* The freshest fix already known, which costs no battery and no wait —
+     `whereNow` never asks the radio. Null is ordinary and handled: see
+     `pickOrigin`, which then measures from the city instead. */
+  const [fix, setFix] = React.useState<{ lat: number; lng: number } | null>(null);
+
+  React.useEffect(() => {
+    let live = true;
+    void import('../src/native/where')
+      .then((m) => m.whereNow())
+      .then((w) => {
+        if (live && w?.lat != null && w?.lng != null) setFix({ lat: w.lat, lng: w.lng });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
   React.useEffect(() => {
     let live = true;
@@ -106,16 +138,22 @@ export default function PickScreen() {
   React.useEffect(() => {
     let live = true;
     setLoading(true);
-    void pickCandidates(day?.city ?? null, q, pickedRef.current).then((r) => {
+    void pickCandidates(day?.city ?? null, q, pickedRef.current, {
+      forToday: day?.planDate === today,
+      fix: fix ? { lat: fix.lat, lng: fix.lng } : null,
+    }).then((r) => {
       if (!live) return;
       setRows(r.rows);
+      /* The count the cap sentence reads. Lost in a merge once — without it
+         `total` stays 0, `total > rows.length` is never true, and a capped list
+         silently stops saying it is capped. */
       setTotal(r.total);
       setLoading(false);
     });
     return () => {
       live = false;
     };
-  }, [day?.city, q]);
+  }, [day?.city, day?.planDate, today, fix, q]);
 
   const toggle = (id: string) =>
     setPicked((current) =>
@@ -131,6 +169,30 @@ export default function PickScreen() {
     router.back();
   };
 
+  /* The same origin the sort used, so the numbers on screen and the order they
+     are in cannot disagree — measured once here rather than recomputed per row. */
+  const origin = React.useMemo(
+    () =>
+      pickOrigin({
+        fix,
+        forToday: day?.planDate === today,
+        cityShops: rows
+          .filter((r) => r.gpsLat != null && r.gpsLng != null)
+          .map((r) => ({ lat: r.gpsLat as number, lng: r.gpsLng as number })),
+      }),
+    [fix, day?.planDate, today, rows],
+  );
+
+  const away = React.useCallback(
+    (c: Candidate): string => {
+      if (c.gpsLat == null || c.gpsLng == null) return 'no pin';
+      if (!origin) return '';
+      const m = haversineMetres(origin, { lat: c.gpsLat, lng: c.gpsLng });
+      return m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km';
+    },
+    [origin],
+  );
+
   if (!day) {
     return (
       <AppFrame title="Pick your shops" contentStyle={{ padding: 16 }}>
@@ -142,6 +204,7 @@ export default function PickScreen() {
   }
 
   const here = (day.city ?? '').trim().toLowerCase();
+
 
   return (
     <AppFrame
@@ -228,12 +291,55 @@ export default function PickScreen() {
         />
       </View>
 
-      {/* No inner ScrollView. The frame already scrolls, and a vertical one
-          nested in another has no height of its own to scroll within — it
-          grew to its content and handed the gesture back, which is why the
-          list read as one long page rather than a pane. */}
-      <View>
-        {rows.length === 0 ? (
+      {/* LIST OR MAP. On a day in one city the map is often the faster way to
+          choose: the shops are a walk apart and their arrangement is the plan.
+          A tap PICKS rather than opens — the number on a picked row is where it
+          sits in the day, and the map shows the same state filled in. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+        {([
+          { key: false, label: 'List' },
+          { key: true, label: 'Map' },
+        ] as const).map((chip) => {
+          const on = asMap === chip.key;
+          return (
+            <Pressable
+              key={String(chip.key)}
+              onPress={() => setAsMap(chip.key)}
+              style={{
+                paddingHorizontal: 14,
+                paddingVertical: 7,
+                borderRadius: radius.sm,
+                borderWidth: 1,
+                borderColor: on ? C.ink : C.border,
+                backgroundColor: on ? C.ink : C.surface,
+              }}>
+              <T style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
+                {chip.label}
+              </T>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {asMap ? (
+        <ShopMap
+          height={440}
+          pins={rows.map((c) => ({
+            id: c.id,
+            name: c.name,
+            lat: c.gpsLat ?? NaN,
+            lng: c.gpsLng ?? NaN,
+            picked: picked.includes(c.id),
+          }))}
+          onPress={(pin) => toggle(pin.id)}
+        />
+      ) : (
+        /* No inner ScrollView. The frame already scrolls, and a vertical one
+           nested in another has no height of its own to scroll within — it grew
+           to its content and handed the gesture back, which is why the list read
+           as one long page rather than a pane. */
+        <View>
+          {rows.length === 0 ? (
           <T s="small" style={{ color: C.muted, paddingVertical: 24, textAlign: 'center' }}>
             {loading
               ? 'Looking…'
@@ -323,27 +429,33 @@ export default function PickScreen() {
                 </T>
               </View>
 
-              {elsewhere ? (
-                <T s="small" style={{ color: C.muted }}>
-                  elsewhere
-                </T>
-              ) : null}
+              {/* The distance, because "nearest first" that does not say the
+                  distances is an order somebody has to take on trust. A shop
+                  with no pin says so rather than showing nothing: it sorts last,
+                  and the reason it does is worth one word. */}
+              <T s="small" style={{ color: C.muted }}>
+                {away(c)}
+              </T>
             </Pressable>
           );
         })}
+          {/*
+            What the list is a slice OF.
+            A capped list that counts itself is how a screen reports sixty shops
+            on a book of five thousand and says nothing about the rest. The way
+            past it is the search box above, so the sentence names it.
 
-        {/*
-          What the list is a slice OF.
-          A capped list that counts itself is how a screen reports sixty shops
-          on a book of five thousand and says nothing about the rest. The way
-          past it is the search box above, so the sentence names it.
-        */}
-        {total > rows.length ? (
-          <T s="small" style={{ color: C.muted, paddingVertical: 14, textAlign: 'center' }}>
-            {rows.length + ' of ' + total + ' shops — search for one that is not here'}
-          </T>
-        ) : null}
-      </View>
+            Inside the LIST branch: the map draws every pin it is given and is
+            not capped by the same read, so a count of what was left out belongs
+            with the list it was left out of.
+          */}
+          {total > rows.length ? (
+            <T s="small" style={{ color: C.muted, paddingVertical: 14, textAlign: 'center' }}>
+              {rows.length + ' of ' + total + ' shops — search for one that is not here'}
+            </T>
+          ) : null}
+        </View>
+      )}
     </AppFrame>
   );
 }

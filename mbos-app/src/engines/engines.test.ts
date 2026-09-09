@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { assessFix, haversineMetres, visitLocationVerdict, withinGeofence } from './geo';
-import { optimiseRoute } from './route';
+import { optimiseRoute, pickOrigin } from './route';
 import { assessOrder } from './credit';
 import { healthScore, type HealthInputs, type HealthThresholds, type HealthWeights } from './health';
 import { applySchemes, matches, type Scheme } from './schemes';
@@ -642,4 +642,40 @@ test('a fraction of a second never rounds a minute up early', () => {
   assert.equal(workedLabel(59_900, true), '0h 00m 59s');
   assert.equal(workedLabel(3_599_999, true), '0h 59m 59s');
   assert.equal(workedLabel(3_600_000, true), '1h 00m 00s');
+});
+
+/* ------------------------------------------------- pickOrigin, for a day */
+
+test('planning today from a known position measures from where he is', () => {
+  const here = { lat: 21.1458, lng: 79.0882 };
+  const origin = pickOrigin({ fix: here, forToday: true, cityShops: [{ lat: 20.7, lng: 78.6 }] });
+  assert.deepEqual(origin, here);
+});
+
+test('planning tomorrow measures from the city, not from his sofa', () => {
+  /* The case that makes this function necessary. He picks tomorrow's Wardha
+     shops in the evening at home in Nagpur — sorting them by distance from the
+     sofa puts the list very nearly upside down. */
+  const sofa = { lat: 21.1458, lng: 79.0882 };
+  const wardha = [
+    { lat: 20.7453, lng: 78.6022 },
+    { lat: 20.7501, lng: 78.6100 },
+  ];
+  const origin = pickOrigin({ fix: sofa, forToday: false, cityShops: wardha });
+  assert.ok(origin);
+  /* The centroid of the shops, not the fix. */
+  assert.ok(Math.abs(origin.lat - 20.7477) < 0.01, String(origin.lat));
+  assert.ok(Math.abs(origin.lng - 78.6061) < 0.01, String(origin.lng));
+});
+
+test('a city with no pinned shops falls back to the fix rather than inventing one', () => {
+  const here = { lat: 21.1458, lng: 79.0882 };
+  assert.deepEqual(pickOrigin({ fix: here, forToday: false, cityShops: [] }), here);
+});
+
+test('no fix and no pins answers null rather than a made-up point', () => {
+  /* The caller then sorts by something that needs no distance. A list ordered
+     around an invented origin is worse than one that admits it cannot measure —
+     it looks right and is wrong. */
+  assert.equal(pickOrigin({ fix: null, forToday: true, cityShops: [] }), null);
 });

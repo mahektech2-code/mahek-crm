@@ -15,6 +15,8 @@ import {
   scopedUserIds,
   type DataScope, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
+import { readSecret } from "../secrets";
+import { territoryClauseFor } from "./territory-service";
 import { policyForDate, resolveSubject } from "./expense-policy-service";
 import { describeRule } from "../expense-rule-forms";
 import { verifyPassword } from "../password";
@@ -408,6 +410,28 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
     if (key.startsWith("mbos.")) out[key] = value;
   }
   out["products.priceSource"] = config["products.priceSource"];
+
+  /*
+   * THE MAP KEY, and it is the one credential that goes down this wire.
+   *
+   * The handset draws the same maps the console does and must ask Ola for the
+   * same tiles — a key that never left the server could not load a single
+   * street. It is the exception `lib/secrets.ts` already names for the browser,
+   * one client further out, and the caveat is written there: a browser key is
+   * restricted to a domain and a phone has none, so a separate revocable key
+   * with a spend cap is the honest mitigation.
+   *
+   * It goes only to a device that has already authenticated as a bound handset
+   * — this payload is behind the MBOS bearer token — which is the most this
+   * side can do about it.
+   *
+   * Absent where no key is set, and the map screens draw nothing rather than a
+   * grey rectangle: a map that fails when opened is worse than one never
+   * offered, which is the same rule the microphone follows.
+   */
+  const mapKey = await readSecret("olamaps.apiKey").catch(() => null);
+  if (mapKey) out["maps.olaKey"] = mapKey;
+
   return out;
 }
 
@@ -522,19 +546,34 @@ export async function customerIdsInScope(
   principal: MbosPrincipal,
 ): Promise<string[]> {
   const ids = scopedUserIds(principal.scope);
-
   /*
-   * `null` is unrestricted, and it has to short-circuit BEFORE the `or` below.
-   * `scopeIn(null)` is `undefined` — Drizzle drops an undefined operand — so
-   * `or(undefined, namedBy…)` would collapse to the name match alone and
-   * NARROW an admin to it, which is the opposite of what null means.
+   * WHO MAY SEE IT, AND WHERE HE WORKS — two clauses doing two different jobs,
+   * and they are ANDed rather than folded together.
+   *
+   * The first is the security boundary and is main's: the three seats decide
+   * whose book a record is in, `namedByUsers` adds the salesman the customer
+   * master NAMES, and `null` short-circuits BEFORE the `or` because
+   * `scopeIn(null)` is `undefined` — Drizzle drops an undefined operand, so
+   * `or(undefined, namedBy…)` would collapse to the name match alone and NARROW
+   * an admin to it, which is the opposite of what null means.
+   *
+   * The second is the territory, and it can only ever REMOVE rows from what the
+   * first allows. Nobody is given sight of another salesman's customer by being
+   * allocated a city. `territoryClauseFor` answers undefined where nothing is
+   * allocated and `and()` drops it, so a person with no territory keeps the
+   * whole book they had — allocating cities to eight people and forgetting the
+   * ninth must not empty her handset.
+   *
+   * `and(undefined, undefined)` is undefined, so an admin with no territory is
+   * still unrestricted. Both null-handling rules survive the pairing.
    */
-  const where = ids === null ? undefined : or(scopeIn(ids), namedByUsers(ids));
+  const visible = ids === null ? undefined : or(scopeIn(ids), namedByUsers(ids));
+  const territory = await territoryClauseFor(principal.user.id);
 
   const rows = await db
     .select({ id: customers.id })
     .from(customers)
-    .where(where);
+    .where(and(visible, territory));
   return rows.map((r) => r.id);
 }
 
@@ -1042,8 +1081,20 @@ async function openSamples(userId: string, customerIds: string[], since?: string
            pr.name as "productName",
            s.quantity_cans as "quantityCans",
            s.requested_date::text as "requestedDate",
+           -- Three assertions by three parties, and never collapsed: we sent
+           -- it, the carrier says it arrived, the shop says it has it. Only
+           -- the third starts the review clock.
+           s.dispatched_at as "dispatchedAt",
+           s.courier_name as "courierName",
+           s.tracking_number as "trackingNumber",
            s.delivered_at as "deliveredAt",
            s.delivery_photo_id as "deliveryPhotoId",
+           s.received_at as "receivedAt",
+           s.trial_started_at as "trialStartedAt",
+           s.trial_completed_at as "trialCompletedAt",
+           s.satisfaction,
+           s.additional_requirement as "additionalRequirement",
+           s.rejection_reason as "rejectionReason",
            s.trial_outcome as "trialOutcome",
            s.follow_up_date::text as "followUpDate",
            s.feedback_notes as "feedbackNotes",
@@ -1076,13 +1127,33 @@ async function openLeads(userId: string, since?: string | null) {
            c.lead_next_follow_up_date::text as "nextFollowUpDate",
            c.lead_notes as notes,
            c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
+           -- The coordinating seat, and the NAME beside it: a salesman with a
+           -- commercial question needs somebody to ring, and an id is not a
+           -- person. Resolved here rather than on the handset because the
+           -- handset holds no user table.
+           c.lead_manager_id as "leadManagerId",
+           lm.name as "leadManagerName",
+           c.lead_hold_reason as "holdReason",
+           -- How many times anybody has stood in this shop.
+           --
+           -- Counted rather than cached: a cached count needs a recompute
+           -- path, an invalidation on every visit write, and a way to be
+           -- wrong. This is count(*) on mbos_visits_customer_idx for the
+           -- handful of open leads one salesman owns.
+           (select count(*)::int from mbos_visits v
+             where v.customer_id = c.id) as "visitCount",
            case when c.lead_converted_at is not null then c.id end as "convertedCustomerId",
            c.lead_last_activity_date::text as "lastActivityDate",
            c.updated_at as "updatedAt"
       from customers c
-     where c.owner_id = ${userId}
+      left join users lm on lm.id = c.lead_manager_id
+     where (c.owner_id = ${userId} or c.lead_manager_id = ${userId})
        and c.lead_stage is not null
        and c.lead_archived = false
+       -- on_hold is deliberately NOT excluded. A held lead is a live
+       -- prospect with a reason it is not moving, and taking it off the
+       -- handset would make "on hold" mean "gone" — which is exactly the
+       -- conflation the status exists to end.
        and c.lead_stage not in ('won', 'lost')
        ${since ? sql`and c.updated_at > ${since}` : sql``}
      order by c.lead_next_follow_up_date asc nulls last
