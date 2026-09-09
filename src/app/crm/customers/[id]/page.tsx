@@ -228,6 +228,10 @@ export default async function CustomerRecordPage({
         salesManagerName: customer.salesManagerName,
         backOfficeAmId: customer.backOfficeAmId,
         backOfficeAmName: customer.backOfficeAmName,
+        // §Q — the fourth seat. The name for the screen, and the timestamp
+        // because "not handed over" is a real state the screen says in words.
+        relationshipOwnerName: customer.relationshipOwnerName,
+        handedOverAt: customer.handedOverAt,
         status: customerStatusLabel(customer),
         slowPayer: customer.slowPayer,
         outstanding: customer.outstanding,
@@ -276,6 +280,7 @@ export default async function CustomerRecordPage({
       // seat drives no queue, no scope and no target, so a manager may set it
       // while the two beside it stay accounts' and admin's.
       canAssignSalesManager={can(user.role, "customer.assignSalesManager")}
+      canHandOver={can(user.role, "customer.handOver")}
       backOfficePeople={backOfficePeople}
       amReasons={config["people.amChangeReasons"]}
       amSearchThreshold={config["people.pickerSearchThreshold"]}

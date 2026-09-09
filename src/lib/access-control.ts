@@ -258,6 +258,20 @@ export const BACK_OFFICE_SQL = sql`customers.back_office_am_id`;
 export const LEAD_MANAGER_SQL = sql`customers.lead_manager_id`;
 
 /**
+ * The FOURTH seat that grants sight: whoever the relationship was handed over
+ * to once the lead became a customer.
+ *
+ * Same split as the three above, and here it is the one that matters most.
+ * `ASSIGNED_TO_SQL` decides whose orders an account is and whose target it
+ * counts toward; reading this there would move revenue between people as a
+ * side effect of naming a relationship manager, and quietly — nobody reads a
+ * target screen looking for a handover. Moving money is `customer.reassign`,
+ * accounts' and admin's. This only lets the person who was handed the account
+ * open it, which is the least a seat can do and still be a seat.
+ */
+export const RELATIONSHIP_OWNER_SQL = sql`customers.relationship_owner_id`;
+
+/**
  * WHOSE LIST A CUSTOMER APPEARS ON, which is not the same question as who
  * holds the book — and is the one every scoped query actually asks.
  *
@@ -287,6 +301,13 @@ export function scopedToUsers(ids: string[] | null): SQL | undefined {
      * would lead to a screen that refused them.
      */
     inArray(LEAD_MANAGER_SQL, ids),
+    /*
+     * And whoever now runs the relationship. Exactly the same reasoning one
+     * step later in the account's life: a handover that did not carry sight
+     * with it would announce to somebody that an account is theirs and then
+     * refuse them the screen.
+     */
+    inArray(RELATIONSHIP_OWNER_SQL, ids),
   );
 }
 
@@ -314,6 +335,7 @@ export const CAPABILITIES = [
   "sheet.import",
   "customer.reassign",
   "customer.assignSalesManager",
+  "customer.handOver",
   "customer.classify",
   /*
    * The expense policy: writing a draft, and putting one into force.
@@ -353,6 +375,25 @@ const MANAGER_ONLY: ReadonlySet<Capability> = new Set<Capability>([
    * "everything Rahul had" is a hundred accounts in one press.
    */
   "customer.assignSalesManager",
+  /*
+   * Handing the relationship over — a manager's, and for the same reason the
+   * seat above is.
+   *
+   * The test is always whether the act moves NUMBERS. `customer.reassign`
+   * moves the sales seat, which decides who is credited for an account's
+   * orders and whose target it counts toward, so a manager holding it is a
+   * manager moving their own people's figures — that is why it sits in
+   * `ACCOUNTS_ONLY`. A handover moves neither: not a rupee of revenue, not a
+   * target, not a collections list. What it moves is who runs the account and
+   * who can open it, which is line management, and line management is the one
+   * thing the accounts desk does not do.
+   *
+   * It is a real power even so — it grants sight of an account — so it is a
+   * capability of its own rather than folded into `customer.write`, and it is
+   * checked in the action rather than by hiding a menu item. A server action
+   * is a URL.
+   */
+  "customer.handOver",
 ]);
 
 /**
@@ -716,6 +757,12 @@ export async function assertCustomerInScope(
      * above, and absent means the same thing: the old, stricter check.
      */
     leadManagerId?: string | null;
+    /**
+     * Whoever the relationship was handed over to. Optional for the same
+     * reason as the two above, and absent means the same thing: the old,
+     * stricter check.
+     */
+    relationshipOwnerId?: string | null;
   } | null,
 ) {
   const { scope } = await resolveScope();
@@ -751,6 +798,7 @@ export async function assertCustomerInScope(
   const assigned = assignedUserId(customer);
   const backOffice = customer.backOfficeAmId ?? null;
   const leadManager = customer.leadManagerId ?? null;
+  const relationshipOwner = customer.relationshipOwnerId ?? null;
   const owner = customer.ownerId;
   const mine =
     (assigned !== null && ids.includes(assigned)) ||
@@ -763,6 +811,13 @@ export async function assertCustomerInScope(
      * same thing: the row is on your screen and opening it throws a 500.
      */
     (leadManager !== null && ids.includes(leadManager)) ||
+    /*
+     * The fifth, and the paragraph above is why it is in the same edit as
+     * `RELATIONSHIP_OWNER_SQL` rather than a commit later. "If one of these
+     * ever changes again, the other has to change with it" is the whole rule,
+     * and it has been broken twice by people who meant to come back to it.
+     */
+    (relationshipOwner !== null && ids.includes(relationshipOwner)) ||
     (owner !== null && ids.includes(owner));
 
   if (!mine) throw new NotPermittedError("customer.read");

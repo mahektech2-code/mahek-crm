@@ -539,6 +539,20 @@ export const BACK_OFFICE_AM_NAME_SQL = sql<string | null>`coalesce(
 )`;
 
 /**
+ * Who runs the relationship, by name.
+ *
+ * NO `coalesce` and no name column behind it, unlike all three seats above.
+ * Those fall back to a name the customer master states, because a sales person
+ * or a back office clerk can be somebody with no MahekOne login and the screen
+ * still has to say who they are. This seat cannot: it grants SIGHT of the
+ * account, so it is only ever a `users` row, and a spelling with nobody behind
+ * it would be a relationship handed to a name that cannot open it.
+ */
+export const RELATIONSHIP_OWNER_NAME_SQL = sql<string | null>`(
+  select name from users u where u.id = customers.relationship_owner_id
+)`;
+
+/**
  * The names each filter can offer.
  *
  * Read from the SAME expressions the column renders, and not from `users`,
@@ -1018,6 +1032,9 @@ export const getCustomer = cache(async function getCustomer(
       // or a manager choosing somebody, so it is the better answer where it
       // exists, and the sheet's name is what stands in when it does not.
       backOfficeAmName: BACK_OFFICE_AM_NAME_SQL,
+      // §Q. Read here so the record page can name it. No fallback, because
+      // this seat has no name column to fall back to — see the SQL above.
+      relationshipOwnerName: RELATIONSHIP_OWNER_NAME_SQL,
       // The same subquery `listCustomers` reads — the last call that produced
       // a next step, and nothing else, or the record page and the customers
       // list would disagree about the same customer's next call.
@@ -1047,6 +1064,7 @@ export const getCustomer = cache(async function getCustomer(
     salesAmName: rows[0].salesAmName,
     salesManagerName: rows[0].salesManagerName,
     backOfficeAmName: rows[0].backOfficeAmName,
+    relationshipOwnerName: rows[0].relationshipOwnerName,
     nextStep: rows[0].nextStep ?? null,
   };
 });

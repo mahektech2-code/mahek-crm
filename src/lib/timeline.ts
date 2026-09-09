@@ -146,6 +146,17 @@ export const MBOS_EVENT = {
   leadAssigned: "lead_assigned",
   leadConverted: "lead_converted",
   ownerChange: "owner_change",
+  /**
+   * §Q — the relationship passing to whoever runs the account from here.
+   *
+   * Its own kind rather than a second use of `ownerChange`, which the CRM
+   * already writes when an account MANAGER moves. The two would read
+   * identically on a customer's history and mean different things: one is the
+   * sales or back-office seat moving, the other is the moment a lead somebody
+   * won in the field became somebody else's account to run. Reading a history
+   * to find out when that happened is the whole reason the marker exists.
+   */
+  relationshipHandover: "relationship_handover",
 
   /* What was learnt, and from whom. */
   requirement: "requirement",
