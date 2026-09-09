@@ -764,6 +764,10 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
       "journeyStops", "planDays", "priceList", "schemes", "documents",
       "courses", "approvals", "performance", "tasks", "leads", "samples",
       "leaveBalances", "holidays", "salary", "deletions",
+      /* The three customer-history channels. `applyPull` walks all three and
+         none of them was asserted here — `customerBills` is new, and the two
+         beside it had simply been missed. */
+      "customerOrders", "customerPayments", "customerBills",
     ] as const) {
       assert.ok(
         Array.isArray((delta as Record<string, unknown>)[channel]),
@@ -809,6 +813,67 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
       stops.filter((x) => x.customerId === shop.id).length,
       1,
       "the stop never reached the handset either",
+    );
+  });
+
+  /*
+   * B3-14 §O. WHAT THE MONEY IS AGAINST.
+   *
+   * The handset carried one number, `outstandingPaise`, so a salesman could
+   * say a shop owed 47,000 and not which invoices that was — and because
+   * nothing could name a bill, every collection spread oldest-first even where
+   * the customer was plainly paying against the invoice in his hand.
+   *
+   * These assert the two halves that make the picker honest: an open bill
+   * arrives with the id `handlePayment` validates against, and an `unstated`
+   * bill arrives SAYING it is unstated, because its balance is the full amount
+   * purely because nobody has spoken for it — printing that as a debt is the
+   * imported-book mistake arriving on a phone.
+   */
+  test("the open bills behind the outstanding come down, with their position", async () => {
+    const stated = id("bill");
+    const unstated = id("bill");
+    const settled = id("bill");
+    const day = new Date().toISOString().slice(0, 10);
+
+    await db.execute(sql`
+      insert into bills (id, customer_id, bill_no, bill_date, amount, paid_amount, payment_position)
+      values
+        (${stated},   ${shop.id}, 'MMI/26-27/9001', ${day}::date, 250000, 50000, 'stated'),
+        (${unstated}, ${shop.id}, 'MMI/26-27/9002', ${day}::date, 400000, 0,     'unstated'),
+        (${settled},  ${shop.id}, 'MMI/26-27/9003', ${day}::date, 100000, 100000,'stated')
+    `);
+
+    const payload = await buildBootstrap(principal);
+    const rows = payload.customerBills as Array<Record<string, unknown>>;
+
+    const open = rows.find((b) => b.id === stated);
+    assert.ok(open, "the open bill never reached the handset, so nothing can be named");
+    assert.equal(open.billNo, "MMI/26-27/9001");
+    assert.equal(open.balancePaise, 200000, "the balance is what is still open, not the face value");
+    assert.equal(open.paymentPosition, "stated");
+
+    const quiet = rows.find((b) => b.id === unstated);
+    assert.ok(quiet, "an unstated bill is still a bill somebody can pay against");
+    assert.equal(
+      quiet.paymentPosition,
+      "unstated",
+      "without this the screen prints the full amount as a debt — the imported-book mistake, on a phone",
+    );
+
+    assert.equal(
+      rows.find((b) => b.id === settled),
+      undefined,
+      "a settled bill must not be offered: naming it is refused with `bill_settled`, " +
+        "which reads as the app being wrong rather than the phone being stale",
+    );
+
+    /* The customer's name, the aging bucket and the status are on the Accounts
+       row and have nowhere to land here. One extra key empties the phone. */
+    assert.deepEqual(
+      Object.keys(open).filter((k) => !ALLOWED_BILL_KEYS.has(k)),
+      [],
+      "the payload was forwarded rather than trimmed to the handset",
     );
   });
 
@@ -1327,6 +1392,21 @@ describe("Releasing a handset", () => {
     assert.equal(row.active, true);
   });
 });
+
+/**
+ * Exactly what a bill row may carry to the handset.
+ *
+ * `customer_bills` is a SQLite table and `applyPull` inserts the columns that
+ * arrived, so a key with no column throws — and because the whole pull is one
+ * transaction, that throw empties the book. The wire test pins this against
+ * the handset schema as text; this one pins it against a row that really came
+ * out of the service.
+ */
+const ALLOWED_BILL_KEYS = new Set([
+  "id", "customerId", "billNo", "billDate", "dueDate",
+  "amountPaise", "paidPaise", "balancePaise", "overdueDays",
+  "disputed", "paymentPosition",
+]);
 
 describe("The journey channels' delta pull", () => {
   /*
