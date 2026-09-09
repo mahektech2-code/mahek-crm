@@ -2127,6 +2127,35 @@ dialog, a manager left untouched is OMITTED from the request rather than sent
 as its current value — sending it would stamp a decision mark on an account
 nobody decided anything about.
 
+**AND THE BACK OFFICE SEAT IS "LOGISTICS", which is why no such role exists.**
+The MBOS brief assigns six items to a Logistics actor and MahekOne's role list
+is telecaller, manager, accounts, admin — so those items sat unbuilt, blocked
+on a seat that appeared to be missing. It was not missing: dispatch is the
+first word in the sentence above, and the people who put things on lorries and
+chase them are the back office team. Reading the brief's job title as a role to
+be created is what kept it blocked. A fifth `users.role` would have been a new
+way to see the whole company's book — scope reads the derived widest role — to
+model something that has existed since the second manager column shipped.
+
+**Where nobody holds it, the task still lands, and it SAYS why.** An account
+with no back office person still has to produce a chase: a sample that never
+arrives is the quietest way a lead dies, because the salesman assumes it is
+being tried and the shop assumes we forgot. So it falls through to the Lead
+Manager and the description says it came there because no back office person is
+named. That distinction is the whole of it — quietly moving a job the brief
+puts elsewhere looks like completion, and naming why it moved does not. It also
+turns the gap into something somebody can fix, which a silent fallback never
+does. `back_office_am_id` and never `back_office_name`: a task needs somebody
+who can sign in and close it, and the name column is for a person who may have
+no login at all.
+
+**A chase is CLOSED by the answer, not deleted by it.** Confirmed receipt marks
+the task done and keeps its `sourceId`, because "we asked where this parcel was
+and then it arrived" is the only way anybody finds out a courier is the
+problem. Deleting it leaves a lead that converted late and nothing saying why.
+It is closed before the review task is raised, so the two never sit on one list
+saying opposite things about one sample.
+
 **A reassignment is a decision, so the sheet keeps its hands off it.**
 `customers.amDecidedAt` is the third mark of its kind, after
 `orders.approvedAt` and `bills.paymentDecidedAt`, and it guards TWO things

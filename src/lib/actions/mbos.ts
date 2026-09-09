@@ -2155,6 +2155,7 @@ async function handleSampleUpdate(
       id: mbosSamples.id,
       customerId: mbosSamples.customerId,
       salesmanId: mbosSamples.salesmanId,
+      dispatchedAt: mbosSamples.dispatchedAt,
       receivedAt: mbosSamples.receivedAt,
       trialOutcome: mbosSamples.trialOutcome,
       rejectionReason: mbosSamples.rejectionReason,
@@ -2266,10 +2267,32 @@ async function handleSampleUpdate(
     }).catch(() => {});
   }
 
+  /* §J — dispatched and not yet confirmed. Raised on the TRANSITION, so a
+     re-sent dispatch date does not stack a second chase on somebody's list. */
+  if (p.dispatchedAt != null && !existing.dispatchedAt) {
+    await afterSampleDispatched(
+      principal,
+      existing.id,
+      customer.id,
+      customer.name,
+      new Date(p.dispatchedAt),
+      p.courierName ?? null,
+      p.trackingNumber ?? null,
+    ).catch(() => {});
+  }
+
   /* Confirmed received starts the review clock — §K's "review call every 2–3
      days". Raised once, on the transition, so a re-sent confirmation does not
      stack a second task on somebody's list. */
   if (p.receivedAt != null && !existing.receivedAt) {
+    /*
+     * AND IT ANSWERS THE CHASE. The question "where did this parcel get to"
+     * has just been answered by the shop, so leaving its task open puts work
+     * on somebody's list that is already done — which is how a task list stops
+     * being read. Closed before the review is raised, so the two never sit
+     * there together saying opposite things about the same sample.
+     */
+    await closeTransitChase(existing.id, principal.user.id).catch(() => {});
     await afterSampleReceived(principal, existing.id, customer.id, customer.name).catch(
       () => {},
     );
@@ -2288,6 +2311,121 @@ async function handleSampleUpdate(
   }
 
   return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/**
+ * §J — WHERE DID THE PARCEL GET TO, and who is asked.
+ *
+ * THE SEAT §J NAMES IS "LOGISTICS", AND MAHEKONE ALREADY HAS IT — it is just
+ * not called that. `back_office_am_id` is dispatch, billing and paperwork; the
+ * back office team are the people who put things on lorries and chase them.
+ * Reading the brief's word as a role to be invented is what kept this item
+ * unbuilt: a fifth `users.role` value would have been a new way to see the
+ * whole company's book (see the note on `customer.handOver`), to model a seat
+ * that has existed since the second account manager column shipped.
+ *
+ * WHERE NOBODY HOLDS THAT SEAT the task still has to land somewhere, and it
+ * goes to the Lead Manager — but the description SAYS it came here because no
+ * back office person is named. That distinction is the whole objection this
+ * item was parked on: quietly moving a job the brief puts elsewhere is
+ * dishonest, and naming why it moved is not. It also turns the gap into
+ * something somebody can fix, which a silent fallback never does.
+ *
+ * `back_office_am_id` and not `back_office_name`: a task needs somebody who can
+ * sign in and close it, and that column is a name the customer master states
+ * for a person who may have no login at all.
+ */
+async function afterSampleDispatched(
+  principal: MbosPrincipal,
+  sampleId: string,
+  customerId: string,
+  customerName: string,
+  dispatchedAt: Date,
+  courierName: string | null,
+  trackingNumber: string | null,
+): Promise<void> {
+  const config = await getConfig();
+  const [seats] = await db
+    .select({
+      backOfficeAmId: customers.backOfficeAmId,
+      backOfficeName: customers.backOfficeName,
+      leadManagerId: customers.leadManagerId,
+      ownerId: customers.ownerId,
+    })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
+
+  const logistics = seats?.backOfficeAmId ?? null;
+  const assignee = logistics ?? seats?.leadManagerId ?? seats?.ownerId;
+  if (!assignee) return;
+
+  const days = config["mbos.samples.transitChaseAfterDays"];
+  /* `calendarDate`, not `toISOString().slice(0, 10)` — that spelling answers in
+     UTC, so a chase scheduled at 2am IST lands on the previous day, wrong on
+     every machine equally. The §11 grep test guards it. Dated from DISPATCH
+     rather than from now, because a dispatch is routinely recorded a day late
+     from a phone that was offline, and the parcel does not wait for the sync. */
+  const due = calendarDate(new Date(dispatchedAt.getTime() + days * 86_400_000));
+
+  const carrier = [courierName, trackingNumber].filter(Boolean).join(" · ");
+  const standingIn = logistics
+    ? ""
+    : " This is on your list because no back office person is named on this account — naming one sends the next chase to them.";
+
+  await db
+    .insert(mbosTasks)
+    .values({
+      id: gen("mbos_task"),
+      title: `Where is the sample — ${customerName}`,
+      description:
+        `Sent${carrier ? ` by ${carrier}` : ""}, and the shop has not confirmed it arrived. Find out where it is, and either get it moving or send another. Mark the sample received once they say they have it.${standingIn}`,
+      assignedToUserId: assignee,
+      priority: "medium",
+      dueDate: due,
+      customerId,
+      status: "open",
+      /* The natural key with `sourceId` below: one chase per sample, so a
+         re-sent dispatch cannot stack a second. */
+      sourceType: "sample_in_transit",
+      sourceId: sampleId,
+      createdById: principal.user.id,
+      updatedById: principal.user.id,
+    })
+    .onConflictDoNothing();
+
+  await db
+    .insert(notifications)
+    .values({
+      id: gen("ntf"),
+      userId: assignee,
+      title: "A sample is on its way",
+      body: `${customerName} is expecting a sample${carrier ? ` (${carrier})` : ""}. If they have not confirmed it by ${due}, chase it.`,
+      kind: "info",
+    })
+    .catch(() => {});
+}
+
+/**
+ * The chase, answered.
+ *
+ * `done` rather than deleted, and the row keeps its `sourceId`, because "we
+ * asked where this parcel was and then it arrived" is the record of a sample
+ * that went slowly — which is the only way anybody ever finds out a courier is
+ * the problem. A deleted task leaves a lead that converted late and nothing
+ * saying why.
+ */
+async function closeTransitChase(sampleId: string, actorId: string): Promise<void> {
+  await db
+    .update(mbosTasks)
+    .set({ status: "done", completedAt: new Date(), updatedById: actorId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(mbosTasks.sourceType, "sample_in_transit"),
+        eq(mbosTasks.sourceId, sampleId),
+        eq(mbosTasks.status, "open"),
+      ),
+    );
 }
 
 /**
