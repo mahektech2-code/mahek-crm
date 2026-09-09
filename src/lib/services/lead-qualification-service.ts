@@ -12,6 +12,7 @@ import {
 import { getConfig } from "../config/store";
 import { nextWorkingDay, type BusinessDate } from "../business-date";
 import { managerNameByEmployeeName } from "./org-service";
+import { MBOS_EVENT, writeTimelineEvent } from "../timeline";
 import { sendExpoPush } from "../mbos/push";
 
 /* ---------------------------------------------------------------------------
@@ -161,6 +162,19 @@ export async function qualifyLead(
       updatedAt: new Date(),
     })
     .where(and(eq(customers.id, customerId), isNull(customers.leadManagerId)));
+
+  /* §R — work moving onto somebody's plate is a fact about the account, not
+     just about the person. A history that shows a lead qualified and never
+     shows who picked it up cannot answer "who was running this in March". */
+  await writeTimelineEvent(db, {
+    customerId,
+    eventType: MBOS_EVENT.leadAssigned,
+    sourceApp: "mbos",
+    sourceRecordId: `${customerId}:lead_manager`,
+    occurredAt: new Date(),
+    actorUserId: leadManagerId,
+    summary: "Qualified — a Lead Manager is now running it",
+  }).catch(() => {});
 
   const taskId = await raiseValidationTask(customerId, leadManagerId, customerName);
 

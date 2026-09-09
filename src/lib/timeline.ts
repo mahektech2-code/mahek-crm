@@ -107,6 +107,63 @@ export const CRM_EVENT = {
   call: "telecaller_call",
   order: "order",
   payment: "payment",
+  /**
+   * §R — whose account this is, changing.
+   *
+   * `crm` rather than `mbos` because that is where reassignment happens: the
+   * capability is accounts' and admin's and the screen is the customer list, so
+   * the app that wrote it is the CRM whoever pressed the button was in.
+   */
+  ownerChange: "owner_change",
+} as const;
+
+/**
+ * The event types MBOS writes, named here beside the CRM's for the same reason.
+ *
+ * The natural key is built from this string, so a typo makes a second, silently
+ * duplicated stream — and worse, one nothing will ever deduplicate, because the
+ * conflict target will never match. Five of these existed as literals at their
+ * call sites before §R was worked through; the rest are new, and all of them
+ * live here now so the set can be read in one place and compared against what
+ * the brief asks for.
+ *
+ * §R asks for twenty-three kinds. `quotation` is deliberately absent: there is
+ * no quotation record in MahekOne to project FROM, and a timeline entry with no
+ * source row is not a projection of anything — it is a sentence somebody typed,
+ * in a table whose whole discipline is that every row points back at the record
+ * that is the actual truth.
+ */
+export const MBOS_EVENT = {
+  /* Already written before §R was completed. */
+  visit: "visit",
+  order: "order",
+  payment: "payment",
+  complaint: "complaint",
+  sample: "sample",
+
+  /* The lead's own life. */
+  leadCreated: "lead_created",
+  leadAssigned: "lead_assigned",
+  leadConverted: "lead_converted",
+  ownerChange: "owner_change",
+
+  /* What was learnt, and from whom. */
+  requirement: "requirement",
+  competitor: "competitor",
+  validation: "validation_call",
+  internalNote: "internal_note",
+
+  /* The sample, at each point somebody's word changes. */
+  sampleDispatched: "sample_dispatched",
+  sampleReceived: "sample_received",
+  sampleReview: "sample_review",
+
+  /* The commercial half. */
+  negotiation: "negotiation",
+  delivery: "delivery",
+
+  /** Where a shop actually is, recorded the first time somebody stood in it. */
+  gps: "gps",
 } as const;
 
 /**

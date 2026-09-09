@@ -143,6 +143,35 @@ holding the whole app and nobody who was deliberately narrowed.
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
 
+**EVERY TIMELINE KIND IS A CONSTANT, never a literal at the call site.**
+`CRM_EVENT` and `MBOS_EVENT` in `lib/timeline.ts` are the whole vocabulary. The
+natural key is (app, kind, source row), so a literal that drifts by one
+character produces a stream that can never deduplicate against itself — a
+retried sync writes a second copy and the record reads as the salesman having
+visited twice. `timeline-coverage.test.ts` reads the source and fails on a bare
+string, and on any kind DECLARED and never written, which is the other half:
+that one reads on a customer record as a gap in their history rather than as an
+unbuilt feature. It found two the moment it was written.
+
+**Where one record produces several events, the STAGE goes in the source id.**
+A sample is dispatched, received and reviewed, and all three name the same row —
+so `sourceRecordId` is `<id>:dispatched`, `<id>:received`, `<id>:review`. Left
+as the bare id the natural key would collapse them onto one row, the first
+written would win, and the receipt would never appear.
+
+**QUOTATION IS ABSENT, and that is the honest answer.** §R asks for it; there is
+no quotation record in MahekOne to project FROM, and a timeline row with no
+source is not a projection — it is a sentence somebody typed, in a table whose
+entire discipline is that every row points back at the record that is the actual
+truth. A test asserts its absence, so building the record is what deletes the
+test rather than the gap being forgotten.
+
+**An internal note's BODY never reaches the timeline.** `visibleToRoles` decides
+who may read a note and the timeline has no such gate, so copying the words in
+would route a restricted note straight around its own restriction. The entry
+records that one was written; the note stays where the rule about reading it
+lives.
+
 **"DID WE SELL ANYTHING" IS DERIVED FROM ONE LIST, not restated in SQL.**
 `orderCountsSql` used to spell the three counting statuses out as a literal
 beside `PURCHASE_STATUSES`, which held the same three — two definitions waiting

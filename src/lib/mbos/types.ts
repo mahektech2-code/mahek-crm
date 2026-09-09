@@ -85,6 +85,15 @@ export const SYNC_ENTITY_TYPES = [
    * the salesman's account with the office's and destroy exactly that.
    */
   "lead_validation",
+  /**
+   * §R — a note about a customer that the customer must never see.
+   *
+   * `mbos_internal_notes` has had a table and a read path since the module
+   * shipped, and no write anywhere: the bootstrap narrowed them by role and
+   * sent nothing, because nothing could put one there. The same shape
+   * `mbos_competitor_records` was in.
+   */
+  "internal_note",
   "approval",
   /**
    * The salesman's answer to a proposed day: agreed, or refused with a reason

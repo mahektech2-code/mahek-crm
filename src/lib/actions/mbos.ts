@@ -24,6 +24,7 @@ import {
   mbosJourneyPlans,
   mbosJourneyStops,
   mbosCompetitorRecords,
+  mbosInternalNotes,
   mbosLeadValidations,
   mbosLeaveRequests,
   mbosTours,
@@ -39,7 +40,7 @@ import {
   users,
   type OrderLine,
 } from "@/db/schema";
-import { writeTimelineEvent, type TimelineWriter } from "../timeline";
+import { MBOS_EVENT, writeTimelineEvent, type TimelineWriter } from "../timeline";
 import { qualifyLead } from "../services/lead-qualification-service";
 import { scopedToUsers} from "../access-control";
 import { getConfig } from "../config/store";
@@ -540,6 +541,7 @@ const DEPENDENCY_TABLES: Record<string, string> = {
    * written again — a retry loop with nothing at either end to explain it. */
   lead: "customers",
   lead_validation: "mbos_lead_validations",
+  internal_note: "mbos_internal_notes",
   task: "mbos_tasks",
   expense: "mbos_expenses",
   attendance: "mbos_attendance_days",
@@ -716,6 +718,8 @@ async function dispatchItem(
       return handleCompetitor(principal, item);
     case "lead_validation":
       return handleLeadValidation(principal, item);
+    case "internal_note":
+      return handleInternalNote(principal, item);
     case "approval":
       return handleApproval(principal, item);
     case "plan_day":
@@ -1041,7 +1045,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
 
     await writeTimeline(tx, {
       customerId: customer.id,
-      eventType: "visit",
+      eventType: MBOS_EVENT.visit,
       sourceRecordId: item.entityId,
       occurredAt: checkInAt,
       actorUserId: principal.user.id,
@@ -1097,6 +1101,24 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
           updatedAt: new Date(),
         })
         .where(eq(customers.id, customer.id));
+
+      /* §R. Keyed on the VISIT, so a requirement asked again on a later visit
+         is a second entry rather than one that overwrites the first — what they
+         said in March and what they say in September is a change worth seeing. */
+      await writeTimeline(tx, {
+        customerId: customer.id,
+        eventType: MBOS_EVENT.requirement,
+        sourceRecordId: item.entityId,
+        occurredAt: checkInAt,
+        actorUserId: principal.user.id,
+        summary: [
+          p.requirement?.trim(),
+          p.monthlyVolumeLitres ? `${p.monthlyVolumeLitres} litres a month` : null,
+          p.quantityCans ? `${p.quantityCans} cans to start` : null,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      });
     }
 
     if (p.suspectDecision) {
@@ -1249,6 +1271,23 @@ async function handleOrderProgress(
   }
 
   await db.update(orders).set(changed).where(eq(orders.id, item.entityId));
+
+  /* §R — the delivery, which B3-09 also named as unbuildable and which Phase 5
+     gave a record to project from. Written on the SHOP's confirmation rather
+     than on our own status, because that is the assertion worth a line in a
+     history somebody reads before ringing them. */
+  if (p.deliveryConfirmedAt != null) {
+    await writeTimeline(db, {
+      customerId: customer.id,
+      eventType: MBOS_EVENT.delivery,
+      sourceRecordId: item.entityId,
+      occurredAt: new Date(p.deliveryConfirmedAt),
+      actorUserId: principal.user.id,
+      summary: p.deliveryDiscrepancy?.trim()
+        ? `Delivery confirmed, with a problem: ${p.deliveryDiscrepancy.trim()}`
+        : "Delivery confirmed by the customer",
+    }).catch(() => {});
+  }
 
   /*
    * A short or damaged delivery is told to the people who can do something
@@ -1640,7 +1679,7 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
 
     await writeTimeline(tx, {
       customerId: customer.id,
-      eventType: "order",
+      eventType: MBOS_EVENT.order,
       sourceRecordId: item.entityId,
       occurredAt: orderedAt,
       actorUserId: principal.user.id,
@@ -1916,7 +1955,7 @@ async function handlePayment(principal: MbosPrincipal, item: SyncItem): Promise<
 
     await writeTimeline(tx, {
       customerId: customer.id,
-      eventType: "payment",
+      eventType: MBOS_EVENT.payment,
       sourceRecordId: item.entityId,
       occurredAt: new Date(item.clientCreatedAt),
       actorUserId: principal.user.id,
@@ -2007,7 +2046,7 @@ async function handleComplaint(
 
     await writeTimeline(tx, {
       customerId: customer.id,
-      eventType: "complaint",
+      eventType: MBOS_EVENT.complaint,
       sourceRecordId: item.entityId,
       occurredAt,
       actorUserId: principal.user.id,
@@ -2143,6 +2182,50 @@ async function handleSampleUpdate(
   }
 
   await db.update(mbosSamples).set(changed).where(eq(mbosSamples.id, item.entityId));
+
+  /*
+   * §R — B3-09 named these as unbuildable because there was no record to
+   * project from. There is now: Phase 4 gave a sample a dispatch and a
+   * confirmed receipt, so the two entries the brief asks for have sources.
+   *
+   * `sourceRecordId` carries the STAGE as well as the id, because the natural
+   * key is (app, kind, source row) and three events about one sample would
+   * otherwise collapse onto one row — the first written would win and the
+   * receipt would never appear.
+   */
+  if (p.dispatchedAt != null) {
+    await writeTimeline(db, {
+      customerId: customer.id,
+      eventType: MBOS_EVENT.sampleDispatched,
+      sourceRecordId: `${item.entityId}:dispatched`,
+      occurredAt: new Date(p.dispatchedAt),
+      actorUserId: principal.user.id,
+      summary: `Sample sent${p.courierName ? ` by ${p.courierName}` : ""}${p.trackingNumber ? ` (${p.trackingNumber})` : ""}`,
+    }).catch(() => {});
+  }
+  if (p.receivedAt != null && !existing.receivedAt) {
+    await writeTimeline(db, {
+      customerId: customer.id,
+      eventType: MBOS_EVENT.sampleReceived,
+      sourceRecordId: `${item.entityId}:received`,
+      occurredAt: new Date(p.receivedAt),
+      actorUserId: principal.user.id,
+      summary: "Customer confirmed the sample arrived",
+    }).catch(() => {});
+  }
+  if (p.trialOutcome && p.trialOutcome !== "pending") {
+    await writeTimeline(db, {
+      customerId: customer.id,
+      eventType: MBOS_EVENT.sampleReview,
+      sourceRecordId: `${item.entityId}:review`,
+      occurredAt: new Date(),
+      actorUserId: principal.user.id,
+      summary:
+        p.trialOutcome === "approved"
+          ? `Sample approved${p.satisfaction ? ` — ${p.satisfaction}` : ""}`
+          : `Sample rejected: ${p.rejectionReason ?? existing.rejectionReason ?? "no reason recorded"}`,
+    }).catch(() => {});
+  }
 
   /* Confirmed received starts the review clock — §K's "review call every 2–3
      days". Raised once, on the transition, so a re-sent confirmation does not
@@ -2286,6 +2369,15 @@ async function afterSampleVerdict(
       .set({ leadStage: "negotiation", updatedAt: new Date() })
       .where(and(eq(customers.id, customerId), eq(customers.leadStage, "qualified")));
 
+    await writeTimeline(db, {
+      customerId,
+      eventType: MBOS_EVENT.negotiation,
+      sourceRecordId: sampleId,
+      occurredAt: new Date(),
+      actorUserId: salesmanId,
+      summary: "Negotiation opened — the sample came through",
+    }).catch(() => {});
+
     /*
      * And the visit that spends it. A stage that opens and no work attached to
      * it is a lead that sits at `negotiation` for a month — the salesman was
@@ -2364,7 +2456,7 @@ async function handleSample(principal: MbosPrincipal, item: SyncItem): Promise<H
 
     await writeTimeline(tx, {
       customerId: customer.id,
-      eventType: "sample",
+      eventType: MBOS_EVENT.sample,
       sourceRecordId: item.entityId,
       occurredAt: new Date(item.clientCreatedAt),
       actorUserId: principal.user.id,
@@ -2585,6 +2677,12 @@ async function handleLeadUpdate(
     changed.leadConvertedAt = new Date();
   }
 
+  /* §R — an internal note is a fact about the account and belongs in its
+     history. The BODY is not repeated here: `mbos_internal_notes` carries a
+     role list deciding who may read it, and the timeline has no such gate, so
+     copying the words in would route a restricted note around its own
+     restriction. The entry says one was written and where to find it. */
+
   await db.update(customers).set(changed).where(eq(customers.id, item.entityId));
 
   /*
@@ -2718,6 +2816,37 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
   await bindMbosMedia(p.shopPhotoId, "mbos_lead", item.entityId);
 
   /*
+   * §R — where the account began. Outside the insert's own transaction and
+   * unable to fail it: a lead is never lost to its own timeline entry, and the
+   * natural key makes a retry write nothing rather than a second row.
+   */
+  await writeTimeline(db, {
+    customerId: item.entityId,
+    eventType: MBOS_EVENT.leadCreated,
+    sourceRecordId: item.entityId,
+    occurredAt: new Date(item.clientCreatedAt),
+    actorUserId: principal.user.id,
+    summary: `Lead raised in the field${p.city ? ` — ${p.city}` : ""}${p.source ? ` (${p.source.replace("_", " ")})` : ""}`,
+  }).catch(() => {});
+
+  /*
+   * And the pin, which is its own event because it is its own fact: somebody
+   * stood in this shop and recorded where it is. Written only where there IS a
+   * fix — "no GPS" is not an event, it is the absence of one, and a row saying
+   * so would be a timeline entry about nothing having happened.
+   */
+  if (p.gpsLat != null && p.gpsLng != null) {
+    await writeTimeline(db, {
+      customerId: item.entityId,
+      eventType: MBOS_EVENT.gps,
+      sourceRecordId: `${item.entityId}:gps`,
+      occurredAt: new Date(item.clientCreatedAt),
+      actorUserId: principal.user.id,
+      summary: "Shop location captured on the spot",
+    }).catch(() => {});
+  }
+
+  /*
    * And the competitor, if he got one.
    *
    * It goes in `mbos_competitor_records` rather than a column on the lead,
@@ -2739,7 +2868,82 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
         updatedById: principal.user.id,
       })
       .onConflictDoNothing();
+
+    await writeTimeline(db, {
+      customerId: item.entityId,
+      eventType: MBOS_EVENT.competitor,
+      sourceRecordId: item.entityId,
+      occurredAt: new Date(item.clientCreatedAt),
+      actorUserId: principal.user.id,
+      summary: `Buying from ${p.competitorName.trim()} at the moment`,
+    }).catch(() => {});
   }
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/* ------------------------------------------------------- internal notes */
+
+const internalNoteSchema = z.object({
+  customerId: z.string(),
+  body: z.string().min(1).max(4000),
+  /**
+   * Who may read it. Empty means everybody who can see the customer — which is
+   * what a note with no list has always meant on the read side.
+   */
+  visibleToRoles: z.array(z.string().max(40)).max(8).nullish(),
+});
+
+/**
+ * §R — a note about a customer that the customer must never see, and that a
+ * field salesman is never sent either.
+ *
+ * The table, the role list and the bootstrap's narrowing have existed since the
+ * module shipped. What did not exist was any way to WRITE one, so the feature
+ * was a read path over an empty table — the same shape `mbos_competitor_records`
+ * was in before it got a write path.
+ *
+ * The timeline entry deliberately does NOT carry the body. `visibleToRoles`
+ * decides who may read a note and the timeline has no such gate, so copying the
+ * words into it would route a restricted note straight around its own
+ * restriction. The entry records that one was written; the note itself stays
+ * where the rule about reading it lives.
+ */
+async function handleInternalNote(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const parsed = internalNoteSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const found = await scopedCustomer(principal, p.customerId);
+  if (!found.ok) return { kind: "rejected", value: found.value };
+  const customer = found.customer;
+
+  await db
+    .insert(mbosInternalNotes)
+    .values({
+      id: item.entityId,
+      customerId: customer.id,
+      authorId: principal.user.id,
+      body: p.body,
+      visibleToRoles: p.visibleToRoles ?? [],
+      createdById: principal.user.id,
+      updatedById: principal.user.id,
+      deviceId: principal.deviceId,
+      clientCreatedAt: new Date(item.clientCreatedAt),
+    })
+    .onConflictDoNothing({ target: mbosInternalNotes.id });
+
+  await writeTimeline(db, {
+    customerId: customer.id,
+    eventType: MBOS_EVENT.internalNote,
+    sourceRecordId: item.entityId,
+    occurredAt: new Date(item.clientCreatedAt),
+    actorUserId: principal.user.id,
+    summary: "An internal note was added",
+  }).catch(() => {});
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }
@@ -2852,6 +3056,18 @@ async function handleLeadValidation(
       })
       .where(eq(mbosTasks.id, p.taskId));
   }
+
+  /* §R — the office's own reading of the shop, beside the salesman's. */
+  await writeTimeline(db, {
+    customerId: customer.id,
+    eventType: MBOS_EVENT.validation,
+    sourceRecordId: item.entityId,
+    occurredAt: calledAt,
+    actorUserId: principal.user.id,
+    summary: p.reached
+      ? `Validation call — ${p.verdict === "confirmed" ? "confirmed as a prospect" : p.verdict === "not_qualified" ? "not qualified" : p.verdict === "on_hold" ? "put on hold" : "no verdict yet"}${p.verdictReason ? `: ${p.verdictReason}` : ""}`
+      : "Validation call — no answer",
+  }).catch(() => {});
 
   await afterValidationVerdict(principal, customer.id, customer.name, p.verdict ?? "pending", p.verdictReason ?? null);
 
@@ -4580,6 +4796,15 @@ async function handleCustomerCreate(
           })
           .onConflictDoNothing();
       }
+
+      await writeTimeline(db, {
+        customerId: lead.id,
+        eventType: MBOS_EVENT.leadConverted,
+        sourceRecordId: `${lead.id}:converted`,
+        occurredAt: new Date(),
+        actorUserId: principal.user.id,
+        summary: `Became a customer — opened in the field${distributor ? `, billed through ${distributor.name}` : ""}`,
+      }).catch(() => {});
 
       await notifyManagers(
         principal.user.id,
