@@ -51,3 +51,22 @@ export function qualify(expression: string, table: string): string {
     `${table}.$1`,
   );
 }
+
+/**
+ * The same value, folded to a key SQL can compare spellings on.
+ *
+ * `customers.region` is written from the sheet and holds 24 distinct strings
+ * for about 20 places — Gujrat 97 beside Gujarat 31, Chhattisgadh 14 beside
+ * Chhattisgarh 19, TAMIL NADU beside Tamilnadu. Comparing the raw text made
+ * each spelling its own territory, so a chip saying "Gujarat" covered 31
+ * customers and silently withheld 97.
+ *
+ * Letters only, lower case — the SQL twin of `stateKey` in `india-states.ts`,
+ * and it has to stay its twin. The chip list canonicalises in JavaScript and
+ * the filter compares in Postgres; if the two folded differently the console
+ * would offer a place whose own customers it then failed to match, which is
+ * the same class of failure as reading two different columns.
+ */
+export function stateKeySql(expression: string): string {
+  return `regexp_replace(lower(coalesce(${expression}, '')), '[^a-z]', '', 'g')`;
+}

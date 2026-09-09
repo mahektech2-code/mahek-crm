@@ -5,7 +5,8 @@ import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
 import { today } from "../recompute";
 import { employeeJoinOn, employeeLinkKindSql } from "@/lib/employee-link";
-import { TERRITORY_REGION_SQL, qualify } from "@/lib/territory-sql";
+import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "@/lib/territory-sql";
+import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
 
 /* ---------------------------------------------------------------------------
  * Every read the Sales Dashboard makes.
@@ -85,8 +86,14 @@ export const managerScope = cache(async function managerScope(): Promise<Manager
 
   if (!rows.length) return { national: true, regions: [], salesmanIds: null };
 
-  const regions = rows.map((r) => r.region);
-  const list = sql`(${sql.join(regions.map((r) => sql`${r}`), sql`, `)})`;
+  /* Every spelling of every region on the patch, folded the same way the chip
+     list folds them. Compared as raw text a manager allocated "Gujarat" would
+     oversee the 31 customers spelled that way and not the 97 spelled "Gujrat"
+     — most of the state missing from their console, with nothing saying so. */
+  const regions = rows.map((r) => canonicalState(r.region));
+  const keys = [...new Set(regions.flatMap((r) => stateVariants(r)))];
+  if (!keys.length) return { national: true, regions: [], salesmanIds: null };
+  const list = sql`(${sql.join(keys.map((k) => sql`${k}`), sql`, `)})`;
 
   /* A salesman is in scope when any shop in his book is. The book is the
    * territory — `customers.territory_region` — rather than a second field on
@@ -96,7 +103,7 @@ export const managerScope = cache(async function managerScope(): Promise<Manager
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       join customers c on coalesce(c.sales_am_id, c.owner_id) = u.id
-     where ${sql.raw(qualify(TERRITORY_REGION_SQL, "c"))} in ${list}
+     where ${sql.raw(stateKeySql(qualify(TERRITORY_REGION_SQL, "c")))} in ${list}
   `);
 
   return { national: false, regions, salesmanIds: men.map((m) => m.id) };
@@ -2835,16 +2842,25 @@ export async function knownRegions(): Promise<string[]> {
      order by 1
   `);
 
-  /* Deduplicated case-insensitively, exactly as `knownPlaces` does it and for
-     the same reason: the filter lowercases, so "HARYANA" and "Haryana" are one
-     place, and offering both would be two chips that behave as one. Genuine
-     misspellings — the book carries both "Gujarat" and "Gujrat" — are NOT
-     merged: those match different rows, and quietly folding them would hide
-     half a state's customers behind a chip that does not say so. */
+  /* ONE CHIP PER PLACE, however the sheet spelled it.
+     
+     The book holds 24 distinct strings for about 20 places — Gujrat 97 beside
+     Gujarat 31, Chhattisgadh 14 beside Chhattisgarh 19, TAMIL NADU beside
+     Tamilnadu. Offered raw, each spelling was its own chip and its own
+     territory: allocating "Gujarat" gave somebody 31 customers and silently
+     withheld 97, which is worse than an empty result because the screen looks
+     like it worked.
+     
+     `canonicalState` is the same fold `territoryClause` matches on, so a chip
+     and the filter behind it cannot disagree about which customers a place
+     has. A spelling this file has not been taught is kept as typed rather than
+     guessed into a neighbour — a state nobody listed is likelier than a typo,
+     and folding it on a string edit would move customers between
+     territories. */
   const seen = new Map<string, string>();
   for (const r of rows) {
-    const key = r.region.trim().toLowerCase();
-    if (key && !seen.has(key)) seen.set(key, r.region.trim());
+    const name = canonicalState(r.region);
+    if (name && !seen.has(stateKey(name))) seen.set(stateKey(name), name);
   }
   return [...seen.values()].sort((a, b) => a.localeCompare(b));
 }

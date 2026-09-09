@@ -2,7 +2,8 @@ import "server-only";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { mbosUserTerritories } from "@/db/schema";
-import { TERRITORY_REGION_SQL, qualify } from "@/lib/territory-sql";
+import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "@/lib/territory-sql";
+import { stateVariants } from "@/lib/india-states";
 
 export { TERRITORY_REGION_SQL, qualify };
 
@@ -86,10 +87,26 @@ export function territoryClause(territories: Territory[]): SQL | undefined {
      condition silently becomes false — the rule AGENTS.md records under "in raw
      SQL, qualify every column of the outer table", which shipped once already
      and passes both types and unit tests when it is wrong. */
-  const parts = territories.map(
-    (t) =>
-      sql`lower(trim(coalesce(${sql.raw(qualify(COLUMN[t.kind], "customers"))}, ''))) = ${t.value.trim().toLowerCase()}`,
-  );
+  const parts = territories.map((t) => {
+    const column = sql.raw(qualify(COLUMN[t.kind], "customers"));
+
+    /* A STATE IS MATCHED ON EVERY SPELLING OF IT, not on the one somebody
+       clicked. The sheet writes this column and holds Gujrat 97 beside Gujarat
+       31, so comparing the text made each spelling its own territory and a
+       chip saying "Gujarat" covered a quarter of Gujarat with nothing on the
+       screen saying so. The other kinds have no such list and stay a plain
+       comparison. */
+    if (t.kind === "state" || t.kind === "region") {
+      const keys = stateVariants(t.value);
+      if (!keys.length) return sql`false`;
+      return sql`${sql.raw(stateKeySql(qualify(COLUMN[t.kind], "customers")))} in ${sql`(${sql.join(
+        keys.map((k) => sql`${k}`),
+        sql`, `,
+      )})`}`;
+    }
+
+    return sql`lower(trim(coalesce(${column}, ''))) = ${t.value.trim().toLowerCase()}`;
+  });
 
   return sql`(${sql.join(parts, sql` or `)})`;
 }

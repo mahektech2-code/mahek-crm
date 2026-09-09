@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { TERRITORY_REGION_SQL, qualify } from "./territory-sql";
+import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "./territory-sql";
+import { stateKey } from "./india-states";
 
 /**
  * The territory expression, pinned as TEXT.
@@ -52,4 +53,18 @@ test("the other kinds qualify too, and are left alone otherwise", () => {
   /* Only the known column names are touched — a function name or a literal
      inside the expression must survive being qualified. */
   assert.equal(qualify("lower(city)", "c"), "lower(c.city)");
+});
+
+test("the SQL fold and the JavaScript fold are twins", () => {
+  /* The chip list canonicalises in JavaScript and the filter compares in
+     Postgres. If the two folded differently the console would offer a place
+     whose own customers it then failed to match — the same class of failure as
+     reading two different columns, and just as invisible. Both keep letters
+     only, lower case. */
+  const sql = stateKeySql("region");
+  assert.match(sql, /lower/);
+  assert.match(sql, /\[\^a-z\]/);
+  /* And the JavaScript side agrees on what that means. */
+  assert.equal(stateKey("TAMIL NADU"), "tamilnadu");
+  assert.equal(stateKey("Jammu & Kashmir"), "jammukashmir");
 });
