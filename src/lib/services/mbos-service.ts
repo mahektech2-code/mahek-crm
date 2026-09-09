@@ -22,7 +22,8 @@ import { describeRule } from "../expense-rule-forms";
 import { verifyPassword } from "../password";
 import { bearerFrom, verifyToken, signingKeyPresent } from "../mbos/token";
 import { today } from "../recompute";
-import { addDays, APP_TIMEZONE } from "../business-date";
+import { addDays, APP_TIMEZONE, type BusinessDate } from "../business-date";
+import { bandFor } from "../engines/inactivity";
 import {
   leaveBalances as computeLeaveBalances,
   leaveDebitDays,
@@ -852,7 +853,7 @@ export async function buildBootstrap(
  */
 async function customersForDevice(ids: string[]) {
   if (!ids.length) return [];
-  return db.execute<Record<string, unknown>>(sql`
+  const rows = await db.execute<Record<string, unknown>>(sql`
     select c.id, c.name, c.contact_person as "contactPerson", c.phone,
            c.city, c.area, c.beat,
            c.territory_region as "territoryRegion", c.dealer_code as "dealerCode",
@@ -894,6 +895,39 @@ async function customersForDevice(ids: string[]) {
      where c.id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
      order by c.name asc
   `);
+
+  /*
+   * THE RETENTION BAND, computed here rather than in the SQL above.
+   *
+   * `bandFor` is the one definition of "has this customer gone quiet" — the
+   * same function `customers.status`, the Call Log and the owner's retention
+   * report all read. Spelling it as a CASE expression in the query would have
+   * been a second copy of a rule whose whole point is that there is one, and
+   * the copy would drift the first time somebody changed a multiplier.
+   *
+   * It is sent rather than computed on the handset for the reason the score
+   * beside it is: one answer, made once. A phone that derived its own would
+   * derive it from a book that is hours old, and two salesmen standing in one
+   * shop would read different words about it.
+   *
+   * Null is a real answer and means the customer has never ordered — they have
+   * not stopped buying, they have not started, and the handset says so in
+   * words rather than drawing a band it invented.
+   */
+  const config = await getConfig();
+  const day = await today();
+  return rows.map((r) => ({
+    ...r,
+    healthBand:
+      bandFor(
+        {
+          lastOrderDate: (r.lastOrderDate as BusinessDate | null) ?? null,
+          cycleDays: Number(r.cycleDays ?? 0),
+        },
+        day,
+        config,
+      )?.band ?? null,
+  }));
 }
 
 /**

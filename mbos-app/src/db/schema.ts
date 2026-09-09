@@ -1240,6 +1240,28 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE samples ADD COLUMN additionalRequirement TEXT;`,
     `ALTER TABLE samples ADD COLUMN rejectionReason TEXT;`,
   ],
+
+  /*
+   * v(next) — B3-16. The retention BAND, beside the score that was already
+   * here.
+   *
+   * Two models and four renderings of them, two of which used the same two
+   * words for different questions: the salesman's list called a customer
+   * "At risk" below a SCORE of 40, and the owner's report called one "At
+   * risk" at 1.25 CYCLES overdue. A manager and an owner could read the same
+   * phrase about one shop on one afternoon and mean different things.
+   *
+   * The band is the retention answer and owns that phrase now; the score
+   * keeps its number and says what it is actually docking. Computed on the
+   * SERVER like the score beside it — a phone deriving its own would derive
+   * it from a book hours old, and two salesmen in one shop would disagree.
+   *
+   * Null is a real answer: the customer has never ordered, so they have not
+   * stopped buying — they have not started.
+   */
+  [
+    `ALTER TABLE customers ADD COLUMN healthBand TEXT;`,
+  ],
 ];
 
 /**

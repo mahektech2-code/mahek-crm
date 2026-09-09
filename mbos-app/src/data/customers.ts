@@ -11,6 +11,17 @@ import { enqueue } from '../sync/queue';
 import { insertAndQueue, insertLocal, stamp } from './write';
 
 /**
+ * The retention band, exactly as the server computes and sends it.
+ *
+ * Declared HERE, in the data layer, because this is the wire shape — the
+ * component that draws it imports this rather than keeping its own copy of the
+ * four words. Two copies of a four-value union is how the fifth rendering of
+ * customer health came to exist in the first place.
+ */
+export type HealthBandValue = 'active' | 'at-risk' | 'dormant' | 'lost';
+
+
+/**
  * Reading the book.
  *
  * Every one of these hits SQLite and returns. Nothing here is async because of
@@ -41,6 +52,13 @@ export type Customer = {
   outstandingPaise: number;
   submittedNotInvoicedPaise: number;
   healthScore: number | null;
+  /**
+   * The retention band, computed by the server from the customer's own buying
+   * cycle — 'active' | 'at-risk' | 'dormant' | 'lost'. Null where they have
+   * never ordered, which is not a band: they have not stopped buying, they
+   * have not started.
+   */
+  healthBand: HealthBandValue | null;
   healthComponents: string | null;
   lastOrderDate: string | null;
   lastVisitDate: string | null;
@@ -196,16 +214,43 @@ export function accountType(c: Pick<Customer, 'kind' | 'thirdParty'>): string | 
 }
 
 /**
- * The word on the card: Active, At risk, Overdue.
+ * The word on the card.
  *
- * MahekOne owns it and sends it down in `status`; the health band is only the
- * fallback for a row that arrived without one, because a card with a blank
- * where the verdict goes is a card nobody trusts.
+ * IT USED TO DERIVE ONE FROM THE SCORE, and that was the fifth and worst of
+ * the renderings B3-16 was raised about: `< 40 ? 'Overdue' : < 60 ? 'At risk'`
+ * — a third pair of thresholds, neither of them configuration, producing the
+ * phrase "At risk" from a question that is not the one that phrase answers.
+ * The owner's report calls a customer at risk when they are 1.25 of their own
+ * cycles overdue; this called one at risk for owing money while ordering every
+ * week. Worse, an unscored customer fell through to 'Active' — a verdict about
+ * somebody nothing had measured.
+ *
+ * The band is the answer now, and it arrives from the server already computed
+ * by the one engine `customers.status`, the Call Log and the owner's retention
+ * report all read. `status` still wins where MahekOne has stated one, because
+ * that is a decision somebody made and this is a derivation.
+ *
+ * Null where there is nothing to say — the caller draws no verdict rather than
+ * inventing one.
  */
-export function customerStage(c: Pick<Customer, 'status' | 'healthScore'>): 'Active' | 'At risk' | 'Overdue' {
-  if (c.status === 'Overdue' || c.status === 'At risk' || c.status === 'Active') return c.status;
-  if (c.healthScore == null) return 'Active';
-  return c.healthScore < 40 ? 'Overdue' : c.healthScore < 60 ? 'At risk' : 'Active';
+export function customerStage(
+  c: Pick<Customer, 'status' | 'healthBand'>,
+): 'Active' | 'At risk' | 'Dormant' | 'Lost' | null {
+  if (c.status === 'Overdue' || c.status === 'At risk' || c.status === 'Active') {
+    return c.status === 'Overdue' ? 'At risk' : c.status;
+  }
+  switch (c.healthBand) {
+    case 'active':
+      return 'Active';
+    case 'at-risk':
+      return 'At risk';
+    case 'dormant':
+      return 'Dormant';
+    case 'lost':
+      return 'Lost';
+    default:
+      return null;
+  }
 }
 
 /** Whole days since a `YYYY-MM-DD`, or null when there is no date to count from. */

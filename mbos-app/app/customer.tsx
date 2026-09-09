@@ -181,7 +181,9 @@ export default function CustomerRecord() {
               {[c.contactPerson, c.city, c.phone].filter(Boolean).join(' · ')}
             </Text>
           </View>
-          {c.healthScore != null ? <HealthPill value={c.healthScore} large /> : null}
+          {c.healthScore != null || c.healthBand ? (
+            <HealthPill value={c.healthScore ?? null} band={c.healthBand ?? null} large />
+          ) : null}
         </View>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.hairline }}>

@@ -55,6 +55,8 @@ export type SettingCategory =
   | "mbos-push"
   | "mbos-leads"
   | "mbos-tasks"
+  /** Maps on the handset, and how much of one it may keep for no signal. */
+  | "mbos-maps"
   /**
    * Travel and expense — the PLATFORM behaviour, not the reimbursement terms.
    *
@@ -2064,7 +2066,24 @@ export const SETTINGS = [
     label: "Leave a person gets in a year",
     description:
       "Days per kind, for everybody, per calendar year. This is what the handset builds its list of leave kinds from — a kind missing from here cannot be applied for at all, and with none of them set the only thing the form can offer is loss of pay. A person on different terms gets a row in `mbos_leave_balances`, which overrides this for them alone. `loss_of_pay` does not belong here: it is what leave becomes once the balance is gone, and there is no balance of unpaid days to keep.",
-    default: { casual: 12, sick: 6, earned: 12 },
+    /*
+     * Twenty-four days, which is the two a month the employee sheet states
+     * on 54 of its 64 filled rows — the only leave figure Mahek has written
+     * down anywhere, so it is the one to default to.
+     *
+     * The sheet's `yearly_maximum_leave` says 60 and is NOT this number: it
+     * only reconciles with two days a month if it means the most absence
+     * allowed in a year including unpaid, which is a different question to
+     * what somebody is entitled to. Six rows carry 24 in the MONTHLY column,
+     * which is the annual figure typed into the wrong cell — that is why the
+     * sheet is read for the number once, here, by a person, rather than
+     * projected into balances every night by a job.
+     *
+     * The split across the three kinds is not in the sheet at all. It is a
+     * decision, and this is where it is recorded rather than in anybody's
+     * memory.
+     */
+    default: { casual: 12, sick: 6, earned: 6 },
   },
 
 
@@ -2088,10 +2107,21 @@ export const SETTINGS = [
     key: "mbos.health.atRiskBelow",
     type: "integer",
     category: "mbos-health",
-    label: "At-risk score",
+    label: "Watch below this score",
     description:
-      "A customer scoring below this is shown as at risk on the salesman's list and in the AI assistant's suggestions. Advisory — nothing is blocked by a score.",
+      "A customer scoring below this is worth a look, and the screens say which of the five components is dragging. Deliberately NOT called at risk any more: that phrase belongs to the retention band, which asks whether somebody has stopped BUYING, and a customer ordering perfectly on time can still score badly for late payments or open complaints. Two settings using one phrase for two questions is what B3-16 was raised about. Advisory - nothing is blocked by a score. The key keeps its old name so no stored setting has to be migrated.",
     default: 40,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "mbos.health.strongAtOrAbove",
+    type: "integer",
+    category: "mbos-health",
+    label: "Strong at or above this score",
+    description:
+      "At or above this a customer's score reads as strong. It existed as a literal 70 inside the handset's health pill, with 50 beside it, which made two business thresholds invisible to the one screen a manager would go to change them. Nothing business-critical is a constant.",
+    default: 70,
     min: 0,
     max: 100,
   },
@@ -2400,6 +2430,119 @@ export const SETTINGS = [
     max: 200,
   },
 
+  /* ------------------------------------------------- maps, kept for offline
+
+     A salesman in a market lane has no signal, and a map that is blank exactly
+     where he is standing is worse than no map at all. These decide what a
+     handset may download to answer that, and every one of them is a trade
+     between the size of the download and how much of the map survives it. */
+  {
+    key: "mbos.maps.offlineEnabled",
+    type: "boolean",
+    category: "mbos-maps",
+    label: "Let handsets download maps to work offline",
+    description:
+      "On, a salesman can save the streets around the places he works so the map still draws with no signal. Off, the screen is not offered at all rather than offered and refused — a control that fails when pressed is worse than one never drawn. Nothing already downloaded is deleted by turning this off; it stops new downloads.",
+    default: true,
+  },
+  {
+    key: "mbos.maps.maxZoom",
+    type: "integer",
+    category: "mbos-maps",
+    label: "Closest zoom saved",
+    description:
+      "How far in a saved map still has streets. THIS IS THE SETTING THAT DECIDES THE SIZE — each step closer is four times the tiles, so 17 is roughly four times the download of 16 and sixteen times that of 15. At 16 a market lane has its name on it, which is the point of the whole feature; at 14 the download is small and the salesman is looking at a map of the town he already knows.",
+    default: 16,
+    min: 10,
+    max: 18,
+  },
+  {
+    key: "mbos.maps.minZoom",
+    type: "integer",
+    category: "mbos-maps",
+    label: "Furthest zoom saved",
+    description:
+      "How far out a saved map still draws. Costs almost nothing — the whole of a district is four tiles at zoom 9 — and without it the map is blank the moment somebody pinches out to see where an area sits.",
+    default: 9,
+    min: 0,
+    max: 14,
+  },
+  {
+    key: "mbos.maps.areaSeparationKm",
+    type: "integer",
+    category: "mbos-maps",
+    label: "How far apart two places are",
+    description:
+      "Kilometres between shops before the handset treats them as two places to download rather than one. This is what stops a book spread over a state becoming a single box with three hundred kilometres of farmland in it. Raise it and a salesman downloads fewer, larger maps; lower it and he downloads more, smaller ones, and has to remember which. Shops link in a chain, so a beat running down a highway stays one map however long it is, as long as each step is under this.",
+    default: 25,
+    min: 1,
+    max: 200,
+  },
+  {
+    key: "mbos.maps.paddingMetres",
+    type: "integer",
+    category: "mbos-maps",
+    label: "Margin around the shops",
+    description:
+      "Metres of map saved beyond the outermost shop. A map that stops at the shop's own doorstep is no use for getting there — this is the road he arrives on, the junction he turns at and the lane behind. It is also what keeps a download useful as the book grows: a shop added next month just outside the old edge is still inside what was saved.",
+    default: 2000,
+    min: 0,
+    max: 20000,
+  },
+  {
+    key: "mbos.maps.bytesPerTileEstimate",
+    type: "integer",
+    category: "mbos-maps",
+    label: "Assumed size of one map tile",
+    description:
+      "Bytes, used ONLY to tell a salesman what a download will cost before he starts it. A tile over a paint market is several times one over farmland, so this is an estimate and every screen calls it one — but the decision it informs is \"tens of megabytes or hundreds\", and it is right about that. Tune it once somebody has watched a few real downloads finish against what this predicted.",
+    default: 45000,
+    min: 1000,
+    max: 500000,
+  },
+  {
+    key: "mbos.maps.maxPackMegabytes",
+    type: "integer",
+    category: "mbos-maps",
+    label: "Largest map a handset may save",
+    description:
+      "Megabytes. An area estimated above this is shown with its size and NOT offered — a download that fills a salesman's phone is a phone that stops taking photographs of cheques. If a place somebody genuinely works is over the limit, the fix is to lower \"How far apart two places are\" so it splits into towns, or to save one zoom level less.",
+    default: 500,
+    min: 20,
+    max: 4000,
+  },
+  {
+    key: "mbos.maps.tileCountLimit",
+    type: "integer",
+    category: "mbos-maps",
+    label: "Tiles a handset may hold in total",
+    description:
+      "A ceiling MapLibre itself enforces across every saved map on the phone, and it ABORTS a download rather than trimming it — so it is deliberately set well above what the megabyte limit above allows. The two are different units and the phone cannot convert between them; if this one binds first, a download the size check had already approved stops part-way with an error about tiles that means nothing to the person reading it. Its own shipped default is 6,000, which is a few square kilometres and no use here at all.",
+    default: 250000,
+    min: 1000,
+    max: 5000000,
+  },
+  {
+    key: "mbos.maps.downloadOnWifiOnly",
+    type: "boolean",
+    category: "mbos-maps",
+    label: "Only download maps on Wi-Fi",
+    description:
+      "On, the download button says why it is off while the phone is on mobile data. Several hundred megabytes out of a salesman's own data allowance is a real cost to him, and it is the kind he only finds out about at the end of the month. Off, he decides — the size is on the screen either way.",
+    default: true,
+  },
+  {
+    key: "mbos.maps.refreshAfterDays",
+    type: "integer",
+    category: "mbos-maps",
+    label: "Call a saved map old after",
+    description:
+      "Days before a saved map is marked as worth refreshing. Roads do not change quickly, so this is a nudge and never an expiry — nothing is deleted and the old map goes on working. Refreshing re-checks each tile against the server and downloads only what actually changed, so it costs far less than saving the area again.",
+    default: 120,
+    min: 7,
+    max: 1095,
+  },
+
   /* --------------------------------------------------------------- tasks */
   {
     key: "mbos.tasks.escalationHours",
@@ -2577,6 +2720,21 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
  */
 export function checkConsistency(config: Config): string[] {
   const problems: string[] = [];
+
+  /*
+   * A score cannot be both strong and worth watching. Set the strong threshold
+   * at or below the watch one and every score in the overlap is rendered green
+   * by one rule and red by the other on two screens that both claim to show
+   * health — which is the shape of the confusion B3-16 was raised about, one
+   * level down. Refused here rather than resolved by ordering the branches in
+   * `healthView`, because a rule the code silently works around is a rule
+   * nobody knows is broken.
+   */
+  if (config["mbos.health.strongAtOrAbove"] <= config["mbos.health.atRiskBelow"]) {
+    problems.push(
+      `Health: "strong at or above" (${config["mbos.health.strongAtOrAbove"]}) must sit above "watch below" (${config["mbos.health.atRiskBelow"]}), or a score between them is both at once.`,
+    );
+  }
 
   /*
    * Sarvam's synchronous endpoint refuses audio over 30 seconds. With the
@@ -2843,6 +3001,37 @@ export function checkConsistency(config: Config): string[] {
   if (escalateDays > staleDays) {
     problems.push(
       `A lead escalates to the manager after ${escalateDays} days but is not stale until ${staleDays}. Escalation is meant to save the lead, so it has to come first.`,
+    );
+  }
+
+  /*
+   * A saved map whose closest zoom is below its furthest is an empty download:
+   * the handset would ask for every level from 16 down to 9 and there are none,
+   * so the pack completes instantly at nothing and the salesman is left with a
+   * row that says "saved" over a blank map.
+   */
+  const mapMin = config["mbos.maps.minZoom"];
+  const mapMax = config["mbos.maps.maxZoom"];
+  if (mapMin > mapMax) {
+    problems.push(
+      `Saved maps would go from zoom ${mapMin} out to ${mapMax} in, which is no zoom levels at all. The closest zoom must be at least the furthest one.`,
+    );
+  }
+
+  /*
+   * The tile ceiling and the megabyte ceiling are two limits in two units on
+   * the same download, and only one of them is enforced by something that can
+   * explain itself. MapLibre's ABORTS the download; ours refuses it up front
+   * with the size on the screen. If the tile ceiling binds first, a salesman
+   * starts a download this app has already told him is fine and it stops
+   * part-way with an error about tiles.
+   */
+  const megabyteCeiling = config["mbos.maps.maxPackMegabytes"];
+  const perTile = config["mbos.maps.bytesPerTileEstimate"];
+  const tilesAtCeiling = Math.ceil((megabyteCeiling * 1_000_000) / perTile);
+  if (config["mbos.maps.tileCountLimit"] < tilesAtCeiling) {
+    problems.push(
+      `A ${megabyteCeiling} MB map is about ${tilesAtCeiling.toLocaleString("en-IN")} tiles, which is more than the ${config["mbos.maps.tileCountLimit"].toLocaleString("en-IN")}-tile ceiling. Downloads the size limit allows would abort part-way — raise the tile ceiling, or lower the megabyte one.`,
     );
   }
 
@@ -3136,6 +3325,7 @@ export type Config = {
 
   "mbos.health.componentWeights": Record<MbosHealthComponent, number>;
   "mbos.health.atRiskBelow": number;
+  "mbos.health.strongAtOrAbove": number;
   "mbos.health.staleAfterHours": number;
 
   "mbos.sync.imageMaxDimensionPx": number;
@@ -3165,6 +3355,17 @@ export type Config = {
   "mbos.leads.validationScript": {
     sections: { heading: string; lines: string[] }[];
   };
+
+  "mbos.maps.offlineEnabled": boolean;
+  "mbos.maps.minZoom": number;
+  "mbos.maps.maxZoom": number;
+  "mbos.maps.areaSeparationKm": number;
+  "mbos.maps.paddingMetres": number;
+  "mbos.maps.bytesPerTileEstimate": number;
+  "mbos.maps.maxPackMegabytes": number;
+  "mbos.maps.tileCountLimit": number;
+  "mbos.maps.downloadOnWifiOnly": boolean;
+  "mbos.maps.refreshAfterDays": number;
 
   "mbos.tasks.escalationHours": number;
   "mbos.tasks.requireCompletionNote": boolean;

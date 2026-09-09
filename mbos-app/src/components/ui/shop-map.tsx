@@ -1,8 +1,11 @@
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, Pressable } from 'react-native';
+import { router, usePathname } from 'expo-router';
 import { Camera, Map, Marker, type LngLatBounds } from '@maplibre/maplibre-react-native';
 import { color as C, radius, weight } from '../../theme/tokens';
-import { getConfig } from '../../data/config';
+import { MAP_STYLE, mapKey, savedBounds } from '../../data/offline-maps';
+import { coverageOf, type Bounds, type Coverage } from '../../engines/tiles';
+import { plural } from '../../lib/format';
 
 /**
  * The book on a map, on the handset.
@@ -18,13 +21,36 @@ import { getConfig } from '../../data/config';
  * a map of where things are must not do. The count of what could not be drawn
  * is returned to the caller so the screen can say it in words instead.
  *
- * **NO MAP IS AN ANSWER, and the screen has to look like it.** With no key, or
- * no connection, the tiles never arrive — so rather than a grey rectangle with
- * pins floating on it, this says which of the two it is. A map that fails when
+ * **NO MAP IS AN ANSWER, and the screen has to look like it.** With no key, no
+ * pins, or no way to fetch tiles, this says which of those it is rather than
+ * drawing a grey rectangle with dots floating on it. A map that fails when
  * opened is worse than one never offered, which is the rule the microphone
- * already follows. Offline, the pins still draw over a plain ground: their
- * relative positions are real and useful even with no streets behind them.
- */
+ * already follows.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * **AND "NO SIGNAL" IS NO LONGER ONE OF THOSE ANSWERS, where the area has
+ * been saved.** This is the screen the whole offline-maps feature exists for:
+ * a salesman in a market lane with two bars of nothing, holding the one device
+ * that could tell him which lane. MapLibre serves a tile out of a downloaded
+ * pack without being asked to, so the drawing needs no code here at all — what
+ * needs code is knowing WHETHER it will, before the map is drawn, so the
+ * alternative can be a sentence instead of a grey box.
+ *
+ * Three answers, and they are genuinely different:
+ *
+ *   Covered — draw the map. It makes no difference whether there is signal.
+ *   Partly covered — draw it, and say how many shops fall outside what was
+ *     saved. Their pins are on a blank patch and the salesman should know why
+ *     rather than conclude the map is broken.
+ *   Not covered, and offline — do NOT draw. Say so, and offer the screen that
+ *     fixes it. A map drawn here is a grey rectangle, and the thing it is
+ *     hiding is that fifteen minutes on the hotel Wi-Fi would have prevented
+ *     it.
+ *
+ * Coverage is asked of the PINS rather than of the viewport, because the
+ * viewport is not known until the map has drawn and this decision has to be
+ * made before it does.
+ * ───────────────────────────────────────────────────────────────────────── */
 
 export type MapPin = {
   id: string;
@@ -36,9 +62,6 @@ export type MapPin = {
   /** Ticked on the journey screen. Ignored elsewhere. */
   picked?: boolean;
 };
-
-const OLA_STYLE =
-  'https://api.olamaps.io/tiles/vector/v1/styles/default-light-standard/style.json';
 
 /** Fit, never fill — one pin gets a street, not a rooftop. */
 const MAX_FIT_ZOOM = 15;
@@ -53,14 +76,48 @@ export function ShopMap({
   height?: number;
 }) {
   const [key, setKey] = React.useState<string | null | undefined>(undefined);
+  const [packs, setPacks] = React.useState<Bounds[] | null>(null);
+  const [online, setOnline] = React.useState(true);
+
+  /* Where the back link on the maps screen should return to. Taken from the
+     route rather than passed in, because the two screens that draw this map
+     would each have to remember to name themselves and the one that forgot
+     would send somebody somewhere they had never been. */
+  const here = usePathname().replace(/^\//, '') || 'customers';
 
   React.useEffect(() => {
     let live = true;
-    void getConfig<string>('maps.olaKey')
-      .then((k) => live && setKey(k ?? null))
+    /* `mapKey` applies the key as well as returning it: it goes on every
+       request MapLibre makes — tiles, glyphs and the sprite sheet, not only
+       the style file — and is added at the HTTP layer, so a downloaded pack is
+       stored and found without it. See `data/offline-maps.ts`. */
+    void mapKey()
+      .then((k) => live && setKey(k))
       .catch(() => live && setKey(null));
+    /* What is on the phone. Read once — a pack cannot appear while this screen
+       is open, because saving one happens on a screen of its own. */
+    void savedBounds()
+      .then((b) => live && setPacks(b))
+      .catch(() => live && setPacks([]));
     return () => {
       live = false;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    let live = true;
+    let stop: (() => void) | undefined;
+    void import('@react-native-community/netinfo').then(({ default: NetInfo }) => {
+      if (!live) return;
+      /* Followed rather than read once: somebody walks out of the market and
+         into signal while looking at this, and the screen should stop telling
+         him he has none. */
+      stop = NetInfo.addEventListener((s) => setOnline(s.isConnected !== false));
+      void NetInfo.fetch().then((s) => live && setOnline(s.isConnected !== false));
+    });
+    return () => {
+      live = false;
+      stop?.();
     };
   }, []);
 
@@ -91,9 +148,14 @@ export function ShopMap({
     return [w, s, e, n];
   }, [placed]);
 
+  const coverage: Coverage = React.useMemo(
+    () => coverageOf(placed, packs ?? []),
+    [placed, packs],
+  );
+
   const missing = pins.length - placed.length;
 
-  if (key === undefined) {
+  if (key === undefined || packs === null) {
     return <Frame height={height}><Note>Loading the map…</Note></Frame>;
   }
 
@@ -122,13 +184,43 @@ export function ShopMap({
     );
   }
 
+  /* NO SIGNAL AND NOTHING SAVED FOR HERE. The one case where drawing the map
+     is worse than not drawing it: the tiles cannot arrive, the pins would sit
+     on a blank ground, and the fix — fifteen minutes on Wi-Fi — is a screen
+     away and would otherwise never be found. */
+  if (!online && coverage.state === 'none') {
+    return (
+      <Frame height={height}>
+        <Note>No signal, and no map saved for here.</Note>
+        <Pressable
+          onPress={() => router.push(`/maps?from=${here}`)}
+          accessibilityRole="button"
+          style={{
+            marginTop: 12,
+            minHeight: 48,
+            paddingHorizontal: 16,
+            justifyContent: 'center',
+            borderRadius: radius.md,
+            borderWidth: 1,
+            borderColor: C.border,
+            backgroundColor: C.surface,
+          }}>
+          <Text style={[{ fontSize: 15, color: C.primary }, weight(600)]}>
+            Save maps for offline
+          </Text>
+        </Pressable>
+        <Text style={{ fontSize: 13, lineHeight: 19, marginTop: 10, color: C.muted, textAlign: 'center' }}>
+          Do it once on Wi-Fi and the streets are there whether or not you have
+          signal.
+        </Text>
+      </Frame>
+    );
+  }
+
   return (
     <View>
       <View style={{ height, borderRadius: radius.card, overflow: 'hidden' }}>
-        <Map
-          style={{ flex: 1 }}
-          mapStyle={`${OLA_STYLE}?api_key=${encodeURIComponent(key)}`}
-        >
+        <Map style={{ flex: 1 }} mapStyle={MAP_STYLE}>
           {bounds ? (
             <Camera
               bounds={bounds}
@@ -160,13 +252,21 @@ export function ShopMap({
         </Map>
       </View>
 
-      {/* What could NOT be drawn, said in words. A map that silently omits a
-          third of the book is a map somebody plans a day from and is wrong. */}
+      {/* WHAT THE MAP CANNOT ANSWER FOR, said in words underneath. Two
+          different gaps and they are never merged: a shop with no coordinate
+          is missing from the map whatever the signal, and a shop outside what
+          was saved is missing only while there is none. */}
       {missing > 0 ? (
         <Text style={[{ fontSize: 13, lineHeight: 19, marginTop: 8, color: C.muted }]}>
           {missing === 1
             ? 'One shop has no location yet, so it is not on the map.'
             : `${missing} shops have no location yet, so they are not on the map.`}
+        </Text>
+      ) : null}
+
+      {!online && coverage.state === 'partial' ? (
+        <Text style={[{ fontSize: 13, lineHeight: 19, marginTop: 8, color: C.warnInk }]}>
+          {`No signal. ${plural(coverage.outside, 'shop')} of these are outside the maps saved on this phone, so the streets around them will be blank.`}
         </Text>
       ) : null}
     </View>

@@ -6,6 +6,16 @@ import { useToast } from "@/components/ui/toast";
 import { addDays } from "@/lib/business-date";
 import { answerRefusal, proposeJourneyDays, saveJourneyPeriod } from "@/lib/actions/sales";
 import type { BookCustomer, JourneyPlan, Salesman } from "@/lib/services/sales-service";
+import { HEALTH_BAND_LABELS } from "@/lib/engines/inactivity";
+
+/* The words are the shared ones — the same map the owner's report and the
+   handset read, so three surfaces cannot come to call one shop three things. */
+const BAND_TITLE: Record<string, string> = {
+  active: `${HEALTH_BAND_LABELS.active} — ordering on their own rhythm`,
+  "at-risk": `${HEALTH_BAND_LABELS["at-risk"]} — past their own cycle`,
+  dormant: `${HEALTH_BAND_LABELS.dormant} — well past it`,
+  lost: `${HEALTH_BAND_LABELS.lost} — no order for a long time`,
+};
 import { SalesIcon } from "../icons";
 import { Banner, Button, Empty, Pill } from "../parts";
 import { plural } from "../words";
@@ -542,6 +552,33 @@ function DayLine({
                     }
                   >
                     {on ? <SalesIcon name="tick" size={12} /> : null}
+                    {/*
+                      B3-16 — the retention band, as a dot.
+                      
+                      This list fetched `health_score` and drew nothing with it
+                      for as long as it has existed, so a manager arranging
+                      somebody's day could not see which of these shops had
+                      gone quiet without opening each one. A dot rather than a
+                      pill because the chip is a picker and a second word in it
+                      would crowd out the name; the band is on the title, which
+                      is where somebody looks once they have noticed a colour.
+                      No dot at all where there is no band — a shop that has
+                      never ordered has not stopped buying.
+                    */}
+                    {c.healthBand ? (
+                      <span
+                        aria-hidden
+                        title={BAND_TITLE[c.healthBand]}
+                        className={
+                          "inline-block h-1.5 w-1.5 rounded-full " +
+                          (c.healthBand === "active"
+                            ? "bg-success"
+                            : c.healthBand === "at-risk"
+                              ? "bg-warn"
+                              : "bg-danger")
+                        }
+                      />
+                    ) : null}
                     {c.name}
                     {!c.hasGps ? <span className="text-warn-ink">no pin</span> : null}
                   </button>

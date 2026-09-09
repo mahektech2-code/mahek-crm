@@ -2,8 +2,10 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, orders } from "@/db/schema";
+import { auditLog, customers, orders } from "@/db/schema";
 import { requireCapability } from "../access-control";
+import { money } from "../format";
+import { notifyUser } from "../notify";
 import { recomputeBuyingCycle } from "../recompute";
 import { err, okVoid, type Result } from "../result";
 
@@ -20,7 +22,9 @@ const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
  *
  * Approving is the only thing this file does, and it is the only place that
  * moves an order out of pending. Both paths recompute the buying cycle,
- * because both change which orders count as purchases.
+ * because both change which orders count as purchases, and both tell whoever
+ * took the order what was decided — a queue that receives work and answers
+ * into silence is only half a workflow.
  * ------------------------------------------------------------------------- */
 
 export type PendingOrder = {
@@ -143,6 +147,77 @@ export async function orderLines(orderId: string): Promise<PendingOrderLine[]> {
   }));
 }
 
+/**
+ * Telling the person who took the order what accounts decided.
+ *
+ * A DECISION NOBODY RECEIVES IS NOT A DECISION — `lib/actions/sales.ts` says
+ * exactly that about MBOS approvals, and this was the one decision path that
+ * never said it. The reason went onto the customer timeline and stopped
+ * there, so the telecaller who had promised a customer their order found out
+ * it was refused by opening that customer's record, which nobody does
+ * unprompted. In practice the customer found out first, and rang to ask.
+ *
+ * WHO is `orders.userId` — whoever took it, never whoever owns the account
+ * today. The person who has to ring back is the person who made the promise,
+ * and a reassignment since does not move that. It is null on anything the
+ * sheet imported, and those tell nobody: there is no author to tell.
+ *
+ * Accounts deciding an order they took themselves would be told what they had
+ * just done, so that is skipped — the same rule as a reassignment that
+ * changes nothing notifying nobody.
+ *
+ * NO HANDSET DEEP LINK, deliberately. MBOS's `/rejections` screen reads the
+ * local outbox — records the office refused BEFORE they were ever stored — and
+ * an order declined here synced perfectly well days ago, so it is not on that
+ * screen and never will be. A tap falls through to `/notifications`, which
+ * carries the reason in the body: the honest default `notify.ts` names, rather
+ * than a deep link that lands somewhere the record is not.
+ *
+ * IT NEVER FAILS THE DECISION. The order is decided and audited before this
+ * runs; the courtesy is on top of a completed write, exactly as the next-step
+ * sentence is on a completed call.
+ */
+async function tellTheAuthor(
+  order: typeof orders.$inferSelect,
+  decidedBy: { id: string; name: string },
+  reason: string | null,
+): Promise<void> {
+  const authorId = order.userId;
+  if (!authorId || authorId === decidedBy.id) return;
+
+  const [customer] = await db
+    .select({ name: customers.name })
+    .from(customers)
+    .where(eq(customers.id, order.customerId));
+  const who = customer?.name ?? "a customer";
+  const value = money(Number(order.totalAmount));
+  const href = `/crm/customers/${order.customerId}`;
+
+  await notifyUser(
+    reason === null
+      ? {
+          userId: authorId,
+          title: `Your order for ${who} was approved`,
+          body: `${decidedBy.name} approved it — ${value}.`,
+          href,
+        }
+      : {
+          userId: authorId,
+          title: `Your order for ${who} was declined`,
+          /* The ring-back sentence goes BEFORE the reason so the reason can
+             end the body however it was typed. Trailing a free-text field
+             with another sentence reads as one run-on the moment somebody
+             leaves the full stop off. */
+          body: `${decidedBy.name} declined it — ${value}. You will need to ring the customer back. Reason given: ${reason}`,
+          kind: "warn",
+          href,
+        },
+  ).catch(() => {
+    /* A bell that could not be written must not undo an order decision that
+       already stands in the ledger. */
+  });
+}
+
 export async function approveOrder(orderId: string): Promise<Result> {
   const ctx = await requireCapability("order.approve");
 
@@ -187,6 +262,7 @@ export async function approveOrder(orderId: string): Promise<Result> {
 
   // It is a purchase now, so the cycle, the average and the history all change.
   await recomputeBuyingCycle(order.customerId);
+  await tellTheAuthor(order, ctx.user, null);
   return okVoid("Order approved");
 }
 
@@ -245,6 +321,7 @@ export async function declineOrder(
   // the calling list on their own cycle rather than staying quiet on the
   // strength of an order that was refused.
   await recomputeBuyingCycle(order.customerId);
+  await tellTheAuthor(order, ctx.user, reason.trim());
   return okVoid("Order declined");
 }
 

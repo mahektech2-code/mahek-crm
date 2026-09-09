@@ -1,4 +1,6 @@
 import "server-only";
+import { bandFor, type HealthBand } from "../engines/inactivity";
+import type { BusinessDate } from "../business-date";
 import { cache } from "react";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -935,6 +937,14 @@ export type LeadRow = {
   customerStatus: string | null;
   customerLastOrderDate: string | null;
   customerCycleDays: number | null;
+  /**
+   * The retention band — the ONE definition of "gone quiet", the same one
+   * `customers.status`, the Call Log and the owner's report read. Computed in
+   * JS from the two columns above rather than as a CASE in the query, because
+   * a second copy of that rule is a copy that drifts. Null where the lead has
+   * never ordered: no band, and the screen says so in words.
+   */
+  customerHealthBand: HealthBand | null;
   customerOutstandingPaise: number | null;
 };
 
@@ -1004,7 +1014,7 @@ const LEAD_ROW_SELECT = sql`
 /** Prospects each salesman is working, and how long since anybody touched one. */
 export async function leadsList(day: string): Promise<LeadRow[]> {
   const scope = await managerScope();
-  return db.execute<LeadRow>(sql`
+  return withHealthBand(day, await db.execute<LeadRow>(sql`
     ${LEAD_ROW_SELECT},
            coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
            (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
@@ -1016,7 +1026,36 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
        ${onlyMine(scope, "c.owner_id")}
      order by c.lead_next_follow_up_date asc nulls last, c.lead_last_activity_date asc nulls last
      limit 400
-  `) as unknown as LeadRow[];
+  `) as unknown as LeadRow[]);
+}
+
+/**
+ * Fill in each row's retention band.
+ *
+ * `bandFor` is the one definition of "has this customer gone quiet", shared
+ * with `customers.status`, the Call Log and the owner's retention report.
+ * Spelling it as a CASE expression in the query above would have been a second
+ * copy of a rule whose entire point is that there is one — and the copy drifts
+ * the day somebody changes a multiplier on the Settings screen.
+ *
+ * Null stays null: a lead that has never ordered is in NO band, which the
+ * screen says in words rather than drawing one it invented.
+ */
+async function withHealthBand(day: string, rows: LeadRow[]): Promise<LeadRow[]> {
+  const { getConfig } = await import("../config/store");
+  const config = await getConfig();
+  return rows.map((r) => ({
+    ...r,
+    customerHealthBand:
+      bandFor(
+        {
+          lastOrderDate: (r.customerLastOrderDate as BusinessDate | null) ?? null,
+          cycleDays: Number(r.customerCycleDays ?? 0),
+        },
+        day as BusinessDate,
+        config,
+      )?.band ?? null,
+  }));
 }
 
 /**
@@ -2403,6 +2442,9 @@ export type BookCustomer = {
   creditLimitPaise: number | null;
   creditBlocked: boolean;
   healthScore: number | null;
+  /** The retention band. See `withHealthBand` — one definition, filled in JS. */
+  healthBand: HealthBand | null;
+  cycleDays: number | null;
   lastVisitDate: string | null;
   lastOrderDate: string | null;
 };
@@ -2437,7 +2479,7 @@ export async function fieldBook(filter?: {
             or coalesce(c.area, '') ilike ${"%" + filter.search + "%"})`
     : sql``;
 
-  return db.execute<BookCustomer>(sql`
+  const rows = (await db.execute<BookCustomer>(sql`
     select c.id, c.name, c.city, c.area, c.beat, c.phone,
            coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
            u.name as "salesmanName",
@@ -2446,6 +2488,8 @@ export async function fieldBook(filter?: {
            c.credit_limit_paise as "creditLimitPaise",
            c.credit_blocked as "creditBlocked",
            c.health_score as "healthScore",
+           -- the two facts the band is derived from, so it can be filled in JS
+           c.cycle_days as "cycleDays",
            c.last_visit_date::text as "lastVisitDate",
            c.last_order_date::text as "lastOrderDate"
       from customers c
@@ -2455,7 +2499,25 @@ export async function fieldBook(filter?: {
        ${salesman} ${beat} ${gps} ${search}
      order by c.name asc
      limit 500
-  `) as unknown as BookCustomer[];
+  `)) as unknown as BookCustomer[];
+
+  const { getConfig } = await import("../config/store");
+  const [config, day] = await Promise.all([getConfig(), today()]);
+  /* The same one definition the leads list and the handset payload use. A
+     manager arranging somebody's day should be able to see which of these
+     shops has gone quiet without opening each one. */
+  return rows.map((r) => ({
+    ...r,
+    healthBand:
+      bandFor(
+        {
+          lastOrderDate: (r.lastOrderDate as BusinessDate | null) ?? null,
+          cycleDays: Number(r.cycleDays ?? 0),
+        },
+        day,
+        config,
+      )?.band ?? null,
+  }));
 }
 
 /** How much of the book has no coordinates. A count, and then a decision. */
@@ -2644,6 +2706,12 @@ const SETTING_GROUPS: Array<{ category: string; label: string; blurb: string }> 
     label: "Sync and the handset",
     blurb:
       "Batch sizes, the offline login window, and what the handset holds. Changing these changes how a phone behaves in a market with no signal.",
+  },
+  {
+    category: "mbos-maps",
+    label: "Maps on the handset",
+    blurb:
+      "What a salesman may save so the map still draws in a market with no signal. The closest zoom is the setting that decides the size — every step in is four times the download.",
   },
   {
     category: "mbos-devices",

@@ -1657,6 +1657,46 @@ person chasing the target must not sign off the orders that hit it. Declining
 requires a reason, and it lands on the customer timeline, because the telecaller
 has to ring back and say something.
 
+**AND THE PERSON WHO TOOK IT IS TOLD, which for a long time they were not.**
+The sentence above was the whole of it: the reason landed on the timeline and
+stopped there, so the telecaller who had promised a customer their order found
+out by opening that customer's record — which nobody does unprompted. In
+practice the customer rang first. Every other write in this app that changes
+somebody else's work already tells them: a reassignment tells both sides, a
+feedback reply tells the reporter, a target revision tells whoever it was set
+for. `lib/notify.ts` says in as many words that a decision nobody receives is
+not a decision, and `lib/actions/sales.ts` says it about MBOS approvals — an
+order decision was the one path in the app that never said it.
+
+**The reason travels IN the message, not behind a link.** It is the entire
+content of a decline — they have to ring the customer and say something — and a
+notification that makes somebody open a screen to find out what to say is one
+they read later. The decline is `kind: "warn"`, which is a kind the bell
+actually colours: it reads `warn` and `danger`, and the several existing callers
+writing `warning` are silently drawn as ordinary.
+
+**And it carries NO `mbosHref`, deliberately.** The obvious guess is
+`/rejections`, since that is where a field salesman reads what the office
+refused — and it would be wrong. That screen renders `listRejections` from the
+handset's own OUTBOX: records refused before they were ever stored. An order
+declined here synced perfectly well days ago, so it is not in that queue and
+never will be, and the tap would land on a screen that does not contain it. A
+null falls through to `/notifications`, which carries the reason in the body —
+the honest default `notify.ts` names, and better than a deep link that is
+confidently pointed at nothing.
+
+**Whose number it is, is `orders.userId` — never whoever owns the account
+today.** The person who has to ring back is the one who made the promise, and a
+reassignment since does not move that. Two people are deliberately not told: an
+order the SHEET wrote carries no `user_id`, because nobody in MahekOne took it,
+and an approver who is also the taker does not need telling what they just did —
+the same discipline as a reassignment that changes nothing notifying nobody.
+
+**It runs after the transaction and can never fail the decision.** The order is
+decided, audited and recomputed before the courtesy runs, exactly as the
+next-step sentence is a courtesy on top of a completed call. A bell that could
+not be written must not undo an order decision already standing in the ledger.
+
 **Money the customer says has arrived is not money the business has seen.** A
 payment reported by a telecaller sits at `reported` until accounts find it in
 the bank, and `bills.paidAmount` — and therefore outstanding, aging, the
@@ -3019,6 +3059,41 @@ every customer would make the figure fall every time somebody added a prospect.
 "A thousand transactions" says nothing without the number of customers behind
 it — a thousand from 250 is a different business to a thousand from 900.
 
+**THE BAND OWNS THE PHRASE "AT RISK", AND THE SCORE MAY NOT BORROW IT.**
+There are two health models and both are worth having — the BAND asks whether
+somebody has stopped buying, from one fact, their own cycles elapsed; the SCORE
+asks how the relationship is doing, from five. They were being rendered in five
+places with four different sets of thresholds, and two of those five used the
+same two words for different questions: `/sales/leads` called a customer "At
+risk" below a SCORE of 40, and the owner's report called one "At risk" at 1.25
+CYCLES overdue. A manager and an owner could read that phrase about one shop on
+one afternoon and mean different things, which is what B3-16 was raised about.
+The handset's `customerStage` was the worst of the five — `< 40 ? 'Overdue' :
+< 60 ? 'At risk'`, a third pair of thresholds, neither of them configuration,
+and an unscored customer falling through to "Active", which is a verdict about
+somebody nothing had measured.
+
+`lib/customer-health.ts` is the one place either becomes words, pure and
+client-safe like `account-types` and `seat-labels` beside it. The band gets the
+retention word; a low score says `watch` and NAMES the components dragging it,
+because "paying late, two complaints open" is both truer than "at risk" and
+tells somebody what to do. There is a test asserting a score can never produce
+the phrase.
+
+**And its two thresholds are configuration now.** They were a literal 70 and 50
+inside the handset's health pill — two business numbers invisible to the one
+screen a manager would change them on. `mbos.health.strongAtOrAbove` joins
+`mbos.health.atRiskBelow`, and `checkConsistency` refuses a strong threshold at
+or below the watch one, because a score between them would be both at once.
+The old key keeps its name so no stored setting has to be migrated; what
+changed is its label, which is what a manager actually reads.
+
+**The band reaches the handset on the wire, computed once.** Like the score
+beside it: a phone deriving its own would derive it from a book hours old, and
+two salesmen standing in one shop would read different words about it. It is
+filled in JS by `bandFor` — never as a CASE in the query — because a second
+copy of that rule drifts the day somebody changes a multiplier.
+
 **CUSTOMER HEALTH IS FOUR BANDS OF ONE EXISTING RULE, not a second one.** Active,
 at risk, dormant and lost, measured in multiples of the customer's OWN buying
 cycle — a fortnightly buyer and a twice-a-year buyer are both a quarter late at
@@ -3493,6 +3568,94 @@ shops are never clicked. Out of scope or gone both answer with nothing to
 show, the same "absent to them, never a crash" rule the CRM record page
 itself follows. A prospect pin keeps its plain text popup — there is no
 customer record behind it yet.
+
+**THE HANDSET'S MAP WORKS WITH NO SIGNAL, because the streets are on the
+phone.** The Live map and Territory's map are read in an office; the handset's
+is read in a paint market with two bars of nothing, which is exactly where a
+map is worth most and exactly where a tile server cannot be reached. MapLibre
+serves a tile out of a downloaded pack without being asked to, so the drawing
+needed no code — what needed code is deciding WHAT is worth several hundred
+megabytes of somebody's phone, saying what it will cost before he starts, and
+being able to tell him afterwards whether where he is standing is inside it.
+`mbos-app/src/engines/tiles.ts` is the arithmetic, pure like every other
+engine; `data/offline-maps.ts` wires it to the book and the native pack store;
+`app/maps.tsx` is the screen.
+
+**A DISTRICT IS NOT THE UNIT.** An administrative boundary was drawn for
+revenue collection: most of one is fields with no shop in it, and a beat that
+straddles two needs both. The areas offered are CLUSTERED FROM THE SALESMAN'S
+OWN BOOK — single-link on a grid, so two shops on a street are always one area
+and two towns an hour apart never are — and named with the office's own word
+for where they are, the area falling back to the city. A repeated name is
+separated by its town rather than by a number, because two rows both reading
+"Sadar" are two rows nobody can tell apart and the one with the wrong 300 MB
+in it is the one they will pick.
+
+**THE KEY IS NOT IN THE STYLE URL, and that is what makes any of it work.**
+MapLibre files every downloaded resource under the URL it asked for. With
+`?api_key=` on that URL the pack is stored under the key — so rotating it in
+the Admin Console makes several hundred megabytes on a phone unreachable, with
+nothing on any screen able to say why the map went blank. `TransformRequestManager`
+signs requests at the HTTP layer, which runs AFTER the offline database has
+been consulted, so a pack is stored key-less and found key-less and a rotated
+key costs one request and no tiles. It fixes a second thing in the same
+motion: a key on the style URL authenticates the style file ALONE, and the
+tile sources, glyphs and sprite sheet it names carry none — which is why Ola's
+own SDK signs every request rather than the first. The web has done this since
+Territory's map shipped; the handset never got the equivalent.
+
+**The size is on the row before the button is pressed.** These are the largest
+downloads this product asks anybody for, and a progress bar that appears after
+the decision is not a decision. It is an ESTIMATE — a vector tile over a paint
+market is several times one over farmland — and every screen calls it one; the
+question it is right about is "tens of megabytes or hundreds", which is the
+one the answer turns on. `mbos.maps.maxZoom` is the setting that decides it,
+because each step closer is four times the tiles.
+
+**Two ceilings in two units, and only one of them can explain itself.** Ours
+refuses an area up front with its size on the screen; MapLibre's own tile count
+ABORTS a download part-way with an error about tiles. `checkConsistency`
+refuses a tile ceiling below what the megabyte ceiling allows, or a salesman
+starts a download this app has already told him is fine and watches it stop.
+Its shipped default is 6,000 tiles — a few square kilometres, inherited from
+Mapbox's terms — so it has to be raised before the first pack is created.
+
+**A saved area is matched to a pack by GEOMETRY, never by a stored id.** An id
+written into the metadata at download time is wrong the first time somebody
+adds a shop and the cluster moves: the pack is orphaned, the area offers to
+download itself again, and the phone ends up holding two copies of the same
+300 MB with nothing able to say so. Coverage is counted in SHOPS — "9 of these
+62 are outside the map you saved" is something a salesman can act on, and "83%
+of the bounding box" is not — and PARTIAL is a real answer that is never
+rounded to either end. Rounding up draws a map with a blank corner and no
+explanation; rounding down hides a map that would have worked for most of what
+he needs.
+
+**Saving again replaces, and the old pack goes AFTER the new one lands.** The
+grown area is a superset, so nothing is lost by dropping the old one, and
+MapLibre shares resources between packs and frees a tile only when no pack
+still wants it — so an overlapping download costs the new tiles and not the
+old ones again. Deleting first is the version that loses a salesman his
+working map for the twenty minutes the new download takes, on the day he is
+standing in the market it covers.
+
+**Nothing here deletes anything on its own.** Not a pack for an area that has
+left his book, not one that has gone stale, not one that failed half-way. Each
+is listed with what it is and a way to remove it: the storage is his, and
+taking back three hundred megabytes unasked is the kind of helpfulness nobody
+thanks you for. "Old" is a nudge and never an expiry — refreshing re-checks
+each tile against the server and fetches only what changed, which is why it is
+worth offering at all.
+
+**And the map screen says which of four things is true, rather than drawing a
+grey rectangle.** No key, no pinned shops, covered, or offline with nothing
+saved for here — and only the last is new. Where an area is covered the map
+draws exactly as it does in the office and the signal is irrelevant; where it
+is partly covered it draws and says how many shops fall outside; where there
+is no signal and nothing saved it does NOT draw, because the pins would sit on
+a blank ground and the thing that is being hidden is that fifteen minutes on
+Wi-Fi would have prevented it. That last state carries the link to the screen
+that fixes it.
 
 ## Testing
 
