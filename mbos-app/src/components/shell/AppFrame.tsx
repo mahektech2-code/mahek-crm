@@ -44,6 +44,8 @@ export const FROM_LABEL: Record<string, string> = {
   notifications: 'Notifications',
   leads: 'Leads',
   lead: 'Lead',
+  maps: 'Offline maps',
+  pick: 'Pick your shops',
 };
 
 /** Reads the recorded entry route, so the label and the destination agree. */

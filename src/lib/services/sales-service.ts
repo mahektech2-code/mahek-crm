@@ -2600,6 +2600,12 @@ const SETTING_GROUPS: Array<{ category: string; label: string; blurb: string }> 
       "Batch sizes, the offline login window, and what the handset holds. Changing these changes how a phone behaves in a market with no signal.",
   },
   {
+    category: "mbos-maps",
+    label: "Maps on the handset",
+    blurb:
+      "What a salesman may save so the map still draws in a market with no signal. The closest zoom is the setting that decides the size — every step in is four times the download.",
+  },
+  {
     category: "mbos-devices",
     label: "Handsets",
     blurb:

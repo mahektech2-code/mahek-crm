@@ -141,6 +141,23 @@ export function distanceLabel(metres: number | null | undefined): string | null 
 }
 
 /**
+ * A number of bytes, as somebody deciding whether to download it would say it.
+ *
+ * Megabytes are the unit the decision is actually made in — a salesman knows
+ * what 300 MB costs him and has no feel at all for 314,572,800. Decimal
+ * megabytes rather than binary ones, because that is what the phone's own
+ * storage screen and his data plan both use, and a figure here that disagreed
+ * with the one in Settings would be the one he stopped believing.
+ */
+export function dataSize(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '—';
+  if (bytes >= 1_000_000_000) return (bytes / 1_000_000_000).toFixed(1) + ' GB';
+  if (bytes >= 1_000_000) return Math.round(bytes / 1_000_000) + ' MB';
+  if (bytes >= 1_000) return Math.round(bytes / 1_000) + ' KB';
+  return bytes + ' B';
+}
+
+/**
  * A SHOP'S NAME AS IT SHOULD BE READ, not as it was typed.
  *
  * Half this book is shouted and a third of it is whispered: of 5,915 customers,

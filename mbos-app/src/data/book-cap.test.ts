@@ -29,7 +29,7 @@ const DATA = import.meta.dirname;
 /**
  * Reads that return the whole book on purpose.
  *
- * Two, and both earn it.
+ * Three, and all three earn it.
  *
  * `findDuplicate` matches a typed mobile against every number on the book, and
  * the matching cannot be done in SQL — the numbers are stored as they arrived
@@ -42,16 +42,34 @@ const DATA = import.meta.dirname;
  * so: anything that RENDERS it has the bug `CUSTOMER_PAGE` exists to prevent.
  * That is a rule about its callers rather than about the query, and this test
  * cannot see callers — which is the gap, stated rather than papered over.
+ *
+ * `pinnedBook` cuts the book into places worth saving a map of, and a cluster
+ * is a statement about EVERY shop or about none: capped to the first sixty by
+ * insertion order it would offer a salesman three towns and silently omit the
+ * fourth, which is the one failure this screen cannot have — its whole job is
+ * to say what is not covered. Five narrow columns, one pass, and what reaches
+ * the screen is a handful of areas rather than a row per shop.
  */
 const UNCAPPED_ON_PURPOSE = [
   'SELECT id, name, phone FROM customers WHERE phone IS NOT NULL',
   /* customerPageQuery({ limit: -1 }) — the lookup above, built in customer-query.ts. */
   'X',
+  'SELECT id, area, city, gpsLat AS lat, gpsLng AS lng FROM customers WHERE gpsLat IS NOT NULL AND gpsLng IS NOT NULL',
 ];
 
-/** Comments carry SQL words and confuse the reader below. */
+/**
+ * Comments carry SQL words and confuse the reader below.
+ *
+ * A `//` preceded by a colon is a URL SCHEME, not a comment. Without that
+ * exception `'https://api.olamaps.io/…'` loses everything after `https:` and
+ * leaves an unterminated quote behind — which puts the literal reader below
+ * out of phase for the rest of the file, so it walks past real string
+ * boundaries and reports a blob of ordinary code as an uncapped read of the
+ * book. That is the second time this reader has been fooled by its own
+ * simplicity; the first is written up over `blankInterpolations`.
+ */
 function stripComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+  return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
 }
 
 /**
