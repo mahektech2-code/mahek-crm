@@ -369,6 +369,9 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       companyName?: string | null;
       mobile?: string | null;
       city?: string | null;
+      /* The locality inside the city. Sent since leads existed and
+         dropped until this table had a column for it. */
+      area?: string | null;
       source?: string | null;
       stage?: string;
       estimatedPotentialPaise?: number | null;
@@ -376,8 +379,11 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       notes?: string | null;
       convertedCustomerId?: string | null;
       lastActivityDate?: string | null;
-      /* Sent since leads existed and dropped on the floor until v13 gave this
-         table somewhere to put them — a lead map with no coordinates. */
+      /* Sent since leads existed and dropped on the floor until the
+         `a lead has a place` migration gave this table somewhere to put
+         them — a lead map with no coordinates. Named rather than numbered:
+         this said v13 and the block is v16, because migrations renumber
+         when another branch's land first. */
       gpsLat?: number | null;
       gpsLng?: number | null;
       /* The coordinating seat, and the name beside it. Reference data: it does
@@ -390,15 +396,15 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       holdReason?: string | null;
     };
     await run(
-      `INSERT INTO leads (id, name, company, mobile, city, source, estimatedPotentialPaise,
+      `INSERT INTO leads (id, name, company, mobile, city, area, source, estimatedPotentialPaise,
                           assigneeId, stage, nextFollowUpDate, notes, convertedCustomerId,
                           archived, lastActivityDate, gpsLat, gpsLng,
                           leadManagerId, leadManagerName, visitCount, holdReason,
                           clientCreatedAt, serverCreatedAt, deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name, company = excluded.company, mobile = excluded.mobile,
-         city = excluded.city, source = excluded.source,
+         city = excluded.city, area = excluded.area, source = excluded.source,
          estimatedPotentialPaise = excluded.estimatedPotentialPaise,
          stage = excluded.stage, nextFollowUpDate = excluded.nextFollowUpDate,
          convertedCustomerId = excluded.convertedCustomerId,
@@ -415,6 +421,7 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         l.companyName ?? null,
         l.mobile ?? null,
         l.city ?? null,
+        l.area ?? null,
         l.source ?? null,
         l.estimatedPotentialPaise ?? null,
         localStage(l.stage),
