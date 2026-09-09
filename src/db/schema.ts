@@ -588,6 +588,42 @@ export const users = pgTable(
      * null answers no.
      */
     salesPersonName: text("sales_person_name"),
+    /**
+     * WHICH HRMS EMPLOYEE THIS ACCOUNT IS, said rather than guessed.
+     *
+     * The second link of exactly the same kind as `salesPersonName` above, for
+     * the same reason and with the same rule about not inferring it. Pay, days
+     * worked and reimbursements are all read by joining `users` to `employees`
+     * on `lower(email)` or `company_mobile = users.phone`, and on the real
+     * book that heuristic finds nobody: 56 of 71 employees carry no email at
+     * all, the accounts are `@mahek.in` while the sheet holds personal gmail
+     * addresses, and the work numbers on the accounts are not the company
+     * mobiles in the sheet. So every field salesman's salary read blank, on a
+     * screen where a missing number and a zero one look identical.
+     *
+     * It CANNOT be fixed by matching harder, and that is the load-bearing
+     * part. The book carries `Pritesh Doshi` and `Pritesh Bipin Doshi` as two
+     * rows at two different salaries sharing one company mobile, so a name
+     * match picks one and is wrong half the time about somebody's pay. Held,
+     * never auto-picked — the same rule the catalogue import follows for a
+     * name carried by two legacy product ids.
+     *
+     * Written in two places and nowhere else: `setAccess`, where an account is
+     * created FROM an employee and the answer is already in hand, and
+     * `npm run employee:link`, which proposes the unambiguous ones and refuses
+     * the rest rather than choosing. NULL is the ordinary state and costs
+     * nothing — every read falls back to the old heuristic where this is null,
+     * which is why adding it moved no figure on any screen.
+     *
+     * The constraint itself lives in the migration and NOT in a
+     * `.references()` here, for the reason `reportsToId` above carries none:
+     * `employees` references `sheetSyncRuns`, which references `users`, so
+     * declaring that arrow closes a cycle and TypeScript gives up inferring
+     * all three tables — `users implicitly has type any`, and every query in
+     * the app silently loses its checking at once. The database still has the foreign key
+     * and the `on delete set null`; Drizzle simply does not need to know.
+     */
+    employeeId: text("employee_id"),
     active: boolean("active").notNull().default(true),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -598,6 +634,11 @@ export const users = pgTable(
   (t) => [
     uniqueIndex("users_email_key").on(t.email),
     index("users_reports_to_idx").on(t.reportsToId),
+    /* One account per employee. Two accounts claiming one payroll row would
+       show the same salary twice with no way to tell which was meant. */
+    uniqueIndex("users_employee_key")
+      .on(t.employeeId)
+      .where(sql`${t.employeeId} is not null`),
   ],
 );
 

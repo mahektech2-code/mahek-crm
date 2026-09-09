@@ -3,7 +3,7 @@ import { enqueue } from '../sync/queue';
 import { insertAndQueue, insertLocal, stamp, updateAndQueue } from './write';
 import { getConfig } from './config';
 import { isoDate } from '../lib/format';
-import { wireNotes, wireStage } from '../lib/wire';
+import { wireNotes, wireSource, wireStage } from '../lib/wire';
 import {
   matchDuplicate,
   normaliseMobile,
@@ -282,7 +282,9 @@ export async function createLead(args: {
     /* This table's columns and the wire's fields are not the same words —
        PROTOCOL.md §4.1. `company`, a capitalised stage and notes as a list are
        ours; MahekOne reads `companyName`, a lower-case stage and one string.
-       Every lead a salesman created was refused on all three at once. */
+       Every lead a salesman created was refused on all three at once — and
+       then went on being refused on the fourth, the source, which this pass
+       missed. */
     payloadExtras: {
       companyName: args.company?.trim() || undefined,
       stage: 'new',
@@ -301,6 +303,11 @@ export async function createLead(args: {
       requirement: args.requirement?.trim() || undefined,
       monthlyVolumeLitres: args.monthlyVolumeLitres ?? undefined,
       decisionMaker: args.decisionMaker?.trim() || undefined,
+      /* The fourth of the four, and the one that outlived the fix above: the
+         source went out as the salesman's own word against an enum that only
+         ever held codes, so every lead was still refused after the other three
+         were mended. See `wireSource`. */
+      source: wireSource(args.source),
     },
     row: {
       ...base,

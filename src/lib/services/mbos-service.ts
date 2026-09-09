@@ -28,6 +28,7 @@ import {
   leaveDebitDays,
 } from "../engines/leave";
 import { LEAVE_LABELS, type LeaveType, type PullDelta } from "../mbos/types";
+import { employeeJoinOn } from "../employee-link";
 
 /* ---------------------------------------------------------------------------
  * MBOS — every read the handset makes.
@@ -1511,9 +1512,11 @@ async function salaryFor(userId: string): Promise<Record<string, unknown>[]> {
 
       from periods p
       left join users u on u.id = ${userId}
-      left join employees e
-             on lower(e.email) = lower(u.email)
-             or (e.company_mobile is not null and e.company_mobile = u.phone)
+      /* The same join the Sales Dashboard's Salary screen makes, from the same
+         file, so the figure on a handset and the figure in the office cannot
+         come from two different readings of who this person is. See
+         lib/employee-link.ts. */
+      left join employees e on ${employeeJoinOn("u", "e")}
      order by p."from" desc
   `);
 }

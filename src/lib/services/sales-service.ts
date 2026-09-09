@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
 import { today } from "../recompute";
+import { employeeJoinOn, employeeLinkKindSql } from "@/lib/employee-link";
 
 /* ---------------------------------------------------------------------------
  * Every read the Sales Dashboard makes.
@@ -2681,6 +2682,17 @@ export type PayRow = {
   salesmanName: string;
   active: boolean;
   employeeCode: string | null;
+  /**
+   * Whether that employee was CHOSEN or merely matched.
+   *
+   * `guessed` means nobody has linked this account and the old email-or-mobile
+   * heuristic found the row — which on this book is rare and, where it does
+   * fire, is matching an account against whichever of two same-named payroll
+   * rows happened to share a number. A pay figure arrived at that way is worth
+   * saying out loud rather than printing beside a chosen one as though the two
+   * were the same kind of fact.
+   */
+  employeeMatch: "linked" | "guessed";
   employeeStatus: string | null;
   netSalaryPaise: number | null;
   conveyancePaise: number | null;
@@ -2716,6 +2728,7 @@ export async function payForPeriod(from: string, to: string): Promise<PayRow[]> 
   return db.execute<PayRow>(sql`
     select u.id as "salesmanId", u.name as "salesmanName", u.active,
            e.employee_code as "employeeCode",
+           ${employeeLinkKindSql("u")} as "employeeMatch",
            e.status_raw as "employeeStatus",
            e.net_salary_paise as "netSalaryPaise",
            e.conveyance_paise as "conveyancePaise",
@@ -2741,10 +2754,13 @@ export async function payForPeriod(from: string, to: string): Promise<PayRow[]> 
 
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
-      /* Email then company mobile — the same rule the Access screen uses. */
-      left join employees e
-             on lower(e.email) = lower(u.email)
-             or (e.company_mobile is not null and e.company_mobile = u.phone)
+      /* The link somebody made, falling back to the old email-or-mobile guess
+         where nobody has made one -- see lib/employee-link.ts, which the
+         handset's own copy of these figures reads too. The guess alone matched
+         almost nobody on the real book, so this screen showed a blank salary
+         for every field salesman with no way to say whether that meant unpaid
+         or unknown. */
+      left join employees e on ${employeeJoinOn("u", "e")}
      where u.active ${onlyMine(scope, "u.id")}
      order by u.name asc
   `) as unknown as PayRow[];
