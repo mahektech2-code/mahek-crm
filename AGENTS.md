@@ -143,6 +143,20 @@ holding the whole app and nobody who was deliberately narrowed.
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
 
+**A LEAD IS A ROW IN BOTH HANDSET TABLES, so the book's view asks an EXISTS.**
+The office collapsed leads and customers into one `customers` row long ago, and
+the wire still sends leads down their own channel into `leads` keyed on the same
+id — so "is this a lead" on the handset is a correlated subquery against that
+table, never a column read. `archived = 0` is part of it: an archived lead is
+one filed out of the way, and letting it remove a shop from the Customers view
+too would leave that shop on no screen at all.
+
+The Everything / Customers / Leads chips are a VIEW and not a scope. All three
+show only his own book, already narrowed to the territory he works, and nothing
+there reaches another salesman's. They sit beside the origin chips rather than
+inside the filter sheet because they change what the list IS, and a list whose
+subject is hidden behind a menu is one people misread.
+
 **A TERRITORY NARROWS A BOOK. IT IS NOT A PERMISSION.**
 `mbos_user_territories` — renamed from `mbos_manager_territories`, because it is
 no longer only a manager's — says which geography a person works, with a `kind`

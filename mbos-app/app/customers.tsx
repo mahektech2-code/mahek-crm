@@ -19,7 +19,7 @@ import {
   listCustomersPage,
   type Customer,
 } from '../src/data/customers';
-import { CUSTOMER_PAGE, type Origin } from '../src/data/customer-query';
+import { CUSTOMER_PAGE, type BookView, type Origin } from '../src/data/customer-query';
 import { whereNow } from '../src/native/where';
 
 /**
@@ -68,6 +68,14 @@ export default function Customers() {
   const [hasMore, setHasMore] = React.useState(false);
   const [loadingMore, setLoadingMore] = React.useState(false);
   const [today] = React.useState(() => isoDate(new Date()));
+  /*
+   * WHICH HALF OF THE BOOK. Customers, leads, or both.
+   *
+   * It is a VIEW and not a scope: all three show only his own, and a territory
+   * has already narrowed them to where he works. Nothing here reaches another
+   * salesman's book.
+   */
+  const [view, setView] = React.useState<BookView>('all');
 
   /* ------------------------------------------------- where to measure from
    *
@@ -128,7 +136,7 @@ export default function Customers() {
   useFocusEffect(
     React.useCallback(() => {
       let live = true;
-      void listCustomersPage({ query: custQ, origin }).then((p) => {
+      void listCustomersPage({ query: custQ, origin, view }).then((p) => {
         if (!live) return;
         setRows(p.rows);
         setTotal(p.total);
@@ -137,7 +145,7 @@ export default function Customers() {
       return () => {
         live = false;
       };
-    }, [custQ, origin]),
+    }, [custQ, origin, view]),
   );
 
   /* Load more APPENDS, and asks for the page after what is on screen — never
@@ -147,7 +155,7 @@ export default function Customers() {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     try {
-      const p = await listCustomersPage({ query: custQ, origin, offset: rows.length });
+      const p = await listCustomersPage({ query: custQ, origin, view, offset: rows.length });
       setRows((prev) => [...prev, ...p.rows]);
       setTotal(p.total);
       setHasMore(p.hasMore);
@@ -235,6 +243,38 @@ export default function Customers() {
           style={{ position: 'absolute', right: 2, top: 2, width: HIT, height: HIT, alignItems: 'center', justifyContent: 'center' }}>
           <Icon name="filter" size={22} color={C.body} strokeWidth={1.5} />
         </Pressable>
+      </View>
+
+      {/* WHICH HALF. A view, never a scope — all three show only his own book,
+          already narrowed to the territory he works. Drawn beside "where from"
+          rather than buried in the filter sheet because it changes what the
+          list IS, and a list whose subject is hidden behind a menu is one people
+          misread. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
+        {([
+          { key: 'all', label: 'Everything' },
+          { key: 'customers', label: 'Customers' },
+          { key: 'leads', label: 'Leads' },
+        ] as const).map((chip) => {
+          const on = view === chip.key;
+          return (
+            <Pressable
+              key={chip.key}
+              onPress={() => setView(chip.key)}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 7,
+                borderRadius: radius.sm,
+                borderWidth: 1,
+                borderColor: on ? C.ink : C.border,
+                backgroundColor: on ? C.ink : C.surface,
+              }}>
+              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
+                {chip.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       {/* WHERE FROM. Three chips rather than a menu: it is one tap, it is

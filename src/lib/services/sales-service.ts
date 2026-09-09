@@ -129,6 +129,15 @@ export type Salesman = {
   lastSeenAt: Date | null;
   lastLoginAt: Date | null;
   customerCount: number;
+  /**
+   * Where he WORKS. Empty means his whole book, which is the safe default and
+   * a deliberate one — allocating cities to eight people and forgetting the
+   * ninth must not empty her handset.
+   *
+   * Regions are excluded: those are a manager's oversight patch, set on its own
+   * screen, and a salesman's dialog must not appear able to change them.
+   */
+  territories: { kind: string; value: string }[];
 };
 
 /**
@@ -154,7 +163,17 @@ export async function fieldTeam(): Promise<Salesman[]> {
              where d.user_id = u.id and d.active) as "lastSeenAt",
            (select count(*)::int from customers c
              where coalesce(c.sales_am_id, c.owner_id) = u.id
-               and c.status = 'active') as "customerCount"
+               and c.status = 'active') as "customerCount",
+           -- Where he WORKS, which narrows the book above rather than being
+           -- part of it. Regions are excluded: those are a manager's oversight
+           -- patch, set on its own screen, and showing them here would read as
+           -- something this dialog can change.
+           coalesce((
+             select json_agg(json_build_object('kind', t.kind, 'value', t.region)
+                             order by t.kind, t.region)
+               from mbos_user_territories t
+              where t.user_id = u.id and t.kind <> 'region'
+           ), '[]'::json) as "territories"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
      where true ${onlyMine(scope, "u.id")}
@@ -2739,6 +2758,41 @@ export async function knownRegions(): Promise<string[]> {
      order by 1
   `);
   return rows.map((r) => r.region);
+}
+
+/**
+ * The cities and beats the BOOK actually uses.
+ *
+ * Read off `customers` rather than kept as a list of their own, exactly as
+ * `knownRegions` is and for the same reason: a separate list would offer places
+ * no customer is in, and a territory that matches nothing is a book that goes
+ * quietly empty.
+ *
+ * Trimmed and deduplicated case-insensitively, because "Nagpur", "nagpur " and
+ * "NAGPUR" are one city typed by three people — and the filter that reads these
+ * compares the same way, so the dialog must not offer three chips that behave
+ * as one.
+ */
+export async function knownPlaces(): Promise<{ cities: string[]; beats: string[] }> {
+  const rows = await db.execute<{ city: string | null; beat: string | null }>(sql`
+    select distinct
+           nullif(trim(c.city), '') as city,
+           nullif(trim(c.beat), '') as beat
+      from customers c
+  `);
+
+  const pick = (get: (r: { city: string | null; beat: string | null }) => string | null) => {
+    const seen = new Map<string, string>();
+    for (const r of rows) {
+      const v = get(r);
+      if (!v) continue;
+      const key = v.toLowerCase();
+      if (!seen.has(key)) seen.set(key, v);
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  };
+
+  return { cities: pick((r) => r.city), beats: pick((r) => r.beat) };
 }
 
 /* ══════════════════════════════════════════════════ one salesman's record */
