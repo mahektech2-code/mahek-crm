@@ -1657,6 +1657,46 @@ person chasing the target must not sign off the orders that hit it. Declining
 requires a reason, and it lands on the customer timeline, because the telecaller
 has to ring back and say something.
 
+**AND THE PERSON WHO TOOK IT IS TOLD, which for a long time they were not.**
+The sentence above was the whole of it: the reason landed on the timeline and
+stopped there, so the telecaller who had promised a customer their order found
+out by opening that customer's record — which nobody does unprompted. In
+practice the customer rang first. Every other write in this app that changes
+somebody else's work already tells them: a reassignment tells both sides, a
+feedback reply tells the reporter, a target revision tells whoever it was set
+for. `lib/notify.ts` says in as many words that a decision nobody receives is
+not a decision, and `lib/actions/sales.ts` says it about MBOS approvals — an
+order decision was the one path in the app that never said it.
+
+**The reason travels IN the message, not behind a link.** It is the entire
+content of a decline — they have to ring the customer and say something — and a
+notification that makes somebody open a screen to find out what to say is one
+they read later. The decline is `kind: "warn"`, which is a kind the bell
+actually colours: it reads `warn` and `danger`, and the several existing callers
+writing `warning` are silently drawn as ordinary.
+
+**And it carries NO `mbosHref`, deliberately.** The obvious guess is
+`/rejections`, since that is where a field salesman reads what the office
+refused — and it would be wrong. That screen renders `listRejections` from the
+handset's own OUTBOX: records refused before they were ever stored. An order
+declined here synced perfectly well days ago, so it is not in that queue and
+never will be, and the tap would land on a screen that does not contain it. A
+null falls through to `/notifications`, which carries the reason in the body —
+the honest default `notify.ts` names, and better than a deep link that is
+confidently pointed at nothing.
+
+**Whose number it is, is `orders.userId` — never whoever owns the account
+today.** The person who has to ring back is the one who made the promise, and a
+reassignment since does not move that. Two people are deliberately not told: an
+order the SHEET wrote carries no `user_id`, because nobody in MahekOne took it,
+and an approver who is also the taker does not need telling what they just did —
+the same discipline as a reassignment that changes nothing notifying nobody.
+
+**It runs after the transaction and can never fail the decision.** The order is
+decided, audited and recomputed before the courtesy runs, exactly as the
+next-step sentence is a courtesy on top of a completed call. A bell that could
+not be written must not undo an order decision already standing in the ledger.
+
 **Money the customer says has arrived is not money the business has seen.** A
 payment reported by a telecaller sits at `reported` until accounts find it in
 the bank, and `bills.paidAmount` — and therefore outstanding, aging, the
