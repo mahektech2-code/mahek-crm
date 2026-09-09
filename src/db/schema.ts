@@ -4696,14 +4696,24 @@ export const distributorProfiles = pgTable(
     yearsInBusiness: integer("years_in_business"),
     decisionMaker: text("decision_maker"),
 
-    /* distribution capability */
-    hasDealerNetwork: boolean("has_dealer_network").notNull().default(false),
+    /* distribution capability
+     *
+     * `hasDealerNetwork` and `hasWarehouse` are NULLABLE, unlike the four
+     * verification flags above them, and the difference is the whole point: a
+     * verification is a task somebody completes, so `false` honestly means "not
+     * done yet" and the gate is right to hold out for `true`. These two are
+     * FACTS about the distributor, and "no, they have no godown" is a complete
+     * answer that a gate demanding `true` can never accept — a candidate
+     * without one could never be appointed, and the only way through the form
+     * was to lie on it. Null is unanswered; either boolean is an answer.
+     */
+    hasDealerNetwork: boolean("has_dealer_network"),
     activeDealerCount: integer("active_dealer_count"),
     territoryCovered: text("territory_covered"),
     citiesCovered: text("cities_covered"),
     salesTeamSize: integer("sales_team_size"),
     deliveryCapability: text("delivery_capability"),
-    hasWarehouse: boolean("has_warehouse").notNull().default(false),
+    hasWarehouse: boolean("has_warehouse"),
     /** Litres. The unit every capacity in MahekOne is measured in. */
     storageCapacityLitres: integer("storage_capacity_litres"),
 

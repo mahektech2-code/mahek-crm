@@ -19,7 +19,7 @@
  */
 
 import type { LeadSalesType, LeadStage } from "../lead-labels";
-import { ladderFor, nextStage } from "./lead-ladder";
+import { isTerminal, ladderFor, nextStage } from "./lead-ladder";
 
 /* ------------------------------------------------------------- conditions */
 
@@ -316,9 +316,15 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
         out.push(
           ...missingFrom(QUALIFICATION_CONDITIONS, (c) => {
             switch (c.id) {
-              /* Four of the twelve are answered by real columns rather than a
-                 tick, so the gate reads the value. A tick beside an empty
-                 field is exactly the state this whole engine exists to stop. */
+              /* EIGHT of the twelve are answered by a real column rather than
+                 a tick, so the gate reads the value: a ticked box beside an
+                 empty field is exactly the state this engine exists to stop.
+                 Only `gst_verified` demands the column AND the tick, because
+                 holding a GST number is not the same statement as having
+                 checked it — the other seven are self-evidencing, since a
+                 competitor's name in the box IS the competitor being
+                 identified. The remaining four are genuine yes/no judgements
+                 with nothing to store but the answer. */
               case "gst_verified": return has(i.gstin) && ticked(q, "gst_verified");
               case "monthly_requirement": return has(i.monthlyLitres);
               case "monthly_potential": return has(i.potentialPaise);
@@ -366,10 +372,19 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
          behaved before the funnel existed and how it must go on behaving for
          every lead raised before it. */
       if (!i.salesType) return out;
-      if (!i.sample?.feedbackRecorded) {
+      /* The two halves used to disagree about what a MISSING sample meant: no
+         sample pushed `sample_reviewed`, so it was never negotiable, while
+         `sample_approved` fired only where a row existed. One condition rather
+         than a contradictory pair — the trial is a rung on both ladders that
+         reach here, so no sample is one fact and deserves one sentence. */
+      if (!i.sample) {
+        out.push({ id: "sample_sent", says: "Nothing has been sent for them to try yet" });
+        return out;
+      }
+      if (!i.sample.feedbackRecorded) {
         out.push({ id: "sample_reviewed", says: "Write down what they thought of the sample" });
       }
-      if (i.sample && i.sample.trialOutcome !== "approved") {
+      if (i.sample.trialOutcome !== "approved") {
         out.push({
           id: "sample_approved",
           says: "They have to be happy with the trial before you negotiate",
@@ -438,13 +453,16 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
             case "business_type": return has(p.businessType);
             case "years_in_business": return has(p.yearsInBusiness);
             case "decision_maker": return has(p.decisionMaker);
-            case "dealer_network": return p.hasDealerNetwork === true;
+            /* Answered, not affirmative. See the note on these two columns in
+               `distributor_profiles`: a candidate with no godown is ordinary,
+               and a gate demanding `true` could only ever be passed by lying. */
+            case "dealer_network": return p.hasDealerNetwork !== null && p.hasDealerNetwork !== undefined;
             case "active_dealers": return has(p.activeDealerCount);
             case "territory_covered": return has(p.territoryCovered);
             case "cities_covered": return has(p.citiesCovered);
             case "sales_team": return has(p.salesTeamSize);
             case "delivery_capability": return has(p.deliveryCapability);
-            case "warehouse": return p.hasWarehouse === true;
+            case "warehouse": return p.hasWarehouse !== null && p.hasWarehouse !== undefined;
             case "storage_capacity": return has(p.storageCapacityLitres);
             case "product_portfolio": return has(p.productPortfolio);
             case "competitor_brands": return has(p.competitorBrands);
@@ -565,8 +583,14 @@ export function gateTo(i: LeadGateInput, to: LeadStage): GateVerdict {
 
   /* §24, applied to every upward move on a real ladder. Not to the legacy one:
      those leads predate the rule, and demanding a next action to move a
-     four-year-old lead would freeze the book the rule was meant to unstick. */
-  if (i.salesType && to !== "won" && !nextActionMet(i)) {
+     four-year-old lead would freeze the book the rule was meant to unstick.
+
+     Skipped where the destination's own list already carries it — the move to
+     Prospect asks for a next action among its eight, and pushing this as well
+     printed the same instruction twice in one refusal, worded differently. A
+     salesman reading a list of what to go and do counts the items. */
+  const alreadyAsked = missing.some((c) => c.id === NEXT_ACTION_CONDITION.id);
+  if (i.salesType && to !== "won" && !alreadyAsked && !nextActionMet(i)) {
     missing.push(NEXT_ACTION_CONDITION);
   }
 
@@ -575,7 +599,12 @@ export function gateTo(i: LeadGateInput, to: LeadStage): GateVerdict {
 
 /** The ordinary question: may it go UP one, and what is in the way. */
 export function gateForNext(i: LeadGateInput): GateVerdict {
-  const to = nextStage(i.stage, i.salesType);
+  /* `nextStage` answers with the foot of the ladder for a stage that is not on
+     it, which is right for a lead whose sales type somebody has just changed and
+     wrong for a terminal one — without this guard a LOST lead was offered "move
+     to Suspect". Terminal is checked here rather than there because the ladder
+     engine is a map, and being finished with it is not a place on it. */
+  const to = isTerminal(i.stage) ? null : nextStage(i.stage, i.salesType);
   if (!to) {
     return { to: i.stage, open: false, missing: [], noNextRung: true };
   }
@@ -617,6 +646,11 @@ export function approvalRouteReason(
   if (!profile) return null;
   const discount = Number(profile.specialDiscountPercent ?? 0);
   const limit = Number(profile.agreedCreditLimitPaise ?? 0);
+  /* `exclusivityGranted`, NOT `exclusivityRequested` — one letter apart in the
+     same object and opposite in meaning. Asking for exclusivity is a candidate's
+     opening position and routes nowhere; GRANTING it is the term that cannot be
+     walked back without taking something away from somebody, so it always goes
+     to management whatever the numbers beside it say. */
   if (profile.exclusivityGranted === true) return "exclusivity";
   if (discount > thresholds.discountPercent) return "over_discount";
   if (limit > thresholds.creditLimitPaise) return "over_credit_limit";

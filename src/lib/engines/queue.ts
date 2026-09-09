@@ -2,6 +2,7 @@ import type { BusinessDate } from "../business-date";
 import { shortDateWithYear } from "../format";
 import { addDays, daysBetween } from "../business-date";
 import { DEFAULT_TIER_WEIGHTS, type Config, type QueueReasonKind } from "../config/registry";
+import { salesTypeLabel, type LeadSalesType } from "../lead-labels";
 
 /* ---------------------------------------------------------------------------
  * E2 — Queue Builder
@@ -98,6 +99,24 @@ export type QueueCandidate = {
    * still reach the list.
    */
   thirdParty: boolean;
+
+  /**
+   * WHICH LADDER THE FIELD TEAM IS WORKING THIS LEAD UP, or null for a lead
+   * that is on nobody's funnel.
+   *
+   * It suppresses PROSPECTING and nothing else, exactly as `thirdParty` does
+   * and for a sharper version of the same reason. A funnel lead stays a lead
+   * through eleven rungs — suspect, prospect, qualification, a sample sent and
+   * reviewed, a negotiation — which on the prospect cadence is months of the
+   * office ringing a shop a salesman is standing in, to ask for a first order
+   * he is in the middle of asking for himself. Two people chasing the same
+   * first order is worse than either doing it alone.
+   *
+   * Null is the whole book as it was: a lead nobody has put a sales type on
+   * is chased on the prospect cadence exactly as it always has been, which is
+   * why this could ship without moving a row.
+   */
+  leadSalesType?: LeadSalesType | null;
 
   /** Tie-breakers. */
   outstanding: number;
@@ -260,17 +279,26 @@ export function buildQueue(
     // do-not-contact are never in the stripped set — see `isHoldableReason`.
     const hold = holdWindow(c, today);
 
+    // A lead the field team is climbing a ladder with is not a prospect for
+    // the office to cold-call. Only the prospect reason goes; see `funnelHold`.
+    const funnel = funnelHold(c);
+
     let reasons = quiet ? all.filter((r) => !isOrderChasing(r.kind)) : all;
     if (hold) reasons = reasons.filter((r) => !isHoldableReason(r.kind));
+    if (funnel) reasons = reasons.filter((r) => r.kind !== "prospect");
 
     if (!reasons.length) {
-      // Nothing left but a reason the window or the hold says not yet.
-      // Shown rather than dropped: a customer late by their own cycle would
-      // otherwise vanish with no explanation.
+      // Nothing left but a reason the window, the hold or the funnel says not
+      // yet. Shown rather than dropped: a customer late by their own cycle
+      // would otherwise vanish with no explanation.
+      //
+      // The order names the one that actually did the stripping. `quiet` and
+      // `hold` both need an order or a promise, neither of which a suspect on
+      // a ladder has, so a lead emptied by the funnel falls to the third.
       suppressed.push({
         customerId: c.customerId,
         name: c.name,
-        reason: quiet ?? hold!,
+        reason: quiet ?? hold ?? funnel!,
       });
       continue;
     }
@@ -851,6 +879,26 @@ function quietWindow(
  * Only the EARLIEST held reminder is named when more than one exists,
  * matching `withPromise` in `next-step.ts`, which reads the same ordering.
  */
+/**
+ * Why the Call Log is not cold-calling a lead the field team is working, or
+ * null where nobody is working it.
+ *
+ * A sentence rather than a boolean because it is READ: suppression is a return
+ * value, not a filter, so this lead appears in the held-back strip saying who
+ * has it and why the office is leaving it alone. Dropping it silently would
+ * make a telecaller's own book shrink for no visible reason, which is the one
+ * thing the strip exists to prevent.
+ *
+ * Like the third-party mark, it silences PROSPECTING alone. A reminder
+ * somebody promised, money this account owes, an order it actually placed —
+ * all of those still reach the list, because none of them is the first order
+ * the salesman is out asking for.
+ */
+function funnelHold(c: QueueCandidate): string | null {
+  if (!c.leadSalesType) return null;
+  return `On the sales team's lead funnel (${salesTypeLabel(c.leadSalesType)}) - they are asking for the first order, so the Call Log does not`;
+}
+
 function holdWindow(c: QueueCandidate, today: BusinessDate): string | null {
   const held = c.reminders
     .filter((r) => r.holdOtherReasonsUntilDue && r.dueDate > today)

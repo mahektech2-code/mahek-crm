@@ -30,6 +30,8 @@ import {
   type OwnerAlert,
   type Retention,
 } from "@/lib/engines/owner-kpis";
+import { bandOf } from "@/lib/engines/lead-ladder";
+import type { LeadStage } from "@/lib/lead-labels";
 
 /* ---------------------------------------------------------------------------
  * The owner's five, read off the book.
@@ -179,6 +181,37 @@ function windowOf(range: DateRange) {
  * derived from whether anybody ever put the lead on a ladder rather than from
  * which table it sat in.
  */
+/**
+ * A stored rung, said in the four words the KPI has always counted in.
+ *
+ * SEVENTEEN NEW ENUM VALUES MUST NOT SHRINK A DENOMINATOR NOBODY IS LOOKING
+ * AT. `isQualified` in the engine reads three stage words — qualified,
+ * negotiation, won — and a lead sitting on `sample_trial` or `first_order`
+ * matches none of them, so the qualified figure would have fallen every time
+ * the field team actually worked a lead up its ladder. A pipeline that
+ * silently shrinks as the team works it is the worst direction that bug can
+ * take, because it looks like the team.
+ *
+ * `bandOf` is the ONE place a rung is placed, read here rather than restated:
+ * a second stage list in this file would drift from the console's funnel bar
+ * inside a release, and the half that drifts is always the half somebody
+ * reads. The four bands map onto the four legacy words they were named after,
+ * and the closed end of a ladder — `customer`, `active_distributor`, `won` —
+ * is `won`, which is what the cohort has always called a lead that made it.
+ *
+ * Every one of the original six answers with itself, so nothing moved on the
+ * day this landed, and `owner-dashboard.test.ts` says so.
+ */
+function bandedStage(raw: string | null): string | null {
+  if (raw === null) return null;
+  const stage = raw as LeadStage;
+  if (stage === "lost") return "lost";
+  const band = bandOf(stage);
+  if (band) return band;
+  /* Out of the funnel and not lost: the ladder finished. */
+  return "won";
+}
+
 export async function leadsCreatedIn(
   range: DateRange,
   filters: OwnerFilters,
@@ -239,7 +272,7 @@ export async function leadsCreatedIn(
     city: r.city === null ? null : String(r.city),
     customerType: r.customer_type === null ? null : String(r.customer_type),
     createdOn: String(r.created_on),
-    stage: r.stage === null ? null : String(r.stage),
+    stage: bandedStage(r.stage === null ? null : String(r.stage)),
     firstOrderOn: r.first_order_on === null ? null : String(r.first_order_on),
   });
 
