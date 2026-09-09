@@ -588,6 +588,42 @@ export const users = pgTable(
      * null answers no.
      */
     salesPersonName: text("sales_person_name"),
+    /**
+     * WHICH HRMS EMPLOYEE THIS ACCOUNT IS, said rather than guessed.
+     *
+     * The second link of exactly the same kind as `salesPersonName` above, for
+     * the same reason and with the same rule about not inferring it. Pay, days
+     * worked and reimbursements are all read by joining `users` to `employees`
+     * on `lower(email)` or `company_mobile = users.phone`, and on the real
+     * book that heuristic finds nobody: 56 of 71 employees carry no email at
+     * all, the accounts are `@mahek.in` while the sheet holds personal gmail
+     * addresses, and the work numbers on the accounts are not the company
+     * mobiles in the sheet. So every field salesman's salary read blank, on a
+     * screen where a missing number and a zero one look identical.
+     *
+     * It CANNOT be fixed by matching harder, and that is the load-bearing
+     * part. The book carries `Pritesh Doshi` and `Pritesh Bipin Doshi` as two
+     * rows at two different salaries sharing one company mobile, so a name
+     * match picks one and is wrong half the time about somebody's pay. Held,
+     * never auto-picked — the same rule the catalogue import follows for a
+     * name carried by two legacy product ids.
+     *
+     * Written in two places and nowhere else: `setAccess`, where an account is
+     * created FROM an employee and the answer is already in hand, and
+     * `npm run employee:link`, which proposes the unambiguous ones and refuses
+     * the rest rather than choosing. NULL is the ordinary state and costs
+     * nothing — every read falls back to the old heuristic where this is null,
+     * which is why adding it moved no figure on any screen.
+     *
+     * The constraint itself lives in the migration and NOT in a
+     * `.references()` here, for the reason `reportsToId` above carries none:
+     * `employees` references `sheetSyncRuns`, which references `users`, so
+     * declaring that arrow closes a cycle and TypeScript gives up inferring
+     * all three tables — `users implicitly has type any`, and every query in
+     * the app silently loses its checking at once. The database still has the foreign key
+     * and the `on delete set null`; Drizzle simply does not need to know.
+     */
+    employeeId: text("employee_id"),
     active: boolean("active").notNull().default(true),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -598,6 +634,11 @@ export const users = pgTable(
   (t) => [
     uniqueIndex("users_email_key").on(t.email),
     index("users_reports_to_idx").on(t.reportsToId),
+    /* One account per employee. Two accounts claiming one payroll row would
+       show the same salary twice with no way to tell which was meant. */
+    uniqueIndex("users_employee_key")
+      .on(t.employeeId)
+      .where(sql`${t.employeeId} is not null`),
   ],
 );
 
@@ -1256,6 +1297,29 @@ export const customers = pgTable(
     gpsLat: doublePrecision("gps_lat"),
     gpsLng: doublePrecision("gps_lng"),
     gpsAccuracyM: integer("gps_accuracy_m"),
+    /**
+     * A PIN THAT WAS LOOKED UP, kept apart from the one above.
+     *
+     * `gpsLat` is where somebody stood; this is where an address resolved to,
+     * and the two are different kinds of claim. Visit verification reads the
+     * field pin before deciding whether a salesman was really at a shop, so a
+     * geocode landing in that column would make an answer out of a guess on
+     * the one screen where that matters most.
+     *
+     * 503 shops on the real book have an address and no pin at all, and those
+     * are invisible on the territory map and unroutable in a day's plan. This
+     * is what puts them roughly in the right place — roughly being the honest
+     * word: asked for a Nagpur address the API answered with the LOCALITY
+     * centre. `geocodedPrecision` carries Ola's own word for how exact the
+     * answer is, so a screen can draw a guess differently from a measurement
+     * rather than presenting them alike.
+     */
+    geocodedLat: doublePrecision("geocoded_lat"),
+    geocodedLng: doublePrecision("geocoded_lng"),
+    geocodedPrecision: text("geocoded_precision"),
+    /** What was actually sent, so a bad answer can be told from a bad question. */
+    geocodedQuery: text("geocoded_query"),
+    geocodedAt: timestamp("geocoded_at", { withTimezone: true }),
     gpsCapturedAt: timestamp("gps_captured_at", { withTimezone: true }),
 
     /** The route a salesman walks, and where it sits. Free text, from the beat master. */
@@ -6768,3 +6832,35 @@ export type MbosTravelMode = typeof mbosTravelModes.$inferSelect;
 export type MbosExpenseDay = typeof mbosExpenseDays.$inferSelect;
 export type MbosTravelLeg = typeof mbosTravelLegs.$inferSelect;
 export type MbosExpenseException = typeof mbosExpenseExceptions.$inferSelect;
+
+/**
+ * Road distance and driving time between two points, as answered by Ola Maps.
+ *
+ * A CACHE, and nothing derives from it that cannot be recomputed. Empty it and
+ * every screen falls back to the straight-line answer it gave before, which is
+ * also exactly what happens when Ola is unreachable — so an outage and an
+ * empty cache are the same, already-handled thing.
+ *
+ * Keyed on the ROUNDED coordinate rather than on a customer, because a leg
+ * starts wherever the salesman is — his home, a live fix, a shop — and only
+ * some of those are rows in `customers`. Four decimal places is about eleven
+ * metres, which is inside the accuracy of the handset fixes themselves, so the
+ * rounding cannot lose a distinction the data carries and it stops a re-plan
+ * from being a fresh bill.
+ *
+ * DIRECTED. One-ways and divided carriageways mean A to B is not always B to
+ * A, and a cache that folded the two would quietly report the wrong way round.
+ */
+export const roadLegs = pgTable(
+  "road_legs",
+  {
+    id: text("id").primaryKey(),
+    /** `legKey` in `lib/road-legs.ts` — the one place the rounding is decided. */
+    fromKey: text("from_key").notNull(),
+    toKey: text("to_key").notNull(),
+    metres: integer("metres").notNull(),
+    seconds: integer("seconds").notNull(),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("road_legs_pair_key").on(t.fromKey, t.toKey)],
+);

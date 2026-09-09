@@ -6,6 +6,14 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
 import { today } from "../recompute";
+import { employeeJoinOn, employeeLinkKindSql } from "@/lib/employee-link";
+import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "@/lib/territory-sql";
+import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
+import {
+  leaveBalances as leaveBalancesFor,
+  leaveDebitDays,
+  type LeaveBalance,
+} from "@/lib/engines/leave";
 
 /* ---------------------------------------------------------------------------
  * Every read the Sales Dashboard makes.
@@ -85,8 +93,14 @@ export const managerScope = cache(async function managerScope(): Promise<Manager
 
   if (!rows.length) return { national: true, regions: [], salesmanIds: null };
 
-  const regions = rows.map((r) => r.region);
-  const list = sql`(${sql.join(regions.map((r) => sql`${r}`), sql`, `)})`;
+  /* Every spelling of every region on the patch, folded the same way the chip
+     list folds them. Compared as raw text a manager allocated "Gujarat" would
+     oversee the 31 customers spelled that way and not the 97 spelled "Gujrat"
+     — most of the state missing from their console, with nothing saying so. */
+  const regions = rows.map((r) => canonicalState(r.region));
+  const keys = [...new Set(regions.flatMap((r) => stateVariants(r)))];
+  if (!keys.length) return { national: true, regions: [], salesmanIds: null };
+  const list = sql`(${sql.join(keys.map((k) => sql`${k}`), sql`, `)})`;
 
   /* A salesman is in scope when any shop in his book is. The book is the
    * territory — `customers.territory_region` — rather than a second field on
@@ -96,7 +110,7 @@ export const managerScope = cache(async function managerScope(): Promise<Manager
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       join customers c on coalesce(c.sales_am_id, c.owner_id) = u.id
-     where c.territory_region in ${list}
+     where ${sql.raw(stateKeySql(qualify(TERRITORY_REGION_SQL, "c")))} in ${list}
   `);
 
   return { national: false, regions, salesmanIds: men.map((m) => m.id) };
@@ -151,6 +165,8 @@ export type Salesman = {
   deviceBoundAt: Date | null;
   /** When the handset last spoke to MahekOne. Null where it never has. */
   lastSeenAt: Date | null;
+  /** The handset bound to them now, so it can be released. Null if none is. */
+  boundDeviceId: string | null;
   lastLoginAt: Date | null;
   customerCount: number;
   /**
@@ -185,6 +201,15 @@ export async function fieldTeam(): Promise<Salesman[]> {
              where d.user_id = u.id and d.active) as "deviceBoundAt",
            (select max(d.last_seen_at) from mbos_devices d
              where d.user_id = u.id and d.active) as "lastSeenAt",
+           /* The handset currently bound, so it can be released from this row.
+              A salesman who changes phone cannot sign in on the new one while
+              the old binding stands, and until now the only way to lift it was
+              a screen he could not reach. Newest wins where a row somehow
+              carries two: the one he is actually holding is the one he last
+              signed in on. */
+           (select d.device_id from mbos_devices d
+             where d.user_id = u.id and d.active
+             order by d.bound_at desc limit 1) as "boundDeviceId",
            (select count(*)::int from customers c
              where coalesce(c.sales_am_id, c.owner_id) = u.id
                and c.status = 'active') as "customerCount",
@@ -2526,6 +2551,17 @@ export type ShopPin = {
   beat: string | null;
   lat: number;
   lng: number;
+  /**
+   * True where the pin was looked up from an address rather than captured by
+   * standing in the shop.
+   *
+   * It is on the row rather than derived on the map because the difference is
+   * real and often large: an Indian address outside a metro geocodes to the
+   * locality centre, which can be several hundred metres from the door.
+   * Drawing it identically to a field fix would present a guess as a
+   * measurement on the screen a territory is planned from.
+   */
+  approximate: boolean;
   salesmanId: string | null;
   salesmanName: string | null;
 };
@@ -2540,13 +2576,23 @@ export async function shopPins(): Promise<ShopPin[]> {
   const scope = await managerScope();
   return db.execute<ShopPin>(sql`
     select c.id, c.name, c.city, c.area, c.beat,
-           c.gps_lat as lat, c.gps_lng as lng,
+           /* The field pin first, then the looked-up one. 503 shops carry an
+              address and no pin, and they were absent from this map entirely
+              — a shop nobody can see is a shop nobody plans a day around. */
+           coalesce(c.gps_lat, c.geocoded_lat) as lat,
+           coalesce(c.gps_lng, c.geocoded_lng) as lng,
+           /* WHICH KIND OF PIN THIS IS. A geocode is a locality centre often
+              enough that drawing it identically to a fix taken in the doorway
+              would present a guess as a measurement. The map draws it hollow,
+              the same way a stale activity fix is drawn. */
+           (c.gps_lat is null) as "approximate",
            coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
            u.name as "salesmanName"
       from customers c
       left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
      where c.status = 'active' and c.kind = 'customer'
-       and c.gps_lat is not null and c.gps_lng is not null
+       and coalesce(c.gps_lat, c.geocoded_lat) is not null
+       and coalesce(c.gps_lng, c.geocoded_lng) is not null
        ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
   `) as unknown as ShopPin[];
 }
@@ -2749,6 +2795,17 @@ export type PayRow = {
   salesmanName: string;
   active: boolean;
   employeeCode: string | null;
+  /**
+   * Whether that employee was CHOSEN or merely matched.
+   *
+   * `guessed` means nobody has linked this account and the old email-or-mobile
+   * heuristic found the row — which on this book is rare and, where it does
+   * fire, is matching an account against whichever of two same-named payroll
+   * rows happened to share a number. A pay figure arrived at that way is worth
+   * saying out loud rather than printing beside a chosen one as though the two
+   * were the same kind of fact.
+   */
+  employeeMatch: "linked" | "guessed";
   employeeStatus: string | null;
   netSalaryPaise: number | null;
   conveyancePaise: number | null;
@@ -2784,6 +2841,7 @@ export async function payForPeriod(from: string, to: string): Promise<PayRow[]> 
   return db.execute<PayRow>(sql`
     select u.id as "salesmanId", u.name as "salesmanName", u.active,
            e.employee_code as "employeeCode",
+           ${employeeLinkKindSql("u")} as "employeeMatch",
            e.status_raw as "employeeStatus",
            e.net_salary_paise as "netSalaryPaise",
            e.conveyance_paise as "conveyancePaise",
@@ -2809,10 +2867,13 @@ export async function payForPeriod(from: string, to: string): Promise<PayRow[]> 
 
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
-      /* Email then company mobile — the same rule the Access screen uses. */
-      left join employees e
-             on lower(e.email) = lower(u.email)
-             or (e.company_mobile is not null and e.company_mobile = u.phone)
+      /* The link somebody made, falling back to the old email-or-mobile guess
+         where nobody has made one -- see lib/employee-link.ts, which the
+         handset's own copy of these figures reads too. The guess alone matched
+         almost nobody on the real book, so this screen showed a blank salary
+         for every field salesman with no way to say whether that meant unpaid
+         or unknown. */
+      left join employees e on ${employeeJoinOn("u", "e")}
      where u.active ${onlyMine(scope, "u.id")}
      order by u.name asc
   `) as unknown as PayRow[];
@@ -2862,13 +2923,40 @@ export async function managers(): Promise<ManagerRow[]> {
  * screen regions nobody's shops are in.
  */
 export async function knownRegions(): Promise<string[]> {
+  /* The SAME expression the filter matches on — see `TERRITORY_REGION_SQL`.
+     Read straight off `territory_region` this came back EMPTY on the real book,
+     so the patch dialog offered no chips and no manager's patch could ever be
+     set; and a row inserted by hand would have matched nothing and blanked that
+     manager's console. A chip list and a filter that read different columns is
+     how a screen offers a place no book is in. */
   const rows = await db.execute<{ region: string }>(sql`
-    select distinct c.territory_region as region
+    select distinct ${sql.raw(qualify(TERRITORY_REGION_SQL, "c"))} as region
       from customers c
-     where c.territory_region is not null and c.territory_region <> ''
+     where ${sql.raw(qualify(TERRITORY_REGION_SQL, "c"))} is not null
      order by 1
   `);
-  return rows.map((r) => r.region);
+
+  /* ONE CHIP PER PLACE, however the sheet spelled it.
+     
+     The book holds 24 distinct strings for about 20 places — Gujrat 97 beside
+     Gujarat 31, Chhattisgadh 14 beside Chhattisgarh 19, TAMIL NADU beside
+     Tamilnadu. Offered raw, each spelling was its own chip and its own
+     territory: allocating "Gujarat" gave somebody 31 customers and silently
+     withheld 97, which is worse than an empty result because the screen looks
+     like it worked.
+     
+     `canonicalState` is the same fold `territoryClause` matches on, so a chip
+     and the filter behind it cannot disagree about which customers a place
+     has. A spelling this file has not been taught is kept as typed rather than
+     guessed into a neighbour — a state nobody listed is likelier than a typo,
+     and folding it on a string edit would move customers between
+     territories. */
+  const seen = new Map<string, string>();
+  for (const r of rows) {
+    const name = canonicalState(r.region);
+    if (name && !seen.has(stateKey(name))) seen.set(stateKey(name), name);
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
 }
 
 /**
@@ -3121,4 +3209,82 @@ export async function salesmanRecord(
     leads: leads as never,
     tasks: tasks as never,
   };
+}
+
+/* ══════════════════════════════════════ leave, per person */
+
+export type EntitlementRow = {
+  userId: string;
+  name: string;
+  balances: LeaveBalance[];
+  /** The kinds this person has a stored figure for, as against the default. */
+  overridden: string[];
+};
+
+/**
+ * What each salesman may take this year, and how much is left.
+ *
+ * The entitlement itself is CONFIGURATION — `mbos.leave.annualEntitlementDays`
+ * — and a row in `mbos_leave_balances` overrides it for one person. That much
+ * already worked. What did not exist was any way to WRITE such a row: nothing
+ * in MahekOne created one, so the override was a mechanism with no door, and a
+ * salesman on different terms could not be given them.
+ *
+ * Read through `leaveBalances`, the same engine the handset's own figures come
+ * through, so this screen and the phone in somebody's pocket cannot disagree
+ * about how many days remain.
+ */
+export async function leaveEntitlements(year: number): Promise<EntitlementRow[]> {
+  const scope = await managerScope();
+  const { getConfig } = await import("../config/store");
+
+  const [people, overrideRows, usedRows, config] = await Promise.all([
+    db.execute<{ userId: string; name: string }>(sql`
+      select u.id as "userId", u.name
+        from users u
+        join app_access a on a.user_id = u.id and a.app = 'field'
+       where u.active ${onlyMine(scope, "u.id")}
+       order by u.name asc
+    `),
+    db.execute<{ userId: string; kind: string; entitled: number }>(sql`
+      select b.user_id as "userId", b.leave_type::text as kind, b.entitled_days as entitled
+        from mbos_leave_balances b
+       where b.year = ${year}
+    `),
+    /* The approved requests, not a stored sum — what a request costs is
+       `leaveDebitDays`, and spelling that arithmetic out in SQL as well is how
+       two answers to "how much has he taken" come to exist. */
+    db.execute<{ userId: string; kind: string; days: number; halfDay: boolean }>(sql`
+      select r.user_id as "userId", r.leave_type::text as kind, r.days, r.half_day as "halfDay"
+        from mbos_leave_requests r
+        join mbos_approvals ap on ap.subject_id = r.id and ap.type = 'leave'
+       where ap.state in ('approved', 'partially_approved')
+         and r.cancelled_at is null
+         and extract(year from r.from_date) = ${year}
+    `),
+    getConfig(),
+  ]);
+
+  const entitlement = config["mbos.leave.annualEntitlementDays"] ?? {};
+
+  const overridesBy = new Map<string, Record<string, number>>();
+  for (const r of overrideRows as unknown as { userId: string; kind: string; entitled: number }[]) {
+    const forUser = overridesBy.get(r.userId) ?? {};
+    forUser[r.kind] = r.entitled;
+    overridesBy.set(r.userId, forUser);
+  }
+
+  const usedBy = new Map<string, Record<string, number>>();
+  for (const r of usedRows as unknown as { userId: string; kind: string; days: number; halfDay: boolean }[]) {
+    const forUser = usedBy.get(r.userId) ?? {};
+    forUser[r.kind] = (forUser[r.kind] ?? 0) + leaveDebitDays(Number(r.days), r.halfDay);
+    usedBy.set(r.userId, forUser);
+  }
+
+  return (people as unknown as { userId: string; name: string }[]).map((p) => ({
+    userId: p.userId,
+    name: p.name,
+    balances: leaveBalancesFor(entitlement, usedBy.get(p.userId) ?? {}, overridesBy.get(p.userId) ?? {}),
+    overridden: Object.keys(overridesBy.get(p.userId) ?? {}),
+  }));
 }

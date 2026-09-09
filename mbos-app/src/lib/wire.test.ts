@@ -7,6 +7,7 @@ import {
   wireNotes,
   wireOutcome,
   wirePriority,
+  wireSource,
   wireStage,
   localStage,
 } from '../lib/wire';
@@ -40,6 +41,43 @@ test('a stage nobody knows is left undefined rather than guessed at', () => {
      lead; sending none leaves the stage where it was, which is the smaller
      wrong answer of the two. */
   assert.equal(wireStage('Warm-ish'), undefined);
+});
+
+/* -------------------------------------------------------- the lead source */
+
+/**
+ * Every one of these was a rejected lead in production.
+ *
+ * `LEAD_SOURCES` in `engines/leads.ts` is what the salesman actually taps, and
+ * the FIRST of them is the default — so this is not an edge case reachable by
+ * an unusual pick, it is what happens when somebody fills the form in and
+ * presses save without touching the source at all.
+ */
+test('every source the screen offers maps to a value MahekOne holds', () => {
+  /* Kept in step with LEAD_SOURCES by hand rather than imported: importing it
+     would make the test pass by construction, and what is being asserted is
+     precisely that the two lists agree. */
+  assert.equal(wireSource('Walked past'), 'cold_call');
+  assert.equal(wireSource('Referral'), 'referral');
+  assert.equal(wireSource('Market enquiry'), 'manual');
+  assert.equal(wireSource('Exhibition'), 'exhibition');
+  assert.equal(wireSource('Office'), 'manual');
+});
+
+test("MahekOne's own words go back out unchanged, so an edit is not refused for being right", () => {
+  for (const v of ['manual', 'website', 'referral', 'exhibition', 'cold_call', 'whatsapp', 'campaign']) {
+    assert.equal(wireSource(v), v, v + ' should survive a round trip');
+  }
+});
+
+test('a source nobody knows is left undefined rather than guessed at', () => {
+  /* The same rule as the stage above, and for the same reason: the server
+     refuses the WHOLE lead over one bad enum value, so a lead that arrives
+     with no source beats a lead that never arrives. */
+  assert.equal(wireSource('Walked pastt'), undefined);
+  assert.equal(wireSource(''), undefined);
+  assert.equal(wireSource(null), undefined);
+  assert.equal(wireSource(undefined), undefined);
 });
 
 test('notes flatten to one string, oldest first, keeping their dates', () => {
