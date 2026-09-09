@@ -10,6 +10,7 @@ import { conflictCount, listQueue, queueCounts, queueDepth, retryItem, type Queu
 import { mediaCounts } from '../src/sync/media';
 import { syncNow } from '../src/sync/engine';
 import { useStore } from '../src/state/store';
+import { runningBuild } from '../src/native/updates';
 
 /**
  * The outbox.
@@ -226,6 +227,19 @@ export default function SyncScreen() {
           </T>
         </View>
       ) : null}
+      {/* WHICH BUILD THIS IS. Without it, "the fix is not on my phone" and
+          "the fix does not work" look identical from the office — which is
+          exactly the hour that was lost to an APK that had been built and
+          never published. `embedded` means it is running the bundle that came
+          with the install; anything else is an update it has picked up. */}
+      <T s="caption" style={{ textAlign: 'center', marginTop: 20 }}>
+        {(() => {
+          const b = runningBuild();
+          return b.embedded
+            ? 'Running the build that was installed'
+            : `Running update ${b.id.slice(0, 8)}${b.channel ? ' · ' + b.channel : ''}`;
+        })()}
+      </T>
     </AppFrame>
   );
 }

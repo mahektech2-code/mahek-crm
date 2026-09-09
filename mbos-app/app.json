@@ -66,6 +66,14 @@
       "./plugins/withReleaseSigning.js"
     ],
     "scheme": "mbos",
-    "backgroundColor": "#F7F8FA"
+    "backgroundColor": "#F7F8FA",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "enabled": false,
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_LOAD"
+    }
   }
 }

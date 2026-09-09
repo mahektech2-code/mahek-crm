@@ -11,6 +11,7 @@ import { closeOpenVisits } from '../data/visits';
 import { escalateOverdue } from '../data/tasks';
 import { getConfig } from '../data/config';
 import { registerForPush } from '../native/push';
+import { fetchUpdateInBackground } from '../native/updates';
 
 /**
  * Starting up.
@@ -54,6 +55,10 @@ export function BootProvider({ children }: { children: React.ReactNode }) {
         void registerBackgroundSync();
         void runDayBoundaryWork(existing.user.id).then(() => resumeTrailIfDayOpen(existing.user.id));
         void registerForPush();
+        /* Behind the app, never in front of it: `setReady(true)` has already
+           run, so the salesman is looking at his day while this downloads. It
+           applies on the NEXT launch — see `fetchUpdateInBackground`. */
+        void fetchUpdateInBackground();
       }
     })();
 

@@ -311,6 +311,50 @@ the release back on whichever laptop has a JDK — which is the situation this
 workflow exists to end. Local `gradlew assembleRelease` is for trying a change
 on your own phone.
 
+## Shipping to the handset without reinstalling it
+
+**Most changes to MBOS no longer need an APK.** `expo-updates` is wired in:
+JavaScript, assets, copy and engine rules travel over the air, and a handset
+picks the new bundle up in the background and runs it the next time it opens.
+
+**It is switched OFF until somebody runs `eas init`.** `app.json` carries
+`updates.enabled: false`, so `Updates.isEnabled` is false and the check returns
+immediately. That is deliberate: an update channel pointed at nothing fails on
+every launch, in the background, silently. `eas init` writes the project id and
+the update URL, and the same step is what makes PUSH NOTIFICATIONS work —
+`registerForPush` needs `extra.eas.projectId` and currently returns early
+without it, which is why nine devices hold zero push tokens between them.
+
+After `eas init`, set `updates.enabled: true`, build ONE more APK through the
+`MBOS APK` workflow so the field is running a build that knows how to update
+itself, and from then on:
+
+```bash
+eas update --branch production --message "what changed"
+```
+
+**What can never go over the air:** anything native — a new native module, a
+permission, an Expo SDK bump, and `EXPO_PUBLIC_API_BASE`, which is inlined into
+the bundle at build time. Those are an APK, always.
+
+**`runtimeVersion` is what enforces that**, and it is the `fingerprint` policy
+rather than `appVersion` on purpose. `appVersion` would read `1.0.0` — a number
+this project has never bumped — so every native change would keep the same
+runtime and an update would happily push JS to a build that cannot run it. A
+fingerprint hashes the native project, so it changes when the native side does,
+whether or not anybody remembered to.
+
+**An update never delays a launch.** `fallbackToCacheTimeout` is 0 and the check
+is not awaited: the app opens on the bundle it has, downloads the new one
+behind it, and runs it next time. It deliberately does not `reloadAsync()` —
+restarting the app under somebody with a half-filled order form on screen would
+lose real work to deliver a cosmetic change.
+
+**Which build a handset is running is printed on its Sync screen.** "Running the
+build that was installed" means the embedded bundle; anything else names the
+update. Without that, "the fix is not on my phone" and "the fix does not work"
+look identical from the office.
+
 ## Day to day
 
 ```bash
