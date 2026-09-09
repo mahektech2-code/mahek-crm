@@ -1,5 +1,6 @@
 import { all, newId, one } from '../db';
 import {
+  CUSTOMER_PAGE,
   cityOriginsQuery,
   customerCountQuery,
   customerPageQuery,
@@ -222,8 +223,21 @@ export async function getCustomer(id: string): Promise<Customer | null> {
  * missing them then capturing them is an early field task rather than a
  * background nicety.
  */
-export async function customersWithoutGps(): Promise<Customer[]> {
-  return all<Customer>('SELECT * FROM customers WHERE gpsLat IS NULL OR gpsLng IS NULL ORDER BY name');
+export async function customersWithoutGps(): Promise<{ rows: Customer[]; total: number }> {
+  /* Capped and counted like every other read of the book. Nothing calls this
+     yet, which is exactly why the cap goes on now: 487 of the 1,076 shops on a
+     real handset have no coordinate, so the screen this is waiting for would
+     mount half the territory on its first render and freeze the app the way
+     the pick list did. */
+  const counted = await one<{ n: number }>(
+    'SELECT COUNT(*) AS n FROM customers WHERE gpsLat IS NULL OR gpsLng IS NULL',
+  );
+  const rows = await all<Customer>(
+    `SELECT * FROM customers
+      WHERE gpsLat IS NULL OR gpsLng IS NULL
+      ORDER BY name LIMIT ${CUSTOMER_PAGE}`,
+  );
+  return { rows, total: counted?.n ?? rows.length };
 }
 
 /**
