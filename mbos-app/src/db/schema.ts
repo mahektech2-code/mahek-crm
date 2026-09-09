@@ -1262,6 +1262,25 @@ export const MIGRATIONS: string[][] = [
   [
     `ALTER TABLE customers ADD COLUMN healthBand TEXT;`,
   ],
+
+  /*
+   * v(next) — a lead's locality, which the office has had all along.
+   *
+   * `openLeads` has selected `c.area` since leads existed and this table
+   * has never had a column to put it in, so every lead on every handset
+   * showed a city and no locality — while the customer beside it showed
+   * both, from the same two fields, because `customers` has the column.
+   *
+   * It is the same shape as the coordinates four blocks up, and it
+   * survived the fix for those: a hand-rolled handler cannot throw on a
+   * field it does not know, so the server sending one nobody reads is
+   * silent at both ends. That direction is checked now — see
+   * `a hand-rolled handler drops nothing the server sends` in
+   * `src/lib/mbos-wire.test.ts`, which is what found this one.
+   */
+  [
+    `ALTER TABLE leads ADD COLUMN area TEXT;`,
+  ],
 ];
 
 /**

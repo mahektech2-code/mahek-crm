@@ -418,6 +418,61 @@ test("a hand-rolled handler reads no field the server forgets to send", () => {
   );
 });
 
+/*
+ * What the server sends that the handler never reads — the third direction,
+ * and the one that had nothing looking down it.
+ *
+ * The two checks above watch the handler: what it READS that nothing sends,
+ * and what it WRITES that the table lacks. Neither can see a field going the
+ * other way. The generic upsert cannot lose one silently — it inserts exactly
+ * the keys that arrived, so an unknown column throws and the test at the top
+ * of this file catches it before it ships. A hand-rolled handler types its
+ * column list out, so a field nobody listed is simply absent: no error on the
+ * server, none on the handset, and a column of nulls in between.
+ *
+ * `openLeads` sent `gpsLat` and `gpsLng` from the day leads existed and the
+ * handset had nowhere to put them, so every lead on every handset had a null
+ * place — found by hand, long after. Writing this test found the next one
+ * unaided: `area`, sent by the same query, dropped the same way, while the
+ * customer row beside it showed a locality from the very same two fields.
+ *
+ * A field that is deliberately not stored is named in NOT_STORED with the
+ * reason, so the list of exceptions stays short enough to read and nobody
+ * silences a real drop by adding a line to it without saying why.
+ */
+const NOT_STORED: Record<string, string> = {
+  /* The delta's own cursor. It is compared on the server to decide what to
+     send and is not a fact about the row — the handset stamps its own
+     `lastSyncedAt` instead. */
+  updatedAt: "the delta cursor, never a column on the handset",
+};
+
+test("a hand-rolled handler drops nothing the server sends", () => {
+  const service = readFileSync(SERVICE, "utf8");
+  const pull = readFileSync("mbos-app/src/sync/pull.ts", "utf8");
+  const faults: string[] = [];
+
+  for (const { handler, fns } of HANDLERS) {
+    const read = new Set(fieldsRead(pull, handler));
+    for (const fn of fns) {
+      const dropped = payloadColumns(service, fn).filter(
+        (f) => !read.has(f) && !(f in NOT_STORED),
+      );
+      if (dropped.length) {
+        faults.push(`${fn} sends what ${handler} never reads: ${dropped.join(", ")}`);
+      }
+    }
+  }
+
+  assert.deepEqual(
+    faults,
+    [],
+    "a typed column list cannot throw on a field it does not know, so these " +
+      "arrive, are ignored, and leave a column of nulls with nothing failing " +
+      `at either end:\n  ${faults.join("\n  ")}`,
+  );
+});
+
 test("a hand-rolled handler writes no column the handset lacks", () => {
   const tables = handsetTables();
   const pull = readFileSync("mbos-app/src/sync/pull.ts", "utf8");
