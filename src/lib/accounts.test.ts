@@ -23,6 +23,7 @@ import {
   complaints,
   customers,
   appAccess,
+  notifications,
   orders,
   paymentReceipts,
   payments,
@@ -264,6 +265,85 @@ describe("Order approvals", () => {
     const again = await declineOrder(order.id, "changed my mind");
     assert.equal(again.ok, false);
     assert.equal(again.ok === false && again.code, "conflict");
+  });
+
+  test("a decline reaches the person who took the order, carrying the reason", async () => {
+    const customer = await makeCustomer({ name: "Shree Paints" });
+    const order = await pendingOrder(customer.id);
+
+    await declineOrder(order.id, "Outstanding is over their limit.");
+
+    const [note] = await db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.userId, priya.id));
+    assert.ok(note, "the telecaller who took the order was told nothing");
+    assert.match(note.title, /declined/);
+    assert.match(note.title, /Shree Paints/);
+    // The reason is the whole point: she has to ring back and say something.
+    assert.match(note.body, /Outstanding is over their limit\./);
+    assert.equal(note.kind, "warn");
+    assert.equal(note.href, `/crm/customers/${customer.id}`);
+  });
+
+  test("an approval is told too, and it is not drawn as a warning", async () => {
+    const customer = await makeCustomer({ name: "Shree Paints" });
+    const order = await pendingOrder(customer.id);
+
+    await approveOrder(order.id);
+
+    const [note] = await db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.userId, priya.id));
+    assert.ok(note, "the telecaller was never told her order went through");
+    assert.match(note.title, /approved/);
+    assert.notEqual(note.kind, "warn");
+  });
+
+  test("accounts deciding their own order tell nobody", async () => {
+    const customer = await makeCustomer();
+    // Deepa both took it and decides it — the notification would tell her
+    // what she had just done, which is the reassignment rule one level down.
+    const [order] = await db
+      .insert(orders)
+      .values({
+        id: id("ord"),
+        customerId: customer.id,
+        userId: deepa.id,
+        orderedAt: new Date(),
+        totalAmount: 5_000_00,
+        status: "pending_approval",
+      })
+      .returning();
+
+    await declineOrder(order.id, "Over the limit.");
+
+    const notes = await db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.userId, deepa.id));
+    assert.equal(notes.length, 0);
+  });
+
+  test("an order the sheet imported has no author, and notifies nobody", async () => {
+    const customer = await makeCustomer();
+    // `orders.userId` is null on everything the projection writes. The
+    // decision still stands; there is simply nobody to tell.
+    const [order] = await db
+      .insert(orders)
+      .values({
+        id: id("ord"),
+        customerId: customer.id,
+        orderedAt: new Date(),
+        totalAmount: 5_000_00,
+        status: "pending_approval",
+      })
+      .returning();
+
+    const done = await declineOrder(order.id, "Over the limit.");
+    assert.equal(done.ok, true, done.ok ? "" : done.error);
+    assert.equal((await db.select().from(notifications)).length, 0);
   });
 
   test("a telecaller cannot approve, however the screen is reached", async () => {
