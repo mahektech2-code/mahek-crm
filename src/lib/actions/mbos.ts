@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import {
   attachments,
+  attachmentParentEnum,
   bills,
   complaints,
   customerDistributors,
@@ -4042,12 +4043,27 @@ export type MediaOutcome =
  * the attachment id, which makes the dedupe a primary-key lookup rather than a
  * column somebody has to remember to index.
  */
+const MBOS_PARENTS: Record<string, (typeof attachmentParentEnum.enumValues)[number]> = {
+  attendance: "mbos_attendance",
+  visit: "mbos_visit",
+  expense: "mbos_expense",
+  sample: "mbos_sample",
+  task: "mbos_task",
+  /* Not `mbos_payment`: a field collection is written into `payment_receipts`,
+     the same table the CRM's own receipts use, so this is that parent and
+     `canRead` resolves it through the customer exactly as it does for one
+     captured at a desk. */
+  payment: "payment_receipt",
+};
+
 export async function storeMbosMedia(
   principal: MbosPrincipal,
   input: {
     clientId: string;
     kind: string;
-    entityId?: string;
+    /** The handset's own name for the table — see `MBOS_PARENTS`. */
+    parentType?: string;
+    parentId?: string;
     filename: string;
     bytes: Uint8Array;
   },
@@ -4110,6 +4126,16 @@ export async function storeMbosMedia(
       contentType: actual,
     });
 
+    /* The parent, which nothing was recording — see the note in
+     * `api/mbos/media/route.ts`. A file with none is readable by its uploader
+     * alone and is deleted by the nightly orphan sweep, so this pair of
+     * columns is the difference between an attachment and a file with a
+     * twenty-four-hour life. */
+    const parentType = input.parentType
+      ? (MBOS_PARENTS[input.parentType] ?? null)
+      : null;
+    const parentId = parentType && input.parentId ? input.parentId : null;
+
     await db
       .insert(attachments)
       .values({
@@ -4124,6 +4150,8 @@ export async function storeMbosMedia(
            to be hashed. */
         contentHash: createHash("sha256").update(input.bytes).digest("hex"),
         status: "available",
+        parentType,
+        parentId,
         uploadedById: principal.user.id,
       })
       .onConflictDoUpdate({
@@ -4134,6 +4162,10 @@ export async function storeMbosMedia(
           sizeBytes: stored.sizeBytes,
           contentHash: createHash("sha256").update(input.bytes).digest("hex"),
           status: "available",
+          /* Re-parented on a re-upload only where this one names a parent: a
+             retry that has lost the name must not orphan a file that was
+             already filed correctly. */
+          ...(parentType ? { parentType, parentId } : {}),
           updatedAt: new Date(),
         },
       });

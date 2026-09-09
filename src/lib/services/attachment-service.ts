@@ -8,6 +8,7 @@ import {
   calls,
   customers,
   followUpAttempts,
+  mbosAttendanceDays,
   mbosCourses,
   mbosDocuments,
   paymentReceipts,
@@ -335,6 +336,21 @@ export async function canRead(attachmentId: string): Promise<boolean> {
     return Boolean(course?.active);
   }
 
+  /*
+   * ATTENDANCE HAS NO CUSTOMER BEHIND IT, and every selfie was a 404.
+   *
+   * `customerBehind` below falls through to `calls` for any parent type it
+   * does not name, so an attendance selfie's `parentId` — an
+   * `mbos_attendance_days` id — was looked up in the calls table, found
+   * nothing, and this returned false. Every check-in photograph ever taken was
+   * refused to everybody, including the person in it and the manager it exists
+   * for. It failed SHUT, which is the safe direction and exactly why it
+   * survived: no screen displayed one, so there was nothing to notice it on.
+   */
+  if (row.parentType === "mbos_attendance") {
+    return canReadAttendanceSelfie(row.parentId);
+  }
+
   const customerId = await customerBehind(row.parentType, row.parentId);
   if (!customerId) return false;
 
@@ -399,6 +415,47 @@ async function canReadDocument(documentId: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Who may open an attendance selfie.
+ *
+ * Three answers, in this order, because they are three different people:
+ *
+ *   The salesman in the photograph. Always — it is a photograph of him,
+ *   attached to his own attendance, and the handset shows it back to him.
+ *
+ *   Whoever can see his attendance. That is the Sales Dashboard's own
+ *   narrowing and not a second opinion about it: `managerScope` gives a
+ *   regional manager their own salesmen and a national one everybody, which is
+ *   exactly the list `attendanceForDay` draws the screen from. Two definitions
+ *   of who may look at a person's day would drift, and the generous one always
+ *   wins in the end.
+ *
+ *   Nobody else. Not "anybody holding the field app" — a salesman must not be
+ *   able to fetch a colleague's photograph by guessing at an id, and these ids
+ *   travel in payloads.
+ *
+ * A missing attendance row answers no rather than throwing: an unbound selfie
+ * is already handled above, so a bound one naming a row that does not exist is
+ * a bug and refusing is the safe direction.
+ */
+async function canReadAttendanceSelfie(attendanceId: string): Promise<boolean> {
+  const [day] = await db
+    .select({ userId: mbosAttendanceDays.userId })
+    .from(mbosAttendanceDays)
+    .where(eq(mbosAttendanceDays.id, attendanceId));
+  if (!day) return false;
+
+  const ctx = await resolveScope();
+  if (day.userId === ctx.user.id) return true;
+
+  const { managerScope } = await import("./sales-service");
+  const scope = await managerScope();
+  /* `null` is a national manager — everybody. See `onlyMine`, which reads the
+     same field to mean the same thing in SQL. */
+  if (scope.salesmanIds === null) return true;
+  return scope.salesmanIds.includes(day.userId);
 }
 
 async function customerBehind(
