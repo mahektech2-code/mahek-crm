@@ -15,6 +15,8 @@ import {
 } from "@/lib/actions/sales";
 import { healthView } from "@/lib/customer-health";
 import type { LeadRow } from "@/lib/services/sales-service";
+import type { FunnelByType } from "@/lib/services/lead-console-service";
+import { salesTypeLabel, stageLabel, type LeadStage } from "@/lib/lead-labels";
 import {
   Button,
   Cell,
@@ -30,12 +32,19 @@ import {
 } from "../parts";
 
 /**
- * The qualification ladder, in the order it is climbed. The FUNNEL only
- * counts the first four — `won` and `lost` are terminal, not pipeline, and
- * folding them in is how a funnel bar comes to include the deals that are no
- * longer in it. The table below still lists every stage.
+ * What the four bands are CALLED on this screen.
+ *
+ * The bands themselves are `bandOf`'s, counted in SQL and banded on the
+ * server — this is only the wording, because "New" reads better over a bar
+ * than the enum value that produced it and a distributor's `management_review`
+ * folds into "Qualified" without either word appearing.
  */
-const FUNNEL_STAGES = ["new", "contacted", "qualified", "negotiation"] as const;
+const BAND_LABEL: Record<"new" | "contacted" | "qualified" | "negotiation", string> = {
+  new: "New / Suspect",
+  contacted: "Contacted / Prospect",
+  qualified: "Qualified",
+  negotiation: "Negotiation & beyond",
+};
 
 type Acting =
   | { kind: "reassign"; lead: LeadRow }
@@ -64,6 +73,8 @@ export function LeadsScreen({
   healthAtRiskBelow,
   healthStrongAtOrAbove,
   team,
+  funnel,
+  desks,
 }: {
   leads: LeadRow[];
   showArchived: boolean;
@@ -74,10 +85,25 @@ export function LeadsScreen({
   /** At or above this a score reads as strong. */
   healthStrongAtOrAbove: number;
   team: Array<{ id: string; name: string }>;
+  /** One funnel per sales type, counted in SQL and banded by the engine. */
+  funnel: FunnelByType[];
+  /** What is waiting on the three desks this screen is the way in to. */
+  desks: {
+    verification: number;
+    verificationMine: number;
+    noNextAction: number;
+    appointments: number;
+  };
 }) {
   const router = useRouter();
   const toast = useToast();
 
+  /* The type filter is local state rather than a URL parameter, unlike the
+     archived view beside it. Archived is a different LIST and worth sending to
+     somebody; which of three funnels you are looking at is a glance, and a
+     round trip to the server to redraw four counted bars is a page flash for
+     nothing. */
+  const [funnelType, setFunnelType] = React.useState<string>("all");
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
   const [acting, setActing] = React.useState<Acting | null>(null);
   const [salesmanId, setSalesmanId] = React.useState("");
@@ -138,15 +164,16 @@ export function LeadsScreen({
   const working = leads.filter((l) => l.stage !== "won" && l.stage !== "lost");
   const stale = working.filter((l) => l.quietDays >= staleDays);
 
-  const funnel = FUNNEL_STAGES.map((stage) => {
-    const at = leads.filter((l) => l.stage === stage);
-    return {
-      stage,
-      count: at.length,
-      potential: at.reduce((n, l) => n + Number(l.estimatedPotentialPaise ?? 0), 0),
-    };
-  });
-  const widest = Math.max(1, ...funnel.map((f) => f.count));
+  const funnelKey = (t: FunnelByType["salesType"]) => t ?? "legacy";
+  const shownFunnels =
+    funnelType === "all" ? funnel : funnel.filter((f) => funnelKey(f.salesType) === funnelType);
+  /* One scale across every funnel drawn, so two bars of the same length mean
+     the same number. Scaling each funnel to its own widest band would make a
+     ladder with four leads on it look exactly like one with four hundred. */
+  const widest = Math.max(
+    1,
+    ...shownFunnels.flatMap((f) => f.bands.map((b) => b.count)),
+  );
 
   const exportRows = [
     [
@@ -220,30 +247,89 @@ export function LeadsScreen({
       ) : (
         <>
           {!showArchived ? (
-            <section className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-4">
-              <div className="mb-3 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                The funnel
-              </div>
-              <div className="grid grid-cols-4 gap-5">
-                {funnel.map((f) => (
-                  <span key={f.stage} className="block min-w-0">
-                    <span className="flex items-baseline justify-between gap-2">
-                      <span className="text-[14px] text-body capitalize">{f.stage}</span>
-                      <span className="text-[18px] font-semibold text-ink">{f.count}</span>
-                    </span>
-                    <span className="mt-1.5 block h-1.5 overflow-hidden rounded-[3px] bg-canvas">
-                      <span
-                        className="block h-full rounded-[3px] bg-brand"
-                        style={{ width: `${Math.round((f.count / widest) * 100)}%` }}
+            <>
+              <DeskStrip desks={desks} />
+
+              <section className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-4">
+                <div className="mb-2 flex flex-wrap items-baseline justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                      The funnel
+                    </div>
+                    <p className="mt-0.5 max-w-[640px] text-[12px] text-pretty text-muted">
+                      Counted by sales type, because they are three different climbs. Folding them
+                      into one bar puts a distributor appointment in a paint shop&rsquo;s pipeline
+                      and calls both of them &ldquo;negotiation&rdquo;.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <TypeChip
+                      on={funnelType === "all"}
+                      label="All"
+                      onPick={() => setFunnelType("all")}
+                    />
+                    {funnel.map((f) => (
+                      <TypeChip
+                        key={funnelKey(f.salesType)}
+                        on={funnelType === funnelKey(f.salesType)}
+                        label={f.salesType ? salesTypeLabel(f.salesType) : "Original ladder"}
+                        count={f.inFunnel}
+                        onPick={() => setFunnelType(funnelKey(f.salesType))}
                       />
-                    </span>
-                    <span className="mt-1 block text-[12px] text-muted">
-                      {f.potential ? money(f.potential) : "—"} potential
-                    </span>
-                  </span>
-                ))}
-              </div>
-            </section>
+                    ))}
+                  </div>
+                </div>
+
+                {shownFunnels.length === 0 ? (
+                  <p className="text-[13px] text-muted">Nothing on this ladder yet.</p>
+                ) : (
+                  shownFunnels.map((f) => (
+                    <div key={funnelKey(f.salesType)} className="mt-3 first:mt-1">
+                      <div className="mb-1.5 flex flex-wrap items-baseline gap-2">
+                        <span className="text-[13px] font-medium text-ink">
+                          {f.salesType ? salesTypeLabel(f.salesType) : "Raised before the funnel"}
+                        </span>
+                        <span className="text-[12px] text-muted">
+                          {f.inFunnel} in it
+                          {f.inFunnelPotentialPaise
+                            ? ` · ${money(f.inFunnelPotentialPaise)} potential`
+                            : ""}
+                          {f.won ? ` · ${f.won} arrived` : ""}
+                          {f.lost ? ` · ${f.lost} lost` : ""}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-5 md:grid-cols-4">
+                        {f.bands.map((b) => (
+                          <span key={b.band} className="block min-w-0">
+                            <span className="flex items-baseline justify-between gap-2">
+                              <span className="truncate text-[13px] text-body">
+                                {BAND_LABEL[b.band]}
+                              </span>
+                              <span className="text-[18px] font-semibold text-ink">{b.count}</span>
+                            </span>
+                            <span className="mt-1.5 block h-1.5 overflow-hidden rounded-[3px] bg-canvas">
+                              <span
+                                className="block h-full rounded-[3px] bg-brand"
+                                style={{ width: `${Math.round((b.count / widest) * 100)}%` }}
+                              />
+                            </span>
+                            <span className="mt-1 block text-[12px] text-muted">
+                              {b.potentialPaise ? money(b.potentialPaise) : "—"} potential
+                            </span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+                <p className="mt-3 text-[12px] text-muted">
+                  Potential is an estimate somebody typed, not a price — the product master carries
+                  none, so nothing here can value an order. Won, lost and appointed are counted
+                  beside the funnel rather than inside it: a funnel that includes the business it
+                  already did only ever grows.
+                </p>
+              </section>
+            </>
           ) : null}
 
           {!showArchived && stale.length ? (
@@ -286,7 +372,19 @@ export function LeadsScreen({
                 <React.Fragment key={l.id}>
                   <Row striped={i % 2 === 1} onClick={() => toggleExpanded(l.id)}>
                     <Cell truncate={230}>
-                      <span className="font-medium text-ink">{l.name}</span>
+                      {/* The name is the door to the record. The row itself
+                          still expands, so the one-line summary is a click and
+                          the whole climb is a click — the two questions a
+                          manager asks of a list are "which of these" and "what
+                          is this one waiting on", and they deserve different
+                          gestures. */}
+                      <Link
+                        href={`/sales/leads/${l.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="font-medium no-underline"
+                      >
+                        {l.name}
+                      </Link>
                       <span className="block truncate text-[12px] text-muted">
                         {[l.companyName, l.city].filter(Boolean).join(" · ") || l.mobile || "—"}
                       </span>
@@ -320,7 +418,7 @@ export function LeadsScreen({
                           l.stage === "won" ? "success" : l.stage === "lost" ? "danger" : "brand"
                         }
                       >
-                        {l.stage}
+                        {stageLabel(l.stage as LeadStage)}
                       </Pill>
                     </Cell>
                     <Cell>
@@ -347,6 +445,7 @@ export function LeadsScreen({
                       ) : (
                         <RowMenu
                           items={[
+                            { label: "Open the record", href: `/sales/leads/${l.id}` },
                             { label: "Reassign the lead", run: () => begin(l, "reassign") },
                             {
                               label: "Chase the owner",
@@ -600,5 +699,116 @@ function DetailPanel({ lead, hasDetail }: { lead: LeadRow; hasDetail: boolean })
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The three desks, counted, above the funnel.
+ *
+ * They are the work the funnel added and none of it is a column on this table:
+ * a call somebody owes, a lead nobody is working, a distributor waiting on a
+ * signature. A queue with no count on the screen people start from is a queue
+ * nobody opens — which is how the nurture sequence and the verification call
+ * would both have shipped invisible.
+ */
+function DeskStrip({
+  desks,
+}: {
+  desks: {
+    verification: number;
+    verificationMine: number;
+    noNextAction: number;
+    appointments: number;
+  };
+}) {
+  const items = [
+    {
+      href: "/sales/leads/verification",
+      label: "Verification queue",
+      value: desks.verificationMine,
+      sub:
+        desks.verification === desks.verificationMine
+          ? "prospects waiting on your call"
+          : `yours, of ${desks.verification} waiting on anybody`,
+      warn: desks.verificationMine > 0,
+    },
+    {
+      href: "/sales/leads/no-next-action",
+      label: "Nobody is working these",
+      value: desks.noNextAction,
+      sub: "no plan, or a plan whose day has gone",
+      warn: desks.noNextAction > 0,
+    },
+    {
+      href: "/sales/leads/appointments",
+      label: "Distributor appointments",
+      value: desks.appointments,
+      sub: "waiting on a signature",
+      warn: false,
+    },
+    {
+      href: "/sales/leads/nurture",
+      label: "Nurture schedule",
+      value: null as number | null,
+      sub: "what the sequence has raised",
+      warn: false,
+    },
+  ];
+
+  return (
+    <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      {items.map((it) => (
+        <Link
+          key={it.href}
+          href={it.href}
+          className="block rounded-[6px] border border-line bg-surface px-4 py-3 no-underline hover:bg-canvas hover:no-underline"
+        >
+          <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+            {it.label}
+          </span>
+          {it.value != null ? (
+            <span
+              className={
+                it.warn
+                  ? "block text-[22px] leading-7 font-semibold tabular-nums text-warn-ink"
+                  : "block text-[22px] leading-7 font-semibold tabular-nums text-ink"
+              }
+            >
+              {it.value}
+            </span>
+          ) : (
+            <span className="block text-[15px] leading-7 font-medium text-body">Open it</span>
+          )}
+          <span className="block text-xs text-muted">{it.sub}</span>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function TypeChip({
+  on,
+  label,
+  count,
+  onPick,
+}: {
+  on: boolean;
+  label: string;
+  count?: number;
+  onPick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      className={
+        on
+          ? "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[4px] border border-brand bg-brand-soft px-3 text-[13px] font-medium whitespace-nowrap text-[#5223E0]"
+          : "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[4px] border border-line bg-surface px-3 text-[13px] whitespace-nowrap text-body hover:bg-canvas"
+      }
+    >
+      {label}
+      {count != null ? <span className={on ? "tabular-nums" : "tabular-nums text-muted"}>{count}</span> : null}
+    </button>
   );
 }

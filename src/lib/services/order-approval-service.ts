@@ -4,6 +4,8 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, customers, orders } from "@/db/schema";
 import { requireCapability } from "../access-control";
+import { calendarDate } from "../business-date";
+import { convertIfNowQualified } from "./lead-conversion-service";
 import { money } from "../format";
 import { notifyUser } from "../notify";
 import { recomputeBuyingCycle } from "../recompute";
@@ -262,6 +264,38 @@ export async function approveOrder(orderId: string): Promise<Result> {
 
   // It is a purchase now, so the cycle, the average and the history all change.
   await recomputeBuyingCycle(order.customerId);
+
+  /*
+   * And it may be the order that makes them a customer.
+   *
+   * A lead becomes one on its SECOND order, and what counts as an order is an
+   * APPROVED one — so the save path can ask "has this account ordered before"
+   * and be told no, purely because the first order was still sitting with
+   * accounts. Nothing looked again when it was approved, and the shop stayed a
+   * lead until a third order, on a book where the calling queue and the owner's
+   * funnel both read `kind`.
+   *
+   * Outside the transaction above deliberately: this is a consequence of the
+   * approval rather than part of it, and a failure here must not roll back a
+   * decision accounts have already taken. The order is approved either way, and
+   * the nightly pass would catch the promotion on the next order regardless.
+   */
+  try {
+    await convertIfNowQualified(
+      db,
+      order.customerId,
+      calendarDate(order.orderedAt ?? new Date()),
+      ctx.user.id,
+      "order_approved",
+      order.id,
+    );
+  } catch {
+    /* Reported nowhere on purpose: accounts approved an order and that is what
+       the screen must say. A promotion that did not happen is visible on the
+       next order and on the customer record, and telling a clerk about it here
+       would be reporting somebody else's job as their failure. */
+  }
+
   await tellTheAuthor(order, ctx.user, null);
   return okVoid("Order approved");
 }

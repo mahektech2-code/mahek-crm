@@ -175,6 +175,37 @@ export const MBOS_EVENT = {
 
   /** Where a shop actually is, recorded the first time somebody stood in it. */
   gps: "gps",
+
+  /* ---- the funnel §5 §12 §15 §25 ----
+   *
+   * Four of the funnel's writes have NO entry here and deliberately reuse the
+   * ones above: a stage move writes `leadStage`, but a dispatched sample writes
+   * `sampleDispatched`, a delivered one `sampleReceived`, a reviewed one
+   * `sampleReview`, and the manager's §8 verification call writes `validation`.
+   * Those four already existed for the same events under slightly different
+   * spellings, and a second constant beside each would have produced exactly
+   * what this whole map exists to prevent — two streams for one event, neither
+   * able to deduplicate against the other, because the natural key is built
+   * from this string.
+   */
+
+  /** Every move up, down or out of a ladder. §25's timeline is built on it. */
+  leadStage: "lead_stage",
+
+  /** §15 — the points where somebody's word about a sample changes. */
+  sampleRequested: "sample_requested",
+  sampleDecided: "sample_request_decided",
+  sampleCancelled: "sample_cancelled",
+
+  /* §12 — appointing a distributor, at each signature. */
+  distributorSubmitted: "distributor_submitted",
+  distributorTerms: "distributor_terms_agreed",
+  distributorAgreement: "distributor_agreement",
+
+  /** §14 — a file sent or a call placed from the manager's lead page. */
+  leadCommunication: "lead_communication",
+  /** §18 — the eight questions, and the date they produced. */
+  firstOrderAsk: "lead_first_order_ask",
 } as const;
 
 /**

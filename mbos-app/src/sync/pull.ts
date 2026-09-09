@@ -358,6 +358,14 @@ async function upsertConfig(config: Record<string, unknown> | undefined, now: nu
  * wire at all because MahekOne tracks the two timestamps behind it instead.
  * That is exactly why neither of these can go through the generic upsert: it
  * writes the keys it is given, and none of these five is the same word twice.
+ *
+ * NEITHER READS A FUNNEL COLUMN, deliberately. The lead row now carries a
+ * sales type, a rung, the eight prospect answers and a qualification object,
+ * and `openLeads` sends none of them yet — so reading them here would be
+ * exactly the `upsertTasks` bug again, one release later: an undefined field
+ * becomes NULL and the `ON CONFLICT` clause writes it over the answers a
+ * salesman typed standing in the shop. They are added to the list below ONLY
+ * in the same change that adds them to the server's query.
  */
 async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<number> {
   if (!rows?.length) return 0;
@@ -379,11 +387,45 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       notes?: string | null;
       convertedCustomerId?: string | null;
       lastActivityDate?: string | null;
+      /*
+       * THE FUNNEL, ARRIVING — and every one of these is now on the wire.
+       *
+       * The rule this obeys is the one `upsertTasks` broke: a field READ here
+       * that the server does not send is `undefined`, and the `ON CONFLICT`
+       * clause then writes that NULL over whatever the row held. That is how
+       * every completed task lost its note and its photograph. So these are
+       * added in the same change as `openLeads`, never ahead of it — and the
+       * list below is the whole of what `openLeads` selects, no more.
+       */
+      salesType?: string | null;
+      stageSince?: string | null;
+      customerType?: string | null;
+      /* `lead_monthly_volume_litres` under its wire name. The server holds one
+         column for the fact and aliases it to this. */
+      monthlyLitres?: number | null;
+      competitor?: string | null;
+      requiredProductId?: string | null;
+      requiredProductName?: string | null;
+      contactPerson?: string | null;
+      decisionMaker?: string | null;
+      creditDaysWanted?: number | null;
+      application?: string | null;
+      gstin?: string | null;
+      qualification?: unknown;
+      nextAction?: string | null;
+      nextActionDate?: string | null;
+      nextActionOwnerId?: string | null;
+      nextActionOutcome?: string | null;
+      suspectDecidedAt?: string | null;
+      verifiedAt?: string | null;
+      thirdParty?: boolean | null;
+      distributorSalesmanId?: string | null;
+      distributorSalesmanName?: string | null;
+      expectedOrderDate?: string | null;
+      expectedOrderValuePaise?: number | null;
       /* Sent since leads existed and dropped on the floor until the
          `a lead has a place` migration gave this table somewhere to put
-         them — a lead map with no coordinates. Named rather than numbered:
-         this said v13 and the block is v16, because migrations renumber
-         when another branch's land first. */
+         them — a lead map with no coordinates. */
       gpsLat?: number | null;
       gpsLng?: number | null;
       /* The coordinating seat, and the name beside it. Reference data: it does
@@ -400,8 +442,15 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
                           assigneeId, stage, nextFollowUpDate, notes, convertedCustomerId,
                           archived, lastActivityDate, gpsLat, gpsLng,
                           leadManagerId, leadManagerName, visitCount, holdReason,
-                          clientCreatedAt, serverCreatedAt, deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
+                          clientCreatedAt, serverCreatedAt, deviceId, syncState,
+                          salesType, funnelStage, stageSince, customerType, monthlyLitres,
+                          competitor, requiredProductId, requiredProductName, contactPerson,
+                          decisionMaker, creditDaysWanted, application, gstin, qualification,
+                          nextAction, nextActionDate, nextActionOwnerId, nextActionOutcome,
+                          suspectDecidedAt, verifiedAt, thirdParty, distributorSalesmanId,
+                          distributorSalesmanName, expectedOrderDate, expectedOrderValuePaise)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced',
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name, company = excluded.company, mobile = excluded.mobile,
          city = excluded.city, area = excluded.area, source = excluded.source,
@@ -413,7 +462,24 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
          leadManagerId = excluded.leadManagerId,
          leadManagerName = excluded.leadManagerName,
          visitCount = excluded.visitCount,
-         holdReason = excluded.holdReason
+         holdReason = excluded.holdReason,
+         salesType = excluded.salesType, funnelStage = excluded.funnelStage,
+         stageSince = excluded.stageSince, customerType = excluded.customerType,
+         monthlyLitres = excluded.monthlyLitres, competitor = excluded.competitor,
+         requiredProductId = excluded.requiredProductId,
+         requiredProductName = excluded.requiredProductName,
+         contactPerson = excluded.contactPerson, decisionMaker = excluded.decisionMaker,
+         creditDaysWanted = excluded.creditDaysWanted, application = excluded.application,
+         gstin = excluded.gstin, qualification = excluded.qualification,
+         nextAction = excluded.nextAction, nextActionDate = excluded.nextActionDate,
+         nextActionOwnerId = excluded.nextActionOwnerId,
+         nextActionOutcome = excluded.nextActionOutcome,
+         suspectDecidedAt = excluded.suspectDecidedAt, verifiedAt = excluded.verifiedAt,
+         thirdParty = excluded.thirdParty,
+         distributorSalesmanId = excluded.distributorSalesmanId,
+         distributorSalesmanName = excluded.distributorSalesmanName,
+         expectedOrderDate = excluded.expectedOrderDate,
+         expectedOrderValuePaise = excluded.expectedOrderValuePaise
        WHERE leads.syncState = 'synced'`,
       [
         l.id,
@@ -440,6 +506,38 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         l.holdReason ?? null,
         now,
         now,
+        l.salesType ?? null,
+        /* The specification's rung, kept apart from `stage`. `stage` is what the
+           filter chips select on and only ever holds one of the original six —
+           writing `sample_review` into it makes a lead findable on no chip. */
+        l.stage ?? null,
+        l.stageSince ?? null,
+        l.customerType ?? null,
+        l.monthlyLitres ?? null,
+        l.competitor ?? null,
+        l.requiredProductId ?? null,
+        l.requiredProductName ?? null,
+        l.contactPerson ?? null,
+        l.decisionMaker ?? null,
+        l.creditDaysWanted ?? null,
+        l.application ?? null,
+        l.gstin ?? null,
+        /* jsonb arrives as an object and SQLite holds text. */
+        l.qualification == null ? '{}' : JSON.stringify(l.qualification),
+        l.nextAction ?? null,
+        l.nextActionDate ?? null,
+        l.nextActionOwnerId ?? null,
+        l.nextActionOutcome ?? null,
+        /* An ISO instant carries its own zone, so `Date.parse` is right here —
+           it is a date-ONLY string that would be read as UTC and land five and a
+           half hours early. */
+        l.suspectDecidedAt ? Date.parse(l.suspectDecidedAt) : null,
+        l.verifiedAt ? Date.parse(l.verifiedAt) : null,
+        l.thirdParty ? 1 : 0,
+        l.distributorSalesmanId ?? null,
+        l.distributorSalesmanName ?? null,
+        l.expectedOrderDate ?? null,
+        l.expectedOrderValuePaise ?? null,
       ],
     );
   }

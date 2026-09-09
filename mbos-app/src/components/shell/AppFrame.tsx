@@ -44,6 +44,9 @@ export const FROM_LABEL: Record<string, string> = {
   notifications: 'Notifications',
   leads: 'Leads',
   lead: 'Lead',
+  sample: 'Sample',
+  'lead-prospect': 'Prospect details',
+  'lead-qualify': 'Qualification',
   maps: 'Offline maps',
   pick: 'Pick your shops',
 };

@@ -459,6 +459,22 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
    */
   "mbos_travel_leg",
   /**
+   * §12 — the signed distributor agreement, and its own parent kind for the
+   * usual reason: `canRead` decides who may open a file FROM the parent kind.
+   *
+   * Filed as `mbos_document` it would be read under the document rules, which
+   * are role lists and a customer's scope — a commercial contract handed to
+   * every salesman holding the field app. Left unparented, which is what it was
+   * before this value existed, `sweepOrphans` deletes the bytes within
+   * `attachments.orphanCleanupHours` and marks the row removed: the same
+   * nightly job that quietly destroyed every field photograph for months.
+   *
+   * `parentId` is the CUSTOMER, because the agreement is about the account and
+   * not about the application row — a profile can be superseded and the
+   * contract it produced is still the contract.
+   */
+  "distributor_agreement",
+  /**
    * The policy document as HR issued it. Nothing parses it; it is the source
    * of record, so that the rates typed beside it can always be checked
    * against the thing they were typed from.
@@ -828,8 +844,22 @@ export const impersonationTokens = pgTable(
 /* -------------------------------------------------------------- §3.3 customer */
 
 /** A record is one or the other, and the difference decides what is shown. */
-/** The qualification ladder. `won` is the stage a conversion leaves behind. */
+/**
+ * Every rung of every ladder, in one enum.
+ *
+ * THE FIRST SIX ARE THE LADDER THIS SHIPPED WITH and they are kept exactly as
+ * they were. A lead with no `leadSalesType` climbs those six and nothing about
+ * it changed on the day the rest arrived — which is what let this land without
+ * touching a single existing row, the console funnel, or the owner's cohort
+ * conversion. `lib/engines/lead-ladder.ts` is what decides which rungs belong
+ * to which ladder; nothing reads this list in order.
+ *
+ * `won` and `lost` stay terminal for all three ladders. `customer` and
+ * `active_distributor` are the funnel's own final rungs and are NOT the same
+ * statement as `customers.kind` — see the note on `leadSalesType`.
+ */
 export const mbosLeadStageEnum = pgEnum("mbos_lead_stage", [
+  /* the original six */
   "new",
   "contacted",
   "qualified",
@@ -846,6 +876,58 @@ export const mbosLeadStageEnum = pgEnum("mbos_lead_stage", [
   "on_hold",
   "won",
   "lost",
+  /* shared by the direct-customer and third-party ladders */
+  "suspect",
+  "prospect",
+  "qualification",
+  "sample_trial",
+  "sample_received",
+  "sample_review",
+  "first_order",
+  "delivery",
+  "payment",
+  "second_order",
+  "customer",
+  /* the distributor appointment ladder */
+  "management_review",
+  "commercial_discussion",
+  "distributor_approval",
+  "distributor_agreement",
+  "initial_stock_order",
+  "active_distributor",
+]);
+
+/**
+ * Which ladder a lead climbs, and the three ways Mahek sells.
+ *
+ * Direct is Mahek to the shop. Distributor is an appointment — the objective is
+ * a signed distributor, not a sample. Third party is Mahek to a distributor to
+ * the shop, where the goods reach a counter we do not invoice.
+ *
+ * NULL is the fourth answer and the load-bearing one: it means a lead raised
+ * before any of this existed, and it climbs the original six rungs. Nothing
+ * backfills it, because guessing which of three ladders somebody was on is a
+ * decision dressed as a migration.
+ */
+export const leadSalesTypeEnum = pgEnum("lead_sales_type", [
+  "direct",
+  "distributor",
+  "third_party",
+]);
+
+/**
+ * Who answered a stage move, and under what authority.
+ *
+ * A gate that was overridden is not the same event as a gate that was passed,
+ * and a month later the only thing that can tell them apart is this column.
+ */
+export const leadTransitionKindEnum = pgEnum("lead_transition_kind", [
+  /* every condition was met */
+  "passed",
+  /* a manager moved it anyway, with a reason */
+  "overridden",
+  /* moved back down the ladder */
+  "reverted",
 ]);
 
 export const customerKindEnum = pgEnum("customer_kind", ["lead", "customer"]);
@@ -956,6 +1038,109 @@ export const customers = pgTable(
     /** When it stopped being a lead. The row did not change identity. */
     leadConvertedAt: timestamp("lead_converted_at", { withTimezone: true }),
 
+    /* ---- the funnel §2, §3 ----
+     *
+     * `leadSalesType` picks the ladder and is chosen before anything else is
+     * typed, because it decides which questions the rest of the form asks.
+     * Changing it later is its own action with its own reason: a lead half way
+     * up the distributor ladder does not become a shop by somebody tapping a
+     * different chip.
+     *
+     * IT IS NOT `customerType`, which is what the account IS in the trade and
+     * decides a price list. A dealer can be sold to directly or through a
+     * distributor, and both are true at once.
+     */
+    leadSalesType: leadSalesTypeEnum("lead_sales_type"),
+    /**
+     * The day the lead reached the stage it is on.
+     *
+     * Its own column rather than derived from the newest transition row: the
+     * console sorts and ages by it on every list, and a correlated subquery per
+     * row to answer "how long has this been sitting here" is the query that
+     * makes a leads screen slow on the book that most needs one.
+     */
+    leadStageSince: date("lead_stage_since"),
+
+    /* ---- §24 THE NEXT ACTION, and it is four answers rather than a date ----
+     *
+     * `leadNextFollowUpDate` above is the salesman's own diary and stays what
+     * it always was. This is the spec's rule: an active lead may not sit with
+     * nothing owed by anybody, so it names the action, the day, the person and
+     * what that person is expected to come back with. A date alone was what
+     * this had, and a date alone is how a lead sits for six weeks with everyone
+     * assuming somebody else has it.
+     *
+     * Enforced in `advanceLeadStage`, not by a required field on one screen.
+     */
+    leadNextAction: text("lead_next_action"),
+    leadNextActionDate: date("lead_next_action_date"),
+    leadNextActionOwnerId: text("lead_next_action_owner_id").references(() => users.id),
+    leadNextActionOutcome: text("lead_next_action_outcome"),
+
+    /* ---- §7, §8 THE MANAGER'S SEAT, WHICH ARRIVED FROM BOTH DIRECTIONS ----
+     *
+     * `leadManagerId` below is not mine and is not duplicated here. The office's
+     * own flow put a coordinating manager on a lead at qualification; the
+     * specification's §7 puts one there at Prospect to make the verification
+     * call. That is one seat with two reasons to fill it, and two columns would
+     * have been two answers to "who is coordinating this" — with the screens
+     * reading whichever their author happened to know about.
+     *
+     * `assignLeadManager` writes it and stamps `leadManagerDecidedAt` when a
+     * PERSON chose rather than the territory rule.
+     */    /** §8 — set by the manager's verification call, never by the salesman. */
+    leadVerifiedAt: timestamp("lead_verified_at", { withTimezone: true }),
+    leadVerifiedById: text("lead_verified_by_id").references(() => users.id),
+
+    /* ---- §6, §9 what a prospect had to answer to become one ----
+     *
+     * These are the eight mandatory fields, stored as columns because every one
+     * of them is asked about on a list or in a report — "which leads want
+     * Nano", "what is the pipeline worth in litres". The fifty-five yes/no
+     * qualification CONDITIONS are jsonb below, because those are only ever
+     * read as a set.
+     */
+    leadCompetitor: text("lead_competitor"),
+    leadRequiredProductId: text("lead_required_product_id").references(() => products.id),
+    leadCreditDaysWanted: integer("lead_credit_days_wanted"),
+    leadApplication: text("lead_application"),
+
+    /**
+     * §9, §11 — the qualification checklist's answers, keyed by condition id.
+     *
+     * Jsonb rather than fifty-five columns and a migration per question: the
+     * conditions are configuration, a manager may add one, and the only reader
+     * is `lib/engines/lead-gates.ts`, which takes the whole object. A value is
+     * `true`, or a short string where the condition records something.
+     */
+    leadQualification: jsonb("lead_qualification")
+      .$type<Record<string, boolean | string>>()
+      .notNull()
+      .default({}),
+
+    /**
+     * §4 — the Suspect decision, once it has been made.
+     *
+     * How many visits a suspect has had is NOT stored: it is counted from
+     * `mbos_visits`, because a column would drift the first time a visit was
+     * deleted or arrived late from a handset. What is stored is the answer, so
+     * a lead the salesman decided against is not asked again every morning.
+     */
+    leadSuspectDecidedAt: timestamp("lead_suspect_decided_at", { withTimezone: true }),
+
+    /* ---- §23 the third-party chain ----
+     *
+     * Who bills this shop lives in `customer_distributors` and always has. What
+     * had no home is the distributor's OWN salesman — Rahul, in the spec's
+     * example — because he has no MahekOne login and never will. Named on the
+     * lead so the chain is recorded from the first visit rather than
+     * reconstructed at conversion.
+     */
+    leadDistributorSalesmanId: text("lead_distributor_salesman_id"),
+
+    /** §18 — what the manager was told when they asked for the first order. */
+    leadExpectedOrderDate: date("lead_expected_order_date"),
+    leadExpectedOrderValuePaise: bigint("lead_expected_order_value_paise", { mode: "number" }),
     /**
      * WHO COORDINATES THIS LEAD'S CONVERSION — a second seat, beside the owner.
      *
@@ -3026,6 +3211,17 @@ export const customerDistributors = pgTable(
     isPrimary: boolean("is_primary").notNull().default(false),
     /** The arrangement in somebody's own words — a route, a rate, a caveat. */
     note: text("note"),
+    /**
+     * §23 — which of the distributor's own people covers this shop.
+     *
+     * Optional, and it stays optional: a distributor with one counter and no
+     * sales team is ordinary, and refusing the arrangement for want of a name
+     * would make the commonest case the hardest to record.
+     */
+    distributorSalesmanId: text("distributor_salesman_id").references(
+      () => distributorSalesmen.id,
+      { onDelete: "set null" },
+    ),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -4470,6 +4666,35 @@ export const mbosSampleOutcomeEnum = pgEnum("mbos_sample_outcome", [
   "pending",
   "approved",
   "rejected",
+  /**
+   * §15 — the third answer, and the one the two-value version could not give.
+   *
+   * "The customer wants to try it again on a different substrate" is neither an
+   * approval nor a rejection, and recording it as `pending` loses the fact that
+   * a trial actually happened and produced an opinion.
+   */
+  "more_testing",
+]);
+
+/**
+ * §15 — where a sample has got to, which is a different question to what the
+ * customer thought of it.
+ *
+ * `trialOutcome` is the verdict and stays null-ish until there is one; this is
+ * the journey, and every step of it is a date somebody can be chased about. A
+ * sample that was approved three weeks ago and never dispatched is stock nobody
+ * gave away and an opportunity nobody took, and with one column it looked
+ * identical to a sample under evaluation.
+ */
+export const mbosSampleStateEnum = pgEnum("mbos_sample_state", [
+  "requested",
+  "approved",
+  "rejected",
+  "dispatched",
+  "received",
+  "trial_done",
+  "reviewed",
+  "cancelled",
 ]);
 
 /**
@@ -4542,6 +4767,53 @@ export const mbosSamples = pgTable(
     rejectionReason: text("rejection_reason"),
     followUpDate: date("follow_up_date"),
     feedbackNotes: text("feedback_notes"),
+
+    /* ---- §15 the lifecycle ----
+     *
+     * `state` is derived from nothing and set by the person doing the step, so
+     * every one of these dates has a name against it in the timeline. The
+     * approval itself is an `mbos_approvals` row of type `sample` — this column
+     * is the subject's own position, and the two are kept in step by
+     * `advanceSample` rather than by anybody writing both.
+     */
+    state: mbosSampleStateEnum("state").notNull().default("requested"),
+    /** §10 — a code from `leads.sampleReasons`. Why the customer wants one. */
+    reasonCode: text("reason_code"),
+    /** What it is going to be used on. Decides whether the trial means anything. */
+    application: text("application"),
+    /** The lead this sample belongs to, where it was raised from the funnel. */
+    leadStageAtRequest: mbosLeadStageEnum("lead_stage_at_request"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    approvedById: text("approved_by_id").references(() => users.id),
+    /*
+     * `dispatchedAt`, `courierName`, `trackingNumber`, `receivedAt` and
+     * `trialCompletedAt` are declared ONCE, above, and the lifecycle reads
+     * those. Two teams built §15 at the same time and this block carried a
+     * second set of the same five under different names — `courier_docket` for
+     * the tracking number, `received_confirmed_at` for the received date, and
+     * three exact duplicates. A duplicate key in an object literal is not an
+     * error in TypeScript's eyes at the point it matters here: the later
+     * declaration simply wins, so half the product wrote one column and half
+     * read the other, and a sample dispatched on one screen read as never sent
+     * on the next. One column per fact.
+     */
+    dispatchedById: text("dispatched_by_id").references(() => users.id),
+    /** What was promised. `deliveredAt` above is what happened. */
+    expectedDeliveryDate: date("expected_delivery_date"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    reviewedById: text("reviewed_by_id").references(() => users.id),
+    /**
+     * §16 — how many times the review has been chased.
+     *
+     * The ladder is day 2, then 4, then 6, and it does not stop until there is
+     * an answer. Stored so the nightly pass knows which rung it is on without
+     * counting tasks, and so a screen can say "asked three times" — which is
+     * the number that tells a manager to pick the phone up themselves.
+     */
+    reviewChaseCount: integer("review_chase_count").notNull().default(0),
+    lastReviewChaseAt: timestamp("last_review_chase_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancelReason: text("cancel_reason"),
     /** Set when the trial became a sale. The conversion report is this column. */
     convertedOrderId: text("converted_order_id").references(() => orders.id, {
       onDelete: "set null",
@@ -4678,78 +4950,240 @@ export const mbosVisits = pgTable(
 
 /* ----------------------------------------------------------------- leads */
 
-/** §2.5 — where the prospect came from. Conversion is reported by this. */
-export const mbosLeadSourceEnum = pgEnum("mbos_lead_source", [
-  "manual",
-  "website",
-  "referral",
-  "exhibition",
-  "cold_call",
-  "whatsapp",
-  "campaign",
-]);
-
-/* `mbosLeadStageEnum` now lives beside `customerKindEnum` — it is a column
- * on `customers`, and a const must be defined before the table that reads it. */
+/*
+ * `mbos_leads` USED TO BE HERE and it is gone.
+ *
+ * It was the second table for one noun — the CRM had `kind = 'lead'` with no
+ * ladder, the handset had a ladder in a table of its own — and the ONE LEAD
+ * consolidation moved every column of it onto `customers` as `lead_*`. What it
+ * left behind was the table itself, referenced by nothing but the seed's
+ * truncate list, under a doc comment still describing the two-table world it
+ * had just stopped being. A dead table with living prose above it is worse than
+ * either, because the prose is what the next person reads.
+ *
+ * The funnel's own tables are below. They hang off `customers`, like the
+ * columns do.
+ */
 
 /**
- * §2.5 — a prospect the field team is working.
+ * §5, §10, §25, §26 — every move up, down or out of the ladder, one row each.
  *
- * `customers.kind = 'lead'` already exists and is a different animal: it is a
- * party the sheet knows about that has never ordered. This is a lead somebody
- * MET, before there is any reason to put a row in the customer master at all —
- * a name and a mobile number from an exhibition is not a customer, and writing
- * one would put it on the collections list's outer joins and the queue's
- * prospect cadence on the strength of a business card.
+ * This is the audit AND the timeline's source, and it is the only place a
+ * reason code is stored. A stage on the customer row answers "where is it now";
+ * nothing but this answers "how did it get here", which is the question asked
+ * of a lead that has been sitting at Prospect for two months.
  *
- * Conversion writes a customer and records its id here; the lead row stays, so
- * "where did this account come from" keeps its answer.
+ * It is append-only. A transition recorded wrongly is corrected by a further
+ * transition, never by an edit — the same rule `calls.next_step_*` follows, and
+ * for the same reason: this records what somebody decided on a day, and a
+ * rewrite destroys the question rather than answering it.
  */
-export const mbosLeads = pgTable(
-  "mbos_leads",
+export const leadStageTransitions = pgTable(
+  "lead_stage_transitions",
   {
-    ...mbosColumns(),
-    name: text("name").notNull(),
-    companyName: text("company_name"),
-    /** Mandatory in the form, and the duplicate check runs on it. */
-    mobile: text("mobile"),
-    city: text("city"),
-    area: text("area"),
-    source: mbosLeadSourceEnum("source").notNull().default("manual"),
-    /** Paise. What the salesman thinks the account could be worth in a month. */
-    estimatedPotentialPaise: bigint("estimated_potential_paise", { mode: "number" }),
-    assignedToUserId: text("assigned_to_user_id").references(() => users.id),
-    stage: mbosLeadStageEnum("stage").notNull().default("new"),
-    nextFollowUpDate: date("next_follow_up_date"),
-    notes: text("notes"),
-    gpsLat: doublePrecision("gps_lat"),
-    gpsLng: doublePrecision("gps_lng"),
-
-    /** Set on conversion. The lead is not deleted — it is where the account began. */
-    convertedCustomerId: text("converted_customer_id").references(() => customers.id, {
-      onDelete: "set null",
-    }),
-    convertedAt: timestamp("converted_at", { withTimezone: true }),
-    /** Mandatory when the stage is `lost`: a loss nobody explained teaches nothing. */
-    lostReason: text("lost_reason"),
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /** Null on the first row: a lead created at Suspect came from nowhere. */
+    fromStage: mbosLeadStageEnum("from_stage"),
+    toStage: mbosLeadStageEnum("to_stage").notNull(),
+    salesType: leadSalesTypeEnum("sales_type"),
+    kind: leadTransitionKindEnum("kind").notNull().default("passed"),
     /**
-     * A lead nobody has touched for the configured window archives itself. It
-     * is a flag rather than a delete, because a cold lead is exactly who a
-     * campaign goes back to next year.
+     * A code from the matching list in `lib/config/registry.ts` — never the
+     * label. The lists are editable, and a stored label stops resolving the day
+     * somebody rewords one.
      */
-    archived: boolean("archived").notNull().default(false),
-    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    reasonCode: text("reason_code"),
+    /** What the person typed beside the code, where they typed anything. */
+    note: text("note"),
     /**
-     * Derived cache: the last day anything happened on this lead. It drives
-     * the stale flag and the auto-archive, and it is rebuilt from activity
-     * rather than typed.
+     * §28 — what was still missing when a manager moved it anyway.
+     *
+     * Only ever set on an `overridden` row. It is the list of condition ids the
+     * gate was refusing on, kept because "who let this through and what were
+     * they ignoring" is the whole point of allowing an override at all.
      */
-    lastActivityDate: date("last_activity_date"),
+    overriddenConditions: jsonb("overridden_conditions").$type<string[]>().notNull().default([]),
+    actorId: text("actor_id").references(() => users.id),
+    /** Which hat allowed it. Null means not recorded, never "no role". */
+    actorRole: text("actor_role"),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index("mbos_leads_assigned_idx").on(t.assignedToUserId, t.stage),
-    index("mbos_leads_mobile_idx").on(t.mobile),
-    index("mbos_leads_stale_idx").on(t.archived, t.lastActivityDate),
+    /* The record page reads this newest-first, and a tiebreaker is not
+       optional: several transitions of one lead share a second. */
+    index("lead_stage_transitions_customer_idx").on(t.customerId, t.at, t.id),
+    index("lead_stage_transitions_stage_idx").on(t.toStage, t.at),
+  ],
+);
+
+
+/**
+ * §23 — the distributor's own salesman. Rahul, in the spec's example.
+ *
+ * Deliberately NOT a `users` row. He works for the distributor, he has no
+ * MahekOne login, he will never sign in, and giving him one would put him in
+ * every person picker in the product. He is a fact about how a shop is served,
+ * which is the same kind of fact `sales_person_name` already is.
+ */
+export const distributorSalesmen = pgTable(
+  "distributor_salesmen",
+  {
+    id: text("id").primaryKey(),
+    /** The distributor he works for — an account we invoice. */
+    distributorCustomerId: text("distributor_customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    mobile: text("mobile"),
+    territory: text("territory"),
+    /** Left rather than deleted: which shops he served is still history. */
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    index("distributor_salesmen_distributor_idx").on(t.distributorCustomerId, t.active),
+  ],
+);
+
+/**
+ * §11 — the thirty conditions a distributor answers that a shop does not.
+ *
+ * Its own table rather than more `lead_*` columns, because not one of these is
+ * true of a shop and thirty always-null columns on 5,292 customers is a table
+ * nobody can read. One row per candidate, created when the lead picks the
+ * distributor ladder.
+ *
+ * The five groups are the spec's own: legal, distribution capability,
+ * commercial capability, territory and commitment. `lib/engines/lead-gates.ts`
+ * is what decides which of them a stage needs — this table only holds answers.
+ */
+export const distributorProfiles = pgTable(
+  "distributor_profiles",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+
+    /* business and legal */
+    gstVerified: boolean("gst_verified").notNull().default(false),
+    panNumber: text("pan_number"),
+    panVerified: boolean("pan_verified").notNull().default(false),
+    businessAddressVerified: boolean("business_address_verified").notNull().default(false),
+    businessType: text("business_type"),
+    yearsInBusiness: integer("years_in_business"),
+    decisionMaker: text("decision_maker"),
+
+    /* distribution capability
+     *
+     * `hasDealerNetwork` and `hasWarehouse` are NULLABLE, unlike the four
+     * verification flags above them, and the difference is the whole point: a
+     * verification is a task somebody completes, so `false` honestly means "not
+     * done yet" and the gate is right to hold out for `true`. These two are
+     * FACTS about the distributor, and "no, they have no godown" is a complete
+     * answer that a gate demanding `true` can never accept — a candidate
+     * without one could never be appointed, and the only way through the form
+     * was to lie on it. Null is unanswered; either boolean is an answer.
+     */
+    hasDealerNetwork: boolean("has_dealer_network"),
+    activeDealerCount: integer("active_dealer_count"),
+    territoryCovered: text("territory_covered"),
+    citiesCovered: text("cities_covered"),
+    salesTeamSize: integer("sales_team_size"),
+    deliveryCapability: text("delivery_capability"),
+    hasWarehouse: boolean("has_warehouse"),
+    /** Litres. The unit every capacity in MahekOne is measured in. */
+    storageCapacityLitres: integer("storage_capacity_litres"),
+
+    /* commercial capability */
+    productPortfolio: text("product_portfolio"),
+    competitorBrands: text("competitor_brands"),
+    /** Paise, like every other money column here. */
+    monthlyPotentialPaise: bigint("monthly_potential_paise", { mode: "number" }),
+    initialOrderPotentialPaise: bigint("initial_order_potential_paise", { mode: "number" }),
+    investmentCapacityPaise: bigint("investment_capacity_paise", { mode: "number" }),
+    expectedMonthlyPurchasePaise: bigint("expected_monthly_purchase_paise", { mode: "number" }),
+    creditDaysRequired: integer("credit_days_required"),
+    creditLimitRequiredPaise: bigint("credit_limit_required_paise", { mode: "number" }),
+
+    /* territory */
+    proposedTerritory: text("proposed_territory"),
+    existingDistributorChecked: boolean("existing_distributor_checked").notNull().default(false),
+    territoryConflict: boolean("territory_conflict"),
+    territoryConflictNote: text("territory_conflict_note"),
+    exclusivityRequested: boolean("exclusivity_requested"),
+
+    /* commitment */
+    initialStockCommitmentPaise: bigint("initial_stock_commitment_paise", { mode: "number" }),
+    monthlyPurchaseCommitmentPaise: bigint("monthly_purchase_commitment_paise", { mode: "number" }),
+    dealerDevelopmentCommitment: text("dealer_development_commitment"),
+    expectedStartDate: date("expected_start_date"),
+
+    /* ---- §12 the commercial terms, which are what force the second step ----
+     *
+     * Any of these three set to something out of the ordinary routes the
+     * approval to management rather than stopping at the sales manager. The
+     * routing decision itself is in `lib/engines/lead-gates.ts`; these are the
+     * numbers it reads.
+     */
+    specialDiscountPercent: integer("special_discount_percent"),
+    agreedCreditLimitPaise: bigint("agreed_credit_limit_paise", { mode: "number" }),
+    exclusivityGranted: boolean("exclusivity_granted"),
+    commercialTermsNote: text("commercial_terms_note"),
+    commercialTermsAgreedAt: timestamp("commercial_terms_agreed_at", { withTimezone: true }),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    /* One profile per candidate. A second is a double-submit, not a second
+       application, and two would let two screens disagree about one answer. */
+    uniqueIndex("distributor_profiles_customer_key").on(t.customerId),
+  ],
+);
+
+/**
+ * §16 — what the customer actually said about the sample.
+ *
+ * Seven answers rather than one free-text box, because the whole point of the
+ * trial is the comparison, and "good" written in a notes field cannot be read
+ * back as "better drying than the competitor, price is the problem". The
+ * seventh is still free text, for what the six do not cover.
+ *
+ * One row per sample. Recorded once by whoever took the review call — a second
+ * opinion is a second sample.
+ */
+export const sampleFeedback = pgTable(
+  "sample_feedback",
+  {
+    id: text("id").primaryKey(),
+    sampleId: text("sample_id")
+      .notNull()
+      .references(() => mbosSamples.id, { onDelete: "cascade" }),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    quality: text("quality"),
+    performance: text("performance"),
+    application: text("application"),
+    drying: text("drying"),
+    competitorComparison: text("competitor_comparison"),
+    priceFeedback: text("price_feedback"),
+    otherComments: text("other_comments"),
+    recordedById: text("recorded_by_id").references(() => users.id),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sample_feedback_sample_key").on(t.sampleId),
+    index("sample_feedback_customer_idx").on(t.customerId),
   ],
 );
 
@@ -5709,6 +6143,34 @@ export const mbosLeadValidations = pgTable(
     confirmedCompetitor: text("confirmed_competitor"),
     confirmedPotentialPaise: bigint("confirmed_potential_paise", { mode: "number" }),
 
+    /* ---- §8's twelve questions, the seven §E had no box for ----
+     *
+     * The Sales Manager's verification call asks twelve things, and seven of
+     * them are not §E's four. They are COLUMNS rather than lines inside
+     * `notes`, which is where they started: "how many of last month's leads
+     * said price was the problem" is the question §8 exists to answer, and
+     * `notes ilike '%price%'` is not an answer to it. A jsonb blob of answers
+     * — this branch's first attempt at the same table — has the identical
+     * problem one level along.
+     *
+     * The first three are the reason the call is a MANAGER's. Whether the
+     * salesman actually went, whether he explained Mahek and whether any of it
+     * landed are questions about the salesman rather than about the sale, and
+     * a check somebody performs on their own work is not a check. Stored as
+     * text rather than boolean because "he came but only for five minutes" is
+     * the answer that matters and a tick cannot hold it.
+     */
+    salesmanVisited: text("salesman_visited"),
+    mahekExplained: text("mahek_explained"),
+    productUnderstood: text("product_understood"),
+    /** What they are using today — the incumbent, in their own words. */
+    currentProduct: text("current_product"),
+    /** Whether the monthly figure could grow, as a sentence not a number. */
+    growthPotential: text("growth_potential"),
+    priceConcern: text("price_concern"),
+    /** The last question, and the one that decides whether to send a sample. */
+    genuineInterest: text("genuine_interest"),
+
     /**
      * `pending` is a call that was made and left undecided, which is a real
      * state rather than a missing value — the caller reached somebody, wrote
@@ -5789,6 +6251,16 @@ export const mbosDocumentCategoryEnum = pgEnum("mbos_document_category", [
   "kyc",
   "policy",
   "marketing",
+  /**
+   * §14 — the two the communication buttons need and the library did not have.
+   *
+   * A manager pressing "Send company profile" has to get the current company
+   * profile, and `marketing` held brochures, videos and profiles together with
+   * nothing to tell them apart. The button is only as good as the category
+   * behind it.
+   */
+  "company_profile",
+  "product_video",
 ]);
 
 /** §2.11 — the document library. The bytes are an `attachments` row. */
@@ -5871,6 +6343,15 @@ export const mbosApprovalTypeEnum = pgEnum("mbos_approval_type", [
   "tour",
   "sample",
   "attendance_regularisation",
+  /**
+   * §12 — appointing a distributor, which a salesman may never do alone.
+   *
+   * It uses the same two-step chain every other approval here already has:
+   * `stepIndex` 0 is the sales manager's review, 1 is management. Special
+   * discount, credit limit and territory exclusivity are what force the second
+   * step, and `routeReason` says which.
+   */
+  "distributor_appointment",
 ]);
 
 export const mbosApprovalStateEnum = pgEnum("mbos_approval_state", [
@@ -6820,7 +7301,10 @@ export type MbosJourneyPlan = typeof mbosJourneyPlans.$inferSelect;
 export type MbosJourneyStop = typeof mbosJourneyStops.$inferSelect;
 export type MbosSample = typeof mbosSamples.$inferSelect;
 export type MbosVisit = typeof mbosVisits.$inferSelect;
-export type MbosLead = typeof mbosLeads.$inferSelect;
+export type LeadStageTransition = typeof leadStageTransitions.$inferSelect;
+export type DistributorProfile = typeof distributorProfiles.$inferSelect;
+export type DistributorSalesman = typeof distributorSalesmen.$inferSelect;
+export type SampleFeedback = typeof sampleFeedback.$inferSelect;
 export type MbosExpense = typeof mbosExpenses.$inferSelect;
 export type MbosExpenseClaim = typeof mbosExpenseClaims.$inferSelect;
 export type MbosAttendanceDay = typeof mbosAttendanceDays.$inferSelect;

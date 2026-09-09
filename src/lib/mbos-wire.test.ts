@@ -80,6 +80,22 @@ function selectedNames(query: string): string[] {
   let depth = 0;
 
   /*
+   * COMMENTS COME OUT FIRST, before anything scans for a keyword.
+   *
+   * They were stripped further down, after the loop that finds the `from`
+   * closing the select list — so a prose comment inside the select containing
+   * the word "from" ended the scan early and every column after it read as one
+   * the server never sends. It is a false POSITIVE, which is the tolerable
+   * direction, but it is triggered by ordinary house style: these queries carry
+   * paragraphs, and "reached the office perfectly from the first build" is not
+   * a sentence anybody would suspect.
+   *
+   * Parentheses inside a comment went into the depth count too, which could
+   * unbalance it in either direction.
+   */
+  query = query.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
+
+  /*
    * The OUTERMOST select, which is not always the first one. `salaryFor`
    * opens with a CTE and `recentTimeline` selects from a subquery, so both
    * have a select the handset never sees the columns of — reading the first
@@ -106,8 +122,7 @@ function selectedNames(query: string): string[] {
     clause += ch;
   }
 
-  /* Comments carry commas and column-shaped words. */
-  clause = clause.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
+  /* Comments are already out — see the top of this function. */
   clause = clause.slice(clause.search(/\bselect\b/i) + 6);
 
   depth = 0;
@@ -477,6 +492,94 @@ test("a hand-rolled handler drops nothing the server sends", () => {
     "a typed column list cannot throw on a field it does not know, so these " +
       "arrive, are ignored, and leave a column of nulls with nothing failing " +
       `at either end:\n  ${faults.join("\n  ")}`,
+  );
+});
+
+/* ---------------------------------------------------------------------------
+ * THE FUNNEL'S ENGINES ARE COMPILED TWICE, and a copy can drift.
+ *
+ * `lead-gates.ts` says it in its own header: three callers, one answer. The
+ * handset draws the next rung disabled with the missing conditions under it,
+ * the server action refuses on the same function before it writes, and the
+ * console shows a manager what a lead is stuck behind. That only holds while
+ * the two copies ARE one answer.
+ *
+ * The handset cannot import these files — it is a separate TypeScript program
+ * that this one excludes and that excludes this one, joined only inside a
+ * phone. So they are copied, and this is what stops the copy going stale: the
+ * two are read as text and compared, allowing only the import PATH to differ,
+ * because that is the one line a copy has to change.
+ *
+ * A drift here is the worst shape of bug this repo has: the salesman is told a
+ * rung is open, does the work, and the save refuses in different words. He
+ * concludes the app is lying, which it is.
+ * ------------------------------------------------------------------------- */
+
+const ENGINE_COPIES: { server: string; handset: string }[] = [
+  { server: "src/lib/lead-labels.ts", handset: "mbos-app/src/engines/funnel/lead-labels.ts" },
+  { server: "src/lib/engines/lead-ladder.ts", handset: "mbos-app/src/engines/funnel/lead-ladder.ts" },
+  { server: "src/lib/engines/lead-gates.ts", handset: "mbos-app/src/engines/funnel/lead-gates.ts" },
+];
+
+/** The import lines are the one difference allowed, so they are normalised. */
+function normalisedEngine(source: string): string {
+  return source.replace(/from "\.[^"]*\/?(lead-labels|lead-ladder)"/g, 'from "<engine>/$1"');
+}
+
+test("the handset's copy of the funnel engines has not drifted", () => {
+  const faults: string[] = [];
+
+  for (const { server, handset } of ENGINE_COPIES) {
+    const a = normalisedEngine(readFileSync(server, "utf8"));
+    const b = normalisedEngine(readFileSync(handset, "utf8"));
+    if (a === b) continue;
+
+    /* The first differing line, because "these files differ" on a 600-line
+       engine is a message somebody has to diff by hand anyway. */
+    const left = a.split("\n");
+    const right = b.split("\n");
+    let at = 0;
+    while (at < left.length && at < right.length && left[at] === right[at]) at++;
+    faults.push(
+      `${handset} differs from ${server} at line ${at + 1}:\n` +
+        `    server:  ${left[at] ?? "<end of file>"}\n` +
+        `    handset: ${right[at] ?? "<end of file>"}`,
+    );
+  }
+
+  assert.deepEqual(
+    faults,
+    [],
+    "Edit the server's copy and copy it across — never the handset's. " +
+      "While these differ, a rung the phone says is open is a rung the save " +
+      "may refuse, in different words:\n  " + faults.join("\n  "),
+  );
+});
+
+/*
+ * And the handset's own stage list, which is neither a copy nor derivable.
+ *
+ * `wire.ts` validates an outgoing funnel stage against a `Set` of strings,
+ * because `LeadStage` is a TypeScript union and the wire carries text. A rung
+ * missing from that set is sent as `undefined` — which is the safe direction
+ * and completely silent: the lead moves on the phone and stays where it was in
+ * the office, with nothing anywhere saying so.
+ */
+test("the handset validates every stage the ladder can reach", () => {
+  const labels = readFileSync("src/lib/lead-labels.ts", "utf8");
+  const union = labels.slice(labels.indexOf("export type LeadStage ="));
+  const stages = [...union.slice(0, union.indexOf(";")).matchAll(/"(\w+)"/g)].map((m) => m[1]);
+  assert.ok(stages.length > 6, "LeadStage no longer reads as a union of string literals");
+
+  const wire = readFileSync("mbos-app/src/lib/wire.ts", "utf8");
+  const set = wire.slice(wire.indexOf("const FUNNEL_STAGES"));
+  const known = new Set([...set.slice(0, set.indexOf("]")).matchAll(/'(\w+)'/g)].map((m) => m[1]));
+
+  const missing = stages.filter((s) => !known.has(s));
+  assert.deepEqual(
+    missing,
+    [],
+    `these rungs would be silently dropped on the way out of the handset: ${missing.join(", ")}`,
   );
 });
 

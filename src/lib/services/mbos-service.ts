@@ -412,7 +412,22 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
   const config = (await getConfig()) as unknown as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(config)) {
-    if (key.startsWith("mbos.")) out[key] = value;
+    /*
+     * `leads.` as well as `mbos.`, and the prefix test is why it had to be
+     * said out loud.
+     *
+     * The funnel's settings were named for the FEATURE rather than for the app
+     * — `leads.suspectMaxVisits`, `leads.prospectReasons`, `leads.lostReasons`
+     * — because the console reads them too. This loop sent only `mbos.*`, so
+     * none of them reached a handset: the phone fell back to the defaults
+     * compiled into it, and a manager who changed the suspect window on the
+     * Settings screen changed it in the office and nowhere else. Silent in both
+     * directions, since a defaulted value is a plausible value.
+     *
+     * The salesman is the person those settings are actually about, so they go
+     * where he is.
+     */
+    if (key.startsWith("mbos.") || key.startsWith("leads.")) out[key] = value;
   }
   out["products.priceSource"] = config["products.priceSource"];
 
@@ -1188,9 +1203,59 @@ async function openLeads(userId: string, since?: string | null) {
              where v.customer_id = c.id) as "visitCount",
            case when c.lead_converted_at is not null then c.id end as "convertedCustomerId",
            c.lead_last_activity_date::text as "lastActivityDate",
+           /*
+            * THE FUNNEL, SENT — and it was not, which made the whole thing
+            * one-way.
+            *
+            * Everything a salesman AUTHORS reached the office perfectly from
+            * the first build: the sales type, the eight answers, the checklist,
+            * all of it went up. None of it came back. So a lead the office
+            * verified, re-typed or corrected showed the phone the version it
+            * had already had — and a lead created on the Leads screen in the
+            * console arrived on the handset as a bare name with no ladder,
+            * where every gate refused it for want of answers that existed.
+            * Exactly the shape of the bug that left MBOS with no reference data
+            * at all: the authored half worked, so nothing looked broken.
+            *
+            * Both sides in ONE change, always. A column added here that the
+            * handset has no place for throws inside applyPull and rolls back
+            * the entire pull, not just the leads.
+            *
+            * (And no backticks in this comment: it lives inside a sql template
+            * literal, where one would end the literal mid-query.)
+            */
+           c.lead_sales_type as "salesType",
+           c.lead_stage_since::text as "stageSince",
+           c.customer_type as "customerType",
+           c.lead_monthly_volume_litres as "monthlyLitres",
+           c.lead_competitor as competitor,
+           c.lead_required_product_id as "requiredProductId",
+           p.name as "requiredProductName",
+           c.contact_person as "contactPerson",
+           c.lead_decision_maker as "decisionMaker",
+           c.lead_credit_days_wanted as "creditDaysWanted",
+           c.lead_application as application,
+           c.gstin,
+           c.lead_qualification as qualification,
+           c.lead_next_action as "nextAction",
+           c.lead_next_action_date::text as "nextActionDate",
+           c.lead_next_action_owner_id as "nextActionOwnerId",
+           c.lead_next_action_outcome as "nextActionOutcome",
+           c.lead_suspect_decided_at as "suspectDecidedAt",
+           c.lead_verified_at as "verifiedAt",
+           c.third_party as "thirdParty",
+           c.lead_distributor_salesman_id as "distributorSalesmanId",
+           ds.name as "distributorSalesmanName",
+           c.lead_expected_order_date::text as "expectedOrderDate",
+           c.lead_expected_order_value_paise as "expectedOrderValuePaise",
            c.updated_at as "updatedAt"
       from customers c
+      left join products p on p.id = c.lead_required_product_id
+      left join distributor_salesmen ds on ds.id = c.lead_distributor_salesman_id
       left join users lm on lm.id = c.lead_manager_id
+      -- The lead manager reads it too, not only the salesman who raised it.
+      -- The commercial half of a lead is his to answer, and a screen that
+      -- listed only what a person OWNS would hide every lead he was named on.
      where (c.owner_id = ${userId} or c.lead_manager_id = ${userId})
        and c.lead_stage is not null
        and c.lead_archived = false

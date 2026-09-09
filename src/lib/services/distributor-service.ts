@@ -1,8 +1,24 @@
 import "server-only";
 import { and, asc, desc, eq, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { customerDistributors, customers, orders } from "@/db/schema";
+import {
+  customerDistributors,
+  customers,
+  distributorProfiles,
+  distributorSalesmen,
+  mbosApprovals,
+  orders,
+  users,
+} from "@/db/schema";
+import { assertCustomerInScope } from "@/lib/access-control";
 import { APP_TIMEZONE } from "@/lib/business-date";
+import { getConfig } from "@/lib/config/store";
+import {
+  approvalRouteReason,
+  ladderVerdicts,
+  type GateVerdict,
+} from "@/lib/engines/lead-gates";
+import { leadGateInput } from "@/lib/services/lead-service";
 
 /* ---------------------------------------------------------------------------
  * The arrangement behind the mark.
@@ -418,4 +434,268 @@ export async function accountServing(customerId: string): Promise<AccountServing
     distributors: links,
     shops: Number(served[0]?.n ?? 0),
   };
+}
+
+/* ===========================================================================
+ * §11, §12 and §23 — APPOINTING one, which is a different question to serving
+ * a shop through one.
+ *
+ * Everything above this line is the ARRANGEMENT: who bills which shop, read
+ * from either end. What follows is the APPOINTMENT: a candidate's thirty
+ * answers, where their request has got to, and the men they employ. They share
+ * a file because they share a subject — an appointed distributor is exactly the
+ * account the arrangement above names — and keeping them apart would mean two
+ * services that both had to know what a distributor is.
+ *
+ * Reads only, like the rest of this file. The writes are
+ * `lib/actions/distributor-appointment.ts`.
+ * ========================================================================= */
+
+export type AppointmentQueueRow = {
+  approvalId: string;
+  customerId: string;
+  name: string;
+  city: string | null;
+  /** 0 is the sales manager's review, 1 is management's. */
+  stepIndex: number;
+  /** Why this step exists: `normal`, `over_discount`, `exclusivity`… */
+  routeReason: string | null;
+  /** The one line the approver reads: the terms, or what was said on submit. */
+  reason: string | null;
+  requestedById: string;
+  requestedByName: string | null;
+  requestedAt: string | null;
+  /** Whole days it has been waiting. What the queue is actually sorted by. */
+  waitingDays: number;
+  /* The three §12 numbers, so a decision does not need a second screen. */
+  discountPercent: number | null;
+  creditLimitPaise: number | null;
+  exclusivity: boolean | null;
+};
+
+/**
+ * Who is waiting for a decision, and at which step.
+ *
+ * The step is a parameter rather than two functions, because the two queues are
+ * the same list read by two different people — a sales manager sees step 0 and
+ * an administrator sees step 1 — and writing them separately is how one of them
+ * quietly stops showing the credit limit.
+ *
+ * It is NOT narrowed by scope, and that is deliberate for the same reason the
+ * order approval queue is not: an approval queue is nobody's book. Narrowing it
+ * to the approver's own accounts would empty the administrator's queue, since
+ * an administrator sells to nobody.
+ */
+export async function appointmentQueue(
+  stepIndex: 0 | 1,
+  limit = 100,
+): Promise<AppointmentQueueRow[]> {
+  const rows = await db
+    .select({
+      approvalId: mbosApprovals.id,
+      customerId: customers.id,
+      name: customers.name,
+      city: customers.city,
+      stepIndex: mbosApprovals.stepIndex,
+      routeReason: mbosApprovals.routeReason,
+      reason: mbosApprovals.reason,
+      requestedById: mbosApprovals.requestedByUserId,
+      requestedByName: users.name,
+      requestedAt: sql<string | null>`${mbosApprovals.requestedAt}`,
+      waitingDays: sql<number>`greatest(0, (((now() AT TIME ZONE ${APP_TIMEZONE})::date) - ((${mbosApprovals.requestedAt} AT TIME ZONE ${APP_TIMEZONE})::date)))::int`,
+      discountPercent: distributorProfiles.specialDiscountPercent,
+      creditLimitPaise: distributorProfiles.agreedCreditLimitPaise,
+      exclusivity: distributorProfiles.exclusivityGranted,
+    })
+    .from(mbosApprovals)
+    .innerJoin(customers, eq(customers.id, mbosApprovals.subjectId))
+    .leftJoin(users, eq(users.id, mbosApprovals.requestedByUserId))
+    .leftJoin(distributorProfiles, eq(distributorProfiles.customerId, customers.id))
+    .where(
+      and(
+        eq(mbosApprovals.type, "distributor_appointment"),
+        eq(mbosApprovals.subjectType, "customers"),
+        eq(mbosApprovals.state, "pending"),
+        eq(mbosApprovals.stepIndex, stepIndex),
+      ),
+    )
+    /* Oldest first, with the id as the tiebreaker: several submissions share a
+       second, and a paged sort without one shows a row twice and another not
+       at all. */
+    .orderBy(asc(mbosApprovals.requestedAt), asc(mbosApprovals.id))
+    .limit(limit);
+
+  return rows.map((r) => ({
+    ...r,
+    waitingDays: Number(r.waitingDays ?? 0),
+    discountPercent: r.discountPercent === null ? null : Number(r.discountPercent),
+    creditLimitPaise: r.creditLimitPaise === null ? null : Number(r.creditLimitPaise),
+  }));
+}
+
+export type DistributorAppointmentCandidate = {
+  customerId: string;
+  name: string;
+  city: string | null;
+  salesType: string | null;
+  stage: string | null;
+  /** The thirty answers. Null where nobody has started on them. */
+  profile: typeof distributorProfiles.$inferSelect | null;
+  /**
+   * §12 — whether the terms as they stand would go to management, and why.
+   *
+   * Read from the gate engine rather than worked out here, so a screen warning
+   * "this will need management" and the action that routes it can never
+   * disagree. Null means it stops with the sales manager.
+   */
+  routeReason: string | null;
+  /** Every rung of this candidate's ladder with its verdict. §28. */
+  verdicts: GateVerdict[];
+  /** What the appointment is waiting on, newest step first. */
+  approvals: Array<{
+    id: string;
+    stepIndex: number;
+    state: string;
+    routeReason: string | null;
+    decisionNote: string | null;
+    decidedAt: string | null;
+    approverUserId: string | null;
+  }>;
+};
+
+/**
+ * One candidate, with everything a decision needs and nothing a second screen.
+ *
+ * The verdicts come from `ladderVerdicts` — the same pure function the handset
+ * draws its next rung from — because a manager looking at a stalled candidate
+ * wants to see where it stopped and what it is waiting on, and re-deriving that
+ * here would be a second reading of §28 that drifts inside a release.
+ */
+export async function distributorCandidate(
+  customerId: string,
+): Promise<DistributorAppointmentCandidate | null> {
+  const [row] = await db
+    .select({
+      customerId: customers.id,
+      name: customers.name,
+      city: customers.city,
+      kind: customers.kind,
+      ownerId: customers.ownerId,
+      salesAmId: customers.salesAmId,
+      backOfficeAmId: customers.backOfficeAmId,
+      salesType: customers.leadSalesType,
+      stage: customers.leadStage,
+    })
+    .from(customers)
+    .where(eq(customers.id, customerId));
+  if (!row) return null;
+  /* A candidate's finances are not readable by guessing an id. */
+  await assertCustomerInScope(row);
+
+  const [profile] = await db
+    .select()
+    .from(distributorProfiles)
+    .where(eq(distributorProfiles.customerId, customerId));
+
+  const config = await getConfig();
+  const routeReason = approvalRouteReason(profile ?? null, {
+    discountPercent: config["leads.distributorDiscountApprovalPercent"],
+    creditLimitPaise: config["leads.distributorCreditLimitApprovalPaise"],
+  });
+
+  const gateInput = await leadGateInput(customerId);
+
+  const approvals = await db
+    .select({
+      id: mbosApprovals.id,
+      stepIndex: mbosApprovals.stepIndex,
+      state: mbosApprovals.state,
+      routeReason: mbosApprovals.routeReason,
+      decisionNote: mbosApprovals.decisionNote,
+      decidedAt: sql<string | null>`${mbosApprovals.decidedAt}`,
+      approverUserId: mbosApprovals.approverUserId,
+    })
+    .from(mbosApprovals)
+    .where(
+      and(
+        eq(mbosApprovals.type, "distributor_appointment"),
+        eq(mbosApprovals.subjectType, "customers"),
+        eq(mbosApprovals.subjectId, customerId),
+      ),
+    )
+    .orderBy(desc(mbosApprovals.stepIndex), desc(mbosApprovals.requestedAt), desc(mbosApprovals.id));
+
+  return {
+    customerId: row.customerId,
+    name: row.name,
+    city: row.city,
+    salesType: row.salesType ?? null,
+    stage: row.stage ?? null,
+    profile: profile ?? null,
+    routeReason,
+    verdicts: gateInput ? ladderVerdicts(gateInput) : [],
+    approvals,
+  };
+}
+
+export type DistributorSalesmanRow = {
+  id: string;
+  name: string;
+  mobile: string | null;
+  territory: string | null;
+  active: boolean;
+  /** How many shops he is named against. §23's whole point. */
+  shops: number;
+};
+
+/**
+ * §23 — the distributor's own men, and how many shops each is named against.
+ *
+ * The count is what makes the list worth drawing: a man with no shops against
+ * him is either newly recorded or somebody nobody has finished filing, and both
+ * are worth seeing. Inactive men are INCLUDED, marked, for the reason the table
+ * keeps them at all — which shops he served is still history, and a name
+ * missing from a list reads as a broken list rather than as a leaver.
+ */
+export async function distributorSalesmenFor(
+  distributorCustomerId: string,
+): Promise<DistributorSalesmanRow[]> {
+  const rows = await db
+    .select({
+      id: distributorSalesmen.id,
+      name: distributorSalesmen.name,
+      mobile: distributorSalesmen.mobile,
+      territory: distributorSalesmen.territory,
+      active: distributorSalesmen.active,
+      shops: sql<number>`(
+        select count(*)::int from customer_distributors d
+         where d.distributor_salesman_id = distributor_salesmen.id
+      )`,
+    })
+    .from(distributorSalesmen)
+    .where(eq(distributorSalesmen.distributorCustomerId, distributorCustomerId))
+    /* Active first, then by name: a leaver at the top of the list is the one
+       thing this ordering must not do. */
+    .orderBy(desc(distributorSalesmen.active), asc(distributorSalesmen.name))
+    .limit(200);
+
+  return rows.map((r) => ({ ...r, shops: Number(r.shops ?? 0) }));
+}
+
+/** The two queue depths, for a tile that says what is waiting inside. */
+export async function appointmentQueueCounts(): Promise<{ step0: number; step1: number }> {
+  const [row] = await db
+    .select({
+      step0: sql<number>`count(*) filter (where ${mbosApprovals.stepIndex} = 0)::int`,
+      step1: sql<number>`count(*) filter (where ${mbosApprovals.stepIndex} = 1)::int`,
+    })
+    .from(mbosApprovals)
+    .where(
+      and(
+        eq(mbosApprovals.type, "distributor_appointment"),
+        eq(mbosApprovals.subjectType, "customers"),
+        eq(mbosApprovals.state, "pending"),
+      ),
+    );
+  return { step0: Number(row?.step0 ?? 0), step1: Number(row?.step1 ?? 0) };
 }

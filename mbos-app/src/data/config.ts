@@ -1,4 +1,10 @@
 import { all, one } from '../db';
+import {
+  LOST_REASONS,
+  OVERRIDE_REASONS,
+  PROSPECT_REASONS,
+  SAMPLE_REASONS,
+} from '../engines/funnel/lead-labels';
 
 /**
  * Configuration, read from the local cache of what MahekOne's Admin Console
@@ -128,6 +134,33 @@ const DEFAULTS: Record<string, unknown> = {
   'mbos.leads.staleDays': 30,
   'mbos.leads.archiveDays': 90,
   'mbos.leads.escalateAfterDays': 7,
+
+  /*
+   * The funnel's own thresholds and its four coded lists.
+   *
+   * These are `leads.*` rather than `mbos.leads.*` because they are the SAME
+   * settings the CRM, the console and the server action read — a suspect
+   * window of three on a phone and two in the office would be two rules
+   * wearing one name, and the salesman would be the one who found out.
+   *
+   * TODO(integration): `mbosConfigPayload()` in
+   * `src/lib/services/mbos-service.ts` sends every `mbos.*` key and
+   * `products.priceSource`, so none of these reaches a handset yet — the
+   * defaults below are what the app runs on until workstream A widens it to
+   * carry the `leads.*` keys too. They are copied from
+   * `lib/config/registry.ts`, which takes its own from the same
+   * `lead-labels.ts` this app compiles, so the words on the screen are right
+   * even while the numbers are only defaults.
+   */
+  'leads.suspectMaxVisits': 3,
+  'leads.requireNextAction': true,
+  'leads.allowManagerOverride': true,
+  'leads.prospectReasons': PROSPECT_REASONS.map((r) => ({ ...r })),
+  'leads.sampleReasons': SAMPLE_REASONS.map((r) => ({ ...r })),
+  'leads.lostReasons': LOST_REASONS.map((r) => ({ ...r })),
+  'leads.overrideReasons': OVERRIDE_REASONS.map((r) => ({ ...r })),
+  'leads.sampleReviewChaseDays': [2, 4, 6],
+  'leads.verificationDueDays': 2,
 
   /* tasks */
   'mbos.tasks.escalationHours': 24,

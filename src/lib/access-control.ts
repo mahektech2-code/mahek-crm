@@ -346,6 +346,40 @@ export const CAPABILITIES = [
    */
   "expense.policy.write",
   "expense.policy.publish",
+  /*
+   * THE LEAD FUNNEL, §28.
+   *
+   * `lead.work` is in none of the sets below, which is how a capability is
+   * given to "everybody who works the book": a telecaller holds anything not
+   * named in `MANAGER_ONLY`, and a field salesman signs in as one. That is the
+   * right shape here rather than an accident — moving a lead up its ladder is
+   * the ordinary work of the person standing in the shop, and a funnel only a
+   * manager can advance is a funnel nobody updates. Accounts fall out of it for
+   * free: they do not work the calling book and they do not work this one.
+   */
+  "lead.work",
+  "lead.override",
+  "lead.verify",
+  /*
+   * §15 — letting a sample go out, which is stock leaving the godown.
+   *
+   * It exists because a capability that does NOT exist is one everybody holds:
+   * `can()` falls through to `!MANAGER_ONLY.has(...)` for anything it does not
+   * recognise, so an unnamed capability fails OPEN. Without this the salesman
+   * would have been approving the stock he had just asked for.
+   */
+  "sample.approve",
+  /*
+   * §12 — the discount, the credit limit and the exclusivity.
+   *
+   * Separate from `distributor.approve` because they are different acts by
+   * different people: a sales manager NEGOTIATES the terms and management
+   * ALLOWS them, and it is the terms themselves that decide whether management
+   * has to be asked at all. A salesman writing his own customer a 30% discount
+   * would route his own appointment past the person meant to weigh it.
+   */
+  "distributor.terms",
+  "distributor.approve",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -376,8 +410,47 @@ const MANAGER_ONLY: ReadonlySet<Capability> = new Set<Capability>([
    */
   "customer.assignSalesManager",
   /*
-   * Handing the relationship over — a manager's, and for the same reason the
-   * seat above is.
+   * §28 — passing a gate that is shut, and it is a manager's alone.
+   *
+   * A system that refuses everything is defeated in a week by people recording
+   * the work after the event, and the record then says the process was followed
+   * when it was not — which is worse than the gate being open. So the escape
+   * hatch exists, it demands a reason code, it stores exactly which conditions
+   * were still missing, and it is held by the one person who can be asked about
+   * it afterwards. It is also what a downward move needs: putting a lead back
+   * down its ladder undoes work somebody recorded, and the ladder engine's own
+   * `previousStage` says in as many words that it is for a manager reverting
+   * one.
+   */
+  "lead.override",
+  /*
+   * §8 — the verification call, which is the whole point of §7.
+   *
+   * The sales manager rings the customer to establish that the salesman was
+   * there and that Mahek was explained. Two of the twelve questions are about
+   * the salesman rather than the sale, which is exactly why the salesman may
+   * not be the person who records the answers — a check somebody performs on
+   * their own work is not a check.
+   */
+  "lead.verify",
+  /*
+   * §15 — a salesman must not approve the stock he asked for.
+   *
+   * The same shape as `order.approve` being kept off the person carrying the
+   * target: the sample is a cost, the person who wants it out of the door is
+   * the person it helps, and one signature covering both is not a signature.
+   */
+  "sample.approve",
+  /*
+   * §12 — terms are negotiated by a manager and allowed by management.
+   *
+   * A manager may agree them; whether that agreement needs management is
+   * decided by `approvalRouteReason` from the numbers, not by who typed them.
+   */
+  "distributor.terms",
+  /*
+   * Handing the relationship over — a manager's, and for the same reason
+   * `customer.assignSalesManager` above is.
    *
    * The test is always whether the act moves NUMBERS. `customer.reassign`
    * moves the sales seat, which decides who is credited for an account's
@@ -457,6 +530,21 @@ const ACCOUNTS_ONLY: ReadonlySet<Capability> = new Set<Capability>([
  */
 const ADMIN_ONLY: ReadonlySet<Capability> = new Set<Capability>([
   "expense.policy.publish",
+  /*
+   * §12 — appointing a distributor, which is the SECOND step of that chain and
+   * not the manager's own recommendation.
+   *
+   * The specification calls this step "Management", and the distinction it is
+   * drawing is the one `order.approve` already draws one level down: a special
+   * discount, a credit limit and territory exclusivity are decisions with a
+   * cost attached, and the person carrying the target must not be the person
+   * allowing them. A sales manager may put a candidate forward — that is
+   * `stepIndex` 0 and it needs nothing but their own hat — and may not appoint
+   * one. There is no "management" role in MahekOne, and inventing a fifth would
+   * mean teaching scope, the console and every switcher about it; admin is who
+   * actually holds that seat here.
+   */
+  "distributor.approve",
 ]);
 
 /**

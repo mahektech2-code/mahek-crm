@@ -33,7 +33,11 @@ import { nextStepForCustomer } from "./queue-service";
 import { addDays, onOrAfterWorkingDay } from "../business-date";
 import { err, ok, type Result } from "../result";
 import { CRM_EVENT, callTimelineSummary, writeTimelineEvents } from "../timeline";
-import { conversionColumns, recordConversion } from "./lead-conversion-service";
+import {
+  conversionColumns,
+  hasOrderedBefore,
+  recordConversion,
+} from "./lead-conversion-service";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -856,16 +860,21 @@ export async function saveInteraction(
         set.lastOrderDate = orderedOn;
       }
 
-      // A lead becomes a customer the moment it orders. That is the whole
-      // definition of the difference, so it converts here rather than waiting
-      // for somebody to remember to change a dropdown — a lead with orders
-      // against it would keep showing the lead notice and hiding the very
-      // purchase history it had just started building.
+      // A lead becomes a customer on its SECOND order, which is the client's
+      // own correction of the rule this used to apply. A first order from a
+      // shop that has just finished a trial is a few cans to try in their own
+      // booth; it is the end of the trial rather than the start of a
+      // relationship, and it routinely does not repeat.
+      //
+      // The order just written is excluded from the count by id, so the
+      // question is strictly "have they ordered before" — and what counts as
+      // an order is `lib/order-status.ts`, so an order accounts declined can
+      // never promote anybody.
       //
       // The person who found them becomes the sales account manager. Back
       // office is deliberately left unassigned: who handles the dispatch and
-      // billing is a decision, not something to guess at on first order.
-      if (customer.kind === "lead") {
+      // billing is a decision, not something to guess at.
+      if (customer.kind === "lead" && (await hasOrderedBefore(tx, customer.id, orderId))) {
         /*
          * Through `lead-conversion-service`, which is the ONE definition of
          * what happens when a lead orders. MBOS converts on its own order path

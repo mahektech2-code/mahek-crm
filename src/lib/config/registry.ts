@@ -11,6 +11,12 @@
  * ------------------------------------------------------------------------- */
 
 import { COMPLAINT_CATEGORIES } from "../constants";
+import {
+  LOST_REASONS,
+  OVERRIDE_REASONS,
+  PROSPECT_REASONS,
+  SAMPLE_REASONS,
+} from "../lead-labels";
 import { LEAVE_TYPES, PAID_LEAVE_TYPES, type PaidLeaveType } from "../mbos/types";
 
 export type SettingType = "integer" | "decimal" | "text" | "boolean" | "structured";
@@ -2554,6 +2560,114 @@ export const SETTINGS = [
     max: 1095,
   },
 
+  /* ------------------------------------------------------ the lead funnel */
+  {
+    key: "leads.suspectMaxVisits",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Visits before a Suspect must be decided",
+    description:
+      "§4. A salesman gets this many visits to work out whether there is a genuine opportunity, and then the lead turns into a single question: Prospect or not. The specification's normal target is two and its absolute maximum is three. Nothing is refused when the cap is reached - a decision is DEMANDED, which is the opposite gesture, and the lead cannot be quietly left in the drawer instead.",
+    default: 3,
+    min: 1,
+    max: 10,
+  },
+  {
+    key: "leads.requireNextAction",
+    type: "boolean",
+    category: "mbos-leads",
+    label: "Every active lead must have a next action",
+    description:
+      "§24. An upward move is refused unless the lead names what happens next, on what day, and who is doing it. Off, a lead may move with none of the three - which is how a lead sits for six weeks with everybody assuming somebody else is holding it. It never applies to a lead raised before the funnel existed: those carry no sales type and are exempt by design.",
+    default: true,
+  },
+  {
+    key: "leads.allowManagerOverride",
+    type: "boolean",
+    category: "mbos-leads",
+    label: "A manager may move a lead past a gate",
+    description:
+      "§28 with its escape hatch. A system that refuses everything is defeated in a week by people recording the work after the event, and the record then says the process was followed when it was not - which is worse than the gate being open. An override is a manager's alone, it demands a reason, and it stores exactly which conditions were still missing. Off, nobody may pass a gate that is shut.",
+    default: true,
+  },
+  {
+    key: "leads.prospectReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Why a Suspect becomes a Prospect",
+    description:
+      "§5. A closed list rather than a text box, because the question exists to stop a shop being promoted on the strength of having been walked past - and a free-text field answers it with 'good potential' every time, which is not an answer and cannot be counted. Each entry is a code and a label; the code is what is stored, so rewording a label never orphans the leads already carrying it.",
+    default: PROSPECT_REASONS.map((r) => ({ ...r })),
+  },
+  {
+    key: "leads.sampleReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Why the customer wants a trial",
+    description:
+      "§10. Asked at the moment the sample is requested, for the same reason as the list above: a sample is stock given away, and 'they asked for one' has to be distinguishable from 'they are comparing us against the incumbent'.",
+    default: SAMPLE_REASONS.map((r) => ({ ...r })),
+  },
+  {
+    key: "leads.lostReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Why a lead was lost",
+    description:
+      "§26. A loss nobody explained teaches nothing, which the handset and the server have both refused to accept for as long as the field has existed. What this adds is that the answer is a CODE - so 'how many did we lose on credit terms this quarter' becomes a question somebody can ask, rather than a grep over free text.",
+    default: LOST_REASONS.map((r) => ({ ...r })),
+  },
+  {
+    key: "leads.overrideReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Why a manager overrode a gate",
+    description:
+      "Only offered where the override setting above is on. The commonest honest answer is the first one - the work was done and recorded afterwards - and naming it is what keeps the override from being used as a shrug.",
+    default: OVERRIDE_REASONS.map((r) => ({ ...r })),
+  },
+  {
+    key: "leads.sampleReviewChaseDays",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Chasing a sample review",
+    description:
+      "§16. Days after the sample was received to ask what they thought, in order. The specification's own ladder is day 2, then 4, then 6, and it does not stop: the LAST interval repeats until there is an answer, because a trial nobody reviewed is stock given away for nothing. The count of times it has been asked is on the sample, and a screen showing 'asked three times' is what tells a manager to ring themselves.",
+    default: [2, 4, 6],
+  },
+  {
+    key: "leads.verificationDueDays",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Verification call is due within",
+    description:
+      "§7, §8. Days from a lead reaching Prospect before the sales manager's verification call is overdue. Deliberately short: the call checks that the visit happened and that Mahek was explained, and both answers decay fast in the customer's memory.",
+    default: 2,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "leads.distributorDiscountApprovalPercent",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Discount needing management approval",
+    description:
+      "§12. A special discount above this routes the distributor appointment past the sales manager to management. The person carrying the target must not be the person allowing the discount that hits it - the same reasoning that keeps order approval away from managers entirely.",
+    default: 5,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "leads.distributorCreditLimitApprovalPaise",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Credit limit needing management approval",
+    description:
+      "§12, in paise. A credit limit above this routes the appointment to management. Territory exclusivity always does, whatever the numbers say, because it is the one term that cannot be walked back without taking something away from somebody.",
+    default: 50000000,
+    min: 0,
+  },
+
   /* --------------------------------------------------------------- tasks */
   {
     key: "mbos.tasks.escalationHours",
@@ -3378,6 +3492,18 @@ export type Config = {
   "mbos.maps.tileCountLimit": number;
   "mbos.maps.downloadOnWifiOnly": boolean;
   "mbos.maps.refreshAfterDays": number;
+
+  "leads.suspectMaxVisits": number;
+  "leads.requireNextAction": boolean;
+  "leads.allowManagerOverride": boolean;
+  "leads.prospectReasons": { code: string; label: string }[];
+  "leads.sampleReasons": { code: string; label: string }[];
+  "leads.lostReasons": { code: string; label: string }[];
+  "leads.overrideReasons": { code: string; label: string }[];
+  "leads.sampleReviewChaseDays": number[];
+  "leads.verificationDueDays": number;
+  "leads.distributorDiscountApprovalPercent": number;
+  "leads.distributorCreditLimitApprovalPaise": number;
 
   "mbos.tasks.escalationHours": number;
   "mbos.tasks.requireCompletionNote": boolean;
