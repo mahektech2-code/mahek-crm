@@ -120,6 +120,7 @@ export function AppFrame({
   const here = (pathname ?? '').replace(/^\/+/, '').split('/')[0] || 'home';
   const fromHere = `?from=${here}`;
   const keyboardHeight = useKeyboardHeight();
+  const [footerHeight, setFooterHeight] = React.useState(0);
   const unread = useUnreadCount();
   const waiting = usePendingCount();
   const checkInAt = useCheckInTime();
@@ -151,8 +152,17 @@ export function AppFrame({
     },
     {
       key: 'sync',
-      label: `${waiting} to send`,
-      tone: 'warn',
+      /*
+       * Nothing waiting is GOOD news, and it was drawn amber.
+       *
+       * The pip was `warn` unconditionally, so "0 to send" sat under an amber
+       * light on every screen of the app all day — which is how a warning
+       * light stops meaning anything: the one state worth noticing looked
+       * exactly like the ordinary one. And "0 to send" is a count of nothing,
+       * where the fact somebody wants is that the handset is clear.
+       */
+      label: waiting === 0 ? 'All sent' : `${waiting} to send`,
+      tone: waiting === 0 ? 'ok' : 'warn',
       onPress: () => router.push(`/sync${fromHere}`),
     },
   ];
@@ -212,7 +222,12 @@ export function AppFrame({
 
       {body}
 
-      {footer}
+      {/* Measured rather than guessed, so the toast can sit above whatever the
+          screen pinned here — see `Toast`. A screen with no footer measures 0
+          and nothing moves. */}
+      {footer ? (
+        <View onLayout={(e) => setFooterHeight(e.nativeEvent.layout.height)}>{footer}</View>
+      ) : null}
 
       {/* The tab bar is hidden while typing. Left in place it floats over the
           keyboard on Android, covering the top row of keys. */}
@@ -252,7 +267,7 @@ export function AppFrame({
         }}
       />
 
-      <Toast message={toast} onDone={clearToast} />
+      <Toast message={toast} onDone={clearToast} lift={footerHeight} />
     </View>
   );
 }

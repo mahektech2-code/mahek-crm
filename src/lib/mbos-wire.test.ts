@@ -256,12 +256,17 @@ const DELTA: { anchor: string; table: string }[] = [
   { anchor: 'select p.id, p.name, p.pack_size', table: "products" },
   { anchor: 'select t.id, t.customer_id as "customerId"', table: "timeline_events" },
   { anchor: "select s.id,", table: "journey_stops" },
-  { anchor: 'select p.id, p.plan_date::text as "planDate"', table: "journey_days" },
   /*
-   * `leave_balances` was the sixth of these and is deliberately not here any
-   * more: the delta calls the same `leaveBalances` the bootstrap does, so there
-   * is no second spelling left to check. It is covered by the WIRE list above,
-   * once, which is the state every entry in this list is waiting to reach.
+   * TWO ENTRIES LEFT THIS LIST, one from each side of this merge, and both for
+   * the same reason: the delta now calls the same function the bootstrap does,
+   * so there is no second spelling left to check and the WIRE entry above
+   * covers each once. That is the state every remaining entry is waiting to
+   * reach.
+   *
+   * `journey_days` moved for a stronger reason than tidiness — the bootstrap
+   * sent NO plan days at all, so a fresh sign-in got an empty Journey tab and
+   * the `updated_at`-gated delta could never make it up: a day proposed before
+   * this handset signed in arrived on no pass, ever.
    */
 ];
 
@@ -288,6 +293,77 @@ test("the delta's own queries send nothing the handset cannot hold either", () =
   }
 
   assert.deepEqual(faults, [], `the delta would throw on the handset:\n  ${faults.join("\n  ")}`);
+});
+
+/* ---------------------------------------------------------------------------
+ * THE OTHER DIRECTION: what an ACCEPT writes back onto the record.
+ *
+ * `setEntityState` in `mbos-app/src/sync/queue.ts` reflects a queue item's
+ * fate onto the row itself, so a screen can say what state an order is in
+ * without joining the outbox. It writes `syncState` and `syncMessage` always,
+ * and `serverCreatedAt` whenever the server sent a time — which an ACCEPT
+ * always does, so that is the ordinary path and not the exception.
+ *
+ * `journey_days` was in `ENTITY_TABLE` without a `serverCreatedAt` column, so
+ * every accepted `plan_day` threw `no such column` INSIDE the push loop:
+ * after the queue row had been marked synced, before the rest of the batch had
+ * been read, and before `applyPull` ran at all. So agreeing a day silently
+ * threw away that tick's whole delta — the stops for the day just agreed
+ * included — and left the day reading "waiting for signal" for ever with the
+ * answer already on the server. Every OTHER table in that map had the column,
+ * which is exactly why nothing caught it.
+ *
+ * Same shape as the pull contract above and the same reason nothing else can
+ * catch it: one file's `UPDATE` is a string, the other file's schema is a
+ * string, and they meet only inside a phone.
+ * ------------------------------------------------------------------------- */
+
+const QUEUE = "mbos-app/src/sync/queue.ts";
+
+test("every table a sync verdict is written onto can hold the verdict", () => {
+  const queue = readFileSync(QUEUE, "utf8");
+  const tables = handsetTables();
+
+  const map = queue.match(/const ENTITY_TABLE[^=]*=\s*\{([\s\S]*?)\n\};/);
+  assert.ok(map, "ENTITY_TABLE is gone from sync/queue.ts — this test needs updating with it");
+
+  /* `'visits'` in `visit: 'visits',` — the quoted half, so a comment
+     mentioning a table name cannot be read as an entry. */
+  const targets = [...map[1].matchAll(/^\s*\w+:\s*'(\w+)'/gm)].map((m) => m[1]);
+  assert.ok(targets.length > 10, `only ${targets.length} entity tables parsed — the shape changed`);
+
+  /* Read off `setEntityState` rather than typed out here, so a fourth column
+     added to that UPDATE is checked without anybody remembering to. */
+  const from = queue.indexOf("async function setEntityState");
+  assert.ok(from > -1, "setEntityState is gone from sync/queue.ts");
+  /* That function's body only — the file goes on to UPDATE `sync_queue`
+     itself, and those columns belong to a different table. */
+  const writes = queue.slice(from, queue.indexOf("\n}", from));
+  const written = [...new Set([...writes.matchAll(/SET ([^`]*?) WHERE/g)]
+    .flatMap((m) => [...m[1].matchAll(/(\w+)\s*=\s*\?/g)].map((c) => c[1])))];
+  assert.ok(
+    written.includes("syncState") && written.includes("serverCreatedAt"),
+    `setEntityState no longer writes what this test thinks: ${written.join(", ")}`,
+  );
+
+  const faults: string[] = [];
+  for (const table of new Set(targets)) {
+    const local = tables.get(table);
+    if (!local) {
+      faults.push(`${table} does not exist on the handset at all`);
+      continue;
+    }
+    const missing = written.filter((c) => !local.has(c));
+    if (missing.length) faults.push(`${table}: ${missing.join(", ")}`);
+  }
+
+  assert.deepEqual(
+    faults,
+    [],
+    "An accept writes these onto the row, and a missing column throws inside " +
+      "the push loop — which abandons the rest of the batch AND the pull " +
+      "behind it:\n  " + faults.join("\n  "),
+  );
 });
 
 /*

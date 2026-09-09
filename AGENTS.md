@@ -2370,6 +2370,29 @@ moment a handset had a cursor; bootstrap passes no Date at all, which is exactly
 why sign-in worked and syncing after it did not. An ISO instant carries its own
 zone, so this is not the bare-cast rule in different clothes.
 
+**A NUMBER SUBTRACTED FROM A DATE NEEDS ITS TYPE SAID OUT LOUD, and this one
+took the whole delta down again.** Same endpoint, same 500, a different cause,
+and it outlived the fix above: `p.plan_date >= (now() at time zone $tz)::date -
+$days`. `$days` is a bind parameter and an untyped parameter beside a date lets
+Postgres resolve the subtraction as `date - date` — which yields an integer, so
+`date >= integer` has no operator and the query throws. `buildPull` ran two of
+these inside its `Promise.all`, so the rejection took every other channel with
+it: the journey, the customers, the products, the tasks, the price list, all of
+it, on every pull from a handset holding a cursor. Which is every pull after
+sign-in, because the bootstrap is what issues the first one. `::int` on the
+parameter is the whole fix and `planDaysFor` is the one copy of it.
+
+**And NOTHING HAD EVER EXECUTED `buildPull`** — that is why both of these
+lived there. The wire test reads the file as TEXT to compare column names
+against the handset's schema, which is a real check and cannot see a query that
+throws; `buildBootstrap` was exercised and the delta was not. Correct columns
+in a query nothing runs is exactly the state it was in for both bugs. There is
+a test in `activity-location.test.ts` that RUNS the delta with a cursor now,
+asserts every channel the handset applies came back as an array, and puts a
+real plan day and stop through it. Its point is not the date arithmetic: it is
+that the next query which only fails at the database fails there rather than on
+a phone in Nagpur.
+
 **And it came back, in the order handler, where it failed differently.**
 `handleOrder` bound `orderedAt` — a Date — into both `update customers set
 last_order_date …` statements, so EVERY field order was refused with a
