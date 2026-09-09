@@ -2,6 +2,7 @@ import Link from "next/link";
 import { APP_TIMEZONE, addDays } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
 import { attendanceForDay } from "@/lib/services/sales-service";
+import { getSetting } from "@/lib/config/store";
 import {
   Banner,
   Cell,
@@ -16,6 +17,7 @@ import {
 import {
   plural,
 } from "../words";
+import { Selfies } from "./selfies";
 
 export const metadata = { title: "Attendance — Sales Dashboard — MahekOne" };
 
@@ -45,6 +47,7 @@ export default async function Page({
   const day = /^\d{4}-\d{2}-\d{2}$/.test(params.day ?? "") ? params.day! : now;
 
   const rows = await attendanceForDay(day);
+  const retentionHours = await getSetting("mbos.attendance.selfieRetentionHours");
 
   const inToday = rows.filter((r) => r.checkInAt);
   const missing = rows.filter((r) => !r.checkInAt);
@@ -56,7 +59,7 @@ export default async function Page({
     <div className="p-6">
       <ScreenHeader
         title="Attendance"
-        subtitle="Who started the day and from where. A check-in outside the permitted radius is flagged, never blocked — a salesman who cannot mark attendance cannot work."
+        subtitle={`Who started the day and from where. A check-in outside the permitted radius is flagged, never blocked — a salesman who cannot mark attendance cannot work. Photographs are kept for ${retentionWords(retentionHours)} and then deleted.`}
         actions={
           <div className="flex items-center gap-1 text-[13px]">
             <Link
@@ -117,7 +120,7 @@ export default async function Page({
         />
       ) : (
         <Table
-          minWidth={1160}
+          minWidth={1390}
           head={
             <>
               <HeadCell width={200}>Salesman</HeadCell>
@@ -126,6 +129,11 @@ export default async function Page({
               <HeadCell width={130}>Worked</HeadCell>
               <HeadCell align="right" width={100}>Visits</HeadCell>
               <HeadCell width={150}>Verdict</HeadCell>
+              {/* Deliberately beside the times rather than at the end: the
+                  photograph is what the two times either side of it are worth,
+                  and a column somebody has to scroll to is one they stop
+                  checking by the second week. */}
+              <HeadCell width={230}>Photographs</HeadCell>
               <HeadCell>Notes</HeadCell>
             </>
           }
@@ -191,6 +199,9 @@ export default async function Page({
                   {r.status.replace(/_/g, " ")}
                 </Pill>
               </Cell>
+              <Cell>
+                <Selfies row={r} />
+              </Cell>
               <Cell truncate={340} title={r.regularisationReason ?? undefined}>
                 {r.withinGeofence === false ? (
                   <span className="mr-1.5">
@@ -211,8 +222,40 @@ export default async function Page({
           ))}
         </Table>
       )}
+
+      {/*
+        WHY AN OLDER DAY HAS NO PHOTOGRAPHS, said on the screen rather than left
+        to be worked out. A manager who steps back a week and finds the column
+        empty has two readings available — the team stopped photographing, or
+        the app is broken — and both are wrong. Printed whatever day is being
+        looked at, because the rule is the same on all of them and a sentence
+        that appears only on old days is one nobody reads until they are
+        confused.
+      */}
+      {rows.length ? (
+        <p className="mt-3 text-[13px] text-muted">
+          A photograph is taken at every check-in and every check-out, and is
+          deleted {retentionWords(retentionHours)} after it reaches the office.
+          The check-in itself, its time and its place are kept — only the image
+          goes, so an older day shows when somebody arrived and no longer shows
+          their face.
+        </p>
+      ) : null}
     </div>
   );
+}
+
+/**
+ * The window in the unit somebody thinks in. A round number of days is how the
+ * team says it; anything else stays in hours rather than being rounded into a
+ * figure that disagrees with the setting.
+ */
+function retentionWords(hours: number): string {
+  if (hours % 24 === 0) {
+    const days = hours / 24;
+    return days === 1 ? "24 hours" : `${days} days`;
+  }
+  return `${hours} hours`;
 }
 
 

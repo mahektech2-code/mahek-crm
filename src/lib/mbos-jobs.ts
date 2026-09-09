@@ -441,6 +441,24 @@ async function refreshPerformance(): Promise<Counted> {
   return { recordsAffected: people, detail: `${people} scored for ${day.slice(0, 7)}` };
 }
 
+/**
+ * The attendance photographs past their window, deleted.
+ *
+ * HERE rather than in the nightly, because the retention window is a number on
+ * a screen. Swept once a night, "72 hours" would mean up to ninety-six for
+ * anybody who checked in during the morning — and the gap between what a
+ * setting says and what it does is exactly the kind of thing nobody notices
+ * until it is the subject of an argument about somebody's pay.
+ */
+async function sweepSelfies(): Promise<Counted> {
+  const { sweepAttendanceSelfies } = await import("./services/attachment-service");
+  const { swept } = await sweepAttendanceSelfies();
+  return {
+    recordsAffected: swept,
+    detail: swept ? `${swept} attendance photographs deleted` : "no photographs past their window",
+  };
+}
+
 export async function mbosHourly(): Promise<Counted> {
   const parts = [
     await escalateOverdueTasks(),
@@ -448,6 +466,7 @@ export async function mbosHourly(): Promise<Counted> {
     await flagOverdueSamples(),
     await refreshPerformance(),
     await readPushReceipts(),
+    await sweepSelfies(),
   ];
   return {
     recordsAffected: parts.reduce((a, p) => a + p.recordsAffected, 0),

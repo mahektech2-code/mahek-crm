@@ -35,6 +35,15 @@ export async function GET(
     .where(eq(attachments.id, id));
   if (!row) return new NextResponse("Not found", { status: 404 });
 
+  /* A file whose bytes retention has already taken. Without this the read
+     reaches storage, finds nothing and answers 502 — which reads as a broken
+     backend and sends somebody looking for a fault that is not there. The row
+     is deliberately kept (see `sweepAttendanceSelfies`), so "it existed and is
+     gone" is a thing this endpoint can actually say. */
+  if (row.status === "removed") {
+    return new NextResponse("This file has been deleted", { status: 410 });
+  }
+
   try {
     const bytes = await fileStorage.read(row.storedRef);
     return new NextResponse(bytes, {
