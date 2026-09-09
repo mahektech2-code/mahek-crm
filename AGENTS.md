@@ -143,6 +143,53 @@ holding the whole app and nobody who was deliberately narrowed.
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
 
+**A TERRITORY NARROWS A BOOK. IT IS NOT A PERMISSION.**
+`mbos_user_territories` — renamed from `mbos_manager_territories`, because it is
+no longer only a manager's — says which geography a person works, with a `kind`
+of state, region, city or beat. A salesman allocated Nagpur sees HIS customers
+and HIS leads in Nagpur, never another salesman's: `ASSIGNED_TO_SQL` and the two
+seats beside it remain the whole of who may see what, and the territory clause
+can only remove rows from what they already allow.
+
+The distinction is worth stating because the two look alike from a distance, and
+a reader who mistakes this for the security boundary might delete a real check
+believing it redundant. `territoryClause` answers UNDEFINED rather than a false
+condition where nothing is allocated, so a caller cannot accidentally AND it
+into oblivion.
+
+**NO TERRITORY MEANS NO NARROWING.** Allocating cities to eight people and
+forgetting the ninth must not empty her book — that failure is already on record
+here, where reading one seat instead of two gave Seema Roy "queue cleared" on a
+day she had 195 accounts to work. An empty screen is the one outcome nobody
+debugs, because it looks like having no work.
+
+**One table, and each consumer asks for the kinds it means.** `managerScope`
+reads `kind = 'region'` and the handset's book reads the rest, so allocating a
+salesman a city cannot narrow a manager's console to it. Two tables would be two
+places for "Vidarbha" to be spelled differently.
+
+**THE AGREED CITY IS A HARD FILTER on the pick list, and that overruled us.**
+It used to rise to the top without filtering, on the reasoning that a man going
+to Nagpur often has one call to make on the way. Mahek's answer is that a day is
+a city; the call on the road is added from the customers list or made unplanned
+with a deviation reason, which is what that field exists for. The sort is
+NEAREST rather than longest-unseen for the same kind of reason — a man filling a
+Tuesday morning in one town is choosing a walking order.
+
+**WHAT "NEAREST" IS MEASURED FROM is the part that had to be got right.**
+`pickOrigin`: for TODAY it is where he is standing; for any other day it is the
+CENTROID of our shops in that city. He picks tomorrow's doors at home, so his
+fix is his sofa — and sorting Wardha by distance from a sofa in Nagpur puts the
+list very nearly upside down. The centroid needs no geocoding service, no
+connection and no city-centre table, and is the better answer anyway: the middle
+of our business in that town rather than the middle of the town. With neither a
+fix nor a pinned shop it returns null and the caller keeps the old ordering — a
+list sorted around an invented origin looks right and is wrong.
+
+**A shop with no pin sorts LAST rather than being dropped**, the same rule the
+route engine follows and for the same reason: a shop missing from the day's list
+is a shop nobody visits and nobody ever finds out why.
+
 **"WHAT IS NEAR ME" IS ORDERED BY WHAT IS WORTH DOING, not by distance.**
 The mapping brief says so in as many words, and `engines/nearby.ts` is the one
 place that rule lives: distance is a COST subtracted from what a stop is worth,

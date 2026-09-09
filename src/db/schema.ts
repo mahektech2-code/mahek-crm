@@ -5261,29 +5261,54 @@ export const mbosLeaveBalances = pgTable(
  * region is whatever the customer master says it is, and a second list would
  * offer the console regions the book does not use.
  */
-export const mbosManagerTerritories = pgTable(
-  "mbos_manager_territories",
+/**
+ * A PERSON'S GEOGRAPHY — which is two people's question, not one.
+ *
+ * It held the regions a MANAGER oversees, and `managerScope` still reads it for
+ * exactly that. A salesman needs the same fact about himself: which cities he
+ * works, so his book, his map and his day's picking are bounded to where he
+ * actually goes. One table, because it is one idea — two would be two places
+ * for "Vidarbha" to be spelled differently.
+ *
+ * A SALESMAN'S TERRITORY IS A FILTER, NOT A PERMISSION, and the distinction is
+ * the important thing in this file. It NARROWS a book he already had:
+ * `ASSIGNED_TO_SQL` and the two seats beside it remain the whole of who may see
+ * what. Nobody gains sight of another salesman's customer by being allocated a
+ * city, and no row here can widen anything.
+ *
+ * That is worth saying out loud because the two look alike from a distance, and
+ * a reader who mistakes this for the security boundary might remove a real
+ * check believing it redundant.
+ *
+ * NO TERRITORY MEANS NO NARROWING. Allocating cities to eight people and
+ * forgetting the ninth must not empty her book — that is the failure this
+ * codebase already has on record, where reading one seat instead of two gave
+ * Seema Roy "queue cleared" on a day she had 195 accounts to work.
+ */
+export const mbosUserTerritories = pgTable(
+  "mbos_user_territories",
   {
     id: text("id").primaryKey(),
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    /**
+     * Which geography this names, because a state and a city are not
+     * interchangeable and the column each matches against is different.
+     * `region` is the default so every row that existed kept its meaning.
+     */
+    kind: text("kind").notNull().default("region"),
+    /** The value itself — kept as `region` for the column somebody may query. */
     region: text("region").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id"),
   },
-  (t) => [uniqueIndex("mbos_manager_territories_key").on(t.userId, t.region)],
+  (t) => [
+    uniqueIndex("mbos_user_territories_key").on(t.userId, t.kind, t.region),
+    index("mbos_user_territories_user_idx").on(t.userId, t.kind),
+  ],
 );
 
-/**
- * §2.11 — the days nobody is expected to work.
- *
- * `scope` is free text and not a foreign key to a beat, because a holiday is
- * regional in a way the territory model cannot express: "Nagpur East and
- * Nagpur West" is two beats, "all beats" is every beat there will ever be, and
- * a join table would need maintaining every time a beat is renamed. Null means
- * everywhere.
- */
 export const mbosHolidays = pgTable(
   "mbos_holidays",
   {

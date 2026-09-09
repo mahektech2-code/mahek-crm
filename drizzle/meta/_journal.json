@@ -722,6 +722,13 @@
       "when": 1787502580000,
       "tag": "0102_customer_potential",
       "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1787502640000,
+      "tag": "0103_user_territories",
+      "breakpoints": true
     }
   ]
 }

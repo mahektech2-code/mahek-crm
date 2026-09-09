@@ -74,7 +74,11 @@ export const managerScope = cache(async function managerScope(): Promise<Manager
   }
 
   const rows = await db.execute<{ region: string }>(sql`
-    select region from mbos_manager_territories where user_id = ${userId}
+    -- REGIONS ONLY. The table also holds a salesman's working cities now, and
+    -- reading one of those as an oversight region would narrow a manager's
+    -- console to a city on the day somebody allocated him one.
+    select region from mbos_user_territories
+     where user_id = ${userId} and kind = 'region'
   `);
 
   if (!rows.length) return { national: true, regions: [], salesmanIds: null };

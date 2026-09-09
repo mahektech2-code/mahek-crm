@@ -16,7 +16,7 @@ import {
   mbosHolidays,
   mbosLeaveBalances,
   mbosLeaveRequests,
-  mbosManagerTerritories,
+  mbosUserTerritories,
   mbosJourneyPlans,
   mbosJourneyStops,
   mbosPriceList,
@@ -1222,10 +1222,18 @@ export async function setManagerTerritories(input: {
 
     const wanted = [...new Set(input.regions.map((r) => r.trim()).filter(Boolean))].sort();
 
+    /* REGIONS ONLY. This action sets a manager's oversight patch, and the
+       table now also holds a salesman's working cities — deleting by user id
+       alone would wipe those as a side effect of editing a region. */
     const before = await db
-      .select({ region: mbosManagerTerritories.region })
-      .from(mbosManagerTerritories)
-      .where(eq(mbosManagerTerritories.userId, input.managerId));
+      .select({ region: mbosUserTerritories.region })
+      .from(mbosUserTerritories)
+      .where(
+        and(
+          eq(mbosUserTerritories.userId, input.managerId),
+          eq(mbosUserTerritories.kind, "region"),
+        ),
+      );
     const had = before.map((b) => b.region).sort();
 
     if (JSON.stringify(had) === JSON.stringify(wanted)) {
@@ -1234,13 +1242,19 @@ export async function setManagerTerritories(input: {
 
     await db.transaction(async (tx) => {
       await tx
-        .delete(mbosManagerTerritories)
-        .where(eq(mbosManagerTerritories.userId, input.managerId));
+        .delete(mbosUserTerritories)
+        .where(
+          and(
+            eq(mbosUserTerritories.userId, input.managerId),
+            eq(mbosUserTerritories.kind, "region"),
+          ),
+        );
       if (wanted.length) {
-        await tx.insert(mbosManagerTerritories).values(
+        await tx.insert(mbosUserTerritories).values(
           wanted.map((region) => ({
             id: gen("mt"),
             userId: input.managerId,
+            kind: "region",
             region,
             createdById: user.id,
           })),

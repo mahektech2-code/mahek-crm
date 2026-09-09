@@ -1,6 +1,8 @@
 import { all, one, run } from '../db';
 import { isoDate } from '../lib/format';
 import { enqueue } from '../sync/queue';
+import { pickOrigin } from '../engines/route';
+import { haversineMetres } from '../engines/geo';
 
 /**
  * The day's route.
@@ -230,13 +232,55 @@ export type Candidate = {
  * tomorrow — a name that has never been visited sorts to the very top, because
  * that is the strongest version of the same answer.
  */
-export async function pickCandidates(city: string | null, query = ''): Promise<Candidate[]> {
+/**
+ * The shops a salesman may pick for an agreed day.
+ *
+ * TWO THINGS CHANGED HERE, both on Mahek's instruction, and both reverse a
+ * decision this file used to argue for:
+ *
+ * The agreed city is now a HARD FILTER. It used to rise to the top without
+ * filtering, on the reasoning that a man going to Nagpur often has one call to
+ * make on the way. Mahek's answer is that a day is a city and the list should
+ * say so; the call on the road is added from the customers list, or made
+ * unplanned with a deviation reason, which is what that field is for.
+ *
+ * The sort is NEAREST FIRST. It used to be "who you have not seen longest",
+ * which answers a different and also good question — but a man filling a
+ * Tuesday morning in one town is choosing a walking order, and distance is what
+ * he is actually deciding on.
+ *
+ * WHAT IT IS MEASURED FROM is the part worth reading. See `pickOrigin`: for
+ * today it is where he is, and for any other day it is the middle of our shops
+ * in that city — because he plans tomorrow at home, and sorting Wardha by
+ * distance from a sofa in Nagpur puts the list upside down.
+ *
+ * With no origin at all — no fix, no pinned shop in the city — it falls back to
+ * the old ordering rather than inventing a point. A list sorted around a
+ * made-up origin looks right and is wrong, which is worse than one that admits
+ * it cannot measure.
+ */
+export async function pickCandidates(
+  city: string | null,
+  query = '',
+  opts: { forToday?: boolean; fix?: { lat: number; lng: number } | null } = {},
+): Promise<Candidate[]> {
   const q = query.trim().toLowerCase();
-  const like = `%${q}%`;
-  const where = q
-    ? `WHERE lower(name) LIKE ? OR lower(COALESCE(area,'')) LIKE ? OR lower(COALESCE(city,'')) LIKE ?`
-    : '';
-  const args: string[] = q ? [like, like, like] : [];
+  const here = (city ?? '').trim().toLowerCase();
+
+  const clauses: string[] = [];
+  const args: string[] = [];
+
+  /* The hard filter. Applied in SQL rather than after the read so a big book
+     does not come across the bridge to be thrown away. */
+  if (here) {
+    clauses.push(`lower(trim(COALESCE(city,''))) = ?`);
+    args.push(here);
+  }
+  if (q) {
+    clauses.push(`(lower(name) LIKE ? OR lower(COALESCE(area,'')) LIKE ?)`);
+    args.push(`%${q}%`, `%${q}%`);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
   const rows = await all<Candidate>(
     `SELECT id, name, area, city, beat, outstandingPaise, lastVisitDate, lastOrderDate, gpsLat, gpsLng
@@ -245,14 +289,33 @@ export async function pickCandidates(city: string | null, query = ''): Promise<C
     args,
   );
 
-  if (!city) return rows;
-  const here = city.trim().toLowerCase();
-  /* Sorted in JavaScript rather than in SQL, so the ordering above is stated
-     once and the city only lifts a group of it. */
-  return [
-    ...rows.filter((r) => (r.city ?? '').trim().toLowerCase() === here),
-    ...rows.filter((r) => (r.city ?? '').trim().toLowerCase() !== here),
-  ];
+  const pinned = rows
+    .filter((r) => r.gpsLat != null && r.gpsLng != null)
+    .map((r) => ({ lat: r.gpsLat as number, lng: r.gpsLng as number }));
+
+  const origin = pickOrigin({
+    fix: opts.fix ?? null,
+    forToday: opts.forToday ?? false,
+    cityShops: pinned,
+  });
+
+  /* No origin: keep the ordering the query already gave, which is the one this
+     screen used before distance was asked for. */
+  if (!origin) return rows;
+
+  /* A shop with no pin cannot be measured and sorts LAST rather than being
+     dropped — the same rule the route engine follows, and for the same reason:
+     a shop missing from the day's list is a shop nobody visits and nobody ever
+     finds out why. */
+  return [...rows].sort((a, b) => {
+    const da = a.gpsLat != null && a.gpsLng != null
+      ? haversineMetres(origin, { lat: a.gpsLat, lng: a.gpsLng })
+      : Number.POSITIVE_INFINITY;
+    const db = b.gpsLat != null && b.gpsLng != null
+      ? haversineMetres(origin, { lat: b.gpsLat, lng: b.gpsLng })
+      : Number.POSITIVE_INFINITY;
+    return da - db;
+  });
 }
 
 /** The shops already picked for a day, so reopening the screen shows them. */

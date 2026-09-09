@@ -15,6 +15,7 @@ import {
   scopedUserIds,
   type DataScope, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
+import { territoryClauseFor } from "./territory-service";
 import { policyForDate, resolveSubject } from "./expense-policy-service";
 import { describeRule } from "../expense-rule-forms";
 import { verifyPassword } from "../password";
@@ -474,10 +475,25 @@ export async function customerIdsInScope(
   principal: MbosPrincipal,
 ): Promise<string[]> {
   const ids = scopedUserIds(principal.scope);
+  /*
+   * WHO MAY SEE IT, AND WHERE HE WORKS — two clauses doing two jobs.
+   *
+   * `scopeIn` is the security boundary and is unchanged: the three seats decide
+   * whose book a record is in. The territory clause NARROWS that book to the
+   * cities and beats this person actually works, and can only ever remove rows
+   * from it. Nobody is given sight of another salesman's customer by being
+   * allocated a city.
+   *
+   * `territoryClauseFor` answers undefined where nothing is allocated, and
+   * `and()` drops an undefined — so a person with no territory keeps the whole
+   * book they had. Allocating cities to eight people and forgetting the ninth
+   * must not empty her handset.
+   */
+  const territory = await territoryClauseFor(principal.user.id);
   const rows = await db
     .select({ id: customers.id })
     .from(customers)
-    .where(scopeIn(ids));
+    .where(and(scopeIn(ids), territory));
   return rows.map((r) => r.id);
 }
 

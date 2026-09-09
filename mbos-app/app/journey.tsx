@@ -38,6 +38,21 @@ import { useStore } from '../src/state/store';
  * nobody visits and nobody ever finds out why.
  */
 
+/**
+ * How long a proposal has been waiting on him, in words.
+ *
+ * Null where the office did not record when it asked — every plan written
+ * before the negotiation existed is in that state, and "proposed 20,214 days
+ * ago" from a null read as an epoch is worse than saying nothing.
+ */
+function waitingLabel(proposedAt: number | null): string | null {
+  if (!proposedAt) return null;
+  const days = Math.floor((Date.now() - proposedAt) / 86_400_000);
+  if (days <= 0) return 'asked today';
+  if (days === 1) return 'asked yesterday';
+  return 'waiting ' + days + ' days';
+}
+
 export default function JourneyScreen() {
   const notify = useStore((s) => s.notify);
   const askConfirm = useStore((s) => s.askConfirm);
@@ -233,6 +248,12 @@ export default function JourneyScreen() {
               <T s="small" style={{ color: C.body, marginTop: 2 }}>
                 {d.city ? d.city + ' was proposed' : 'A day was proposed'}
                 {d.proposedBy ? ' by ' + d.proposedBy : ''}
+                {/* HOW LONG IT HAS BEEN SITTING. The office is waiting on this
+                    answer to plan a week, and "proposed" with no age reads as
+                    something that arrived a moment ago — so a request four days
+                    old looks identical to one from this morning, and gets the
+                    same non-answer. */}
+                {waitingLabel(d.proposedAt) ? ' · ' + waitingLabel(d.proposedAt) : ''}
               </T>
               <T s="small" style={{ color: C.muted, marginTop: 6 }}>
                 You pick the shops once you agree — you know the city.

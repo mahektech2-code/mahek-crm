@@ -15,6 +15,8 @@ import {
 } from '../src/data/journey';
 import { inr, isoDate, plural } from '../src/lib/format';
 import { daysSince } from '../src/data/customers';
+import { pickOrigin } from '../src/engines/route';
+import { haversineMetres } from '../src/engines/geo';
 import { useStore } from '../src/state/store';
 
 /**
@@ -31,14 +33,23 @@ import { useStore } from '../src/state/store';
  * morning, which is not knowable the evening before. The number on each ticked
  * row says where it sits, so the list is the plan rather than a set.
  *
- * **The proposed city rises to the top; it does not filter.** A man going to
- * Nagpur often has one call to make on the way, and a list that hid it would
- * send him back to the office to ask. The row says "elsewhere" so nothing is
- * picked by accident.
+ * **The agreed city is a HARD FILTER**, on Mahek's instruction. It used to rise
+ * to the top without filtering, on the reasoning that a man going to Nagpur
+ * often has one call to make on the way — that reasoning was not wrong, it was
+ * overruled: a day is a city, and the call on the road is added from the
+ * customers list or made unplanned with a deviation reason, which is what that
+ * field exists for.
  *
- * **Who you have not seen sorts first.** The question a plan answers is which
- * shops are going without a visit, and a customer seen yesterday is the last
- * one to put on tomorrow.
+ * **Nearest sorts first**, also on instruction, and it replaced "who you have
+ * not seen longest". Both answer real questions; a man filling a Tuesday
+ * morning in one town is choosing a walking order, and distance is what he is
+ * deciding on.
+ *
+ * **What it is measured FROM is the part worth knowing.** For today it is where
+ * he is standing. For any other day it is the middle of our shops in that city,
+ * because he picks tomorrow's doors at home — and sorting Wardha by distance
+ * from a sofa in Nagpur puts the list very nearly upside down. With neither, it
+ * keeps the old order rather than inventing a point.
  */
 export default function PickScreen() {
   const params = useLocalSearchParams<{ day?: string }>();
@@ -51,6 +62,23 @@ export default function PickScreen() {
   const [q, setQ] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [today] = React.useState(() => isoDate(new Date()));
+  /* The freshest fix already known, which costs no battery and no wait —
+     `whereNow` never asks the radio. Null is ordinary and handled: see
+     `pickOrigin`, which then measures from the city instead. */
+  const [fix, setFix] = React.useState<{ lat: number; lng: number } | null>(null);
+
+  React.useEffect(() => {
+    let live = true;
+    void import('../src/native/where')
+      .then((m) => m.whereNow())
+      .then((w) => {
+        if (live && w?.lat != null && w?.lng != null) setFix({ lat: w.lat, lng: w.lng });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
   React.useEffect(() => {
     let live = true;
@@ -69,13 +97,16 @@ export default function PickScreen() {
 
   React.useEffect(() => {
     let live = true;
-    void pickCandidates(day?.city ?? null, q).then((r) => {
+    void pickCandidates(day?.city ?? null, q, {
+      forToday: day?.planDate === today,
+      fix: fix ? { lat: fix.lat, lng: fix.lng } : null,
+    }).then((r) => {
       if (live) setRows(r);
     });
     return () => {
       live = false;
     };
-  }, [day?.city, q]);
+  }, [day?.city, day?.planDate, today, fix, q]);
 
   const toggle = (id: string) =>
     setPicked((current) =>
@@ -91,6 +122,30 @@ export default function PickScreen() {
     router.back();
   };
 
+  /* The same origin the sort used, so the numbers on screen and the order they
+     are in cannot disagree — measured once here rather than recomputed per row. */
+  const origin = React.useMemo(
+    () =>
+      pickOrigin({
+        fix,
+        forToday: day?.planDate === today,
+        cityShops: rows
+          .filter((r) => r.gpsLat != null && r.gpsLng != null)
+          .map((r) => ({ lat: r.gpsLat as number, lng: r.gpsLng as number })),
+      }),
+    [fix, day?.planDate, today, rows],
+  );
+
+  const away = React.useCallback(
+    (c: Candidate): string => {
+      if (c.gpsLat == null || c.gpsLng == null) return 'no pin';
+      if (!origin) return '';
+      const m = haversineMetres(origin, { lat: c.gpsLat, lng: c.gpsLng });
+      return m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km';
+    },
+    [origin],
+  );
+
   if (!day) {
     return (
       <AppFrame title="Pick your shops" contentStyle={{ padding: 16 }}>
@@ -102,6 +157,7 @@ export default function PickScreen() {
   }
 
   const here = (day.city ?? '').trim().toLowerCase();
+
 
   return (
     <AppFrame
@@ -213,11 +269,13 @@ export default function PickScreen() {
                 </T>
               </View>
 
-              {elsewhere ? (
-                <T s="small" style={{ color: C.muted }}>
-                  elsewhere
-                </T>
-              ) : null}
+              {/* The distance, because "nearest first" that does not say the
+                  distances is an order somebody has to take on trust. A shop
+                  with no pin says so rather than showing nothing: it sorts last,
+                  and the reason it does is worth one word. */}
+              <T s="small" style={{ color: C.muted }}>
+                {away(c)}
+              </T>
             </Pressable>
           );
         })}
