@@ -1034,6 +1034,7 @@ async function planDaysFor(userId: string, since: string | null) {
            p.day_state::text as "dayState",
            p.refusal_reason as "refusalReason",
            p.counter_city as "counterCity",
+           p.self_planned as "selfPlanned",
            (extract(epoch from p.proposed_at) * 1000)::double precision as "proposedAt",
            m.name as "proposedBy",
            (select count(*)::int from mbos_journey_stops s where s.plan_id = p.id)

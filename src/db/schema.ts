@@ -4409,6 +4409,25 @@ export const mbosJourneyPlans = pgTable(
     proposedAt: timestamp("proposed_at", { withTimezone: true }),
     /** Why he will not walk it. Required by the action that writes a refusal. */
     refusalReason: text("refusal_reason"),
+    /**
+     * WHO STARTED THIS DAY.
+     *
+     * This table was built for one direction — the office proposes a city
+     * and the salesman answers — and a day he starts himself reaches the
+     * same states through a different door. Without a mark saying which,
+     * "he went where he was asked" and "he chose it himself" read
+     * identically on every screen afterwards, and only one of those is a
+     * fact about the office's planning.
+     *
+     * False by default, which is load-bearing: every row that existed when
+     * this arrived was proposed by the office, so it moved nothing. The
+     * same reasoning `dayState` shipped with.
+     *
+     * It does NOT weaken the negotiation. A self-planned day is born
+     * `agreed` — there is nobody to agree with — and the manager is told,
+     * so the office still sees the whole calendar.
+     */
+    selfPlanned: boolean("self_planned").notNull().default(false),
     /** What he wants instead. Optional — "not this" is a legitimate answer. */
     counterCity: text("counter_city"),
     respondedAt: timestamp("responded_at", { withTimezone: true }),

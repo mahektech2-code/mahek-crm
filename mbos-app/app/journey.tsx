@@ -7,6 +7,7 @@ import { ActionSheet, BottomSheet, Calendar } from '../src/components/ui/overlay
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
 import {
+  createDay,
   agreeDay,
   planDays,
   refuseDay,
@@ -66,6 +67,14 @@ export default function JourneyScreen() {
   const [tourPick, setTourPick] = React.useState<'from' | 'to' | null>(null);
   const [tourErr, setTourErr] = React.useState<string | null>(null);
   const [tourBusy, setTourBusy] = React.useState(false);
+  /* Starting a day, as against answering one. `own` is the form; the date
+     defaults to nothing rather than to today, because a day planned by
+     accident is worse than one not planned yet. */
+  const [ownOpen, setOwnOpen] = React.useState(false);
+  const [own, setOwn] = React.useState({ date: '', city: '' });
+  const [ownPick, setOwnPick] = React.useState(false);
+  const [ownErr, setOwnErr] = React.useState<string | null>(null);
+  const [ownBusy, setOwnBusy] = React.useState(false);
   const [stops, setStops] = React.useState<JourneyStop[]>([]);
   const [days, setDays] = React.useState<PlanDay[]>([]);
   const [pastCounts, setPastCounts] = React.useState<Record<string, { total: number; done: number }>>({});
@@ -137,6 +146,30 @@ export default function JourneyScreen() {
    * is actually true — picked, waiting for the office — is the whole fix; the
    * alternative is inventing stop rows the office has not issued.
    */
+  /**
+   * Start a day the office never proposed.
+   *
+   * Straight on to the shops afterwards. The day is `agreed` and empty, which
+   * is the one state on this screen with nothing to walk — leaving him on the
+   * Journey tab would mean reading his own new day back and tapping it, to get
+   * where he was already going.
+   */
+  const startOwnDay = async () => {
+    if (ownBusy) return;
+    setOwnBusy(true);
+    setOwnErr(null);
+    const out = await createDay(own.date, own.city);
+    setOwnBusy(false);
+
+    if (!out.ok) return setOwnErr(out.message);
+
+    setOwnOpen(false);
+    setOwn({ date: '', city: '' });
+    load();
+    notify(dayLabel(own.date) + ' is yours. Pick the shops.');
+    router.push({ pathname: '/pick', params: { day: out.id } });
+  };
+
   const todayPlanned = days.find((d) => d.planDate === today && d.dayState === 'planned');
 
   /* Future days already routed — tomorrow's plan and beyond, distinct from
@@ -463,6 +496,25 @@ export default function JourneyScreen() {
             ))}
         </View>
       ) : null}
+
+      {/*
+        A day nobody proposed.
+
+        Under the questions and the agreed days rather than above them: what
+        the office has asked is the first thing to answer, and this is what to
+        do when it has asked nothing. It is always drawn — a salesman whose
+        manager plans nothing would otherwise find an empty tab with no way
+        forward, which is exactly the case it exists for.
+      */}
+      <DashedButton
+        label="Plan a day"
+        onPress={() => {
+          setOwn({ date: '', city: '' });
+          setOwnErr(null);
+          setOwnOpen(true);
+        }}
+        style={{ marginBottom: 16 }}
+      />
 
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 }}>
         <View style={{ minWidth: 0, flex: 1 }}>
@@ -795,6 +847,82 @@ export default function JourneyScreen() {
           ))}
         </View>
       ) : null}
+
+      {/* ------------------------------------------------- plan your own day */}
+      <BottomSheet open={ownOpen} onClose={() => setOwnOpen(false)} scroll>
+        <T s="h2">Plan a day</T>
+        <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+          Your manager is told. Pick the shops on the next screen.
+        </T>
+
+        <View style={{ marginTop: 16 }}>
+          <T s="label" style={{ marginBottom: 6 }}>
+            Which day
+          </T>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setOwnPick(true)}
+            style={{
+              minHeight: HIT,
+              justifyContent: 'center',
+              paddingHorizontal: 12,
+              borderWidth: 1,
+              borderColor: C.border,
+              borderRadius: radius.lg,
+              backgroundColor: C.surface,
+            }}>
+            <T style={{ fontSize: 16, color: own.date ? C.ink : C.muted }}>
+              {own.date ? dmy(own.date) : 'Pick a date'}
+            </T>
+          </Pressable>
+        </View>
+
+        <View style={{ marginTop: 14 }}>
+          <T s="label" style={{ marginBottom: 6 }}>
+            Which city
+          </T>
+          <Input
+            value={own.city}
+            onChangeText={(v) => {
+              setOwn((d) => ({ ...d, city: v }));
+              setOwnErr(null);
+            }}
+            placeholder="Nagpur"
+          />
+          {/* Said before the picker opens, not after it has drawn the wrong
+              list: the shop list is filtered by this and by nothing else. */}
+          <T s="caption" style={{ marginTop: 6 }}>
+            You will be offered the shops in this city.
+          </T>
+        </View>
+
+        {ownErr ? (
+          <T style={{ fontSize: 13, color: C.danger, marginTop: 10 }}>{ownErr}</T>
+        ) : null}
+
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+          <SecondaryButton label="Cancel" onPress={() => setOwnOpen(false)} style={{ flex: 1 }} />
+          <PrimaryButton
+            label={ownBusy ? 'Saving…' : 'Plan it'}
+            onPress={startOwnDay}
+            style={{ flex: 1 }}
+          />
+        </View>
+      </BottomSheet>
+
+      <BottomSheet open={ownPick} onClose={() => setOwnPick(false)}>
+        <T s="h3" style={{ marginBottom: 10 }}>
+          Which day
+        </T>
+        <Calendar
+          selected={own.date}
+          onPick={(iso) => {
+            setOwn((d) => ({ ...d, date: iso }));
+            setOwnErr(null);
+            setOwnPick(false);
+          }}
+        />
+      </BottomSheet>
 
       <ActionSheet
         open={moreOpen}

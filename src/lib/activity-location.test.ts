@@ -921,6 +921,158 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
    * And the two channels the journey tab is made of, with real rows behind
    * them — a query that returns nothing cannot tell you it would have worked.
    */
+  /*
+   * A DAY HE STARTED HIMSELF.
+   *
+   * The negotiation ran one way — the office proposes, he agrees or refuses —
+   * and `handlePlanDay` answered a day it could not find with `retry`, for
+   * ever. So a Tuesday the office had not thought about could not be worked at
+   * all, which is most Tuesdays.
+   *
+   * Sent as a real payload through `ingestSyncBatch` rather than by calling the
+   * handler, because that is the only way the shape of the thing is checked
+   * too: every one of the three Date-binding faults in this module type-checked
+   * perfectly and failed on contact with a real item.
+   */
+  describe("planning a day nobody proposed", () => {
+    const tomorrow = () =>
+      new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+
+    test("a created day is born agreed, marked his, and carries the city", async () => {
+      const planId = id("mbos_plan");
+      const [result] = await ingestSyncBatch(principal, [
+        item({
+          entityType: "plan_day",
+          entityId: planId,
+          op: "create",
+          payload: { answer: "agreed", planDate: tomorrow(), city: "Nagpur" },
+        }),
+      ]);
+
+      assert.equal(result.status, "accepted", JSON.stringify(result));
+
+      const [row] = await db.execute<Record<string, unknown>>(sql`
+        select day_state::text as "dayState", city, self_planned as "selfPlanned",
+               user_id as "userId", plan_date::text as "planDate"
+          from mbos_journey_plans where id = ${planId}
+      `);
+
+      assert.ok(row, "the day never landed");
+      /* `agreed`, never `planned`: the city is settled and the shops are not
+         picked yet, which is exactly what that state means. */
+      assert.equal(row.dayState, "agreed");
+      assert.equal(row.city, "Nagpur");
+      assert.equal(row.selfPlanned, true, "nothing records that he started it");
+      assert.equal(row.userId, salesman.id, "a handset planned somebody else's day");
+    });
+
+    /*
+     * The check that matters most. `pickCandidates` filters the shop list by
+     * the day's city and applies NO clause at all when it is empty, so a day
+     * created without one opens the picker on the entire book — the unfiltered
+     * list Mahek overruled, arriving silently.
+     */
+    test("a day with no city is refused, because the picker would show the whole book", async () => {
+      const [result] = await ingestSyncBatch(principal, [
+        item({
+          entityType: "plan_day",
+          entityId: id("mbos_plan"),
+          op: "create",
+          payload: { answer: "agreed", planDate: tomorrow(), city: "   " },
+        }),
+      ]);
+
+      assert.equal(result.status, "rejected", JSON.stringify(result));
+      assert.match(
+        (result as { message: string }).message,
+        /city/i,
+        "the refusal has to say what is missing",
+      );
+    });
+
+    test("a day already gone is refused", async () => {
+      const [result] = await ingestSyncBatch(principal, [
+        item({
+          entityType: "plan_day",
+          entityId: id("mbos_plan"),
+          op: "create",
+          payload: { answer: "agreed", planDate: "2020-01-06", city: "Nagpur" },
+        }),
+      ]);
+      assert.equal(result.status, "rejected", JSON.stringify(result));
+    });
+
+    /*
+     * A date the office has already proposed. The unique index on
+     * (user_id, plan_date) is what stops the second row, and the salesman has
+     * to be told which day it is rather than watching the create fail quietly.
+     */
+    test("a day the office already proposed is refused, not duplicated", async () => {
+      const day = tomorrow();
+      await db.execute(sql`
+        insert into mbos_journey_plans (id, user_id, plan_date, city, day_state, proposed_by_id)
+        values (${id("mbos_plan")}, ${salesman.id}, ${day}::date, 'Wardha', 'proposed', ${salesman.id})
+      `);
+
+      const [result] = await ingestSyncBatch(principal, [
+        item({
+          entityType: "plan_day",
+          entityId: id("mbos_plan"),
+          op: "create",
+          payload: { answer: "agreed", planDate: day, city: "Nagpur" },
+        }),
+      ]);
+
+      assert.equal(result.status, "rejected", JSON.stringify(result));
+
+      const rows = await db.execute<{ n: number }>(sql`
+        select count(*)::int as n from mbos_journey_plans
+         where user_id = ${salesman.id} and plan_date = ${day}::date
+      `);
+      assert.equal(Number(rows[0].n), 1, "two rows for one day");
+    });
+
+    /* Answering a day that does not exist still retries — a create is the new
+       door, not a replacement for the one the negotiation uses. */
+    test("an ANSWER to a day the office has not sent yet still waits", async () => {
+      const [result] = await ingestSyncBatch(principal, [
+        item({
+          entityType: "plan_day",
+          entityId: id("mbos_plan"),
+          op: "update",
+          payload: { answer: "agreed" },
+        }),
+      ]);
+      assert.equal(result.status, "retry", JSON.stringify(result));
+    });
+
+    test("the day he started comes back down the delta, marked as his", async () => {
+      const before = await buildPull(principal, null);
+
+      const planId = id("mbos_plan");
+      await ingestSyncBatch(principal, [
+        item({
+          entityType: "plan_day",
+          entityId: planId,
+          op: "create",
+          payload: { answer: "agreed", planDate: tomorrow(), city: "Nagpur" },
+        }),
+      ]);
+
+      const delta = await buildPull(principal, before.cursor);
+      const days = delta.planDays as Array<Record<string, unknown>>;
+      const mine = days.find((d) => d.id === planId);
+
+      assert.ok(mine, "his own day never reached his handset");
+      assert.equal(mine.dayState, "agreed");
+      assert.equal(
+        mine.selfPlanned,
+        true,
+        "the mark has to travel, or the handset cannot tell his day from the office's",
+      );
+    });
+  });
+
   test("a plan day and its stop both come down the delta", async () => {
     /* The cursor is taken FIRST, because the delta is `updated_at`-gated: a
        cursor issued after the rows exist excludes them by design, and a test
