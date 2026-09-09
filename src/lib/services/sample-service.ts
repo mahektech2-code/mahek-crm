@@ -59,9 +59,9 @@ export type SampleDeskRow = {
   approvedAt: string | null;
   dispatchedAt: string | null;
   courierName: string | null;
-  courierDocket: string | null;
+  trackingNumber: string | null;
   expectedDeliveryDate: string | null;
-  receivedConfirmedAt: string | null;
+  receivedAt: string | null;
   /** How many times the review has been asked for. See §16. */
   reviewChaseCount: number;
   lastReviewChaseAt: string | null;
@@ -92,9 +92,9 @@ const deskColumns = {
   approvedAt: sql<string | null>`${mbosSamples.approvedAt}`,
   dispatchedAt: sql<string | null>`${mbosSamples.dispatchedAt}`,
   courierName: mbosSamples.courierName,
-  courierDocket: mbosSamples.courierDocket,
+  trackingNumber: mbosSamples.trackingNumber,
   expectedDeliveryDate: mbosSamples.expectedDeliveryDate,
-  receivedConfirmedAt: sql<string | null>`${mbosSamples.receivedConfirmedAt}`,
+  receivedAt: sql<string | null>`${mbosSamples.receivedAt}`,
   reviewChaseCount: mbosSamples.reviewChaseCount,
   lastReviewChaseAt: sql<string | null>`${mbosSamples.lastReviewChaseAt}`,
 };
@@ -134,9 +134,9 @@ const asRow = (r: Record<string, unknown>, waitingDays: number): SampleDeskRow =
   approvedAt: (r.approvedAt as string | null) ?? null,
   dispatchedAt: (r.dispatchedAt as string | null) ?? null,
   courierName: (r.courierName as string | null) ?? null,
-  courierDocket: (r.courierDocket as string | null) ?? null,
+  trackingNumber: (r.trackingNumber as string | null) ?? null,
   expectedDeliveryDate: (r.expectedDeliveryDate as string | null) ?? null,
-  receivedConfirmedAt: (r.receivedConfirmedAt as string | null) ?? null,
+  receivedAt: (r.receivedAt as string | null) ?? null,
   reviewChaseCount: Number(r.reviewChaseCount ?? 0),
   lastReviewChaseAt: (r.lastReviewChaseAt as string | null) ?? null,
   waitingDays: Number(waitingDays ?? 0),
@@ -237,7 +237,7 @@ export async function samplesAwaitingReview(limit = 100): Promise<SampleAwaiting
   const ladder = config["leads.sampleReviewChaseDays"];
   const day = await today();
 
-  const rows = await deskQuery(waitingDaysFrom(mbosSamples.receivedConfirmedAt))
+  const rows = await deskQuery(waitingDaysFrom(mbosSamples.receivedAt))
     .where(
       and(
         inArray(mbosSamples.state, ["received", "trial_done"]),
@@ -247,7 +247,7 @@ export async function samplesAwaitingReview(limit = 100): Promise<SampleAwaiting
     /* Most-chased first: the ones that have been asked about the most are the
        ones closest to being written off, and they are the ones worth a
        manager's own phone call. */
-    .orderBy(desc(mbosSamples.reviewChaseCount), asc(mbosSamples.receivedConfirmedAt), asc(mbosSamples.id))
+    .orderBy(desc(mbosSamples.reviewChaseCount), asc(mbosSamples.receivedAt), asc(mbosSamples.id))
     .limit(limit);
 
   return rows.map((r) => {
@@ -256,7 +256,7 @@ export async function samplesAwaitingReview(limit = 100): Promise<SampleAwaiting
        own — the column comes back from the driver already rendered in that
        zone by the select above, so the date part is the day and nothing here
        truncates an instant of its own. */
-    const receivedOn = r.receivedConfirmedAt ? String(r.receivedConfirmedAt).slice(0, 10) : null;
+    const receivedOn = r.receivedAt ? String(r.receivedAt).slice(0, 10) : null;
     const offset = chaseOffset(ladder, base.reviewChaseCount + 1);
     const nextChaseOn = receivedOn ? addDays(receivedOn, offset) : null;
     return {

@@ -21,6 +21,20 @@ export type LeadStage =
   | "negotiation"
   | "won"
   | "lost"
+  /**
+   * §—: main's own rung, and it is NOT on any of the three ladders.
+   *
+   * A live prospect that has stopped moving — a plant shutdown, a budget
+   * quarter, a decision maker abroad — which is genuinely different from
+   * `lost`, where nobody rings again. It is a PARK: the lead keeps its place in
+   * the world and loses its place on the ladder, because the stage column can
+   * only hold one value and this one displaces the rung.
+   *
+   * That is why `bandOf` cannot answer for it and `gateForNext` refuses: the
+   * rung it was parked FROM is in `lead_stage_transitions`, not in the stage.
+   * See `isParked`.
+   */
+  | "on_hold"
   | "suspect"
   | "prospect"
   | "qualification"
@@ -102,6 +116,10 @@ const STAGE_TEXT: Record<LeadStage, { short: string; long: string }> = {
   negotiation: { short: "Negotiation", long: "Talking about quantity, price and terms." },
   won: { short: "Won", long: "They became an account." },
   lost: { short: "Lost", long: "Closed, with the reason recorded." },
+  on_hold: {
+    short: "On hold",
+    long: "Still live, but not moving — and the reason is on the record.",
+  },
 
   /* the customer ladders */
   suspect: {
@@ -292,6 +310,86 @@ export const VERIFICATION_QUESTIONS: readonly { id: string; ask: string }[] = [
   { id: "service_issue", ask: "Any concern about delivery or service?" },
   { id: "genuine_interest", ask: "Are you genuinely interested in trying it?" },
 ] as const;
+
+/**
+ * WHERE EACH ANSWER LANDS IN `mbos_lead_validations`.
+ *
+ * Two teams built the verification call at once. This branch stored the twelve
+ * answers as one jsonb blob on a `lead_manager_calls` table of its own; main
+ * shipped first with named columns on `mbos_lead_validations`. One
+ * implementation per concept, and main's is the survivor — so the
+ * twelve-question FORM stays, because it is how the call is actually conducted,
+ * and the answers land on main's row.
+ *
+ * EVERY ONE OF THE TWELVE IS ITS OWN COLUMN. Seven of them had no box on main's
+ * table and the first cut of this wrote them into `notes` as labelled lines,
+ * which is the jsonb blob again wearing a different coat: "how many of last
+ * month's leads said price was the problem" is the question §8 exists to
+ * answer, and `notes ilike '%price%'` is not an answer to it. `0116` adds the
+ * seven. A column costs nothing and an unqueryable line costs the report.
+ *
+ * `confirmed_monthly_volume_litres` and `confirmed_potential_paise` are
+ * deliberately NOT filled from this form. They are numbers on the owner's KPI
+ * screens, the form collects a sentence — "about 15-20 tins, more in season" —
+ * and a parser guessing at that would put a confident wrong figure where a
+ * wrong figure does the most damage. The sentence goes to the text column
+ * beside each, which is where it is true.
+ *
+ * `product_feedback` is untouched here, and that is not an oversight: §E asks
+ * an existing customer what they think of our product, and §8 asks a shop that
+ * has never bought whether they understood what it does. Same word, different
+ * question, and folding them together would make the first unreadable.
+ */
+export const VERIFICATION_COLUMNS: Readonly<Record<string, string>> = {
+  visited: "salesmanVisited",
+  explained: "mahekExplained",
+  understood: "productUnderstood",
+  current_product: "currentProduct",
+  competitor: "confirmedCompetitor",
+  monthly_requirement: "confirmedRequirement",
+  potential: "growthPotential",
+  impression: "salesmanFeedback",
+  price_issue: "priceConcern",
+  quality_issue: "qualityFeedback",
+  service_issue: "dispatchFeedback",
+  genuine_interest: "genuineInterest",
+};
+
+/**
+ * And the way back: main's row read as the twelve answers the form asked.
+ *
+ * The record page renders the questions in the order they were asked, so it
+ * needs them keyed the way the form keyed them. One mapping, read from both
+ * ends, because a screen holding its own copy of which column is which is a
+ * screen that shows the price answer under the quality question the day
+ * somebody adds a thirteenth.
+ */
+export function verificationAnswers(
+  row: Record<string, unknown> | null | undefined,
+): Record<string, string> {
+  const answers: Record<string, string> = {};
+  if (!row) return answers;
+  for (const [id, column] of Object.entries(VERIFICATION_COLUMNS)) {
+    const value = row[column];
+    if (typeof value === "string" && value.trim()) answers[id] = value.trim();
+  }
+  return answers;
+}
+
+/**
+ * The verdict, read as the form's yes/no.
+ *
+ * Main's column carries four values and the form asks one question, so the
+ * mapping is lossy in one direction only: `pending` and `on_hold` are neither a
+ * pass nor a failure and answer NULL rather than false. A call left undecided
+ * drawn as "could not verify" would put a follow-up's sentence on a screen
+ * where nobody has decided anything yet.
+ */
+export function verificationVerdict(verdict: string | null): boolean | null {
+  if (verdict === "confirmed") return true;
+  if (verdict === "not_qualified") return false;
+  return null;
+}
 
 /* ------------------------------------------------- §16 the sample review */
 

@@ -79,7 +79,7 @@ export default async function Page({
         <Banner
           tone="warn"
           title={`${plural(unknown.length, "salesman", "salesmen")} ${unknown.length === 1 ? "has" : "have"} no employee record`}
-          body={`${unknown.map((u) => u.salesmanName).join(", ")}. Their MahekOne account is matched to the employee master by email, then by company mobile — if neither matches, there is no payroll row to read. Fixing it means correcting the workbook, not this screen.`}
+          body={`${unknown.map((u) => u.salesmanName).join(", ")}. Nothing links their MahekOne account to a payroll row, and the fallback guess — email, then company mobile — finds nobody on this book: most employees carry no email, and the work numbers on the accounts are not the company mobiles in the sheet. Link them by hand in Admin Console → Access → Link an HRMS record. That is a one-off per person, and it is what makes these figures appear.`}
         />
       ) : null}
 
@@ -139,8 +139,23 @@ export default async function Page({
                   ) : null}
                 </Cell>
                 <Cell truncate={150}>
-                  {r.employeeCode ?? (
-                    <span className="text-warn-ink" title="No employee record matched this account.">
+                  {r.employeeCode ? (
+                    <>
+                      {r.employeeCode}
+                      {/* A guess and a chosen answer look identical in this
+                          column, and one of them is deciding what somebody is
+                          shown as being paid. */}
+                      {r.employeeMatch === "guessed" ? (
+                        <span
+                          className="block text-[12px] text-warn-ink"
+                          title="Matched on email or work number rather than chosen. Link them in Admin Console → Access to be sure this is the right payroll row."
+                        >
+                          guessed, not linked
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className="text-warn-ink" title="Nothing links this account to a payroll row.">
                       Not matched
                     </span>
                   )}

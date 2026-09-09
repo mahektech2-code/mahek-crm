@@ -1,12 +1,25 @@
 import { all, newId, one } from '../db';
 import {
+  CUSTOMER_PAGE,
   cityOriginsQuery,
   customerCountQuery,
   customerPageQuery,
+  type BookView,
   type Origin,
 } from './customer-query';
 import { enqueue } from '../sync/queue';
 import { insertAndQueue, insertLocal, stamp } from './write';
+
+/**
+ * The retention band, exactly as the server computes and sends it.
+ *
+ * Declared HERE, in the data layer, because this is the wire shape — the
+ * component that draws it imports this rather than keeping its own copy of the
+ * four words. Two copies of a four-value union is how the fifth rendering of
+ * customer health came to exist in the first place.
+ */
+export type HealthBandValue = 'active' | 'at-risk' | 'dormant' | 'lost';
+
 
 /**
  * Reading the book.
@@ -39,6 +52,13 @@ export type Customer = {
   outstandingPaise: number;
   submittedNotInvoicedPaise: number;
   healthScore: number | null;
+  /**
+   * The retention band, computed by the server from the customer's own buying
+   * cycle — 'active' | 'at-risk' | 'dormant' | 'lost'. Null where they have
+   * never ordered, which is not a band: they have not stopped buying, they
+   * have not started.
+   */
+  healthBand: HealthBandValue | null;
   healthComponents: string | null;
   lastOrderDate: string | null;
   lastVisitDate: string | null;
@@ -55,6 +75,11 @@ export type Customer = {
   /** When this row was last refreshed from MahekOne. Shown wherever a
    *  decision hangs on the figures — credit limit and outstanding above all. */
   lastSyncedAt: number;
+  /** Squared degrees from the origin the page was sorted by, when there was
+   *  one. `metresFromDist2` is the only thing that reads it. */
+  dist2?: number | null;
+  /** `customer` or `lead`. Null on a row synced before migration v12. */
+  kind?: string | null;
 };
 
 export type CustomerPage = {
@@ -74,12 +99,16 @@ export type CustomerPage = {
 export async function listCustomersPage(args: {
   query?: string;
   origin?: Origin;
+  /** Customers, leads, or the whole book. See `BookView`. */
+  view?: BookView;
   offset?: number;
   limit?: number;
 } = {}): Promise<CustomerPage> {
   const offset = args.offset ?? 0;
 
-  const count = customerCountQuery(args.query);
+  /* The SAME view goes to both, or the screen prints a total over a list that
+     does not match it. */
+  const count = customerCountQuery(args.query, args.view);
   const totalRow = await one<{ n: number }>(count.sql, count.params);
   const total = totalRow?.n ?? 0;
 
@@ -123,17 +152,145 @@ export async function listCustomers(query = ''): Promise<Customer[]> {
   return all<Customer>(q.sql, q.params);
 }
 
+export type CustomerOrder = {
+  id: string;
+  customerId: string;
+  orderedAt: string | null;
+  status: string | null;
+  valuePaise: number | null;
+  lines: number | null;
+  orderNo: string | null;
+};
+
+export type CustomerPayment = {
+  id: string;
+  customerId: string;
+  receivedAt: string | null;
+  amountPaise: number | null;
+  mode: string | null;
+  reference: string | null;
+  status: string | null;
+};
+
 /**
- * The word on the card: Active, At risk, Overdue.
+ * One open bill, as Accounts holds it.
  *
- * MahekOne owns it and sends it down in `status`; the health band is only the
- * fallback for a row that arrived without one, because a card with a blank
- * where the verdict goes is a card nobody trusts.
+ * `balancePaise` is what is still open. On an `unstated` bill that is the full
+ * amount purely because nobody has recorded anything against it either way —
+ * it is NOT a debt, the office keeps it out of the outstanding figure, and the
+ * screen has to say which kind of number it is rather than printing it beside
+ * real balances.
  */
-export function customerStage(c: Pick<Customer, 'status' | 'healthScore'>): 'Active' | 'At risk' | 'Overdue' {
-  if (c.status === 'Overdue' || c.status === 'At risk' || c.status === 'Active') return c.status;
-  if (c.healthScore == null) return 'Active';
-  return c.healthScore < 40 ? 'Overdue' : c.healthScore < 60 ? 'At risk' : 'Active';
+export type CustomerBill = {
+  id: string;
+  customerId: string;
+  billNo: string | null;
+  billDate: string | null;
+  dueDate: string | null;
+  amountPaise: number | null;
+  paidPaise: number | null;
+  balancePaise: number | null;
+  overdueDays: number | null;
+  disputed: number | null;
+  paymentPosition: string | null;
+};
+
+/**
+ * What the office knows this shop bought and paid.
+ *
+ * Read-only, and capped at ten of each by the server. The screen says so —
+ * a list that is a slice has to admit it, or the salesman reads ten orders as
+ * the whole history and tells the customer so.
+ */
+export async function customerOrders(id: string): Promise<CustomerOrder[]> {
+  return all<CustomerOrder>(
+    'SELECT * FROM customer_orders WHERE customerId = ? ORDER BY orderedAt DESC, id DESC',
+    [id],
+  );
+}
+
+export async function customerPayments(id: string): Promise<CustomerPayment[]> {
+  return all<CustomerPayment>(
+    'SELECT * FROM customer_payments WHERE customerId = ? ORDER BY receivedAt DESC, id DESC',
+    [id],
+  );
+}
+
+/**
+ * The open bills behind the shop's outstanding, oldest first.
+ *
+ * Oldest first because that is the order they are chased in and the order the
+ * automatic spread settles them in — so the list a salesman reads and the
+ * allocation the server would make on its own tell the same story.
+ *
+ * These are the office's, read-only, and replaced wholesale on every pull. A
+ * settled bill is gone from the next pass rather than left here to be offered.
+ */
+export async function customerBills(id: string): Promise<CustomerBill[]> {
+  return all<CustomerBill>(
+    'SELECT * FROM customer_bills WHERE customerId = ? ORDER BY billDate ASC, id ASC',
+    [id],
+  );
+}
+
+/**
+ * What KIND of account this is, in one word.
+ *
+ * The mark wins over the kind, which is the rule MahekOne's own
+ * `lib/account-types.ts` states for the web list and for the same reason:
+ * "Lead · Third party" is two facts fighting over one glance, and on a phone
+ * there is even less room to lose the argument in. A shop we deliver to and do
+ * not bill is a third party whatever its kind says.
+ *
+ * `null` where the row predates migration v12 and nothing has re-synced it —
+ * saying "Customer" on no evidence would be a guess, and this is the one field
+ * whose whole job is to stop the salesman guessing.
+ */
+export function accountType(c: Pick<Customer, 'kind' | 'thirdParty'>): string | null {
+  if (c.thirdParty) return 'Third party';
+  if (c.kind === 'lead') return 'Lead';
+  if (c.kind === 'customer') return 'Customer';
+  return null;
+}
+
+/**
+ * The word on the card.
+ *
+ * IT USED TO DERIVE ONE FROM THE SCORE, and that was the fifth and worst of
+ * the renderings B3-16 was raised about: `< 40 ? 'Overdue' : < 60 ? 'At risk'`
+ * — a third pair of thresholds, neither of them configuration, producing the
+ * phrase "At risk" from a question that is not the one that phrase answers.
+ * The owner's report calls a customer at risk when they are 1.25 of their own
+ * cycles overdue; this called one at risk for owing money while ordering every
+ * week. Worse, an unscored customer fell through to 'Active' — a verdict about
+ * somebody nothing had measured.
+ *
+ * The band is the answer now, and it arrives from the server already computed
+ * by the one engine `customers.status`, the Call Log and the owner's retention
+ * report all read. `status` still wins where MahekOne has stated one, because
+ * that is a decision somebody made and this is a derivation.
+ *
+ * Null where there is nothing to say — the caller draws no verdict rather than
+ * inventing one.
+ */
+export function customerStage(
+  c: Pick<Customer, 'status' | 'healthBand'>,
+): 'Active' | 'At risk' | 'Dormant' | 'Lost' | null {
+  if (c.status === 'Overdue' || c.status === 'At risk' || c.status === 'Active') {
+    return c.status === 'Overdue' ? 'At risk' : c.status;
+  }
+  switch (c.healthBand) {
+    case 'active':
+      return 'Active';
+    case 'at-risk':
+      return 'At risk';
+    case 'dormant':
+      return 'Dormant';
+    case 'lost':
+      return 'Lost';
+    default:
+      return null;
+  }
 }
 
 /** Whole days since a `YYYY-MM-DD`, or null when there is no date to count from. */
@@ -156,8 +313,21 @@ export async function getCustomer(id: string): Promise<Customer | null> {
  * missing them then capturing them is an early field task rather than a
  * background nicety.
  */
-export async function customersWithoutGps(): Promise<Customer[]> {
-  return all<Customer>('SELECT * FROM customers WHERE gpsLat IS NULL OR gpsLng IS NULL ORDER BY name');
+export async function customersWithoutGps(): Promise<{ rows: Customer[]; total: number }> {
+  /* Capped and counted like every other read of the book. Nothing calls this
+     yet, which is exactly why the cap goes on now: 487 of the 1,076 shops on a
+     real handset have no coordinate, so the screen this is waiting for would
+     mount half the territory on its first render and freeze the app the way
+     the pick list did. */
+  const counted = await one<{ n: number }>(
+    'SELECT COUNT(*) AS n FROM customers WHERE gpsLat IS NULL OR gpsLng IS NULL',
+  );
+  const rows = await all<Customer>(
+    `SELECT * FROM customers
+      WHERE gpsLat IS NULL OR gpsLng IS NULL
+      ORDER BY name LIMIT ${CUSTOMER_PAGE}`,
+  );
+  return { rows, total: counted?.n ?? rows.length };
 }
 
 /**

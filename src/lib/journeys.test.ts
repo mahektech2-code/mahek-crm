@@ -3404,7 +3404,11 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     setTestUser(priya);
   });
 
-  test("a lead becomes a customer the moment it orders", async () => {
+  test("a lead becomes a customer on its SECOND order, never its first", async () => {
+    /* The client's own correction. A first order from a shop that has just
+       finished a trial is a few cans to try in their own booth — the end of
+       the trial rather than the start of a relationship, and it routinely does
+       not repeat. Promoting on it counts those shops as conversions for ever. */
     const lead = await makeCustomer(priya.id, {
       kind: "lead",
       leadSource: "Walk-in",
@@ -3413,14 +3417,34 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     });
     const [product] = await db.select().from(productsTable).limit(1);
 
-    const saved = await saveInteraction({
-      customerId: lead.id,
-      interactionType: "outbound_call",
-      outcome: "order_taken",
-      productQuantities: { [product.id]: 4 },
-      idempotencyKey: randomUUID(),
-    });
-    assert.ok(saved.ok, JSON.stringify(saved));
+    const order = async () =>
+      saveInteraction({
+        customerId: lead.id,
+        interactionType: "outbound_call",
+        outcome: "order_taken",
+        productQuantities: { [product.id]: 4 },
+        idempotencyKey: randomUUID(),
+      });
+
+    const first = await order();
+    assert.ok(first.ok, JSON.stringify(first));
+
+    const [afterFirst] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, lead.id));
+    assert.equal(afterFirst.kind, "lead", "one order is a trial, not a relationship");
+
+    /* Accounts accept the first one. Until they do it is the customer saying
+       yes rather than the business, and `lib/order-status.ts` is what says so:
+       a declined order must never promote anybody. */
+    await db
+      .update(orders)
+      .set({ status: "confirmed" })
+      .where(eq(orders.customerId, lead.id));
+
+    const second = await order();
+    assert.ok(second.ok, JSON.stringify(second));
 
     const [after] = await db
       .select()
@@ -3429,7 +3453,7 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     assert.equal(
       after.kind,
       "customer",
-      "ordering IS the definition of a customer",
+      "coming back for a second order IS the definition of a customer",
     );
     assert.equal(
       after.salesAmId,
@@ -3439,7 +3463,7 @@ describe("Who the Call Log puts in front of a telecaller", () => {
     assert.equal(
       after.backOfficeAmId,
       null,
-      "back office is a decision, not a guess on first order",
+      "back office is a decision, not a guess on conversion",
     );
 
     // And the Information tab stops hiding the purchase history it just began.
@@ -3450,6 +3474,41 @@ describe("Who the Call Log puts in front of a telecaller", () => {
       info?.purchase,
       "the purchase section appears once they have ordered",
     );
+  });
+
+  test("an order accounts DECLINED does not promote a lead", async () => {
+    /* The reason the count goes through `lib/order-status.ts` rather than
+       `status <> 'cancelled'`: a declined order is the business saying no, and
+       an account promoted on the strength of one is a customer nobody agreed
+       to sell to. */
+    const lead = await makeCustomer(priya.id, {
+      kind: "lead",
+      salesAmId: null,
+      lastOrderDate: null,
+    });
+    const [product] = await db.select().from(productsTable).limit(1);
+
+    const place = () =>
+      saveInteraction({
+        customerId: lead.id,
+        interactionType: "outbound_call",
+        outcome: "order_taken",
+        productQuantities: { [product.id]: 2 },
+        idempotencyKey: randomUUID(),
+      });
+
+    assert.ok((await place()).ok);
+    await db
+      .update(orders)
+      .set({ status: "declined" })
+      .where(eq(orders.customerId, lead.id));
+    assert.ok((await place()).ok);
+
+    const [after] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, lead.id));
+    assert.equal(after.kind, "lead", "a declined order counted towards conversion");
   });
 
   test("a lead is scoped by its owner, a customer by its sales account manager", async () => {

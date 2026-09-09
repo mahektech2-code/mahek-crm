@@ -10,7 +10,6 @@ import {
   mbosSamples,
   mbosTasks,
   mbosVisits,
-  notifications,
   orders,
 } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
@@ -24,6 +23,8 @@ import {
 } from "@/lib/engines/lead-nurture";
 import { today } from "@/lib/recompute";
 import { recomputeSalesPerformance } from "@/lib/services/performance-service";
+import { notifyUsers } from "./notify";
+import { collectPushReceipts, prunePushFailures } from "./mbos/push";
 
 /**
  * The scheduled work MBOS needs, per brief §8.
@@ -40,8 +41,6 @@ import { recomputeSalesPerformance } from "@/lib/services/performance-service";
  */
 
 export type Counted = { recordsAffected: number; detail: string };
-
-const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
 /** Today, in the business timezone rather than the server's. */
 const TODAY = sql`((now() AT TIME ZONE ${APP_TIMEZONE})::date)`;
@@ -255,14 +254,18 @@ export async function escalateOverdueTasks(): Promise<Counted> {
 
   for (const t of due) {
     if (!t.assignedToUserId) continue;
-    await db.insert(notifications).values({
-      id: id("notif"),
-      userId: t.assignedToUserId,
-      title: "Task overdue",
-      body: `${t.title} is past its date and your manager has been told.`,
-      kind: "warning",
-      href: "/field/tasks",
-    });
+    await notifyUsers([
+      {
+        userId: t.assignedToUserId,
+        title: "Task overdue",
+        body: `${t.title} is past its date and your manager has been told.`,
+        kind: "warning",
+        href: "/field/tasks",
+        // The handset's own task list. `/field/tasks` is a MahekOne route the
+        // salesman this is addressed to has no app to open.
+        mbosHref: "/tasks",
+      },
+    ]);
   }
 
   return { recordsAffected: due.length, detail: `${due.length} tasks escalated` };
@@ -312,13 +315,130 @@ export async function flagOverdueSamples(): Promise<Counted> {
   return { recordsAffected: rows.length, detail: `${rows.length} samples past their follow-up` };
 }
 
+/**
+ * §P — a customer past their own reorder date gets a task, once.
+ *
+ * The CYCLE is the customer's own measured rhythm and not a company default, so
+ * a fortnightly shop is chased at a fortnight and a quarterly one is left alone
+ * — which is the whole reason this reads `cycle_days` rather than a flat number.
+ *
+ * ONCE is the load-bearing word. A nightly pass that raised a task every night
+ * would put thirty rows on a salesman's list for one shop that has gone quiet,
+ * and a list like that is one people stop reading — which costs far more than
+ * the reminder was worth. The guard is the open task itself: while one is
+ * standing for this customer nothing new is raised, so the reminder returns
+ * only after somebody has dealt with the last one.
+ *
+ * Only accounts with a MEASURED cycle. `cycle_is_default` means nobody has seen
+ * enough orders to know their rhythm, and chasing on the strength of a default
+ * is chasing on the strength of a guess — the same rule the Call Log's quiet
+ * window already follows.
+ */
+export async function raiseReorderFollowUps(): Promise<Counted> {
+  const day = await today();
+
+  const due = await db.execute<{
+    id: string;
+    name: string;
+    salesmanId: string;
+    days: number;
+    cycleDays: number;
+  }>(sql`
+    select c.id, c.name,
+           coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
+           (${day}::date - c.last_order_date)::int as days,
+           c.cycle_days as "cycleDays"
+      from customers c
+     where c.kind = 'customer'
+       and c.status = 'active'
+       and c.do_not_contact = false
+       and c.last_order_date is not null
+       -- A measured cycle only. A default is a guess, and chasing on a guess
+       -- is how a quarterly buyer gets rung every month.
+       and c.cycle_is_default = false
+       and c.cycle_days > 0
+       and (${day}::date - c.last_order_date) >= c.cycle_days
+       and coalesce(c.sales_am_id, c.owner_id) is not null
+       -- Raised ONCE. While a reorder task is standing for this shop nothing
+       -- new is raised, so the reminder comes back only after somebody has
+       -- dealt with the last one rather than every night for a month.
+       and not exists (
+         select 1 from mbos_tasks t
+          where t.customer_id = c.id
+            and t.source_type = 'reorder'
+            and t.status in ('open', 'in_progress')
+       )
+     limit 200
+  `);
+
+  for (const row of due) {
+    await db
+      .insert(mbosTasks)
+      .values({
+        id: `mbos_task_${randomUUID().slice(0, 12)}`,
+        title: `Due to reorder — ${row.name}`,
+        description: `Last ordered ${row.days} days ago and they buy about every ${row.cycleDays}. Worth a call or a stop.`,
+        assignedToUserId: row.salesmanId,
+        priority: row.days >= row.cycleDays * 2 ? "high" : "medium",
+        dueDate: day,
+        customerId: row.id,
+        status: "open",
+        sourceType: "reorder",
+        sourceId: row.id,
+        createdById: row.salesmanId,
+        updatedById: row.salesmanId,
+      })
+      .catch(() => {});
+  }
+
+  return { recordsAffected: due.length, detail: `${due.length} due to reorder` };
+}
+
 /* ----------------------------------------------------------- composites */
+
+/**
+ * What Expo made of the messages it accepted, read back.
+ *
+ * Hourly, which is comfortably inside Expo's 24-hour receipt window and the
+ * only requirement there is. It is the sole path by which a dead token is ever
+ * discovered: `DeviceNotRegistered` arrives here and nowhere else, and a token
+ * nobody clears is one every future message is thrown away against while the
+ * office reads an unbroken run of successes.
+ *
+ * Cheap by construction — one request per hundred outstanding tickets, and the
+ * table is a worklist that empties itself, so a quiet hour costs one query
+ * that finds nothing.
+ */
+async function readPushReceipts(): Promise<Counted> {
+  const r = await collectPushReceipts();
+  return {
+    recordsAffected: r.checked,
+    detail: r.checked
+      ? `${r.delivered} delivered, ${r.failed} failed, ${r.tokensCleared} dead ${r.tokensCleared === 1 ? "token" : "tokens"} cleared`
+      : "no push receipts outstanding",
+  };
+}
+
+/**
+ * Failed pushes older than the retention window, swept.
+ *
+ * Delivered ones are already gone — deleted the moment their receipt confirmed
+ * them, because the notification row is the record and a second copy of "this
+ * worked" earns nothing. What is left is the evidence of what did NOT arrive,
+ * and it is kept only as long as somebody might read it.
+ */
+async function sweepPushFailures(): Promise<Counted> {
+  const gone = await prunePushFailures();
+  return { recordsAffected: gone, detail: `${gone} old push failures cleared` };
+}
 
 export async function mbosNightly(): Promise<Counted> {
   const parts = [
+    await sweepPushFailures(),
     await closeOpenVisits(),
     await markMissedCheckouts(),
     await ageLeads(),
+    await raiseReorderFollowUps(),
     await countCustomersWithoutGps(),
     /* §13 — the sequence, once a day. Its longest interval is four days, so a
        nightly pass is ample and an hourly one would re-derive the same events
@@ -350,6 +470,24 @@ async function refreshPerformance(): Promise<Counted> {
   return { recordsAffected: people, detail: `${people} scored for ${day.slice(0, 7)}` };
 }
 
+/**
+ * The attendance photographs past their window, deleted.
+ *
+ * HERE rather than in the nightly, because the retention window is a number on
+ * a screen. Swept once a night, "72 hours" would mean up to ninety-six for
+ * anybody who checked in during the morning — and the gap between what a
+ * setting says and what it does is exactly the kind of thing nobody notices
+ * until it is the subject of an argument about somebody's pay.
+ */
+async function sweepSelfies(): Promise<Counted> {
+  const { sweepAttendanceSelfies } = await import("./services/attachment-service");
+  const { swept } = await sweepAttendanceSelfies();
+  return {
+    recordsAffected: swept,
+    detail: swept ? `${swept} attendance photographs deleted` : "no photographs past their window",
+  };
+}
+
 export async function mbosHourly(): Promise<Counted> {
   const parts = [
     await escalateOverdueTasks(),
@@ -362,6 +500,8 @@ export async function mbosHourly(): Promise<Counted> {
     await chaseSampleReviews(),
     await flagSamplesPastDelivery(),
     await refreshPerformance(),
+    await readPushReceipts(),
+    await sweepSelfies(),
   ];
   return {
     recordsAffected: parts.reduce((a, p) => a + p.recordsAffected, 0),
@@ -467,7 +607,7 @@ export async function raiseNurtureTasks(
 
   await tx.insert(mbosTasks).values(
     rows.map(({ task, assignee }) => ({
-      id: id("task"),
+      id: `mbos_task_${randomUUID().slice(0, 12)}`,
       title: task.title,
       description: task.detail,
       assignedToUserId: assignee,
@@ -676,7 +816,7 @@ export async function runNurturePass(): Promise<Counted> {
       salesmanId: mbosSamples.salesmanId,
       requestedOn: dayOf(mbosSamples.serverCreatedAt),
       dispatchedOn: dayOf(mbosSamples.dispatchedAt),
-      receivedOn: dayOf(mbosSamples.receivedConfirmedAt),
+      receivedOn: dayOf(mbosSamples.receivedAt),
       trialOutcome: mbosSamples.trialOutcome,
       reviewedOn: dayOf(mbosSamples.reviewedAt),
     })
@@ -824,7 +964,7 @@ export async function chaseSampleReviews(): Promise<Counted> {
       customerId: mbosSamples.customerId,
       salesmanId: mbosSamples.salesmanId,
       state: mbosSamples.state,
-      receivedOn: sql<string | null>`((${mbosSamples.receivedConfirmedAt} AT TIME ZONE ${APP_TIMEZONE})::date)::text`,
+      receivedOn: sql<string | null>`((${mbosSamples.receivedAt} AT TIME ZONE ${APP_TIMEZONE})::date)::text`,
       chaseCount: mbosSamples.reviewChaseCount,
       lastChasedOn: sql<string | null>`((${mbosSamples.lastReviewChaseAt} AT TIME ZONE ${APP_TIMEZONE})::date)::text`,
     })
@@ -862,7 +1002,7 @@ export async function chaseSampleReviews(): Promise<Counted> {
       if (existing) return;
 
       await tx.insert(mbosTasks).values({
-        id: id("task"),
+        id: `mbos_task_${randomUUID().slice(0, 12)}`,
         title: due.title,
         description: due.detail,
         assignedToUserId: assignee,
@@ -895,7 +1035,7 @@ export async function chaseSampleReviews(): Promise<Counted> {
  *
  * Flagged, never advanced. `state` is what somebody did, and moving a sample to
  * `received` because a date passed would put a delivery on the record that
- * nobody witnessed — the whole reason `receivedConfirmedAt` says "confirmed by
+ * nobody witnessed — the whole reason `receivedAt` says "confirmed by
  * the customer or the salesman, not by the courier".
  *
  * The flag is a task rather than a column: the useful output of "this docket
@@ -911,7 +1051,7 @@ export async function flagSamplesPastDelivery(): Promise<Counted> {
       customerId: mbosSamples.customerId,
       salesmanId: mbosSamples.salesmanId,
       courierName: mbosSamples.courierName,
-      courierDocket: mbosSamples.courierDocket,
+      trackingNumber: mbosSamples.trackingNumber,
       expected: mbosSamples.expectedDeliveryDate,
     })
     .from(mbosSamples)
@@ -940,12 +1080,12 @@ export async function flagSamplesPastDelivery(): Promise<Counted> {
       if (existing) return;
 
       await tx.insert(mbosTasks).values({
-        id: id("task"),
+        id: `mbos_task_${randomUUID().slice(0, 12)}`,
         title: "Sample has not arrived",
         description:
           `It was due on ${s.expected}` +
           (s.courierName ? ` with ${s.courierName}` : "") +
-          (s.courierDocket ? ` on docket ${s.courierDocket}` : "") +
+          (s.trackingNumber ? ` on docket ${s.trackingNumber}` : "") +
           ". Chase the courier, and confirm with the customer whether it has landed.",
         assignedToUserId: assignee,
         customerId: s.customerId,

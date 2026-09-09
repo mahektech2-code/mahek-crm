@@ -674,7 +674,7 @@ describe("§24 — an active lead never sits with nothing owed by anybody", () =
 /* ==================================================================== §26 */
 
 describe("§26 — lost is open from every rung", () => {
-  test("from all 23 stages, on every ladder, with an empty input", () => {
+  test("from all 24 stages, on every ladder, with an empty input", () => {
     for (const salesType of ["direct", "third_party", "distributor", null] as const) {
       for (const stage of ALL_STAGES) {
         const v = gateTo({ salesType, stage }, "lost");

@@ -37,6 +37,16 @@ import { useStore } from '../src/state/store';
  * every one is a different conversation with a different person afterwards —
  * "dries slow" goes to the works and "dearer than Asian" goes to the office,
  * and a single free-text box holding both can be read back as neither.
+ *
+ * THERE IS ONE OF THIS SCREEN, and there were briefly two. A second build of
+ * it read `data/requests.ts` and drew the same lifecycle in fewer marks —
+ * dispatch, delivered, received, trial, a verdict. One route can only open one
+ * screen, and this is the one the funnel needs: `sample_feedback` is what the
+ * gate in front of Negotiation reads, and only this screen writes it, so
+ * keeping the other would have left that rung shut with nothing able to open
+ * it. Nothing is lost in the store — every column the other build wrote is
+ * still on `samples`, still filled by the pull, and `confirmReceived` still
+ * sends `receivedAt` up the wire under the name the office reads.
  */
 
 function toneFor(state: string): BadgeTone {

@@ -965,7 +965,384 @@ export const MIGRATIONS: string[][] = [
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_fix ON positions(at, lat, lng);`,
   ],
 
-  /* ---- v13 · the lead funnel ------------------------------------------- */
+  /* ---- v12 · is this a shop or somebody we hope will become one? -------- */
+  [
+    /*
+     * `kind` was on the wire from the first MBOS commit and had nowhere to
+     * land, so it was dropped from the payload when the two sides were
+     * reconciled. It is wanted now: this list holds LEADS as well as
+     * customers — a lead reaches it through `owner_id` — and a card that does
+     * not say which is which asks the salesman to remember, per row.
+     */
+    `ALTER TABLE customers ADD COLUMN kind TEXT;`,
+  ],
+
+  /* ---- v13 · what the office knows this shop bought and paid ------------ */
+  [
+    /*
+     * THE RECORD'S HISTORY TABS WERE PLACEHOLDERS — "Next to build" — and the
+     * obvious cheap fix was to render them off `timeline_events`, which already
+     * syncs. Production says no: 10,874 orders against 61 order events, and
+     * 18,414 receipts against 271 payment events. A tab built that way would
+     * show one order to a salesman standing in a shop that has placed forty,
+     * and be believed. Better a placeholder than a screen that lies.
+     *
+     * So the office's history gets its own channel and its own tables.
+     *
+     * NOT `orders` and `payments`. Those are OWNED — the salesman authors them,
+     * they carry `syncState` and they feed the outbox — and a sync writing into
+     * them would put the office's rows in the queue that sends his. These are
+     * reference: read-only here, replaced by the pull, cleared on sign-out.
+     */
+    `CREATE TABLE IF NOT EXISTS customer_orders (
+      id TEXT PRIMARY KEY,
+      customerId TEXT NOT NULL,
+      orderedAt TEXT,
+      status TEXT,
+      valuePaise INTEGER,
+      lines INTEGER,
+      orderNo TEXT,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_customer_orders_cust
+       ON customer_orders(customerId, orderedAt DESC);`,
+
+    `CREATE TABLE IF NOT EXISTS customer_payments (
+      id TEXT PRIMARY KEY,
+      customerId TEXT NOT NULL,
+      receivedAt TEXT,
+      amountPaise INTEGER,
+      mode TEXT,
+      reference TEXT,
+      status TEXT,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_customer_payments_cust
+       ON customer_payments(customerId, receivedAt DESC);`,
+  ],
+
+  /* ---- v14 · the column every accepted plan_day was written to ----------- */
+  [
+    /*
+     * `setEntityState` writes `serverCreatedAt` on ACCEPT, for whatever table
+     * the entity type maps to — and an accept always carries a
+     * `serverReceivedAt`, so that branch is not the exception, it is the
+     * ordinary path. Every other table in `ENTITY_TABLE` has the column.
+     * `journey_days` did not, so agreeing a day threw
+     * `no such column: serverCreatedAt` INSIDE the push loop: after the queue
+     * row had been marked synced, before the rest of the batch had been read,
+     * and before `applyPull` ran at all. The results behind it stayed
+     * `syncing`, the whole delta was discarded, and the day itself was left
+     * reading "waiting for signal" for ever with the answer already on the
+     * server.
+     *
+     * Nothing writes a plan day's own `createdAt` — the office owns the row —
+     * so this is only ever the office's acknowledgement, which is exactly what
+     * the column means everywhere else.
+     */
+    `ALTER TABLE journey_days ADD COLUMN serverCreatedAt INTEGER;`,
+    /*
+     * WHICH shops were picked, as well as how many.
+     *
+     * `pickShops` writes the count and enqueues the ids, and `pickedFor` read
+     * them back out of `journey_stops` — which the office mints, so they
+     * arrive on the next pull and not before. Reopening the pick screen in
+     * between showed nothing ticked at all, on a screen whose own comment
+     * promises that reopening it is a correction rather than starting again.
+     * Twelve shops chosen in a shop doorway, gone the moment somebody backed
+     * out to check the date.
+     *
+     * The stops still WIN wherever they exist: this is what was asked for and
+     * they are what the office issued, and the second is the one to walk.
+     */
+    `ALTER TABLE journey_days ADD COLUMN pickedIds TEXT;`,
+  ],
+
+  /* ---- v15 · the check-OUT selfie, which had nowhere to go ---------------- */
+  [
+    /*
+     * Attendance took a photograph at one end of the day.
+     *
+     * `checkInSelfieId` has existed since v1 and there was no counterpart, so
+     * a day proved somebody arrived and proved nothing about when they
+     * stopped — which is the half that decides the hours. Both are mandatory
+     * now and this is where the last one lands.
+     *
+     * The MIRROR, not the record. Every session in `sessions` carries its own
+     * `inSelfieId` and `outSelfieId` — a day with two breaks is three arrivals
+     * and three departures, and each of the six is photographed — and these
+     * two columns hold the first in and the last out, exactly as `checkInAt`
+     * and `checkOutAt` already do beside them. Screens read the mirrors;
+     * anybody auditing a session reads the list.
+     */
+    `ALTER TABLE attendance_days ADD COLUMN checkOutSelfieId TEXT;`,
+  ],
+
+  /* ---- v16 · a lead has a place, and somebody running it ----------------- */
+  [
+    /*
+     * THE SERVER HAS BEEN SENDING THESE ALL ALONG.
+     *
+     * `openLeads` selects `gps_lat` and `gps_lng` on every bootstrap and every
+     * delta, and this table had nowhere to put them — so `upsert` dropped both
+     * columns on arrival, silently, exactly as it is designed to. That is the
+     * right trade in general: a field the screens cannot read costs nothing,
+     * and refusing the row would cost the book. Here it cost the one thing a
+     * lead map is made of. Every lead this handset holds has a coordinate on
+     * the server and none on the phone.
+     *
+     * Nothing else had to change for these to start landing. The generic
+     * upsert writes whatever it recognises; recognising it is the whole fix.
+     */
+    `ALTER TABLE leads ADD COLUMN gpsLat REAL;`,
+    `ALTER TABLE leads ADD COLUMN gpsLng REAL;`,
+    /*
+     * Who is running the conversion, once a lead is qualified.
+     *
+     * The salesman keeps the lead — it is still his to visit and it stays in
+     * his book — so this is read as information rather than as ownership. It
+     * is here so the card can say WHO to ring about a commercial question,
+     * offline, which is the only moment the answer is worth anything.
+     */
+    `ALTER TABLE leads ADD COLUMN leadManagerId TEXT;`,
+    `ALTER TABLE leads ADD COLUMN leadManagerName TEXT;`,
+  ],
+
+  /* ---- v17 · what the salesman actually learns in the shop --------------- */
+  [
+    /*
+     * §A and §C of the brief. The form asked for a name, a company, a mobile,
+     * a town and a guess at the money; these are the nine other things a
+     * salesman finds out while he is standing there, and had nowhere to write.
+     *
+     * `monthlyVolumeLitres` is LITRES and not cans, which is the one place
+     * this app departs from "a quantity is cans". There is no SKU at capture —
+     * a prospect says "about two hundred litres a month" before anybody knows
+     * what pack they will buy it in — so cans would be a unit nobody has
+     * agreed the size of.
+     */
+    `ALTER TABLE leads ADD COLUMN address TEXT;`,
+    `ALTER TABLE leads ADD COLUMN customerType TEXT;`,
+    `ALTER TABLE leads ADD COLUMN gstin TEXT;`,
+    `ALTER TABLE leads ADD COLUMN requirement TEXT;`,
+    `ALTER TABLE leads ADD COLUMN monthlyVolumeLitres INTEGER;`,
+    `ALTER TABLE leads ADD COLUMN decisionMaker TEXT;`,
+    /*
+     * The shop front. An `attachments` id, never a path — the file goes up the
+     * media queue AFTER this row, exactly like a visit's shop photo, so this
+     * names a file whose bytes may still be on the phone.
+     */
+    `ALTER TABLE leads ADD COLUMN shopPhotoId TEXT;`,
+    /*
+     * A competitor, captured at the lead rather than only on a visit.
+     *
+     * The office holds this properly in `mbos_competitor_records`, with a
+     * price, credit days, strengths and weaknesses. Asking for all of that
+     * outside a shop with the customer waiting is how none of it gets typed —
+     * so the lead form asks the one question worth asking cold, and the visit
+     * form asks the rest.
+     */
+    `ALTER TABLE leads ADD COLUMN competitorName TEXT;`,
+  ],
+
+  /* ---- v18 · a Suspect cannot be visited for ever ----------------------- */
+  [
+    /*
+     * How many times anybody has stood in this shop, as the server counts it.
+     *
+     * Not derived on the handset: this phone holds only the visits IT authored
+     * — there is no visits channel on the pull — so after a reinstall, or for a
+     * lead somebody else has been to, a local count would read zero and the cap
+     * would never fire. The office counts, the handset adds whatever it has not
+     * managed to send yet, and that sum is the honest answer offline.
+     */
+    `ALTER TABLE leads ADD COLUMN visitCount INTEGER NOT NULL DEFAULT 0;`,
+    /*
+     * Why a held or stuck lead is not moving. One column for two questions
+     * that are the same question — see `customers.lead_hold_reason`.
+     */
+    `ALTER TABLE leads ADD COLUMN holdReason TEXT;`,
+  ],
+
+  /* ---- v19 · the validation call, and the script it is made from -------- */
+  [
+    /*
+     * §E. Its own table rather than columns on `leads`, for the reason the
+     * server gives at length: what the salesman was told and what the office
+     * was told on the phone are two readings of one shop, and the difference
+     * between them is the only thing this call produces that nothing else
+     * could. Writing the second over the first destroys exactly that.
+     */
+    `CREATE TABLE IF NOT EXISTS lead_validations (
+      id TEXT PRIMARY KEY,
+      customerId TEXT NOT NULL,
+      calledAt INTEGER NOT NULL,
+      reached INTEGER NOT NULL DEFAULT 1,
+      productFeedback TEXT,
+      qualityFeedback TEXT,
+      dispatchFeedback TEXT,
+      salesmanFeedback TEXT,
+      confirmedRequirement TEXT,
+      confirmedMonthlyVolumeLitres INTEGER,
+      confirmedCompetitor TEXT,
+      confirmedPotentialPaise INTEGER,
+      verdict TEXT NOT NULL DEFAULT 'pending',
+      verdictReason TEXT,
+      notes TEXT,
+      taskId TEXT,
+      clientCreatedAt INTEGER NOT NULL,
+      serverCreatedAt INTEGER,
+      deviceId TEXT NOT NULL,
+      syncState TEXT NOT NULL DEFAULT 'local',
+      syncMessage TEXT
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_lead_val_cust ON lead_validations(customerId, calledAt DESC);`,
+    /*
+     * WHY a task exists, which the handset had no way to know.
+     *
+     * The server has sent `sourceType`/`sourceId` on every task since the
+     * rejected-order rule was written, and `upsertTasks` — a hand-rolled
+     * handler that types its columns out — never read them, so they were
+     * dropped in silence. Harmless while every task was just a line of text;
+     * not harmless now, because a validation call and a requirement visit are
+     * tasks that have to OPEN something, and a task list with no idea what kind
+     * of work a row is can only ever show its title.
+     */
+    `ALTER TABLE tasks ADD COLUMN sourceType TEXT;`,
+    `ALTER TABLE tasks ADD COLUMN sourceId TEXT;`,
+  ],
+
+  /* ---- v20 · a sample, from the lorry to the verdict -------------------- */
+  [
+    /*
+     * §I, §J and §K. Three dates rather than one, because they are three
+     * assertions by three different parties and no two are the same fact:
+     * `dispatchedAt` is us saying it went, `deliveredAt` is the carrier or our
+     * own man saying it arrived, and `receivedAt` is the SHOP saying it is in
+     * their hands. §J turns entirely on the third — "sample received Yes/No; if
+     * No the follow-up remains pending" — and it is never defaulted from the
+     * second, because a default would quietly assert something nobody asked
+     * the customer.
+     *
+     * It is the same discipline `payment_receipts` keeps for money, one module
+     * over.
+     */
+    `ALTER TABLE samples ADD COLUMN dispatchedAt INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN courierName TEXT;`,
+    `ALTER TABLE samples ADD COLUMN trackingNumber TEXT;`,
+    `ALTER TABLE samples ADD COLUMN receivedAt INTEGER;`,
+    /* The gap between these two IS the review window. A trial started and never
+       finished is the commonest way a sample goes quiet, and it is invisible
+       where the only column is an outcome. */
+    `ALTER TABLE samples ADD COLUMN trialStartedAt INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN trialCompletedAt INTEGER;`,
+    `ALTER TABLE samples ADD COLUMN satisfaction TEXT;`,
+    `ALTER TABLE samples ADD COLUMN additionalRequirement TEXT;`,
+    `ALTER TABLE samples ADD COLUMN rejectionReason TEXT;`,
+  ],
+
+  /*
+   * v(next) — B3-16. The retention BAND, beside the score that was already
+   * here.
+   *
+   * Two models and four renderings of them, two of which used the same two
+   * words for different questions: the salesman's list called a customer
+   * "At risk" below a SCORE of 40, and the owner's report called one "At
+   * risk" at 1.25 CYCLES overdue. A manager and an owner could read the same
+   * phrase about one shop on one afternoon and mean different things.
+   *
+   * The band is the retention answer and owns that phrase now; the score
+   * keeps its number and says what it is actually docking. Computed on the
+   * SERVER like the score beside it — a phone deriving its own would derive
+   * it from a book hours old, and two salesmen in one shop would disagree.
+   *
+   * Null is a real answer: the customer has never ordered, so they have not
+   * stopped buying — they have not started.
+   */
+  [
+    `ALTER TABLE customers ADD COLUMN healthBand TEXT;`,
+  ],
+
+  /* ---- v(next) · WHAT THE MONEY IS AGAINST ------------------------------ */
+  [
+    /*
+     * B3-14 §O. The open bills behind `customers.outstandingPaise`.
+     *
+     * The handset has always carried that ONE number, so a salesman could tell
+     * a shop it owed 47,000 and not which invoices that was. And
+     * `collectPayment` has always taken a `billRefs` argument that reaches the
+     * server as `billIds` — which `handlePayment` validates and allocates in
+     * `settle` mode — but no screen ever filled it. So every rupee collected in
+     * the field spread OLDEST FIRST, including from the customer standing there
+     * paying against the invoice in his hand.
+     *
+     * Read-only, like `customer_orders` and `customer_payments` beside it: the
+     * office's ledger as it stands, never something this app writes back. The
+     * salesman's own collection is still a `payments` row in the outbox, and it
+     * is still `reported` until accounts find the money in the bank.
+     *
+     * `paymentPosition` rides along because a balance here is not always a
+     * debt: on an `unstated` bill it is the full amount purely because nobody
+     * has recorded anything against it either way, and `recomputeOutstanding`
+     * keeps it out of the figure above. Drawing it as money owed would be the
+     * imported-book mistake arriving on a phone.
+     */
+    `CREATE TABLE IF NOT EXISTS customer_bills (
+      id TEXT PRIMARY KEY,
+      customerId TEXT NOT NULL,
+      billNo TEXT,
+      billDate TEXT,
+      dueDate TEXT,
+      amountPaise INTEGER,
+      paidPaise INTEGER,
+      balancePaise INTEGER,
+      overdueDays INTEGER,
+      disputed INTEGER NOT NULL DEFAULT 0,
+      paymentPosition TEXT,
+      lastSyncedAt INTEGER NOT NULL DEFAULT 0
+    );`,
+    /* Oldest first within a customer: the order they are chased in, and the
+       order the automatic spread would settle them in. */
+    `CREATE INDEX IF NOT EXISTS idx_customer_bills_cust
+       ON customer_bills(customerId, billDate ASC);`,
+  ],
+
+  /*
+   * v(next) — a day he started himself.
+   *
+   * The pull sends this for every day now, so the column has to exist or the
+   * generic upsert throws on an unknown column and takes the WHOLE pull down
+   * with it — customers, products, the price list, all of it. That is the one
+   * failure this schema can produce on its own, and the test at the top of
+   * `src/lib/mbos-wire.test.ts` is what catches it before an APK carries it.
+   *
+   * 0 for every day that already exists, which is all of them: until now the
+   * office proposed every day there was.
+   */
+  [
+    `ALTER TABLE journey_days ADD COLUMN selfPlanned INTEGER NOT NULL DEFAULT 0;`,
+  ],
+
+  /*
+   * v(next) — a lead's locality, which the office has had all along.
+   *
+   * `openLeads` has selected `c.area` since leads existed and this table
+   * has never had a column to put it in, so every lead on every handset
+   * showed a city and no locality — while the customer beside it showed
+   * both, from the same two fields, because `customers` has the column.
+   *
+   * It is the same shape as the coordinates four blocks up, and it
+   * survived the fix for those: a hand-rolled handler cannot throw on a
+   * field it does not know, so the server sending one nobody reads is
+   * silent at both ends. That direction is checked now — see
+   * `a hand-rolled handler drops nothing the server sends` in
+   * `src/lib/mbos-wire.test.ts`, which is what found this one.
+   */
+  [
+    `ALTER TABLE leads ADD COLUMN area TEXT;`,
+  ],
+
+  /* ---- v26 · the lead funnel ------------------------------------------- */
   [
     /*
      * THE LADDER, ON THE PHONE.
@@ -984,24 +1361,32 @@ export const MIGRATIONS: string[][] = [
      * `sample_review` would put a lead on no chip at all — findable nowhere,
      * which is worse than filed a rung early. They are kept in step by
      * `bandOf()`, in one place, so the two can never disagree about one lead.
+     *
+     * IT IS v26 AND NOT v13. This block was written as v13 on its own branch
+     * while main shipped thirteen migrations of its own, and a version number
+     * is not a label — it is what a phone has already run. A handset carrying
+     * main's v13 must never be handed a different one, so this appends after
+     * everything main landed rather than taking a number that is spoken for.
+     * The columns main's own blocks already add are dropped from the list
+     * below for the same reason: a second ALTER of one column throws, and a
+     * migration that throws strands the handset.
      */
     `ALTER TABLE leads ADD COLUMN salesType TEXT;`,
     `ALTER TABLE leads ADD COLUMN funnelStage TEXT;`,
     `ALTER TABLE leads ADD COLUMN stageSince TEXT;`,
 
     /* §6 — the eight a Suspect owes before it may be a Prospect. Columns
+       — less `customerType`, `decisionMaker` and `gstin`, which the capture
+       form's own block already added under exactly those names. Columns
        rather than checklist ticks, because the gate reads real values: a tick
        beside an empty field is exactly what the gate engine exists to stop. */
-    `ALTER TABLE leads ADD COLUMN customerType TEXT;`,
     `ALTER TABLE leads ADD COLUMN monthlyLitres INTEGER;`,
     `ALTER TABLE leads ADD COLUMN competitor TEXT;`,
     `ALTER TABLE leads ADD COLUMN requiredProductId TEXT;`,
     `ALTER TABLE leads ADD COLUMN requiredProductName TEXT;`,
     `ALTER TABLE leads ADD COLUMN contactPerson TEXT;`,
-    `ALTER TABLE leads ADD COLUMN decisionMaker TEXT;`,
     `ALTER TABLE leads ADD COLUMN creditDaysWanted INTEGER;`,
     `ALTER TABLE leads ADD COLUMN application TEXT;`,
-    `ALTER TABLE leads ADD COLUMN gstin TEXT;`,
     `ALTER TABLE leads ADD COLUMN prospectReasonCode TEXT;`,
 
     /* §9 §11 — the checklist's answers, keyed by condition id. One JSON
@@ -1077,17 +1462,21 @@ export const MIGRATIONS: string[][] = [
      * inferred from whichever timestamp happened to be set. `localSampleState`
      * goes on deriving the word for a sample the office sent down; a sample
      * this handset moved sets it directly.
+     *
+     * `dispatchedAt`, `courierName` and `trialCompletedAt` are NOT here: the
+     * dispatch block already added all three. `courierDocket` sits beside
+     * `trackingNumber` and `receivedConfirmedAt` beside `receivedAt` rather
+     * than replacing either, because two flows write them — the requests
+     * screen and the lead's own sample screen — and a column renamed out
+     * from under one of them is a screen that silently stops recording.
      */
     `ALTER TABLE samples ADD COLUMN leadId TEXT;`,
     `ALTER TABLE samples ADD COLUMN reasonCode TEXT;`,
     `ALTER TABLE samples ADD COLUMN application TEXT;`,
     `ALTER TABLE samples ADD COLUMN approvedAt INTEGER;`,
-    `ALTER TABLE samples ADD COLUMN dispatchedAt INTEGER;`,
-    `ALTER TABLE samples ADD COLUMN courierName TEXT;`,
     `ALTER TABLE samples ADD COLUMN courierDocket TEXT;`,
     `ALTER TABLE samples ADD COLUMN expectedDeliveryDate TEXT;`,
     `ALTER TABLE samples ADD COLUMN receivedConfirmedAt INTEGER;`,
-    `ALTER TABLE samples ADD COLUMN trialCompletedAt INTEGER;`,
     `ALTER TABLE samples ADD COLUMN reviewedAt INTEGER;`,
     `ALTER TABLE samples ADD COLUMN cancelledAt INTEGER;`,
     `ALTER TABLE samples ADD COLUMN cancelReason TEXT;`,
@@ -1141,6 +1530,7 @@ export const MIGRATIONS: string[][] = [
  */
 export const SCHEMA_VERSION = MIGRATIONS.length;
 
+
 /** Tables holding work the salesman authored. A sync never deletes from these. */
 export const OWNED_TABLES = [
   'visits', 'orders', 'order_lines', 'payments', 'attendance_days', 'tasks',
@@ -1161,6 +1551,7 @@ export const REFERENCE_TABLES = [
   'customers', 'products', 'price_list', 'schemes', 'timeline_events',
   'journey_stops', 'leave_balances', 'holidays', 'documents', 'courses',
   'notifications', 'performance', 'salary',
+  'customer_orders', 'customer_payments', 'customer_bills',
   /* The policy and the modes are the office's, wholly. `expense_exceptions`
      is too: they are the office's questions about his day, and a question he
      has already answered comes back answered rather than being kept here. */

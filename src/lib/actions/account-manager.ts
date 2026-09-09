@@ -14,8 +14,10 @@ import {
   users,
 } from "@/db/schema";
 import { assignedUserId, requireCapability } from "@/lib/access-control";
+import { CRM_EVENT, writeTimelineEvents } from "@/lib/timeline";
 import { getConfig } from "@/lib/config/store";
 import { err, okVoid, fromThrown, type Result } from "@/lib/result";
+import { notifyUsers } from "../notify";
 
 /* ---------------------------------------------------------------------------
  * Changing who an account answers to.
@@ -431,6 +433,31 @@ export async function updateAccountManagers(
 
       if (history.length) await tx.insert(customerAmChanges).values(history);
       if (audits.length) await tx.insert(auditLog).values(audits);
+
+      /*
+       * §R — an ownership change is a fact about the ACCOUNT, and the timeline
+       * is the one place somebody reads an account's story before ringing it.
+       * `customer_am_changes` already records the same move in far more detail
+       * — from, to, reason code, both names — and stays the authority; this is
+       * the one line that says it happened, in the stream beside the calls and
+       * the visits it explains.
+       *
+       * In the transaction, like every other timeline write: an entry for a
+       * reassignment that rolled back is a reassignment that never happened, on
+       * a screen somebody believes.
+       */
+      await writeTimelineEvents(
+        tx,
+        history.map((h) => ({
+          customerId: h.customerId,
+          eventType: CRM_EVENT.ownerChange,
+          sourceApp: "crm" as const,
+          sourceRecordId: h.id,
+          occurredAt: new Date(),
+          actorUserId: ctx.user.id,
+          summary: `${h.role === "back_office" ? "Back office" : "Salesperson"} changed${h.toName ? ` to ${h.toName}` : " — now unassigned"}${h.reasonCode ? ` (${h.reasonCode.replace(/_/g, " ")})` : ""}`,
+        })),
+      );
     });
 
     if (!touched) {
@@ -484,7 +511,7 @@ export async function updateAccountManagers(
         href: "/crm/customers",
       });
     }
-    if (notes.length) await db.insert(notifications).values(notes);
+    if (notes.length) await notifyUsers(notes);
 
     try {
       revalidatePath("/crm/customers");

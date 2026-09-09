@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, Platform, ScrollView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, usePathname } from 'expo-router';
 import { color as C, type, weight } from '../../theme/tokens';
 import { Header, StatusStrip, TabBar, type StripTone, type TabKey } from './Chrome';
 import { ActionSheet, ConfirmSheet, Toast } from '../ui/overlays';
@@ -47,6 +47,8 @@ export const FROM_LABEL: Record<string, string> = {
   sample: 'Sample',
   'lead-prospect': 'Prospect details',
   'lead-qualify': 'Qualification',
+  maps: 'Offline maps',
+  pick: 'Pick your shops',
 };
 
 /** Reads the recorded entry route, so the label and the destination agree. */
@@ -102,7 +104,28 @@ export function AppFrame({
   children: React.ReactNode;
 }) {
   const insets = useSafeAreaInsets();
+
+  /*
+   * WHERE THIS SCREEN ACTUALLY IS.
+   *
+   * The shell used to send every one of these somewhere with `?from=home`
+   * hardcoded, because it had no idea which screen it was wrapping. Two things
+   * came out of that. The back link on nine sub-screens said "Home" whatever
+   * you had opened them from, so leaving the order form dropped you somewhere
+   * you had never been. And the bell pushed `/notifications` from the
+   * notifications screen — a second copy of the page you were already reading,
+   * with a back button that went to the first one.
+   *
+   * `usePathname` is the answer to both, and it has to be read HERE rather than
+   * passed in by each screen: a prop every caller has to remember is a prop
+   * somebody will forget, and this is exactly the kind of wrong nobody reports
+   * because it looks like the app being odd rather than broken.
+   */
+  const pathname = usePathname();
+  const here = (pathname ?? '').replace(/^\/+/, '').split('/')[0] || 'home';
+  const fromHere = `?from=${here}`;
   const keyboardHeight = useKeyboardHeight();
+  const [footerHeight, setFooterHeight] = React.useState(0);
   const unread = useUnreadCount();
   const waiting = usePendingCount();
   const checkInAt = useCheckInTime();
@@ -124,7 +147,7 @@ export function AppFrame({
       key: 'att',
       label: checkInAt != null ? 'In since ' + hhmm(checkInAt) : 'Not checked in',
       tone: checkedIn ? 'ok' : 'idle',
-      onPress: () => router.push('/attendance?from=home'),
+      onPress: () => router.push(`/attendance${fromHere}`),
     },
     {
       key: 'gps',
@@ -134,22 +157,31 @@ export function AppFrame({
     },
     {
       key: 'sync',
-      label: `${waiting} to send`,
-      tone: 'warn',
-      onPress: () => router.push('/sync?from=home'),
+      /*
+       * Nothing waiting is GOOD news, and it was drawn amber.
+       *
+       * The pip was `warn` unconditionally, so "0 to send" sat under an amber
+       * light on every screen of the app all day — which is how a warning
+       * light stops meaning anything: the one state worth noticing looked
+       * exactly like the ordinary one. And "0 to send" is a count of nothing,
+       * where the fact somebody wants is that the handset is clear.
+       */
+      label: waiting === 0 ? 'All sent' : `${waiting} to send`,
+      tone: waiting === 0 ? 'ok' : 'warn',
+      onPress: () => router.push(`/sync${fromHere}`),
     },
   ];
 
   const actionItems = [
     { glyph: 'visit', label: 'Start visit', sub: 'GPS, photos, voice note', run: () => { beginVisit(custId); router.push('/visit'); } },
-    { glyph: 'order', label: 'Punch order', sub: 'From their usual products', run: () => router.push('/order?from=home') },
-    { glyph: 'money', label: 'Collect payment', sub: 'Cash, cheque, UPI or transfer', run: () => router.push('/pay?from=home') },
+    { glyph: 'order', label: 'Punch order', sub: 'From their usual products', run: () => router.push(`/order${fromHere}`) },
+    { glyph: 'money', label: 'Collect payment', sub: 'Cash, cheque, UPI or transfer', run: () => router.push(`/pay${fromHere}`) },
     /* The form is asked for here and opened by the Leads screen, so the shop
        he is standing outside is typed in rather than found for a second time. */
-    { glyph: 'add', label: 'Add lead', sub: 'A shop you just walked past', run: () => { set({ sheet: 'leadForm' }); router.push('/leads?from=home'); } },
-    { glyph: 'camera', label: 'Log expense', sub: 'Photograph the bill', run: () => router.push('/expenses?from=home') },
-    { glyph: 'task', label: 'Create task', sub: 'For you or for someone else', run: () => router.push('/tasks?from=home') },
-    { glyph: 'sample', label: 'Request sample', sub: 'Sent for approval', run: () => router.push('/samples?from=home') },
+    { glyph: 'add', label: 'Add lead', sub: 'A shop you just walked past', run: () => { set({ sheet: 'leadForm' }); router.push(`/leads${fromHere}`); } },
+    { glyph: 'camera', label: 'Log expense', sub: 'Photograph the bill', run: () => router.push(`/expenses${fromHere}`) },
+    { glyph: 'task', label: 'Create task', sub: 'For you or for someone else', run: () => router.push(`/tasks${fromHere}`) },
+    { glyph: 'sample', label: 'Request sample', sub: 'Sent for approval', run: () => router.push(`/samples${fromHere}`) },
   ];
 
   /**
@@ -181,13 +213,26 @@ export function AppFrame({
   return (
     <View style={{ flex: 1, backgroundColor: C.canvas, paddingTop: insets.top }}>
       <View style={s.chrome}>
-        <Header title={title} onBack={onBack} unread={unread} onBell={() => router.push('/notifications?from=home')} />
+        <Header
+          title={title}
+          onBack={onBack}
+          unread={unread}
+          /* No bell on the notifications screen. A control whose whole job is
+             to bring you here is furniture once you have arrived, and tapping
+             it stacked a second copy of the page. */
+          onBell={here === 'notifications' ? undefined : () => router.push(`/notifications${fromHere}`)}
+        />
         <StatusStrip items={strip} />
       </View>
 
       {body}
 
-      {footer}
+      {/* Measured rather than guessed, so the toast can sit above whatever the
+          screen pinned here — see `Toast`. A screen with no footer measures 0
+          and nothing moves. */}
+      {footer ? (
+        <View onLayout={(e) => setFooterHeight(e.nativeEvent.layout.height)}>{footer}</View>
+      ) : null}
 
       {/* The tab bar is hidden while typing. Left in place it floats over the
           keyboard on Android, covering the top row of keys. */}
@@ -227,7 +272,7 @@ export function AppFrame({
         }}
       />
 
-      <Toast message={toast} onDone={clearToast} />
+      <Toast message={toast} onDone={clearToast} lift={footerHeight} />
     </View>
   );
 }

@@ -94,15 +94,15 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
       documents={documents}
       nurture={nurture}
       handover={handover}
+      handoverReasons={config["people.amChangeReasons"]}
       canVerify={canLead(user.role, "lead.verify")}
       canWork={canLead(user.role, "lead.work")}
-      /* §22 — naming the relationship owner is a customer reassignment, and
-         `customer.reassign` is accounts' and admin's on purpose: whose book an
-         account sits in decides whose targets it counts toward, so a manager
-         doing it is a manager moving numbers between their own people. The
-         control is drawn for everybody and refused by the capability, in the
-         action as well as here. */
-      canReassign={canLead(user.role, "customer.reassign")}
+      /* §22 — naming who RUNS the relationship, which moves no revenue and no
+         target and is therefore a manager's. Moving the sales seat is the
+         other act, stays accounts' and admin's under `customer.reassign`, and
+         is done on the customer record. Refused by the capability in the
+         action as well as here — a server action is a URL. */
+      canHandOver={canLead(user.role, "customer.handOver")}
       canOverride={canLead(user.role, "lead.override") && config["leads.allowManagerOverride"]}
       overrideAllowed={config["leads.allowManagerOverride"]}
       nowMs={nowMs()}

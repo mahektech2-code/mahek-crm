@@ -4,7 +4,14 @@ import { db } from "@/db";
 import { can, type Capability } from "../access-control";
 import { bandOf, ladderFor } from "../engines/lead-ladder";
 import type { LeadGateInput } from "../engines/lead-gates";
-import type { LeadSalesType, LeadStage } from "../lead-labels";
+import {
+  verificationAnswers,
+  verificationVerdict,
+  type LeadSalesType,
+  type LeadStage,
+} from "../lead-labels";
+import { asDate } from "../business-date";
+import { orderCountsSql } from "../order-status";
 import { managerScope, onlyMine } from "./sales-service";
 
 /* ---------------------------------------------------------------------------
@@ -70,13 +77,16 @@ export type LeadCapability = Extract<
   /*
    * §22 — the handover, and the one capability here that is NOT the funnel's.
    *
-   * Naming the relationship owner is a customer reassignment, so it is
-   * accounts' and admin's and deliberately not a manager's: whose book an
-   * account sits in decides whose targets it counts toward. It is listed here
-   * rather than reached for with a bare `can()` beside this narrowing, because
-   * two doors onto one question is how one of them ends up more generous.
+   * It names who RUNS the relationship, which moves no revenue, no target and
+   * no collections list — so it is a manager's, and it is not
+   * `customer.reassign`. That one moves the sales seat, decides whose targets
+   * an account counts toward, and stays accounts' and admin's; this panel
+   * called it for a while and so could not be used by the people whose job the
+   * handover is. Listed here rather than reached for with a bare `can()`
+   * beside this narrowing, because two doors onto one question is how one of
+   * them ends up more generous.
    */
-  | "customer.reassign"
+  | "customer.handOver"
 >;
 
 export function canLead(role: string, capability: LeadCapability): boolean {
@@ -159,13 +169,13 @@ export async function verificationQueue(
              c.lead_stage_since::text as "prospectSince",
              coalesce(${day}::date - c.lead_stage_since, 0)::int as "waitingDays",
              (c.lead_manager_id = ${me}) as mine,
-             c.lead_monthly_litres as "monthlyLitres",
+             c.lead_monthly_volume_litres as "monthlyLitres",
              c.lead_competitor as competitor,
              p.name as "requiredProductName",
              c.lead_estimated_potential_paise as "potentialPaise",
-             (select count(*)::int from lead_manager_calls k
+             (select count(*)::int from mbos_lead_validations k
                where k.customer_id = c.id) as attempts,
-             (select max(k.called_at) from lead_manager_calls k
+             (select max(k.called_at) from mbos_lead_validations k
                where k.customer_id = c.id) as "lastAttemptAt"
         from customers c
         left join users u on u.id = c.owner_id
@@ -507,9 +517,9 @@ export type SampleDeskRow = {
   approvalState: string | null;
   dispatchedAt: Date | null;
   courierName: string | null;
-  courierDocket: string | null;
+  trackingNumber: string | null;
   expectedDeliveryDate: string | null;
-  receivedConfirmedAt: Date | null;
+  receivedAt: Date | null;
   /** Days past what the courier promised. Null before dispatch, or once it landed. */
   lateByDays: number | null;
   reviewChaseCount: number;
@@ -554,10 +564,10 @@ export async function sampleDesk(
            s.requested_date::text as "requestedDate",
            a.id as "approvalId", a.state::text as "approvalState",
            s.dispatched_at as "dispatchedAt",
-           s.courier_name as "courierName", s.courier_docket as "courierDocket",
+           s.courier_name as "courierName", s.tracking_number as "trackingNumber",
            s.expected_delivery_date::text as "expectedDeliveryDate",
-           s.received_confirmed_at as "receivedConfirmedAt",
-           case when s.received_confirmed_at is null
+           s.received_at as "receivedAt",
+           case when s.received_at is null
                  and s.expected_delivery_date is not null
                  and s.expected_delivery_date < ${day}::date
                 then (${day}::date - s.expected_delivery_date)::int end as "lateByDays",
@@ -585,7 +595,7 @@ export async function sampleDesk(
           else is the ordinary queue, newest last. */
        case
          when a.state = 'pending' then 0
-         when s.received_confirmed_at is null and s.expected_delivery_date < ${day}::date then 1
+         when s.received_at is null and s.expected_delivery_date < ${day}::date then 1
          when s.state in ('received', 'trial_done') and f.id is null then 2
          else 3
        end,
@@ -853,6 +863,15 @@ export type LeadRecord = {
   salesAmId: string | null;
   salesAmName: string | null;
   backOfficeName: string | null;
+  /*
+   * §22's own seat, and NOT the sales one beside it. Who runs the
+   * relationship moves no revenue, no target and no collections list — which
+   * is the whole reason handing it over can be a manager's act while moving
+   * `sales_am_id` stays accounts' and admin's. The panel draws this one.
+   */
+  relationshipOwnerId: string | null;
+  relationshipOwnerName: string | null;
+  handedOverAt: Date | null;
 
   /* ---- §7 §8 the verification ---- */
   verifiedAt: Date | null;
@@ -905,7 +924,7 @@ export type LeadRecord = {
     productName: string | null;
     quantityCans: number | null;
     expectedDeliveryDate: string | null;
-    receivedConfirmedAt: Date | null;
+    receivedAt: Date | null;
     reviewChaseCount: number;
   } | null;
 
@@ -957,10 +976,13 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
            c.lead_manager_id as "leadManagerId", m.name as "leadManagerName",
            c.sales_am_id as "salesAmId", sa.name as "salesAmName",
            c.back_office_name as "backOfficeName",
+           c.relationship_owner_id as "relationshipOwnerId",
+           ro.name as "relationshipOwnerName",
+           c.handed_over_at as "handedOverAt",
 
            c.lead_verified_at as "verifiedAt", v.name as "verifiedByName",
 
-           c.lead_monthly_litres as "monthlyLitres",
+           c.lead_monthly_volume_litres as "monthlyLitres",
            c.lead_estimated_potential_paise as "potentialPaise",
            c.lead_competitor as competitor,
            c.lead_required_product_id as "requiredProductId",
@@ -1016,7 +1038,7 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
                      sp.name as "productName",
                      s.quantity_cans as "quantityCans",
                      s.expected_delivery_date::text as "expectedDeliveryDate",
-                     s.received_confirmed_at as "receivedConfirmedAt",
+                     s.received_at as "receivedAt",
                      s.review_chase_count as "reviewChaseCount"
                 from mbos_samples s
                 left join products sp on sp.id = s.product_id
@@ -1027,7 +1049,11 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
 
            (select count(*)::int from orders o
              where o.customer_id = c.id
-               and o.status in ('captured', 'confirmed', 'dispatched')) as "countingOrderCount",
+               /* Through order-status.ts, never a literal. This spelled the
+                  three statuses out, which is one status behind the day
+                  somebody adds a fourth - and it is the count the second-order
+                  gate and the conversion rule both turn on. */
+               and ${orderCountsSql("o")}) as "countingOrderCount",
            (select count(*)::int from orders o
              where o.customer_id = c.id and o.status = 'dispatched') as "deliveredOrderCount",
            (select count(*)::int from payment_receipts pr
@@ -1039,6 +1065,7 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
       left join users m on m.id = c.lead_manager_id
       left join users sa on sa.id = c.sales_am_id
       left join users v on v.id = c.lead_verified_by_id
+      left join users ro on ro.id = c.relationship_owner_id
       left join users na on na.id = c.lead_next_action_owner_id
       left join products p on p.id = c.lead_required_product_id
       left join distributor_profiles dp on dp.customer_id = c.id
@@ -1127,18 +1154,66 @@ export async function leadTransitions(customerId: string): Promise<LeadTransitio
   `) as unknown as LeadTransition[];
 }
 
-/** §8 — the verification calls made on this lead, newest first. */
+/**
+ * §8 — the verification calls made on this lead, newest first.
+ *
+ * `mbos_lead_validations` is the one table a verification call lands in,
+ * whether it was made from this console or from a handset. It was two for a
+ * fortnight — this branch's `lead_manager_calls` beside main's — and two
+ * tables answering "has anybody rung this shop" is one screen saying no while
+ * the other says it was rung twice.
+ *
+ * The twelve answers come back through `verificationAnswers`, which is the
+ * same mapping the form writes through, so a column added to the call is added
+ * in one place and both ends see it.
+ */
 export async function managerCalls(customerId: string): Promise<ManagerCall[]> {
-  return db.execute<ManagerCall>(sql`
-    select k.id, k.manager_id as "managerId", u.name as "managerName",
-           k.called_at as "calledAt", k.verified, k.answers,
-           k.follow_up_note as "followUpNote"
-      from lead_manager_calls k
-      left join users u on u.id = k.manager_id
+  const rows = (await db.execute(sql`
+    select k.*, u.name as "callerName"
+      from mbos_lead_validations k
+      left join users u on u.id = k.called_by_user_id
      where k.customer_id = ${customerId}
      order by k.called_at desc, k.id desc
      limit 20
-  `) as unknown as ManagerCall[];
+  `)) as unknown as Record<string, unknown>[];
+
+  return rows.flatMap((r) => {
+    /* `db.execute` hands back a timestamptz as a STRING, whatever the type
+       annotation says, so it comes through `asDate`. The column is NOT NULL,
+       which makes null here a row the driver could not parse — dropped rather
+       than carried as an Invalid Date that throws somewhere unrelated. */
+    const calledAt = asDate(r.called_at);
+    if (!calledAt) return [];
+    return [
+      {
+        id: String(r.id),
+        managerId: String(r.called_by_user_id),
+        managerName: (r.callerName as string | null) ?? null,
+        calledAt,
+        verified: verificationVerdict((r.verdict as string | null) ?? null),
+        /* Read off snake_case, so the row is mapped to the camelCase keys the
+       shared vocabulary is written in. Handing a raw row across that boundary
+       is what made `canRead` refuse every attachment for months — a cast that
+       quiets the compiler across a naming boundary is the bug, not the fix. */
+        answers: verificationAnswers({
+          salesmanVisited: r.salesman_visited,
+          mahekExplained: r.mahek_explained,
+          productUnderstood: r.product_understood,
+          currentProduct: r.current_product,
+          confirmedCompetitor: r.confirmed_competitor,
+          confirmedRequirement: r.confirmed_requirement,
+          growthPotential: r.growth_potential,
+          salesmanFeedback: r.salesman_feedback,
+          priceConcern: r.price_concern,
+          qualityFeedback: r.quality_feedback,
+          dispatchFeedback: r.dispatch_feedback,
+          genuineInterest: r.genuine_interest,
+        }),
+        followUpNote:
+          (r.verdict_reason as string | null) ?? (r.notes as string | null) ?? null,
+      },
+    ];
+  });
 }
 
 /**

@@ -71,9 +71,10 @@ export function LeadRecordScreen({
   documents,
   nurture,
   handover,
+  handoverReasons,
   canVerify,
   canWork,
-  canReassign,
+  canHandOver,
   canOverride,
   overrideAllowed,
   nowMs,
@@ -91,9 +92,10 @@ export function LeadRecordScreen({
   documents: Record<string, PublishedDocument>;
   nurture: NurtureSchedule;
   handover: HandoverCandidate[];
+  handoverReasons: string[];
   canVerify: boolean;
   canWork: boolean;
-  canReassign: boolean;
+  canHandOver: boolean;
   canOverride: boolean;
   overrideAllowed: boolean;
   /** The clock, read once on the server. A client may not read it in render. */
@@ -349,11 +351,15 @@ export function LeadRecordScreen({
             salesType={record.salesType}
             convertedAt={record.convertedAt}
             leadManagerName={record.leadManagerName}
-            currentOwnerId={record.salesAmId ?? record.salesmanId}
-            currentOwnerName={record.salesAmName ?? record.salesmanName}
+            /* The RELATIONSHIP seat, which is what this panel moves. Drawing
+               the sales one here read as "held by Priya" and then handed the
+               account to somebody else entirely. */
+            currentOwnerId={record.relationshipOwnerId}
+            currentOwnerName={record.relationshipOwnerName}
             candidates={handover}
+            reasonCodes={handoverReasons}
             canWork={canWork}
-            canReassign={canReassign}
+            canHandOver={canHandOver}
           />
           <HistoryPanel transitions={transitions} />
         </div>
@@ -680,7 +686,7 @@ function SamplePanel({ record }: { record: LeadRecord }) {
           </div>
           <div className="text-muted">
             {s.expectedDeliveryDate ? `Promised ${shortDate(s.expectedDeliveryDate)}` : "No delivery date promised"}
-            {s.receivedConfirmedAt ? ` · received ${stamp(s.receivedConfirmedAt)}` : " · not confirmed received"}
+            {s.receivedAt ? ` · received ${stamp(s.receivedAt)}` : " · not confirmed received"}
           </div>
           {!s.feedbackRecorded ? (
             <p className="mt-1.5 text-[12px] text-warn-ink">

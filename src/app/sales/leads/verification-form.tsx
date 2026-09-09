@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { VERIFICATION_QUESTIONS } from "@/lib/lead-labels";
-import { recordVerificationCall } from "@/lib/actions/leads";
+import { recordLeadValidationCall } from "@/lib/actions/leads";
 import { Button } from "../parts";
 
 /**
@@ -66,7 +66,7 @@ export function VerificationForm({
     setError(null);
     let result;
     try {
-      result = await recordVerificationCall(customerId, {
+      result = await recordLeadValidationCall(customerId, {
         answers,
         verified: verdict === "verified",
         followUpNote: followUpNote.trim() || undefined,

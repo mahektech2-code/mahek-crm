@@ -46,6 +46,51 @@ export const REJECTION_CODES = [
 export type RejectionCode = (typeof REJECTION_CODES)[number];
 
 /**
+ * The kinds of leave, matching the `mbos_leave_type` enum exactly.
+ *
+ * Here rather than beside the handler that validates against it, because the
+ * configuration registry needs the same list to type an entitlement per kind,
+ * and a registry that cannot import a server action would otherwise have kept
+ * a second copy of it — the drifting half always being the one somebody reads.
+ */
+export const LEAVE_TYPES = ["casual", "sick", "earned", "loss_of_pay"] as const;
+export type LeaveType = (typeof LEAVE_TYPES)[number];
+
+/**
+ * The kinds somebody has a balance OF.
+ *
+ * `loss_of_pay` is what leave becomes when the balance is gone, so it has no
+ * entitlement and no balance row — a person is not allotted a number of unpaid
+ * days a year. Anything reading an entitlement reads this list, not the one
+ * above it.
+ */
+export const PAID_LEAVE_TYPES = LEAVE_TYPES.filter(
+  (t): t is Exclude<LeaveType, "loss_of_pay"> => t !== "loss_of_pay",
+);
+export type PaidLeaveType = (typeof PAID_LEAVE_TYPES)[number];
+
+/**
+ * What a person is shown, as against what the column stores.
+ *
+ * A stored enum is not a label — the same rule the complaint categories
+ * already follow. This one reached a screen: the balance channel sent the enum
+ * value straight through, so the handset's leave form drew a button reading
+ * "loss_of_pay" beside one reading "Loss of pay", which are the same thing
+ * twice in two spellings on the one screen where somebody is deciding whether
+ * a day off costs them money.
+ *
+ * The handset compares kinds case-insensitively and `leaveTypeOf` reads the
+ * words around the word, so a label goes out and comes back as its enum
+ * without either end having to be taught anything.
+ */
+export const LEAVE_LABELS: Record<LeaveType, string> = {
+  casual: "Casual",
+  sick: "Sick",
+  earned: "Earned",
+  loss_of_pay: "Loss of pay",
+};
+
+/**
  * What the outbox may carry. The server refuses anything else by name rather
  * than guessing — an entity type nobody implemented must not be accepted and
  * silently dropped, because the handset would mark it `synced` and the record
@@ -75,6 +120,25 @@ export const SYNC_ENTITY_TYPES = [
    * a table and a read query and no write path anywhere.
    */
   "competitor",
+  /**
+   * §E — the Prospect validation call: what the SHOP said, as against what the
+   * salesman reported.
+   *
+   * Its own entity rather than a lead update, because the two answers are meant
+   * to be able to differ and the difference is the only thing this call
+   * produces that nothing else could. Writing it onto the lead would overwrite
+   * the salesman's account with the office's and destroy exactly that.
+   */
+  "lead_validation",
+  /**
+   * §R — a note about a customer that the customer must never see.
+   *
+   * `mbos_internal_notes` has had a table and a read path since the module
+   * shipped, and no write anywhere: the bootstrap narrowed them by role and
+   * sent nothing, because nothing could put one there. The same shape
+   * `mbos_competitor_records` was in.
+   */
+  "internal_note",
   "approval",
   /**
    * The salesman's answer to a proposed day: agreed, or refused with a reason
@@ -336,6 +400,22 @@ export type PullDelta = {
    */
   leads: unknown[];
   samples: unknown[];
+  /**
+   * What the office knows this shop bought and paid, ten of each per customer.
+   *
+   * Their own tables on the handset rather than `orders` and `payments`, which
+   * are OWNED there — the salesman authors those and they feed his outbox. A
+   * sync writing into them would put the office's rows in the queue that sends
+   * his.
+   */
+  customerOrders: unknown[];
+  customerPayments: unknown[];
+  /**
+   * The open bills behind `outstandingPaise`, read off the Accounts ledger.
+   * Read-only here, like the two above it — what the salesman collects is
+   * still his own `payments` row, and still `reported` until accounts find it.
+   */
+  customerBills: unknown[];
 };
 
 export type SyncResponse = {

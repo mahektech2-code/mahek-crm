@@ -29,6 +29,35 @@ export const CUSTOMER_PAGE = 15;
 /** Where to measure from: a fix, a city's centre, or nothing. */
 export type Origin = { lat: number; lng: number } | null;
 
+/**
+ * Which half of the book to show.
+ *
+ * A LEAD IS A ROW IN BOTH TABLES on this handset. The office collapsed the two
+ * into one `customers` row long ago — `kind` and `lead_stage` live there — but
+ * the wire still sends leads down their own channel into `leads`, keyed on the
+ * same id. So "is this a lead" is asked as an EXISTS against that table rather
+ * than read off a column the handset does not have.
+ *
+ * `archived = 0` matters: an archived lead is one filed out of the way, and it
+ * should not make its customer row disappear from the Customers view.
+ */
+export type BookView = 'all' | 'customers' | 'leads';
+
+const IS_LEAD = `EXISTS (SELECT 1 FROM leads l WHERE l.id = customers.id AND l.archived = 0)`;
+
+/** The clause for a view, or null where everything is wanted. */
+function viewClause(view: BookView | undefined): string | null {
+  if (view === 'leads') return IS_LEAD;
+  if (view === 'customers') return `NOT ${IS_LEAD}`;
+  return null;
+}
+
+/** Join whatever clauses there are into a WHERE, or an empty string. */
+function whereOf(parts: (string | null)[]): string {
+  const live = parts.filter(Boolean);
+  return live.length ? `WHERE ${live.join(' AND ')}` : '';
+}
+
 export type Query = { sql: string; params: (string | number)[] };
 
 /* Name, contact, city, phone, GST and dealer code — because a salesman looking
@@ -47,11 +76,13 @@ function normalise(query: string | undefined): string {
 }
 
 /** How many shops MATCH — the number the screen prints, never a loaded length. */
-export function customerCountQuery(query?: string): Query {
+export function customerCountQuery(query?: string, view?: BookView): Query {
   const q = normalise(query);
-  return q
-    ? { sql: `SELECT COUNT(*) AS n FROM customers WHERE ${SEARCH}`, params: searchParams(q) }
-    : { sql: 'SELECT COUNT(*) AS n FROM customers', params: [] };
+  const where = whereOf([q ? `(${SEARCH})` : null, viewClause(view)]);
+  return {
+    sql: `SELECT COUNT(*) AS n FROM customers ${where}`,
+    params: q ? searchParams(q) : [],
+  };
 }
 
 /**
@@ -80,6 +111,7 @@ export function customerCountQuery(query?: string): Query {
 export function customerPageQuery(args: {
   query?: string;
   origin?: Origin;
+  view?: BookView;
   limit?: number;
   offset?: number;
 } = {}): Query {
@@ -88,7 +120,9 @@ export function customerPageQuery(args: {
   const offset = args.offset ?? 0;
   const origin = args.origin ?? null;
 
-  const where = q ? `WHERE ${SEARCH}` : '';
+  /* The view clause carries no parameters of its own, so the binding order
+     below — projection, then search, then the page — is unchanged by it. */
+  const where = whereOf([q ? `(${SEARCH})` : null, viewClause(args.view)]);
   const whereParams = q ? searchParams(q) : [];
 
   if (!origin) {
@@ -119,8 +153,29 @@ export function customerPageQuery(args: {
   };
 }
 
+/** Degrees of latitude to metres. Good to a few parts in ten thousand. */
+const METRES_PER_DEGREE = 111_320;
+
 /**
- * Somewhere to measure from when the radio has nothing.
+ * The `dist2` a page carries, as metres.
+ *
+ * Deliberately here, beside the SQL that produced it, because the two share a
+ * definition: `dist2` is squared degrees with longitude already scaled by
+ * cos(latitude), so the conversion is one square root and one constant. Put
+ * this anywhere else and the day the ordering changes shape, the number on the
+ * card goes on being computed the old way and quietly disagrees with the order
+ * the rows are in.
+ *
+ * That shared origin is the point. A card cannot show a smaller distance than
+ * the card above it, because the figure it prints and the figure it was sorted
+ * by are the same number.
+ */
+export function metresFromDist2(dist2: number | null | undefined): number | null {
+  if (dist2 == null || !Number.isFinite(dist2) || dist2 < 0) return null;
+  return Math.sqrt(dist2) * METRES_PER_DEGREE;
+}
+
+/**
  *
  * Built from the book rather than from a list of town names typed into a
  * screen — the same rule the web app states about product lists, for the same

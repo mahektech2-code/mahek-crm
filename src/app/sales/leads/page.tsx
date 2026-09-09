@@ -71,6 +71,7 @@ export default async function Page({
       archivedCount={archivedCount}
       staleDays={config["mbos.leads.staleDays"]}
       healthAtRiskBelow={config["mbos.health.atRiskBelow"]}
+      healthStrongAtOrAbove={config["mbos.health.strongAtOrAbove"]}
       team={team.filter((t) => t.active).map((t) => ({ id: t.id, name: t.name }))}
       funnel={funnel}
       desks={{

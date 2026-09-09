@@ -1,5 +1,16 @@
 -- The funnel itself: the columns, the tables and the one deletion.
 --
+-- FOUR COLUMNS THIS ONCE ADDED ARE GONE, because 0099 and 0100 got there first.
+-- `lead_manager_id`, `lead_manager_decided_at`, `lead_monthly_volume_litres`
+-- and `lead_decision_maker` were built here and on main at the same time from
+-- the same client brief, and one seat with two columns is two answers to "who
+-- is coordinating this lead" — with each screen reading whichever its author
+-- knew about. Main's names win because main's are deployed. The index
+-- `customers_lead_manager_idx` is main's too: `CREATE INDEX IF NOT EXISTS`
+-- would have silently kept whichever ran first, and the two definitions had
+-- different WHERE clauses, so the shape of the index would have depended on the
+-- order a database happened to be built in.
+--
 -- 0096 added the rungs and deliberately spent none of them. This is where they
 -- are spent, and it is a second file for the reason written at the top of that
 -- one.
@@ -48,8 +59,6 @@ ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "lead_next_action_outcome" text
 -- `sales_manager_id` beside it: that seat is a reporting line that drives
 -- nothing by design, and hanging a worklist off it would quietly make it
 -- load-bearing.
-ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "lead_manager_id" text;--> statement-breakpoint
-ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "lead_manager_assigned_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "lead_verified_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "lead_verified_by_id" text;--> statement-breakpoint
 
@@ -58,10 +67,8 @@ ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "lead_verified_by_id" text;--> 
 -- or in a report: "which leads want Nano", "what is the pipeline worth in
 -- litres". The fifty-five yes/no conditions below are jsonb, because those are
 -- only ever read as a set.
-ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "lead_monthly_litres" integer;--> statement-breakpoint
 ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "lead_competitor" text;--> statement-breakpoint
 ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "lead_required_product_id" text;--> statement-breakpoint
-ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "lead_decision_maker" text;--> statement-breakpoint
 ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "lead_credit_days_wanted" integer;--> statement-breakpoint
 ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "lead_application" text;--> statement-breakpoint
 
@@ -81,10 +88,6 @@ DO $$ BEGIN
     FOREIGN KEY ("lead_next_action_owner_id") REFERENCES "users"("id");
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;--> statement-breakpoint
 DO $$ BEGIN
-  ALTER TABLE "customers" ADD CONSTRAINT "customers_lead_manager_id_users_id_fk"
-    FOREIGN KEY ("lead_manager_id") REFERENCES "users"("id");
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;--> statement-breakpoint
-DO $$ BEGIN
   ALTER TABLE "customers" ADD CONSTRAINT "customers_lead_verified_by_id_users_id_fk"
     FOREIGN KEY ("lead_verified_by_id") REFERENCES "users"("id");
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;--> statement-breakpoint
@@ -99,9 +102,6 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "customers_lead_funnel_idx"
     ON "customers" ("lead_sales_type", "lead_stage", "lead_stage_since")
     WHERE "kind" = 'lead';--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "customers_lead_manager_idx"
-    ON "customers" ("lead_manager_id", "lead_stage")
-    WHERE "lead_manager_id" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "customers_lead_next_action_idx"
     ON "customers" ("lead_next_action_date")
     WHERE "kind" = 'lead' AND "lead_archived" = false;--> statement-breakpoint
@@ -139,26 +139,11 @@ CREATE INDEX IF NOT EXISTS "lead_stage_transitions_stage_idx"
 
 /* ------------------------------------------------- §8 the verification call */
 
-CREATE TABLE IF NOT EXISTS "lead_manager_calls" (
-  "id"              text PRIMARY KEY NOT NULL,
-  "customer_id"     text NOT NULL,
-  "manager_id"      text NOT NULL,
-  "called_at"       timestamp with time zone DEFAULT now() NOT NULL,
-  "verified"        boolean,
-  "answers"         jsonb DEFAULT '{}'::jsonb NOT NULL,
-  "follow_up_note"  text,
-  "created_at"      timestamp with time zone DEFAULT now() NOT NULL
-);--> statement-breakpoint
-DO $$ BEGIN
-  ALTER TABLE "lead_manager_calls" ADD CONSTRAINT "lead_manager_calls_customer_id_customers_id_fk"
-    FOREIGN KEY ("customer_id") REFERENCES "customers"("id") ON DELETE cascade;
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;--> statement-breakpoint
-DO $$ BEGIN
-  ALTER TABLE "lead_manager_calls" ADD CONSTRAINT "lead_manager_calls_manager_id_users_id_fk"
-    FOREIGN KEY ("manager_id") REFERENCES "users"("id");
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "lead_manager_calls_customer_idx"
-    ON "lead_manager_calls" ("customer_id", "called_at");--> statement-breakpoint
+-- NOTHING HERE. `lead_manager_calls` was this branch's second answer to the
+-- verification call, built at the same time as main's `mbos_lead_validations`
+-- (0102) and asking the same shop the same questions. One table per concept:
+-- main's is the survivor, the twelve-question form writes into it, and a
+-- table that was never created needs no drop.
 
 /* ------------------------------------------- §23 the distributor's own man */
 
@@ -249,19 +234,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS "distributor_profiles_customer_key"
 
 /* --------------------------------------------------- §15 the sample journey */
 
+-- Only the STATE MACHINE is this migration's. 0103 already added the dates
+-- either side of it — `dispatched_at`, `courier_name`, `tracking_number`,
+-- `received_at`, `trial_completed_at` — and this file used to add its own
+-- spelling of all five. Three were exact duplicates that `IF NOT EXISTS`
+-- quietly swallowed; `courier_docket` and `received_confirmed_at` were not,
+-- and they landed as real second columns holding the same fact, so a sample
+-- dispatched through one screen read as never sent on the next. The docket IS
+-- `tracking_number` and the confirmation IS `received_at`.
 ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "state" "mbos_sample_state" DEFAULT 'requested' NOT NULL;--> statement-breakpoint
 ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "reason_code" text;--> statement-breakpoint
 ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "application" text;--> statement-breakpoint
 ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "lead_stage_at_request" "mbos_lead_stage";--> statement-breakpoint
 ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "approved_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "approved_by_id" text;--> statement-breakpoint
-ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "dispatched_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "dispatched_by_id" text;--> statement-breakpoint
-ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "courier_name" text;--> statement-breakpoint
-ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "courier_docket" text;--> statement-breakpoint
 ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "expected_delivery_date" date;--> statement-breakpoint
-ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "received_confirmed_at" timestamp with time zone;--> statement-breakpoint
-ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "trial_completed_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "reviewed_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "reviewed_by_id" text;--> statement-breakpoint
 ALTER TABLE "mbos_samples" ADD COLUMN IF NOT EXISTS "review_chase_count" integer DEFAULT 0 NOT NULL;--> statement-breakpoint

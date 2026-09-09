@@ -21,14 +21,23 @@ import { FilterPills, Modal, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { grantableApps, moduleGroupsForApp, modulesForApp } from "@/lib/modules";
 import type { AppId } from "@/lib/apps";
-import { candidatesForGrant, setAccess } from "@/lib/actions/access";
+import {
+  candidatesForGrant,
+  employeesToLink,
+  linkEmployee,
+  setAccess,
+} from "@/lib/actions/access";
 import {
   endSessionsFor,
   sendPasswordResetFor,
   setUserActive,
 } from "@/lib/actions/people";
 import { mintImpersonationLink } from "@/lib/actions/impersonation";
-import type { AccessRow, Candidate } from "@/lib/services/access-service";
+import type {
+  AccessRow,
+  Candidate,
+  LinkableEmployee,
+} from "@/lib/services/access-service";
 import { useAdmin } from "./store";
 
 /* ---------------------------------------------------------------------------
@@ -103,6 +112,8 @@ export function AccessSection({
   const [managing, setManaging] = React.useState<AccessRow | null>(null);
   /** Turning the sign-in itself off, or back on. */
   const [switching, setSwitching] = React.useState<AccessRow | null>(null);
+  /** Saying which HRMS row this account is — see `EmployeeLinkDialog`. */
+  const [linking, setLinking] = React.useState<AccessRow | null>(null);
   /** A just-minted sign-in link, shown once so it can be copied. */
   const [linkFor, setLinkFor] = React.useState<{
     name: string;
@@ -240,6 +251,7 @@ export function AccessSection({
                           onManage={() => setManaging(r)}
                           onSwitch={() => setSwitching(r)}
                           onOpen={() => onOpenUser(r.userId)}
+                          onLinkEmployee={() => setLinking(r)}
                           onGotLink={setLinkFor}
                         />
                       </span>
@@ -375,6 +387,21 @@ export function AccessSection({
         ) : null}
       </Modal>
 
+      {/* Which payroll row this account is. Keyed on the person for the same
+          reason the access dialog is: fresh initial state on a remount beats an
+          effect resetting it when a prop changes. */}
+      {linking ? (
+        <EmployeeLinkDialog
+          key={linking.userId}
+          row={linking}
+          onClose={() => setLinking(null)}
+          onDone={(r) => {
+            say(r);
+            setLinking(null);
+          }}
+        />
+      ) : null}
+
       {/* Managing somebody already on the list: straight to the apps. Keyed on
           the person, so the draft is initial state on a fresh mount rather than
           something an effect has to reset. */}
@@ -421,13 +448,20 @@ function PersonCells({ row, onOpen }: { row: AccessRow; onOpen: () => void }) {
       <Td className="align-top capitalize">{row.role}</Td>
       <Td className="align-top">
         {row.employeeCode ? (
-          <span className="inline-flex items-center gap-2">
+          <span className="inline-flex flex-wrap items-center gap-2">
             {row.employeeCode}
             {row.employeeStatus === "active" ? null : (
               <Badge tone="warn">
                 {row.employeeStatus === "inactive" ? "Left" : "Status unknown"}
               </Badge>
             )}
+            {/* Chosen, or merely matched. A guess and an answer look identical
+                on a row, and one of them is deciding whose salary shows up. */}
+            {row.employeeMatch === "guessed" ? (
+              <Badge tone="warn" title="Matched on email or work number, not chosen. Link them to be sure.">
+                Guessed
+              </Badge>
+            ) : null}
           </span>
         ) : (
           // Said rather than left blank: the HRMS check could not be made for
@@ -446,6 +480,7 @@ function PersonMenu({
   onManage,
   onSwitch,
   onOpen,
+  onLinkEmployee,
   onGotLink,
 }: {
   row: AccessRow;
@@ -455,6 +490,7 @@ function PersonMenu({
   onManage: () => void;
   onSwitch: () => void;
   onOpen: () => void;
+  onLinkEmployee: () => void;
   onGotLink: (link: { name: string; url: string; expiresInMinutes: number }) => void;
 }) {
   return (
@@ -472,6 +508,15 @@ function PersonMenu({
           onSelect: onSwitch,
         },
         { label: "Open their record", onSelect: onOpen },
+        {
+          /* Not hidden where a row was already guessed: a guess is exactly what
+             somebody would come here to confirm or correct. */
+          label:
+            row.employeeMatch === "linked"
+              ? "Change the HRMS record"
+              : "Link an HRMS record",
+          onSelect: onLinkEmployee,
+        },
         {
           label: "Send a field-app password link",
           onSelect: () => void sendPasswordResetFor(row.userId).then(say),
@@ -1312,5 +1357,214 @@ function ReviewStep({
         </p>
       ) : null}
     </div>
+  );
+}
+
+/* ------------------------------------------------- which payroll row this is */
+
+/**
+ * Saying which HRMS employee an account is.
+ *
+ * Salary, days worked and reimbursements are all read by joining the account to
+ * the employee master, and until this existed that join was a guess on the
+ * email or the company mobile. On the real book the guess finds almost nobody —
+ * most employees carry no email at all, the accounts are `@mahek.in` while the
+ * sheet holds personal addresses, and the work numbers on the accounts are not
+ * the company mobiles in the sheet — so every field salesman's salary screen
+ * was blank, in a way that looked exactly like being paid nothing.
+ *
+ * It is a picker rather than a matcher on purpose. The master carries two rows
+ * for the same man at two different salaries sharing one mobile, so there is a
+ * real question here that only a person can answer, and a screen that answered
+ * it automatically would be deciding somebody's pay on a coin toss.
+ *
+ * A row already spoken for is shown and refused rather than hidden: somebody
+ * hunting for an employee they cannot find would otherwise conclude the search
+ * is broken when the answer is that a colleague linked it last week.
+ */
+function EmployeeLinkDialog({
+  row,
+  onClose,
+  onDone,
+}: {
+  row: AccessRow;
+  onClose: () => void;
+  onDone: (r: { ok: boolean; message?: string; error?: string }) => void;
+}) {
+  const [all, setAll] = React.useState<LinkableEmployee[] | null>(null);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [q, setQ] = React.useState("");
+  const [chosen, setChosen] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    let live = true;
+    void employeesToLink().then((r) => {
+      if (!live) return;
+      if (r.ok) setAll(r.data);
+      else setLoadError(r.error ?? "The employee master could not be read.");
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const shown = React.useMemo(() => {
+    const rows = all ?? [];
+    const needle = q.trim().toLowerCase();
+    if (!needle) return rows.slice(0, 60);
+    return rows
+      .filter((e) =>
+        [e.name, e.employeeCode, e.email, e.phone, e.department, e.position]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(needle),
+      )
+      .slice(0, 60);
+  }, [all, q]);
+
+  const current = (all ?? []).find((e) => e.takenByUserId === row.userId) ?? null;
+
+  const save = (employeeId: string | null) => {
+    setSaving(true);
+    void linkEmployee({ userId: row.userId, employeeId }).then((r) => {
+      setSaving(false);
+      onDone(r);
+    });
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Which employee is ${row.name}?`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          {current ? (
+            <Button
+              variant="secondary"
+              disabled={saving}
+              /* Unlinking destroys nothing — it falls back to the guess, which
+                 is where the account was before anybody linked it. So it takes
+                 no confirmation beyond this click. */
+              title="Their pay goes back to being matched on email or work number"
+              onClick={() => save(null)}
+            >
+              Unlink
+            </Button>
+          ) : null}
+          <Button
+            variant="primary"
+            disabled={!chosen || saving}
+            title={chosen ? undefined : "Pick an employee first"}
+            onClick={() => chosen && save(chosen)}
+          >
+            {saving ? "Saving…" : "Link them"}
+          </Button>
+        </>
+      }
+    >
+      <div className="text-sm leading-[21px] text-body">
+        <p>
+          This is what their salary, days worked and reimbursements are read
+          from — on the Sales Dashboard and on their handset, from the same
+          record, so the two cannot disagree.
+        </p>
+        {current ? (
+          <p className="mt-2">
+            Linked to{" "}
+            <span className="font-medium text-ink">
+              {current.employeeCode} {current.name}
+            </span>
+            .
+          </p>
+        ) : row.employeeCode ? (
+          <p className="mt-2">
+            Nothing is linked. {row.employeeCode} is showing because their email
+            or work number happened to match it — worth confirming, because on
+            this book that match is usually wrong or missing.
+          </p>
+        ) : (
+          <p className="mt-2">
+            Nothing is linked and nothing matched, which is why their pay reads
+            blank rather than zero.
+          </p>
+        )}
+
+        <div className="mt-3">
+          <Field label="Search the employee master">
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Name, employee code, number or department"
+              autoFocus
+            />
+          </Field>
+        </div>
+
+        {loadError ? (
+          <p className="mt-3 text-danger">{loadError}</p>
+        ) : all === null ? (
+          <p className="mt-3 text-muted">Reading the employee master…</p>
+        ) : shown.length === 0 ? (
+          <p className="mt-3 text-muted">
+            {q.trim()
+              ? "Nobody in the master matches that."
+              : "The employee master is empty. HRMS mirrors the workbook, so check the sync."}
+          </p>
+        ) : (
+          <div className="mt-3 max-h-72 overflow-auto rounded-[4px] border border-line">
+            {shown.map((e) => {
+              const takenByOther = !!e.takenByUserId && e.takenByUserId !== row.userId;
+              const isCurrent = e.takenByUserId === row.userId;
+              return (
+                <button
+                  key={e.id}
+                  type="button"
+                  disabled={takenByOther}
+                  title={
+                    takenByOther
+                      ? `Already linked to ${e.takenByName}. Unlink that account first — one payroll row cannot belong to two people.`
+                      : undefined
+                  }
+                  onClick={() => setChosen(e.id)}
+                  className={cx(
+                    "flex w-full items-start gap-2 border-0 border-b border-line px-3 py-2 text-left last:border-b-0",
+                    takenByOther
+                      ? "cursor-not-allowed bg-canvas opacity-60"
+                      : "cursor-pointer bg-transparent hover:bg-canvas",
+                    chosen === e.id ? "bg-canvas ring-1 ring-inset ring-brand" : "",
+                  )}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13px] font-medium text-ink">
+                      {e.name}
+                    </span>
+                    <span className="block text-[12px] text-muted">
+                      {[e.employeeCode, e.position ?? e.department, e.email ?? e.phone]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                    {isCurrent ? <Badge tone="success">Linked</Badge> : null}
+                    {takenByOther ? <Badge tone="warn">{e.takenByName}</Badge> : null}
+                    {e.status === "active" ? null : (
+                      <Badge tone="warn">
+                        {e.status === "inactive" ? "Left" : "Status unknown"}
+                      </Badge>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }

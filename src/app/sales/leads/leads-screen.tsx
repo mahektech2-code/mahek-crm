@@ -13,6 +13,7 @@ import {
   reassignLead,
   restoreLead,
 } from "@/lib/actions/sales";
+import { healthView } from "@/lib/customer-health";
 import type { LeadRow } from "@/lib/services/sales-service";
 import type { FunnelByType } from "@/lib/services/lead-console-service";
 import { salesTypeLabel, stageLabel, type LeadStage } from "@/lib/lead-labels";
@@ -70,6 +71,7 @@ export function LeadsScreen({
   archivedCount,
   staleDays,
   healthAtRiskBelow,
+  healthStrongAtOrAbove,
   team,
   funnel,
   desks,
@@ -80,6 +82,8 @@ export function LeadsScreen({
   staleDays: number;
   /** Below this, a customer's health score reads as at risk. */
   healthAtRiskBelow: number;
+  /** At or above this a score reads as strong. */
+  healthStrongAtOrAbove: number;
   team: Array<{ id: string; name: string }>;
   /** One funnel per sales type, counted in SQL and banded by the engine. */
   funnel: FunnelByType[];
@@ -433,7 +437,7 @@ export function LeadsScreen({
                       ) : null}
                     </Cell>
                     <Cell truncate={190}>
-                      <HealthCell lead={l} atRiskBelow={healthAtRiskBelow} />
+                      <HealthCell lead={l} atRiskBelow={healthAtRiskBelow} strongAtOrAbove={healthStrongAtOrAbove} />
                     </Cell>
                     <Cell align="right" onClick={(e) => e.stopPropagation()}>
                       {showArchived ? (
@@ -567,7 +571,15 @@ export function LeadsScreen({
  * never typed), so everything else says plainly that there is nothing to
  * show yet and why.
  */
-function HealthCell({ lead, atRiskBelow }: { lead: LeadRow; atRiskBelow: number }) {
+function HealthCell({
+  lead,
+  atRiskBelow,
+  strongAtOrAbove,
+}: {
+  lead: LeadRow;
+  atRiskBelow: number;
+  strongAtOrAbove: number;
+}) {
   if (!lead.convertedCustomerId) {
     return (
       <span
@@ -582,11 +594,48 @@ function HealthCell({ lead, atRiskBelow }: { lead: LeadRow; atRiskBelow: number 
     return <span className="text-[12px] text-muted">Converted — not scored yet</span>;
   }
 
-  const atRisk = lead.customerHealthScore < atRiskBelow;
+  /*
+   * B3-16 — THE BAND OWNS THE WORD, and this cell is where it did not.
+   *
+   * It read `score < 40` and printed "At risk", which is the phrase the
+   * owner's retention report uses for a customer 1.25 of their own cycles
+   * overdue. Two questions, one phrase, two screens a manager and an owner
+   * both read. A shop ordering every week that owes money scored 30 here and
+   * was called at risk of leaving; it was at risk of nothing of the kind.
+   */
+  const view = healthView(
+    {
+      band: lead.customerHealthBand,
+      score: lead.customerHealthScore,
+      components: null,
+    },
+    { watchBelow: atRiskBelow, strongAtOrAbove: strongAtOrAbove },
+  );
   return (
     <span className="block">
       <span className="flex items-center gap-1.5">
-        <Pill tone={atRisk ? "warn" : "success"}>{lead.customerHealthScore} · {atRisk ? "At risk" : "Healthy"}</Pill>
+        {/* The retention answer. */}
+        <Pill tone={view.bandTone === "danger" ? "danger" : view.bandTone === "warn" ? "warn" : "success"}>
+          {view.bandLabel}
+        </Pill>
+        {/* And the score beside it, saying only what a score can say. */}
+        <span
+          className={
+            view.scoreTone === "danger"
+              ? "text-[12px] font-medium text-danger"
+              : view.scoreTone === "warn"
+                ? "text-[12px] font-medium text-warn-ink"
+                : "text-[12px] font-medium text-muted"
+          }
+          title={
+            view.watch
+              ? "Below the score worth watching. That is about payments, complaints and visits — not about whether they have stopped buying, which is what the band beside it answers."
+              : undefined
+          }
+        >
+          {view.score}
+          {view.watch ? " · watch" : ""}
+        </span>
       </span>
       <span className="mt-0.5 block truncate text-[12px] text-muted">
         {lead.customerLastOrderDate

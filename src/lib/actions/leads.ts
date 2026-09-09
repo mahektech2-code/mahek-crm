@@ -7,10 +7,9 @@ import { z } from "zod";
 import { db } from "@/db";
 import {
   auditLog,
-  customerAmChanges,
   customers,
-  leadManagerCalls,
   mbosDocuments,
+  mbosLeadValidations,
   mbosTasks,
   notifications,
   users,
@@ -22,12 +21,13 @@ import {
   rolesFor,
 } from "@/lib/access-control";
 import { today } from "@/lib/recompute";
-import { writeTimelineEvent } from "@/lib/timeline";
+import { writeTimelineEvent, MBOS_EVENT } from "@/lib/timeline";
 import { err, fromThrown, ok, type FieldError, type Result } from "@/lib/result";
 import {
   COMMUNICATION_ACTIONS,
   FIRST_ORDER_QUESTIONS,
   stageLabel,
+  VERIFICATION_COLUMNS,
   VERIFICATION_QUESTIONS,
   type LeadSalesType,
   type LeadStage,
@@ -457,7 +457,7 @@ export async function saveProspectFields(
       updatedAt: new Date(),
     };
     if (f.customerType !== undefined) set.customerType = f.customerType;
-    if (f.monthlyLitres !== undefined) set.leadMonthlyLitres = f.monthlyLitres;
+    if (f.monthlyLitres !== undefined) set.leadMonthlyVolumeLitres = f.monthlyLitres;
     if (f.potentialPaise !== undefined) set.leadEstimatedPotentialPaise = f.potentialPaise;
     if (f.competitor !== undefined) set.leadCompetitor = f.competitor;
     if (f.requiredProductId !== undefined) set.leadRequiredProductId = f.requiredProductId;
@@ -675,7 +675,7 @@ export async function assignLeadManager(
         .update(customers)
         .set({
           leadManagerId: chosen,
-          leadManagerAssignedAt: new Date(),
+          leadManagerDecidedAt: new Date(),
           updatedAt: new Date(),
         })
         .where(eq(customers.id, customerId));
@@ -726,8 +726,17 @@ export async function assignLeadManager(
  * The answers are kept whichever way the verdict went: "which competitor did he
  * say he was using" is what somebody needs before the negotiation call, and it
  * does not stop being useful because the visit could not be confirmed.
+ *
+ * IT WRITES MAIN'S TABLE, and that is the whole of what changed here. Two
+ * teams built §8 at once: this one stored the twelve answers as jsonb on a
+ * `lead_manager_calls` table of its own, main stored the same call on
+ * `mbos_lead_validations` with named columns and shipped first. One
+ * implementation per concept — main's row is where a verification call lives,
+ * from the web form and from the handset both, so the two doors onto the same
+ * act cannot report different histories for one lead. `VERIFICATION_COLUMNS`
+ * in `lib/lead-labels.ts` is the one statement of which answer goes where.
  */
-export async function recordVerificationCall(
+export async function recordLeadValidationCall(
   customerId: string,
   call: { answers: Record<string, string>; verified: boolean; followUpNote?: string },
 ): Promise<Result<null>> {
@@ -767,14 +776,52 @@ export async function recordVerificationCall(
     const callId = gen("lmc");
     const day = await today();
 
+    /*
+     * ALL TWELVE ONTO COLUMNS, through the shared mapping rather than spelled
+     * out here — the record page reads it back the same way, so the form and
+     * the screen cannot disagree about which column holds the price answer.
+     * Seven of the twelve are `0116`'s: they spent an afternoon as labelled
+     * lines inside `notes`, which is unqueryable, and the report §8 exists to
+     * produce is a count of those answers.
+     */
+    const columns: Record<string, string | null> = {};
+    for (const column of Object.values(VERIFICATION_COLUMNS)) columns[column] = null;
+    for (const [id, column] of Object.entries(VERIFICATION_COLUMNS)) {
+      columns[column] = answers[id] ?? null;
+    }
+
     await db.transaction(async (tx) => {
-      await tx.insert(leadManagerCalls).values({
+      await tx.insert(mbosLeadValidations).values({
         id: callId,
         customerId,
-        managerId: ctx.user.id,
-        verified: c.verified,
-        answers,
-        followUpNote: c.followUpNote ?? null,
+        calledByUserId: ctx.user.id,
+        /* The call happened — the form is filled in after it. `reached` is
+           false only where nobody picked up, which this form cannot express
+           because it has twelve answers on it. */
+        reached: true,
+        salesmanVisited: columns.salesmanVisited,
+        mahekExplained: columns.mahekExplained,
+        productUnderstood: columns.productUnderstood,
+        currentProduct: columns.currentProduct,
+        confirmedCompetitor: columns.confirmedCompetitor,
+        confirmedRequirement: columns.confirmedRequirement,
+        growthPotential: columns.growthPotential,
+        salesmanFeedback: columns.salesmanFeedback,
+        priceConcern: columns.priceConcern,
+        qualityFeedback: columns.qualityFeedback,
+        dispatchFeedback: columns.dispatchFeedback,
+        genuineInterest: columns.genuineInterest,
+        /*
+         * `pending` rather than `not_qualified` on a failed verification, and
+         * the difference matters: §8 failing means the VISIT could not be
+         * confirmed, which raises a follow-up and closes nothing. Calling the
+         * lead not qualified would be the office turning down a shop on the
+         * strength of not having reached its own salesman.
+         */
+        verdict: c.verified ? "confirmed" : "pending",
+        verdictReason: c.followUpNote ?? null,
+        createdById: ctx.user.id,
+        updatedById: ctx.user.id,
       });
 
       const set: Partial<typeof customers.$inferInsert> = {
@@ -812,7 +859,7 @@ export async function recordVerificationCall(
 
       await writeTimelineEvent(tx, {
         customerId,
-        eventType: "lead_verification",
+        eventType: MBOS_EVENT.validation,
         sourceApp: "crm",
         sourceRecordId: callId,
         occurredAt: new Date(),
@@ -908,7 +955,7 @@ export async function recordCommunication(
     await db.transaction(async (tx) => {
       await writeTimelineEvent(tx, {
         customerId,
-        eventType: "lead_communication",
+        eventType: MBOS_EVENT.leadCommunication,
         sourceApp: "crm",
         sourceRecordId: eventId,
         occurredAt: new Date(),
@@ -1021,7 +1068,7 @@ export async function askForFirstOrder(
 
       await writeTimelineEvent(tx, {
         customerId,
-        eventType: "lead_first_order_ask",
+        eventType: MBOS_EVENT.firstOrderAsk,
         sourceApp: "crm",
         sourceRecordId: eventId,
         occurredAt: new Date(),
@@ -1065,191 +1112,23 @@ function zodErr(error: z.ZodError): ReturnType<typeof err> {
 }
 
 /* ---------------------------------------------------------------------------
- * §22 — THE HANDOVER, AND WHY IT IS ACCOUNTS' AND NOT THE MANAGER'S
+ * §22 — THE HANDOVER LIVES IN `lib/actions/relationship-handover.ts`.
  *
- * A promotion already releases `lead_manager_id`: the lead manager worked a
- * LEAD — the verification call, the nurture sequence, the files — and a customer
- * is worked by whoever owns the account, which is a different job with a
- * different worklist. What `advanceLeadStage` deliberately does NOT do is name
- * the new owner, and that is a permission boundary rather than an omission.
+ * This file grew its own `handOverToRelationshipOwner`, which moved
+ * `sales_am_id` and released the lead manager in one act. Main had already
+ * shipped the same section as its own marker — `relationship_owner_id` and
+ * `handed_over_at`, with an `am_role` of `relationship` — and the two are not
+ * two features. They are one, answered twice, and the answers disagreed about
+ * the thing that matters most: this one moved the SALES SEAT, which decides
+ * who is credited for the account's orders and whose target it counts toward,
+ * and so had to be refused to managers under `customer.reassign`. Main's moves
+ * nobody's numbers, which is exactly why it can be a manager's under
+ * `customer.handOver` — and the handover is a manager's job.
  *
- * Whose book an account sits in decides who is credited for its orders and
- * whose targets it counts toward, so a manager naming the relationship owner is
- * a manager moving numbers between their own people — including themselves.
- * That is the conflict `customer.reassign` exists to prevent, and AGENTS.md is
- * explicit that it is accounts' and admin's and not a manager's.
- *
- * So the act is offered on the screen where it makes sense, refused by the
- * capability rather than by being absent, and does both halves in ONE
- * transaction: the seat moves, the lead manager is released, the reason is
- * recorded in `customer_am_changes` with the names ON the row so the history
- * stays readable after somebody leaves, and both people are told — a book that
- * grows overnight with no message reads as a bug in the queue.
+ * Keeping both would have meant two ways to hand an account over, one of them
+ * silently reassigning revenue. `HandoverPanel` calls
+ * `handOverRelationships`.
  * ------------------------------------------------------------------------- */
-
-const handoverSchema = z.object({
-  customerId: z.string().min(1),
-  ownerId: z.string().min(1),
-  reasonCode: z.string().max(80).optional(),
-  note: z.string().max(500).optional(),
-});
-
-export async function handOverToRelationshipOwner(
-  raw: z.input<typeof handoverSchema>,
-): Promise<Result<null>> {
-  try {
-    const parsed = handoverSchema.safeParse(raw);
-    if (!parsed.success) return zodErr(parsed.error);
-    const { customerId, ownerId, reasonCode, note } = parsed.data;
-
-    /* Refused here, not hidden on the screen — a server action is a URL. */
-    const ctx = await requireCapability("customer.reassign");
-
-    const lead = await leadRow(customerId);
-    if (!lead) return err("That account no longer exists.", "not_found");
-    await assertCustomerInScope({
-      kind: lead.kind,
-      ownerId: lead.ownerId,
-      salesAmId: lead.salesAmId,
-      backOfficeAmId: lead.backOfficeAmId,
-    });
-
-    /*
-     * Only an account that is actually on the book. Handing over a lead nobody
-     * has sold to yet would name a relationship owner for a relationship that
-     * does not exist, and would release the lead manager who is still the only
-     * person working it.
-     */
-    if (lead.kind !== "customer") {
-      return err(
-        `${lead.name} is still a lead. The handover happens when they order — there is no relationship to hand over yet.`,
-        "validation",
-      );
-    }
-
-    const [owner] = await db
-      .select({ id: users.id, name: users.name, active: users.active })
-      .from(users)
-      .where(eq(users.id, ownerId))
-      .limit(1);
-    if (!owner || !owner.active) {
-      return err("That person cannot take an account on.", "validation", [
-        { field: "ownerId", message: "Pick somebody with an active MahekOne account." },
-      ]);
-    }
-
-    const previousOwnerId = lead.salesAmId ?? null;
-    const previousManagerId = lead.leadManagerId ?? null;
-    if (previousOwnerId === owner.id && !previousManagerId) {
-      /* Nothing to do, and notifying nobody is the right answer — a
-         reassignment that changes nothing must not send two people a message. */
-      return ok(null, `${owner.name} already holds ${lead.name}.`);
-    }
-
-    const [previous] = previousOwnerId
-      ? await db
-          .select({ name: users.name })
-          .from(users)
-          .where(eq(users.id, previousOwnerId))
-          .limit(1)
-      : [{ name: null as string | null }];
-
-    const now = new Date();
-    await db.transaction(async (tx) => {
-      await tx
-        .update(customers)
-        .set({
-          salesAmId: owner.id,
-          /*
-           * The mark that holds the sheet off a decision somebody made. Without
-           * it `recomputeSalesPeople` rewrites `sales_person_name` from the
-           * party tab overnight and the account moves for scope while every
-           * screen goes on showing the old person — which nobody reports as a
-           * sync bug, they report that reassignment does not work.
-           */
-          amDecidedAt: now,
-          salesPersonName: owner.name,
-          /* §22 — the lead manager seat goes with it. */
-          leadManagerId: null,
-          leadManagerAssignedAt: null,
-          updatedAt: now,
-          updatedById: ctx.user.id,
-        })
-        .where(eq(customers.id, customerId));
-
-      await tx.insert(customerAmChanges).values({
-        id: `amc_${randomUUID().slice(0, 12)}`,
-        customerId,
-        role: "sales",
-        fromUserId: previousOwnerId,
-        toUserId: owner.id,
-        /* Names ON the row, so the history stays readable after the person
-           leaves and their `users` row goes with them. */
-        fromName: previous?.name ?? null,
-        toName: owner.name,
-        reasonCode: reasonCode ?? "lead_won",
-        note: note ?? null,
-        changedById: ctx.user.id,
-        changedAt: now,
-      });
-
-      await tx.insert(auditLog).values({
-        id: `aud_${randomUUID().slice(0, 12)}`,
-        actorId: ctx.user.id,
-        actorRole: ctx.authorisedBy,
-        action: "lead.handover",
-        entityType: "customer",
-        entityId: customerId,
-        beforeState: { salesAmId: previousOwnerId, leadManagerId: previousManagerId },
-        afterState: { salesAmId: owner.id, leadManagerId: null, reasonCode: reasonCode ?? "lead_won" },
-      });
-
-      /* Inside the transaction, like every other timeline write in this file:
-         a handover recorded with no line on the customer's own history is a
-         book that changed hands with nothing on the record saying so. */
-      await writeTimelineEvent(tx, {
-        customerId,
-        eventType: "lead_handover",
-        sourceApp: "crm",
-        sourceRecordId: customerId,
-        occurredAt: now,
-        actorUserId: ctx.user.id,
-        summary: `Handed over to ${owner.name} as the relationship owner`,
-      });
-    });
-
-    /* Both sides, and the new owner especially: work has moved onto their book
-       without them asking, and the first they would otherwise know is a list
-       that grew overnight. One notification per person, never one per account. */
-    const told = [
-      { userId: owner.id, body: `${lead.name} is yours now — they placed their first order and the lead is closed.` },
-      ...(previousOwnerId && previousOwnerId !== owner.id
-        ? [{ userId: previousOwnerId, body: `${lead.name} has moved to ${owner.name}.` }]
-        : []),
-      ...(previousManagerId && previousManagerId !== owner.id && previousManagerId !== previousOwnerId
-        ? [{ userId: previousManagerId, body: `${lead.name} is on the book, so the lead manager seat is released. ${owner.name} holds the account.` }]
-        : []),
-    ];
-    if (told.length) {
-      await db.insert(notifications).values(
-        told.map((t) => ({
-          id: `ntf_${randomUUID().slice(0, 12)}`,
-          userId: t.userId,
-          kind: "lead_handover" as const,
-          title: "An account changed hands",
-          body: t.body,
-          href: `/crm/customers/${customerId}`,
-        })),
-      );
-    }
-
-    revalidatePath(`/sales/leads/${customerId}`);
-    revalidatePath("/sales/leads");
-    return ok(null, `${lead.name} is ${owner.name}'s now, and both of them have been told.`);
-  } catch (e) {
-    return fromThrown(e);
-  }
-}
 
 /*
  * TODO(integration) — three things this file deliberately does not do.

@@ -192,6 +192,43 @@ async function offlineValidityDays(): Promise<number> {
   return getConfig<number>('mbos.sync.offlineLoginValidityDays', 7);
 }
 
+/**
+ * SETTING A NEW PASSWORD, which this app could not do at all.
+ *
+ * There were three controls for it and none of them did anything. "Forgot
+ * password" raised a toast DESCRIBING a three-step flow — mobile, OTP, new
+ * password — that has never existed: `/api/mbos/auth/otp`, which the handset's
+ * own `requestOtp` calls, is not a route on the server. Profile's "Reset
+ * password" said "A link to set a new password has been sent to your mobile",
+ * and nothing was sent. A salesman locked out of MBOS had no way back in, and
+ * was told help was on the way.
+ *
+ * MahekOne already has the flow, on the web, and it is the careful one: only
+ * the SHA-256 of the token is stored, it works once, it expires in 30 minutes,
+ * asking again kills the old one, and spending it deletes every session that
+ * account had. Building a second one here — with an SMS provider, a code store
+ * and a rate limiter — would be a new way in to the same accounts, written in
+ * a hurry, for no capability the first one lacks.
+ *
+ * So this hands over to it. The salesman taps, the browser opens on the real
+ * form, and he comes back and signs in. It is honest, it works today, and it
+ * adds no route to the server.
+ *
+ * WHAT IT CANNOT DO: that form is keyed on the work EMAIL, so somebody whose
+ * account carries only a mobile number cannot use it and has to ask an admin.
+ * The screens say so rather than sending him to a form that will not know him.
+ */
+export async function openPasswordReset(): Promise<boolean> {
+  const { BASE } = await import('../sync/api');
+  const { Linking } = await import('react-native');
+  try {
+    await Linking.openURL(`${BASE.replace(/\/+$/, '')}/login/forgot`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /* ---------------------------------------------------------------- signing out */
 
 /**

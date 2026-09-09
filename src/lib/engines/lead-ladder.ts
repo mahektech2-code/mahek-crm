@@ -164,6 +164,30 @@ export function isTerminal(stage: LeadStage): boolean {
 }
 
 /**
+ * PARKED, WHICH IS NEITHER TERMINAL NOR ON A LADDER.
+ *
+ * `on_hold` is a live prospect that has stopped moving — a plant shutdown, a
+ * budget quarter, a decision maker abroad. It is emphatically not `lost`: the
+ * reason it exists at all is that folding the two together made every stalled
+ * lead look dead, and the staleness sweep then archived real prospects.
+ *
+ * It DISPLACES the rung, because a lead has one stage column and this took it.
+ * So the rung it was parked FROM lives in `lead_stage_transitions.from_stage`
+ * and nowhere else, and two functions here refuse rather than guess: `bandOf`
+ * cannot say which band a parked lead is in, and `gateForNext` cannot say what
+ * comes next. Coming back is a move to a NAMED rung — the caller reads the
+ * newest transition into `on_hold` and asks `gateTo` about that rung, which
+ * evaluates its conditions exactly as it always would.
+ *
+ * Without this, `nextStage` answered with the FOOT of the ladder, since
+ * `on_hold` is on none of them: parking a qualified lead offered to move it
+ * back to Suspect, and there was no gate-legal way up again.
+ */
+export function isParked(stage: LeadStage): boolean {
+  return stage === "on_hold";
+}
+
+/**
  * Whether a move is up, down, out, or nowhere.
  *
  * `lost` is `out` from anywhere, which is what §26 asks for — a lead can be
@@ -226,42 +250,54 @@ export function bandOf(stage: LeadStage): FunnelBand {
     case "second_order":
     case "initial_stock_order":
       return "negotiation";
-    /* won, lost, customer, active_distributor — out of the funnel by design */
+    /*
+     * won, lost, customer, active_distributor — out of the funnel by design.
+     *
+     * `on_hold` lands here too, for a DIFFERENT reason that matters: those four
+     * have left the funnel and a parked lead has not. It is unanswerable rather
+     * than absent — the rung is in the transition history, not in the stage —
+     * so a screen that only counts bands understates the pipeline by every
+     * parked lead. Count them with `isParked` and show them beside the funnel.
+     * Folding them into a band would be a guess printed as a figure.
+     */
     default:
       return null;
   }
 }
 
 /**
- * The rung at which the account starts being invoiced.
+ * THE RUNG AT WHICH A LEAD BECOMES A CUSTOMER, and it is the SECOND order.
  *
- * MahekOne's own word for a customer is an account that has ORDERED, and about
- * thirty places read `customers.kind` on exactly that understanding — the
- * calling queue's prospect cadence, the owner's funnel, sales attribution, the
- * buying cycle. The specification's ladder says `Customer` at the second order
- * (§22), and honouring that literally would leave an account with one order,
- * one bill and one payment sitting at `kind = 'lead'`, which every one of those
- * thirty readers would get wrong.
+ * §22 says so, and the reason is the trade rather than the schema: a first
+ * order from a shop that has just finished a trial is a test — a few cans to
+ * see how it behaves on their own substrate, in their own booth, in front of
+ * their own customer. It is not a relationship and it routinely does not repeat.
+ * The SECOND order is the one that says the trial worked and they are buying
+ * from us now, and that is what everybody in this business means by a customer.
  *
- * So the two words are separated rather than reconciled: `kind` flips here, at
- * the first order, because that is what the word means everywhere else in the
- * product — and the ladder carries on to its own `second_order` and `customer`
- * rungs, which are the funnel's statement about the relationship rather than
- * the ledger's statement about the account.
+ * This was built at `first_order` first, on the reasoning that MahekOne's own
+ * word for a customer is an account that has ORDERED and that about thirty
+ * readers of `customers.kind` assume it. That reasoning was about the CODE and
+ * this one is about the trade, and where those two disagree the trade wins —
+ * the column exists to describe the business, not the other way round.
+ *
+ * What makes it safe is that most of those thirty readers do not key on `kind`
+ * at all: the Call Log's prospect reason fires on `lastOrderDate` being null,
+ * the buying cycle is computed from approved orders whatever the row calls
+ * itself, and attribution follows the seats. What genuinely changes is that an
+ * account with exactly one order is counted as a lead — which is the whole
+ * point, and is what the owner's funnel should have been saying all along.
+ *
+ * A distributor is NOT held to this. There is no trial order in an appointment:
+ * they are approved, they sign, and they place a stock order that was committed
+ * to in advance. `distributor_approval` is where they start being invoiced.
  */
 export function promotesToCustomerAt(
   salesType: LeadSalesType | null | undefined,
 ): LeadStage {
-  return salesType === "distributor" ? "distributor_approval" : "first_order";
+  return salesType === "distributor" ? "distributor_approval" : "second_order";
 }
 
-/**
- * Whether reaching this rung means the account is now on the book.
- *
- * True from the promoting rung UPWARDS, not just on it — a lead moved straight
- * from qualification to payment by a manager clearing a backlog has still
- * plainly ordered, and asking only about the exact rung would leave it a lead.
- */
 export function isOnTheBookAt(
   stage: LeadStage,
   salesType: LeadSalesType | null | undefined,

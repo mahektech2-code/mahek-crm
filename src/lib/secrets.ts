@@ -35,6 +35,20 @@ import { appSecrets } from "@/db/schema";
  * network tab is not spendable anywhere else. `readSecret` is still the only
  * function that selects it — the exception is what the caller does with the
  * value once read, not a second way of reading it.
+ *
+ * AND NOW TO THE HANDSET, for the same reason and with one caveat that is
+ * NOT the same. MBOS draws the same maps and must ask Ola for the same tiles,
+ * so the key reaches it in the sync payload — the same exception, one client
+ * further out. What does not carry across is the mitigation: a browser key is
+ * restricted to a domain, and there is no domain on a phone. Ola's console
+ * offers no package-name or signing-certificate restriction of the kind
+ * Google Maps has, so a key in an APK is a key somebody can extract and spend.
+ *
+ * That is stated rather than hidden because it is a real cost and it is the
+ * deployer's to weigh: the honest mitigations are a SEPARATE Ola key for the
+ * handset, so a leak is revocable without taking the console's maps down with
+ * it, and a spend cap on it. It is sent only to a device that has already
+ * authenticated as a bound handset, which is the most this side can do.
  * ------------------------------------------------------------------------- */
 
 /**

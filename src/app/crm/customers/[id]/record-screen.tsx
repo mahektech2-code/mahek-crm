@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { seatLabel, type AmRole } from "@/lib/seat-labels";
 import { categoryLabel } from "@/lib/complaint-labels";
 import type { CustomerRecordDetail } from "@/lib/services/customer-record-service";
 import Link from "next/link";
@@ -41,6 +42,8 @@ import { ThirdPartyDialog } from "@/components/crm/third-party-dialog";
 import { updateAccountManagers } from "@/lib/actions/account-manager";
 import { assignSalesManager } from "@/lib/actions/sales-manager";
 import { SalesManagerDialog } from "@/components/crm/sales-manager-dialog";
+import { HandoverDialog } from "@/components/crm/handover-dialog";
+import { handOverRelationships } from "@/lib/actions/relationship-handover";
 import {
   SHEET_NAME_VALUE,
   StaffDot,
@@ -105,6 +108,7 @@ export function RecordScreen({
   canClassify,
   canReassign,
   canAssignSalesManager,
+  canHandOver,
   backOfficePeople,
   amReasons,
   amSearchThreshold,
@@ -158,6 +162,13 @@ export function RecordScreen({
    * for a seat that drives no queue, no scope and no target.
    */
   canAssignSalesManager: boolean;
+  /**
+   * `customer.handOver` — a manager's, like the seat above and unlike the two
+   * that move an account's numbers. Passed in rather than derived here: a
+   * client component asking its own permission question is a permission
+   * question answered on the client.
+   */
+  canHandOver: boolean;
   /** Accounts and current employees both — none of the three seats needs a login. */
   backOfficePeople: Array<{ id: string; name: string; role?: string }>;
   /** `people.amChangeReasons`, asked for whenever a manager changes. */
@@ -191,6 +202,8 @@ export function RecordScreen({
     /** Who the salesperson answers to — a third seat, and a manager's to set. */
     salesManagerId: string | null;
     salesManagerName: string | null;
+    relationshipOwnerName: string | null;
+    handedOverAt: Date | string | null;
     backOfficeAmId: string | null;
     backOfficeAmName: string | null;
     status: string;
@@ -246,7 +259,7 @@ export function RecordScreen({
   /** Every change of account manager, newest first. Names as stored. */
   amChanges: Array<{
     id: string;
-    role: "sales" | "sales_manager" | "back_office";
+    role: AmRole;
     fromName: string | null;
     toName: string | null;
     reasonCode: string;
@@ -283,6 +296,7 @@ export function RecordScreen({
   const [converting, setConverting] = React.useState(false);
   const [amOpen, setAmOpen] = React.useState(false);
   const [smOpen, setSmOpen] = React.useState(false);
+  const [hoOpen, setHoOpen] = React.useState(false);
 
   /*
    * THE TIMELINE IS A PAGE, and this holds the pages read so far.
@@ -1018,6 +1032,35 @@ export function RecordScreen({
                     <Fact label="Sales" value={customer.salesAmName} />
                     {salesManagerFact}
                     <Fact label="Back office" value={customer.backOfficeAmName} />
+                    {/*
+                      §Q — who runs the relationship. Drawn at the same size as
+                      the three above because it is a fourth peer, not a
+                      footnote to them.
+
+                      "Not handed over" is said in WORDS rather than left as a
+                      dash. A dash reads as missing data; this is a real and
+                      actionable state — the account converted and nobody has
+                      taken it on — and it is the whole reason the marker
+                      exists. Same reasoning as naming an unassigned call on a
+                      team list instead of leaving the cell blank.
+                    */}
+                    <dt className="text-muted whitespace-nowrap">Relationship</dt>
+                    <dd className="m-0 flex min-w-0 items-center justify-between gap-2 break-words text-ink">
+                      <span>
+                        {customer.relationshipOwnerName ?? (
+                          <span className="text-muted">Not handed over</span>
+                        )}
+                      </span>
+                      {canHandOver ? (
+                        <button
+                          type="button"
+                          onClick={() => setHoOpen(true)}
+                          className="cursor-pointer text-[12px] font-medium text-brand hover:text-brand-hover"
+                        >
+                          {customer.relationshipOwnerName ? "Move" : "Hand over"}
+                        </button>
+                      ) : null}
+                    </dd>
                     <Fact
                       label="Buying cycle"
                       value={
@@ -1073,14 +1116,13 @@ export function RecordScreen({
                     {amChanges.map((c) => (
                       <span key={c.id} className="block text-[11px] text-muted">
                         {shortDate(c.changedAt)} ·{" "}
-                        {/* Three seats now, so the label cannot be a boolean. A
-                            history line calling a sales manager change "Back
-                            office" is worse than one saying nothing. */}
-                        {c.role === "sales"
-                          ? "Sales"
-                          : c.role === "sales_manager"
-                            ? "Sales manager"
-                            : "Back office"}{" "}
+                        {/* Four seats now, and the label comes from a map
+                            rather than a chain. The chain's last arm was
+                            "Back office", so adding a seat relabelled it
+                            instead of failing — a history line calling a
+                            handover a back office change is worse than one
+                            saying nothing. */}
+                        {seatLabel(c.role)}{" "}
                         {c.fromName ?? "unassigned"} → {c.toName ?? "unassigned"} ·{" "}
                         {c.reasonCode}
                         {c.note ? ` — ${c.note}` : ""}
@@ -1152,6 +1194,41 @@ export function RecordScreen({
             );
             if (result.ok) {
               setSmOpen(false);
+              router.refresh();
+            }
+          }}
+        />
+      ) : null}
+
+      {/* Mounted only while open, like the dialog above it — that is how every
+          modal here gets fresh initial state without an effect resetting it,
+          which the React Compiler rules forbid. */}
+      {hoOpen ? (
+        <HandoverDialog
+          open
+          accounts={[
+            {
+              id: customer.id,
+              name: customer.name,
+              kind: customer.kind,
+              relationshipOwnerName: customer.relationshipOwnerName,
+            },
+          ]}
+          people={backOfficePeople.filter((p) => p.role !== "employee")}
+          reasons={amReasons}
+          searchThreshold={amSearchThreshold}
+          onClose={() => setHoOpen(false)}
+          onSubmit={async (change) => {
+            const result = await run(
+              handOverRelationships({
+                customerIds: change.ids,
+                toUserId: change.toUserId,
+                reasonCode: change.reasonCode,
+                note: change.note,
+              }),
+            );
+            if (result.ok) {
+              setHoOpen(false);
               router.refresh();
             }
           }}

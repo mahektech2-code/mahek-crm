@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { listUserModules } from "@/lib/access";
 import { getConfig } from "@/lib/config/store";
 import { dropInaccurateFixes, splitTrailByGaps } from "@/lib/engines/trail-gaps";
+import { metresBetween } from "@/lib/geo";
 import {
   offsetPolyline,
   splitTrailIntoTrips,
@@ -88,8 +89,34 @@ export async function GET(request: Request) {
     tripBreakMinutes: config["mbos.location.tripBreakMinutes"],
   });
 
+  /*
+   * DISTANCE IS MEASURED ON THE ROAD, not on the fixes.
+   *
+   * Summing the hops between raw fixes counts every metre of GPS jitter, and
+   * at three-second sampling that is most of them: a leg Google Maps calls
+   * 750 m came back as 1.1 km, and the figure on the hover was wrong by half
+   * on every walk. The road-matched path has the jitter taken out of it by
+   * construction — it is the road, and its length is the length of the road.
+   *
+   * Where the path COLLAPSED it is not measured. Twenty-metre anchors are kept
+   * by DISPLACEMENT from the last one, so somebody who milled about in one spot
+   * for an hour leaves two or three of them however far he actually walked —
+   * and the road drawn through those is a shortcut, not his afternoon. One leg
+   * of 391 m came back as 35 m that way.
+   *
+   * The tell is the RATIO. A real walk loses roughly a third to a half of its
+   * raw length when the jitter comes out — the two legs measured against Google
+   * Maps here came back at 65% and 41% of raw. A tenth is not jitter being
+   * removed, it is a leg that was never followed. Below a quarter the raw
+   * figure stands: inflated, and still the better of two wrong answers, because
+   * it at least reflects that he moved about.
+   */
+  const COLLAPSED_BELOW = 0.25;
+
   const segments = [];
   for (const trip of trips) {
+    let roadMetres = 0;
+
     for (const piece of splitTrailByGaps(trip.points, gapMetres)) {
       const raw = piece.coordinates;
       /* `[lng, lat]` on the wire, `{lat,lng}` through the service — GeoJSON
@@ -97,6 +124,17 @@ export async function GET(request: Request) {
       const road = piece.gap
         ? null
         : await roadPathFor(raw.map(([lng, lat]) => ({ lat, lng })));
+      const drawn = offsetPolyline(
+        road ? (road.map((p) => [p.lng, p.lat]) as [number, number][]) : raw,
+        tripOffset(trip.index),
+      );
+
+      /* A gap contributes its straight line — nobody knows the road taken, and
+         pretending it was longer than the crow flies would be an invention. */
+      for (let i = 1; i < drawn.length; i++) {
+        roadMetres += metresBetween(drawn[i - 1][1], drawn[i - 1][0], drawn[i][1], drawn[i][0]);
+      }
+
       segments.push({
         gap: piece.gap,
         trip: trip.index,
@@ -105,14 +143,17 @@ export async function GET(request: Request) {
         metres: trip.metres,
         fromMs: trip.startAt.getTime(),
         toMs: trip.endAt.getTime(),
-        /* Nudged into its lane HERE, in the geometry, rather than by the
-           renderer — see `offsetPolyline` for why `line-offset` breaks at
-           exactly the corners somebody is trying to follow. */
-        coordinates: offsetPolyline(
-          road ? (road.map((p) => [p.lng, p.lat]) as [number, number][]) : raw,
-          tripOffset(trip.index),
-        ),
+        /* Nudged into its lane in the geometry rather than by the renderer —
+           see `offsetPolyline` for why `line-offset` breaks at exactly the
+           corners somebody is trying to follow. */
+        coordinates: drawn,
       });
+    }
+
+    /* Written back onto this trip's segments now the whole leg is known. */
+    const measurable = roadMetres >= trip.metres * COLLAPSED_BELOW;
+    if (measurable && roadMetres > 0) {
+      for (const seg of segments) if (seg.trip === trip.index) seg.metres = roadMetres;
     }
   }
 

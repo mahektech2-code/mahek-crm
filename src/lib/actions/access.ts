@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
@@ -25,7 +25,12 @@ import {
 } from "@/lib/password-reset";
 import { err as fail, fieldErr, ok, type Result } from "@/lib/result";
 import { widestRole, type Role } from "@/lib/access-control";
-import { listCandidates, type Candidate } from "@/lib/services/access-service";
+import {
+  employeesForLink,
+  listCandidates,
+  type Candidate,
+  type LinkableEmployee,
+} from "@/lib/services/access-service";
 
 /* ---------------------------------------------------------------------------
  * Granting and narrowing access.
@@ -326,6 +331,14 @@ export async function setAccess(
         initials: initialsOf(employee.name),
         passwordHash,
         active: true,
+        /* WHICH employee this account is, recorded at the one moment it is
+           known for certain: somebody has just picked them out of the master
+           by hand. Everything downstream that needs pay, days worked or
+           reimbursements reads this rather than guessing from an email the
+           sheet mostly does not carry — see `users.employeeId`. An account
+           created any other way keeps the old guess, and `npm run
+           employee:link` is what settles those. */
+        employeeId: employee.id,
       });
       await tx.insert(appAccess).values(
         apps.map((app) => ({
@@ -598,4 +611,107 @@ export async function candidatesForGrant(): Promise<Result<Candidate[]>> {
     return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
   }
   return ok(await listCandidates());
+}
+
+/* ------------------------------------------------------- the payroll link */
+
+/**
+ * Say which HRMS employee an account is, or take the answer back.
+ *
+ * The one door onto `users.employeeId` that does not require a terminal. On a
+ * deploy nobody has shell access to a terminal is not a fallback, it is a
+ * locked door — the same lesson the sheet import learned — and this is a field
+ * that decides whether anybody's salary appears on a screen at all.
+ *
+ * `employeeId: null` unlinks, which is not the same as never having linked:
+ * the account falls back to the email-or-company-mobile guess, exactly where
+ * it was before. Nothing is destroyed by unlinking, so it takes no
+ * confirmation beyond the click.
+ *
+ * ONE PAYROLL ROW CANNOT BELONG TO TWO ACCOUNTS. The unique index says so and
+ * would refuse it; this checks first so the refusal can NAME the other account
+ * rather than surfacing as a constraint violation naming neither.
+ */
+export async function linkEmployee(input: {
+  userId: string;
+  employeeId: string | null;
+}): Promise<Result<{ employeeCode: string | null }>> {
+  let me;
+  try {
+    me = await actor();
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
+  }
+
+  const [person] = await db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(eq(users.id, input.userId))
+    .limit(1);
+  if (!person) return fail("That account no longer exists.", "not_found");
+
+  if (input.employeeId === null) {
+    await db.update(users).set({ employeeId: null }).where(eq(users.id, person.id));
+    await audit(me.id, "unlink-employee", person.id, `${person.name} · unlinked from payroll`);
+    refresh();
+    return ok(
+      { employeeCode: null },
+      `${person.name} is no longer linked to an HRMS record. Their pay falls back to matching on email or work number, which on this book usually finds nobody.`,
+    );
+  }
+
+  const [employee] = await db
+    .select({
+      id: employees.id,
+      name: employees.name,
+      code: employees.employeeCode,
+      sheetStatus: employees.sheetStatus,
+    })
+    .from(employees)
+    .where(eq(employees.id, input.employeeId))
+    .limit(1);
+  if (!employee) return fail("That employee is no longer in the master.", "not_found");
+  if (employee.sheetStatus === "withdrawn") {
+    /* Refused rather than warned about: HR has stopped maintaining that row,
+       so a salary read through it would go stale with nothing saying when. */
+    return fail(
+      `${employee.name} is no longer in the employee sheet, so their figures would stop being maintained.`,
+      "rule_violation",
+    );
+  }
+
+  const [clash] = await db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(and(eq(users.employeeId, employee.id), ne(users.id, person.id)))
+    .limit(1);
+  if (clash) {
+    return fail(
+      `${employee.code} ${employee.name} is already linked to ${clash.name}. Unlink that account first — one payroll row cannot belong to two people.`,
+      "conflict",
+    );
+  }
+
+  await db.update(users).set({ employeeId: employee.id }).where(eq(users.id, person.id));
+  await audit(
+    me.id,
+    "link-employee",
+    person.id,
+    `${person.name} · linked to ${employee.code} ${employee.name}`,
+  );
+  refresh();
+  return ok(
+    { employeeCode: employee.code },
+    `${person.name} is ${employee.code} ${employee.name}. Their salary, days worked and reimbursements now read off that record.`,
+  );
+}
+
+/** The employee master, for the link picker. Read fresh on every open. */
+export async function employeesToLink(): Promise<Result<LinkableEmployee[]>> {
+  try {
+    await actor();
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
+  }
+  return ok(await employeesForLink());
 }

@@ -19,7 +19,7 @@
  */
 
 import type { LeadSalesType, LeadStage } from "./lead-labels";
-import { isTerminal, ladderFor, nextStage } from "./lead-ladder";
+import { isParked, isTerminal, ladderFor, nextStage } from "./lead-ladder";
 
 /* ------------------------------------------------------------- conditions */
 
@@ -604,7 +604,12 @@ export function gateForNext(i: LeadGateInput): GateVerdict {
      wrong for a terminal one — without this guard a LOST lead was offered "move
      to Suspect". Terminal is checked here rather than there because the ladder
      engine is a map, and being finished with it is not a place on it. */
-  const to = isTerminal(i.stage) ? null : nextStage(i.stage, i.salesType);
+  /* A PARKED lead is refused here too, and not because it is finished. `on_hold`
+     is on no ladder, so `nextStage` would answer with the FOOT of one — parking
+     a qualified lead offered to move it back to Suspect. Coming back is a move
+     to a NAMED rung, read from the transition that parked it. */
+  const to =
+    isTerminal(i.stage) || isParked(i.stage) ? null : nextStage(i.stage, i.salesType);
   if (!to) {
     return { to: i.stage, open: false, missing: [], noNextRung: true };
   }

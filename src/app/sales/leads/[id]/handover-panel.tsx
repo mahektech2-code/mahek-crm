@@ -8,7 +8,7 @@ import { stamp } from "@/lib/format";
 import { isOnTheBookAt, promotesToCustomerAt } from "@/lib/engines/lead-ladder";
 import { stageLabel, type LeadSalesType, type LeadStage } from "@/lib/lead-labels";
 import type { HandoverCandidate } from "@/lib/services/lead-console-service";
-import { handOverToRelationshipOwner } from "@/lib/actions/leads";
+import { handOverRelationships } from "@/lib/actions/relationship-handover";
 import { Button, Pill } from "../../parts";
 
 /**
@@ -26,11 +26,26 @@ import { Button, Pill } from "../../parts";
  * screen rather than only in the action — somebody handing over needs to know
  * it happened without going to look.
  *
- * **`kind` flips at the FIRST order, and the ladder carries on.** MahekOne's
- * own word for a customer is an account that has ordered, and thirty places
- * read it that way; §22 says Customer at the second. The two words are
- * separated rather than reconciled, and this panel says which one it is talking
- * about so nobody reads the badge as a contradiction.
+ * **IT MOVES THE RELATIONSHIP SEAT AND NOTHING ELSE.** This panel used to call
+ * a handover of its own that wrote `sales_am_id` — which decides who is
+ * credited for the account's orders and whose target it counts toward, so it
+ * had to be refused to managers, which is the one group that actually does
+ * this. Main had already shipped §Q on its own marker,
+ * `relationship_owner_id`, moving nobody's numbers; that is what makes it a
+ * manager's act, and it is `handOverRelationships` that performs it.
+ *
+ * **`kind` flips on the SECOND order, and the ladder carries on.** A first
+ * order from a shop that has just finished a trial is a few cans to try in
+ * their own booth, and routinely does not repeat; the account becomes one when
+ * they come back. The badge says which word it is using so nobody reads it as
+ * a contradiction of the stage beside it.
+ *
+ * **The reason is asked for, from the configured list.** It is stored as a code
+ * on `customer_am_changes` beside the from and the to, because the question
+ * somebody asks in March is "what moved when Suresh left, and why" — and an
+ * audit log can only answer that by grep. The list is passed in rather than
+ * read here: this is a client component and a second copy typed into a screen
+ * is the half that drifts.
  */
 export function HandoverPanel({
   customerId,
@@ -42,8 +57,9 @@ export function HandoverPanel({
   currentOwnerId,
   currentOwnerName,
   candidates,
+  reasonCodes,
   canWork,
-  canReassign,
+  canHandOver,
 }: {
   customerId: string;
   leadName: string;
@@ -54,8 +70,9 @@ export function HandoverPanel({
   currentOwnerId: string | null;
   currentOwnerName: string | null;
   candidates: HandoverCandidate[];
+  reasonCodes: string[];
   canWork: boolean;
-  canReassign: boolean;
+  canHandOver: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -63,7 +80,13 @@ export function HandoverPanel({
   const [open, setOpen] = React.useState(false);
   const [ownerId, setOwnerId] = React.useState(currentOwnerId ?? "");
   const [search, setSearch] = React.useState("");
+  const [reasonCode, setReasonCode] = React.useState(reasonCodes[0] ?? "");
+  const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+
+  /* `other` always requires a note — the same rule the action enforces, said
+     on the screen so the refusal is not the first anybody hears of it. */
+  const needsNote = /^other$/i.test(reasonCode);
 
   const promotesAt = promotesToCustomerAt(salesType);
   const onTheBook = isOnTheBookAt(stage, salesType);
@@ -164,6 +187,35 @@ export function HandoverPanel({
           </select>
         </label>
 
+        <label className="mt-3 block">
+          <span className="mb-1 block text-[13px] font-medium text-ink">Why</span>
+          <select
+            value={reasonCode}
+            onChange={(e) => setReasonCode(e.target.value)}
+            className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+          >
+            {reasonCodes.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="mt-2 block">
+          <span className="mb-1 block text-[13px] font-medium text-ink">
+            Note{needsNote ? "" : " (optional)"}
+          </span>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={2}
+            maxLength={500}
+            placeholder={needsNote ? "Say what happened." : "Anything the next person should know"}
+            className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-brand"
+          />
+        </label>
+
         <p className="mt-3 text-[13px] text-body">
           Both people are told — the person taking it, because work has moved onto their queue
           without them asking, and the person losing it, because a book that shrinks silently reads
@@ -171,11 +223,10 @@ export function HandoverPanel({
         </p>
 
         <p className="mt-2 rounded-[6px] border border-line bg-canvas px-3 py-2.5 text-[12px] text-muted">
-          Changing who owns an account is <strong className="font-medium text-body">accounts&rsquo;
-          and admin&rsquo;s</strong>, not a manager&rsquo;s — whose book an account is in decides
-          whose targets it counts toward, and a manager moving accounts is a manager moving numbers
-          between their own people. Ask accounts to make the change on the customer record; this
-          screen names who it should be.
+          This names who <strong className="font-medium text-body">runs the relationship</strong>.
+          It moves no revenue, no target and no collections list — which is what makes it a
+          manager&rsquo;s to do. Whose book the account is in for crediting orders is the sales
+          seat, changed on the customer record by accounts.
         </p>
 
         <div className="mt-4 flex justify-end gap-2">
@@ -184,18 +235,30 @@ export function HandoverPanel({
           </Button>
           <Button
             tone="primary"
-            disabled={!canReassign || !ownerId || busy}
+            disabled={!canHandOver || !ownerId || !reasonCode || (needsNote && !note.trim()) || busy}
             title={
-              !canReassign
-                ? "Moving an account is accounts' and admin's. Whose book it sits in decides whose targets it counts toward, so a manager cannot move numbers between their own people."
+              !canHandOver
+                ? "Handing the relationship over is a manager's. It moves who runs the account and nothing else — the sales seat, which decides whose targets it counts toward, is a separate act and stays accounts' and admin's."
                 : !ownerId
                   ? "Pick who takes the account on."
-                  : undefined
+                  : !reasonCode
+                    ? "Say why it is moving."
+                    : needsNote && !note.trim()
+                      ? "Other always needs a note saying what happened."
+                      : undefined
             }
             onClick={() => {
-              if (!ownerId || busy) return;
+              if (!ownerId || !reasonCode || busy) return;
               setBusy(true);
-              void handOverToRelationshipOwner({ customerId, ownerId }).then((r) => {
+              void handOverRelationships({
+                /* A list, because the action's own entry point is the pending
+                   list and a manager clearing it hands eight accounts over in
+                   one decision. One account is that list of length one. */
+                customerIds: [customerId],
+                toUserId: ownerId,
+                reasonCode,
+                note: note.trim() || undefined,
+              }).then((r) => {
                 setBusy(false);
                 if (!r.ok) {
                   toast.push(r.error);

@@ -46,6 +46,11 @@ const STAGES: Record<string, string> = {
   contacted: 'contacted',
   qualified: 'qualified',
   negotiation: 'negotiation',
+  /* The screen says "On hold" and the enum says `on_hold`. Both spellings are
+     accepted on the way out, because the value reaches here from a stage
+     constant AND from a decision the visit screen picked. */
+  'on hold': 'on_hold',
+  on_hold: 'on_hold',
   converted: 'won',
   won: 'won',
   lost: 'lost',
@@ -58,6 +63,47 @@ const STAGES: Record<string, string> = {
  */
 export function wireStage(stage: string): string | undefined {
   return STAGES[stage.trim().toLowerCase()];
+}
+
+/**
+ * Where the lead came from, in the word MahekOne stores.
+ *
+ * THIS IS THE FIELD THAT WAS MISSED. `companyName`, the stage and the notes
+ * were all fixed when the two halves were first run against each other; the
+ * source was left going out raw, so every lead a salesman ever created was
+ * refused on it alone — `Walked past` against an enum that has never held
+ * anything but lower-case codes. Both leads production has seen were rejected
+ * this way, and `mbos_leads` is empty because of it.
+ *
+ * Two of the five collapse onto `manual`, and that is a real loss said out
+ * loud rather than hidden: `manual` is the residual value — the lead nobody
+ * can attribute to a channel — and both a walk-in enquiry and one the office
+ * handed over are exactly that. The salesman's own word survives on the local
+ * row, which is what the Leads screen prints; the wire carries MahekOne's.
+ *
+ * Undefined where the word is not one of ours, for the same reason
+ * `wireStage` does it: an unknown value is refused for the WHOLE lead, and a
+ * lead that reaches the office with no source recorded is enormously better
+ * than one that never arrives. That is the property this whole file exists
+ * for, and the one the source field never had.
+ */
+const SOURCES: Record<string, string> = {
+  'walked past': 'cold_call',
+  referral: 'referral',
+  'market enquiry': 'manual',
+  exhibition: 'exhibition',
+  office: 'manual',
+  /* MahekOne's own words, so a value that arrived from the office and is
+     being sent back on an edit is not refused for being already correct. */
+  manual: 'manual',
+  website: 'website',
+  cold_call: 'cold_call',
+  whatsapp: 'whatsapp',
+  campaign: 'campaign',
+};
+
+export function wireSource(source: string | null | undefined): string | undefined {
+  return SOURCES[(source ?? '').trim().toLowerCase()];
 }
 
 export type LeadNote = { at: number; text: string };
@@ -98,8 +144,9 @@ const LOCAL_STAGES: Record<string, string> = {
   contacted: 'Contacted',
   qualified: 'Qualified',
   negotiation: 'Negotiation',
-  won: 'Converted',
+  on_hold: 'On hold',
   converted: 'Converted',
+  won: 'Converted',
   lost: 'Lost',
 };
 
@@ -127,7 +174,7 @@ export function localStage(stage: string | undefined): string {
  * `customers.lead_stage` is already `mbos_lead_stage` and holds all of them.
  */
 const FUNNEL_STAGES = new Set<string>([
-  'new', 'contacted', 'qualified', 'negotiation', 'won', 'lost',
+  'new', 'contacted', 'qualified', 'negotiation', 'won', 'lost', 'on_hold',
   'suspect', 'prospect', 'qualification', 'sample_trial', 'sample_received',
   'sample_review', 'first_order', 'delivery', 'payment', 'second_order',
   'customer', 'management_review', 'commercial_discussion',

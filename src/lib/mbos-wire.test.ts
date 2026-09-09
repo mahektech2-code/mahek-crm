@@ -186,8 +186,24 @@ function payloadColumns(source: string, fn: string): string[] {
   }
 
   const obj = body.match(/\.select\(\{([\s\S]*?)\}\)/);
-  assert.ok(obj, `${fn} has neither a sql template nor a .select({}) to read`);
-  return [...obj[1].matchAll(/^\s*(\w+):/gm)].map((m) => m[1]);
+  if (obj) return [...obj[1].matchAll(/^\s*(\w+):/gm)].map((m) => m[1]);
+
+  /*
+   * A payload assembled in TypeScript rather than by the database.
+   *
+   * `leaveBalanceRows` is the one of these: its entitlement comes from
+   * configuration and its usage from a GROUP BY, so there is no single select
+   * whose columns are the row. Reading the object it maps to keeps this test
+   * pointed at the thing that actually goes on the wire — anchoring it on one
+   * of the two queries instead would have checked two of the five columns and
+   * reported the other three as safe.
+   */
+  const literal = body.match(/=>\s*\(\{([\s\S]*?)\}\)\)/);
+  assert.ok(
+    literal,
+    `${fn} has no sql template, no .select({}) and no mapped object to read`,
+  );
+  return [...literal[1].matchAll(/^\s*(\w+):/gm)].map((m) => m[1]);
 }
 
 /*
@@ -200,10 +216,19 @@ const WIRE: { fn: string; table: string; extra?: string[] }[] = [
   { fn: "customersForDevice", table: "customers", extra: ["lastSyncedAt"] },
   { fn: "activeCatalogue", table: "products", extra: ["lastSyncedAt"] },
   { fn: "recentTimeline", table: "timeline_events" },
+  { fn: "recentOrders", table: "customer_orders", extra: ["lastSyncedAt"] },
+  { fn: "recentPayments", table: "customer_payments", extra: ["lastSyncedAt"] },
+  /*
+   * `customerBills` assembles its row in TypeScript rather than in SQL — it
+   * reads the Accounts ledger through `listBills` and TRIMS the result, so the
+   * mapped object literal is the thing that actually goes on the wire. That is
+   * the `leaveBalanceRows` case, and `payloadColumns` reads it the same way.
+   */
+  { fn: "customerBills", table: "customer_bills", extra: ["lastSyncedAt"] },
   { fn: "journeyStops", table: "journey_stops", extra: ["lastSyncedAt"] },
   { fn: "schemeRows", table: "schemes" },
   { fn: "unreadNotifications", table: "notifications" },
-  { fn: "leaveBalances", table: "leave_balances", extra: ["lastSyncedAt"] },
+  { fn: "leaveBalanceRows", table: "leave_balances", extra: ["lastSyncedAt"] },
   { fn: "holidaysFor", table: "holidays", extra: ["lastSyncedAt"] },
   { fn: "visibleDocuments", table: "documents", extra: ["lastSyncedAt"] },
   { fn: "coursesFor", table: "courses", extra: ["lastSyncedAt"] },
@@ -253,9 +278,24 @@ const DELTA: { anchor: string; table: string }[] = [
   { anchor: 'select p.id, p.name, p.pack_size', table: "products" },
   { anchor: 'select t.id, t.customer_id as "customerId"', table: "timeline_events" },
   { anchor: "select s.id,", table: "journey_stops" },
-  { anchor: 'select p.id, p.plan_date::text as "planDate"', table: "journey_days" },
-  { anchor: "select b.leave_type::text as kind", table: "leave_balances" },
+  /*
+   * TWO ENTRIES LEFT THIS LIST, one from each side of this merge, and both for
+   * the same reason: the delta now calls the same function the bootstrap does,
+   * so there is no second spelling left to check and the WIRE entry above
+   * covers each once. That is the state every remaining entry is waiting to
+   * reach.
+   *
+   * `journey_days` moved for a stronger reason than tidiness — the bootstrap
+   * sent NO plan days at all, so a fresh sign-in got an empty Journey tab and
+   * the `updated_at`-gated delta could never make it up: a day proposed before
+   * this handset signed in arrived on no pass, ever.
+   */
 ];
+
+/* The history channels are sent by the SAME functions on both paths — the
+   delta calls `recentOrders`/`recentPayments` rather than spelling them out
+   again — so the bootstrap check above covers both. Listed here in words so
+   the next person to add an inline copy knows it has to be registered. */
 
 test("the delta's own queries send nothing the handset cannot hold either", () => {
   const service = readFileSync(SERVICE, "utf8");
@@ -275,6 +315,77 @@ test("the delta's own queries send nothing the handset cannot hold either", () =
   }
 
   assert.deepEqual(faults, [], `the delta would throw on the handset:\n  ${faults.join("\n  ")}`);
+});
+
+/* ---------------------------------------------------------------------------
+ * THE OTHER DIRECTION: what an ACCEPT writes back onto the record.
+ *
+ * `setEntityState` in `mbos-app/src/sync/queue.ts` reflects a queue item's
+ * fate onto the row itself, so a screen can say what state an order is in
+ * without joining the outbox. It writes `syncState` and `syncMessage` always,
+ * and `serverCreatedAt` whenever the server sent a time — which an ACCEPT
+ * always does, so that is the ordinary path and not the exception.
+ *
+ * `journey_days` was in `ENTITY_TABLE` without a `serverCreatedAt` column, so
+ * every accepted `plan_day` threw `no such column` INSIDE the push loop:
+ * after the queue row had been marked synced, before the rest of the batch had
+ * been read, and before `applyPull` ran at all. So agreeing a day silently
+ * threw away that tick's whole delta — the stops for the day just agreed
+ * included — and left the day reading "waiting for signal" for ever with the
+ * answer already on the server. Every OTHER table in that map had the column,
+ * which is exactly why nothing caught it.
+ *
+ * Same shape as the pull contract above and the same reason nothing else can
+ * catch it: one file's `UPDATE` is a string, the other file's schema is a
+ * string, and they meet only inside a phone.
+ * ------------------------------------------------------------------------- */
+
+const QUEUE = "mbos-app/src/sync/queue.ts";
+
+test("every table a sync verdict is written onto can hold the verdict", () => {
+  const queue = readFileSync(QUEUE, "utf8");
+  const tables = handsetTables();
+
+  const map = queue.match(/const ENTITY_TABLE[^=]*=\s*\{([\s\S]*?)\n\};/);
+  assert.ok(map, "ENTITY_TABLE is gone from sync/queue.ts — this test needs updating with it");
+
+  /* `'visits'` in `visit: 'visits',` — the quoted half, so a comment
+     mentioning a table name cannot be read as an entry. */
+  const targets = [...map[1].matchAll(/^\s*\w+:\s*'(\w+)'/gm)].map((m) => m[1]);
+  assert.ok(targets.length > 10, `only ${targets.length} entity tables parsed — the shape changed`);
+
+  /* Read off `setEntityState` rather than typed out here, so a fourth column
+     added to that UPDATE is checked without anybody remembering to. */
+  const from = queue.indexOf("async function setEntityState");
+  assert.ok(from > -1, "setEntityState is gone from sync/queue.ts");
+  /* That function's body only — the file goes on to UPDATE `sync_queue`
+     itself, and those columns belong to a different table. */
+  const writes = queue.slice(from, queue.indexOf("\n}", from));
+  const written = [...new Set([...writes.matchAll(/SET ([^`]*?) WHERE/g)]
+    .flatMap((m) => [...m[1].matchAll(/(\w+)\s*=\s*\?/g)].map((c) => c[1])))];
+  assert.ok(
+    written.includes("syncState") && written.includes("serverCreatedAt"),
+    `setEntityState no longer writes what this test thinks: ${written.join(", ")}`,
+  );
+
+  const faults: string[] = [];
+  for (const table of new Set(targets)) {
+    const local = tables.get(table);
+    if (!local) {
+      faults.push(`${table} does not exist on the handset at all`);
+      continue;
+    }
+    const missing = written.filter((c) => !local.has(c));
+    if (missing.length) faults.push(`${table}: ${missing.join(", ")}`);
+  }
+
+  assert.deepEqual(
+    faults,
+    [],
+    "An accept writes these onto the row, and a missing column throws inside " +
+      "the push loop — which abandons the rest of the batch AND the pull " +
+      "behind it:\n  " + faults.join("\n  "),
+  );
 });
 
 /*
@@ -326,6 +437,61 @@ test("a hand-rolled handler reads no field the server forgets to send", () => {
     faults,
     [],
     `these arrive as undefined, become NULL, and are written over whatever was there:\n  ${faults.join("\n  ")}`,
+  );
+});
+
+/*
+ * What the server sends that the handler never reads — the third direction,
+ * and the one that had nothing looking down it.
+ *
+ * The two checks above watch the handler: what it READS that nothing sends,
+ * and what it WRITES that the table lacks. Neither can see a field going the
+ * other way. The generic upsert cannot lose one silently — it inserts exactly
+ * the keys that arrived, so an unknown column throws and the test at the top
+ * of this file catches it before it ships. A hand-rolled handler types its
+ * column list out, so a field nobody listed is simply absent: no error on the
+ * server, none on the handset, and a column of nulls in between.
+ *
+ * `openLeads` sent `gpsLat` and `gpsLng` from the day leads existed and the
+ * handset had nowhere to put them, so every lead on every handset had a null
+ * place — found by hand, long after. Writing this test found the next one
+ * unaided: `area`, sent by the same query, dropped the same way, while the
+ * customer row beside it showed a locality from the very same two fields.
+ *
+ * A field that is deliberately not stored is named in NOT_STORED with the
+ * reason, so the list of exceptions stays short enough to read and nobody
+ * silences a real drop by adding a line to it without saying why.
+ */
+const NOT_STORED: Record<string, string> = {
+  /* The delta's own cursor. It is compared on the server to decide what to
+     send and is not a fact about the row — the handset stamps its own
+     `lastSyncedAt` instead. */
+  updatedAt: "the delta cursor, never a column on the handset",
+};
+
+test("a hand-rolled handler drops nothing the server sends", () => {
+  const service = readFileSync(SERVICE, "utf8");
+  const pull = readFileSync("mbos-app/src/sync/pull.ts", "utf8");
+  const faults: string[] = [];
+
+  for (const { handler, fns } of HANDLERS) {
+    const read = new Set(fieldsRead(pull, handler));
+    for (const fn of fns) {
+      const dropped = payloadColumns(service, fn).filter(
+        (f) => !read.has(f) && !(f in NOT_STORED),
+      );
+      if (dropped.length) {
+        faults.push(`${fn} sends what ${handler} never reads: ${dropped.join(", ")}`);
+      }
+    }
+  }
+
+  assert.deepEqual(
+    faults,
+    [],
+    "a typed column list cannot throw on a field it does not know, so these " +
+      "arrive, are ignored, and leave a column of nulls with nothing failing " +
+      `at either end:\n  ${faults.join("\n  ")}`,
   );
 });
 

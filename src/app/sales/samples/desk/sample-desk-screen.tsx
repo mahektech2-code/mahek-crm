@@ -51,7 +51,7 @@ type Acting =
  * without a query.
  *
  * **Delivery is watched against what was PROMISED.** `expected_delivery_date`
- * is the courier's word and `received_confirmed_at` is what actually happened,
+ * is the courier's word and `received_at` is what actually happened,
  * confirmed by the customer or the salesman rather than by the courier. A
  * docket with no movement on it is a sample nobody will ever review, and the
  * row says so on the day it goes past rather than at the review call a
@@ -86,7 +86,7 @@ export function SampleDeskScreen({
     setActing(next);
     setNote("");
     setCourier(next.kind === "dispatch" ? (next.row.courierName ?? "") : "");
-    setDocket(next.kind === "dispatch" ? (next.row.courierDocket ?? "") : "");
+    setDocket(next.kind === "dispatch" ? (next.row.trackingNumber ?? "") : "");
     setExpected(next.kind === "dispatch" ? (next.row.expectedDeliveryDate ?? "") : "");
     setFields({});
     setOutcome("approved");
@@ -108,7 +108,7 @@ export function SampleDeskScreen({
           : acting.kind === "dispatch"
             ? await dispatchSample(acting.row.id, {
                 courierName: courier.trim(),
-                courierDocket: docket.trim(),
+                trackingNumber: docket.trim(),
                 expectedDeliveryDate: expected,
               })
             : acting.kind === "received"
@@ -254,7 +254,7 @@ export function SampleDeskScreen({
                       {r.courierName ?? "courier not named"}
                     </span>
                     <span className="block truncate text-[12px] text-muted">
-                      {r.courierDocket ?? "no docket"} · {stamp(r.dispatchedAt)}
+                      {r.trackingNumber ?? "no docket"} · {stamp(r.dispatchedAt)}
                     </span>
                   </>
                 ) : (
@@ -262,11 +262,11 @@ export function SampleDeskScreen({
                 )}
               </Cell>
               <Cell truncate={170}>
-                {r.receivedConfirmedAt ? (
+                {r.receivedAt ? (
                   <>
                     <Pill tone="success">Landed</Pill>
                     <span className="block text-[12px] text-muted">
-                      {stamp(r.receivedConfirmedAt)}
+                      {stamp(r.receivedAt)}
                     </span>
                   </>
                 ) : r.expectedDeliveryDate ? (
@@ -337,7 +337,7 @@ export function SampleDeskScreen({
                     <Button size="sm" onClick={() => begin({ kind: "dispatch", row: r })}>
                       Record dispatch
                     </Button>
-                  ) : !r.receivedConfirmedAt ? (
+                  ) : !r.receivedAt ? (
                     <Button size="sm" onClick={() => begin({ kind: "received", row: r })}>
                       Confirm received
                     </Button>

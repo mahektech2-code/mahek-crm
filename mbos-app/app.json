@@ -36,7 +36,7 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "MahekOne records where a visit, an order or a payment was taken, and follows your route only while your day is open. It stops when you check out.",
-          "locationAlwaysAndWhenInUsePermission": "MahekOne follows your route while your day is open, including with the screen off — a call between two shops should not leave a gap in the map. It stops the moment you check out.",
+          "locationAlwaysAndWhenInUsePermission": "MahekOne follows your route while your day is open, including with the screen off \u2014 a call between two shops should not leave a gap in the map. It stops the moment you check out.",
           "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
@@ -63,9 +63,29 @@
           "color": "#5223E0"
         }
       ],
-      "./plugins/withReleaseSigning.js"
+      "./plugins/withReleaseSigning.js",
+      "@maplibre/maplibre-react-native"
     ],
     "scheme": "mbos",
-    "backgroundColor": "#F7F8FA"
+    "backgroundColor": "#F7F8FA",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "enabled": true,
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_LOAD",
+      "url": "https://u.expo.dev/713eb7ff-b462-48c8-9b6a-b89d60bc9bbd",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "713eb7ff-b462-48c8-9b6a-b89d60bc9bbd"
+      }
+    },
+    "owner": "dasabhinaba34"
   }
 }

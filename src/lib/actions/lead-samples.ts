@@ -28,7 +28,7 @@ import {
 } from "@/lib/mbos-jobs";
 import { today } from "@/lib/recompute";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
-import { writeTimelineEvent } from "@/lib/timeline";
+import { writeTimelineEvent, MBOS_EVENT } from "@/lib/timeline";
 
 /* ---------------------------------------------------------------------------
  * §15 and §16 — a sample, from the asking to the answer.
@@ -298,7 +298,7 @@ export async function requestSample(
 
       await writeTimelineEvent(tx, {
         customerId,
-        eventType: "sample_requested",
+        eventType: MBOS_EVENT.sampleRequested,
         sourceApp: "crm",
         sourceRecordId: sampleId,
         occurredAt: now,
@@ -444,7 +444,7 @@ export async function decideSample(
 
       await writeTimelineEvent(tx, {
         customerId: loaded.customer.id,
-        eventType: "sample_request_decided",
+        eventType: MBOS_EVENT.sampleDecided,
         sourceApp: "crm",
         sourceRecordId: sampleId,
         occurredAt: now,
@@ -484,7 +484,7 @@ export async function decideSample(
 
 const dispatchSchema = z.object({
   courierName: z.string().trim().min(1).max(120),
-  courierDocket: z.string().trim().min(1).max(120),
+  trackingNumber: z.string().trim().min(1).max(120),
   /** A plain `YYYY-MM-DD`. What was promised, not what happened. */
   expectedDeliveryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
@@ -522,7 +522,7 @@ export async function dispatchSample(
           dispatchedAt: now,
           dispatchedById: ctx.user.id,
           courierName: parsed.data.courierName,
-          courierDocket: parsed.data.courierDocket,
+          trackingNumber: parsed.data.trackingNumber,
           expectedDeliveryDate: parsed.data.expectedDeliveryDate,
           updatedAt: now,
           updatedById: ctx.user.id,
@@ -531,12 +531,12 @@ export async function dispatchSample(
 
       await writeTimelineEvent(tx, {
         customerId: loaded.customer.id,
-        eventType: "sample_dispatched",
+        eventType: MBOS_EVENT.sampleDispatched,
         sourceApp: "crm",
         sourceRecordId: sampleId,
         occurredAt: now,
         actorUserId: ctx.user.id,
-        summary: `Sample sent with ${parsed.data.courierName}, docket ${parsed.data.courierDocket}, due ${parsed.data.expectedDeliveryDate}`,
+        summary: `Sample sent with ${parsed.data.courierName}, docket ${parsed.data.trackingNumber}, due ${parsed.data.expectedDeliveryDate}`,
       });
 
       await raiseNurtureTasks(tx, {
@@ -614,7 +614,7 @@ export async function confirmSampleReceived(
         .update(mbosSamples)
         .set({
           state: "received",
-          receivedConfirmedAt: at,
+          receivedAt: at,
           deliveredAt: at,
           updatedAt: now,
           updatedById: ctx.user.id,
@@ -623,7 +623,7 @@ export async function confirmSampleReceived(
 
       await writeTimelineEvent(tx, {
         customerId: loaded.customer.id,
-        eventType: "sample_received",
+        eventType: MBOS_EVENT.sampleReceived,
         sourceApp: "crm",
         sourceRecordId: sampleId,
         occurredAt: at,
@@ -742,6 +742,35 @@ export async function recordSampleFeedback(
           state: "reviewed",
           trialOutcome: parsed.data.trialOutcome,
           reviewedAt: now,
+          /*
+           * ONE WRITER, TWO READERS.
+           *
+           * §16 asks the trial seven named questions and they live in
+           * `sample_feedback`, because "better drying than what they use,
+           * price is the problem" cannot be recovered from one box. Main's own
+           * sample screens read `mbos_samples.satisfaction` and
+           * `rejection_reason` — two columns holding the same event at a
+           * coarser grain — and they were shipped first.
+           *
+           * So this writes both rather than either. Leaving main's null would
+           * make a reviewed sample read as never reviewed on the screens that
+           * ask those columns; deleting them would break screens outside this
+           * feature. What must NOT happen is a second writer keeping them in
+           * step, which is how the two come to disagree about one trial.
+           *
+           * The coarse columns are DERIVED from the fine ones here and never
+           * typed separately: satisfaction is what they said about quality and
+           * performance, and a rejection reason is only meaningful on a
+           * rejection.
+           */
+          satisfaction:
+            [f.quality, f.performance].filter((v) => v?.trim()).join(" · ") || null,
+          rejectionReason:
+            parsed.data.trialOutcome === "rejected"
+              ? [f.otherComments, f.priceFeedback, f.competitorComparison]
+                  .find((v) => v?.trim())
+                  ?.trim() || null
+              : null,
           reviewedById: ctx.user.id,
           updatedAt: now,
           updatedById: ctx.user.id,
@@ -750,7 +779,7 @@ export async function recordSampleFeedback(
 
       await writeTimelineEvent(tx, {
         customerId: loaded.customer.id,
-        eventType: "sample_reviewed",
+        eventType: MBOS_EVENT.sampleReview,
         sourceApp: "crm",
         sourceRecordId: sampleId,
         occurredAt: now,
@@ -865,7 +894,7 @@ export async function cancelSample(sampleId: string, reason: string): Promise<Re
 
       await writeTimelineEvent(tx, {
         customerId: loaded.customer.id,
-        eventType: "sample_cancelled",
+        eventType: MBOS_EVENT.sampleCancelled,
         sourceApp: "crm",
         sourceRecordId: sampleId,
         occurredAt: now,

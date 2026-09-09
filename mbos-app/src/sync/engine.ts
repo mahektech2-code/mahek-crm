@@ -177,6 +177,24 @@ async function onRejection(item: QueueItem, code: string, message: string): Prom
     priority: 1,
   });
 
+  /*
+   * A pick the office refused has to give the day back.
+   *
+   * `pickShops` moves the day to `planned` on this handset the moment the
+   * shops are chosen, so the screen reflects the decision rather than the
+   * network. Where the office then refuses it — the day was un-agreed, or it
+   * has moved on since — nothing lifted that, and the day sat `planned` with
+   * no stops behind it: absent from the "shops to pick" prompt, absent from
+   * today's route, and unreachable from either. Back to `agreed` puts the
+   * prompt back, and the refusal is on the day itself as well as in the bell.
+   */
+  if (item.entityType === 'plan_stops') {
+    await run(
+      `UPDATE journey_days SET dayState = 'agreed', picked = 0 WHERE id = ? AND dayState = 'planned'`,
+      [item.entityId],
+    );
+  }
+
   if (item.entityType === 'order' && payload.customerId) {
     const { createTask } = await import('../data/tasks');
     await createTask({

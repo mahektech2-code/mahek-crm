@@ -7,11 +7,11 @@ import {
   customerDistributors,
   customers,
   distributorProfiles,
-  leadManagerCalls,
+  mbosLeadValidations,
   leadStageTransitions,
   mbosApprovals,
   mbosDocuments,
-  mbosManagerTerritories,
+  mbosUserTerritories,
   mbosSamples,
   mbosVisits,
   notifications,
@@ -21,7 +21,7 @@ import {
 } from "@/db/schema";
 import { orderCountsSql } from "../order-status";
 import { getConfig } from "../config/store";
-import { writeTimelineEvent } from "../timeline";
+import { MBOS_EVENT, writeTimelineEvent } from "../timeline";
 import type { Role } from "../access-control";
 import {
   gateTo,
@@ -30,7 +30,13 @@ import {
   type LeadGateInput,
 } from "../engines/lead-gates";
 import { directionOf, isOnTheBookAt } from "../engines/lead-ladder";
-import { stageLabel, type LeadSalesType, type LeadStage } from "../lead-labels";
+import {
+  stageLabel,
+  verificationAnswers,
+  verificationVerdict,
+  type LeadSalesType,
+  type LeadStage,
+} from "../lead-labels";
 
 /* ---------------------------------------------------------------------------
  * Reading one lead — the engines' half of it, and the record page's half.
@@ -77,7 +83,7 @@ const LEAD_COLUMNS = {
   leadArchived: customers.leadArchived,
   leadConvertedAt: customers.leadConvertedAt,
   leadEstimatedPotentialPaise: customers.leadEstimatedPotentialPaise,
-  leadMonthlyLitres: customers.leadMonthlyLitres,
+  leadMonthlyVolumeLitres: customers.leadMonthlyVolumeLitres,
   leadCompetitor: customers.leadCompetitor,
   leadRequiredProductId: customers.leadRequiredProductId,
   leadDecisionMaker: customers.leadDecisionMaker,
@@ -90,7 +96,7 @@ const LEAD_COLUMNS = {
   leadNextActionOwnerId: customers.leadNextActionOwnerId,
   leadNextActionOutcome: customers.leadNextActionOutcome,
   leadManagerId: customers.leadManagerId,
-  leadManagerAssignedAt: customers.leadManagerAssignedAt,
+  leadManagerDecidedAt: customers.leadManagerDecidedAt,
   leadVerifiedAt: customers.leadVerifiedAt,
   leadVerifiedById: customers.leadVerifiedById,
   leadExpectedOrderDate: customers.leadExpectedOrderDate,
@@ -240,7 +246,7 @@ export async function leadGateInput(customerId: string): Promise<LeadGateInput |
     stage: (lead.leadStage ?? "suspect") as LeadStage,
 
     customerType: lead.customerType,
-    monthlyLitres: lead.leadMonthlyLitres,
+    monthlyLitres: lead.leadMonthlyVolumeLitres,
     potentialPaise: lead.leadEstimatedPotentialPaise,
     competitor: lead.leadCompetitor,
     requiredProductId: lead.leadRequiredProductId,
@@ -445,24 +451,37 @@ export type LeadManagerCallRow = {
  * interesting one precisely because there was a first. A screen showing only
  * the newest would present a passed verification with no sign that it took two
  * attempts to get there.
+ *
+ * READ OFF `mbos_lead_validations`, which is where a verification call lives.
+ * This branch built `lead_manager_calls` for the same act at the same time main
+ * built that one, and two tables meant the web form's calls and the handset's
+ * were two histories of one lead — with each screen showing whichever half it
+ * happened to read. The twelve answers are reassembled from their columns by
+ * `verificationAnswers`, the same mapping the form writes through.
  */
 export async function leadManagerCallsFor(customerId: string): Promise<LeadManagerCallRow[]> {
   const rows = await db
-    .select({
-      id: leadManagerCalls.id,
-      managerId: leadManagerCalls.managerId,
-      managerName: users.name,
-      calledAt: leadManagerCalls.calledAt,
-      verified: leadManagerCalls.verified,
-      answers: leadManagerCalls.answers,
-      followUpNote: leadManagerCalls.followUpNote,
-    })
-    .from(leadManagerCalls)
-    .leftJoin(users, eq(users.id, leadManagerCalls.managerId))
-    .where(eq(leadManagerCalls.customerId, customerId))
-    .orderBy(desc(leadManagerCalls.calledAt), desc(leadManagerCalls.id));
+    .select()
+    .from(mbosLeadValidations)
+    .leftJoin(users, eq(users.id, mbosLeadValidations.calledByUserId))
+    .where(eq(mbosLeadValidations.customerId, customerId))
+    .orderBy(desc(mbosLeadValidations.calledAt), desc(mbosLeadValidations.id));
 
-  return rows as LeadManagerCallRow[];
+  return rows.map((r) => {
+    const call = r.mbos_lead_validations;
+    return {
+      id: call.id,
+      managerId: call.calledByUserId,
+      managerName: r.users?.name ?? null,
+      calledAt: call.calledAt,
+      verified: verificationVerdict(call.verdict),
+      answers: verificationAnswers(call as unknown as Record<string, unknown>),
+      /* The reason a verdict was reached is what the follow-up task carried,
+         and `notes` is where a call made from the handset puts its prose. Both
+         are the same sentence to a reader, so neither is dropped. */
+      followUpNote: call.verdictReason ?? call.notes ?? null,
+    };
+  });
 }
 
 /* --------------------------------------------------------- the record page */
@@ -881,7 +900,7 @@ export async function applyLeadStageMove(
        * That seat is the person who owed the verification call, the nurture
        * tasks and the files, and every one of those is about WINNING the
        * account. Left in place it would go on generating a lead's worklist
-       * against a customer who has been buying for a year. `leadManagerAssignedAt`
+       * against a customer who has been buying for a year. `leadManagerDecidedAt`
        * is left alone: when they were given it is a fact about the past, and
        * the empty seat is what says they no longer hold it.
        */
@@ -901,7 +920,7 @@ export async function applyLeadStageMove(
      */
     await writeTimelineEvent(tx, {
       customerId: lead.id,
-      eventType: "lead_stage",
+      eventType: MBOS_EVENT.leadStage,
       sourceApp: actor.sourceApp,
       sourceRecordId: transitionId,
       occurredAt: new Date(),
@@ -1000,8 +1019,8 @@ export async function leadManagerCandidates(region: string | null): Promise<
       .from(users)
       .where(and(eq(users.role, "manager"), eq(users.active, true))),
     db
-      .select({ userId: mbosManagerTerritories.userId, region: mbosManagerTerritories.region })
-      .from(mbosManagerTerritories),
+      .select({ userId: mbosUserTerritories.userId, region: mbosUserTerritories.region })
+      .from(mbosUserTerritories),
   ]);
 
   const covered = new Map<string, string[]>();

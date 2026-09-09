@@ -130,6 +130,17 @@ export default function SamplesScreen() {
           const days = Math.max(0, Math.round((now - x.requestedAt) / 86_400_000));
           const name = names[x.customerId] ?? 'Unknown shop';
           const owed = whatIsOwed(x);
+          /*
+           * To the SAMPLE, not to the customer's Samples tab.
+           *
+           * This routed to the customer record, which is the right answer for a
+           * READ — the trial beside the shop's orders and payments. But a sample
+           * now has a lifecycle to record: dispatch, courier, the shop
+           * confirming receipt, the trial starting and finishing, the verdict.
+           * All of that lives on the sample itself, and routing to the customer
+           * would leave every one of those screens unreachable. The customer's
+           * tab is still there for reading.
+           */
           return (
             <Pressable
               key={x.id}

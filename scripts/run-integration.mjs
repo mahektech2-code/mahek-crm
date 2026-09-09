@@ -39,6 +39,7 @@ const files = [
   "src/lib/accounts.test.ts",
   "src/lib/feedback.test.ts",
   "src/lib/activity-location.test.ts",
+  "src/lib/field-book.test.ts",
   "src/lib/outstanding-import.test.ts",
   "src/lib/monthly-targets.test.ts",
   "src/lib/performance.test.ts",
@@ -46,6 +47,8 @@ const files = [
   "src/lib/founder-dashboard.test.ts",
   "src/lib/expense-policy.test.ts",
   "src/lib/storage-fallback.test.ts",
+  "src/lib/relationship-handover.test.ts",
+  "src/lib/sample-logistics.test.ts",
 ];
 
 let failed = 0;

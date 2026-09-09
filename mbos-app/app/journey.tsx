@@ -5,8 +5,9 @@ import { AppFrame } from '../src/components/shell/AppFrame';
 import { DashedButton, Input, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { ActionSheet, BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
-import { color as C, radius, shadow, type, weight } from '../src/theme/tokens';
+import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
 import {
+  createDay,
   agreeDay,
   planDays,
   refuseDay,
@@ -20,7 +21,8 @@ import { requestTour } from '../src/data/requests';
 import { getConfig } from '../src/data/config';
 import { optimiseRoute } from '../src/engines/route';
 import { fixOf, getFix } from '../src/native/location';
-import { dmy, inr, isoDate, plural } from '../src/lib/format';
+import { dayLabel, dayLabelRelative, dmy, inr, isoDate, plural } from '../src/lib/format';
+import { openMaps, openRoute, shareText } from '../src/lib/messaging';
 import { useBoot } from '../src/state/boot';
 import { useStore } from '../src/state/store';
 
@@ -38,9 +40,25 @@ import { useStore } from '../src/state/store';
  * nobody visits and nobody ever finds out why.
  */
 
+/**
+ * How long a proposal has been waiting on him, in words.
+ *
+ * Null where the office did not record when it asked — every plan written
+ * before the negotiation existed is in that state, and "proposed 20,214 days
+ * ago" from a null read as an epoch is worse than saying nothing.
+ */
+function waitingLabel(proposedAt: number | null): string | null {
+  if (!proposedAt) return null;
+  const days = Math.floor((Date.now() - proposedAt) / 86_400_000);
+  if (days <= 0) return 'asked today';
+  if (days === 1) return 'asked yesterday';
+  return 'waiting ' + days + ' days';
+}
+
 export default function JourneyScreen() {
   const notify = useStore((s) => s.notify);
   const askConfirm = useStore((s) => s.askConfirm);
+  const set = useStore((s) => s.set);
   const beginVisit = useStore((s) => s.beginVisit);
   const boot = useBoot();
   const [moreOpen, setMoreOpen] = React.useState(false);
@@ -49,6 +67,14 @@ export default function JourneyScreen() {
   const [tourPick, setTourPick] = React.useState<'from' | 'to' | null>(null);
   const [tourErr, setTourErr] = React.useState<string | null>(null);
   const [tourBusy, setTourBusy] = React.useState(false);
+  /* Starting a day, as against answering one. `own` is the form; the date
+     defaults to nothing rather than to today, because a day planned by
+     accident is worse than one not planned yet. */
+  const [ownOpen, setOwnOpen] = React.useState(false);
+  const [own, setOwn] = React.useState({ date: '', city: '' });
+  const [ownPick, setOwnPick] = React.useState(false);
+  const [ownErr, setOwnErr] = React.useState<string | null>(null);
+  const [ownBusy, setOwnBusy] = React.useState(false);
   const [stops, setStops] = React.useState<JourneyStop[]>([]);
   const [days, setDays] = React.useState<PlanDay[]>([]);
   const [pastCounts, setPastCounts] = React.useState<Record<string, { total: number; done: number }>>({});
@@ -91,7 +117,60 @@ export default function JourneyScreen() {
    * appear — a day already agreed is waiting on you to pick shops, and one
    * already planned is simply the route.
    */
-  const asking = days.filter((d) => d.dayState === 'proposed');
+  const asking = days.filter((d) => d.dayState === 'proposed' && d.planDate >= today);
+
+  /*
+   * The two live lists below are TODAY ONWARDS, and the filter is not a
+   * tidiness point.
+   *
+   * The screen reads a fortnight back so it can show a history, and both of
+   * these were reading that whole window — so a day agreed and never filled
+   * three weeks ago sat in "shops to pick" for ever, offering a pick screen
+   * for a morning that has already happened, and appeared a second time in
+   * Recently saying nobody ever picked any. One day, two rows, one of them a
+   * form for a day nobody can walk.
+   */
+  const toPick = days.filter((d) => d.dayState === 'agreed' && d.planDate >= today);
+  const sentBack = days.filter((d) => d.dayState === 'refused' && d.planDate >= today);
+
+  /*
+   * Today's day, once it HAS been routed.
+   *
+   * `pickShops` moves the day to `planned` on this handset immediately, and
+   * the stops behind it are minted by the office — they arrive on the next
+   * pull. In between, today's plan was in none of the four lists on this
+   * screen: not a question, not agreed, not "coming up" (that is strictly
+   * after today) and not history. So somebody picked twelve shops, was told
+   * the day was planned, came back here and read "0 of 0 done · Nothing
+   * planned for today", with the day itself gone from the screen. Saying what
+   * is actually true — picked, waiting for the office — is the whole fix; the
+   * alternative is inventing stop rows the office has not issued.
+   */
+  /**
+   * Start a day the office never proposed.
+   *
+   * Straight on to the shops afterwards. The day is `agreed` and empty, which
+   * is the one state on this screen with nothing to walk — leaving him on the
+   * Journey tab would mean reading his own new day back and tapping it, to get
+   * where he was already going.
+   */
+  const startOwnDay = async () => {
+    if (ownBusy) return;
+    setOwnBusy(true);
+    setOwnErr(null);
+    const out = await createDay(own.date, own.city);
+    setOwnBusy(false);
+
+    if (!out.ok) return setOwnErr(out.message);
+
+    setOwnOpen(false);
+    setOwn({ date: '', city: '' });
+    load();
+    notify(dayLabel(own.date) + ' is yours. Pick the shops.');
+    router.push({ pathname: '/pick', params: { day: out.id } });
+  };
+
+  const todayPlanned = days.find((d) => d.planDate === today && d.dayState === 'planned');
 
   /* Future days already routed — tomorrow's plan and beyond, distinct from
      "agreed, not yet picked" above. Without this a day picked three weeks
@@ -110,7 +189,10 @@ export default function JourneyScreen() {
     async (day: PlanDay, yes: boolean) => {
       if (yes) {
         await agreeDay(day.id);
-        setDays(await planDays());
+        /* The SAME window the screen loaded with. `planDays()` defaults to
+           today, so re-reading it bare threw away the fortnight of history
+           underneath — answering one question emptied the Recently list. */
+        setDays(await planDays(historyFrom));
         notify(dayLabel(day.planDate) + ' agreed. Pick your shops when you are ready.');
         return;
       }
@@ -124,23 +206,47 @@ export default function JourneyScreen() {
         run: async (reason: string) => {
           const out = await refuseDay(day.id, reason);
           if (!out.ok) return notify(out.message ?? 'Say why it will not work.');
-          setDays(await planDays());
+          setDays(await planDays(historyFrom));
           notify('Sent back to your manager.');
         },
       });
     },
-    [askConfirm, notify],
+    [askConfirm, notify, historyFrom],
   );
 
   const doneCount = stops.filter((x) => x.status === 'visited').length;
   const next = stops.find((x) => x.status === 'planned');
-  const areas = Array.from(new Set(stops.filter((x) => x.status === 'planned').map((x) => x.area).filter(Boolean)));
+  /* A type GUARD rather than `filter(Boolean)` and a cast downstream: TS does
+     not narrow on `Boolean`, and a cast across that gap is the shape of bug
+     AGENTS.md names — the compiler stops looking exactly where the value is
+     wrong. */
+  const areas = Array.from(
+    new Set(
+      stops
+        .filter((x) => x.status === 'planned')
+        .map((x) => x.area)
+        .filter((a): a is string => !!a),
+    ),
+  );
 
   /* Late against the plan, not against a constant — a stop whose planned time
      has passed and which has not been made yet is the definition of behind. */
   const late = !!next?.plannedAt && next.plannedAt < hhmm(now);
 
+  /* Picked, and the office has not issued the stops back yet. See
+     `todayPlanned` — it is the difference between "nothing planned" and
+     "planned, not yet arrived", and only one of those two is true.
+     The DAY rather than a boolean, so the two lines that read its city and
+     its count narrow on it instead of asserting past it. */
+  const awaitingRoute = stops.length === 0 ? todayPlanned : undefined;
+
   const reorder = async () => {
+    /* Nothing to reorder is not an empty reorder. It toasted
+       "Reordered · 0 km and 0 minutes on the plan", which is a confident
+       answer to a question that was never askable. */
+    if (!stops.some((x) => x.status === 'planned')) {
+      return notify('There are no stops left to reorder today.');
+    }
     const [speed, passes, maxStops, perStop] = await Promise.all([
       getConfig<number>('mbos.route.averageSpeedKmph', 22),
       getConfig<number>('mbos.route.maxTwoOptPasses', 4),
@@ -171,13 +277,33 @@ export default function JourneyScreen() {
     );
   };
 
+  /*
+   * Going somewhere that is not on the plan.
+   *
+   * It raised a toast — "Added off-plan · <reason>" — and wrote NOTHING. No
+   * stop, no visit, no reason anywhere; the sentence on the button says "your
+   * manager sees the reason" and no manager has ever seen one. `visits` has
+   * carried `deviationReason` and `wasPlanned` from the day it was written and
+   * `app/visit.tsx` sent a hardcoded null for the first.
+   *
+   * An off-plan stop IS a visit to a shop that is not on today's route, so
+   * there is nothing to invent: the reason is taken here, the shop is chosen
+   * on the Customers list — which already offers Visit on every row — and the
+   * visit carries both. `wasPlanned` is already derived from whether the shop
+   * turns out to be on the plan, so a shop that IS on it drops the reason
+   * rather than filing an honest stop as a deviation.
+   */
   const deviate = () =>
     askConfirm({
       title: 'Add an off-plan stop?',
-      body: 'It goes on today’s route and is marked off-plan, so your manager can see why the day changed.',
+      body: 'Say why, then pick the shop. The visit is recorded against today and marked off-plan, so your manager can see why the day changed.',
       reasonLabel: 'Why this stop · required',
-      confirmLabel: 'Add the stop',
-      run: (reason) => notify('Added off-plan · ' + reason),
+      confirmLabel: 'Say why, then pick the shop',
+      run: (reason) => {
+        set({ offPlanReason: reason });
+        notify('Now open the shop and press Visit — your reason goes with it.');
+        router.push('/customers?from=journey');
+      },
     });
 
   const sendTour = async () => {
@@ -229,10 +355,18 @@ export default function JourneyScreen() {
                 marginBottom: 8,
                 boxShadow: shadow.card,
               }}>
-              <T style={[type.body, weight(600), { color: C.ink }]}>{dayLabel(d.planDate)}</T>
+              <T style={[type.body, weight(600), { color: C.ink }]}>
+                {dayLabelRelative(d.planDate, today)}
+              </T>
               <T s="small" style={{ color: C.body, marginTop: 2 }}>
                 {d.city ? d.city + ' was proposed' : 'A day was proposed'}
                 {d.proposedBy ? ' by ' + d.proposedBy : ''}
+                {/* HOW LONG IT HAS BEEN SITTING. The office is waiting on this
+                    answer to plan a week, and "proposed" with no age reads as
+                    something that arrived a moment ago — so a request four days
+                    old looks identical to one from this morning, and gets the
+                    same non-answer. */}
+                {waitingLabel(d.proposedAt) ? ' · ' + waitingLabel(d.proposedAt) : ''}
               </T>
               <T s="small" style={{ color: C.muted, marginTop: 6 }}>
                 You pick the shops once you agree — you know the city.
@@ -258,13 +392,12 @@ export default function JourneyScreen() {
         prompt that gets somebody from one to the other, so it sits directly
         under the questions rather than at the bottom of the screen.
       */}
-      {days.filter((d) => d.dayState === 'agreed').length ? (
+      {toPick.length ? (
         <View style={{ marginBottom: 16 }}>
           <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
             Agreed — shops to pick
           </T>
-          {days
-            .filter((d) => d.dayState === 'agreed')
+          {toPick
             .map((d) => (
               <Pressable
                 key={d.id}
@@ -280,10 +413,21 @@ export default function JourneyScreen() {
                   boxShadow: shadow.card,
                 }}>
                 <View style={{ flex: 1 }}>
-                  <T style={[type.body, weight(600), { color: C.ink }]}>{dayLabel(d.planDate)}</T>
+                  <T style={[type.body, weight(600), { color: C.ink }]}>
+                    {dayLabelRelative(d.planDate, today)}
+                  </T>
                   <T s="small" style={{ color: C.muted, marginTop: 2 }}>
                     {(d.city ? d.city + ' · ' : '') + 'no shops picked yet'}
                   </T>
+                  {/* A day back here because the office REFUSED the pick has
+                      to say so. Without it the card is identical to one nobody
+                      has touched, and the salesman picks the same shops again
+                      into the same refusal. */}
+                  {d.syncState === 'rejected' ? (
+                    <T s="small" style={{ color: C.warnInk, marginTop: 4 }}>
+                      {d.syncMessage ?? 'The office did not accept the shops you picked.'}
+                    </T>
+                  ) : null}
                 </View>
                 <Icon name="forward" size={20} color={C.muted} strokeWidth={1.5} />
               </Pressable>
@@ -313,7 +457,9 @@ export default function JourneyScreen() {
                 boxShadow: shadow.card,
               }}>
               <View style={{ flex: 1 }}>
-                <T style={[type.body, weight(600), { color: C.ink }]}>{dayLabel(d.planDate)}</T>
+                <T style={[type.body, weight(600), { color: C.ink }]}>
+                  {dayLabelRelative(d.planDate, today)}
+                </T>
                 <T s="small" style={{ color: C.muted, marginTop: 2 }}>
                   {(d.city ? d.city + ' · ' : '') + plural(d.picked, 'shop') + ' picked'}
                 </T>
@@ -325,10 +471,9 @@ export default function JourneyScreen() {
       ) : null}
 
       {/* What you have already sent back, so a refusal does not vanish. */}
-      {days.filter((d) => d.dayState === 'refused').length ? (
+      {sentBack.length ? (
         <View style={{ marginBottom: 16 }}>
-          {days
-            .filter((d) => d.dayState === 'refused')
+          {sentBack
             .map((d) => (
               <View
                 key={d.id}
@@ -339,7 +484,7 @@ export default function JourneyScreen() {
                   marginBottom: 8,
                 }}>
                 <T s="small" style={{ color: C.warnInk }}>
-                  {dayLabel(d.planDate)} — sent back
+                  {dayLabelRelative(d.planDate, today)} — sent back
                   {d.syncState === 'queued' ? ', waiting for signal' : ''}
                 </T>
                 {d.refusalReason ? (
@@ -352,36 +497,81 @@ export default function JourneyScreen() {
         </View>
       ) : null}
 
+      {/*
+        A day nobody proposed.
+
+        Under the questions and the agreed days rather than above them: what
+        the office has asked is the first thing to answer, and this is what to
+        do when it has asked nothing. It is always drawn — a salesman whose
+        manager plans nothing would otherwise find an empty tab with no way
+        forward, which is exactly the case it exists for.
+      */}
+      <DashedButton
+        label="Plan a day"
+        onPress={() => {
+          setOwn({ date: '', city: '' });
+          setOwnErr(null);
+          setOwnOpen(true);
+        }}
+        style={{ marginBottom: 16 }}
+      />
+
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 }}>
         <View style={{ minWidth: 0, flex: 1 }}>
-          <T style={type.h1}>{doneCount + ' of ' + stops.length + ' done'}</T>
+          <T style={type.h1}>
+            {awaitingRoute
+              ? plural(awaitingRoute.picked, 'shop') + ' picked'
+              : doneCount + ' of ' + stops.length + ' done'}
+          </T>
           <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-            {areas.length ? areas.join(' and ') : 'Nothing planned for today'}
+            {awaitingRoute
+              ? (awaitingRoute.city ? awaitingRoute.city + ' · ' : '') +
+                'sent to the office — the stops arrive on the next sync'
+              : areas.length
+                ? saidAsList(areas)
+                : 'Nothing planned for today'}
           </T>
         </View>
+        {/* `Icon name="dots"`, not the character `⋯`.
+            A text ellipsis renders at whatever weight and baseline the font
+            feels like, next to twenty controls drawn from the same stroked
+            icon set — it read as a typo rather than a button. */}
         <Pressable
           onPress={() => setMoreOpen(true)}
           accessibilityRole="button"
           accessibilityLabel="Route actions"
-          style={{ width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
-          <T style={{ fontSize: 20, color: C.muted }}>⋯</T>
+          hitSlop={HIT}
+          style={({ pressed }) => ({
+            width: 44,
+            height: 44,
+            borderRadius: 22,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: pressed ? C.wash : 'transparent',
+          })}>
+          <Icon name="dots" size={22} color={C.body} strokeWidth={1.5} />
         </Pressable>
       </View>
 
-      <View style={{ flexDirection: 'row', gap: 6, marginTop: 14 }}>
-        {stops.map((x) => (
-          <View
-            key={x.id}
-            style={{
-              flex: 1,
-              height: 6,
-              borderRadius: 3,
-              backgroundColor:
-                x.status === 'visited' ? C.primary : next && x.id === next.id ? C.primaryEdge : C.hairline,
-            }}
-          />
-        ))}
-      </View>
+      {/* Drawn only where there is a day to draw. At zero stops this was an
+          empty 6pt row plus its margin — twenty points of nothing between the
+          headline and whatever came next. */}
+      {stops.length ? (
+        <View style={{ flexDirection: 'row', gap: 6, marginTop: 14 }}>
+          {stops.map((x) => (
+            <View
+              key={x.id}
+              style={{
+                flex: 1,
+                height: 6,
+                borderRadius: 3,
+                backgroundColor:
+                  x.status === 'visited' ? C.primary : next && x.id === next.id ? C.primaryEdge : C.hairline,
+              }}
+            />
+          ))}
+        </View>
+      ) : null}
 
       {next ? (
         <View
@@ -411,7 +601,14 @@ export default function JourneyScreen() {
           <T style={[{ fontSize: 20, lineHeight: 26, letterSpacing: -0.3, color: C.ink, marginTop: 10 }, weight(600)]}>
             {next.customerName}
           </T>
-          <T s="small" style={{ color: C.muted, marginTop: 2 }}>{next.area ?? ''}</T>
+          {/* Only where there is one. An empty `<T>` still occupies its line
+              height, so a shop with no area left a blank gap that read as a
+              missing value rather than an absent one. */}
+          {next.area ? (
+            <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+              {next.area}
+            </T>
+          ) : null}
           <T s="small" style={{ marginTop: 10 }}>
             {(next.plannedAt ? 'Planned ' + next.plannedAt + '. ' : '') +
               (next.outstandingPaise > 0
@@ -421,7 +618,15 @@ export default function JourneyScreen() {
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
             <SecondaryButton
               label="Navigate"
-              onPress={() => notify('Maps to ' + next.customerName)}
+              onPress={async () => {
+                const out = await openMaps({
+                  lat: next.gpsLat,
+                  lng: next.gpsLng,
+                  name: next.customerName,
+                  city: next.area,
+                });
+                if (out.status !== 'opened') notify(out.reason);
+              }}
               style={{ flex: 1, borderRadius: radius.xl }}
             />
             <PrimaryButton
@@ -436,80 +641,181 @@ export default function JourneyScreen() {
         </View>
       ) : null}
 
-      <View style={{ marginTop: 20 }}>
-        {stops.map((x, i) => {
-          const isNext = !!next && x.id === next.id;
-          const done = x.status === 'visited';
-          const last = i === stops.length - 1;
-          return (
-            <View key={x.id} style={{ flexDirection: 'row', gap: 14, alignItems: 'stretch' }}>
-              <View style={{ width: 28, alignItems: 'center' }}>
-                <View
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 14,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderWidth: 1,
-                    backgroundColor: done ? C.primaryTint : isNext ? C.primary : C.surface,
-                    borderColor: done ? C.primaryEdge : isNext ? C.primary : C.border,
-                  }}>
-                  {done ? (
-                    <Icon name="task" size={14} color={C.primaryDeep} strokeWidth={2.4} />
-                  ) : (
-                    <T style={[{ fontSize: 13, color: isNext ? C.surface : C.muted }, weight(600)]}>{String(i + 1)}</T>
+      {/* Guarded like the pips: an empty container still spends its top
+          margin, and this screen's commonest state has nothing in it. */}
+      {stops.length ? (
+        <View style={{ marginTop: 20 }}>
+          {stops.map((x, i) => {
+            const isNext = !!next && x.id === next.id;
+            const done = x.status === 'visited';
+            const last = i === stops.length - 1;
+            return (
+              <View key={x.id} style={{ flexDirection: 'row', gap: 14, alignItems: 'stretch' }}>
+                <View style={{ width: 28, alignItems: 'center' }}>
+                  <View
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: 14,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderWidth: 1,
+                      backgroundColor: done ? C.primaryTint : isNext ? C.primary : C.surface,
+                      borderColor: done ? C.primaryEdge : isNext ? C.primary : C.border,
+                    }}>
+                    {done ? (
+                      <Icon name="task" size={14} color={C.primaryDeep} strokeWidth={2.4} />
+                    ) : (
+                      <T style={[{ fontSize: 13, color: isNext ? C.surface : C.muted }, weight(600)]}>{String(i + 1)}</T>
+                    )}
+                  </View>
+                  {last ? null : (
+                    <View style={{ width: 2, flex: 1, minHeight: 12, backgroundColor: done ? C.primaryEdge : C.hairline }} />
                   )}
                 </View>
-                {last ? null : (
-                  <View style={{ width: 2, flex: 1, minHeight: 12, backgroundColor: done ? C.primaryEdge : C.hairline }} />
-                )}
+
+                <Pressable
+                  onPress={async () => {
+                    /* A stop already walked answers with what happened; one still
+                       ahead answers by opening the way to it. Both used to answer
+                       with a toast. */
+                    if (done) return notify(x.customerName + ' · visit already logged today');
+                    const out = await openMaps({
+                      lat: x.gpsLat,
+                      lng: x.gpsLng,
+                      name: x.customerName,
+                      city: x.area,
+                    });
+                    if (out.status !== 'opened') notify(out.reason);
+                  }}
+                  accessibilityRole="button"
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 12,
+                    paddingVertical: 12,
+                    paddingHorizontal: 14,
+                    marginBottom: 8,
+                    borderRadius: radius.lg,
+                    borderWidth: 1,
+                    borderColor: isNext ? C.primaryEdge : C.hairline,
+                    backgroundColor: isNext ? C.primaryTint : C.surface,
+                  }}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <T
+                      numberOfLines={1}
+                      style={[{ fontSize: 15, color: done ? C.muted : C.ink }, weight(isNext ? 600 : 500)]}>
+                      {x.customerName}
+                    </T>
+                    {/* Joined rather than concatenated. With no area recorded —
+                        which is most of an imported book — these read
+                        " · arrived 10:15", opening on a separator with nothing
+                        in front of it. */}
+                    <T s="caption" style={{ marginTop: 1 }}>
+                      {[
+                        x.area,
+                        done
+                          ? 'arrived ' + (x.actualAt ? hhmm(x.actualAt) : '—')
+                          : x.plannedAt
+                            ? 'planned ' + x.plannedAt
+                            : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </T>
+                  </View>
+                  {done || isNext ? (
+                    <T style={[{ fontSize: 13, color: done ? C.success : C.primaryDeep }, weight(500)]}>
+                      {done ? 'Done' : 'Now'}
+                    </T>
+                  ) : null}
+                </Pressable>
               </View>
+            );
+          })}
+        </View>
+      ) : null}
 
-              <Pressable
+      {/*
+        A DAY WITH NOTHING ON IT IS THE COMMONEST STATE THIS SCREEN HAS, and it
+        was drawn as nothing at all: a headline, one muted line, and then six
+        hundred points of empty canvas above a dashed button. Every other empty
+        state in this app says what to do next; this one — the tab a salesman
+        opens first every morning — said the least of any of them, on the days
+        it mattered most.
+
+        What it says depends on which nothing it is, because they need
+        different things done: a day agreed and unfilled is HIS to fill, a day
+        proposed is his to answer, and no day at all is the office's move and
+        worth saying so rather than leaving him wondering whether the app is
+        broken.
+      */}
+      {!stops.length && !awaitingRoute ? (
+        <View
+          style={{
+            marginTop: 20,
+            backgroundColor: C.surface,
+            borderRadius: radius.card,
+            borderWidth: 1,
+            borderColor: C.hairline,
+            paddingVertical: 26,
+            paddingHorizontal: 20,
+            alignItems: 'center',
+            boxShadow: shadow.card,
+          }}>
+          <View
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: 22,
+              backgroundColor: C.primaryTint,
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 12,
+            }}>
+            <Icon name="route" size={22} color={C.primaryDeep} strokeWidth={1.6} />
+          </View>
+          <T style={[type.body, weight(600), { color: C.ink, textAlign: 'center' }]}>
+            {toPick.length
+              ? 'A day is waiting for its shops'
+              : asking.length
+                ? 'A day is waiting for your answer'
+                : 'No route for today'}
+          </T>
+          <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 6, maxWidth: 280 }}>
+            {toPick.length
+              ? 'You have agreed ' +
+                dayLabel(toPick[0]!.planDate) +
+                '. Pick the shops and it becomes a route.'
+              : asking.length
+                ? 'Say yes or send it back — either answer lets your manager get on with it.'
+                : 'Your manager has not proposed one. You can still walk in and log a visit — anything you do today is recorded against it.'}
+          </T>
+          {toPick.length ? (
+            <View style={{ marginTop: 14, alignSelf: 'stretch' }}>
+              <PrimaryButton
+                label="Pick your shops"
+                fullWidth
                 onPress={() =>
-                  done ? notify(x.customerName + ' · visit already logged today') : notify('Maps to ' + x.customerName)
+                  router.push({ pathname: '/pick', params: { day: toPick[0]!.id } })
                 }
-                accessibilityRole="button"
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 12,
-                  paddingVertical: 12,
-                  paddingHorizontal: 14,
-                  marginBottom: 8,
-                  borderRadius: radius.lg,
-                  borderWidth: 1,
-                  borderColor: isNext ? C.primaryEdge : C.hairline,
-                  backgroundColor: isNext ? C.primaryTint : C.surface,
-                }}>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <T
-                    numberOfLines={1}
-                    style={[{ fontSize: 15, color: done ? C.muted : C.ink }, weight(isNext ? 600 : 500)]}>
-                    {x.customerName}
-                  </T>
-                  <T s="caption" style={{ marginTop: 1 }}>
-                    {done
-                      ? (x.area ?? '') + ' · arrived ' + (x.actualAt ? hhmm(x.actualAt) : '—')
-                      : (x.area ?? '') + (x.plannedAt ? ' · planned ' + x.plannedAt : '')}
-                  </T>
-                </View>
-                {done || isNext ? (
-                  <T style={[{ fontSize: 13, color: done ? C.success : C.primaryDeep }, weight(500)]}>
-                    {done ? 'Done' : 'Now'}
-                  </T>
-                ) : null}
-              </Pressable>
+              />
             </View>
-          );
-        })}
-      </View>
+          ) : null}
+        </View>
+      ) : null}
 
+      {/*
+        Going off the plan.
+        The label is a CONTROL now rather than a two-line sentence centred in a
+        dashed box — that read as body copy with a border round it, which is
+        exactly how somebody scrolls past the only escape hatch on the screen.
+        What it costs is said in the dialog, where the reason is typed.
+      */}
       <DashedButton
-        label="Visiting somewhere not on the plan? Add it — your manager sees the reason."
+        label="Add a stop that is not on the plan"
         onPress={deviate}
         style={{ marginTop: 16 }}
       />
@@ -542,6 +848,82 @@ export default function JourneyScreen() {
         </View>
       ) : null}
 
+      {/* ------------------------------------------------- plan your own day */}
+      <BottomSheet open={ownOpen} onClose={() => setOwnOpen(false)} scroll>
+        <T s="h2">Plan a day</T>
+        <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+          Your manager is told. Pick the shops on the next screen.
+        </T>
+
+        <View style={{ marginTop: 16 }}>
+          <T s="label" style={{ marginBottom: 6 }}>
+            Which day
+          </T>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setOwnPick(true)}
+            style={{
+              minHeight: HIT,
+              justifyContent: 'center',
+              paddingHorizontal: 12,
+              borderWidth: 1,
+              borderColor: C.border,
+              borderRadius: radius.lg,
+              backgroundColor: C.surface,
+            }}>
+            <T style={{ fontSize: 16, color: own.date ? C.ink : C.muted }}>
+              {own.date ? dmy(own.date) : 'Pick a date'}
+            </T>
+          </Pressable>
+        </View>
+
+        <View style={{ marginTop: 14 }}>
+          <T s="label" style={{ marginBottom: 6 }}>
+            Which city
+          </T>
+          <Input
+            value={own.city}
+            onChangeText={(v) => {
+              setOwn((d) => ({ ...d, city: v }));
+              setOwnErr(null);
+            }}
+            placeholder="Nagpur"
+          />
+          {/* Said before the picker opens, not after it has drawn the wrong
+              list: the shop list is filtered by this and by nothing else. */}
+          <T s="caption" style={{ marginTop: 6 }}>
+            You will be offered the shops in this city.
+          </T>
+        </View>
+
+        {ownErr ? (
+          <T style={{ fontSize: 13, color: C.danger, marginTop: 10 }}>{ownErr}</T>
+        ) : null}
+
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+          <SecondaryButton label="Cancel" onPress={() => setOwnOpen(false)} style={{ flex: 1 }} />
+          <PrimaryButton
+            label={ownBusy ? 'Saving…' : 'Plan it'}
+            onPress={startOwnDay}
+            style={{ flex: 1 }}
+          />
+        </View>
+      </BottomSheet>
+
+      <BottomSheet open={ownPick} onClose={() => setOwnPick(false)}>
+        <T s="h3" style={{ marginBottom: 10 }}>
+          Which day
+        </T>
+        <Calendar
+          selected={own.date}
+          onPick={(iso) => {
+            setOwn((d) => ({ ...d, date: iso }));
+            setOwnErr(null);
+            setOwnPick(false);
+          }}
+        />
+      </BottomSheet>
+
       <ActionSheet
         open={moreOpen}
         title="Today’s route"
@@ -558,10 +940,39 @@ export default function JourneyScreen() {
           {
             glyph: 'nav',
             label: 'Navigate the whole day',
-            sub: 'Opens every stop in order',
-            run: () => notify('Full route sent to maps'),
+            sub: 'Opens the route in order, up to ten stops',
+            run: async () => {
+              const out = await openRoute(
+                stops.map((st) => ({ lat: st.gpsLat, lng: st.gpsLng })),
+              );
+              if (out.status !== 'opened') return notify(out.reason);
+              /* Said plainly rather than hidden: a route that quietly stops at
+                 lunchtime is worse than one that says where it stops. */
+              if (out.dropped > 0) {
+                notify(
+                  `Maps takes ten stops — the last ${out.dropped} are not in this route.`,
+                );
+              }
+            },
           },
-          { glyph: 'share', label: 'Share the plan', sub: 'To your manager on WhatsApp', run: () => notify('Route shared') },
+          {
+            glyph: 'share',
+            label: 'Share the plan',
+            sub: 'Pick who, in the share sheet',
+            run: async () => {
+              if (!stops.length) return notify('There are no stops to share yet.');
+              const lines = stops.map(
+                (st, i) =>
+                  `${i + 1}. ${st.customerName}` +
+                  (st.area ? ` — ${st.area}` : '') +
+                  (st.plannedAt ? ` (${st.plannedAt})` : ''),
+              );
+              const out = await shareText(
+                [`Plan for ${today} — ${plural(stops.length, 'stop')}`, ...lines].join('\n'),
+              );
+              if (out.status === 'copied') notify(out.reason);
+            },
+          },
           {
             glyph: 'cal',
             label: 'Request a tour',
@@ -684,18 +1095,16 @@ function hhmm(ms: number): string {
 
 
 /**
- * `Mon 18 Aug` — a day named the way somebody says it out loud.
+ * `Dharampeth, Sitabuldi and Itwari` — a list said the way somebody says it.
  *
- * Built in UTC deliberately: these are calendar days with no time of day in
- * them, so there is no zone to get right, and building them locally is what
- * shifts a date across a DST boundary.
+ * It was `areas.join(' and ')`, which on a five-area day produced
+ * "A and B and C and D and E". Four stops is an ordinary morning, so this was
+ * not an edge case; it read as a bug in the sentence.
  */
-function dayLabel(iso: string): string {
-  const [y, m, d] = iso.split('-').map(Number);
-  const at = new Date(Date.UTC(y, m - 1, d));
-  const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][at.getUTCDay()];
-  const month = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][at.getUTCMonth()];
-  return day + ' ' + at.getUTCDate() + ' ' + month;
+function saidAsList(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? '';
+  if (items.length === 2) return items[0] + ' and ' + items[1];
+  return items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1];
 }
 
 /** What a past day comes down to, in one line. */

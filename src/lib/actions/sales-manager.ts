@@ -17,6 +17,7 @@ import { requireCapability } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { customerFilterClause } from "@/lib/queries";
 import { err, okVoid, fromThrown, type Result } from "@/lib/result";
+import { notifyUsers } from "../notify";
 
 /* ---------------------------------------------------------------------------
  * Who the salesperson answers to.
@@ -409,7 +410,7 @@ export async function assignSalesManager(
         href: "/crm/customers",
       });
     }
-    if (notes.length) await db.insert(notifications).values(notes);
+    if (notes.length) await notifyUsers(notes);
 
     try {
       revalidatePath("/crm/customers");

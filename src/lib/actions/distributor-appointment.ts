@@ -20,7 +20,7 @@ import {
 import { getConfig } from "@/lib/config/store";
 import { approvalRouteReason } from "@/lib/engines/lead-gates";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
-import { writeTimelineEvent } from "@/lib/timeline";
+import { writeTimelineEvent, MBOS_EVENT } from "@/lib/timeline";
 import { advanceLeadStage } from "@/lib/actions/leads";
 
 /* ---------------------------------------------------------------------------
@@ -318,7 +318,7 @@ export async function submitForManagementReview(
 
       await writeTimelineEvent(tx, {
         customerId,
-        eventType: "distributor_submitted",
+        eventType: MBOS_EVENT.distributorSubmitted,
         sourceApp: "crm",
         sourceRecordId: customerId,
         occurredAt: now,
@@ -464,7 +464,7 @@ export async function agreeCommercialTerms(
 
       await writeTimelineEvent(tx, {
         customerId,
-        eventType: "distributor_terms_agreed",
+        eventType: MBOS_EVENT.distributorTerms,
         sourceApp: "crm",
         sourceRecordId: customerId,
         occurredAt: now,
@@ -757,7 +757,7 @@ export async function recordDistributorAgreement(
     await db.transaction(async (tx) => {
       await writeTimelineEvent(tx, {
         customerId,
-        eventType: "distributor_agreement",
+        eventType: MBOS_EVENT.distributorAgreement,
         sourceApp: "crm",
         sourceRecordId: customerId,
         occurredAt: now,

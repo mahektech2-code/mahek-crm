@@ -23,6 +23,7 @@ import {
   bandOf,
   directionOf,
   isOnTheBookAt,
+  isParked,
   isTerminal,
   ladderFor,
   nextStage,
@@ -30,6 +31,7 @@ import {
   promotesToCustomerAt,
   rungOf,
 } from "./lead-ladder";
+import { gateForNext } from "./lead-gates";
 import { buildQueue, type QueueCandidate } from "./queue";
 import { defaultConfig } from "../config/registry";
 
@@ -48,6 +50,7 @@ const ALL_STAGES = [
   "negotiation",
   "won",
   "lost",
+  "on_hold",
   "suspect",
   "prospect",
   "qualification",
@@ -79,8 +82,8 @@ const EVERY_STAGE_IS_LISTED: [Unlisted] extends [never] ? true : false = true;
 describe("the ladders", () => {
   test("every stage is accounted for", () => {
     assert.equal(EVERY_STAGE_IS_LISTED, true);
-    assert.equal(ALL_STAGES.length, 23);
-    assert.equal(new Set(ALL_STAGES).size, 23);
+    assert.equal(ALL_STAGES.length, 24);
+    assert.equal(new Set(ALL_STAGES).size, 24);
   });
 
   test("the legacy ladder is the six this product shipped with", () => {
@@ -260,6 +263,10 @@ describe("isTerminal", () => {
  * shrinks as the team works it, with nothing on any screen saying why.
  */
 const EXPECTED_BAND: Record<LeadStage, "new" | "contacted" | "qualified" | "negotiation" | null> = {
+  /* Parked, and null for a DIFFERENT reason than the four below it: a lead on
+     hold has not left the funnel, its rung is simply not recoverable from the
+     stage. `isParked` is how a screen counts them instead of losing them. */
+  on_hold: null,
   new: "new",
   suspect: "new",
 
@@ -291,23 +298,32 @@ const EXPECTED_BAND: Record<LeadStage, "new" | "contacted" | "qualified" | "nego
 };
 
 describe("bandOf", () => {
-  test("every one of the 23 stages lands where it is meant to", () => {
+  test("every one of the 24 stages lands where it is meant to", () => {
     for (const stage of ALL_STAGES) {
       assert.equal(bandOf(stage), EXPECTED_BAND[stage], stage);
     }
   });
 
   test("nothing falls through the default unintentionally", () => {
-    /* Only the four closed rungs answer null. Any new stage that answers null
-       is either deliberately out of the funnel — in which case it belongs in
-       the list above — or it is the bug this test exists for. */
+    /* Only the four closed rungs and the parked one answer null. Any OTHER
+       stage that answers null is either deliberately out of the funnel — in
+       which case it belongs in this list — or it is the bug this test exists
+       for: a rung that quietly leaves the pipeline as the team works it.
+
+       `on_hold` is in the list for a different reason than the four beside it,
+       and the difference is the thing to remember: those have left the funnel,
+       and a parked lead has not. Its rung is simply not recoverable from the
+       stage column, so `bandOf` refuses rather than guessing, and a screen
+       counts it with `isParked` instead of losing it. */
     const outOfFunnel = ALL_STAGES.filter((s) => bandOf(s) === null);
     assert.deepEqual([...outOfFunnel].sort(), [
       "active_distributor",
       "customer",
       "lost",
+      "on_hold",
       "won",
     ]);
+    assert.equal(outOfFunnel.filter((s) => !isParked(s)).length, 4);
   });
 
   test("the original six band as themselves, so no KPI moved", () => {
@@ -323,23 +339,52 @@ describe("bandOf", () => {
 /* ============================================================== on the book */
 
 describe("promotesToCustomerAt", () => {
-  test("the first order, except a distributor, who is appointed", () => {
-    assert.equal(promotesToCustomerAt("direct"), "first_order");
-    assert.equal(promotesToCustomerAt("third_party"), "first_order");
-    assert.equal(promotesToCustomerAt(null), "first_order");
+  /* THE SECOND ORDER, and the reason is the trade rather than the schema: a
+     first order from a shop that has just finished a trial is a few cans to see
+     how it behaves in their own booth. It is not a relationship and it
+     routinely does not repeat. The second order is the one that says the trial
+     worked. */
+  test("the second order, except a distributor, who is appointed", () => {
+    assert.equal(promotesToCustomerAt("direct"), "second_order");
+    assert.equal(promotesToCustomerAt("third_party"), "second_order");
+    assert.equal(promotesToCustomerAt(null), "second_order");
     assert.equal(promotesToCustomerAt("distributor"), "distributor_approval");
+  });
+});
+
+describe("isParked", () => {
+  test("on_hold only, and it is not terminal", () => {
+    assert.equal(isParked("on_hold"), true);
+    assert.equal(isTerminal("on_hold"), false);
+    for (const s of ["suspect", "negotiation", "lost", "won", "customer"] as const) {
+      assert.equal(isParked(s), false, s);
+    }
+  });
+
+  /* The bug this exists to stop: `on_hold` is on no ladder, so `nextStage`
+     answered with the FOOT of one and parking a qualified lead offered to move
+     it back to Suspect. */
+  test("a parked lead is offered no next rung at all", () => {
+    const v = gateForNext({ salesType: "direct", stage: "on_hold" });
+    assert.equal(v.noNextRung, true);
+    assert.equal(v.open, false);
   });
 });
 
 describe("isOnTheBookAt", () => {
   test("at the promoting rung, and every rung above it", () => {
-    assert.equal(isOnTheBookAt("first_order", "direct"), true);
-    assert.equal(isOnTheBookAt("delivery", "direct"), true);
     assert.equal(isOnTheBookAt("second_order", "direct"), true);
+    assert.equal(isOnTheBookAt("customer", "direct"), true);
   });
 
-  test("not below it", () => {
-    for (const stage of ["suspect", "prospect", "qualification", "sample_trial", "negotiation"] as const) {
+  /* A shop with ONE order is still a lead, which is the whole point of the
+     rule and the thing most likely to be "corrected" back by somebody who
+     assumes an account that has ordered must be a customer. */
+  test("not below it — one order does not make a customer", () => {
+    for (const stage of [
+      "suspect", "prospect", "qualification", "sample_trial",
+      "negotiation", "first_order", "delivery", "payment",
+    ] as const) {
       assert.equal(isOnTheBookAt(stage, "direct"), false, stage);
     }
   });
@@ -348,7 +393,7 @@ describe("isOnTheBookAt", () => {
      payment. It has plainly ordered; asking only about the exact rung would
      leave it a lead. */
   test("a lead moved straight past the promoting rung is still on the book", () => {
-    assert.equal(isOnTheBookAt("payment", "direct"), true);
+    assert.equal(isOnTheBookAt("customer", "direct"), true);
     assert.equal(isOnTheBookAt("distributor_agreement", "distributor"), true);
   });
 

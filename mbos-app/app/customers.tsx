@@ -7,9 +7,12 @@ import { Card, HealthPill, PrimaryButton } from '../src/components/ui/primitives
 import { BottomSheet } from '../src/components/ui/overlays';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
-import { inr, isoDate, plural, pretty } from '../src/lib/format';
-import { callNumber, openWhatsApp } from '../src/lib/messaging';
+import { getConfig } from '../src/data/config';
+import { distanceLabel, inr, isoDate, plural, pretty, shopName } from '../src/lib/format';
+import { reorderLabel, reorderState } from '../src/engines/leads';
+import { callNumber, openMaps, openWhatsApp } from '../src/lib/messaging';
 import {
+  accountType,
   addFieldShop,
   billableCustomers,
   cityOrigins,
@@ -18,7 +21,13 @@ import {
   listCustomersPage,
   type Customer,
 } from '../src/data/customers';
-import { CUSTOMER_PAGE, type Origin } from '../src/data/customer-query';
+import {
+  CUSTOMER_PAGE,
+  metresFromDist2,
+  type BookView,
+  type Origin,
+} from '../src/data/customer-query';
+import { ShopMap } from '../src/components/ui/shop-map';
 import { whereNow } from '../src/native/where';
 
 /**
@@ -41,6 +50,26 @@ export default function Customers() {
   const beginVisit = useStore((s) => s.beginVisit);
   const sheet = useStore((s) => s.sheet);
 
+  /* The two health thresholds. Read from configuration, never typed here —
+     they used to be a literal 70 and 50 inside the pill, which put two
+     business numbers where the one screen a manager would change them on
+     could not see them. */
+  const [healthWatch, setHealthWatch] = React.useState(40);
+  const [healthStrong, setHealthStrong] = React.useState(70);
+  React.useEffect(() => {
+    let live = true;
+    void Promise.all([
+      getConfig<number>('mbos.health.atRiskBelow', 40),
+      getConfig<number>('mbos.health.strongAtOrAbove', 70),
+    ]).then(([w, st]) => {
+      if (!live) return;
+      setHealthWatch(w);
+      setHealthStrong(st);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
   const [rowMore, setRowMore] = React.useState<Customer | null>(null);
 
   /* ------------------------------------- a shop that is not on the book yet
@@ -55,7 +84,7 @@ export default function Customers() {
    * should be in the same place as the question.
    */
   const [adding, setAdding] = React.useState(false);
-  const [shopName, setShopName] = React.useState('');
+  const [newShopName, setNewShopName] = React.useState('');
   const [shopPhone, setShopPhone] = React.useState('');
   const [shopCity, setShopCity] = React.useState('');
   const [billers, setBillers] = React.useState<Customer[]>([]);
@@ -67,6 +96,21 @@ export default function Customers() {
   const [hasMore, setHasMore] = React.useState(false);
   const [loadingMore, setLoadingMore] = React.useState(false);
   const [today] = React.useState(() => isoDate(new Date()));
+  /*
+   * WHICH HALF OF THE BOOK. Customers, leads, or both.
+   *
+   * It is a VIEW and not a scope: all three show only his own, and a territory
+   * has already narrowed them to where he works. Nothing here reaches another
+   * salesman's book.
+   */
+  const [view, setView] = React.useState<BookView>('all');
+  /*
+   * LIST OR MAP, and the tap means a different thing on each SCREEN rather than
+   * on each mode: here it opens the record, and on the journey screen the same
+   * component adds a stop. The component takes the handler rather than deciding,
+   * so neither screen has to know about the other.
+   */
+  const [asMap, setAsMap] = React.useState(false);
 
   /* ------------------------------------------------- where to measure from
    *
@@ -127,7 +171,7 @@ export default function Customers() {
   useFocusEffect(
     React.useCallback(() => {
       let live = true;
-      void listCustomersPage({ query: custQ, origin }).then((p) => {
+      void listCustomersPage({ query: custQ, origin, view }).then((p) => {
         if (!live) return;
         setRows(p.rows);
         setTotal(p.total);
@@ -136,7 +180,7 @@ export default function Customers() {
       return () => {
         live = false;
       };
-    }, [custQ, origin]),
+    }, [custQ, origin, view]),
   );
 
   /* Load more APPENDS, and asks for the page after what is on screen — never
@@ -146,7 +190,7 @@ export default function Customers() {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     try {
-      const p = await listCustomersPage({ query: custQ, origin, offset: rows.length });
+      const p = await listCustomersPage({ query: custQ, origin, view, offset: rows.length });
       setRows((prev) => [...prev, ...p.rows]);
       setTotal(p.total);
       setHasMore(p.hasMore);
@@ -172,7 +216,7 @@ export default function Customers() {
     /* Seeded with what he already typed. He has just searched for the shop by
        name; asking him to type it again is the sort of thing that gets a
        feature left unused. */
-    setShopName(custQ.trim());
+    setNewShopName(custQ.trim());
     setShopPhone('');
     setShopCity('');
     setBillerId(null);
@@ -186,7 +230,7 @@ export default function Customers() {
     setSaving(true);
     try {
       const r = await addFieldShop({
-        name: shopName,
+        name: newShopName,
         phone: shopPhone,
         city: shopCity,
         distributorCustomerId: biller.id,
@@ -234,6 +278,66 @@ export default function Customers() {
           style={{ position: 'absolute', right: 2, top: 2, width: HIT, height: HIT, alignItems: 'center', justifyContent: 'center' }}>
           <Icon name="filter" size={22} color={C.body} strokeWidth={1.5} />
         </Pressable>
+      </View>
+
+      {/* LIST OR MAP. One tap, always visible, and the state is obvious from
+          which side is filled — a map hidden behind a menu is one nobody finds. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
+        {([
+          { key: false, label: 'List' },
+          { key: true, label: 'Map' },
+        ] as const).map((chip) => {
+          const on = asMap === chip.key;
+          return (
+            <Pressable
+              key={String(chip.key)}
+              onPress={() => setAsMap(chip.key)}
+              style={{
+                paddingHorizontal: 14,
+                paddingVertical: 7,
+                borderRadius: radius.sm,
+                borderWidth: 1,
+                borderColor: on ? C.ink : C.border,
+                backgroundColor: on ? C.ink : C.surface,
+              }}>
+              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
+                {chip.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {/* WHICH HALF. A view, never a scope — all three show only his own book,
+          already narrowed to the territory he works. Drawn beside "where from"
+          rather than buried in the filter sheet because it changes what the
+          list IS, and a list whose subject is hidden behind a menu is one people
+          misread. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
+        {([
+          { key: 'all', label: 'Everything' },
+          { key: 'customers', label: 'Customers' },
+          { key: 'leads', label: 'Leads' },
+        ] as const).map((chip) => {
+          const on = view === chip.key;
+          return (
+            <Pressable
+              key={chip.key}
+              onPress={() => setView(chip.key)}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 7,
+                borderRadius: radius.sm,
+                borderWidth: 1,
+                borderColor: on ? C.ink : C.border,
+                backgroundColor: on ? C.ink : C.surface,
+              }}>
+              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
+                {chip.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       {/* WHERE FROM. Three chips rather than a menu: it is one tap, it is
@@ -308,12 +412,42 @@ export default function Customers() {
         </Card>
       ) : null}
 
+      {/* THE MAP. Only the loaded page is drawn, deliberately: the list pages
+          fifteen at a time and a map that quietly showed the whole book would
+          disagree with the count above it. The sentence under the map says what
+          could not be placed. */}
+      {asMap && rows.length ? (
+        <View style={{ marginTop: 12 }}>
+          <ShopMap
+            pins={rows.map((x) => ({
+              id: x.id,
+              name: x.name,
+              lat: x.gpsLat ?? NaN,
+              lng: x.gpsLng ?? NaN,
+            }))}
+            /* HERE a tap opens the record. On the journey screen the same
+               component adds a stop — the difference lives in the caller, so
+               neither screen knows about the other. */
+            onPress={(pin) => {
+              set({ custId: pin.id, pTab: 0 });
+              router.push('/customer');
+            }}
+          />
+        </View>
+      ) : null}
+
       <View style={{ gap: 12, marginTop: 8 }}>
-        {rows.map((x) => {
+        {asMap ? null : rows.map((x) => {
           /* Rupees at the point of display, paise everywhere behind it. */
           const dues = x.outstandingPaise / 100;
           const stage = customerStage(x);
           const seenDays = daysSince(x.lastVisitDate, today);
+          const type_ = accountType(x);
+          /* Only where the origin is the salesman himself. A distance from the
+             middle of a town he picked is not how far HE has to walk, and
+             printing it as though it were would be a lie of the most useful
+             kind — believable, and acted on. */
+          const away = originMode === 'me' ? distanceLabel(metresFromDist2(x.dist2)) : null;
           return (
           <Card key={x.id} padded={false} style={{ overflow: 'hidden' }}>
             <Pressable
@@ -325,15 +459,30 @@ export default function Customers() {
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text numberOfLines={1} style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(500)]}>
-                    {x.name}
+                    {shopName(x.name)}
                   </Text>
-                  <Text style={[type.caption, { marginTop: 2 }]}>
+                  <Text numberOfLines={1} style={[type.caption, { marginTop: 2 }]}>
+                    {/* How far, first and in ink: standing in a street it is
+                        the one fact on the card he acts on immediately. */}
+                    {away ? (
+                      <Text style={[{ color: C.ink }, weight(500)]}>{away}</Text>
+                    ) : null}
+                    {away && (x.contactPerson || x.city) ? '  ·  ' : ''}
                     {[x.contactPerson, x.city].filter(Boolean).join(' · ')}
                   </Text>
                 </View>
-                {/* A customer the office has not scored yet gets no pill at all —
-                    a zero would read as the worst score there is. */}
-                {x.healthScore != null ? <HealthPill value={x.healthScore} /> : null}
+                {/* A customer the office has not scored yet gets no NUMBER —
+                    a zero would read as the worst score there is — but a band
+                    can still stand on its own, because it needs only the last
+                    order date and the cycle. Both absent draws nothing. */}
+                {x.healthScore != null || x.healthBand ? (
+                  <HealthPill
+                    value={x.healthScore ?? null}
+                    band={x.healthBand ?? null}
+                    strongAtOrAbove={healthStrong}
+                    watchBelow={healthWatch}
+                  />
+                ) : null}
               </View>
 
               <Text
@@ -349,16 +498,74 @@ export default function Customers() {
                   pretty(x.lastOrderDate)}
               </Text>
 
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
-                <View
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 4,
-                    backgroundColor: stage === 'Overdue' ? C.danger : stage === 'At risk' ? C.warn : C.success,
-                  }}
-                />
-                <Text style={{ fontSize: 14, color: C.body }}>{stage}</Text>
+              {/* §P — due to reorder, on the customer's OWN measured rhythm.
+                  Derived on the phone from two columns every row already
+                  carries, so it is right in a market lane with no signal.
+                  Above the status row rather than inside it: the status is what
+                  the account IS, this is what to do about it today. */}
+              {reorderLabel(x.lastOrderDate, x.cycleDays, today) ? (
+                <Text
+                  style={[
+                    {
+                      fontSize: 14,
+                      lineHeight: 20,
+                      marginTop: 4,
+                      color:
+                        reorderState(x.lastOrderDate, x.cycleDays, today) === 'overdue'
+                          ? C.danger
+                          : C.warnInk,
+                    },
+                    weight(500),
+                  ]}>
+                  {reorderLabel(x.lastOrderDate, x.cycleDays, today)}
+                </Text>
+              ) : null}
+
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginTop: 8,
+                }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <View
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 4,
+                      /* Dormant and Lost are the far end of the same scale
+                         and must not fall through to green, which is what the
+                         old 'Overdue' check did the moment the words changed. */
+                      backgroundColor:
+                        stage === 'Dormant' || stage === 'Lost'
+                          ? C.danger
+                          : stage === 'At risk'
+                            ? C.warn
+                            : C.success,
+                    }}
+                  />
+                  <Text style={{ fontSize: 14, color: C.body }}>{stage}</Text>
+                </View>
+
+                {/* Quiet, and on the other side of the row: it is a fact about
+                    the account rather than about today, so it should be
+                    findable without competing with the one that is. */}
+                {type_ ? (
+                  <View
+                    style={{
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: radius.sm,
+                      borderWidth: 1,
+                      borderColor: C.border,
+                      backgroundColor: C.wash,
+                    }}>
+                    <Text style={[{ fontSize: 11, color: C.muted, letterSpacing: 0.3 }, weight(500)]}>
+                      {type_}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
             </Pressable>
 
@@ -385,8 +592,26 @@ export default function Customers() {
                     if (out.status !== 'handed_off') notify(out.reason);
                   },
                 },
-                { g: 'nav', l: 'Navigate', run: () => notify('Maps to ' + x.name) },
-                { g: 'visit', l: 'Visit', run: () => { beginVisit(x.id); router.push('/visit'); } },
+                {
+                  /* `pin`, not `nav`. The two glyphs were the wrong way round:
+                     `visit` and `pin` are the SAME path — a map pin — so the
+                     button that checks you in was drawn as the universal symbol
+                     for "show me on a map", and the one that opens maps was a
+                     compass nobody reads that way. Tapping the pin expecting
+                     directions checked you into the shop instead. */
+                  g: 'pin',
+                  l: 'Navigate',
+                  run: async () => {
+                    const out = await openMaps({
+                      lat: x.gpsLat,
+                      lng: x.gpsLng,
+                      name: x.name,
+                      city: x.city,
+                    });
+                    if (out.status !== 'opened') notify(out.reason);
+                  },
+                },
+                { g: 'shop', l: 'Visit', run: () => { beginVisit(x.id); router.push('/visit'); } },
                 { g: 'order', l: 'Order', run: () => { set({ custId: x.id }); router.push('/order?from=customers'); } },
                 { g: 'dots', l: 'More', run: () => { set({ custId: x.id }); setRowMore(x); } },
               ].map((a) => (
@@ -550,7 +775,7 @@ export default function Customers() {
           Goods go here; the bill goes to whoever you pick below.
         </Text>
 
-        <Field label="Shop name" value={shopName} onChange={setShopName} placeholder="As it is written on the board" />
+        <Field label="Shop name" value={newShopName} onChange={setNewShopName} placeholder="As it is written on the board" />
         <Field
           label="Phone"
           value={shopPhone}

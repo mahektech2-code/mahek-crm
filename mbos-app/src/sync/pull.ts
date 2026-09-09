@@ -25,6 +25,9 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertPriceList(pull.priceList);
     touched += await upsertSchemes(pull.schemes);
     touched += await upsertTimeline(pull.timeline);
+    touched += await upsertCustomerOrders(pull.customerOrders, now);
+    touched += await upsertCustomerPayments(pull.customerPayments, now);
+    touched += await upsertCustomerBills(pull.customerBills, now);
     touched += await upsertStops(pull.journeyStops, now);
     touched += await upsertPlanDays(pull.planDays, now);
     touched += await upsertConfig(pull.config, now);
@@ -220,12 +223,44 @@ async function upsertPriceList(rows: unknown[] | undefined) {
   return rows.length;
 }
 
+/**
+ * The open bills, REPLACED WHOLESALE — the price list's rule, for the same
+ * reason it has it.
+ *
+ * A rate that was withdrawn has to disappear; so does a bill that has been
+ * settled. A per-row upsert leaves it behind, and a bill left behind is one
+ * the picker goes on offering — so a salesman names it, the server refuses the
+ * allocation with `bill_settled`, and the refusal looks like the app being
+ * wrong rather than the phone being stale. The server sends the CURRENT open
+ * set for every customer on this handset on every pass, never a delta, which
+ * is what makes replacing correct.
+ *
+ * `!rows?.length` guards it exactly as the price list does: an empty payload
+ * is the no-cursor pull saying nothing, not the office saying every bill in
+ * the book has been paid.
+ */
+async function upsertCustomerBills(rows: unknown[] | undefined, now: number) {
+  if (!rows?.length) return 0;
+  await run('DELETE FROM customer_bills');
+  return upsert('customer_bills', 'id', rows, { lastSyncedAt: now });
+}
+
 function upsertSchemes(rows: unknown[] | undefined) {
   return upsert('schemes', 'id', rows);
 }
 
 function upsertTimeline(rows: unknown[] | undefined) {
   return upsert('timeline_events', 'id', rows);
+}
+
+/* The office's history, read-only here. Its own tables rather than `orders`
+   and `payments`, which are the salesman's own and feed his outbox. */
+function upsertCustomerOrders(rows: unknown[] | undefined, now: number) {
+  return upsert('customer_orders', 'id', rows, { lastSyncedAt: now });
+}
+
+function upsertCustomerPayments(rows: unknown[] | undefined, now: number) {
+  return upsert('customer_payments', 'id', rows, { lastSyncedAt: now });
 }
 
 function upsertStops(rows: unknown[] | undefined, now: number) {
@@ -342,6 +377,9 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       companyName?: string | null;
       mobile?: string | null;
       city?: string | null;
+      /* The locality inside the city. Sent since leads existed and
+         dropped until this table had a column for it. */
+      area?: string | null;
       source?: string | null;
       stage?: string;
       estimatedPotentialPaise?: number | null;
@@ -356,11 +394,14 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
        * that the server does not send is `undefined`, and the `ON CONFLICT`
        * clause then writes that NULL over whatever the row held. That is how
        * every completed task lost its note and its photograph. So these are
-       * added in the same change as `openLeads`, never ahead of it.
+       * added in the same change as `openLeads`, never ahead of it — and the
+       * list below is the whole of what `openLeads` selects, no more.
        */
       salesType?: string | null;
       stageSince?: string | null;
       customerType?: string | null;
+      /* `lead_monthly_volume_litres` under its wire name. The server holds one
+         column for the fact and aliases it to this. */
       monthlyLitres?: number | null;
       competitor?: string | null;
       requiredProductId?: string | null;
@@ -382,27 +423,46 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       distributorSalesmanName?: string | null;
       expectedOrderDate?: string | null;
       expectedOrderValuePaise?: number | null;
+      /* Sent since leads existed and dropped on the floor until the
+         `a lead has a place` migration gave this table somewhere to put
+         them — a lead map with no coordinates. */
+      gpsLat?: number | null;
+      gpsLng?: number | null;
+      /* The coordinating seat, and the name beside it. Reference data: it does
+         not move the lead out of this salesman's book. */
+      leadManagerId?: string | null;
+      leadManagerName?: string | null;
+      /* Counted by the office over every visit, not just this phone's — see
+         `visitsHere`, which adds what has not synced yet. */
+      visitCount?: number | null;
+      holdReason?: string | null;
     };
     await run(
-      `INSERT INTO leads (id, name, company, mobile, city, source, estimatedPotentialPaise,
+      `INSERT INTO leads (id, name, company, mobile, city, area, source, estimatedPotentialPaise,
                           assigneeId, stage, nextFollowUpDate, notes, convertedCustomerId,
-                          archived, lastActivityDate, clientCreatedAt, serverCreatedAt,
-                          deviceId, syncState,
+                          archived, lastActivityDate, gpsLat, gpsLng,
+                          leadManagerId, leadManagerName, visitCount, holdReason,
+                          clientCreatedAt, serverCreatedAt, deviceId, syncState,
                           salesType, funnelStage, stageSince, customerType, monthlyLitres,
                           competitor, requiredProductId, requiredProductName, contactPerson,
                           decisionMaker, creditDaysWanted, application, gstin, qualification,
                           nextAction, nextActionDate, nextActionOwnerId, nextActionOutcome,
                           suspectDecidedAt, verifiedAt, thirdParty, distributorSalesmanId,
                           distributorSalesmanName, expectedOrderDate, expectedOrderValuePaise)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, 'server', 'synced',
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced',
                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name, company = excluded.company, mobile = excluded.mobile,
-         city = excluded.city, source = excluded.source,
+         city = excluded.city, area = excluded.area, source = excluded.source,
          estimatedPotentialPaise = excluded.estimatedPotentialPaise,
          stage = excluded.stage, nextFollowUpDate = excluded.nextFollowUpDate,
          convertedCustomerId = excluded.convertedCustomerId,
          lastActivityDate = excluded.lastActivityDate,
+         gpsLat = excluded.gpsLat, gpsLng = excluded.gpsLng,
+         leadManagerId = excluded.leadManagerId,
+         leadManagerName = excluded.leadManagerName,
+         visitCount = excluded.visitCount,
+         holdReason = excluded.holdReason,
          salesType = excluded.salesType, funnelStage = excluded.funnelStage,
          stageSince = excluded.stageSince, customerType = excluded.customerType,
          monthlyLitres = excluded.monthlyLitres, competitor = excluded.competitor,
@@ -427,6 +487,7 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         l.companyName ?? null,
         l.mobile ?? null,
         l.city ?? null,
+        l.area ?? null,
         l.source ?? null,
         l.estimatedPotentialPaise ?? null,
         localStage(l.stage),
@@ -437,6 +498,12 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         localNotes(l.notes, now),
         l.convertedCustomerId ?? null,
         l.lastActivityDate ?? null,
+        l.gpsLat ?? null,
+        l.gpsLng ?? null,
+        l.leadManagerId ?? null,
+        l.leadManagerName ?? null,
+        l.visitCount ?? 0,
+        l.holdReason ?? null,
         now,
         now,
         l.salesType ?? null,
@@ -494,19 +561,40 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
       followUpDate?: string | null;
       feedbackNotes?: string | null;
       convertedOrderId?: string | null;
+      /* The lifecycle, §I–§K. `receivedAt` is the shop's own word and is what
+         the review call is dated from — never inferred from `deliveredAt`. */
+      dispatchedAt?: string | null;
+      courierName?: string | null;
+      trackingNumber?: string | null;
+      receivedAt?: string | null;
+      trialStartedAt?: string | null;
+      trialCompletedAt?: string | null;
+      satisfaction?: string | null;
+      additionalRequirement?: string | null;
+      rejectionReason?: string | null;
     };
     await run(
       `INSERT INTO samples (id, customerId, productId, productName, cans, reason,
                             requestedAt, state, deliveredAt, deliveryPhotoId, trialOutcome,
-                            followUpDate, convertedOrderId, clientCreatedAt, serverCreatedAt,
-                            deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
+                            followUpDate, convertedOrderId,
+                            dispatchedAt, courierName, trackingNumber, receivedAt,
+                            trialStartedAt, trialCompletedAt, satisfaction,
+                            additionalRequirement, rejectionReason,
+                            clientCreatedAt, serverCreatedAt, deviceId, syncState)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          productId = excluded.productId, productName = excluded.productName,
          cans = excluded.cans, reason = excluded.reason, state = excluded.state,
          deliveredAt = excluded.deliveredAt, deliveryPhotoId = excluded.deliveryPhotoId,
          trialOutcome = excluded.trialOutcome, followUpDate = excluded.followUpDate,
-         convertedOrderId = excluded.convertedOrderId
+         convertedOrderId = excluded.convertedOrderId,
+         dispatchedAt = excluded.dispatchedAt, courierName = excluded.courierName,
+         trackingNumber = excluded.trackingNumber, receivedAt = excluded.receivedAt,
+         trialStartedAt = excluded.trialStartedAt,
+         trialCompletedAt = excluded.trialCompletedAt,
+         satisfaction = excluded.satisfaction,
+         additionalRequirement = excluded.additionalRequirement,
+         rejectionReason = excluded.rejectionReason
        WHERE samples.syncState = 'synced'`,
       [
         s.id,
@@ -527,6 +615,18 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
         s.trialOutcome ?? null,
         s.followUpDate ?? null,
         s.convertedOrderId ?? null,
+        /* Instants off the wire. `localInstant` is already imported here for
+           `deliveredAt` — a date-only string parses as UTC and lands five and a
+           half hours before the day it names. */
+        s.dispatchedAt ? localInstant(s.dispatchedAt) : null,
+        s.courierName ?? null,
+        s.trackingNumber ?? null,
+        s.receivedAt ? localInstant(s.receivedAt) : null,
+        s.trialStartedAt ? localInstant(s.trialStartedAt) : null,
+        s.trialCompletedAt ? localInstant(s.trialCompletedAt) : null,
+        s.satisfaction ?? null,
+        s.additionalRequirement ?? null,
+        s.rejectionReason ?? null,
         now,
         now,
       ],
@@ -550,6 +650,9 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
       customerId?: string | null;
       status: string;
       completionNote?: string | null;
+      /* What KIND of work this is, so the list can open the right screen. */
+      sourceType?: string | null;
+      sourceId?: string | null;
       completionPhotoId?: string | null;
       snoozedTo?: string | null;
       snoozeReason?: string | null;
@@ -562,13 +665,15 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
     await run(
       `INSERT INTO tasks (id, title, description, assigneeId, assignerId, priority, dueDate,
                           customerId, status, completionNote, completionPhotoId, snoozeHistory,
+                          sourceType, sourceId,
                           escalated, clientCreatedAt, serverCreatedAt, deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'server', 'synced')
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          title = excluded.title, description = excluded.description,
          priority = excluded.priority, dueDate = excluded.dueDate, customerId = excluded.customerId,
          status = excluded.status, completionNote = excluded.completionNote,
          completionPhotoId = excluded.completionPhotoId, escalated = excluded.escalated,
+         sourceType = excluded.sourceType, sourceId = excluded.sourceId,
          syncState = 'synced'`,
       [
         t.id,
@@ -583,6 +688,8 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
         t.completionNote ?? null,
         t.completionPhotoId ?? null,
         snoozeHistory,
+        t.sourceType ?? null,
+        t.sourceId ?? null,
         t.escalatedAt ? 1 : 0,
         now,
       ],

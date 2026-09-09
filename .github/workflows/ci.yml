@@ -72,6 +72,26 @@ jobs:
           npm ci
           npm run lint
 
+      # AND ITS TYPES AND ITS TESTS, which nothing ran until now.
+      #
+      # Both scripts existed in `mbos-app/package.json` and neither was called
+      # by anything, so the handset's engines were tested only when somebody
+      # remembered to, and its types only on a laptop that happened to have the
+      # native packages installed. That is the half that matters most here: a
+      # local tree usually cannot resolve `@maplibre/maplibre-react-native` at
+      # all, so `tsc` skips every call into it and a wrong argument reaches an
+      # APK — which cannot be recalled — with nothing in between having looked.
+      # A fresh `npm ci` above is exactly the tree that can check it.
+      - name: Field app types
+        run: |
+          cd mbos-app
+          npm run typecheck
+
+      - name: Field app engine tests
+        run: |
+          cd mbos-app
+          npm run test
+
       - name: Engine tests
         run: npm run test
 

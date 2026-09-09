@@ -57,6 +57,128 @@ export async function openWhatsApp(phone: string, message: string): Promise<Send
   }
 }
 
+/**
+ * Take him there.
+ *
+ * This button existed and did nothing — it raised a toast saying "Maps to
+ * <shop>" and stopped, which is worse than not drawing it: a control that
+ * acknowledges the tap and then does not act teaches people the app is
+ * unreliable rather than that the feature is missing.
+ *
+ * The coordinates are the point. Most of this book is pinned, and a shop in a
+ * market lane is findable by its dot and very often not by its name — so where
+ * there is a fix, that is what is handed over, and the shop's name rides along
+ * only as the LABEL on the pin. Where there is no fix we search for the name
+ * and the town instead, which is the same thing he would have typed himself.
+ *
+ * `google.navigation:` first, because it starts turn-by-turn in the app he
+ * already has, and the https form second, which any Android resolves into
+ * Google Maps and any other platform opens in a browser. Falling all the way
+ * to the browser is still an answer; refusing is not.
+ */
+export type MapsOutcome = { status: 'opened' } | { status: 'failed'; reason: string };
+
+export async function openMaps(args: {
+  lat?: number | null;
+  lng?: number | null;
+  name?: string | null;
+  city?: string | null;
+}): Promise<MapsOutcome> {
+  const hasFix = typeof args.lat === 'number' && typeof args.lng === 'number';
+
+  const query = hasFix
+    ? `${args.lat},${args.lng}`
+    : [args.name, args.city].filter(Boolean).join(' ').trim();
+
+  if (!query) {
+    return {
+      status: 'failed',
+      reason: 'No location and no name to search for on this customer.',
+    };
+  }
+
+  /* Turn-by-turn straight away, which is what the button says it does. */
+  const native = hasFix
+    ? `google.navigation:q=${args.lat},${args.lng}`
+    : `geo:0,0?q=${encodeURIComponent(query)}`;
+  const web = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(query)}`;
+
+  try {
+    if (Platform.OS === 'android' && (await Linking.canOpenURL(native))) {
+      await Linking.openURL(native);
+      return { status: 'opened' };
+    }
+    await Linking.openURL(web);
+    return { status: 'opened' };
+  } catch {
+    return { status: 'failed', reason: 'No maps app would open on this handset.' };
+  }
+}
+
+/**
+ * THE WHOLE DAY, IN ORDER.
+ *
+ * "Navigate the whole day" raised the words "Full route sent to maps" and sent
+ * nothing. That is the worse half of this class of bug: a control that does
+ * nothing teaches you it is broken, and a control that SAYS IT DID teaches you
+ * to believe it — so the salesman sets off expecting his phone to know where he
+ * is going.
+ *
+ * Google's directions URL takes a destination and waypoints in between, and it
+ * caps the waypoints at NINE. A beat can be longer than that, so the extra
+ * stops are dropped from the ROUTE and the caller is told how many, rather than
+ * the whole thing silently failing or — worse — opening a route that quietly
+ * misses the afternoon.
+ *
+ * Stops with no coordinates are dropped for the same reason a shop with no pin
+ * cannot be navigated to individually: there is nothing to send.
+ */
+const MAX_WAYPOINTS = 9;
+
+export type RouteOutcome =
+  | { status: 'opened'; used: number; dropped: number }
+  | { status: 'failed'; reason: string };
+
+export async function openRoute(
+  stops: { lat?: number | null; lng?: number | null }[],
+): Promise<RouteOutcome> {
+  const pinned = stops
+    .filter((s) => typeof s.lat === 'number' && typeof s.lng === 'number')
+    .map((s) => `${s.lat},${s.lng}`);
+
+  if (pinned.length === 0) {
+    return {
+      status: 'failed',
+      reason: 'None of today’s stops has a location saved, so there is no route to open.',
+    };
+  }
+  if (pinned.length === 1) {
+    const out = await openMaps({ lat: stops[0].lat, lng: stops[0].lng });
+    return out.status === 'opened'
+      ? { status: 'opened', used: 1, dropped: 0 }
+      : { status: 'failed', reason: out.reason };
+  }
+
+  /* The last one is the destination; everything before it is a waypoint, and
+     only the first nine of those fit. */
+  const destination = pinned[pinned.length - 1];
+  const middle = pinned.slice(0, -1);
+  const used = middle.slice(0, MAX_WAYPOINTS);
+  const dropped = middle.length - used.length;
+
+  const url =
+    'https://www.google.com/maps/dir/?api=1&travelmode=driving' +
+    `&destination=${encodeURIComponent(destination)}` +
+    (used.length ? `&waypoints=${encodeURIComponent(used.join('|'))}` : '');
+
+  try {
+    await Linking.openURL(url);
+    return { status: 'opened', used: used.length + 1, dropped };
+  } catch {
+    return { status: 'failed', reason: 'No maps app would open on this handset.' };
+  }
+}
+
 export async function openSms(phone: string, message: string): Promise<SendOutcome> {
   /* iOS wants `&` for the body, Android wants `?`. Getting it wrong opens the
      composer with an empty message, which reads as the app losing the text. */
@@ -76,7 +198,15 @@ export async function copyToClipboard(message: string): Promise<SendOutcome> {
   return { status: 'copied', reason: 'Copied. Paste it wherever you need it.' };
 }
 
-/** The system share sheet, for anything that is not a specific channel. */
+/**
+ * The system share sheet, for anything that is not a specific channel.
+ *
+ * It is what "Share the plan" uses. That control said "To your manager on
+ * WhatsApp" and then reported "Route shared", and neither was true — nor could
+ * the first have been: nothing on this handset knows which number his manager
+ * is on. The share sheet does, because his recent chats are in it, so it asks
+ * rather than guessing.
+ */
 export async function shareText(message: string, title?: string): Promise<SendOutcome> {
   try {
     await Share.share({ message, title });
@@ -165,4 +295,64 @@ export function orderMessage(args: {
   if (args.valueRupees) out.push('', `Value: ${args.valueRupees}`);
 
   return out.join('\n');
+}
+
+/* ------------------------------------------------------------- navigation */
+
+/**
+ * Hand the shop to whatever maps app the phone has.
+ *
+ * §G and 2-§D ask for a Navigate button, and this is the whole of it: a deep
+ * link, no dependency, no key, no bill, and no tile ever fetched. Android takes
+ * `google.navigation:` straight into turn-by-turn; everything else gets the
+ * platform's `geo:` or, failing that, a maps URL the browser will pick up.
+ *
+ * Deliberately NOT a route we compute. `engines/route.ts` orders a day's stops
+ * by straight-line distance and says in its own header that it is not a routing
+ * service — real turn-by-turn needs a road network, a directions API and a
+ * connection, and the phone that most needs directions is the one with one bar
+ * in a market lane. Handing off to an app that has already downloaded the roads
+ * is better than any of that, and free.
+ *
+ * The name rides along so the destination reads as a shop rather than a pair of
+ * numbers when the maps app shows it back.
+ */
+export async function navigateTo(
+  coords: { lat: number; lng: number },
+  label?: string | null,
+): Promise<SendOutcome> {
+  const point = coords.lat + ',' + coords.lng;
+  const name = label?.trim() ? encodeURIComponent(label.trim()) : null;
+
+  const candidates =
+    Platform.OS === 'android'
+      ? [
+          'google.navigation:q=' + point,
+          'geo:' + point + '?q=' + point + (name ? '(' + name + ')' : ''),
+        ]
+      : [
+          /* Apple Maps takes a label directly; `geo:` is the generic fallback. */
+          'maps://?daddr=' + point + (name ? '&q=' + name : ''),
+          'geo:' + point,
+        ];
+  candidates.push('https://www.google.com/maps/dir/?api=1&destination=' + point);
+
+  for (const url of candidates) {
+    try {
+      if (await Linking.canOpenURL(url)) {
+        await Linking.openURL(url);
+        return { status: 'handed_off', channel: 'copy' };
+      }
+    } catch {
+      /* Try the next one. A phone with no maps app at all is rare and is
+         handled by the fallback below rather than by an error nobody can act
+         on. */
+    }
+  }
+
+  /* Nothing would open it. The coordinates go on the clipboard, because a
+     salesman standing outside with a number he can paste is better off than one
+     told "navigation is unavailable". */
+  await Clipboard.setStringAsync(point);
+  return { status: 'copied', reason: 'No maps app would open — the location is on your clipboard.' };
 }

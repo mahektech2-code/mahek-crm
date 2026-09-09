@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { stamp } from "@/lib/format";
-import { fieldTeam, knownRegions, managers } from "@/lib/services/sales-service";
+import { fieldTeam, knownPlaces, knownRegions, managers } from "@/lib/services/sales-service";
+import { getCurrentUser, isManager } from "@/lib/auth";
+import { Credentials } from "./credentials";
 import { Managers } from "./managers";
+import { Territories, WorksCell } from "./territories";
 import { Cell, Empty, HeadCell, Pill, Row, ScreenHeader, Table } from "../parts";
 import { plural } from "../words";
 
@@ -20,11 +23,20 @@ export const metadata = { title: "The team — Sales Dashboard — MahekOne" };
  * reads as a broken list.
  */
 export default async function Page() {
-  const [team, managerRows, regions] = await Promise.all([
+  const [team, managerRows, regions, places, me] = await Promise.all([
     fieldTeam(),
     managers(),
     knownRegions(),
+    knownPlaces(),
+    getCurrentUser(),
   ]);
+
+  /* Handing out credentials is guarded by `isManager` in `people.ts`, not by
+     holding the Sales Dashboard, and that boundary is deliberate: a sign-in is
+     an account decision rather than a sales one. Resolved here so the control
+     can be drawn disabled with the reason on it, rather than as a button that
+     fails when it is pressed. */
+  const canManageAccounts = !!me && isManager(me);
 
   return (
     <div className="p-6">
@@ -40,14 +52,15 @@ export default async function Page() {
         />
       ) : (
         <Table
-          minWidth={980}
+          minWidth={1180}
           head={
             <>
               <HeadCell width={220}>Name</HeadCell>
               <HeadCell width={190}>Work number</HeadCell>
               <HeadCell align="right" width={110}>Customers</HeadCell>
               <HeadCell width={190}>Handset</HeadCell>
-              <HeadCell width={190}>Last signed in</HeadCell>
+              <HeadCell width={190}>Works</HeadCell>
+              <HeadCell width={170}>Last signed in</HeadCell>
               <HeadCell />
             </>
           }
@@ -89,6 +102,13 @@ export default async function Page() {
                   <span className="text-muted">Never signed in on a phone</span>
                 )}
               </Cell>
+              {/* Where he works NARROWS the book in the column to its left —
+                  it never widens it. Both are shown because the pair is the
+                  question somebody actually has: how many shops are his, and
+                  how many of those are in front of him today. */}
+              <Cell truncate={190}>
+                <WorksCell salesman={t} />
+              </Cell>
               <Cell>
                 {t.lastLoginAt ? (
                   stamp(t.lastLoginAt)
@@ -97,12 +117,21 @@ export default async function Page() {
                 )}
               </Cell>
               <Cell align="right">
-                <Link
-                  href={`/sales/journeys?salesman=${t.id}`}
-                  className="text-[13px] text-[#5223E0] no-underline"
-                >
-                  Plan a route
-                </Link>
+                <span className="inline-flex items-center gap-2">
+                  <Territories
+                    salesman={t}
+                    states={regions}
+                    cities={places.cities}
+                    beats={places.beats}
+                  />
+                  <Link
+                    href={`/sales/journeys?salesman=${t.id}`}
+                    className="text-[13px] text-[#5223E0] no-underline"
+                  >
+                    Plan a route
+                  </Link>
+                  <Credentials salesman={t} canManageAccounts={canManageAccounts} />
+                </span>
               </Cell>
             </Row>
           ))}

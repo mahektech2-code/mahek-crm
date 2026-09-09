@@ -3,7 +3,7 @@ import { enqueue } from '../sync/queue';
 import { insertAndQueue, insertLocal, stamp, updateAndQueue } from './write';
 import { getConfig } from './config';
 import { isoDate } from '../lib/format';
-import { wireNotes, wireStage } from '../lib/wire';
+import { wireNotes, wireSource, wireStage } from '../lib/wire';
 import {
   matchDuplicate,
   normaliseMobile,
@@ -12,6 +12,7 @@ import {
   type DuplicateMatch,
   type LeadFilter,
   type LeadThresholds,
+  type VisitCapThresholds,
 } from '../engines/leads';
 
 /**
@@ -43,6 +44,34 @@ export type Lead = {
   lostReason: string | null;
   archived: number;
   lastActivityDate: string | null;
+  /**
+   * Where the shop is. The server has sent these on every pull since leads
+   * existed; this table had no columns for them until v13, so `upsert` dropped
+   * both on arrival and every lead on every handset had a null place.
+   */
+  gpsLat: number | null;
+  gpsLng: number | null;
+  /**
+   * Who runs the conversion once the lead is qualified. Information, not
+   * ownership — the lead is still this salesman's to visit. The name is sent
+   * with the id because the handset holds no user table to resolve one.
+   */
+  leadManagerId: string | null;
+  leadManagerName: string | null;
+  /* §A and §C — what he learns in the shop. See the v14 migration for why
+     consumption is in litres and not in cans. */
+  address: string | null;
+  customerType: string | null;
+  gstin: string | null;
+  requirement: string | null;
+  monthlyVolumeLitres: number | null;
+  decisionMaker: string | null;
+  shopPhotoId: string | null;
+  competitorName: string | null;
+  /** As the office counts it. `visitsHere()` adds what has not synced yet. */
+  visitCount: number;
+  /** Why it is not moving. Set for On hold, and for a Suspect kept past the cap. */
+  holdReason: string | null;
   clientCreatedAt: number;
   syncState: string;
 
@@ -62,16 +91,19 @@ export type Lead = {
   funnelStage: string | null;
   stageSince: string | null;
 
-  customerType: string | null;
+  /* `customerType`, `decisionMaker` and `gstin` are the same three facts the
+     capture form above already declares, under exactly those names — one
+     column each, not two. `monthlyLitres` and `competitor` are NOT: they are
+     the wire's own words for what the office holds, and `openLeads` sends
+     them under these names while the capture form writes the two beside them.
+     See the funnel migration for why both pairs of columns are on the row. */
   monthlyLitres: number | null;
   competitor: string | null;
   requiredProductId: string | null;
   requiredProductName: string | null;
   contactPerson: string | null;
-  decisionMaker: string | null;
   creditDaysWanted: number | null;
   application: string | null;
-  gstin: string | null;
   prospectReasonCode: string | null;
 
   /** JSON, keyed by condition id. Read as a whole by the gate engine. */
@@ -159,6 +191,62 @@ export async function leadThresholds(): Promise<LeadThresholds> {
   return { staleDays, archiveDays, escalateAfterDays };
 }
 
+/**
+ * The two numbers the visit cap is measured in.
+ *
+ * Configuration, and the SAME two the server checks `decide` against — which
+ * is what lets the rule live in two runtimes without a shared module. They
+ * arrive on every pull with the rest of the `mbos.*` keys, so an office that
+ * changes them changes both ends at once.
+ */
+export async function visitCapThresholds(): Promise<VisitCapThresholds> {
+  const [visitsBeforeDecision, maxSuspectVisits] = await Promise.all([
+    getConfig<number>('mbos.leads.visitsBeforeDecision'),
+    getConfig<number>('mbos.leads.maxSuspectVisits'),
+  ]);
+  return { visitsBeforeDecision, maxSuspectVisits };
+}
+
+/**
+ * Visits to this shop, counting the ones still in the outbox.
+ *
+ * The server's count plus anything this handset has recorded and not yet sent.
+ * Without the second half a salesman who made visit two offline would be shown
+ * "Visit 1 / 3" and asked for no decision on visit three — the cap would fire
+ * one visit late, every time the phone was out of signal, which is exactly when
+ * he is in the field.
+ */
+export async function visitsHere(leadId: string, serverCount: number): Promise<number> {
+  const rows = await all<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM visits WHERE customerId = ? AND syncState <> 'synced'`,
+    [leadId],
+  );
+  return serverCount + Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * Is this shop still a Suspect, and how many times have we been?
+ *
+ * Null for anything that is not a lead — which is most of the book, and the
+ * answer the visit screen wants: a real customer is never asked to justify a
+ * visit. A lead IS a `customers` row, so the visit screen holds the customer
+ * and has to come here for the half that lives on the lead.
+ *
+ * The count is the office's plus whatever this handset has not managed to send,
+ * because a salesman who made visit two in a market with no signal must still
+ * be asked for a decision on visit three.
+ */
+export async function suspectFor(
+  customerId: string,
+): Promise<{ stage: string; visits: number } | null> {
+  const row = await one<{ stage: string; visitCount: number }>(
+    'SELECT stage, visitCount FROM leads WHERE id = ? AND archived = 0',
+    [customerId],
+  );
+  if (!row) return null;
+  return { stage: row.stage, visits: await visitsHere(customerId, row.visitCount ?? 0) };
+}
+
 /* ------------------------------------------------------------- duplicates */
 
 /**
@@ -197,6 +285,16 @@ export async function createLead(args: {
   assigneeId?: string | null;
   nextFollowUpDate?: string | null;
   note?: string | null;
+  /* §A. All optional: a salesman who has a name and a number outside a closed
+     shop must still be able to write the lead down. What he could not do
+     before was come back and add the rest. */
+  address?: string | null;
+  customerType?: string | null;
+  requirement?: string | null;
+  monthlyVolumeLitres?: number | null;
+  decisionMaker?: string | null;
+  shopPhotoId?: string | null;
+  competitorName?: string | null;
   today?: string;
   /**
    * §2 — which of the three ladders this lead climbs.
@@ -229,15 +327,31 @@ export async function createLead(args: {
   }
 
   const base = await stamp('lead');
+  /*
+   * The freshest fix already known, which is almost always one the day's trail
+   * took minutes ago — so this costs no battery and, more importantly, no
+   * TIME. `whereNow()` never waits on the radio: a salesman outside a shop with
+   * the customer waiting must not watch a spinner while the GPS settles, and a
+   * lead with no pin is far better than a lead nobody wrote down.
+   */
+  const { whereNow } = await import('../native/where');
+  const fix = await whereNow().catch(() => null);
   const notes: LeadNote[] = args.note?.trim() ? [{ at: Date.now(), text: args.note.trim() }] : [];
 
+  /* Bound the way a visit binds its photographs: the shop front is shot while
+     the shop is in front of you, so it begins life under the parent `pending`
+     and is claimed the moment the record it belongs to exists. The server
+     binds its own copy too (`bindMbosMedia`) — this is what makes the UPLOAD
+     carry the right parent rather than relying on the fix-up afterwards. */
   const id = await insertAndQueue({
     table: 'leads',
     entityType: 'lead',
     /* This table's columns and the wire's fields are not the same words —
        PROTOCOL.md §4.1. `company`, a capitalised stage and notes as a list are
        ours; MahekOne reads `companyName`, a lower-case stage and one string.
-       Every lead a salesman created was refused on all three at once. */
+       Every lead a salesman created was refused on all three at once — and
+       then went on being refused on the fourth, the source, which this pass
+       missed. */
     payloadExtras: {
       companyName: args.company?.trim() || undefined,
       /* A lead on a ladder is raised onto its FOOT, which is `suspect` on all
@@ -245,7 +359,31 @@ export async function createLead(args: {
          the foot of the legacy ladder and what this app has always sent. */
       stage: args.salesType ? 'suspect' : 'new',
       notes: wireNotes(notes),
-      funnel: args.salesType ? { salesType: args.salesType } : undefined,
+      /* §2 — which ladder, sent FLAT rather than nested. `leadCreateSchema`
+         names `salesType` at the top level and `safeParse` strips whatever it
+         does not name, without a word: wrapped in a `funnel` object this
+         arrived as nothing at all, and the lead was raised on the legacy
+         ladder with the salesman's answer lost between the two ends. */
+      salesType: args.salesType ?? undefined,
+      /* WHERE HE IS STANDING, which is the whole of the lead map.
+         `enqueue` already attaches a position to the sync ITEM — that records
+         where the act happened. This is different and both are wanted: this is
+         where the SHOP is, and it goes on the customer row, where a pin is
+         read from. A lead captured at the shop door has them equal; one typed
+         up in the evening has an activity location and no shop pin, which is
+         the honest answer rather than a guess. */
+      gpsLat: fix?.lat ?? undefined,
+      gpsLng: fix?.lng ?? undefined,
+      address: args.address?.trim() || undefined,
+      customerType: args.customerType ?? undefined,
+      requirement: args.requirement?.trim() || undefined,
+      monthlyVolumeLitres: args.monthlyVolumeLitres ?? undefined,
+      decisionMaker: args.decisionMaker?.trim() || undefined,
+      /* The fourth of the four, and the one that outlived the fix above: the
+         source went out as the salesman's own word against an enum that only
+         ever held codes, so every lead was still refused after the other three
+         were mended. See `wireSource`. */
+      source: wireSource(args.source),
     },
     row: {
       ...base,
@@ -266,11 +404,29 @@ export async function createLead(args: {
       nextFollowUpDate: args.nextFollowUpDate ?? null,
       notes,
       archived: 0,
+      address: args.address?.trim() || null,
+      customerType: args.customerType ?? null,
+      gstin: null,
+      requirement: args.requirement?.trim() || null,
+      monthlyVolumeLitres: args.monthlyVolumeLitres ?? null,
+      decisionMaker: args.decisionMaker?.trim() || null,
+      shopPhotoId: args.shopPhotoId ?? null,
+      competitorName: args.competitorName?.trim() || null,
+      visitCount: 0,
+      holdReason: null,
+      gpsLat: fix?.lat ?? null,
+      gpsLng: fix?.lng ?? null,
+      leadManagerId: null,
+      leadManagerName: null,
       /* Staleness is measured from here, so it starts today rather than null —
          a lead created this morning has not gone quiet. */
       lastActivityDate: today,
     },
   });
+
+  if (args.shopPhotoId) {
+    await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, args.shopPhotoId]);
+  }
 
   return { ok: true, value: id };
 }
