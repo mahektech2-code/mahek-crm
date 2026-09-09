@@ -203,6 +203,13 @@ const WIRE: { fn: string; table: string; extra?: string[] }[] = [
   { fn: "recentTimeline", table: "timeline_events" },
   { fn: "recentOrders", table: "customer_orders", extra: ["lastSyncedAt"] },
   { fn: "recentPayments", table: "customer_payments", extra: ["lastSyncedAt"] },
+  /*
+   * `customerBills` assembles its row in TypeScript rather than in SQL — it
+   * reads the Accounts ledger through `listBills` and TRIMS the result, so the
+   * mapped object literal is the thing that actually goes on the wire. That is
+   * the `leaveBalanceRows` case, and `payloadColumns` reads it the same way.
+   */
+  { fn: "customerBills", table: "customer_bills", extra: ["lastSyncedAt"] },
   { fn: "journeyStops", table: "journey_stops", extra: ["lastSyncedAt"] },
   { fn: "schemeRows", table: "schemes" },
   { fn: "unreadNotifications", table: "notifications" },

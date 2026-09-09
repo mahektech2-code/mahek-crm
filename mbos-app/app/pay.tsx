@@ -7,6 +7,7 @@ import { Icon } from '../src/components/ui/Icon';
 import { color as C, radius, shadow, tabular, weight } from '../src/theme/tokens';
 import { inr, isoDate, pretty } from '../src/lib/format';
 import { cashInHand, collectPayment, type PaymentMode } from '../src/data/payments';
+import { customerBills, type CustomerBill } from '../src/data/customers';
 import { copyToClipboard, openWhatsApp, receiptMessage } from '../src/lib/messaging';
 import { takePhoto } from '../src/native/capture';
 import { useCustomer, useStore } from '../src/state/store';
@@ -25,6 +26,13 @@ import { useBoot } from '../src/state/boot';
  * What this screen records is money the CUSTOMER handed over. It is not money
  * the business has seen: outstanding does not move until accounts find it in
  * the bank, and nothing here pretends otherwise.
+ *
+ * WHICH BILLS IT IS AGAINST is asked here, and for a long time it could not be.
+ * `collectPayment` has always taken `billRefs`, the server has always read
+ * them as `billIds` and allocated in `settle` mode — and no screen ever filled
+ * it, so every collection spread OLDEST FIRST however plainly the customer was
+ * paying against the invoice in his hand. Naming nothing still spreads oldest
+ * first, which is the right default and is now SAID rather than assumed.
  */
 
 const MODES: { label: PaymentMode; glyph: string }[] = [
@@ -50,8 +58,11 @@ export default function PayScreen() {
 
   const [cash, setCash] = React.useState<{ totalPaise: number; sentence: string; nextDeadline: number | null } | null>(null);
   const [chequePhotoId, setChequePhotoId] = React.useState<string | null>(null);
+  const [bills, setBills] = React.useState<CustomerBill[]>([]);
+  const [picked, setPicked] = React.useState<Set<string>>(new Set());
 
   const userId = boot.session?.user.id ?? null;
+  const customerId = c?.id ?? null;
   useFocusEffect(
     React.useCallback(() => {
       let live = true;
@@ -59,14 +70,31 @@ export default function PayScreen() {
       void cashInHand(userId).then((p) => {
         if (live) setCash({ totalPaise: p.totalPaise, sentence: p.sentence, nextDeadline: p.nextDeadline });
       });
+      /* The office's open bills for this shop. No reset of `picked` here — a
+         tick against a bill that is no longer on the list simply does not
+         match one, which `chosen` below works out on every render. Clearing
+         state in an effect is what the React Compiler rules forbid. */
+      if (customerId) void customerBills(customerId).then((b) => live && setBills(b));
       return () => {
         live = false;
       };
-    }, [userId]),
+    }, [userId, customerId]),
   );
 
   const amt = parseInt(payAmt || '0', 10);
   const needsCheque = payMode === 'Cheque';
+
+  /*
+   * The ticks that still match a bill on the list.
+   *
+   * Derived rather than stored, so a bill settled since the last pull — the
+   * pull replaces this table wholesale — takes its own tick with it instead of
+   * being sent to a server that would refuse the whole receipt with
+   * `bill_settled`.
+   */
+  const chosen = bills.filter((b) => picked.has(b.id));
+  const namedPaise = chosen.reduce((n, b) => n + (b.balancePaise ?? 0), 0);
+  const onAccountPaise = Math.max(0, amt * 100 - namedPaise);
   /* A cheque with no number and no photograph is a promise, not an
      instrument — both are required before this one saves. */
   const payOk = !!payMode && amt > 0 && (!needsCheque || (payChq.trim().length > 0 && !!chequePhotoId));
@@ -95,6 +123,9 @@ export default function PayScreen() {
       mode: payMode as PaymentMode,
       chequeNumber: needsCheque ? payChq.trim() : null,
       chequePhotoId: needsCheque ? chequePhotoId : null,
+      /* Named bills, or nothing — in which case the server spreads it oldest
+         first, exactly as it always has. */
+      billRefs: chosen.length ? chosen.map((b) => b.id) : undefined,
     });
 
     markVisitDone('payment', payMode + ' · ' + inr(amt));
@@ -122,6 +153,7 @@ export default function PayScreen() {
     const phone = c.phone;
     set({ payAmt: '', payChq: '', payMode: null });
     setChequePhotoId(null);
+    setPicked(new Set());
 
     /* Offered, never sent. Nothing goes out on the company's behalf, and the
        payment is not recorded as receipted until a human presses send. */
@@ -170,6 +202,90 @@ export default function PayScreen() {
       <T style={{ fontSize: 15, color: C.body, marginTop: 16 }}>
         {c ? (dues ? 'They owe ' + inr(dues) : 'Nothing outstanding') : 'Open a customer first'}
       </T>
+
+      {/*
+        * WHICH BILLS, which is the question the outstanding figure above cannot
+        * answer. Drawn only where there are bills to name: an empty list here
+        * would read as "this shop has no invoices", which is a different fact
+        * from "the office has not sent them down yet".
+        */}
+      {c && bills.length > 0 ? (
+        <View style={{ marginTop: 16 }}>
+          <SectionLabel style={{ marginBottom: 10 }}>What is this against</SectionLabel>
+          <View style={{ gap: 8 }}>
+            {bills.map((b) => {
+              const on = picked.has(b.id);
+              /*
+               * An `unstated` bill is NOT a debt. Its balance is the full
+               * amount purely because nobody has recorded anything against it
+               * either way, and the office keeps it out of the outstanding
+               * figure above — so it says so in words rather than printing a
+               * number beside real balances. It can still be named: money
+               * recorded against it is what makes somebody speak for it.
+               */
+              const unstated = b.paymentPosition === 'unstated';
+              const overdue = (b.overdueDays ?? 0) > 0;
+              return (
+                <Pressable
+                  key={b.id}
+                  onPress={() =>
+                    setPicked((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(b.id)) next.delete(b.id);
+                      else next.add(b.id);
+                      return next;
+                    })
+                  }
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: on }}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 12,
+                    borderRadius: radius.xl,
+                    borderWidth: 1,
+                    borderColor: on ? C.primary : C.hairline,
+                    backgroundColor: on ? C.primaryTint : C.surface,
+                    paddingVertical: 12,
+                    paddingHorizontal: 14,
+                  }}>
+                  <Icon name={on ? 'check' : 'note'} size={20} color={on ? C.primaryDeep : C.muted} />
+                  <View style={{ flex: 1 }}>
+                    <T style={[{ fontSize: 15, color: C.ink }, weight(on ? 600 : 500)]}>
+                      {b.billNo ?? 'Bill'}
+                    </T>
+                    <T style={{ fontSize: 13, lineHeight: 18, color: overdue ? C.danger : C.muted, marginTop: 2 }}>
+                      {b.billDate ? pretty(b.billDate) : 'No date'}
+                      {overdue ? ` · ${b.overdueDays} days overdue` : ''}
+                      {b.disputed ? ' · disputed' : ''}
+                    </T>
+                  </View>
+                  {unstated ? (
+                    <T style={{ fontSize: 13, color: C.muted, textAlign: 'right', maxWidth: 110 }}>
+                      Not stated either way
+                    </T>
+                  ) : (
+                    <T style={[{ fontSize: 15, color: C.ink }, weight(600), tabular]}>
+                      {inr((b.balancePaise ?? 0) / 100)}
+                    </T>
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {/* What naming nothing DOES, said rather than assumed — and what a
+              remainder becomes, because money on account is a real outcome the
+              salesman will be asked about. */}
+          <T style={{ fontSize: 13, lineHeight: 18, color: C.muted, marginTop: 10 }}>
+            {chosen.length === 0
+              ? 'Name none and it goes against their oldest bills first.'
+              : onAccountPaise > 0 && amt > 0
+                ? `${chosen.length} named · ${inr(onAccountPaise / 100)} more than they cover, which sits on account.`
+                : `${chosen.length} named.`}
+          </T>
+        </View>
+      ) : null}
 
       <View style={{ marginTop: 16 }}>
         <SectionLabel style={{ marginBottom: 10 }}>How are they paying</SectionLabel>
