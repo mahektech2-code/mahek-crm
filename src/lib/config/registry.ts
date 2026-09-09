@@ -2064,7 +2064,24 @@ export const SETTINGS = [
     label: "Leave a person gets in a year",
     description:
       "Days per kind, for everybody, per calendar year. This is what the handset builds its list of leave kinds from — a kind missing from here cannot be applied for at all, and with none of them set the only thing the form can offer is loss of pay. A person on different terms gets a row in `mbos_leave_balances`, which overrides this for them alone. `loss_of_pay` does not belong here: it is what leave becomes once the balance is gone, and there is no balance of unpaid days to keep.",
-    default: { casual: 12, sick: 6, earned: 12 },
+    /*
+     * Twenty-four days, which is the two a month the employee sheet states
+     * on 54 of its 64 filled rows — the only leave figure Mahek has written
+     * down anywhere, so it is the one to default to.
+     *
+     * The sheet's `yearly_maximum_leave` says 60 and is NOT this number: it
+     * only reconciles with two days a month if it means the most absence
+     * allowed in a year including unpaid, which is a different question to
+     * what somebody is entitled to. Six rows carry 24 in the MONTHLY column,
+     * which is the annual figure typed into the wrong cell — that is why the
+     * sheet is read for the number once, here, by a person, rather than
+     * projected into balances every night by a job.
+     *
+     * The split across the three kinds is not in the sheet at all. It is a
+     * decision, and this is where it is recorded rather than in anybody's
+     * memory.
+     */
+    default: { casual: 12, sick: 6, earned: 6 },
   },
 
 
