@@ -12,6 +12,7 @@ import { useBoot } from '../src/state/boot';
 import { color as C, radius, weight } from '../src/theme/tokens';
 import { canOffer, isOn as lockIsOn, setOn as rememberLockChoice } from '../src/data/app-lock';
 import { prompt as promptBiometric } from '../src/native/biometrics';
+import { pushStatus, registerForPush, type PushReadiness } from '../src/native/push';
 
 /**
  * Profile — the four things about him the office may have wrong, and three
@@ -49,7 +50,7 @@ import { prompt as promptBiometric } from '../src/native/biometrics';
  * lock switched on. Leaving it here as "not built" would be the same lie in the
  * other direction.
  */
-type Pref = { k: 'wifi' | 'push'; l: string; s: string; blocked?: string };
+type Pref = { k: 'wifi'; l: string; s: string; blocked?: string };
 
 const PREFS: Pref[] = [
   {
@@ -57,12 +58,6 @@ const PREFS: Pref[] = [
     l: 'Sync on Wi-Fi only',
     s: 'Saves data when you are on mobile',
     blocked: 'Not built — the sync runs on whatever connection there is.',
-  },
-  {
-    k: 'push',
-    l: 'Push notifications',
-    s: 'Tasks, approvals and announcements',
-    blocked: 'Not switched on for this build. Notifications still arrive in the app.',
   },
 ];
 
@@ -101,16 +96,28 @@ export default function ProfileScreen() {
    * that answered from a value cached at boot would offer a switch that no
    * longer works.
    */
+  /*
+   * Push, asked WITHOUT prompting.
+   *
+   * It said "Not switched on for this build" until push was built, which was
+   * true and is now false — and a switch that lies in the reassuring
+   * direction is worse than one that lies in the other, because it is where
+   * somebody goes to fix the problem and it tells them they already have.
+   */
+  const [push, setPush] = React.useState<PushReadiness | null>(null);
+  const [pushBusy, setPushBusy] = React.useState(false);
+
   const [lockOn, setLockOn] = React.useState(false);
   const [lockOffer, setLockOffer] = React.useState<{ ok: boolean; why: string; label: string } | null>(null);
   const [lockBusy, setLockBusy] = React.useState(false);
 
   React.useEffect(() => {
     let live = true;
-    void Promise.all([lockIsOn(), canOffer()]).then(([on, offer]) => {
+    void Promise.all([lockIsOn(), canOffer(), pushStatus()]).then(([on, offer, p]) => {
       if (!live) return;
       setLockOn(on);
       setLockOffer(offer);
+      setPush(p);
     });
     return () => {
       live = false;
@@ -330,6 +337,58 @@ export default function ProfileScreen() {
             )}
           </View>
         ))}
+
+        {/*
+          Push, and whether it can actually reach this phone.
+
+          Three different answers with three different things to do about
+          them — the office has not finished setting it up, this phone has
+          notifications switched off, or it is working — and a single toggle
+          could express none of them. Where the person can fix it themselves
+          the row is a button; where they cannot, it says who can.
+        */}
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 16,
+            paddingHorizontal: 16,
+            paddingVertical: 14,
+            borderTopWidth: 1,
+            borderTopColor: C.wash,
+          }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <T style={{ fontSize: 16, lineHeight: 22, color: C.ink, opacity: push?.ok ? 1 : 0.5 }}>
+              Push notifications
+            </T>
+            <T s="caption" style={{ marginTop: 1 }}>
+              {push == null
+                ? 'Checking…'
+                : push.ok
+                  ? 'On. Decisions reach you without opening the app.'
+                  : push.why}
+            </T>
+          </View>
+          {push && !push.ok && push.reason === 'permission' ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={pushBusy}
+              onPress={() => {
+                setPushBusy(true);
+                void registerForPush()
+                  .then((r) => {
+                    setPush(r);
+                    if (!r.ok) notify(r.why);
+                  })
+                  .finally(() => setPushBusy(false));
+              }}
+              style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 4 }}>
+              <T style={[{ fontSize: 15, color: C.primary }, weight(500)]}>
+                {pushBusy ? 'Asking…' : 'Turn on'}
+              </T>
+            </Pressable>
+          ) : null}
+        </View>
 
         {/*
           The app lock. Drawn with the switch where the phone can actually

@@ -3977,6 +3977,55 @@ export const timelineEvents = pgTable(
  * device that has been released, and the row stays because "whose phone wrote
  * this record in March" outlives the phone.
  */
+/**
+ * Whether a push actually arrived — the half of Expo's API nothing used.
+ *
+ * `send` returns a TICKET per message, and a ticket means "accepted for
+ * delivery", not "delivered". The verdict comes later from `getReceipts`,
+ * and that is the only place `DeviceNotRegistered` is ever reported: a token
+ * that will never work again. Without reading it the token stays on the
+ * device row for ever, every send to it is discarded by Expo, and the office
+ * sees nothing but success.
+ *
+ * A WORKLIST, not a log. Written when a message is accepted, DELETED when its
+ * receipt says it arrived, and kept with the reason when it did not. So this
+ * table holds "pushes not yet confirmed, plus recent failures" — small by
+ * construction, and exactly the list somebody wants when they ask why a push
+ * never came.
+ */
+export const mbosPushReceipts = pgTable(
+  "mbos_push_receipts",
+  {
+    id: text("id").primaryKey(),
+    /** Expo's ticket id. Null where the send was refused outright — a failure
+     *  that never gets a receipt and must not sit waiting for one. */
+    ticketId: text("ticket_id"),
+    deviceId: text("device_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** The notification row it rode on. Nullable: the row is the record and
+     *  the push is a courtesy on top of it, never the other way round. */
+    notificationId: text("notification_id"),
+    /** The token AS IT WAS at send time — invalidation has to know which
+     *  string to clear, and the device row may have rotated since. */
+    pushToken: text("push_token").notNull(),
+    /** `accepted` · `delivered` · `failed`. Text rather than an enum because
+     *  Expo's own error vocabulary is theirs to extend, and this codebase has
+     *  already been bitten by not being able to use a new enum value in the
+     *  migration that adds it. */
+    status: text("status").notNull().default("accepted"),
+    errorCode: text("error_code"),
+    errorDetail: text("error_detail"),
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("mbos_push_receipts_pending_idx").on(t.status, t.sentAt),
+    index("mbos_push_receipts_user_idx").on(t.userId, t.sentAt),
+  ],
+);
+
 export const mbosDevices = pgTable(
   "mbos_devices",
   {

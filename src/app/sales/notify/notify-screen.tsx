@@ -7,6 +7,8 @@ import { sendFieldNotification } from "@/lib/actions/sales";
 import { Banner, Button, ScreenHeader } from "../parts";
 
 type Person = { id: string; name: string; hasPush: boolean };
+type Readiness = { ok: boolean; why: string; reachable: number };
+type Failure = { id: string; errorCode: string; errorDetail: string | null; sentAt: string };
 
 /**
  * A message the office writes by hand.
@@ -16,7 +18,15 @@ type Person = { id: string; name: string; hasPush: boolean };
  * This is the one screen that writes a notification nobody derived, so it
  * asks for exactly two things and nothing else: who, and what.
  */
-export function NotifyScreen({ people }: { people: Person[] }) {
+export function NotifyScreen({
+  people,
+  readiness,
+  failures,
+}: {
+  people: Person[];
+  readiness: Readiness;
+  failures: Failure[];
+}) {
   const router = useRouter();
   const toast = useToast();
 
@@ -70,6 +80,34 @@ export function NotifyScreen({ people }: { people: Person[] }) {
       />
 
       {error ? <Banner tone="danger" title="That did not send" body={error} /> : null}
+
+      {/*
+        WHY nothing would arrive, before somebody writes a message into the
+        silence. The count of handsets without a token below is a symptom; this
+        is the cause, and they are different problems with different people to
+        fix them — a switch and a project id are the office's, a permission is
+        the salesman's.
+      */}
+      {!readiness.ok ? (
+        <Banner tone="warn" title="Push cannot reach anybody right now" body={readiness.why} />
+      ) : null}
+
+      {failures.length > 0 ? (
+        <Banner
+          tone="info"
+          title={`${failures.length} recent ${failures.length === 1 ? "push" : "pushes"} did not arrive`}
+          body={
+            /* `DeviceNotRegistered` is the one worth naming: it means the app
+               was uninstalled or reinstalled, the token is dead, and it has
+               already been cleared — so the fix is that person signing in
+               again, not anything on this screen. */
+            failures
+              .map((f) => f.errorCode)
+              .filter((code, i, all) => all.indexOf(code) === i)
+              .join(", ")
+          }
+        />
+      ) : null}
 
       {withoutPush > 0 ? (
         <Banner

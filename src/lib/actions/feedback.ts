@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { and, eq, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { appAccess, feedback, feedbackMessages, notifications, users } from "@/db/schema";
+import { appAccess, feedback, feedbackMessages, users } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { APP_IDS, type AppId } from "@/lib/apps";
 import {
@@ -24,6 +24,7 @@ import {
   type FeedbackStatus,
 } from "@/lib/feedback-labels";
 import { err as fail, ok, type Result } from "@/lib/result";
+import { notifyUsers } from "../notify";
 
 /* ---------------------------------------------------------------------------
  * Feedback from the people using MahekOne.
@@ -420,9 +421,8 @@ async function notifyTriagers(note: {
   const ids = rows.map((u) => u.id);
   if (!ids.length) return;
 
-  await db.insert(notifications).values(
+  await notifyUsers(
     ids.map((userId) => ({
-      id: newId("ntf"),
       userId,
       title: note.title,
       body: note.body,
@@ -441,14 +441,18 @@ async function notifySubmitter(
   userId: string,
   note: { title: string; body: string; kind: string },
 ) {
-  await db.insert(notifications).values({
-    id: newId("ntf"),
-    userId,
-    title: note.title,
-    body: note.body,
-    kind: note.kind,
-    href: THREAD_HREF,
-  });
+  await notifyUsers([
+    {
+      userId,
+      title: note.title,
+      body: note.body,
+      kind: note.kind,
+      href: THREAD_HREF,
+      // Anybody can report something, the field team included, and the reply
+      // is the half that has to reach them.
+      mbosHref: "/notifications",
+    },
+  ]);
 }
 
 function refresh() {
