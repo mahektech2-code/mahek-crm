@@ -346,6 +346,15 @@ export async function canRead(attachmentId: string): Promise<boolean> {
    * refused to everybody, including the person in it and the manager it exists
    * for. It failed SHUT, which is the safe direction and exactly why it
    * survived: no screen displayed one, so there was nothing to notice it on.
+   * It is the same bug AGENTS.md already records for the whole subsystem, one
+   * parent type over, and it matters more now that the photograph is
+   * mandatory: a proof nobody can open is not a proof.
+   *
+   * Who may see it: the salesman himself, and whoever can see his attendance —
+   * which is the Sales Dashboard's own narrowing, `scopedToUsers`, so a
+   * manager sees their own people and an admin sees everybody. Not "anyone
+   * with the field app": a salesman must not be able to fetch a colleague's
+   * photograph by id.
    */
   if (row.parentType === "mbos_attendance") {
     return canReadAttendanceSelfie(row.parentId);

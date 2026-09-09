@@ -597,6 +597,16 @@ export type BootstrapPayload = {
    * tomorrow" the moment somebody plans one.
    */
   journeyStops: unknown[];
+  /**
+   * The days themselves, and how far each has got in being agreed.
+   *
+   * The stops channel above carries a day only once it is PLANNED, so without
+   * this a fresh sign-in showed nothing on the Journey tab — no day to agree,
+   * no day to pick shops for, no history — and the delta could not make it up
+   * afterwards, being gated on `updated_at`: a day proposed before this
+   * handset signed in and never touched again would arrive on no pass ever.
+   */
+  planDays: unknown[];
   /** In force today. See `priceListRows` — the handset replaces it wholesale. */
   priceList: unknown[];
   /** Live promotions, as data. Nothing here interprets eligibility or benefit. */
@@ -719,6 +729,7 @@ export async function buildBootstrap(
     customerRows,
     productRows,
     journeyRows,
+    planDayRows,
     priceRows,
     schemeRowsForBootstrap,
     taskRows,
@@ -740,6 +751,9 @@ export async function buildBootstrap(
     customersForDevice(ids),
     activeCatalogue(),
     journeyStops(principal.user.id, planFrom, planTo),
+    /* Null, so the whole window comes down rather than a delta of it — see
+       `planDaysFor`. */
+    planDaysFor(principal.user.id, null),
     priceListRows(),
     schemeRows(null),
     openTasks(principal.user.id),
@@ -775,6 +789,7 @@ export async function buildBootstrap(
     customers: customerRows,
     products: productRows,
     journeyStops: journeyRows,
+    planDays: planDayRows,
     priceList: priceRows,
     schemes: schemeRowsForBootstrap,
     tasks: taskRows,
@@ -940,6 +955,50 @@ async function journeyStops(userId: string, fromDate: string, toDate: string) {
      order by p.plan_date asc, s.sequence asc
   `);
   return rows;
+}
+
+/**
+ * The days themselves, and how far each has got in being agreed.
+ *
+ * A STOP ONLY EXISTS ONCE A DAY IS PLANNED, so the stops channel cannot show
+ * a salesman a day he is merely being asked about — which, on a month laid out
+ * in advance, is nearly all of them. This is the channel that can, and the
+ * bootstrap did not carry it: a fresh sign-in got an empty Journey tab and had
+ * to wait for a delta, which is `updated_at`-gated, so a day proposed before
+ * that handset signed in and never touched again arrived NEVER. It is the same
+ * failure `journeyStops` above already carries a note about — built, sent by
+ * one channel, and applied by nothing on the other.
+ *
+ * `since` null is the bootstrap asking for the whole window, exactly as
+ * `holidaysFor` and `openLeads` are asked.
+ *
+ * **A NUMBER SUBTRACTED FROM A DATE NEEDS ITS TYPE SAID OUT LOUD.**
+ * `${PLAN_HISTORY_DAYS}` is a bind parameter, and an untyped parameter next to
+ * a date lets Postgres resolve `date - $n` as `date - date` — which yields an
+ * integer, and `date >= integer` has no operator, so the query throws. It is
+ * the same family as the bare-cast rules in AGENTS.md and it hides the same
+ * way: the SQL is correct-looking, `tsc` sees a string, and nothing fails
+ * until the query actually runs. `::int` is the fix and the two callers of
+ * this now share one copy of it.
+ */
+async function planDaysFor(userId: string, since: string | null) {
+  return db.execute<Record<string, unknown>>(sql`
+    select p.id, p.plan_date::text as "planDate", p.city, p.beat,
+           p.day_state::text as "dayState",
+           p.refusal_reason as "refusalReason",
+           p.counter_city as "counterCity",
+           (extract(epoch from p.proposed_at) * 1000)::double precision as "proposedAt",
+           m.name as "proposedBy",
+           (select count(*)::int from mbos_journey_stops s where s.plan_id = p.id)
+             as "picked"
+      from mbos_journey_plans p
+      left join users m on m.id = p.proposed_by_id
+     where p.user_id = ${userId}
+       and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}::int
+       ${since ? sql`and p.updated_at > ${since}` : sql``}
+     order by p.plan_date asc
+     limit 200
+  `);
 }
 
 async function openTasks(userId: string) {
@@ -1749,24 +1808,12 @@ export async function buildPull(
        *
        * A stop only exists once a day is PLANNED, so the stops channel alone
        * cannot show a salesman the days he is being asked about — which, on a
-       * month laid out in advance, is nearly all of them. */
-      db.execute<Record<string, unknown>>(sql`
-        select p.id, p.plan_date::text as "planDate", p.city, p.beat,
-               p.day_state::text as "dayState",
-               p.refusal_reason as "refusalReason",
-               p.counter_city as "counterCity",
-               (extract(epoch from p.proposed_at) * 1000)::double precision as "proposedAt",
-               m.name as "proposedBy",
-               (select count(*)::int from mbos_journey_stops s where s.plan_id = p.id)
-                 as "picked"
-          from mbos_journey_plans p
-          left join users m on m.id = p.proposed_by_id
-         where p.user_id = ${principal.user.id}
-           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}::int
-           and p.updated_at > ${sinceIso}
-         order by p.plan_date asc
-         limit 200
-      `),
+       * month laid out in advance, is nearly all of them.
+       *
+       * The SAME function the bootstrap calls, for the reason `leaveBalances`
+       * beside it carries: two spellings of one channel drift, and the half
+       * that drifts is the one nobody is looking at. */
+      planDaysFor(principal.user.id, sinceIso),
 
       /* What leave he has left.
        *

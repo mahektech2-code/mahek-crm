@@ -22,11 +22,12 @@
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
   appAccess,
+  attachments,
   customerDistributors,
   customers,
   mbosDevices,
@@ -41,7 +42,8 @@ import { releaseDevice } from "@/lib/actions/sales";
 import { markMissedCheckouts } from "@/lib/mbos-jobs";
 import { mbosAttendanceDays, mbosPositions } from "@/db/schema";
 import { auditLog, notifications as notificationsTable } from "@/db/schema";
-import { ingestSyncBatch } from "@/lib/actions/mbos";
+import { ingestSyncBatch, storeMbosMedia } from "@/lib/actions/mbos";
+import { canRead, sweepOrphans } from "@/lib/services/attachment-service";
 import {
   buildBootstrap,
   buildPull,
@@ -59,6 +61,20 @@ let principal: MbosPrincipal;
 
 /** Nagpur, Sadar. A real place, so a wrong sign or a swap is visible. */
 const HERE = { lat: 21.1601, lng: 79.0805 };
+
+/*
+ * A file that is a JPEG by its BYTES.
+ *
+ * `sniffContentType` reads the signature and nothing else — an extension and a
+ * declared MIME both come from the same untrusted place — so a test uploading
+ * `Buffer.from("hello")` named `.jpg` is refused at the door, correctly, and
+ * would look like the parenting being broken. `FF D8 FF E0` then a JFIF header
+ * is the smallest thing that is genuinely one.
+ */
+const JPEG = new Uint8Array([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+  0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9,
+]);
 
 function item(over: Partial<SyncItem> & Pick<SyncItem, "entityType">): SyncItem {
   const entityId = over.entityId ?? id("mbos");
@@ -370,6 +386,448 @@ describe("The pull carries who bills each shop", () => {
     assert.ok(sent);
     assert.equal(sent.thirdParty, false);
     assert.deepEqual(sent.distributors, [], "an empty arrangement must be a list, not null");
+  });
+});
+
+
+/* ------------------------------------------- the attendance selfie, and its
+ * whole life: taken, uploaded, PARENTED, kept, and readable by somebody. */
+
+describe("An attendance photograph survives the night and can be opened", () => {
+  /*
+   * EVERY MBOS PHOTOGRAPH WAS DELETED BY THE NIGHTLY JOB.
+   *
+   * `storeMbosMedia` never wrote `parentType`/`parentId` — the route read an
+   * `entityId` nothing sends, and the handset's own `parentType` was ignored —
+   * so every field upload landed unparented. `sweepOrphans` selects exactly
+   * that (`parentId is null` past the orphan window), removes the bytes and
+   * marks the row removed. A selfie taken on Monday was gone on Tuesday, and
+   * in the meantime only the salesman who took it could open it, because
+   * `canRead` falls back to "unbound and still the uploader's own".
+   *
+   * That is the difference between an attachment and a file with a
+   * twenty-four-hour life, and it is why this is pinned rather than left to
+   * the type checker: nothing about a null column is a type error.
+   */
+  test("an uploaded selfie is filed against the attendance day, not orphaned", async () => {
+    const attendanceId = id("mbos_att");
+    await db.execute(sql`
+      insert into mbos_attendance_days (id, user_id, day, check_in_at, status)
+      values (${attendanceId}, ${salesman.id},
+              (now() at time zone 'Asia/Kolkata')::date, now(), 'present')
+    `);
+
+    const clientId = `mbos_media_${randomUUID()}`;
+    const stored = await storeMbosMedia(principal, {
+      clientId,
+      kind: "selfie",
+      parentType: "attendance",
+      parentId: attendanceId,
+      filename: "selfie.jpg",
+      bytes: JPEG,
+    });
+    assert.ok(stored.ok, `the upload was refused: ${!stored.ok && stored.error}`);
+
+    const [row] = await db
+      .select({ parentType: attachments.parentType, parentId: attachments.parentId })
+      .from(attachments)
+      .where(eq(attachments.id, clientId));
+    assert.equal(
+      row.parentType,
+      "mbos_attendance",
+      "the handset says `attendance`; the enum says `mbos_attendance` — the mapping is what files it",
+    );
+    assert.equal(row.parentId, attendanceId, "a null parent is a file the nightly sweep deletes");
+  });
+
+  test("and the nightly orphan sweep leaves it alone", async () => {
+    const attendanceId = id("mbos_att");
+    await db.execute(sql`
+      insert into mbos_attendance_days (id, user_id, day, check_in_at, status)
+      values (${attendanceId}, ${salesman.id},
+              (now() at time zone 'Asia/Kolkata')::date, now(), 'present')
+    `);
+
+    const parented = `mbos_media_${randomUUID()}`;
+    const orphan = `mbos_media_${randomUUID()}`;
+    await storeMbosMedia(principal, {
+      clientId: parented,
+      kind: "selfie",
+      parentType: "attendance",
+      parentId: attendanceId,
+      filename: "selfie.jpg",
+      bytes: JPEG,
+    });
+    /* One with no parent, to prove the sweep still does its job — the fix must
+       not be "the sweep stopped working". */
+    await storeMbosMedia(principal, {
+      clientId: orphan,
+      kind: "selfie",
+      filename: "selfie.jpg",
+      bytes: JPEG,
+    });
+
+    /* Both older than the window. The sweep reads `uploadedAt`, so the clock
+       is moved rather than the test waiting a day. */
+    await db.execute(sql`
+      update attachments set uploaded_at = now() - interval '10 days'
+       where id in (${parented}, ${orphan})
+    `);
+
+    await sweepOrphans();
+
+    const rows = await db
+      .select({ id: attachments.id, status: attachments.status })
+      .from(attachments)
+      .where(inArray(attachments.id, [parented, orphan]));
+    const byId = new Map(rows.map((r) => [r.id, r.status]));
+    assert.equal(byId.get(parented), "available", "the selfie was swept away with the orphans");
+    assert.equal(byId.get(orphan), "removed", "the sweep must still remove what belongs to nothing");
+  });
+
+  /*
+   * And somebody has to be able to LOOK at it. `customerBehind` falls through
+   * to the `calls` table for any parent it does not name, so an attendance id
+   * was looked up among calls, found nothing, and every selfie answered 404 —
+   * to the salesman in it and to the manager it exists for. It failed shut,
+   * which is why nothing noticed: no screen had ever displayed one.
+   */
+  test("the salesman may open his own, and a national manager may too", async () => {
+    const attendanceId = id("mbos_att");
+    await db.execute(sql`
+      insert into mbos_attendance_days (id, user_id, day, check_in_at, status)
+      values (${attendanceId}, ${salesman.id},
+              (now() at time zone 'Asia/Kolkata')::date, now(), 'present')
+    `);
+    const clientId = `mbos_media_${randomUUID()}`;
+    await storeMbosMedia(principal, {
+      clientId,
+      kind: "selfie",
+      parentType: "attendance",
+      parentId: attendanceId,
+      filename: "selfie.jpg",
+      bytes: JPEG,
+    });
+
+    setTestUser(salesman);
+    assert.equal(await canRead(clientId), true, "he cannot open a photograph of himself");
+
+    /* A manager with no territory rows is national — `managerScope` says so,
+       and `onlyMine` reads the same field to mean the same thing in SQL. */
+    const [manager] = await db
+      .insert(users)
+      .values({
+        id: id("usr"),
+        name: "Vikram",
+        email: "vikram@test.local",
+        passwordHash: "x",
+        role: "manager",
+        initials: "VS",
+      })
+      .returning();
+    setTestUser(manager);
+    assert.equal(await canRead(clientId), true, "the manager the photograph exists for cannot see it");
+  });
+
+  test("but another salesman may not, however he came by the id", async () => {
+    const attendanceId = id("mbos_att");
+    await db.execute(sql`
+      insert into mbos_attendance_days (id, user_id, day, check_in_at, status)
+      values (${attendanceId}, ${salesman.id},
+              (now() at time zone 'Asia/Kolkata')::date, now(), 'present')
+    `);
+    const clientId = `mbos_media_${randomUUID()}`;
+    await storeMbosMedia(principal, {
+      clientId,
+      kind: "selfie",
+      parentType: "attendance",
+      parentId: attendanceId,
+      filename: "selfie.jpg",
+      bytes: JPEG,
+    });
+
+    /* A second field salesman, with a territory of his own so he is scoped
+       rather than national. */
+    const [other] = await db
+      .insert(users)
+      .values({
+        id: id("usr"),
+        name: "Rakesh",
+        email: "rakesh@test.local",
+        passwordHash: "x",
+        role: "telecaller",
+        initials: "RK",
+      })
+      .returning();
+    await db.insert(appAccess).values({ id: id("acc"), userId: other.id, app: "field" });
+    await db.execute(sql`
+      insert into mbos_manager_territories (id, user_id, region)
+      values (${id("terr")}, ${other.id}, 'Nowhere')
+    `);
+
+    setTestUser(other);
+    assert.equal(
+      await canRead(clientId),
+      false,
+      "a salesman could fetch a colleague's photograph by id",
+    );
+  });
+});
+
+
+/* --------------------------------- the day's SESSIONS reach the office, with
+ * a photograph at each end of each one. */
+
+describe("Every check-in and check-out is photographed, all day", () => {
+  /*
+   * The server held ONE pair of timestamps for a day the handset models as a
+   * list of sessions — so 9-to-1 plus 2-to-6 arrived as nine hours on the
+   * record that feeds a payslip, and there was nowhere to put more than two
+   * photographs. A day with two breaks takes six.
+   */
+  test("a three-session day arrives whole, with six selfies", async () => {
+    const attendanceId = id("mbos_att");
+    const day = new Date().toISOString().slice(0, 10);
+    const t = (h: number) =>
+      new Date(`${day}T${String(h).padStart(2, "0")}:00:00+05:30`).getTime();
+
+    /* Nine to one, two to four, five and still out. Two breaks, three
+       sessions, six photographs — the shape the office could not see. */
+    const sessions = [
+      { inAt: t(9), outAt: t(13), inSelfieId: "s1", outSelfieId: "s2" },
+      { inAt: t(14), outAt: t(16), inSelfieId: "s3", outSelfieId: "s4" },
+      { inAt: t(17), outAt: null, inSelfieId: "s5", outSelfieId: null },
+    ];
+
+    const [result] = await ingestSyncBatch(principal, [
+      item({
+        entityType: "attendance",
+        entityId: attendanceId,
+        payload: { id: attendanceId, day, checkInAt: t(9), sessions, selfieId: "s1" },
+      }),
+    ]);
+    assert.equal(result.status, "accepted", JSON.stringify(result));
+
+    const [row] = await db
+      .select({ sessions: mbosAttendanceDays.sessions })
+      .from(mbosAttendanceDays)
+      .where(eq(mbosAttendanceDays.id, attendanceId));
+
+    assert.equal(row.sessions.length, 3, "the day arrived as one pair — the breaks are gone");
+    assert.equal(row.sessions[0].outSelfieId, "s2", "the check-OUT photograph had nowhere to land");
+    assert.equal(
+      row.sessions[2].outAt,
+      null,
+      "the open session must stay open — `undefined` reads as neither",
+    );
+    assert.deepEqual(
+      row.sessions.flatMap((x) => [x.inSelfieId, x.outSelfieId]).filter(Boolean),
+      ["s1", "s2", "s3", "s4", "s5"],
+      "every photograph of the day, in the order it was taken",
+    );
+  });
+
+  /*
+   * A LATER ARRIVAL GROWS THE DAY. The check-in mark is deliberately never
+   * moved by a second sync, and the sessions are the opposite case: the
+   * afternoon and its two photographs are new facts about a row that already
+   * exists, and the whole list is what the handset sends.
+   */
+  test("the afternoon session is added rather than dropped", async () => {
+    const attendanceId = id("mbos_att");
+    const day = new Date().toISOString().slice(0, 10);
+    const t = (h: number) => new Date(`${day}T${String(h).padStart(2, "0")}:00:00+05:30`).getTime();
+
+    await ingestSyncBatch(principal, [
+      item({
+        entityType: "attendance",
+        entityId: attendanceId,
+        payload: {
+          id: attendanceId,
+          day,
+          checkInAt: t(9),
+          sessions: [{ inAt: t(9), outAt: t(13), inSelfieId: "m1", outSelfieId: "m2" }],
+        },
+      }),
+    ]);
+
+    await ingestSyncBatch(principal, [
+      item({
+        entityType: "attendance",
+        entityId: attendanceId,
+        payload: {
+          id: attendanceId,
+          day,
+          sessions: [
+            { inAt: t(9), outAt: t(13), inSelfieId: "m1", outSelfieId: "m2" },
+            { inAt: t(14), outAt: t(18), inSelfieId: "a1", outSelfieId: "a2" },
+          ],
+        },
+      }),
+    ]);
+
+    const [row] = await db
+      .select({ sessions: mbosAttendanceDays.sessions })
+      .from(mbosAttendanceDays)
+      .where(eq(mbosAttendanceDays.id, attendanceId));
+    assert.equal(row.sessions.length, 2, "the second check-in of the day was lost");
+    assert.equal(row.sessions[1].outSelfieId, "a2");
+  });
+
+  /*
+   * MEDIA SYNCS AFTER ITS PARENT — that is the whole reason it is a separate
+   * queue — so an attendance row routinely names a photograph whose bytes are
+   * still on the phone. The two selfie columns are foreign keys, and a key
+   * does not care why: it would refuse the check-in over a file in transit,
+   * which is the one write in this app that must not be refused.
+   */
+  test("a check-in naming a photograph that has not arrived is still accepted", async () => {
+    const attendanceId = id("mbos_att");
+    const day = new Date().toISOString().slice(0, 10);
+    const [result] = await ingestSyncBatch(principal, [
+      item({
+        entityType: "attendance",
+        entityId: attendanceId,
+        payload: {
+          id: attendanceId,
+          day,
+          checkInAt: Date.now(),
+          selfieId: `mbos_media_${randomUUID()}`,
+          sessions: [{ inAt: Date.now(), outAt: null, inSelfieId: "not-uploaded-yet" }],
+        },
+      }),
+    ]);
+    assert.equal(
+      result.status,
+      "accepted",
+      "the day was refused because a photograph was still uploading",
+    );
+
+    const [row] = await db
+      .select({
+        selfie: mbosAttendanceDays.checkInSelfieId,
+        sessions: mbosAttendanceDays.sessions,
+      })
+      .from(mbosAttendanceDays)
+      .where(eq(mbosAttendanceDays.id, attendanceId));
+    assert.equal(row.selfie, null, "the key column waits for the bytes");
+    assert.equal(
+      row.sessions[0].inSelfieId,
+      "not-uploaded-yet",
+      "the LIST keeps the id regardless — the mark is never lost to an upload's ordering",
+    );
+  });
+});
+
+
+/* -------------------------------------------------- the delta actually RUNS */
+
+/*
+ * NOTHING HAD EVER EXECUTED `buildPull`.
+ *
+ * It is the query behind every sync from every handset, several times an hour,
+ * and the only thing checking it was `mbos-wire.test.ts` — which reads the
+ * file as TEXT to compare column names against the handset's schema. Correct
+ * columns in a query that throws is exactly the state it was in.
+ *
+ * `and p.plan_date >= (now() at time zone $tz)::date - $days` looks right and
+ * is not: `$days` is an untyped bind parameter, so Postgres resolves the
+ * subtraction as `date - date`, gets an integer, and `date >= integer` has no
+ * operator. Two of the fourteen queries in there carried it, and they sit
+ * inside a `Promise.all` — so the rejection took the whole delta with it and
+ * every pull from a handset holding a cursor answered 500. Which is every pull
+ * after sign-in: the journey, the customers, the products, the tasks, the
+ * price list, all of it, from the moment the bootstrap gave the phone a
+ * cursor.
+ *
+ * The point of this test is not the date arithmetic. It is that the delta is
+ * RUN, with a cursor, so the next query that only fails at the database fails
+ * here instead of on a phone in Nagpur.
+ */
+describe("The pull delta runs — with a cursor, which is every pull after sign-in", () => {
+  test("a cursor'd pull answers rather than throwing", async () => {
+    /* A cursor the way the handset gets one: from the bootstrap. */
+    const bootstrap = await buildBootstrap(principal);
+    assert.ok(bootstrap.cursor, "the bootstrap issued no cursor to pull with");
+
+    const delta = await buildPull(principal, bootstrap.cursor);
+
+    assert.ok(delta.cursor, "the delta issued no cursor to continue from");
+    /* Every channel the handset applies has to be present and iterable —
+       `applyPull` walks each one, and a missing key is a channel silently
+       never applied. */
+    for (const channel of [
+      "customers", "products", "timeline", "notifications", "transcripts",
+      "journeyStops", "planDays", "priceList", "schemes", "documents",
+      "courses", "approvals", "performance", "tasks", "leads", "samples",
+      "leaveBalances", "holidays", "salary", "deletions",
+    ] as const) {
+      assert.ok(
+        Array.isArray((delta as Record<string, unknown>)[channel]),
+        `the delta sent no ${channel} array — the handset applies that channel`,
+      );
+    }
+    assert.equal(typeof delta.config, "object", "the config is not optional");
+  });
+
+  /*
+   * And the two channels the journey tab is made of, with real rows behind
+   * them — a query that returns nothing cannot tell you it would have worked.
+   */
+  test("a plan day and its stop both come down the delta", async () => {
+    /* The cursor is taken FIRST, because the delta is `updated_at`-gated: a
+       cursor issued after the rows exist excludes them by design, and a test
+       that got that backwards would report the channel dead when it is not. */
+    const before = await buildPull(principal, null);
+
+    const planId = id("mbos_plan");
+    const today = new Date().toISOString().slice(0, 10);
+    await db.execute(sql`
+      insert into mbos_journey_plans (id, user_id, plan_date, city, day_state, proposed_by_id)
+      values (${planId}, ${salesman.id}, ${today}::date, 'Nagpur', 'planned', ${salesman.id})
+    `);
+    await db.execute(sql`
+      insert into mbos_journey_stops (id, plan_id, customer_id, sequence, status)
+      values (${id("mbos_stop")}, ${planId}, ${shop.id}, 1, 'planned')
+    `);
+
+    const delta = await buildPull(principal, before.cursor);
+
+    const days = delta.planDays as Array<Record<string, unknown>>;
+    const mine = days.find((d) => d.id === planId);
+    assert.ok(mine, "the plan day never reached the handset — see the note above");
+    assert.equal(mine.planDate, today, "the date has to arrive as a plain YYYY-MM-DD");
+    assert.equal(mine.dayState, "planned");
+    assert.equal(mine.city, "Nagpur");
+    assert.equal(mine.picked, 1, "the stop count the Coming up card prints");
+
+    const stops = delta.journeyStops as Array<Record<string, unknown>>;
+    assert.equal(
+      stops.filter((x) => x.customerId === shop.id).length,
+      1,
+      "the stop never reached the handset either",
+    );
+  });
+
+  /*
+   * The bootstrap sent NO plan days at all, and the delta is `updated_at`
+   * gated — so a day proposed before this handset signed in arrived on no pass
+   * ever, and a fresh sign-in opened the Journey tab on nothing.
+   */
+  test("the bootstrap carries the days themselves, not only the stops", async () => {
+    const planId = id("mbos_plan");
+    await db.execute(sql`
+      insert into mbos_journey_plans (id, user_id, plan_date, city, day_state, proposed_by_id)
+      values (${planId}, ${salesman.id}, (now() at time zone 'Asia/Kolkata')::date + 2,
+              'Amravati', 'proposed', ${salesman.id})
+    `);
+
+    const payload = await buildBootstrap(principal);
+    const days = payload.planDays as Array<Record<string, unknown>>;
+    const mine = days.find((d) => d.id === planId);
+    assert.ok(mine, "a fresh sign-in got no plan days, so the Journey tab opens empty");
+    assert.equal(mine.dayState, "proposed", "the day it is being ASKED about");
+    assert.equal(mine.proposedBy, "Mahesh", "who asked — the card names them");
   });
 });
 

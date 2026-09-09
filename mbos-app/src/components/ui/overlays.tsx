@@ -4,6 +4,8 @@ import { color as C, HIT, radius, shadow, type, weight, tabular } from '../../th
 import { Icon } from './Icon';
 import { Input, PrimaryButton, SecondaryButton } from './primitives';
 import { isoDate, monthName } from '../../lib/format';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { TAB_BAR_HEIGHT } from '../shell/Chrome';
 import { useKeyboardHeight } from './keyboard';
 import { useReduceMotion } from './motion';
 
@@ -53,8 +55,30 @@ function Scrim({
  * just did and a thing that fades UP from where their thumb was reads as
  * caused by them. It leaves the same way instead of blinking out, which is
  * what stops it feeling like a glitch on a slow frame.
+ *
+ * And it is CLEAR of the furniture underneath it. `bottom: 88` was a
+ * hardcoded guess at the tab bar's height — which is
+ * `64 + insets.bottom`, so on any handset with a gesture bar the toast landed
+ * exactly ON the bar with nothing between them, and the raised action button
+ * (which pokes 20 points above it) sat over the text. What it actually looked
+ * like on a phone was a toast growing out of the tab bar and covering the last
+ * row of whatever list was open.
+ *
+ * Measured rather than guessed, and the same arithmetic `TabBar` itself uses.
+ * `lift` is for a screen with a pinned footer of its own — the pick screen's
+ * save bar — because a message about what just happened must not cover the
+ * button that did it.
  */
-export function Toast({ message, onDone }: { message: string | null; onDone: () => void }) {
+export function Toast({
+  message,
+  onDone,
+  lift = 0,
+}: {
+  message: string | null;
+  onDone: () => void;
+  lift?: number;
+}) {
+  const insets = useSafeAreaInsets();
   const reduce = useReduceMotion();
   const progress = React.useRef(new Animated.Value(0)).current;
   const [showing, setShowing] = React.useState<string | null>(null);
@@ -107,6 +131,7 @@ export function Toast({ message, onDone }: { message: string | null; onDone: () 
       style={[
         st.toast,
         {
+          bottom: TAB_BAR_HEIGHT + insets.bottom + 12 + lift,
           opacity: progress,
           transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
         },
@@ -437,7 +462,7 @@ const st = StyleSheet.create({
     position: 'absolute',
     left: 16,
     right: 16,
-    bottom: 88,
+    /* `bottom` is set on the element — see the note on `Toast`. */
     zIndex: 50,
     flexDirection: 'row',
     alignItems: 'flex-start',

@@ -215,13 +215,45 @@ export default function Home() {
    * half-way through, and the check-in it is in the middle of with it.
    */
   const [selfieOpen, setSelfieOpen] = React.useState(false);
+  const [selfieWords, setSelfieWords] = React.useState({
+    title: 'Start your day',
+    subtitle: 'A photo of you goes with the check-in.',
+    cancelLabel: 'Cancel the check-in',
+  });
   const answerSelfie = React.useRef<((r: SelfieResult) => void) | null>(null);
 
-  const askSelfie = () =>
+  const askSelfie = (words: typeof selfieWords) =>
     new Promise<SelfieResult>((resolve) => {
+      setSelfieWords(words);
       answerSelfie.current = resolve;
       setSelfieOpen(true);
     });
+
+  /**
+   * The photograph, queued, or null if there is no photograph.
+   *
+   * Both failures come back the same way and MUST: a cancelled camera and a
+   * compression that would not write are different causes with one
+   * consequence, which is that there is no evidence — and the mark is not
+   * written without evidence. What differs is what the person is told, which
+   * is why the caller gets the reason rather than a bare null.
+   */
+  const captureSelfie = async (
+    words: typeof selfieWords,
+  ): Promise<{ ok: true; id: string } | { ok: false; why: string | null }> => {
+    const picked = await askSelfie(words);
+    /* Cancelled. No message: they just pressed the thing that says what it
+       abandons, and a toast repeating it back is noise. */
+    if (!picked) return { ok: false, why: null };
+    try {
+      return { ok: true, id: await queueSelfie(picked.uri, 'pending') };
+    } catch {
+      return {
+        ok: false,
+        why: 'The photo could not be saved on this phone, so nothing was recorded. Try again.',
+      };
+    }
+  };
 
   /**
    * Starting the day: GPS, then attendance with a selfie, then the timer.
@@ -240,29 +272,39 @@ export default function Home() {
       const radius = await getConfig<number>('mbos.attendance.geofenceRadiusM', 200);
       const base = await getConfig<{ lat: number; lng: number } | null>('mbos.attendance.baseLocation', null);
 
-      const fix = fixOf(await getFix({ accuracyThresholdM: threshold }));
+      /* Started, not awaited: it settles while the photograph is being taken.
+         `void` on the promise would drop the value, so it is held. */
+      const fixing = getFix({ accuracyThresholdM: threshold });
 
-      /* Front-facing, inside the app, and skippable. Every way out of the
-         camera — cancel, a refused permission, a shutter that failed — comes
-         back as null, and the day starts regardless: the check-in is never
-         blocked by a photograph. */
-      const picked = await askSelfie();
-      /* Queueing it is inside its own try, because the rule is that a save is
-         never blocked by an attachment: a compression or a disk write that
-         fails must cost the photograph and not the day. */
-      let selfieMediaId: string | null = null;
-      if (picked) {
-        try {
-          selfieMediaId = await queueSelfie(picked.uri, 'pending');
-        } catch {
-          selfieMediaId = null;
-        }
+      /* THE SELFIE COMES FIRST AND THE DAY DOES NOT START WITHOUT IT. Every
+         other thing this function can fail to get — a fix, a base location, an
+         accurate enough fix — is recorded as missing and the day starts
+         anyway, because a salesman who cannot mark attendance cannot work. The
+         photograph is the exception: it is not an attachment to the mark, it
+         is the evidence the mark is made of. See `src/data/attendance.ts`.
+
+         Nothing is written before the camera closes, so cancelling leaves no
+         half-started day behind — which is why the order is photograph, then
+         write, and not the other way round. */
+      const selfie = await captureSelfie({
+        title: 'Start your day',
+        subtitle: 'A photo of you goes with the check-in.',
+        cancelLabel: 'Cancel the check-in',
+      });
+      if (!selfie.ok) {
+        /* Nothing has been written, so there is nothing to undo. The fix is
+           abandoned with it — a location for a check-in that did not happen is
+           a record of somewhere somebody stood while nothing happened. */
+        if (selfie.why) notify(selfie.why);
+        return;
       }
+
+      const fix = fixOf(await fixing);
 
       const row = await checkIn({
         userId,
         fix,
-        selfieMediaId,
+        selfieMediaId: selfie.id,
         homeLocation: base,
       });
 
@@ -302,8 +344,23 @@ export default function Home() {
     setStarting(true);
     try {
       const threshold = await getConfig<number>('mbos.location.gpsAccuracyThresholdM', 100);
-      const fix = fixOf(await getFix({ accuracyThresholdM: threshold }));
-      const out = await checkOut(userId, fix);
+      const fixing = getFix({ accuracyThresholdM: threshold });
+
+      /* A photograph at THIS end too, and there was none before — so a day
+         proved that somebody arrived and proved nothing whatever about when
+         they stopped, which is the half that decides the hours. */
+      const selfie = await captureSelfie({
+        title: 'Close your day',
+        subtitle: 'A photo of you goes with the check-out.',
+        cancelLabel: 'Stay on the clock',
+      });
+      if (!selfie.ok) {
+        if (selfie.why) notify(selfie.why);
+        return;
+      }
+
+      const fix = fixOf(await fixing);
+      const out = await checkOut(userId, fix, selfie.id);
       load();
       notify(
         out.ok
@@ -325,8 +382,25 @@ export default function Home() {
     setStarting(true);
     try {
       const threshold = await getConfig<number>('mbos.location.gpsAccuracyThresholdM', 100);
-      const fix = fixOf(await getFix({ accuracyThresholdM: threshold }));
-      await checkIn({ userId, fix, selfieMediaId: null, homeLocation: null });
+      const fixing = getFix({ accuracyThresholdM: threshold });
+
+      /* This passed `selfieMediaId: null`, so the second and third check-ins
+         of a day went unphotographed — a hole exactly where the record is
+         least verifiable, since nobody watches an afternoon session begin. It
+         is the same mandatory photograph as the morning's, because they are
+         the same act. */
+      const selfie = await captureSelfie({
+        title: 'Back on the clock',
+        subtitle: 'A photo of you goes with every check-in.',
+        cancelLabel: 'Stay off the clock',
+      });
+      if (!selfie.ok) {
+        if (selfie.why) notify(selfie.why);
+        return;
+      }
+
+      const fix = fixOf(await fixing);
+      await checkIn({ userId, fix, selfieMediaId: selfie.id, homeLocation: null });
       set({ gps: fix ? 'locked' : 'off' });
       load();
       notify('Back on the clock');
@@ -367,7 +441,7 @@ export default function Home() {
                 {starting ? 'Starting…' : 'Start day'}
               </Text>
               <Text style={{ fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.82)', marginTop: 2 }}>
-                Marks attendance, locks GPS, starts the timer
+                Takes your photo, marks attendance, starts the timer
               </Text>
             </View>
             <Text style={{ fontSize: 20, color: 'rgba(255,255,255,0.6)' }}>›</Text>
@@ -427,9 +501,12 @@ export default function Home() {
               backgroundColor: pressed ? C.wash : day.running ? C.surface : C.primaryTint,
               opacity: starting ? 0.6 : 1,
             })}>
-            <Icon name={day.running ? 'clock' : 'play'} size={18} color={day.running ? C.body : C.primaryDeep} />
+            {/* `camera`, not the clock: what happens when this is pressed is
+                that the camera opens, and the icon that says so is worth more
+                here than the one restating the label. */}
+            <Icon name="camera" size={18} color={day.running ? C.body : C.primaryDeep} />
             <Text style={[{ fontSize: 15, color: day.running ? C.body : C.primaryDeep }, weight(500)]}>
-              {day.running ? 'End day' : 'Start again'}
+              {day.running ? 'End day · photo' : 'Start again · photo'}
             </Text>
           </Pressable>
         </Card>
@@ -485,6 +562,9 @@ export default function Home() {
 
       <SelfieCamera
         open={selfieOpen}
+        title={selfieWords.title}
+        subtitle={selfieWords.subtitle}
+        cancelLabel={selfieWords.cancelLabel}
         onDone={(result) => {
           setSelfieOpen(false);
           answerSelfie.current?.(result);

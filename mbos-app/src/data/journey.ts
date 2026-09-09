@@ -103,6 +103,10 @@ export type PlanDay = {
   proposedBy: string | null;
   picked: number;
   syncState: string;
+  /* What the office SAID when it refused an answer, written onto the row by
+     `setEntityState`. The card reads it, because "the shops were not accepted"
+     with no reason attached sends somebody back to pick the same ones. */
+  syncMessage: string | null;
 };
 
 /**
@@ -219,6 +223,18 @@ export type Candidate = {
 };
 
 /**
+ * How many shops the pick list offers unprompted.
+ *
+ * The whole book was, which on this handset is thousands of rows — every one
+ * of them a card in a list, and the buttons that save the day sat underneath
+ * the last of them. Nobody scrolls a book to find a button. A day is twenty
+ * stops at the very outside, so what a cap costs is the shop somebody was
+ * going to reach by scrolling rather than by typing its name, and the search
+ * box is right above it.
+ */
+export const PICK_PAGE = 60;
+
+/**
  * Who there is to pick from, for a day in a given city.
  *
  * **The city NARROWS rather than filters.** Everything is offered, with the
@@ -231,47 +247,66 @@ export type Candidate = {
  * not seen", and a customer visited yesterday is the last one to put on
  * tomorrow — a name that has never been visited sorts to the very top, because
  * that is the strongest version of the same answer.
+ *
+ * **Capped, and the screen says what it is a slice of.** `total` is a
+ * `count(*)` rather than the length of what came back, for the reason the
+ * web app's timeline pills carry: a capped list that counts itself reports
+ * sixty shops on a book of five thousand and nothing on the screen says so.
+ *
+ * **Already-picked shops are never cut.** They are read by id alongside the
+ * page, because a shop ticked, then searched past, then found again outside
+ * the cap would come back with its number gone — and the number IS the plan.
  */
 /**
  * The shops a salesman may pick for an agreed day.
  *
- * TWO THINGS CHANGED HERE, both on Mahek's instruction, and both reverse a
- * decision this file used to argue for:
+ * THIS FUNCTION CARRIES TWO SEPARATE PIECES OF WORK and they meet here.
  *
- * The agreed city is now a HARD FILTER. It used to rise to the top without
- * filtering, on the reasoning that a man going to Nagpur often has one call to
- * make on the way. Mahek's answer is that a day is a city and the list should
- * say so; the call on the road is added from the customers list, or made
- * unplanned with a deviation reason, which is what that field is for.
+ * From the cap: the read is LIMITed. The whole book drawn at once is what
+ * stopped this screen answering — 1,076 shops mounted as native views in one
+ * pass — so `PICK_PAGE` bounds it, `total` says what the list is a slice of,
+ * and already-ticked shops are fetched separately so one ticked, searched past
+ * and found again never comes back with its number gone. The number IS the
+ * plan: it is the order he means to walk.
  *
- * The sort is NEAREST FIRST. It used to be "who you have not seen longest",
- * which answers a different and also good question — but a man filling a
- * Tuesday morning in one town is choosing a walking order, and distance is what
- * he is actually deciding on.
+ * From the day's picking, on Mahek's instruction, reversing two things this
+ * file used to argue for:
  *
- * WHAT IT IS MEASURED FROM is the part worth reading. See `pickOrigin`: for
- * today it is where he is, and for any other day it is the middle of our shops
- * in that city — because he plans tomorrow at home, and sorting Wardha by
- * distance from a sofa in Nagpur puts the list upside down.
+ *   The agreed city is a HARD FILTER. It used to rise to the top without
+ *   filtering, on the reasoning that a man going to Nagpur often has one call
+ *   to make on the way. A day is a city; that call is added from the customers
+ *   list or made unplanned with a deviation reason, which is what that field
+ *   exists for.
  *
- * With no origin at all — no fix, no pinned shop in the city — it falls back to
- * the old ordering rather than inventing a point. A list sorted around a
- * made-up origin looks right and is wrong, which is worse than one that admits
- * it cannot measure.
+ *   The sort is NEAREST. It was "who you have not seen longest", which answers
+ *   a real question — but a man filling a Tuesday morning in one town is
+ *   choosing a walking order.
+ *
+ * THE FILTER MOVED INTO SQL because of the cap. Filtering by city in JavaScript
+ * after a LIMIT of sixty would page the wrong sixty: the read would take the
+ * sixty least-recently-seen shops in the BOOK and then discard whichever were
+ * not in the city, so a salesman could open a Nagpur day and be shown four
+ * shops out of the eighty there are. The two changes are only compatible in
+ * this order.
+ *
+ * WHAT NEAREST IS MEASURED FROM is `pickOrigin`: today, where he stands; any
+ * other day, the middle of our shops in that city — he plans tomorrow at home,
+ * and sorting Wardha from a sofa in Nagpur puts the list upside down. With no
+ * origin at all it keeps the query's own ordering rather than inventing a
+ * point, because a list sorted around a made-up origin looks right and is
+ * wrong.
  */
 export async function pickCandidates(
   city: string | null,
   query = '',
+  keep: string[] = [],
   opts: { forToday?: boolean; fix?: { lat: number; lng: number } | null } = {},
-): Promise<Candidate[]> {
+): Promise<{ rows: Candidate[]; total: number }> {
   const q = query.trim().toLowerCase();
   const here = (city ?? '').trim().toLowerCase();
 
   const clauses: string[] = [];
   const args: string[] = [];
-
-  /* The hard filter. Applied in SQL rather than after the read so a big book
-     does not come across the bridge to be thrown away. */
   if (here) {
     clauses.push(`lower(trim(COALESCE(city,''))) = ?`);
     args.push(here);
@@ -282,43 +317,66 @@ export async function pickCandidates(
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
-  const rows = await all<Candidate>(
-    `SELECT id, name, area, city, beat, outstandingPaise, lastVisitDate, lastOrderDate, gpsLat, gpsLng
+  const COLS = `id, name, area, city, beat, outstandingPaise, lastVisitDate, lastOrderDate, gpsLat, gpsLng`;
+
+  /* Asked of SQLite rather than of the array. A capped list that counts itself
+     reports sixty shops on a book of a thousand and nothing says otherwise. */
+  const counted = await one<{ n: number }>(`SELECT COUNT(*) AS n FROM customers ${where}`, args);
+
+  const page = await all<Candidate>(
+    `SELECT ${COLS}
        FROM customers ${where}
-      ORDER BY lastVisitDate IS NULL DESC, lastVisitDate ASC, name ASC`,
+      ORDER BY lastVisitDate IS NULL DESC, lastVisitDate ASC, name ASC
+      LIMIT ${PICK_PAGE}`,
     args,
   );
 
-  const pinned = rows
-    .filter((r) => r.gpsLat != null && r.gpsLng != null)
-    .map((r) => ({ lat: r.gpsLat as number, lng: r.gpsLng as number }));
+  /* Already-ticked shops are never cut. A shop ticked, then searched past, then
+     found again outside the cap would come back with its number gone — and the
+     number IS the plan, because it is the order he means to walk. */
+  const missing = keep.filter((id) => !page.some((r) => r.id === id));
+  const held = missing.length
+    ? await all<Candidate>(
+        `SELECT ${COLS} FROM customers WHERE id IN (${missing.map(() => '?').join(',')})`,
+        missing,
+      )
+    : [];
+
+  const rows = [...held, ...page];
+  const total = counted?.n ?? rows.length;
 
   const origin = pickOrigin({
     fix: opts.fix ?? null,
     forToday: opts.forToday ?? false,
-    cityShops: pinned,
+    cityShops: rows
+      .filter((r) => r.gpsLat != null && r.gpsLng != null)
+      .map((r) => ({ lat: r.gpsLat as number, lng: r.gpsLng as number })),
   });
 
-  /* No origin: keep the ordering the query already gave, which is the one this
-     screen used before distance was asked for. */
-  if (!origin) return rows;
+  if (!origin) return { rows, total };
 
   /* A shop with no pin cannot be measured and sorts LAST rather than being
-     dropped — the same rule the route engine follows, and for the same reason:
-     a shop missing from the day's list is a shop nobody visits and nobody ever
-     finds out why. */
-  return [...rows].sort((a, b) => {
-    const da = a.gpsLat != null && a.gpsLng != null
-      ? haversineMetres(origin, { lat: a.gpsLat, lng: a.gpsLng })
-      : Number.POSITIVE_INFINITY;
-    const db = b.gpsLat != null && b.gpsLng != null
-      ? haversineMetres(origin, { lat: b.gpsLat, lng: b.gpsLng })
-      : Number.POSITIVE_INFINITY;
-    return da - db;
-  });
+     dropped — the route engine's rule, for its reason: a shop missing from the
+     day's list is a shop nobody visits and nobody ever finds out why. */
+  const far = Number.POSITIVE_INFINITY;
+  const away = (r: Candidate) =>
+    r.gpsLat != null && r.gpsLng != null
+      ? haversineMetres(origin, { lat: r.gpsLat, lng: r.gpsLng })
+      : far;
+
+  return { rows: [...rows].sort((x, y) => away(x) - away(y)), total };
 }
 
-/** The shops already picked for a day, so reopening the screen shows them. */
+/**
+ * The shops already picked for a day, so reopening the screen shows them.
+ *
+ * Two sources, in this order, and the order is the point. `journey_stops` is
+ * what the OFFICE issued — the real route, and the one to walk. `pickedIds` is
+ * what this handset ASKED for, held on the day row because the stops are
+ * minted server-side and arrive on the next pull: without it, backing out of
+ * this screen and returning before that pull showed nothing ticked, and twelve
+ * shops chosen in a doorway had to be chosen again.
+ */
 export async function pickedFor(planDayId: string): Promise<string[]> {
   /* Stops are keyed by the DATE here rather than by the day's id — the handset
      table came down flat, one row per stop with its `planDate`, and adding a
@@ -329,7 +387,21 @@ export async function pickedFor(planDayId: string): Promise<string[]> {
       WHERE d.id = ? ORDER BY s.seq`,
     [planDayId],
   );
-  return rows.map((r) => r.customerId);
+  if (rows.length) return rows.map((r) => r.customerId);
+
+  const day = await one<{ pickedIds: string | null }>(
+    'SELECT pickedIds FROM journey_days WHERE id = ?',
+    [planDayId],
+  );
+  if (!day?.pickedIds) return [];
+  try {
+    const parsed: unknown = JSON.parse(day.pickedIds);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    /* A row nobody can parse is a row nobody picked. Losing the ticks is bad;
+       failing the screen that would let somebody re-tick them is worse. */
+    return [];
+  }
 }
 
 export async function planDay(id: string): Promise<PlanDay | null> {
@@ -359,8 +431,10 @@ export async function pickShops(
   }
 
   await run(
-    `UPDATE journey_days SET dayState = 'planned', picked = ?, syncState = 'queued' WHERE id = ?`,
-    [customerIds.length, planDayId],
+    `UPDATE journey_days
+        SET dayState = 'planned', picked = ?, pickedIds = ?, syncState = 'queued'
+      WHERE id = ?`,
+    [customerIds.length, JSON.stringify(customerIds), planDayId],
   );
 
   await enqueue({

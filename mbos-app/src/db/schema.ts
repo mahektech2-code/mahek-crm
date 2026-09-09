@@ -1021,7 +1021,64 @@ export const MIGRATIONS: string[][] = [
        ON customer_payments(customerId, receivedAt DESC);`,
   ],
 
-  /* ---- v14 · a lead has a place, and somebody running it ----------------- */
+  /* ---- v14 · the column every accepted plan_day was written to ----------- */
+  [
+    /*
+     * `setEntityState` writes `serverCreatedAt` on ACCEPT, for whatever table
+     * the entity type maps to — and an accept always carries a
+     * `serverReceivedAt`, so that branch is not the exception, it is the
+     * ordinary path. Every other table in `ENTITY_TABLE` has the column.
+     * `journey_days` did not, so agreeing a day threw
+     * `no such column: serverCreatedAt` INSIDE the push loop: after the queue
+     * row had been marked synced, before the rest of the batch had been read,
+     * and before `applyPull` ran at all. The results behind it stayed
+     * `syncing`, the whole delta was discarded, and the day itself was left
+     * reading "waiting for signal" for ever with the answer already on the
+     * server.
+     *
+     * Nothing writes a plan day's own `createdAt` — the office owns the row —
+     * so this is only ever the office's acknowledgement, which is exactly what
+     * the column means everywhere else.
+     */
+    `ALTER TABLE journey_days ADD COLUMN serverCreatedAt INTEGER;`,
+    /*
+     * WHICH shops were picked, as well as how many.
+     *
+     * `pickShops` writes the count and enqueues the ids, and `pickedFor` read
+     * them back out of `journey_stops` — which the office mints, so they
+     * arrive on the next pull and not before. Reopening the pick screen in
+     * between showed nothing ticked at all, on a screen whose own comment
+     * promises that reopening it is a correction rather than starting again.
+     * Twelve shops chosen in a shop doorway, gone the moment somebody backed
+     * out to check the date.
+     *
+     * The stops still WIN wherever they exist: this is what was asked for and
+     * they are what the office issued, and the second is the one to walk.
+     */
+    `ALTER TABLE journey_days ADD COLUMN pickedIds TEXT;`,
+  ],
+
+  /* ---- v15 · the check-OUT selfie, which had nowhere to go ---------------- */
+  [
+    /*
+     * Attendance took a photograph at one end of the day.
+     *
+     * `checkInSelfieId` has existed since v1 and there was no counterpart, so
+     * a day proved somebody arrived and proved nothing about when they
+     * stopped — which is the half that decides the hours. Both are mandatory
+     * now and this is where the last one lands.
+     *
+     * The MIRROR, not the record. Every session in `sessions` carries its own
+     * `inSelfieId` and `outSelfieId` — a day with two breaks is three arrivals
+     * and three departures, and each of the six is photographed — and these
+     * two columns hold the first in and the last out, exactly as `checkInAt`
+     * and `checkOutAt` already do beside them. Screens read the mirrors;
+     * anybody auditing a session reads the list.
+     */
+    `ALTER TABLE attendance_days ADD COLUMN checkOutSelfieId TEXT;`,
+  ],
+
+  /* ---- v16 · a lead has a place, and somebody running it ----------------- */
   [
     /*
      * THE SERVER HAS BEEN SENDING THESE ALL ALONG.
@@ -1051,7 +1108,7 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE leads ADD COLUMN leadManagerName TEXT;`,
   ],
 
-  /* ---- v15 · what the salesman actually learns in the shop --------------- */
+  /* ---- v17 · what the salesman actually learns in the shop --------------- */
   [
     /*
      * §A and §C of the brief. The form asked for a name, a company, a mobile,
@@ -1088,7 +1145,7 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE leads ADD COLUMN competitorName TEXT;`,
   ],
 
-  /* ---- v16 · a Suspect cannot be visited for ever ----------------------- */
+  /* ---- v18 · a Suspect cannot be visited for ever ----------------------- */
   [
     /*
      * How many times anybody has stood in this shop, as the server counts it.
@@ -1107,7 +1164,7 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE leads ADD COLUMN holdReason TEXT;`,
   ],
 
-  /* ---- v17 · the validation call, and the script it is made from -------- */
+  /* ---- v19 · the validation call, and the script it is made from -------- */
   [
     /*
      * §E. Its own table rather than columns on `leads`, for the reason the
@@ -1155,7 +1212,7 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE tasks ADD COLUMN sourceId TEXT;`,
   ],
 
-  /* ---- v18 · a sample, from the lorry to the verdict -------------------- */
+  /* ---- v20 · a sample, from the lorry to the verdict -------------------- */
   [
     /*
      * §I, §J and §K. Three dates rather than one, because they are three
