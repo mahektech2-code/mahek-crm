@@ -825,6 +825,13 @@ export type LeadRow = {
   salesmanId: string | null;
   salesmanName: string | null;
   initials: string | null;
+  /**
+   * Who coordinates the conversion, once the lead is qualified. Distinct from
+   * the salesman above, who keeps the book and keeps making the visits — see
+   * `customers.leadManagerId`. Null until a lead is qualified.
+   */
+  leadManagerId: string | null;
+  leadManagerName: string | null;
   nextFollowUpDate: string | null;
   lastActivityDate: string | null;
   /** Days since anything happened. What "stale" is measured from. */
@@ -887,6 +894,12 @@ const LEAD_ROW_SELECT = sql`
            c.lead_stage::text as stage,
            c.owner_id as "salesmanId",
            u.name as "salesmanName", u.initials,
+           /* The coordinating seat. It is NOT the owner and must not be drawn
+            * as one: the salesman above still holds the book and still makes
+            * the visits. This is who runs the conversation about price, terms
+            * and samples once the lead is qualified. */
+           c.lead_manager_id as "leadManagerId",
+           lm.name as "leadManagerName",
            c.lead_next_follow_up_date::text as "nextFollowUpDate",
            c.lead_last_activity_date::text as "lastActivityDate",
            c.lead_notes as notes,
@@ -913,6 +926,7 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
            (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
       from customers c
       left join users u on u.id = c.owner_id
+      left join users lm on lm.id = c.lead_manager_id
      where c.lead_stage is not null
        and c.lead_archived = false
        ${onlyMine(scope, "c.owner_id")}
@@ -938,6 +952,7 @@ export async function archivedLeadsList(day: string): Promise<LeadRow[]> {
            (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
       from customers c
       left join users u on u.id = c.owner_id
+      left join users lm on lm.id = c.lead_manager_id
      where c.lead_stage is not null
        and c.lead_archived = true
        ${onlyMine(scope, "c.owner_id")}

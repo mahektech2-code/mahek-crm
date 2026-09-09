@@ -964,6 +964,36 @@ export const MIGRATIONS: string[][] = [
       WHERE rowid NOT IN (SELECT MIN(rowid) FROM positions GROUP BY at, lat, lng);`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_fix ON positions(at, lat, lng);`,
   ],
+
+  /* ---- v13 · a lead has a place, and somebody running it ----------------- */
+  [
+    /*
+     * THE SERVER HAS BEEN SENDING THESE ALL ALONG.
+     *
+     * `openLeads` selects `gps_lat` and `gps_lng` on every bootstrap and every
+     * delta, and this table had nowhere to put them — so `upsert` dropped both
+     * columns on arrival, silently, exactly as it is designed to. That is the
+     * right trade in general: a field the screens cannot read costs nothing,
+     * and refusing the row would cost the book. Here it cost the one thing a
+     * lead map is made of. Every lead this handset holds has a coordinate on
+     * the server and none on the phone.
+     *
+     * Nothing else had to change for these to start landing. The generic
+     * upsert writes whatever it recognises; recognising it is the whole fix.
+     */
+    `ALTER TABLE leads ADD COLUMN gpsLat REAL;`,
+    `ALTER TABLE leads ADD COLUMN gpsLng REAL;`,
+    /*
+     * Who is running the conversion, once a lead is qualified.
+     *
+     * The salesman keeps the lead — it is still his to visit and it stays in
+     * his book — so this is read as information rather than as ownership. It
+     * is here so the card can say WHO to ring about a commercial question,
+     * offline, which is the only moment the answer is worth anything.
+     */
+    `ALTER TABLE leads ADD COLUMN leadManagerId TEXT;`,
+    `ALTER TABLE leads ADD COLUMN leadManagerName TEXT;`,
+  ],
 ];
 
 /**

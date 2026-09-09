@@ -572,12 +572,16 @@ export const appAccess = pgTable(
      * terminal that knows nothing about roles has to go on granting an app
      * that works.
      *
-     * What it decides is CAPABILITIES, which are the union across every grant
-     * a person holds. What it does not yet decide is SCOPE: `users.role` is
-     * still what mine/team/all is read from, and it is now derived — the
-     * widest role somebody holds anywhere — so a manager-in-the-CRM sees their
-     * team. Scope per app is the next step, and until it lands an admin
-     * anywhere is an admin everywhere for reading.
+     * It decides CAPABILITIES as a union — hold one under any hat and you hold
+     * it — and it now decides SCOPE per app as well. `src/proxy.ts` names the
+     * app on the request and `resolveScope` reads the grant for THAT app, so a
+     * manager hat on the Sales Dashboard no longer widens what the same person
+     * sees in the CRM. Before that it did: `users.role` is the widest role held
+     * anywhere, and an admin anywhere was an admin everywhere for reading.
+     *
+     * Resolving per app can only ever NARROW, because the derived role is the
+     * widest of these. A row with no role here is the account's own, so a grant
+     * written by `npm run app:grant` behaves exactly as it always did.
      */
     role: roleEnum("role"),
     grantedById: text("granted_by_id").references(() => users.id),
@@ -849,6 +853,35 @@ export const customers = pgTable(
     leadLastActivityDate: date("lead_last_activity_date"),
     /** When it stopped being a lead. The row did not change identity. */
     leadConvertedAt: timestamp("lead_converted_at", { withTimezone: true }),
+
+    /**
+     * WHO COORDINATES THIS LEAD'S CONVERSION — a second seat, beside the owner.
+     *
+     * The office proposes that the sales manager over the salesman picks this
+     * up once a lead is qualified, while the salesman goes on making the field
+     * visits. Those are two people on one record, so they need two columns: a
+     * lead's owner IS its handset scope — `ASSIGNED_TO_SQL` reads `owner_id`
+     * for a lead, and the MBOS book is filtered on it — so moving the owner
+     * would take the lead off the phone of the person still expected to walk
+     * into the shop.
+     *
+     * It is read by `scopedToUsers`, which answers who may SEE a record, and
+     * deliberately NOT by `ASSIGNED_TO_SQL`, which answers whose book it is.
+     * That is the same split `backOfficeAmId` already lives under, and it has
+     * the same consequence: one record legitimately appears on two lists.
+     *
+     * Null on customers, and on a lead nobody has qualified yet.
+     */
+    leadManagerId: text("lead_manager_id").references(() => users.id),
+    /**
+     * When a PERSON set that seat, as opposed to the qualification rule filling
+     * it in from the org chart. The same mark as `salesManagerDecidedAt` and it
+     * does the same job: an override has to survive the next org-chart change,
+     * or it is not an override.
+     */
+    leadManagerDecidedAt: timestamp("lead_manager_decided_at", {
+      withTimezone: true,
+    }),
 
     /*
      * A shop we deliver to, served through a distributor.

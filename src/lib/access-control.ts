@@ -1,9 +1,11 @@
 import "server-only";
 import { cache } from "react";
 import { randomUUID } from "node:crypto";
-import { eq, inArray, or, sql, type SQL } from "drizzle-orm";
+import { headers } from "next/headers";
+import { and, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { appAccess, auditLog, users, type User } from "@/db/schema";
+import { appAccess, appIdEnum, auditLog, users, type User } from "@/db/schema";
+import { APP_HEADER } from "@/proxy";
 import { requireUser } from "./auth";
 import { getScope as getScopePreference } from "./scope";
 
@@ -34,9 +36,79 @@ export type RequestScope = {
 export const resolveScope = cache(
   async function resolveScope(): Promise<RequestScope> {
     const user = await requireUser();
-    return scopeForUser(user);
+    return scopeForUser(user, undefined, await requestAppRole(user));
   },
 );
+
+/* ---------------------------------------------------------------------------
+ * SCOPE RESOLVED PER APP.
+ *
+ * `users.role` is the widest role somebody holds anywhere, rebuilt by
+ * `setAccess`. It is the right answer to "what may this person DO" — that is
+ * the union, deliberately, and `requireCapability` still asks it that way.
+ *
+ * It was the wrong answer to "how much may this person SEE". Granting Vikram a
+ * manager hat on the Sales Dashboard set `users.role` to manager, and every
+ * screen in every app then read his scope as `team` — including the CRM, where
+ * he was only ever meant to be a telecaller working his own book.
+ *
+ * The hat is on the GRANT, so scope is now read from the grant for the app the
+ * request is actually in. Everything below rests on one property that makes it
+ * safe: a per-app role can only ever be NARROWER than the derived one, because
+ * the derived one is the widest of them. Resolving per app can lose reach and
+ * cannot gain it, and where the app is unknown the old answer stands.
+ * ------------------------------------------------------------------------- */
+
+const APP_IDS: ReadonlySet<string> = new Set(appIdEnum.enumValues);
+
+/**
+ * Which app this request is in, or null.
+ *
+ * Written by `src/proxy.ts` from the URL, after stripping anything the client
+ * sent under the same name. Null is ordinary rather than exceptional: a job, a
+ * test, a cron route and the MBOS API all reach this code with no app route
+ * behind them, and they get the account's own role exactly as before.
+ */
+export async function requestAppId(): Promise<string | null> {
+  try {
+    const value = (await headers()).get(APP_HEADER);
+    return value && APP_IDS.has(value) ? value : null;
+  } catch {
+    /* No request headers here — a job or a test. Not an error. */
+    return null;
+  }
+}
+
+/**
+ * The role this person holds IN THIS APP, or null to fall back to the account.
+ *
+ * A grant with no role means the account's own, which is what every grant
+ * meant before the column existed and what `npm run app:grant` still writes —
+ * so null here and "no grant at all" are answered the same way on purpose. A
+ * person with no grant is refused by the app's own layout long before scope
+ * matters; narrowing them here would only change what an unreachable screen
+ * would have shown.
+ */
+export async function requestAppRole(user: {
+  id: string;
+  role: string;
+}): Promise<Role | null> {
+  const app = await requestAppId();
+  if (!app) return null;
+
+  const [grant] = await db
+    .select({ role: appAccess.role })
+    .from(appAccess)
+    .where(
+      and(
+        eq(appAccess.userId, user.id),
+        eq(appAccess.app, app as (typeof appIdEnum.enumValues)[number]),
+      ),
+    )
+    .limit(1);
+
+  return (grant?.role as Role | null) ?? null;
+}
 
 /**
  * The scope rules themselves, for a user who is already known.
@@ -53,8 +125,19 @@ export const resolveScope = cache(
 export async function scopeForUser(
   user: User,
   preference?: "mine" | "team",
+  appRole?: Role | null,
 ): Promise<RequestScope> {
-  if (user.role === "telecaller") {
+  /*
+   * The hat worn in THIS app, falling back to the account's own.
+   *
+   * Only ever narrower than `user.role` — see the note above `requestAppId`.
+   * The rest of this function is unchanged and reads `role` where it used to
+   * read `user.role`, so a caller that supplies nothing gets exactly the
+   * behaviour it got before this existed.
+   */
+  const role = (appRole ?? user.role) as Role;
+
+  if (role === "telecaller") {
     return {
       user,
       role: "telecaller",
@@ -69,7 +152,7 @@ export async function scopeForUser(
   // switch, so the narrowing below must not reach them: `getScope` answers
   // "mine" for every non-manager, and reading it here would scope the approval
   // queue to an accounts clerk's own book, which is empty.
-  if (user.role === "accounts") {
+  if (role === "accounts") {
     return { user, role: "accounts", scope: { kind: "all", userIds: null } };
   }
 
@@ -83,13 +166,13 @@ export async function scopeForUser(
   if (narrowing === "mine") {
     return {
       user,
-      role: user.role === "admin" ? "admin" : "manager",
+      role: role === "admin" ? "admin" : "manager",
       scope: { kind: "own", userIds: [user.id] },
     };
   }
 
   // An admin's team is the whole company, not a reporting line.
-  if (user.role === "admin") {
+  if (role === "admin") {
     return { user, role: "admin", scope: { kind: "all", userIds: null } };
   }
 
@@ -164,6 +247,17 @@ export const ASSIGNED_TO_SQL = sql`
 export const BACK_OFFICE_SQL = sql`customers.back_office_am_id`;
 
 /**
+ * The THIRD seat that grants sight: the Lead Manager coordinating a lead.
+ *
+ * Deliberately not part of `ASSIGNED_TO_SQL`. Whose book a lead is in stays the
+ * owner's, because that is what puts it on a salesman's handset and dates his
+ * follow-ups — and the whole point of this seat is that the salesman keeps
+ * visiting the shop while somebody senior runs the conversion. Reading it as
+ * ownership would have moved the lead off his phone on the day he qualified it.
+ */
+export const LEAD_MANAGER_SQL = sql`customers.lead_manager_id`;
+
+/**
  * WHOSE LIST A CUSTOMER APPEARS ON, which is not the same question as who
  * holds the book — and is the one every scoped query actually asks.
  *
@@ -183,7 +277,17 @@ export const BACK_OFFICE_SQL = sql`customers.back_office_am_id`;
  */
 export function scopedToUsers(ids: string[] | null): SQL | undefined {
   if (!ids) return undefined;
-  return or(inArray(ASSIGNED_TO_SQL, ids), inArray(BACK_OFFICE_SQL, ids));
+  return or(
+    inArray(ASSIGNED_TO_SQL, ids),
+    inArray(BACK_OFFICE_SQL, ids),
+    /*
+     * And the Lead Manager, for a lead they have been given to run. Without
+     * this the seat would be a label: the person told to coordinate the
+     * conversion could not open the record, and the notification announcing it
+     * would lead to a screen that refused them.
+     */
+    inArray(LEAD_MANAGER_SQL, ids),
+  );
 }
 
 /* -------------------------------------------------------------- permissions */
@@ -460,10 +564,17 @@ export function canAny(roles: readonly Role[], capability: Capability): boolean 
  * not have between them. Accounts sits above telecaller because the accounts
  * screens deliberately sit outside the narrowing.
  *
- * IT IS IMPRECISE ON PURPOSE, and the imprecision is named: an admin in the
- * Admin console is an admin for reading everywhere, including the calling
- * book. Scope resolved per app is the next piece of work, and this comment is
- * the thing that should be deleted when it lands.
+ * IT IS NO LONGER WHAT SCOPE READS. This used to be the whole answer, and the
+ * imprecision was named here rather than hidden: an admin in the Admin console
+ * was an admin for reading everywhere, the calling book included. `resolveScope`
+ * now asks `requestAppRole` for the hat worn in the app the request is actually
+ * in, and only falls back to this where there is no app to ask about — a job, a
+ * test, the MBOS API.
+ *
+ * It stays derived, and it stays the widest, because two things still read it:
+ * `isManager` on thirty-one screens deciding whether to DRAW a control, and the
+ * fallback above. Both want "is this person a manager anywhere", which is the
+ * question this has always answered.
  */
 const SCOPE_WIDTH: Role[] = ["telecaller", "accounts", "manager", "admin"];
 
@@ -600,6 +711,11 @@ export async function assertCustomerInScope(
      * direction, and never the cause of a customer being wrongly readable.
      */
     backOfficeAmId?: string | null;
+    /**
+     * The coordinating seat on a lead. Optional for the same reason as the one
+     * above, and absent means the same thing: the old, stricter check.
+     */
+    leadManagerId?: string | null;
   } | null,
 ) {
   const { scope } = await resolveScope();
@@ -634,10 +750,19 @@ export async function assertCustomerInScope(
    */
   const assigned = assignedUserId(customer);
   const backOffice = customer.backOfficeAmId ?? null;
+  const leadManager = customer.leadManagerId ?? null;
   const owner = customer.ownerId;
   const mine =
     (assigned !== null && ids.includes(assigned)) ||
     (backOffice !== null && ids.includes(backOffice)) ||
+    /*
+     * The fourth seat, added with `LEAD_MANAGER_SQL` in `scopedToUsers` and in
+     * the same commit — because the paragraph above this function is the record
+     * of what happens when these two are changed apart. Twice now a seat was
+     * added to the list and not to the read, and both times it surfaced as the
+     * same thing: the row is on your screen and opening it throws a 500.
+     */
+    (leadManager !== null && ids.includes(leadManager)) ||
     (owner !== null && ids.includes(owner));
 
   if (!mine) throw new NotPermittedError("customer.read");

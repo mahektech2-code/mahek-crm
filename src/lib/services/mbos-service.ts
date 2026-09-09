@@ -943,11 +943,18 @@ async function openLeads(userId: string, since?: string | null) {
            c.lead_next_follow_up_date::text as "nextFollowUpDate",
            c.lead_notes as notes,
            c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
+           -- The coordinating seat, and the NAME beside it: a salesman with a
+           -- commercial question needs somebody to ring, and an id is not a
+           -- person. Resolved here rather than on the handset because the
+           -- handset holds no user table.
+           c.lead_manager_id as "leadManagerId",
+           lm.name as "leadManagerName",
            case when c.lead_converted_at is not null then c.id end as "convertedCustomerId",
            c.lead_last_activity_date::text as "lastActivityDate",
            c.updated_at as "updatedAt"
       from customers c
-     where c.owner_id = ${userId}
+      left join users lm on lm.id = c.lead_manager_id
+     where (c.owner_id = ${userId} or c.lead_manager_id = ${userId})
        and c.lead_stage is not null
        and c.lead_archived = false
        and c.lead_stage not in ('won', 'lost')

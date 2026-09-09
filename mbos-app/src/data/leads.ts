@@ -43,6 +43,20 @@ export type Lead = {
   lostReason: string | null;
   archived: number;
   lastActivityDate: string | null;
+  /**
+   * Where the shop is. The server has sent these on every pull since leads
+   * existed; this table had no columns for them until v13, so `upsert` dropped
+   * both on arrival and every lead on every handset had a null place.
+   */
+  gpsLat: number | null;
+  gpsLng: number | null;
+  /**
+   * Who runs the conversion once the lead is qualified. Information, not
+   * ownership — the lead is still this salesman's to visit. The name is sent
+   * with the id because the handset holds no user table to resolve one.
+   */
+  leadManagerId: string | null;
+  leadManagerName: string | null;
   clientCreatedAt: number;
   syncState: string;
 };

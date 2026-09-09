@@ -341,20 +341,32 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       notes?: string | null;
       convertedCustomerId?: string | null;
       lastActivityDate?: string | null;
+      /* Sent since leads existed and dropped on the floor until v13 gave this
+         table somewhere to put them — a lead map with no coordinates. */
+      gpsLat?: number | null;
+      gpsLng?: number | null;
+      /* The coordinating seat, and the name beside it. Reference data: it does
+         not move the lead out of this salesman's book. */
+      leadManagerId?: string | null;
+      leadManagerName?: string | null;
     };
     await run(
       `INSERT INTO leads (id, name, company, mobile, city, source, estimatedPotentialPaise,
                           assigneeId, stage, nextFollowUpDate, notes, convertedCustomerId,
-                          archived, lastActivityDate, clientCreatedAt, serverCreatedAt,
+                          archived, lastActivityDate, gpsLat, gpsLng,
+                          leadManagerId, leadManagerName, clientCreatedAt, serverCreatedAt,
                           deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, 'server', 'synced')
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name, company = excluded.company, mobile = excluded.mobile,
          city = excluded.city, source = excluded.source,
          estimatedPotentialPaise = excluded.estimatedPotentialPaise,
          stage = excluded.stage, nextFollowUpDate = excluded.nextFollowUpDate,
          convertedCustomerId = excluded.convertedCustomerId,
-         lastActivityDate = excluded.lastActivityDate
+         lastActivityDate = excluded.lastActivityDate,
+         gpsLat = excluded.gpsLat, gpsLng = excluded.gpsLng,
+         leadManagerId = excluded.leadManagerId,
+         leadManagerName = excluded.leadManagerName
        WHERE leads.syncState = 'synced'`,
       [
         l.id,
@@ -372,6 +384,10 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         localNotes(l.notes, now),
         l.convertedCustomerId ?? null,
         l.lastActivityDate ?? null,
+        l.gpsLat ?? null,
+        l.gpsLng ?? null,
+        l.leadManagerId ?? null,
+        l.leadManagerName ?? null,
         now,
         now,
       ],

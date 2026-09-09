@@ -143,6 +143,19 @@ holding the whole app and nobody who was deliberately narrowed.
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
 
+**A LEAD HAS TWO SEATS, and only one of them is the book.** The office asks that
+the sales manager over a salesman picks up a lead once it is qualified, while
+the salesman goes on making the visits — two people on one record, so two
+columns. `customers.lead_manager_id` is the coordinating seat. It is read by
+`scopedToUsers` and by `assertCustomerInScope`, which answer who may SEE and
+WORK a record; it is deliberately NOT read by `ASSIGNED_TO_SQL`, which answers
+whose book it is. Moving the owner instead would have been the obvious
+implementation and it takes the lead off the handset of the person who was just
+told to keep visiting the shop — a lead's owner IS its MBOS scope. It is the
+same split `back_office_am_id` already lives under, with the same consequence:
+one record legitimately appears on two lists. `lead_manager_decided_at` is the
+usual mark that a person chose, so an override survives the next org-chart pass.
+
 **A PERSON WEARS SEVERAL HATS, and the grant is where each one is worn.**
 `app_access.role` is the role an app is held under: Vikram is a manager in the
 CRM and a clerk in Accounts, which are different powers over different data
@@ -154,16 +167,26 @@ A grant with NO role means the account's own, which is what every grant meant
 before the column existed and what `npm run app:grant` still writes: a terminal
 that knows nothing about roles has to go on granting an app that works.
 
-**What you may DO is the union; what you may SEE is still one answer.**
+**What you may DO is the union; what you may SEE is resolved PER APP.**
 Hold a capability under any hat and you hold it — `canAny`, and
-`requireCapability` checks the union. Scope is not there yet: `users.role` is
-what mine/team/all is read from, and it is now DERIVED — the widest role
-somebody holds anywhere, rebuilt by `setAccess` — so a manager in the CRM gets
-their team on the day the hat is granted, without teaching thirty-one screens
-about a list. The imprecision is named rather than hidden: an admin in the
-console is an admin for reading everywhere, including the calling book. Scope
-resolved per app is the next piece of work, and that paragraph in
-`app_access.role` is what should be deleted when it lands.
+`requireCapability` checks the union. Scope is the other half and it is no
+longer one answer for the whole person: `src/proxy.ts` names the app on the
+request from its URL prefix, and `resolveScope` reads `app_access.role` for THAT
+app. Vikram is a manager on the Sales Dashboard and a telecaller in the CRM, and
+the CRM now shows him his own book.
+
+`users.role` stays derived — the widest role held anywhere — because two things
+still want "is this person a manager at all": `isManager`, on thirty-one screens
+deciding whether to DRAW a control, and the fallback where there is no app to
+ask about. That fallback is what makes this safe to have landed at all: a job, a
+test, a cron route and the MBOS API reach `resolveScope` with no app route
+behind them and get exactly the answer they got before.
+
+**And it can only ever NARROW.** The derived role is the widest of the hats, so
+a per-app hat is by construction no wider. Resolving per app can lose reach and
+cannot gain it — which is why 73 call sites of `resolveScope` did not have to be
+audited one at a time. The header is stripped off the incoming request before
+the proxy writes it, so a client cannot post its own `x-mahek-app: admin`.
 
 **The audit records WHICH HAT allowed it.** With one role per person, "was he
 allowed to do this" was answerable from the person; with four it is not. The
