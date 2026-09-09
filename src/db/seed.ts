@@ -66,7 +66,6 @@ import {
   mbosInternalNotes,
   mbosJourneyPlans,
   mbosJourneyStops,
-  mbosLeads,
   mbosLeaveBalances,
   mbosLeaveRequests,
   mbosManagerTerritories,
@@ -512,7 +511,6 @@ async function main() {
     // Expenses before the claim they sit on, which does not cascade.
     mbosExpenses,
     mbosExpenseClaims,
-    mbosLeads,
     mbosVisits,
     mbosSamples,
     mbosJourneyStops,
