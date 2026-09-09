@@ -1657,6 +1657,31 @@ person chasing the target must not sign off the orders that hit it. Declining
 requires a reason, and it lands on the customer timeline, because the telecaller
 has to ring back and say something.
 
+**AND THE PERSON WHO TOOK IT IS TOLD, which for a long time they were not.**
+The sentence above was the whole of it: the reason landed on the timeline and
+stopped there, so the telecaller who promised a customer their order found out
+by opening that customer's record — which nobody does unprompted. They ring the
+customer back a week later still believing it was placed. Every other write in
+this app that changes somebody else's work already tells them: a reassignment
+tells both sides, a feedback reply tells the reporter, a target revision tells
+whoever it was set for. An order decision was the exception, and the only reason
+was that nobody had written the function.
+
+**The reason travels IN the message, not behind a link.** It is the entire
+content of a decline — they have to ring the customer and say something — and a
+notification that makes somebody open a screen to find out what to say is one
+they read later. `mbosHref` is `/rejections`, because a field salesman has no
+`/accounts` page to open and that is the handset screen showing him the same
+thing; an approval carries none, falling through to `/notifications`, since
+there is no handset screen for one approved order and pointing at a guess is
+worse than the honest default.
+
+**Two people are deliberately not told.** An order the SHEET wrote carries no
+`user_id` — nobody in MahekOne took it — and an approver who is also the taker
+does not need telling what they just did. The same discipline as a reassignment
+that changes nothing notifying nobody. It runs AFTER the transaction and cannot
+throw into it: a decision must not fail because a push timed out.
+
 **Money the customer says has arrived is not money the business has seen.** A
 payment reported by a telecaller sits at `reported` until accounts find it in
 the bank, and `bills.paidAmount` — and therefore outstanding, aging, the

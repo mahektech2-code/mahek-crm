@@ -23,6 +23,7 @@ import {
   complaints,
   customers,
   appAccess,
+  notifications,
   orders,
   paymentReceipts,
   payments,
@@ -264,6 +265,90 @@ describe("Order approvals", () => {
     const again = await declineOrder(order.id, "changed my mind");
     assert.equal(again.ok, false);
     assert.equal(again.ok === false && again.code, "conflict");
+  });
+
+  /* ---------------------------------------------------------------------
+   * §M — the answer coming back.
+   *
+   * A decision here changes somebody else's next phone call. It used to tell
+   * them nothing: the decline reason landed on the customer timeline and
+   * stopped there, so the telecaller who promised a customer their order found
+   * out by opening that customer's record, which nobody does unprompted.
+   * ------------------------------------------------------------------- */
+
+  test("approving tells whoever took the order", async () => {
+    const customer = await makeCustomer({ name: "Shree Paints" });
+    const order = await pendingOrder(customer.id, 18_600_00);
+
+    await approveOrder(order.id);
+
+    const told = await db.select().from(notifications);
+    assert.equal(told.length, 1);
+    assert.equal(told[0].userId, priya.id, "the person who took it, not the approver");
+    assert.match(told[0].title, /Shree Paints/);
+    assert.match(told[0].body, /Deepa/, "and who decided it");
+  });
+
+  test("declining carries the REASON in the message, not behind a link", async () => {
+    /* It is the whole content: they have to ring the customer back and say
+       something, and a notification that makes them open a screen to find out
+       what to say is one they read later. */
+    const customer = await makeCustomer({ name: "Shree Paints" });
+    const order = await pendingOrder(customer.id);
+
+    await declineOrder(order.id, "Outstanding is over their limit.");
+
+    const [told] = await db.select().from(notifications);
+    assert.equal(told.userId, priya.id);
+    assert.match(told.body, /Outstanding is over their limit\./);
+    assert.match(told.title, /declined/i);
+    /* `href` is the BELL in MahekOne and it is the stored half; `mbosHref`
+       rides on the push only and has no column, so what is pinned here is the
+       one a reader can actually follow from the notification row. */
+    assert.equal(told.href, `/crm/customers/${customer.id}`);
+  });
+
+  test("an order the sheet wrote has nobody to tell", async () => {
+    /* `source = 'external'` carries no `user_id`, because no person in
+       MahekOne took it. A notification to nobody is a crash, not a courtesy. */
+    const customer = await makeCustomer();
+    const [order] = await db
+      .insert(orders)
+      .values({
+        id: id("ord"),
+        customerId: customer.id,
+        userId: null,
+        source: "external",
+        orderedAt: new Date(),
+        totalAmount: 5_000_00,
+        status: "pending_approval",
+      })
+      .returning();
+
+    const result = await approveOrder(order.id);
+    assert.equal(result.ok, true, result.ok ? "" : result.error);
+    assert.equal((await db.select().from(notifications)).length, 0);
+  });
+
+  test("approving your own order tells you nothing", async () => {
+    /* An accounts user who also logs calls does not need telling what they
+       just did — the same discipline as a reassignment that changes nothing
+       notifying nobody. */
+    const customer = await makeCustomer();
+    const [order] = await db
+      .insert(orders)
+      .values({
+        id: id("ord"),
+        customerId: customer.id,
+        userId: deepa.id,
+        orderedAt: new Date(),
+        totalAmount: 5_000_00,
+        status: "pending_approval",
+      })
+      .returning();
+
+    await approveOrder(order.id);
+    assert.equal((await db.select().from(notifications)).length, 0);
   });
 
   test("a telecaller cannot approve, however the screen is reached", async () => {

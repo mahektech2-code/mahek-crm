@@ -2,10 +2,12 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, orders } from "@/db/schema";
+import { auditLog, customers, orders } from "@/db/schema";
 import { requireCapability } from "../access-control";
 import { recomputeBuyingCycle } from "../recompute";
 import { err, okVoid, type Result } from "../result";
+import { money } from "../format";
+import { notifyUser } from "../notify";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -143,6 +145,79 @@ export async function orderLines(orderId: string): Promise<PendingOrderLine[]> {
   }));
 }
 
+/**
+ * TELL WHOEVER TOOK THE ORDER WHAT WAS DECIDED.
+ *
+ * This is the one write in the app that changes somebody else's next phone
+ * call and told them nothing. A decline reason landed on the customer timeline
+ * and stopped there, so the telecaller who promised a customer their order
+ * found out by opening that customer's record — which nobody does unprompted.
+ * They ring the customer back a week later still believing it was placed.
+ *
+ * Everything else here already notifies both sides: a reassignment tells the
+ * person who gained the accounts and the person who lost them, a feedback reply
+ * tells the reporter, a target revision tells whoever it was set for. An order
+ * decision was the exception, and there was no reason for it beyond nobody
+ * having written this function.
+ *
+ * AFTER the transaction, never inside it. `notifyUser` writes a row and sends a
+ * push, and a decision must not fail because a push timed out — the same rule
+ * every notification in this codebase follows.
+ */
+async function tellWhoTookIt(
+  order: typeof orders.$inferSelect,
+  actorId: string,
+  actorName: string,
+  decision: "approved" | "declined",
+  reason: string | null,
+): Promise<void> {
+  /*
+   * Nobody to tell on an order the SHEET wrote — `source = 'external'` carries
+   * no `user_id`, because no person in MahekOne took it. And nobody to tell
+   * when the approver IS the taker: an accounts user who also logs calls
+   * approving their own order does not need to be told they did.
+   */
+  if (!order.userId || order.userId === actorId) return;
+
+  const [customer] = await db
+    .select({ name: customers.name })
+    .from(customers)
+    .where(eq(customers.id, order.customerId))
+    .limit(1);
+  const who = customer?.name ?? "the customer";
+  const value = money(Number(order.totalAmount));
+
+  await notifyUser(
+    decision === "approved"
+      ? {
+          userId: order.userId,
+          title: `Order approved — ${who}`,
+          body: `${actorName} approved the ${value} order you took. It counts as a sale now.`,
+          href: `/crm/customers/${order.customerId}`,
+          /*
+           * No `mbosHref`. A tap falls through to `/notifications`, which is
+           * always right and never precise — and there is no handset screen
+           * that shows one approved order, so pointing at a guess would be
+           * worse than the honest default.
+           */
+        }
+      : {
+          userId: order.userId,
+          title: `Order declined — ${who}`,
+          /*
+           * The reason is IN THE BODY rather than behind a link. It is the
+           * whole content of the message: they have to ring the customer back
+           * and say something, and a notification that makes them open a
+           * screen to find out what to say is one they read later.
+           */
+          body: `${actorName} declined the ${value} order you took: ${reason ?? "no reason recorded"}. They will need a call.`,
+          href: `/crm/customers/${order.customerId}`,
+          /* The handset screen that shows a salesman his refused orders. */
+          mbosHref: "/rejections",
+        },
+  ).catch(() => {});
+}
+
 export async function approveOrder(orderId: string): Promise<Result> {
   const ctx = await requireCapability("order.approve");
 
@@ -187,6 +262,7 @@ export async function approveOrder(orderId: string): Promise<Result> {
 
   // It is a purchase now, so the cycle, the average and the history all change.
   await recomputeBuyingCycle(order.customerId);
+  await tellWhoTookIt(order, ctx.user.id, ctx.user.name, "approved", null);
   return okVoid("Order approved");
 }
 
@@ -245,6 +321,7 @@ export async function declineOrder(
   // the calling list on their own cycle rather than staying quiet on the
   // strength of an order that was refused.
   await recomputeBuyingCycle(order.customerId);
+  await tellWhoTookIt(order, ctx.user.id, ctx.user.name, "declined", reason.trim());
   return okVoid("Order declined");
 }
 
