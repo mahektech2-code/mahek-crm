@@ -7,6 +7,11 @@ import { today } from "../recompute";
 import { employeeJoinOn, employeeLinkKindSql } from "@/lib/employee-link";
 import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "@/lib/territory-sql";
 import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
+import {
+  leaveBalances as leaveBalancesFor,
+  leaveDebitDays,
+  type LeaveBalance,
+} from "@/lib/engines/leave";
 
 /* ---------------------------------------------------------------------------
  * Every read the Sales Dashboard makes.
@@ -3136,4 +3141,82 @@ export async function salesmanRecord(
     leads: leads as never,
     tasks: tasks as never,
   };
+}
+
+/* ══════════════════════════════════════ leave, per person */
+
+export type EntitlementRow = {
+  userId: string;
+  name: string;
+  balances: LeaveBalance[];
+  /** The kinds this person has a stored figure for, as against the default. */
+  overridden: string[];
+};
+
+/**
+ * What each salesman may take this year, and how much is left.
+ *
+ * The entitlement itself is CONFIGURATION — `mbos.leave.annualEntitlementDays`
+ * — and a row in `mbos_leave_balances` overrides it for one person. That much
+ * already worked. What did not exist was any way to WRITE such a row: nothing
+ * in MahekOne created one, so the override was a mechanism with no door, and a
+ * salesman on different terms could not be given them.
+ *
+ * Read through `leaveBalances`, the same engine the handset's own figures come
+ * through, so this screen and the phone in somebody's pocket cannot disagree
+ * about how many days remain.
+ */
+export async function leaveEntitlements(year: number): Promise<EntitlementRow[]> {
+  const scope = await managerScope();
+  const { getConfig } = await import("../config/store");
+
+  const [people, overrideRows, usedRows, config] = await Promise.all([
+    db.execute<{ userId: string; name: string }>(sql`
+      select u.id as "userId", u.name
+        from users u
+        join app_access a on a.user_id = u.id and a.app = 'field'
+       where u.active ${onlyMine(scope, "u.id")}
+       order by u.name asc
+    `),
+    db.execute<{ userId: string; kind: string; entitled: number }>(sql`
+      select b.user_id as "userId", b.leave_type::text as kind, b.entitled_days as entitled
+        from mbos_leave_balances b
+       where b.year = ${year}
+    `),
+    /* The approved requests, not a stored sum — what a request costs is
+       `leaveDebitDays`, and spelling that arithmetic out in SQL as well is how
+       two answers to "how much has he taken" come to exist. */
+    db.execute<{ userId: string; kind: string; days: number; halfDay: boolean }>(sql`
+      select r.user_id as "userId", r.leave_type::text as kind, r.days, r.half_day as "halfDay"
+        from mbos_leave_requests r
+        join mbos_approvals ap on ap.subject_id = r.id and ap.type = 'leave'
+       where ap.state in ('approved', 'partially_approved')
+         and r.cancelled_at is null
+         and extract(year from r.from_date) = ${year}
+    `),
+    getConfig(),
+  ]);
+
+  const entitlement = config["mbos.leave.annualEntitlementDays"] ?? {};
+
+  const overridesBy = new Map<string, Record<string, number>>();
+  for (const r of overrideRows as unknown as { userId: string; kind: string; entitled: number }[]) {
+    const forUser = overridesBy.get(r.userId) ?? {};
+    forUser[r.kind] = r.entitled;
+    overridesBy.set(r.userId, forUser);
+  }
+
+  const usedBy = new Map<string, Record<string, number>>();
+  for (const r of usedRows as unknown as { userId: string; kind: string; days: number; halfDay: boolean }[]) {
+    const forUser = usedBy.get(r.userId) ?? {};
+    forUser[r.kind] = (forUser[r.kind] ?? 0) + leaveDebitDays(Number(r.days), r.halfDay);
+    usedBy.set(r.userId, forUser);
+  }
+
+  return (people as unknown as { userId: string; name: string }[]).map((p) => ({
+    userId: p.userId,
+    name: p.name,
+    balances: leaveBalancesFor(entitlement, usedBy.get(p.userId) ?? {}, overridesBy.get(p.userId) ?? {}),
+    overridden: Object.keys(overridesBy.get(p.userId) ?? {}),
+  }));
 }
