@@ -31,6 +31,18 @@ const DEFAULTS: Record<string, unknown> = {
   'mbos.location.trackWhileWorking': true,
   'mbos.location.trackEverySeconds': 3,
 
+  /* maps kept for no signal — see `engines/tiles.ts` for what each one costs */
+  'mbos.maps.offlineEnabled': true,
+  'mbos.maps.minZoom': 9,
+  'mbos.maps.maxZoom': 16,
+  'mbos.maps.areaSeparationKm': 25,
+  'mbos.maps.paddingMetres': 2000,
+  'mbos.maps.bytesPerTileEstimate': 45_000,
+  'mbos.maps.maxPackMegabytes': 500,
+  'mbos.maps.tileCountLimit': 250_000,
+  'mbos.maps.downloadOnWifiOnly': true,
+  'mbos.maps.refreshAfterDays': 120,
+
   /* visits */
   'mbos.visits.minimumDwellSeconds': 120,
 

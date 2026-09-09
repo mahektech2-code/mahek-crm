@@ -13,6 +13,7 @@ import { leaveBalances, listExpenses, listSamples } from '../src/data/requests';
 import { priceDay } from '../src/data/travel';
 import { openLeadCount } from '../src/data/leads';
 import { pendingCount, queueCounts } from '../src/sync/queue';
+import { savedMaps } from '../src/data/offline-maps';
 import { isoDate, plural } from '../src/lib/format';
 
 /**
@@ -28,6 +29,7 @@ import { isoDate, plural } from '../src/lib/format';
 type Item = { label: string; badge: string; route?: string };
 
 type Counts = {
+  savedMaps: number;
   overdueTasks: number;
   openLeads: number;
   leaveLeft: number;
@@ -41,6 +43,7 @@ type Counts = {
 };
 
 const EMPTY: Counts = {
+  savedMaps: 0,
   overdueTasks: 0,
   openLeads: 0,
   leaveLeft: 0,
@@ -89,6 +92,14 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
         { label: 'Product catalogue', badge: '', route: 'catalogue' },
         { label: 'Documents', badge: '', route: 'docs' },
         { label: 'Knowledge centre', badge: '', route: 'knowledge' },
+        /* The badge counts what is ON THE PHONE, not how many places could be
+           saved. "3 saved" is a fact; "9 available" would be an advertisement
+           for a several-hundred-megabyte download in a menu. */
+        {
+          label: 'Offline maps',
+          badge: n.savedMaps ? plural(n.savedMaps, 'saved', 'saved') : '',
+          route: 'maps',
+        },
       ],
     },
     /* `WhatsApp` was here and went nowhere — MBOS has no WhatsApp screen, and a
@@ -137,9 +148,11 @@ export default function MoreScreen() {
         pendingCount(),
         queueCounts(),
         priceDay(boot.session?.user.id ?? '', today),
-      ]).then(([tasks, openLeads, balances, expenses, samples, toSend, queue, today_]) => {
+        savedMaps().catch(() => []),
+      ]).then(([tasks, openLeads, balances, expenses, samples, toSend, queue, today_, maps]) => {
         if (!live) return;
         setCounts({
+          savedMaps: maps.length,
           overdueTasks: tasks.filter((t) => bucketOf(t.dueDate, today) === 'Overdue').length,
           openLeads,
           leaveLeft: Math.round(balances.reduce((a, b) => a + b.available, 0)),

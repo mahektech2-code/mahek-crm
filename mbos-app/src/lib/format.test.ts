@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dayLabel, dayLabelRelative, distanceLabel, inr, shopName } from './format';
+import { dataSize, dayLabel, dayLabelRelative, distanceLabel, inr, shopName } from './format';
 
 /**
  * Every example here is a real customer name off the production book, or the
@@ -128,4 +128,20 @@ test('rupees are grouped the Indian way', () => {
   assert.equal(inr(236000), '₹2,36,000');
   assert.equal(inr(1243405), '₹12,43,405');
   assert.equal(inr(999), '₹999');
+});
+
+/* ------------------------------------------------------------- data size */
+
+test('a download is said in the unit the decision is made in', () => {
+  assert.equal(dataSize(314_572_800), '315 MB');
+  assert.equal(dataSize(1_400_000_000), '1.4 GB');
+  assert.equal(dataSize(45_000), '45 KB');
+});
+
+test('a size nobody could work out reads as an em dash, never as zero', () => {
+  /* A pack whose status will not load has no size. Printing "0 MB" against it
+     would read as an empty download rather than an unreadable one. */
+  assert.equal(dataSize(null), '—');
+  assert.equal(dataSize(undefined), '—');
+  assert.equal(dataSize(NaN), '—');
 });
