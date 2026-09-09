@@ -230,7 +230,31 @@ export type Candidate = {
  * tomorrow — a name that has never been visited sorts to the very top, because
  * that is the strongest version of the same answer.
  */
-export async function pickCandidates(city: string | null, query = ''): Promise<Candidate[]> {
+/**
+ * How many shops the pick list offers at once.
+ *
+ * It offered all of them. The book on a real handset is 1,076 shops and this
+ * screen draws a card per row inside the frame's plain ScrollView, so opening
+ * "Pick your shops" from the route screen mounted the whole territory as
+ * native views in one pass and the app stopped answering — no error, no crash,
+ * just a handset that had to be force-closed. The Customers tab learned this
+ * first and `CUSTOMER_PAGE` is its answer; this screen was reached by a
+ * different door and kept the bug.
+ *
+ * Larger than `CUSTOMER_PAGE` on purpose. That list is browsed and pages with
+ * a Load more button; this one is SCANNED — the question is which shops are
+ * worth a Tuesday, which is asked of a spread rather than of a row at a time —
+ * and it has no pager. A day is twenty stops at the very outside, so what the
+ * cap costs is the shop somebody was going to reach by scrolling rather than
+ * by typing its name, and the search box is directly above the list.
+ */
+export const PICK_PAGE = 60;
+
+export async function pickCandidates(
+  city: string | null,
+  query = '',
+  keep: string[] = [],
+): Promise<{ rows: Candidate[]; total: number }> {
   const q = query.trim().toLowerCase();
   const like = `%${q}%`;
   const where = q
@@ -238,21 +262,45 @@ export async function pickCandidates(city: string | null, query = ''): Promise<C
     : '';
   const args: string[] = q ? [like, like, like] : [];
 
-  const rows = await all<Candidate>(
-    `SELECT id, name, area, city, beat, outstandingPaise, lastVisitDate, lastOrderDate, gpsLat, gpsLng
+  const COLS = `id, name, area, city, beat, outstandingPaise, lastVisitDate, lastOrderDate, gpsLat, gpsLng`;
+
+  /* Asked of SQLite rather than of the array. A capped list that counts itself
+     reports sixty shops on a book of a thousand and nothing says otherwise. */
+  const counted = await one<{ n: number }>(`SELECT COUNT(*) AS n FROM customers ${where}`, args);
+
+  const page = await all<Candidate>(
+    `SELECT ${COLS}
        FROM customers ${where}
-      ORDER BY lastVisitDate IS NULL DESC, lastVisitDate ASC, name ASC`,
+      ORDER BY lastVisitDate IS NULL DESC, lastVisitDate ASC, name ASC
+      LIMIT ${PICK_PAGE}`,
     args,
   );
 
-  if (!city) return rows;
+  /* Already-ticked shops are never cut. A shop ticked, then searched past,
+     then found again outside the cap would come back with its number gone —
+     and the number IS the plan, because it is the order he means to walk. */
+  const missing = keep.filter((id) => !page.some((r) => r.id === id));
+  const held = missing.length
+    ? await all<Candidate>(
+        `SELECT ${COLS} FROM customers WHERE id IN (${missing.map(() => '?').join(',')})`,
+        missing,
+      )
+    : [];
+
+  const rows = [...held, ...page];
+  const total = counted?.n ?? rows.length;
+
+  if (!city) return { rows, total };
   const here = city.trim().toLowerCase();
   /* Sorted in JavaScript rather than in SQL, so the ordering above is stated
      once and the city only lifts a group of it. */
-  return [
-    ...rows.filter((r) => (r.city ?? '').trim().toLowerCase() === here),
-    ...rows.filter((r) => (r.city ?? '').trim().toLowerCase() !== here),
-  ];
+  return {
+    rows: [
+      ...rows.filter((r) => (r.city ?? '').trim().toLowerCase() === here),
+      ...rows.filter((r) => (r.city ?? '').trim().toLowerCase() !== here),
+    ],
+    total,
+  };
 }
 
 /** The shops already picked for a day, so reopening the screen shows them. */

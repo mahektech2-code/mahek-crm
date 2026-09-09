@@ -48,6 +48,20 @@ export default function PickScreen() {
   const [day, setDay] = React.useState<PlanDay | null>(null);
   const [rows, setRows] = React.useState<Candidate[]>([]);
   const [picked, setPicked] = React.useState<string[]>([]);
+  /* What the list is a slice of — see `PICK_PAGE`. */
+  const [total, setTotal] = React.useState(0);
+  /*
+   * The ticked ids, read by the loader without being a dependency of it.
+   *
+   * They have to reach `pickCandidates` so a shop ticked and then searched
+   * past keeps its number, but putting `picked` in the effect's deps would
+   * re-query the book on every tap — sixty rows re-read and re-rendered to
+   * record one tick.
+   */
+  const pickedRef = React.useRef<string[]>([]);
+  React.useEffect(() => {
+    pickedRef.current = picked;
+  }, [picked]);
   const [q, setQ] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [today] = React.useState(() => isoDate(new Date()));
@@ -69,8 +83,10 @@ export default function PickScreen() {
 
   React.useEffect(() => {
     let live = true;
-    void pickCandidates(day?.city ?? null, q).then((r) => {
-      if (live) setRows(r);
+    void pickCandidates(day?.city ?? null, q, pickedRef.current).then((r) => {
+      if (!live) return;
+      setRows(r.rows);
+      setTotal(r.total);
     });
     return () => {
       live = false;
@@ -221,6 +237,20 @@ export default function PickScreen() {
             </Pressable>
           );
         })}
+
+        {/*
+          What the list is a slice OF.
+          The read is capped because the whole book drawn at once is what
+          stopped this screen answering at all. A capped list that says nothing
+          reports sixty shops on a territory of a thousand, so the sentence
+          names the count and names the way past it, which is the search box
+          above.
+        */}
+        {total > rows.length ? (
+          <T s="small" style={{ color: C.muted, paddingVertical: 14, textAlign: 'center' }}>
+            {rows.length + ' of ' + total + ' shops — search for one that is not here'}
+          </T>
+        ) : null}
       </ScrollView>
 
       {/* Fixed to the bottom, because the list is long and the decision is made
