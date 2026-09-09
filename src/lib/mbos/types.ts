@@ -75,6 +75,16 @@ export const SYNC_ENTITY_TYPES = [
    * a table and a read query and no write path anywhere.
    */
   "competitor",
+  /**
+   * §E — the Prospect validation call: what the SHOP said, as against what the
+   * salesman reported.
+   *
+   * Its own entity rather than a lead update, because the two answers are meant
+   * to be able to differ and the difference is the only thing this call
+   * produces that nothing else could. Writing it onto the lead would overwrite
+   * the salesman's account with the office's and destroy exactly that.
+   */
+  "lead_validation",
   "approval",
   /**
    * The salesman's answer to a proposed day: agreed, or refused with a reason

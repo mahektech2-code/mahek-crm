@@ -5262,6 +5262,70 @@ export const mbosTasks = pgTable(
   ],
 );
 
+/* ------------------------------------------------------ lead validation */
+
+/**
+ * §E — the call that checks the salesman's report against the shop itself.
+ *
+ * An EVENT, not a fact about the account, which is why it is a table and not a
+ * set of columns on `customers`. A lead is routinely validated twice — the
+ * first call reached a receptionist, the second reached the proprietor — and
+ * columns on the customer would keep only the second and destroy the first.
+ * The first is usually the one that matters, because it is the one that says
+ * the salesman's report and the shop's own account of it did not agree.
+ *
+ * The `confirmed*` columns are deliberately NOT written over the lead's own.
+ * What the salesman was told and what the office was told are two readings of
+ * the same shop, and the difference between them is the only thing this call
+ * produces that nothing else could.
+ */
+export const mbosLeadValidations = pgTable(
+  "mbos_lead_validations",
+  {
+    ...mbosColumns(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /**
+     * Not necessarily the Lead Manager. §E says "Lead Manager/Telecaller", and
+     * on a nine-person team it is whoever is free.
+     */
+    calledByUserId: text("called_by_user_id")
+      .notNull()
+      .references(() => users.id),
+    calledAt: timestamp("called_at", { withTimezone: true }).notNull().defaultNow(),
+    /** A call nobody answered is still a call that was made. */
+    reached: boolean("reached").notNull().default(true),
+
+    /* §E's four questions. All nullable — a shop with plenty to say about
+     * dispatch and nothing about quality is the ordinary case, and a form
+     * demanding all four collects four sentences of filler. */
+    productFeedback: text("product_feedback"),
+    qualityFeedback: text("quality_feedback"),
+    dispatchFeedback: text("dispatch_feedback"),
+    salesmanFeedback: text("salesman_feedback"),
+
+    /* What the SHOP says, as against what the salesman reported. */
+    confirmedRequirement: text("confirmed_requirement"),
+    confirmedMonthlyVolumeLitres: integer("confirmed_monthly_volume_litres"),
+    confirmedCompetitor: text("confirmed_competitor"),
+    confirmedPotentialPaise: bigint("confirmed_potential_paise", { mode: "number" }),
+
+    /**
+     * `pending` is a call that was made and left undecided, which is a real
+     * state rather than a missing value — the caller reached somebody, wrote
+     * down what they said, and the judgement is somebody else's.
+     */
+    verdict: text("verdict").notNull().default("pending"),
+    verdictReason: text("verdict_reason"),
+    notes: text("notes"),
+  },
+  (t) => [
+    index("mbos_lead_validations_customer_idx").on(t.customerId, t.calledAt.desc()),
+    index("mbos_lead_validations_caller_idx").on(t.calledByUserId, t.calledAt.desc()),
+  ],
+);
+
 /* ---------------------------------------------------- competitor records */
 
 /**

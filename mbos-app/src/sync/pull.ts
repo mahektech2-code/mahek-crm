@@ -477,6 +477,9 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
       customerId?: string | null;
       status: string;
       completionNote?: string | null;
+      /* What KIND of work this is, so the list can open the right screen. */
+      sourceType?: string | null;
+      sourceId?: string | null;
       completionPhotoId?: string | null;
       snoozedTo?: string | null;
       snoozeReason?: string | null;
@@ -489,13 +492,15 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
     await run(
       `INSERT INTO tasks (id, title, description, assigneeId, assignerId, priority, dueDate,
                           customerId, status, completionNote, completionPhotoId, snoozeHistory,
+                          sourceType, sourceId,
                           escalated, clientCreatedAt, serverCreatedAt, deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'server', 'synced')
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          title = excluded.title, description = excluded.description,
          priority = excluded.priority, dueDate = excluded.dueDate, customerId = excluded.customerId,
          status = excluded.status, completionNote = excluded.completionNote,
          completionPhotoId = excluded.completionPhotoId, escalated = excluded.escalated,
+         sourceType = excluded.sourceType, sourceId = excluded.sourceId,
          syncState = 'synced'`,
       [
         t.id,
@@ -510,6 +515,8 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
         t.completionNote ?? null,
         t.completionPhotoId ?? null,
         snoozeHistory,
+        t.sourceType ?? null,
+        t.sourceId ?? null,
         t.escalatedAt ? 1 : 0,
         now,
       ],

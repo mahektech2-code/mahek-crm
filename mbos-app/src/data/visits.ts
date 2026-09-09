@@ -58,6 +58,16 @@ export type SaveVisitArgs = {
    */
   suspectDecision?: string | null;
   suspectReason?: string | null;
+  /*
+   * §G — the requirement visit's own three answers.
+   *
+   * They overwrite the lead's columns on the server, unlike the validation
+   * call's `confirmed*` answers: this is the same person asking the same
+   * question better informed, not a second party's account of it.
+   */
+  requirement?: string | null;
+  monthlyVolumeLitres?: number | null;
+  quantityCans?: number | null;
 };
 
 export async function saveVisit(args: SaveVisitArgs): Promise<string> {
@@ -201,6 +211,9 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
       nextFollowUpDate: args.nextFollowUpDate ?? undefined,
       suspectDecision: args.suspectDecision ?? undefined,
       suspectReason: args.suspectReason ?? undefined,
+      requirement: args.requirement ?? undefined,
+      monthlyVolumeLitres: args.monthlyVolumeLitres ?? undefined,
+      quantityCans: args.quantityCans ?? undefined,
       clientCreatedAt: base.clientCreatedAt,
       deviceId: base.deviceId,
     },

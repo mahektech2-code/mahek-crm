@@ -79,6 +79,12 @@ export default function Visit() {
   const [decision, setDecision] = React.useState<string | null>(null);
   const [decisionWhy, setDecisionWhy] = React.useState('');
   const [decisionErr, setDecisionErr] = React.useState<string | null>(null);
+  /* §G — the requirement visit. Shown on a lead only: asking a customer of four
+     years what they are looking for is a question they have answered by
+     ordering, and a field nobody fills teaches people to scroll past the form. */
+  const [reqWhat, setReqWhat] = React.useState('');
+  const [reqLitres, setReqLitres] = React.useState('');
+  const [reqCans, setReqCans] = React.useState('');
 
   React.useEffect(() => {
     if (!c?.id) return;
@@ -303,6 +309,9 @@ export default function Visit() {
         linkedSampleId: linked.sampleId ?? null,
         suspectDecision: decision,
         suspectReason: decisionWhy.trim() || null,
+        requirement: reqWhat.trim() || null,
+        monthlyVolumeLitres: Number(reqLitres.replace(/[^\d]/g, '')) || null,
+        quantityCans: Number(reqCans.replace(/[^\d]/g, '')) || null,
       });
       set({ visitSpent: spent });
       router.replace('/saved');
@@ -530,6 +539,67 @@ export default function Visit() {
               {decisionErr}
             </Text>
           ) : null}
+        </Card>
+      ) : null}
+
+      {/* ---- §G · what they actually need ----
+          On a lead only. These overwrite the lead's own columns deliberately,
+          unlike the validation call's answers: this is the same person asking
+          the same question better informed, not a second party's account. */}
+      {suspect ? (
+        <Card style={{ marginTop: 12 }}>
+          <Text style={type.label}>What they need</Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: C.body }}>
+            Optional. Fill it in when you have taken the price list and asked properly.
+          </Text>
+
+          <TextInput
+            value={reqWhat}
+            onChangeText={setReqWhat}
+            placeholder="What they want — thinner for a spray booth"
+            placeholderTextColor={C.faint}
+            style={{
+              marginTop: 12, minHeight: 48, borderWidth: 1, borderColor: C.border,
+              borderRadius: radius.sm, paddingHorizontal: 12, fontSize: 15, color: C.ink,
+            }}
+          />
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+            <View style={{ flex: 1 }}>
+              <TextInput
+                value={reqLitres}
+                onChangeText={setReqLitres}
+                placeholder="Litres a month"
+                placeholderTextColor={C.faint}
+                keyboardType="number-pad"
+                style={{
+                  minHeight: 48, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm,
+                  paddingHorizontal: 12, fontSize: 15, color: C.ink,
+                }}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              {/* Cans, because that is what an ORDER is counted in — the litres
+                  beside it are what the shop says its consumption is. Two
+                  different questions, and the units say which is which. */}
+              <TextInput
+                value={reqCans}
+                onChangeText={setReqCans}
+                placeholder="Cans to start"
+                placeholderTextColor={C.faint}
+                keyboardType="number-pad"
+                style={{
+                  minHeight: 48, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm,
+                  paddingHorizontal: 12, fontSize: 15, color: C.ink,
+                }}
+              />
+            </View>
+          </View>
+
+          {/* §G's business rule, said on the screen where it applies rather
+              than only refused at the server. */}
+          <Text style={{ fontSize: 13, lineHeight: 19, marginTop: 10, color: C.muted }}>
+            No price or delivery promises at this stage. Anything commercial goes to the Lead Manager.
+          </Text>
         </Card>
       ) : null}
 

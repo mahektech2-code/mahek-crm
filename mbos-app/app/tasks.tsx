@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Pressable } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Choice, DashedButton, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { BottomSheet } from '../src/components/ui/overlays';
@@ -36,6 +36,7 @@ function dateFor(when: (typeof WHENS)[number], today: string): string {
 }
 
 export default function TasksScreen() {
+  const set = useStore((st) => st.set);
   const back = useCameFrom('more');
   const notify = useStore((s) => s.notify);
   const askConfirm = useStore((s) => s.askConfirm);
@@ -178,6 +179,31 @@ export default function TasksScreen() {
                       ) : null}
                     </View>
                     <T s="caption" style={{ marginTop: 2 }}>{nameOf(t.customerId)}</T>
+
+                    {/* A task that ASKS for something specific opens the screen
+                        that answers it. Without this the office raises a
+                        validation call and the salesman reads a title with
+                        nowhere to go — which is how a workflow becomes a list
+                        of sentences people tick off without doing. */}
+                    {t.sourceType === 'lead_validation' && t.customerId ? (
+                      <SecondaryButton
+                        label="Make the call"
+                        onPress={() =>
+                          router.push(`/validate?id=${t.customerId}&taskId=${t.id}&from=tasks`)
+                        }
+                        style={{ marginTop: 10 }}
+                      />
+                    ) : null}
+                    {t.sourceType === 'requirement_visit' && t.customerId ? (
+                      <SecondaryButton
+                        label="Open the shop"
+                        onPress={() => {
+                          set({ custId: t.customerId ?? undefined, pTab: 0 });
+                          router.push('/customer');
+                        }}
+                        style={{ marginTop: 10 }}
+                      />
+                    ) : null}
                     <View
                       style={{
                         flexDirection: 'row',

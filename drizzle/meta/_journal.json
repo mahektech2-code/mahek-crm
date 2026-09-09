@@ -694,6 +694,13 @@
       "when": 1787502340000,
       "tag": "0098_lead_hold_and_visit_cap",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1787502400000,
+      "tag": "0099_lead_validation_call",
+      "breakpoints": true
     }
   ]
 }

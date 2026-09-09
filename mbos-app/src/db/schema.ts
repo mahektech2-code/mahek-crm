@@ -1050,6 +1050,54 @@ export const MIGRATIONS: string[][] = [
      */
     `ALTER TABLE leads ADD COLUMN holdReason TEXT;`,
   ],
+
+  /* ---- v16 · the validation call, and the script it is made from -------- */
+  [
+    /*
+     * §E. Its own table rather than columns on `leads`, for the reason the
+     * server gives at length: what the salesman was told and what the office
+     * was told on the phone are two readings of one shop, and the difference
+     * between them is the only thing this call produces that nothing else
+     * could. Writing the second over the first destroys exactly that.
+     */
+    `CREATE TABLE IF NOT EXISTS lead_validations (
+      id TEXT PRIMARY KEY,
+      customerId TEXT NOT NULL,
+      calledAt INTEGER NOT NULL,
+      reached INTEGER NOT NULL DEFAULT 1,
+      productFeedback TEXT,
+      qualityFeedback TEXT,
+      dispatchFeedback TEXT,
+      salesmanFeedback TEXT,
+      confirmedRequirement TEXT,
+      confirmedMonthlyVolumeLitres INTEGER,
+      confirmedCompetitor TEXT,
+      confirmedPotentialPaise INTEGER,
+      verdict TEXT NOT NULL DEFAULT 'pending',
+      verdictReason TEXT,
+      notes TEXT,
+      taskId TEXT,
+      clientCreatedAt INTEGER NOT NULL,
+      serverCreatedAt INTEGER,
+      deviceId TEXT NOT NULL,
+      syncState TEXT NOT NULL DEFAULT 'local',
+      syncMessage TEXT
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_lead_val_cust ON lead_validations(customerId, calledAt DESC);`,
+    /*
+     * WHY a task exists, which the handset had no way to know.
+     *
+     * The server has sent `sourceType`/`sourceId` on every task since the
+     * rejected-order rule was written, and `upsertTasks` — a hand-rolled
+     * handler that types its columns out — never read them, so they were
+     * dropped in silence. Harmless while every task was just a line of text;
+     * not harmless now, because a validation call and a requirement visit are
+     * tasks that have to OPEN something, and a task list with no idea what kind
+     * of work a row is can only ever show its title.
+     */
+    `ALTER TABLE tasks ADD COLUMN sourceType TEXT;`,
+    `ALTER TABLE tasks ADD COLUMN sourceId TEXT;`,
+  ],
 ];
 
 /**

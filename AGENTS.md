@@ -143,6 +143,49 @@ holding the whole app and nobody who was deliberately narrowed.
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
 
+**QUALIFYING A LEAD IS WHAT STARTS THE WORKFLOW.** `qualifyLead` fills the Lead
+Manager seat from the ORG CHART — the same `managerNameByEmployeeName` that
+`recomputeSalesManagers` reads nightly, asked about one person, so the seat a
+qualification assigns and the sales manager the nightly pass writes cannot
+disagree about who reports to whom. It notifies, and it raises a validation call
+for the NEXT WORKING DAY, holidays included, from the same working-week
+configuration the forecast reads. It is IDEMPOTENT — the seat itself is the
+guard — because a sync endpoint retries and a second pass must not put a second
+call on somebody's list. It does NOT set `lead_manager_decided_at`: nobody
+decided this, the org chart did, and stamping it would freeze the seat against
+every future org change as a side effect of a lead being qualified.
+
+**It fires from BOTH doors.** A lead qualified from the lead screen and one
+qualified by answering a visit's own decision start the same workflow. A
+workflow that fires on one of two paths is a workflow salesmen learn not to
+rely on.
+
+**THE VALIDATION CALL'S ANSWERS ARE NOT WRITTEN OVER THE LEAD'S.**
+`lead_requirement` is what the salesman was told standing in the shop;
+`mbos_lead_validations.confirmed_requirement` is what the office was told on the
+phone. The two disagreeing is the single most useful thing this call produces —
+it is how anybody finds out the report and the shop did not match — and
+collapsing them would overwrite the first reading with the second and destroy
+exactly that. It is a TABLE and not columns for the same reason: a lead is
+routinely validated twice, and the first call is usually the one that matters.
+
+**The requirement VISIT does overwrite them, and that is not a contradiction.**
+It is the same person asking the same question better informed, not a second
+party's account of it.
+
+**The script is CONFIGURATION.** `mbos.leads.validationScript` holds the
+headings and lines the caller reads out, because it is content: it will be
+argued about, improved after a bad call and eventually translated, and none of
+that should need a deploy — or, on the handset, an APK nobody can recall.
+
+**NO COMMERCIAL COMMITMENT BEFORE NEGOTIATION.** §G says the requirement visit
+carries no price, service or quality promise, and an order is the most
+commercial commitment there is — so `handleOrder` refuses one against a lead
+below `negotiation`. This one IS a refusal, unlike the visit cap, and the
+difference is what is lost: refusing a visit loses a record of work that really
+happened, while refusing an order loses nothing, because the order was never
+agreed with anybody who could agree it. The message names the way forward.
+
 **A SUSPECT CANNOT BE VISITED FOR EVER, and the cap ASKS rather than refuses.**
 §B of the brief wants a maximum of three visits "enforced", and enforced as a
 block is the one shape this app must not use: `engines/geo.ts` states the

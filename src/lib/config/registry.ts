@@ -2257,6 +2257,51 @@ export const SETTINGS = [
     max: 10,
   },
 
+  {
+    key: "mbos.leads.validationScript",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Validation call script",
+    description:
+      "What the caller reads out and asks on the Prospect validation call. Configuration rather than code because it is CONTENT — the wording will be argued about, improved after a bad call, and translated, and none of that should need a deploy. Each section is a heading and the lines under it; the caller sees them in this order, on the handset and in the console.",
+    default: {
+      sections: [
+        {
+          heading: "Introduce yourself — 30 seconds",
+          lines: [
+            "Good morning, my name is ___ from Mahek Marketing India.",
+            "I look after this area with ___, who came to see you on ___.",
+            "Is this a good moment, or shall I call back?",
+          ],
+        },
+        {
+          heading: "Introduce the company — 30 seconds",
+          lines: [
+            "We make thinners and coatings and supply shops and factories across the region.",
+            "We deliver ourselves, and we can hold stock for a regular customer.",
+          ],
+        },
+        {
+          heading: "Check the visit",
+          lines: [
+            "Did our man explain the products clearly?",
+            "What did you make of the quality?",
+            "Any thoughts on how we dispatch and how quickly?",
+            "And was he alright with you — anything we should know?",
+          ],
+        },
+        {
+          heading: "Confirm what they need",
+          lines: [
+            "What is it you are actually looking for?",
+            "Roughly how much do you get through in a month?",
+            "Who are you buying from at the moment?",
+          ],
+        },
+      ],
+    },
+  },
+
   /* --------------------------------------------------------------- tasks */
   {
     key: "mbos.tasks.escalationHours",
@@ -2973,6 +3018,9 @@ export type Config = {
   "mbos.leads.escalateAfterDays": number;
   "mbos.leads.visitsBeforeDecision": number;
   "mbos.leads.maxSuspectVisits": number;
+  "mbos.leads.validationScript": {
+    sections: { heading: string; lines: string[] }[];
+  };
 
   "mbos.tasks.escalationHours": number;
   "mbos.tasks.requireCompletionNote": boolean;
