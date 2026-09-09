@@ -48,6 +48,16 @@ export type SaveVisitArgs = {
   linkedPaymentId?: string | null;
   linkedComplaintId?: string | null;
   linkedSampleId?: string | null;
+  /*
+   * §B — the Suspect decision, answered on the visit that demanded it.
+   *
+   * It rides on the visit rather than on a separate lead update because the
+   * answer and the visit that prompted it are one act: sending them apart is
+   * how a visit lands with the decision lost to a failed second request. The
+   * server writes both in one transaction for the same reason.
+   */
+  suspectDecision?: string | null;
+  suspectReason?: string | null;
 };
 
 export async function saveVisit(args: SaveVisitArgs): Promise<string> {
@@ -132,6 +142,27 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
     });
 
     await run('UPDATE customers SET lastVisitDate = ? WHERE id = ?', [isoDate(new Date()), args.customerId]);
+
+    /* The decision, mirrored locally so the lead card is right the moment the
+       visit closes rather than after the next pull. `visitsHere` counts the
+       unsynced visit itself, so the counter moves on its own. */
+    if (args.suspectDecision) {
+      const stays = args.suspectDecision === 'still_suspect';
+      const { localStage } = await import('../lib/wire');
+      if (!stays) {
+        await run('UPDATE leads SET stage = ? WHERE id = ?', [
+          localStage(args.suspectDecision),
+          args.customerId,
+        ]);
+      }
+      if (args.suspectReason?.trim()) {
+        const column = args.suspectDecision === 'lost' ? 'lostReason' : 'holdReason';
+        await run(`UPDATE leads SET ${column} = ? WHERE id = ?`, [
+          args.suspectReason.trim(),
+          args.customerId,
+        ]);
+      }
+    }
   });
 
   await enqueue({
@@ -168,6 +199,8 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
       wasPlanned: args.wasPlanned,
       deviationReason: args.deviationReason ?? undefined,
       nextFollowUpDate: args.nextFollowUpDate ?? undefined,
+      suspectDecision: args.suspectDecision ?? undefined,
+      suspectReason: args.suspectReason ?? undefined,
       clientCreatedAt: base.clientCreatedAt,
       deviceId: base.deviceId,
     },

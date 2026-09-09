@@ -832,6 +832,10 @@ export type LeadRow = {
    */
   leadManagerId: string | null;
   leadManagerName: string | null;
+  /** Why a held or stuck lead is not moving. Null while it is progressing. */
+  holdReason: string | null;
+  /** How many times anybody has stood in this shop. Counted, never cached. */
+  visitCount: number;
   nextFollowUpDate: string | null;
   lastActivityDate: string | null;
   /** Days since anything happened. What "stale" is measured from. */
@@ -900,6 +904,12 @@ const LEAD_ROW_SELECT = sql`
             * and samples once the lead is qualified. */
            c.lead_manager_id as "leadManagerId",
            lm.name as "leadManagerName",
+           c.lead_hold_reason as "holdReason",
+           /* The same count the handset is sent, from the same expression, so
+            * the office and the salesman cannot disagree about how many times
+            * somebody has been to a shop. */
+           (select count(*)::int from mbos_visits v
+             where v.customer_id = c.id) as "visitCount",
            c.lead_next_follow_up_date::text as "nextFollowUpDate",
            c.lead_last_activity_date::text as "lastActivityDate",
            c.lead_notes as notes,

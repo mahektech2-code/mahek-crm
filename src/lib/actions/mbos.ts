@@ -739,6 +739,8 @@ async function dispatchItem(
 type ScopedCustomer = {
   id: string;
   name: string;
+  /** Null on a real customer. Non-null means this record is still a lead. */
+  leadStage: string | null;
   creditBlocked: boolean;
   creditBlockReason: string | null;
   creditLimitPaise: number | null;
@@ -770,6 +772,7 @@ async function scopedCustomer(
     .select({
       id: customers.id,
       name: customers.name,
+      leadStage: customers.leadStage,
       creditBlocked: customers.creditBlocked,
       creditBlockReason: customers.creditBlockReason,
       creditLimitPaise: customers.creditLimitPaise,
@@ -846,6 +849,20 @@ const visitSchema = z.object({
   wasPlanned: z.boolean().nullish(),
   deviationReason: z.string().max(500).nullish(),
   nextFollowUpDate: z.string().nullish(),
+  /*
+   * THE SUSPECT DECISION, answered on the visit that demanded it.
+   *
+   * `suspectDecision` is what the salesman chose — moving the lead on, or
+   * keeping it a Suspect — and `suspectReason` is why, which is mandatory for
+   * the second. They ride on the visit rather than on a separate lead update
+   * because the answer and the visit that prompted it are one act: sending
+   * them apart is how a visit lands with the decision lost to a failed second
+   * request.
+   */
+  suspectDecision: z
+    .enum(["contacted", "qualified", "on_hold", "lost", "still_suspect"])
+    .nullish(),
+  suspectReason: z.string().max(500).nullish(),
 });
 
 async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
@@ -858,6 +875,64 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   const customer = found.customer;
 
   const config = await getConfig();
+
+  /*
+   * A SUSPECT CANNOT BE VISITED FOR EVER, and the cap is a QUESTION rather
+   * than a refusal.
+   *
+   * §B asks for a maximum of three visits "enforced". Enforced as a block is
+   * the one shape this app must not use: `engines/geo.ts` states the principle
+   * the whole field product rests on — a reading is evidence, never a gate —
+   * because a salesman whose visit is refused stops recording visits, and the
+   * company loses the GPS, the competitor note and the reason in order to stop
+   * a number reaching four. The business outcome §B actually wants is that
+   * nobody keeps visiting a shop nobody has decided about, and that is bought
+   * by demanding an ANSWER, not by refusing the work.
+   *
+   * So: the visit is always saved. What is required at the cap is that the
+   * salesman says which way it goes — and if the answer is "still a Suspect",
+   * that he says why. Beyond the cap the lead escalates to the manager, which
+   * is where an undecidable lead belongs anyway.
+   *
+   * Only leads, and only leads still at the top of the ladder. A qualified
+   * prospect being visited a fourth time is a negotiation, not a stall.
+   */
+  const suspectStages = ["new", "contacted"];
+  /* The working day in Asia/Kolkata, for the lead's own staleness clock — a
+     visit is activity, so it has to move that date whichever way the decision
+     went. Read once here rather than inside the transaction. */
+  const day = await today();
+  if (customer.leadStage && suspectStages.includes(customer.leadStage)) {
+    const [seen] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(mbosVisits)
+      .where(eq(mbosVisits.customerId, customer.id));
+    /* The visit being saved is not in the table yet, so it is the next one. */
+    const thisVisit = Number(seen?.n ?? 0) + 1;
+    const decideAt = config["mbos.leads.maxSuspectVisits"];
+
+    if (thisVisit >= decideAt && !p.suspectDecision) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          `This is visit ${thisVisit} to ${customer.name} and they are still a Suspect. Say which way it goes before closing the visit — a prospect, on hold, or lost. The visit itself is recorded either way.`,
+        ),
+      };
+    }
+    if (
+      p.suspectDecision === "still_suspect" &&
+      !p.suspectReason?.trim()
+    ) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          `Keeping ${customer.name} as a Suspect after ${thisVisit} visits needs a reason. Somebody will ask why we are still going.`,
+        ),
+      };
+    }
+  }
 
   /* Verification is recorded, never enforced. A check-in 400 metres from the
    * shop's pin is not proof of anything — the pin may be wrong, the fix may be
@@ -975,7 +1050,64 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
          where id = ${p.journeyPlanStopId}
       `);
     }
+
+    /*
+     * THE DECISION IS PART OF THE VISIT, so it is written in the visit's own
+     * transaction.
+     *
+     * A visit that saved and a decision that failed a moment later would leave
+     * the lead exactly where it was and the salesman believing he had answered
+     * — and the next visit would demand the same answer again. Half-saved
+     * calls are how telecaller data goes wrong; this is the same rule one app
+     * over.
+     */
+    if (p.suspectDecision) {
+      const stays = p.suspectDecision === "still_suspect";
+      await tx
+        .update(customers)
+        .set({
+          /* Staying a Suspect does not move the stage — it records why not.
+             Everything else is a real move along the ladder. */
+          ...(stays ? {} : { leadStage: p.suspectDecision as "contacted" }),
+          ...(p.suspectReason?.trim()
+            ? p.suspectDecision === "lost"
+              ? { leadLostReason: p.suspectReason.trim() }
+              : { leadHoldReason: p.suspectReason.trim() }
+            : {}),
+          leadLastActivityDate: day,
+          updatedAt: new Date(),
+        })
+        .where(eq(customers.id, customer.id));
+    }
   });
+
+  /*
+   * PAST THE CAP, THE MANAGER IS TOLD.
+   *
+   * This is the half of §B that a refusal was standing in for. A lead being
+   * visited a fourth time while still a Suspect is not a salesman to be
+   * blocked, it is a judgement somebody senior should look at — the shop may
+   * be worth the persistence, or the salesman may be walking a comfortable
+   * beat. Either way it is a conversation, and a conversation needs somebody
+   * to have been told.
+   *
+   * Outside the transaction and unable to fail the visit: a notification is a
+   * courtesy on top of a completed write, never a reason to lose one.
+   */
+  if (customer.leadStage && suspectStages.includes(customer.leadStage)) {
+    const decideAt = config["mbos.leads.maxSuspectVisits"];
+    const [after] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(mbosVisits)
+      .where(eq(mbosVisits.customerId, customer.id));
+    if (Number(after?.n ?? 0) > decideAt) {
+      await notifyManagers(
+        principal.user.id,
+        "A Suspect is still being visited",
+        `${principal.user.name} has now visited ${customer.name} ${after.n} times and it is still a Suspect. Worth a look — either the shop is worth the persistence or the beat is.`,
+      ).catch(() => {});
+    }
+  }
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }
@@ -1799,7 +1931,9 @@ const leadSchema = z.object({
     .enum(["manual", "website", "referral", "exhibition", "cold_call", "whatsapp", "campaign"])
     .nullish(),
   estimatedPotentialPaise: z.number().int().nonnegative().nullish(),
-  stage: z.enum(["new", "contacted", "qualified", "negotiation", "won", "lost"]).nullish(),
+  stage: z
+    .enum(["new", "contacted", "qualified", "negotiation", "on_hold", "won", "lost"])
+    .nullish(),
   nextFollowUpDate: z.string().nullish(),
   notes: z.string().max(4000).nullish(),
   gpsLat: z.number().nullish(),
@@ -1825,6 +1959,9 @@ const leadSchema = z.object({
      credit days, strengths — is `mbos_competitor_records`, asked on a visit. */
   competitorName: z.string().max(200).nullish(),
   lostReason: z.string().max(500).nullish(),
+  /* Why a held or stuck lead is not moving. Demanded for `on_hold`, and for a
+     lead the salesman is keeping as a Suspect past the decision visit. */
+  holdReason: z.string().max(500).nullish(),
   /** Out of the way, not gone — a filter on every read, never a delete. */
   archived: z.boolean().nullish(),
   /** The shop this lead became, so the two records stay joined up. */
@@ -1847,7 +1984,12 @@ async function handleLeadUpdate(
   const p = parsed.data;
 
   const [existing] = await db
-    .select({ id: customers.id, name: customers.name, gstin: customers.gstin })
+    .select({
+      id: customers.id,
+      name: customers.name,
+      gstin: customers.gstin,
+      leadHoldReason: customers.leadHoldReason,
+    })
     .from(customers)
     .where(eq(customers.id, item.entityId))
     .limit(1);
@@ -1866,6 +2008,26 @@ async function handleLeadUpdate(
       value: reject(
         "validation",
         `${existing.name} was marked lost with no reason. A loss nobody explained teaches nothing — reopen it and say what happened.`,
+      ),
+    };
+  }
+
+  /*
+   * ON HOLD IS AN ANSWER, so it has to say something.
+   *
+   * Held and lost are different and that is the whole reason the status exists
+   * — but they are alike in this: both are somebody deciding a lead is not
+   * progressing, and a decision with no reason on it teaches the next person
+   * nothing. Unlike lost, this one is reversible, which is exactly why the
+   * reason matters: "back after Diwali" is what tells somebody when to look
+   * again.
+   */
+  if (p.stage === "on_hold" && !(p.holdReason ?? existing.leadHoldReason)?.trim()) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        `${existing.name} was put on hold with no reason. Say what you are waiting for — that is what tells anybody when to pick it up again.`,
       ),
     };
   }
@@ -1926,6 +2088,15 @@ async function handleLeadUpdate(
     changed.leadMonthlyVolumeLitres = p.monthlyVolumeLitres;
   }
   if (p.decisionMaker != null) changed.leadDecisionMaker = p.decisionMaker;
+  if (p.holdReason != null) changed.leadHoldReason = p.holdReason;
+  /*
+   * A lead that starts moving again is no longer explaining itself. Clearing
+   * the reason on the way out of a hold is what stops "waiting for their
+   * budget quarter" sitting on a lead that has since ordered.
+   */
+  if (p.stage != null && p.stage !== "on_hold" && p.stage !== "new") {
+    changed.leadHoldReason = null;
+  }
   if (p.gpsLat != null && p.gpsLng != null) {
     changed.gpsLat = p.gpsLat;
     changed.gpsLng = p.gpsLng;

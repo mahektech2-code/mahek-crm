@@ -949,6 +949,15 @@ async function openLeads(userId: string, since?: string | null) {
            -- handset holds no user table.
            c.lead_manager_id as "leadManagerId",
            lm.name as "leadManagerName",
+           c.lead_hold_reason as "holdReason",
+           -- How many times anybody has stood in this shop.
+           --
+           -- Counted rather than cached: a cached count needs a recompute
+           -- path, an invalidation on every visit write, and a way to be
+           -- wrong. This is count(*) on mbos_visits_customer_idx for the
+           -- handful of open leads one salesman owns.
+           (select count(*)::int from mbos_visits v
+             where v.customer_id = c.id) as "visitCount",
            case when c.lead_converted_at is not null then c.id end as "convertedCustomerId",
            c.lead_last_activity_date::text as "lastActivityDate",
            c.updated_at as "updatedAt"
@@ -957,6 +966,10 @@ async function openLeads(userId: string, since?: string | null) {
      where (c.owner_id = ${userId} or c.lead_manager_id = ${userId})
        and c.lead_stage is not null
        and c.lead_archived = false
+       -- on_hold is deliberately NOT excluded. A held lead is a live
+       -- prospect with a reason it is not moving, and taking it off the
+       -- handset would make "on hold" mean "gone" — which is exactly the
+       -- conflation the status exists to end.
        and c.lead_stage not in ('won', 'lost')
        ${since ? sql`and c.updated_at > ${since}` : sql``}
      order by c.lead_next_follow_up_date asc nulls last

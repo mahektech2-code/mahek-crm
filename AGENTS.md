@@ -143,6 +143,49 @@ holding the whole app and nobody who was deliberately narrowed.
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
 
+**A SUSPECT CANNOT BE VISITED FOR EVER, and the cap ASKS rather than refuses.**
+§B of the brief wants a maximum of three visits "enforced", and enforced as a
+block is the one shape this app must not use: `engines/geo.ts` states the
+principle the whole field product rests on — a reading is evidence, never a
+gate — because a salesman whose visit is refused stops recording visits, and the
+company loses the GPS, the competitor note and the reason in order to stop a
+number reaching four. What §B actually wants is that nobody keeps visiting a
+shop nobody has decided about, and that is bought by demanding an ANSWER.
+
+So there are three states and none of them blocks the visit being made:
+`mbos.leads.visitsBeforeDecision` starts the warning, `mbos.leads.maxSuspectVisits`
+makes the Prospect-or-not answer mandatory before the visit can be CLOSED, and
+past it the manager is notified instead. Keeping it a Suspect asks why. Only
+`new` and `contacted` are capped — a qualified prospect visited a fourth time is
+a negotiation, not a stall, and must never be asked to justify itself.
+
+**The rule lives in two runtimes and shares its NUMBERS, not a module.**
+`visitCapState` is pure and on the handset; `handleVisit` checks the same thing
+server-side, because a sync endpoint accepts payloads from a device somebody
+owns and a form is not a rule. They cannot import from each other — one is an
+Expo package — so what is shared is the two configured thresholds, which reach
+the handset on every pull with the rest of the `mbos.*` keys. The comparison is
+one line at each end deliberately: a rule small enough to be obvious cannot
+drift the way a re-derived one does.
+
+**The decision is written in the VISIT's transaction.** A visit that saved and
+a decision that failed a moment later would leave the lead where it was with the
+salesman believing he had answered — and the next visit would demand the same
+answer again. The count behind it is `count(*)` over `mbos_visits`, not a cached
+column: a cache needs a recompute path, an invalidation on every visit write, and
+a way to be wrong. On the handset it is the office's count plus whatever is still
+in the outbox, because a salesman who made visit two with no signal must still
+be asked on visit three.
+
+**ON HOLD IS NOT LOST, and both ask for a reason.** `on_hold` is a live prospect
+that is not moving — a plant shutdown, a budget quarter, a decision maker
+abroad — and folding it into `lost` made every stalled lead look dead, which is
+how a real prospect gets archived by the staleness sweep. It stays ON the
+handset for the same reason. Lost asks for a reason because nobody will look
+again; this one asks because somebody will, and "back after Diwali" is what
+tells them when. `lead_hold_reason` is one column for both that question and
+"why is this still a Suspect", because they are the same question.
+
 **A LEAD'S CONSUMPTION IS IN LITRES, and it is the one place cans do not win.**
 Every other quantity in MahekOne is cans, because cans are what the customer
 says when ordering and litres are derived from the SKU's own packing. There is

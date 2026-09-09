@@ -6,6 +6,8 @@ import { Icon } from '../src/components/ui/Icon';
 import { Card, Choice } from '../src/components/ui/primitives';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { AppFrame } from '../src/components/shell/AppFrame';
+import { suspectFor, visitCapThresholds } from '../src/data/leads';
+import { visitCapState, type VisitCapThresholds } from '../src/engines/leads';
 import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { isoDate, pretty } from '../src/lib/format';
@@ -64,6 +66,38 @@ export default function Visit() {
   const [fix, setFix] = React.useState<Fix | null>(null);
   const [fixReason, setFixReason] = React.useState<string | null>(null);
   const [voiceNoteId, setVoiceNoteId] = React.useState<string | null>(null);
+  /*
+   * §B — is this shop still a Suspect, and is a decision due?
+   *
+   * Null for anything that is not a lead, which is most of the book: a real
+   * customer is never asked to justify a visit. Loaded rather than derived,
+   * because the count includes visits the office knows about and this phone
+   * does not.
+   */
+  const [suspect, setSuspect] = React.useState<{ stage: string; visits: number } | null>(null);
+  const [capCfg, setCapCfg] = React.useState<VisitCapThresholds | null>(null);
+  const [decision, setDecision] = React.useState<string | null>(null);
+  const [decisionWhy, setDecisionWhy] = React.useState('');
+  const [decisionErr, setDecisionErr] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!c?.id) return;
+    let live = true;
+    void Promise.all([suspectFor(c.id), visitCapThresholds()]).then(([sus, cfg]) => {
+      if (!live) return;
+      setSuspect(sus);
+      setCapCfg(cfg);
+    });
+    return () => {
+      live = false;
+    };
+  }, [c?.id]);
+
+  /* `ok` | `warn` | `decide`, and nothing here ever blocks the visit being
+     MADE — see the note above `visitCapState`. What `decide` blocks is closing
+     it without an answer, which is a different thing and the thing §B wants. */
+  const capState =
+    suspect && capCfg ? visitCapState(suspect.stage, suspect.visits, capCfg) : 'ok';
   const [linked, setLinked] = React.useState<{ complaintId?: string; sampleId?: string }>({});
   const [products, setProducts] = React.useState<Product[]>([]);
   const [stopId, setStopId] = React.useState<string | null>(null);
@@ -224,6 +258,23 @@ export default function Visit() {
 
   async function saveAndGo(spent: string, unverifiedReason: string | null) {
     if (!c || saving) return;
+
+    /*
+     * The one thing that stops a save here, and it stops it to ASK rather than
+     * to refuse: past the cap the salesman says which way the lead goes before
+     * the visit closes. The visit is still recorded — this is a field on the
+     * same form, not a rejection — and the server checks the same rule against
+     * the same two configured numbers.
+     */
+    if (capState === 'decide' && !decision) {
+      setDecisionErr('Say which way this one goes before you close the visit.');
+      return;
+    }
+    if (decision === 'still_suspect' && !decisionWhy.trim()) {
+      setDecisionErr('Say why we are still going — somebody will ask.');
+      return;
+    }
+
     setSaving(true);
     const checkOut: Fix | null = fix ? { ...fix, at: now } : null;
     try {
@@ -250,6 +301,8 @@ export default function Visit() {
         unverifiedReason,
         linkedComplaintId: linked.complaintId ?? null,
         linkedSampleId: linked.sampleId ?? null,
+        suspectDecision: decision,
+        suspectReason: decisionWhy.trim() || null,
       });
       set({ visitSpent: spent });
       router.replace('/saved');
@@ -396,6 +449,89 @@ export default function Visit() {
           <Text style={[type.caption, { marginTop: 10 }]}>Compressed and queued — they upload when you have signal.</Text>
         ) : null}
       </Card>
+
+      {/* ---- §B · is this one going anywhere? ----
+          Drawn only for a Suspect, and only once the count is worth mentioning.
+          It is a QUESTION on the visit form, never a refusal of the visit: a
+          salesman whose visit is blocked stops recording visits, and the
+          company loses the GPS, the competitor note and the reason in order to
+          stop a number reaching four. */}
+      {capState !== 'ok' && suspect && capCfg ? (
+        <Card
+          style={{
+            marginTop: 12,
+            borderLeftWidth: 3,
+            borderLeftColor: capState === 'decide' ? C.warnInk : C.hairline,
+          }}>
+          <Text style={type.label}>
+            {'Visit ' + suspect.visits + ' / ' + capCfg.maxSuspectVisits + ' · still a Suspect'}
+          </Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: C.body }}>
+            {capState === 'decide'
+              ? 'Say which way this one goes before you close the visit. The visit is recorded either way.'
+              : 'Next time round you will be asked to decide. Worth thinking about now.'}
+          </Text>
+
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+            {[
+              { v: 'qualified', label: 'A prospect' },
+              { v: 'contacted', label: 'Keep working it' },
+              { v: 'on_hold', label: 'On hold' },
+              { v: 'still_suspect', label: 'Still a Suspect' },
+              { v: 'lost', label: 'Lost' },
+            ].map((o) => (
+              <Choice
+                key={o.v}
+                label={o.label}
+                selected={decision === o.v}
+                onPress={() => {
+                  setDecision(decision === o.v ? null : o.v);
+                  setDecisionErr(null);
+                }}
+                style={{ paddingHorizontal: 14 }}
+              />
+            ))}
+          </View>
+
+          {/* On hold and staying a Suspect both ask why, and for the same
+              reason: somebody is going to look at this lead again and the
+              sentence is what tells them when, or whether. Lost asks too —
+              that one because nobody will. */}
+          {decision === 'still_suspect' || decision === 'on_hold' || decision === 'lost' ? (
+            <TextInput
+              value={decisionWhy}
+              onChangeText={(v) => {
+                setDecisionWhy(v);
+                setDecisionErr(null);
+              }}
+              placeholder={
+                decision === 'lost'
+                  ? 'Why we are not going back'
+                  : 'What we are waiting for'
+              }
+              placeholderTextColor={C.faint}
+              multiline
+              style={{
+                marginTop: 12,
+                minHeight: 64,
+                borderWidth: 1,
+                borderColor: C.border,
+                borderRadius: radius.sm,
+                padding: 12,
+                fontSize: 15,
+                color: C.ink,
+                textAlignVertical: 'top',
+              }}
+            />
+          ) : null}
+
+          {decisionErr ? (
+            <Text style={[{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.danger }, weight(500)]}>
+              {decisionErr}
+            </Text>
+          ) : null}
+        </Card>
+      ) : null}
 
       {/* ---- what was said ---- */}
       <Card style={{ marginTop: 12 }}>

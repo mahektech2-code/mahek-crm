@@ -7,11 +7,11 @@
  * pinned by tests that need neither SQLite nor a handset.
  */
 
-export const LEAD_STAGES = ['New', 'Contacted', 'Qualified', 'Negotiation', 'Converted', 'Lost'] as const;
+export const LEAD_STAGES = ['New', 'Contacted', 'Qualified', 'Negotiation', 'On hold', 'Converted', 'Lost'] as const;
 export type LeadStage = (typeof LEAD_STAGES)[number];
 
 /** Archived is a FILTER. A lead is never deleted, only kept out of the way. */
-export const LEAD_FILTERS = ['All', 'New', 'Contacted', 'Qualified', 'Negotiation', 'Lost', 'Archived'] as const;
+export const LEAD_FILTERS = ['All', 'New', 'Contacted', 'Qualified', 'Negotiation', 'On hold', 'Lost', 'Archived'] as const;
 export type LeadFilter = (typeof LEAD_FILTERS)[number];
 
 /**
@@ -94,8 +94,79 @@ export function matchDuplicate(
  * the whole value of the record after that.
  */
 export function stageRefusal(stage: string, reason: string | null | undefined): string | null {
-  if (stage !== 'Lost') return null;
-  return String(reason ?? '').trim() ? null : 'Say why it was lost — nobody rings this shop again after this.';
+  const said = String(reason ?? '').trim();
+  if (stage === 'Lost') {
+    return said ? null : 'Say why it was lost — nobody rings this shop again after this.';
+  }
+  /* On hold asks too, and for the opposite reason to Lost. Lost wants the
+     reason because nobody will ever look again; this one wants it because
+     somebody will — "back after Diwali" is what tells them when. */
+  if (stage === 'On hold') {
+    return said ? null : 'Say what you are waiting for — that is what tells anybody when to pick it up again.';
+  }
+  return null;
+}
+
+/* ------------------------------------------------------- the visit cap */
+
+/**
+ * How many visits a Suspect has had, and what the handset should do about it.
+ *
+ * §B asks for a maximum "enforced". Enforced as a REFUSAL is the one shape
+ * this app must not use — `engines/geo.ts` states the principle the whole
+ * field product rests on, that a reading is evidence and never a gate, because
+ * a salesman whose visit is refused stops recording visits and the company
+ * loses the GPS, the competitor note and the reason to stop a number reaching
+ * four. What §B actually wants is that nobody keeps visiting a shop nobody has
+ * decided about, and that is bought by demanding an ANSWER.
+ *
+ * So there are three states and none of them blocks anything:
+ *   `ok`      nothing to say.
+ *   `warn`    the next visit will need a decision. Said early, so the answer
+ *             is not sprung on somebody standing in a shop.
+ *   `decide`  this visit needs one before it can be closed.
+ *
+ * The thresholds are configuration and arrive from the office — the server
+ * enforces `decide` against the same two numbers, which is what keeps the two
+ * runtimes agreeing without a shared module they cannot have.
+ */
+export type VisitCapState = 'ok' | 'warn' | 'decide';
+
+export type VisitCapThresholds = { visitsBeforeDecision: number; maxSuspectVisits: number };
+
+/** Only these two are a Suspect. A qualified prospect being visited again is a
+ *  negotiation, not a stall, and must never be asked to justify itself. */
+const SUSPECT_STAGES = ['New', 'Contacted'];
+
+export function visitCapState(
+  stage: string,
+  /** Visits already recorded. The one being made is this plus one. */
+  visitsSoFar: number,
+  cfg: VisitCapThresholds,
+): VisitCapState {
+  if (!SUSPECT_STAGES.includes(stage)) return 'ok';
+  const thisVisit = visitsSoFar + 1;
+  if (thisVisit >= cfg.maxSuspectVisits) return 'decide';
+  if (thisVisit >= cfg.visitsBeforeDecision) return 'warn';
+  return 'ok';
+}
+
+/**
+ * "Visit 2 / 3" — what the lead card prints.
+ *
+ * Null where there is nothing to say, so a qualified prospect's card carries no
+ * counter at all rather than one that has stopped meaning anything.
+ */
+export function visitCapLabel(
+  stage: string,
+  visitsSoFar: number,
+  cfg: VisitCapThresholds,
+): string | null {
+  if (!SUSPECT_STAGES.includes(stage)) return null;
+  /* Past the cap it keeps counting rather than sticking at "3 / 3": a fourth
+     visit happened, the manager has been told, and a counter that lies about
+     it is worse than one that reads oddly. */
+  return 'Visit ' + visitsSoFar + ' / ' + cfg.maxSuspectVisits;
 }
 
 /** A follow-up in the past is a follow-up nobody will be reminded about. */

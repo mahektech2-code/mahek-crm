@@ -751,6 +751,16 @@ export const mbosLeadStageEnum = pgEnum("mbos_lead_stage", [
   "contacted",
   "qualified",
   "negotiation",
+  /**
+   * A live prospect that is not moving, and why.
+   *
+   * Genuinely different from `lost`, which is the end: nobody rings a lost
+   * lead again and its reason is the only thing the record is still worth.
+   * This one is a plant shutdown, a budget quarter, a decision maker abroad —
+   * and folding the two into one word made every stalled lead look dead, which
+   * is how a real prospect gets archived by the staleness sweep.
+   */
+  "on_hold",
   "won",
   "lost",
 ]);
@@ -917,6 +927,19 @@ export const customers = pgTable(
      * people, and negotiating with the wrong one is the visit wasted.
      */
     leadDecisionMaker: text("lead_decision_maker"),
+    /**
+     * WHY IT IS NOT MOVING — one column for two questions that are the same
+     * question.
+     *
+     * "It is staying a Suspect after three visits, why" and "it is On Hold,
+     * why" are both somebody explaining a lead that has stopped progressing,
+     * and two columns would give the screen two fields to read and the
+     * salesman two places to type the same sentence.
+     *
+     * Not `leadLostReason`, which is a different question entirely: that one
+     * is why we stopped, this is why we have not started.
+     */
+    leadHoldReason: text("lead_hold_reason"),
 
     /*
      * A shop we deliver to, served through a distributor.

@@ -8,6 +8,7 @@ import {
   wireOutcome,
   wirePriority,
   wireStage,
+  localStage,
 } from '../lib/wire';
 
 /**
@@ -105,4 +106,18 @@ test('an unrecognised complaint category becomes `other`, never a refusal', () =
      refused at the door is a customer nobody rings back — and this is the one
      record in the app that has to move fast. */
   assert.equal(wireComplaintCategory('Delivered to the wrong shop'), 'other');
+});
+
+test('On hold survives the round trip, in both spellings', () => {
+  /* The screen says "On hold" and the enum says `on_hold`. The value reaches
+     `wireStage` from a stage constant AND from the decision the visit screen
+     picked, which speaks the enum — so both have to be accepted or half the
+     paths silently send `undefined` and the lead stays where it was. */
+  assert.equal(wireStage('On hold'), 'on_hold');
+  assert.equal(wireStage('on_hold'), 'on_hold');
+  assert.equal(localStage('on_hold'), 'On hold');
+  /* And it must not have disturbed the four that were already right. */
+  assert.equal(wireStage('Converted'), 'won');
+  assert.equal(localStage('won'), 'Converted');
+  assert.equal(localStage('lost'), 'Lost');
 });

@@ -2234,6 +2234,28 @@ export const SETTINGS = [
     min: 1,
     max: 90,
   },
+  {
+    key: "mbos.leads.visitsBeforeDecision",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Warn about a Suspect after",
+    description:
+      "Visits to a lead that is still a Suspect before the handset starts asking the salesman to decide. A warning, never a refusal — he is told the next visit needs an answer, and the visit itself is never blocked.",
+    default: 2,
+    min: 1,
+    max: 10,
+  },
+  {
+    key: "mbos.leads.maxSuspectVisits",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Suspect decision required at",
+    description:
+      "The visit on which a Prospect-or-not answer becomes mandatory before the visit can be closed. It does NOT stop the visit being made or recorded — a cap that refuses the save is a cap that produces unlogged visits, and the company loses the GPS, the competitor note and the reason to prevent a number reaching four. Beyond it the lead is escalated to the manager instead.",
+    default: 3,
+    min: 1,
+    max: 10,
+  },
 
   /* --------------------------------------------------------------- tasks */
   {
@@ -2658,6 +2680,18 @@ export function checkConsistency(config: Config): string[] {
   const staleDays = config["mbos.leads.staleDays"];
   const archiveDays = config["mbos.leads.archiveDays"];
   const escalateDays = config["mbos.leads.escalateAfterDays"];
+  /*
+   * The warning has to come BEFORE the decision is demanded, or it is not a
+   * warning. Equal is allowed and means "no warning" — a team that wants the
+   * answer on the second visit with no build-up can say so.
+   */
+  const warnAt = config["mbos.leads.visitsBeforeDecision"];
+  const decideAt = config["mbos.leads.maxSuspectVisits"];
+  if (warnAt > decideAt) {
+    problems.push(
+      `A Suspect decision is demanded on visit ${decideAt} but the warning does not start until visit ${warnAt}. The salesman would be asked for an answer he was never told was coming.`,
+    );
+  }
   if (archiveDays <= staleDays) {
     problems.push(
       `Leads archive after ${archiveDays} days but only go stale at ${staleDays}. Archiving must come later, or a lead is filed away before anybody is told it needs working.`,
@@ -2937,6 +2971,8 @@ export type Config = {
   "mbos.leads.staleDays": number;
   "mbos.leads.archiveDays": number;
   "mbos.leads.escalateAfterDays": number;
+  "mbos.leads.visitsBeforeDecision": number;
+  "mbos.leads.maxSuspectVisits": number;
 
   "mbos.tasks.escalationHours": number;
   "mbos.tasks.requireCompletionNote": boolean;

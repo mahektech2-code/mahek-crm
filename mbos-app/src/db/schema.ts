@@ -1031,6 +1031,25 @@ export const MIGRATIONS: string[][] = [
      */
     `ALTER TABLE leads ADD COLUMN competitorName TEXT;`,
   ],
+
+  /* ---- v15 · a Suspect cannot be visited for ever ----------------------- */
+  [
+    /*
+     * How many times anybody has stood in this shop, as the server counts it.
+     *
+     * Not derived on the handset: this phone holds only the visits IT authored
+     * — there is no visits channel on the pull — so after a reinstall, or for a
+     * lead somebody else has been to, a local count would read zero and the cap
+     * would never fire. The office counts, the handset adds whatever it has not
+     * managed to send yet, and that sum is the honest answer offline.
+     */
+    `ALTER TABLE leads ADD COLUMN visitCount INTEGER NOT NULL DEFAULT 0;`,
+    /*
+     * Why a held or stuck lead is not moving. One column for two questions
+     * that are the same question — see `customers.lead_hold_reason`.
+     */
+    `ALTER TABLE leads ADD COLUMN holdReason TEXT;`,
+  ],
 ];
 
 /**

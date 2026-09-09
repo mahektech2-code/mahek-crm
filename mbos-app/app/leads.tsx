@@ -5,9 +5,9 @@ import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFram
 import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
-import { createLead, leadThresholds, listLeads, type Lead } from '../src/data/leads';
+import { createLead, leadThresholds, listLeads, visitCapThresholds, type Lead } from '../src/data/leads';
 import { takePhoto } from '../src/native/capture';
-import { CUSTOMER_TYPES, LEAD_FILTERS, LEAD_SOURCES, leadAlert, type DuplicateMatch, type LeadFilter, type LeadThresholds } from '../src/engines/leads';
+import { CUSTOMER_TYPES, LEAD_FILTERS, LEAD_SOURCES, leadAlert, visitCapLabel, visitCapState, type DuplicateMatch, type LeadFilter, type LeadThresholds, type VisitCapThresholds } from '../src/engines/leads';
 import { dmy, inr, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 
@@ -47,6 +47,11 @@ export default function LeadsScreen() {
      here would be a business rule living in a screen, and the sentence it
      produced would be wrong on any handset whose office had changed it. */
   const [cfg, setCfg] = React.useState<LeadThresholds | null>(null);
+  /* Null until configuration arrives. A default typed here would be a business
+     rule living in a screen, and it would disagree with the server the day the
+     office changed it — which is the one disagreement this cap cannot afford,
+     since the server is what refuses the visit. */
+  const [capCfg, setCapCfg] = React.useState<VisitCapThresholds | null>(null);
   const [today] = React.useState(() => isoDate(new Date()));
 
   /* the form */
@@ -74,11 +79,14 @@ export default function LeadsScreen() {
 
   const load = React.useCallback(() => {
     let live = true;
-    void Promise.all([listLeads(filter), leadThresholds()]).then(([r, t]) => {
-      if (!live) return;
-      setRows(r);
-      setCfg(t);
-    });
+    void Promise.all([listLeads(filter), leadThresholds(), visitCapThresholds()]).then(
+      ([r, t, c]) => {
+        if (!live) return;
+        setRows(r);
+        setCfg(t);
+        setCapCfg(c);
+      },
+    );
     return () => {
       live = false;
     };
@@ -238,6 +246,38 @@ export default function LeadsScreen() {
 
                 {alert ? (
                   <T style={[{ fontSize: 14, lineHeight: 20, marginTop: 4, color: C.warnInk }, weight(500)]}>{alert}</T>
+                ) : null}
+
+                {/* "Visit 2 / 3" — §B. Drawn only where it means something: a
+                    qualified prospect visited a fourth time is a negotiation,
+                    not a stall, and carries no counter at all. */}
+                {capCfg && visitCapLabel(x.stage, x.visitCount, capCfg) ? (
+                  <T
+                    style={[
+                      {
+                        fontSize: 14,
+                        lineHeight: 20,
+                        marginTop: 4,
+                        color:
+                          visitCapState(x.stage, x.visitCount, capCfg) === 'decide'
+                            ? C.warnInk
+                            : C.muted,
+                      },
+                      weight(500),
+                    ]}>
+                    {visitCapLabel(x.stage, x.visitCount, capCfg)}
+                    {visitCapState(x.stage, x.visitCount, capCfg) === 'decide'
+                      ? ' · a decision is due'
+                      : ''}
+                  </T>
+                ) : null}
+
+                {/* Why it is not moving. On a held lead this is the whole point
+                    of the status — without it "On hold" reads as "forgotten". */}
+                {x.holdReason ? (
+                  <T s="caption" style={{ marginTop: 4 }} numberOfLines={2}>
+                    {'Waiting: ' + x.holdReason}
+                  </T>
                 ) : null}
 
                 {x.archived ? <T s="caption" style={{ marginTop: 4 }}>Archived — still here, just out of the way</T> : null}

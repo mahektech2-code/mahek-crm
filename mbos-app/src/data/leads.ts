@@ -12,6 +12,7 @@ import {
   type DuplicateMatch,
   type LeadFilter,
   type LeadThresholds,
+  type VisitCapThresholds,
 } from '../engines/leads';
 
 /**
@@ -67,6 +68,10 @@ export type Lead = {
   decisionMaker: string | null;
   shopPhotoId: string | null;
   competitorName: string | null;
+  /** As the office counts it. `visitsHere()` adds what has not synced yet. */
+  visitCount: number;
+  /** Why it is not moving. Set for On hold, and for a Suspect kept past the cap. */
+  holdReason: string | null;
   clientCreatedAt: number;
   syncState: string;
 };
@@ -128,6 +133,62 @@ export async function leadThresholds(): Promise<LeadThresholds> {
     getConfig<number>('mbos.leads.escalateAfterDays'),
   ]);
   return { staleDays, archiveDays, escalateAfterDays };
+}
+
+/**
+ * The two numbers the visit cap is measured in.
+ *
+ * Configuration, and the SAME two the server checks `decide` against — which
+ * is what lets the rule live in two runtimes without a shared module. They
+ * arrive on every pull with the rest of the `mbos.*` keys, so an office that
+ * changes them changes both ends at once.
+ */
+export async function visitCapThresholds(): Promise<VisitCapThresholds> {
+  const [visitsBeforeDecision, maxSuspectVisits] = await Promise.all([
+    getConfig<number>('mbos.leads.visitsBeforeDecision'),
+    getConfig<number>('mbos.leads.maxSuspectVisits'),
+  ]);
+  return { visitsBeforeDecision, maxSuspectVisits };
+}
+
+/**
+ * Visits to this shop, counting the ones still in the outbox.
+ *
+ * The server's count plus anything this handset has recorded and not yet sent.
+ * Without the second half a salesman who made visit two offline would be shown
+ * "Visit 1 / 3" and asked for no decision on visit three — the cap would fire
+ * one visit late, every time the phone was out of signal, which is exactly when
+ * he is in the field.
+ */
+export async function visitsHere(leadId: string, serverCount: number): Promise<number> {
+  const rows = await all<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM visits WHERE customerId = ? AND syncState <> 'synced'`,
+    [leadId],
+  );
+  return serverCount + Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * Is this shop still a Suspect, and how many times have we been?
+ *
+ * Null for anything that is not a lead — which is most of the book, and the
+ * answer the visit screen wants: a real customer is never asked to justify a
+ * visit. A lead IS a `customers` row, so the visit screen holds the customer
+ * and has to come here for the half that lives on the lead.
+ *
+ * The count is the office's plus whatever this handset has not managed to send,
+ * because a salesman who made visit two in a market with no signal must still
+ * be asked for a decision on visit three.
+ */
+export async function suspectFor(
+  customerId: string,
+): Promise<{ stage: string; visits: number } | null> {
+  const row = await one<{ stage: string; visitCount: number }>(
+    'SELECT stage, visitCount FROM leads WHERE id = ? AND archived = 0',
+    [customerId],
+  );
+  if (!row) return null;
+  return { stage: row.stage, visits: await visitsHere(customerId, row.visitCount ?? 0) };
 }
 
 /* ------------------------------------------------------------- duplicates */
@@ -210,6 +271,11 @@ export async function createLead(args: {
   const fix = await whereNow().catch(() => null);
   const notes: LeadNote[] = args.note?.trim() ? [{ at: Date.now(), text: args.note.trim() }] : [];
 
+  /* Bound the way a visit binds its photographs: the shop front is shot while
+     the shop is in front of you, so it begins life under the parent `pending`
+     and is claimed the moment the record it belongs to exists. The server
+     binds its own copy too (`bindMbosMedia`) — this is what makes the UPLOAD
+     carry the right parent rather than relying on the fix-up afterwards. */
   const id = await insertAndQueue({
     table: 'leads',
     entityType: 'lead',
@@ -257,6 +323,8 @@ export async function createLead(args: {
       decisionMaker: args.decisionMaker?.trim() || null,
       shopPhotoId: args.shopPhotoId ?? null,
       competitorName: args.competitorName?.trim() || null,
+      visitCount: 0,
+      holdReason: null,
       gpsLat: fix?.lat ?? null,
       gpsLng: fix?.lng ?? null,
       leadManagerId: null,
@@ -266,6 +334,10 @@ export async function createLead(args: {
       lastActivityDate: today,
     },
   });
+
+  if (args.shopPhotoId) {
+    await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, args.shopPhotoId]);
+  }
 
   return { ok: true, value: id };
 }

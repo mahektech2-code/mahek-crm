@@ -349,14 +349,18 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
          not move the lead out of this salesman's book. */
       leadManagerId?: string | null;
       leadManagerName?: string | null;
+      /* Counted by the office over every visit, not just this phone's — see
+         `visitsHere`, which adds what has not synced yet. */
+      visitCount?: number | null;
+      holdReason?: string | null;
     };
     await run(
       `INSERT INTO leads (id, name, company, mobile, city, source, estimatedPotentialPaise,
                           assigneeId, stage, nextFollowUpDate, notes, convertedCustomerId,
                           archived, lastActivityDate, gpsLat, gpsLng,
-                          leadManagerId, leadManagerName, clientCreatedAt, serverCreatedAt,
-                          deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
+                          leadManagerId, leadManagerName, visitCount, holdReason,
+                          clientCreatedAt, serverCreatedAt, deviceId, syncState)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name, company = excluded.company, mobile = excluded.mobile,
          city = excluded.city, source = excluded.source,
@@ -366,7 +370,9 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
          lastActivityDate = excluded.lastActivityDate,
          gpsLat = excluded.gpsLat, gpsLng = excluded.gpsLng,
          leadManagerId = excluded.leadManagerId,
-         leadManagerName = excluded.leadManagerName
+         leadManagerName = excluded.leadManagerName,
+         visitCount = excluded.visitCount,
+         holdReason = excluded.holdReason
        WHERE leads.syncState = 'synced'`,
       [
         l.id,
@@ -388,6 +394,8 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         l.gpsLng ?? null,
         l.leadManagerId ?? null,
         l.leadManagerName ?? null,
+        l.visitCount ?? 0,
+        l.holdReason ?? null,
         now,
         now,
       ],
