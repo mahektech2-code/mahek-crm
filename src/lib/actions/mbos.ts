@@ -41,7 +41,9 @@ import {
   type OrderLine,
 } from "@/db/schema";
 import { MBOS_EVENT, writeTimelineEvent, type TimelineWriter } from "../timeline";
+import { APP_TIMEZONE } from "../business-date";
 import { qualifyLead } from "../services/lead-qualification-service";
+import { convertLeadOnFirstOrder } from "../services/lead-conversion-service";
 import { scopedToUsers} from "../access-control";
 import { getConfig } from "../config/store";
 import { financialYearOf } from "../financial-year";
@@ -750,6 +752,8 @@ type ScopedCustomer = {
   name: string;
   /** Null on a real customer. Non-null means this record is still a lead. */
   leadStage: string | null;
+  ownerId: string | null;
+  salesAmId: string | null;
   creditBlocked: boolean;
   creditBlockReason: string | null;
   creditLimitPaise: number | null;
@@ -782,6 +786,10 @@ async function scopedCustomer(
       id: customers.id,
       name: customers.name,
       leadStage: customers.leadStage,
+      /* Whose book it is, carried so a conversion can move the sales seat
+         through `assignedUserId` rather than re-deriving a fallback. */
+      ownerId: customers.ownerId,
+      salesAmId: customers.salesAmId,
       creditBlocked: customers.creditBlocked,
       creditBlockReason: customers.creditBlockReason,
       creditLimitPaise: customers.creditLimitPaise,
@@ -1360,35 +1368,24 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
   const config = await getConfig();
 
   /*
-   * §G — NO COMMERCIAL COMMITMENT AT THE REQUIREMENT STAGE.
+   * AN ORDER ON A LEAD CONVERTS IT. It does not refuse it.
    *
-   * The brief is explicit: on the requirement visit there is no price
-   * negotiation, no service negotiation and no quality commitment, and anything
-   * commercial is recorded for the Lead Manager instead. An ORDER is the most
-   * commercial commitment there is — a price, a quantity and a delivery, agreed
-   * on the spot — so a lead that has not reached negotiation cannot carry one.
+   * This gate used to reject an order against a lead below `negotiation`,
+   * reading §G's "no price negotiation at the requirement stage" as "no order
+   * until the ladder says so". Mahek's answer is the opposite and it is theirs
+   * to give: a shop that is ready to buy is a customer, whatever rung somebody
+   * had filed it under, and a salesman standing in front of one with an order
+   * in his hand must not be told to come back later.
    *
-   * The stage is what says whether that conversation has been authorised. It
-   * moves on the Lead Manager's say-so after the sample review (§L), which is
-   * the whole point of the ladder: the salesman finds out what they need, and
-   * somebody who holds the discount decides what to offer.
+   * The stage machinery is not wasted by that. §L still opens negotiation off
+   * an approved sample, the tasks still fire, and `lead_stage` still records
+   * how the account was won — what has gone is only the refusal.
    *
-   * This is a REFUSAL rather than a warning, unlike the visit cap, and the
-   * difference is what is lost. Refusing a visit loses a record of work that
-   * genuinely happened; refusing an order loses nothing, because the order has
-   * not been agreed with anybody who could agree it. The message names the way
-   * forward rather than just saying no.
+   * The conversion itself is `lead-conversion-service`, the SAME function the
+   * CRM's interaction save uses. Two copies of "what happens when a lead
+   * orders" would drift within a release, and the half that drifts is the one
+   * nobody is watching — which here is the handset.
    */
-  const NEGOTIABLE_STAGES = ["negotiation", "won"];
-  if (customer.leadStage && !NEGOTIABLE_STAGES.includes(customer.leadStage)) {
-    return {
-      kind: "rejected",
-      value: reject(
-        "validation",
-        `${customer.name} is still a prospect, so an order cannot be taken yet — price and terms are not yours to agree at this stage. Record what they asked for and what it would take, and the Lead Manager will come back with the offer.`,
-      ),
-    };
-  }
 
   /*
    * The delivery party, which is NOT scope-checked and must not be.
@@ -1640,6 +1637,40 @@ async function handleOrder(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       createdById: principal.user.id,
       updatedById: principal.user.id,
     });
+
+    /*
+     * AND IF THIS WAS A LEAD, IT IS A CUSTOMER NOW.
+     *
+     * Inside the order's own transaction, deliberately: an order that landed
+     * against a record still reading `kind = 'lead'` is an invoice on an
+     * account with no buying cycle, no outstanding and no target — five
+     * subsystems reading a column that has stopped meaning what it says. The
+     * two either both happen or neither does.
+     *
+     * On the FIRST order, which is the answer to §Q. `customerSince` is the day
+     * the order is FOR rather than today, because a salesman may state a past
+     * date and the account began when it began.
+     */
+    const convertedOn = (
+      await tx.execute<{ d: string }>(sql`
+        select ((${orderedAtIso}::timestamptz at time zone ${APP_TIMEZONE})::date)::text as d
+      `)
+    )[0]?.d;
+    if (customer.leadStage !== null && convertedOn) {
+      await convertLeadOnFirstOrder(
+        tx,
+        {
+          id: customer.id,
+          kind: "lead",
+          ownerId: customer.ownerId ?? null,
+          salesAmId: customer.salesAmId ?? null,
+          leadSource: null,
+        },
+        convertedOn,
+        principal.user.id,
+        `ordered in the field (${serverNumber})`,
+      );
+    }
 
     // `lastOrderDate` moves on CAPTURE, not on approval: it is the signal that
     // stops the queue chasing somebody who ordered this morning, and a

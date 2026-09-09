@@ -33,6 +33,7 @@ import { nextStepForCustomer } from "./queue-service";
 import { addDays, onOrAfterWorkingDay } from "../business-date";
 import { err, ok, type Result } from "../result";
 import { CRM_EVENT, callTimelineSummary, writeTimelineEvents } from "../timeline";
+import { conversionColumns, recordConversion } from "./lead-conversion-service";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -865,17 +866,17 @@ export async function saveInteraction(
       // office is deliberately left unassigned: who handles the dispatch and
       // billing is a decision, not something to guess at on first order.
       if (customer.kind === "lead") {
-        set.kind = "customer";
-        // Through the one definition of whose book a record is in. A lead
-        // answers to its owner, and a reassignment moves a lead by writing
-        // that column — so this carries the CURRENT holder across rather than
-        // re-deriving a fallback that could disagree with it.
-        set.salesAmId = assignedUserId({
-          kind: "lead",
-          ownerId: customer.ownerId,
-          salesAmId: customer.salesAmId,
-        });
-        set.customerSince = orderedOn;
+        /*
+         * Through `lead-conversion-service`, which is the ONE definition of
+         * what happens when a lead orders. MBOS converts on its own order path
+         * too, and two copies of this would drift within a release — the half
+         * that drifts being whichever nobody is watching.
+         *
+         * Spread into the update this function is already building rather than
+         * issued as a second statement: twenty other fields are going in the
+         * same write.
+         */
+        Object.assign(set, conversionColumns(customer, orderedOn));
         converted = true;
       }
     }
@@ -886,15 +887,16 @@ export async function saveInteraction(
     // hiding inside the interaction's.
     if (converted) {
       produced.push("converted-to-customer");
-      await tx.insert(auditLog).values({
-        id: id("aud"),
-        actorId: ctx.user.id,
-        action: "customer.convertedFromLead",
-        entityType: "customer",
-        entityId: customer.id,
-        beforeState: { kind: "lead", leadSource: customer.leadSource } as never,
-        afterState: { kind: "customer", salesAmId: set.salesAmId } as never,
-      });
+      /* The audit line AND the timeline entry, both from the shared service —
+         a conversion the customer record cannot show is one nobody reading
+         their history would ever know happened. */
+      await recordConversion(
+        tx,
+        customer,
+        ctx.user.id,
+        set.salesAmId ?? null,
+        "ordered on a call",
+      );
     }
 
     /* ----------------------------------------------------- quick note use */
