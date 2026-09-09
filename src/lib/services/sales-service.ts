@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
 import { today } from "../recompute";
 import { employeeJoinOn, employeeLinkKindSql } from "@/lib/employee-link";
+import { TERRITORY_REGION_SQL, qualify } from "@/lib/territory-sql";
 
 /* ---------------------------------------------------------------------------
  * Every read the Sales Dashboard makes.
@@ -95,7 +96,7 @@ export const managerScope = cache(async function managerScope(): Promise<Manager
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       join customers c on coalesce(c.sales_am_id, c.owner_id) = u.id
-     where c.territory_region in ${list}
+     where ${sql.raw(qualify(TERRITORY_REGION_SQL, "c"))} in ${list}
   `);
 
   return { national: false, regions, salesmanIds: men.map((m) => m.id) };
@@ -150,6 +151,8 @@ export type Salesman = {
   deviceBoundAt: Date | null;
   /** When the handset last spoke to MahekOne. Null where it never has. */
   lastSeenAt: Date | null;
+  /** The handset bound to them now, so it can be released. Null if none is. */
+  boundDeviceId: string | null;
   lastLoginAt: Date | null;
   customerCount: number;
   /**
@@ -184,6 +187,15 @@ export async function fieldTeam(): Promise<Salesman[]> {
              where d.user_id = u.id and d.active) as "deviceBoundAt",
            (select max(d.last_seen_at) from mbos_devices d
              where d.user_id = u.id and d.active) as "lastSeenAt",
+           /* The handset currently bound, so it can be released from this row.
+              A salesman who changes phone cannot sign in on the new one while
+              the old binding stands, and until now the only way to lift it was
+              a screen he could not reach. Newest wins where a row somehow
+              carries two: the one he is actually holding is the one he last
+              signed in on. */
+           (select d.device_id from mbos_devices d
+             where d.user_id = u.id and d.active
+             order by d.bound_at desc limit 1) as "boundDeviceId",
            (select count(*)::int from customers c
              where coalesce(c.sales_am_id, c.owner_id) = u.id
                and c.status = 'active') as "customerCount",
@@ -2810,13 +2822,31 @@ export async function managers(): Promise<ManagerRow[]> {
  * screen regions nobody's shops are in.
  */
 export async function knownRegions(): Promise<string[]> {
+  /* The SAME expression the filter matches on — see `TERRITORY_REGION_SQL`.
+     Read straight off `territory_region` this came back EMPTY on the real book,
+     so the patch dialog offered no chips and no manager's patch could ever be
+     set; and a row inserted by hand would have matched nothing and blanked that
+     manager's console. A chip list and a filter that read different columns is
+     how a screen offers a place no book is in. */
   const rows = await db.execute<{ region: string }>(sql`
-    select distinct c.territory_region as region
+    select distinct ${sql.raw(qualify(TERRITORY_REGION_SQL, "c"))} as region
       from customers c
-     where c.territory_region is not null and c.territory_region <> ''
+     where ${sql.raw(qualify(TERRITORY_REGION_SQL, "c"))} is not null
      order by 1
   `);
-  return rows.map((r) => r.region);
+
+  /* Deduplicated case-insensitively, exactly as `knownPlaces` does it and for
+     the same reason: the filter lowercases, so "HARYANA" and "Haryana" are one
+     place, and offering both would be two chips that behave as one. Genuine
+     misspellings — the book carries both "Gujarat" and "Gujrat" — are NOT
+     merged: those match different rows, and quietly folding them would hide
+     half a state's customers behind a chip that does not say so. */
+  const seen = new Map<string, string>();
+  for (const r of rows) {
+    const key = r.region.trim().toLowerCase();
+    if (key && !seen.has(key)) seen.set(key, r.region.trim());
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
 }
 
 /**
