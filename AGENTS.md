@@ -143,6 +143,38 @@ holding the whole app and nobody who was deliberately narrowed.
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
 
+**THE HANDSET MAP IS OLA MAPS, the same supplier the console uses.** Two map
+suppliers is two bills, two outages and two answers to "why does this shop sit
+in the wrong lane". `sales/ola-maps.tsx` records the style quirks the web hit;
+the handset uses the same style URL and the same key, which now travels in the
+sync payload.
+
+**That key is the SECOND named exception in `lib/secrets.ts`, and the caveat is
+not the same as the first.** A tile key has to reach whoever asks for tiles — a
+key that never left the server could not load a street — and the browser's
+mitigation is to restrict it to a domain. A phone has no domain, and Ola's
+console offers no package-name or signing-certificate restriction of the kind
+Google Maps has. So a key in an APK is extractable, and the honest mitigations
+are a SEPARATE Ola key for the handset, revocable without taking the console's
+maps down, and a spend cap on it. It is sent only to a device already
+authenticated as a bound handset, which is the most the server side can do.
+
+**A PIN IS ONLY DRAWN WHERE THERE IS A FIX, and what could not be drawn is said
+in words.** Half this book has never been pinned. Spacing those shops out to
+fill the screen is the one thing a map of where things are must not do, and a
+map that silently omits a third of the book is one somebody plans a day from and
+is wrong. NO MAP is an answer too: with no key configured the screen says so
+rather than drawing a grey rectangle, which is the rule the microphone already
+follows.
+
+**The tap means a different thing on each SCREEN, not in the component.** On the
+customers list it opens the record; on the journey picker it picks a stop. The
+map takes a handler, so neither screen has to know the other exists — and MapLibre
+React Native's `LngLatBounds` is `[west, south, east, north]`, which is GeoJSON's
+order and NOT the `ne`/`sw` pair the web's MapLibre GL takes. Two libraries, two
+orders, and getting it wrong opens the map on the wrong hemisphere rather than
+failing.
+
 **A LEAD IS A ROW IN BOTH HANDSET TABLES, so the book's view asks an EXISTS.**
 The office collapsed leads and customers into one `customers` row long ago, and
 the wire still sends leads down their own channel into `leads` keyed on the same

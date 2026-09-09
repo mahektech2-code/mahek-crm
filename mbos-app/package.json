@@ -5,6 +5,7 @@
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
     "@expo/metro-runtime": "~6.1.2",
+    "@maplibre/maplibre-react-native": "^11.3.10",
     "@react-native-community/netinfo": "11.4.1",
     "expo": "~54.0.37",
     "expo-application": "~7.0.8",

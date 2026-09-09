@@ -15,6 +15,7 @@ import {
   scopedUserIds,
   type DataScope, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
+import { readSecret } from "../secrets";
 import { territoryClauseFor } from "./territory-service";
 import { policyForDate, resolveSubject } from "./expense-policy-service";
 import { describeRule } from "../expense-rule-forms";
@@ -405,6 +406,28 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
     if (key.startsWith("mbos.")) out[key] = value;
   }
   out["products.priceSource"] = config["products.priceSource"];
+
+  /*
+   * THE MAP KEY, and it is the one credential that goes down this wire.
+   *
+   * The handset draws the same maps the console does and must ask Ola for the
+   * same tiles — a key that never left the server could not load a single
+   * street. It is the exception `lib/secrets.ts` already names for the browser,
+   * one client further out, and the caveat is written there: a browser key is
+   * restricted to a domain and a phone has none, so a separate revocable key
+   * with a spend cap is the honest mitigation.
+   *
+   * It goes only to a device that has already authenticated as a bound handset
+   * — this payload is behind the MBOS bearer token — which is the most this
+   * side can do about it.
+   *
+   * Absent where no key is set, and the map screens draw nothing rather than a
+   * grey rectangle: a map that fails when opened is worse than one never
+   * offered, which is the same rule the microphone follows.
+   */
+  const mapKey = await readSecret("olamaps.apiKey").catch(() => null);
+  if (mapKey) out["maps.olaKey"] = mapKey;
+
   return out;
 }
 

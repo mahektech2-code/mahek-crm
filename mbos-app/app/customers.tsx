@@ -20,6 +20,7 @@ import {
   type Customer,
 } from '../src/data/customers';
 import { CUSTOMER_PAGE, type BookView, type Origin } from '../src/data/customer-query';
+import { ShopMap } from '../src/components/ui/shop-map';
 import { whereNow } from '../src/native/where';
 
 /**
@@ -76,6 +77,13 @@ export default function Customers() {
    * salesman's book.
    */
   const [view, setView] = React.useState<BookView>('all');
+  /*
+   * LIST OR MAP, and the tap means a different thing on each SCREEN rather than
+   * on each mode: here it opens the record, and on the journey screen the same
+   * component adds a stop. The component takes the handler rather than deciding,
+   * so neither screen has to know about the other.
+   */
+  const [asMap, setAsMap] = React.useState(false);
 
   /* ------------------------------------------------- where to measure from
    *
@@ -245,6 +253,34 @@ export default function Customers() {
         </Pressable>
       </View>
 
+      {/* LIST OR MAP. One tap, always visible, and the state is obvious from
+          which side is filled — a map hidden behind a menu is one nobody finds. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
+        {([
+          { key: false, label: 'List' },
+          { key: true, label: 'Map' },
+        ] as const).map((chip) => {
+          const on = asMap === chip.key;
+          return (
+            <Pressable
+              key={String(chip.key)}
+              onPress={() => setAsMap(chip.key)}
+              style={{
+                paddingHorizontal: 14,
+                paddingVertical: 7,
+                borderRadius: radius.sm,
+                borderWidth: 1,
+                borderColor: on ? C.ink : C.border,
+                backgroundColor: on ? C.ink : C.surface,
+              }}>
+              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
+                {chip.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       {/* WHICH HALF. A view, never a scope — all three show only his own book,
           already narrowed to the territory he works. Drawn beside "where from"
           rather than buried in the filter sheet because it changes what the
@@ -349,8 +385,32 @@ export default function Customers() {
         </Card>
       ) : null}
 
+      {/* THE MAP. Only the loaded page is drawn, deliberately: the list pages
+          fifteen at a time and a map that quietly showed the whole book would
+          disagree with the count above it. The sentence under the map says what
+          could not be placed. */}
+      {asMap && rows.length ? (
+        <View style={{ marginTop: 12 }}>
+          <ShopMap
+            pins={rows.map((x) => ({
+              id: x.id,
+              name: x.name,
+              lat: x.gpsLat ?? NaN,
+              lng: x.gpsLng ?? NaN,
+            }))}
+            /* HERE a tap opens the record. On the journey screen the same
+               component adds a stop — the difference lives in the caller, so
+               neither screen knows about the other. */
+            onPress={(pin) => {
+              set({ custId: pin.id, pTab: 0 });
+              router.push('/customer');
+            }}
+          />
+        </View>
+      ) : null}
+
       <View style={{ gap: 12, marginTop: 8 }}>
-        {rows.map((x) => {
+        {asMap ? null : rows.map((x) => {
           /* Rupees at the point of display, paise everywhere behind it. */
           const dues = x.outstandingPaise / 100;
           const stage = customerStage(x);

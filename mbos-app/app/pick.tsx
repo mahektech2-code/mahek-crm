@@ -17,6 +17,7 @@ import { inr, isoDate, plural } from '../src/lib/format';
 import { daysSince } from '../src/data/customers';
 import { pickOrigin } from '../src/engines/route';
 import { haversineMetres } from '../src/engines/geo';
+import { ShopMap } from '../src/components/ui/shop-map';
 import { useStore } from '../src/state/store';
 
 /**
@@ -61,6 +62,10 @@ export default function PickScreen() {
   const [picked, setPicked] = React.useState<string[]>([]);
   const [q, setQ] = React.useState('');
   const [saving, setSaving] = React.useState(false);
+  /* The same two ways of looking at the same list the customers screen offers.
+     The tap means something different HERE — it picks a stop rather than opening
+     a record — and that difference lives in this caller rather than in the map. */
+  const [asMap, setAsMap] = React.useState(false);
   const [today] = React.useState(() => isoDate(new Date()));
   /* The freshest fix already known, which costs no battery and no wait —
      `whereNow` never asks the radio. Null is ordinary and handled: see
@@ -205,7 +210,50 @@ export default function PickScreen() {
         />
       </View>
 
-      <ScrollView>
+      {/* LIST OR MAP. On a day in one city the map is often the faster way to
+          choose: the shops are a walk apart and their arrangement is the plan.
+          A tap PICKS rather than opens — the number on a picked row is where it
+          sits in the day, and the map shows the same state filled in. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+        {([
+          { key: false, label: 'List' },
+          { key: true, label: 'Map' },
+        ] as const).map((chip) => {
+          const on = asMap === chip.key;
+          return (
+            <Pressable
+              key={String(chip.key)}
+              onPress={() => setAsMap(chip.key)}
+              style={{
+                paddingHorizontal: 14,
+                paddingVertical: 7,
+                borderRadius: radius.sm,
+                borderWidth: 1,
+                borderColor: on ? C.ink : C.border,
+                backgroundColor: on ? C.ink : C.surface,
+              }}>
+              <T style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
+                {chip.label}
+              </T>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {asMap ? (
+        <ShopMap
+          height={440}
+          pins={rows.map((c) => ({
+            id: c.id,
+            name: c.name,
+            lat: c.gpsLat ?? NaN,
+            lng: c.gpsLng ?? NaN,
+            picked: picked.includes(c.id),
+          }))}
+          onPress={(pin) => toggle(pin.id)}
+        />
+      ) : (
+            <ScrollView>
         {rows.length === 0 ? (
           <T s="small" style={{ color: C.muted, paddingVertical: 24, textAlign: 'center' }}>
             {q ? 'No shop matches that.' : 'There are no customers on this handset yet.'}
@@ -280,6 +328,7 @@ export default function PickScreen() {
           );
         })}
       </ScrollView>
+      )}
 
       {/* Fixed to the bottom, because the list is long and the decision is made
           part-way down it. The count is on the button so nothing has to be
