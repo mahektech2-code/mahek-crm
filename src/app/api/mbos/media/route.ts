@@ -47,7 +47,25 @@ export async function POST(request: Request) {
 
   const clientId = String(form.get("clientId") ?? "");
   const kind = String(form.get("kind") ?? "");
-  const entityId = form.get("entityId");
+  /*
+   * WHAT THIS FILE BELONGS TO, which this route was throwing away.
+   *
+   * The handset has sent `parentType` and `parentId` on every upload since it
+   * was written. This route read `entityId` — a name nothing sends — and
+   * `storeMbosMedia` dropped even that, so every field photograph landed in
+   * `attachments` with a null parent. Two consequences, and the second is the
+   * bad one: only the uploader could ever open it (`canRead` falls back to
+   * "unbound and still the uploader's own"), and `sweepOrphans` DELETES
+   * anything unparented after `attachments.orphanCleanupHours`. Every selfie,
+   * cheque and shop front the field app ever uploaded was removed by the
+   * nightly job the next day.
+   *
+   * `entityId` is still read as a fallback, because an APK in somebody's
+   * pocket cannot be recalled and a future build may prefer that name — the
+   * server moves first, always.
+   */
+  const parentType = form.get("parentType");
+  const parentId = form.get("parentId") ?? form.get("entityId");
   const file = form.get("file");
 
   if (!clientId || !kind) {
@@ -70,7 +88,8 @@ export async function POST(request: Request) {
   const result = await storeMbosMedia(auth.principal, {
     clientId,
     kind,
-    entityId: typeof entityId === "string" ? entityId : undefined,
+    parentType: typeof parentType === "string" ? parentType : undefined,
+    parentId: typeof parentId === "string" ? parentId : undefined,
     filename: file.name || `${kind}.bin`,
     bytes,
   });

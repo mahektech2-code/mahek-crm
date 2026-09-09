@@ -4,6 +4,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
+  attachmentParentEnum,
   attachments,
   bills,
   complaints,
@@ -2530,6 +2531,59 @@ const attendanceSchema = z.object({
   checkOutLng: z.number().nullish(),
   checkOutAccuracyM: z.number().nullish(),
   selfieId: z.string().nullish(),
+  checkOutSelfieId: z.string().nullish(),
+  /**
+   * The day as the handset holds it, and the only place N selfies can live.
+   *
+   * Every check-in and every check-out is photographed, so a day with two
+   * breaks carries six — and `selfieId`/`checkOutSelfieId` above can hold two.
+   * Sent on every attendance write, create and update both, because the whole
+   * list is the answer: a shorter one is how a session is corrected, and
+   * merging here would make a correction impossible.
+   *
+   * Capped at a number no real day reaches. Twelve sessions is six breaks;
+   * past that it is a handset in a loop, and an unbounded list from a client
+   * is a column somebody can grow without limit.
+   */
+  sessions: z
+    .preprocess(
+      /*
+       * A STRING IS AS VALID AS AN ARRAY HERE, and refusing one would refuse
+       * check-ins.
+       *
+       * The handset holds `attendance_days.sessions` as TEXT — SQLite has no
+       * array — and passes the parsed array into its payload. But the two are
+       * one character apart at the call site, the field was never in this
+       * schema before (so zod silently stripped whatever arrived, in any
+       * shape), and an APK already in somebody's pocket cannot be recalled.
+       * Accepting both is the same trade the wire contract makes everywhere
+       * else: the server moves first, and a shape it can read costs nothing.
+       *
+       * A string that will not parse becomes `undefined` rather than an error,
+       * so the day is still recorded. The sessions are the richest part of the
+       * payload and the least urgent — losing them costs the office a break
+       * time; refusing the row costs a salesman his attendance.
+       */
+      (v) => {
+        if (typeof v !== "string") return v;
+        try {
+          return JSON.parse(v);
+        } catch {
+          return undefined;
+        }
+      },
+      z
+        .array(
+          z.object({
+            inAt: z.number(),
+            outAt: z.number().nullish(),
+            inSelfieId: z.string().nullish(),
+            outSelfieId: z.string().nullish(),
+          }),
+        )
+        .max(12),
+    )
+    .nullish(),
   notes: z.string().max(1000).nullish(),
   /** Whether the check-in was inside the permitted radius, where one is set. */
   withinGeofence: z.boolean().nullish(),
@@ -2566,6 +2620,38 @@ async function handleAttendance(
 
   const rowId = existing[0]?.id ?? item.entityId;
 
+  /*
+   * The selfies are checked before they are STORED against the day.
+   *
+   * These columns are foreign keys onto `attachments`, and media syncs AFTER
+   * its parent by design — the record goes up first so 840 KB of photograph
+   * never delays it. So on the create the attachment row does not exist yet
+   * and the key would be violated, which would reject the check-in over a file
+   * that is on its way. The id is kept only where the row is already there,
+   * and the handset re-sends the same payload as the media queue drains, so
+   * the second pass fills it in. `sessions` carries the ids regardless, since
+   * it is jsonb and holds what the handset reported whether or not the bytes
+   * have landed — the mark is never lost to the ordering of an upload.
+   */
+  const known = await knownAttachments([
+    p.selfieId,
+    p.checkOutSelfieId,
+    ...(p.sessions ?? []).flatMap((x) => [x.inSelfieId, x.outSelfieId]),
+  ]);
+  const selfieRef = (id: string | null | undefined) =>
+    id && known.has(id) ? id : null;
+
+  /* Normalised to the column's own shape: an open session is explicitly
+     `outAt: null`, never a missing key. `undefined` in jsonb is how a row
+     comes back with a field that reads as absent rather than as "still
+     running", and `openSession` on the handset keys on exactly that. */
+  const sessions = p.sessions?.map((x) => ({
+    inAt: x.inAt,
+    outAt: x.outAt ?? null,
+    inSelfieId: x.inSelfieId ?? null,
+    outSelfieId: x.outSelfieId ?? null,
+  }));
+
   await db
     .insert(mbosAttendanceDays)
     .values({
@@ -2576,11 +2662,13 @@ async function handleAttendance(
       checkInLat: p.checkInLat ?? null,
       checkInLng: p.checkInLng ?? null,
       checkInAccuracyM: round(p.checkInAccuracyM),
-      checkInSelfieId: p.selfieId ?? null,
+      checkInSelfieId: selfieRef(p.selfieId),
       checkOutAt: p.checkOutAt ? new Date(p.checkOutAt) : null,
       checkOutLat: p.checkOutLat ?? null,
       checkOutLng: p.checkOutLng ?? null,
       checkOutAccuracyM: round(p.checkOutAccuracyM),
+      checkOutSelfieId: selfieRef(p.checkOutSelfieId),
+      sessions: sessions ?? [],
       withinGeofence: p.withinGeofence ?? null,
       geofenceDistanceM: round(p.geofenceDistanceM),
       regularisationRequested: p.regularisationRequested ?? false,
@@ -2652,6 +2740,22 @@ async function handleAttendance(
         ...(p.checkOutAccuracyM != null
           ? { checkOutAccuracyM: round(p.checkOutAccuracyM) }
           : {}),
+        /*
+         * The photographs, and the sessions they hang off.
+         *
+         * Written on every arrival rather than only the first, unlike the
+         * check-in mark above — a day GROWS: the afternoon session and its two
+         * selfies are new facts about a row that already exists, and the whole
+         * list is what the handset sends. Each id is only stored once its
+         * attachment has actually landed (see `selfieRef`), so a re-send after
+         * the media queue drains is what fills the two key columns in; the
+         * jsonb list holds the ids from the first pass either way.
+         */
+        ...(sessions ? { sessions } : {}),
+        ...(selfieRef(p.selfieId) ? { checkInSelfieId: selfieRef(p.selfieId) } : {}),
+        ...(selfieRef(p.checkOutSelfieId)
+          ? { checkOutSelfieId: selfieRef(p.checkOutSelfieId) }
+          : {}),
         /* A correction asked for after the fact — the reason for a check-in
          * outside the radius, or a day somebody wants changed. It arrives as
          * its own write because the day starts when the button is pressed:
@@ -2669,6 +2773,27 @@ async function handleAttendance(
     });
 
   return { kind: "accepted", value: { serverId: rowId } };
+}
+
+/**
+ * Which of these attachment ids actually exist yet.
+ *
+ * Media syncs after its parent — that is the whole point of it being a
+ * separate queue — so an attendance row routinely names a photograph whose
+ * bytes are still on the phone. A foreign key does not care about the reason:
+ * it would refuse the check-in, which is the one write in this app that must
+ * not be refused over a file.
+ */
+async function knownAttachments(
+  ids: (string | null | undefined)[],
+): Promise<Set<string>> {
+  const wanted = [...new Set(ids.filter((x): x is string => !!x))];
+  if (!wanted.length) return new Set();
+  const rows = await db
+    .select({ id: attachments.id })
+    .from(attachments)
+    .where(inArray(attachments.id, wanted));
+  return new Set(rows.map((r) => r.id));
 }
 
 /** GPS accuracy arrives fractional; the columns it lands in are integers. */
@@ -4042,12 +4167,42 @@ export type MediaOutcome =
  * the attachment id, which makes the dedupe a primary-key lookup rather than a
  * column somebody has to remember to index.
  */
+/**
+ * WHAT A FIELD FILE HANGS OFF, in the vocabulary `attachments.parent_type`
+ * speaks.
+ *
+ * The handset names its own tables — `attendance`, `visit`, `expense` — and
+ * the enum names them `mbos_*`, except for a payment, which lands in the CRM's
+ * own `payment_receipts` and so takes the CRM's own value. Mapping here rather
+ * than renaming either side: the enum values are shared with the CRM, and the
+ * handset's names are in an APK that cannot be recalled.
+ *
+ * An unrecognised name parents NOTHING rather than guessing. That is the state
+ * every MBOS upload was already in, so it is no worse than before — and it is
+ * visibly wrong the moment somebody looks, where a guess would file a
+ * photograph under a parent whose `canRead` rules do not apply to it.
+ */
+const MBOS_PARENTS: Record<string, (typeof attachmentParentEnum.enumValues)[number]> = {
+  attendance: "mbos_attendance",
+  visit: "mbos_visit",
+  expense: "mbos_expense",
+  sample: "mbos_sample",
+  task: "mbos_task",
+  /* Not `mbos_payment`: a field collection is written into `payment_receipts`,
+     the same table the CRM's own receipts use, so this is that parent and
+     `canRead` resolves it through the customer exactly as it does for one
+     captured at a desk. */
+  payment: "payment_receipt",
+};
+
 export async function storeMbosMedia(
   principal: MbosPrincipal,
   input: {
     clientId: string;
     kind: string;
-    entityId?: string;
+    /** The handset's own name for the table — see `MBOS_PARENTS`. */
+    parentType?: string;
+    parentId?: string;
     filename: string;
     bytes: Uint8Array;
   },
@@ -4110,6 +4265,16 @@ export async function storeMbosMedia(
       contentType: actual,
     });
 
+    /* The parent, which nothing was recording — see the note in
+     * `api/mbos/media/route.ts`. A file with none is readable by its uploader
+     * alone and is deleted by the nightly orphan sweep, so this pair of
+     * columns is the difference between an attachment and a file with a
+     * twenty-four-hour life. */
+    const parentType = input.parentType
+      ? (MBOS_PARENTS[input.parentType] ?? null)
+      : null;
+    const parentId = parentType && input.parentId ? input.parentId : null;
+
     await db
       .insert(attachments)
       .values({
@@ -4124,6 +4289,8 @@ export async function storeMbosMedia(
            to be hashed. */
         contentHash: createHash("sha256").update(input.bytes).digest("hex"),
         status: "available",
+        parentType,
+        parentId,
         uploadedById: principal.user.id,
       })
       .onConflictDoUpdate({

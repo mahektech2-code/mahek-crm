@@ -687,6 +687,13 @@
       "when": 1787502280000,
       "tag": "0097_push_delivery",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1787502340000,
+      "tag": "0098_attendance_selfies",
+      "breakpoints": true
     }
   ]
 }
