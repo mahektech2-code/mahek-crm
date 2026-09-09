@@ -14,7 +14,6 @@ import {
   mbosDevices,
   mbosDocuments,
   mbosHolidays,
-  mbosLeaveBalances,
   mbosLeaveRequests,
   mbosManagerTerritories,
   mbosJourneyPlans,
@@ -163,6 +162,29 @@ export async function decideApproval(input: {
       );
     }
 
+    /* A request the person took back is not a request.
+     *
+     * Withdrawing marks `cancelled_at` on the leave and leaves the approval
+     * `pending`, so it sat in this queue looking like work — and approving it
+     * debited the balance and told the salesman his leave was approved, for
+     * days he had already said he no longer wanted. The queue filters these out
+     * now; this is the same rule where it actually binds, because a queue is a
+     * screen and a screen is not a permission. */
+    if (approval.type === "leave") {
+      const [subject] = await db
+        .select({ cancelledAt: mbosLeaveRequests.cancelledAt })
+        .from(mbosLeaveRequests)
+        .where(eq(mbosLeaveRequests.id, approval.subjectId))
+        .limit(1);
+
+      if (subject?.cancelledAt) {
+        return err(
+          "This leave was withdrawn by the person who asked for it, so there is nothing to decide. It has already left their calendar.",
+          "conflict",
+        );
+      }
+    }
+
     const note = input.note?.trim() ?? "";
     if (input.decision !== "approved" && !note) {
       return err(
@@ -199,48 +221,21 @@ export async function decideApproval(input: {
         and(eq(mbosApprovals.id, input.approvalId), eq(mbosApprovals.state, "pending")),
       );
 
-    /* The one place `mbos_leave_balances.used_days` moves. Not on the request
-     * itself — a request has no state of its own, it is derived entirely
-     * from its approval — so the balance has to be debited from here, the
-     * single place a leave request actually becomes decided. A missing
-     * balance row is not skipped: it is created at zero entitlement, so the
-     * debit is recorded honestly even before anybody has seeded what a
-     * person is entitled to for the year. */
-    if (approval.type === "leave" && input.decision === "approved") {
-      const [leave] = await db
-        .select({
-          leaveType: mbosLeaveRequests.leaveType,
-          days: mbosLeaveRequests.days,
-          fromDate: mbosLeaveRequests.fromDate,
-        })
-        .from(mbosLeaveRequests)
-        .where(eq(mbosLeaveRequests.id, approval.subjectId))
-        .limit(1);
-
-      if (leave) {
-        const year = new Date(leave.fromDate).getUTCFullYear();
-        await db
-          .insert(mbosLeaveBalances)
-          .values({
-            id: gen("mbos_lbal"),
-            userId: approval.requestedByUserId,
-            year,
-            leaveType: leave.leaveType,
-            entitledDays: 0,
-            usedDays: leave.days,
-            createdById: user.id,
-            updatedById: user.id,
-          })
-          .onConflictDoUpdate({
-            target: [mbosLeaveBalances.userId, mbosLeaveBalances.year, mbosLeaveBalances.leaveType],
-            set: {
-              usedDays: sql`${mbosLeaveBalances.usedDays} + ${leave.days}`,
-              updatedAt: new Date(),
-              updatedById: user.id,
-            },
-          });
-      }
-    }
+    /* Nothing debits a balance here, and that is the fix rather than an
+     * omission.
+     *
+     * This used to increment `mbos_leave_balances.used_days` — creating the row
+     * at ZERO days entitled if it was missing, which it always was, so a
+     * person's first approved leave gave them a balance reading "-2 of 0 left".
+     * Nothing decremented it either: a decision reversed, or leave withdrawn
+     * after it was granted, left the figure permanently short with no way to
+     * notice and no way to rebuild it.
+     *
+     * What somebody has spent is DERIVED from the approved requests now, in
+     * `leaveBalances` — the same shape as outstanding and the buying cycle, and
+     * for the same reason. `mbos_leave_balances` is the entitlement OVERRIDE
+     * table now: a row means this person is on different terms, deliberately.
+     * `used_days` is no longer read or written by anything. */
 
     await db.insert(auditLog).values({
       id: gen("aud"),

@@ -11,6 +11,7 @@
  * ------------------------------------------------------------------------- */
 
 import { COMPLAINT_CATEGORIES } from "../constants";
+import { LEAVE_TYPES, PAID_LEAVE_TYPES, type PaidLeaveType } from "../mbos/types";
 
 export type SettingType = "integer" | "decimal" | "text" | "boolean" | "structured";
 
@@ -2056,6 +2057,16 @@ export const SETTINGS = [
       "On, an employee out of balance may still apply, as loss of pay. Off, the application is refused — which turns a conversation with a manager into an error message.",
     default: true,
   },
+  {
+    key: "mbos.leave.annualEntitlementDays",
+    type: "structured",
+    category: "mbos-leave",
+    label: "Leave a person gets in a year",
+    description:
+      "Days per kind, for everybody, per calendar year. This is what the handset builds its list of leave kinds from — a kind missing from here cannot be applied for at all, and with none of them set the only thing the form can offer is loss of pay. A person on different terms gets a row in `mbos_leave_balances`, which overrides this for them alone. `loss_of_pay` does not belong here: it is what leave becomes once the balance is gone, and there is no balance of unpaid days to keep.",
+    default: { casual: 12, sick: 6, earned: 12 },
+  },
+
 
   /* -------------------------------------------------------- health score */
   {
@@ -2742,6 +2753,42 @@ export function checkConsistency(config: Config): string[] {
     }
   }
 
+  /*
+   * An entitlement is not just a number — it is the LIST the handset builds
+   * its leave form from, so a typo here does not misprice a kind of leave, it
+   * removes it. Somebody who cannot find "casual" on the form applies for loss
+   * of pay instead and finds out on the payslip, which is precisely the failure
+   * this setting exists to end.
+   */
+  const entitlement = config["mbos.leave.annualEntitlementDays"];
+  if (!entitlement || typeof entitlement !== "object") {
+    problems.push(
+      "Leave entitlement must be an object of leave kinds to days a year. With none set, the only thing the handset's leave form can offer is loss of pay.",
+    );
+  } else {
+    const unknown = Object.keys(entitlement).filter(
+      (k) => !(PAID_LEAVE_TYPES as readonly string[]).includes(k),
+    );
+    if (unknown.length) {
+      const wrongHalf = unknown.filter((k) => (LEAVE_TYPES as readonly string[]).includes(k));
+      problems.push(
+        `These are not kinds of leave anybody has a balance of: ${unknown.join(", ")}. The kinds are ${PAID_LEAVE_TYPES.join(", ")}.${
+          wrongHalf.length
+            ? ` ${wrongHalf.join(", ")} is what leave becomes once the balance is spent, so there is no yearly allowance of it to set.`
+            : ""
+        }`,
+      );
+    }
+    if (Object.values(entitlement).some((v) => typeof v !== "number" || v < 0)) {
+      problems.push("Every leave entitlement must be a number of days, none of them negative.");
+    }
+    if (!Object.keys(entitlement).length) {
+      problems.push(
+        "No kind of leave has an entitlement, so the handset's leave form can offer nothing but loss of pay — every request anybody makes would be unpaid.",
+      );
+    }
+  }
+
   if (config["products.priceSource"] === "pricelist") {
     problems.push(
       "Prices are set to come from a customer price list, but no price list exists yet - nothing is keyed on a pricelist tag. Until one is built, order value has to stay manual.",
@@ -2961,6 +3008,7 @@ export type Config = {
 
   "mbos.leave.noticeDays": number;
   "mbos.leave.allowLossOfPay": boolean;
+  "mbos.leave.annualEntitlementDays": Partial<Record<PaidLeaveType, number>>;
 
   "mbos.health.componentWeights": Record<MbosHealthComponent, number>;
   "mbos.health.atRiskBelow": number;

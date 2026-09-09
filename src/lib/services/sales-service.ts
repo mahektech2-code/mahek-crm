@@ -110,6 +110,28 @@ export function onlyMine(scope: ManagerScope, column: string) {
   return sql`and ${sql.raw(column)} in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
 }
 
+/**
+ * A request somebody took back is not waiting on anybody.
+ *
+ * Withdrawing leave marks `cancelled_at` on the request and deliberately does
+ * NOT touch the approval — the office never decided anything, so recording a
+ * decision would be a lie, and `mbos_approval_state` has no word for "taken
+ * back" that an APK already in somebody's pocket would understand. So the
+ * approval stays `pending` for ever and every read of the queue has to know it.
+ *
+ * Every read, which is the point of writing it once: the queue itself, the
+ * count on the dashboard, the sidebar badge and the "oldest thing waiting"
+ * figure. Miss one and a withdrawn request quietly becomes a desk that looks
+ * three days behind.
+ */
+const NOT_WITHDRAWN = sql`
+  and not exists (
+    select 1 from mbos_leave_requests l
+     where l.id = ap.subject_id
+       and ap.type = 'leave'
+       and l.cancelled_at is not null
+  )`;
+
 /* ═════════════════════════════════════════════════════════════════ the team */
 
 export type Salesman = {
@@ -356,6 +378,7 @@ export async function consoleCounts(
 
       (select count(*)::int from mbos_approvals ap
         where ap.state = 'pending' and ap.type = 'leave'
+          ${NOT_WITHDRAWN}
           ${mine("ap.requested_by_user_id")}) as "leave",
       (select count(*)::int from mbos_approvals ap
         where ap.state = 'pending' and ap.type = 'expense_claim'
@@ -494,7 +517,8 @@ export async function pendingApprovals(): Promise<PendingApproval[]> {
 
       from mbos_approvals ap
       join users u on u.id = ap.requested_by_user_id
-     where ap.state = 'pending' ${onlyMine(scope, "ap.requested_by_user_id")}
+     where ap.state = 'pending' ${NOT_WITHDRAWN}
+       ${onlyMine(scope, "ap.requested_by_user_id")}
      order by ap.requested_at asc
      limit 200
   `) as unknown as PendingApproval[];
@@ -503,7 +527,8 @@ export async function pendingApprovals(): Promise<PendingApproval[]> {
 /** For the sidebar badge and the launcher tile. */
 export async function pendingApprovalCount(): Promise<number> {
   const rows = await db.execute<{ n: number }>(
-    sql`select count(*)::int as n from mbos_approvals where state = 'pending'`,
+    sql`select count(*)::int as n from mbos_approvals ap
+         where ap.state = 'pending' ${NOT_WITHDRAWN}`,
   );
   return Number(rows[0]?.n ?? 0);
 }
@@ -518,9 +543,10 @@ export async function pendingApprovalCount(): Promise<number> {
 export async function oldestApprovalHours(): Promise<number> {
   const rows = await db.execute<{ hours: number }>(sql`
     select coalesce(
-             floor(extract(epoch from (now() - min(requested_at))) / 3600), 0
+             floor(extract(epoch from (now() - min(ap.requested_at))) / 3600), 0
            )::int as hours
-      from mbos_approvals where state = 'pending'
+      from mbos_approvals ap
+     where ap.state = 'pending' ${NOT_WITHDRAWN}
   `);
   return Number(rows[0]?.hours ?? 0);
 }
@@ -1376,11 +1402,24 @@ export async function leaveRequests(): Promise<LeaveRow[]> {
            ap.decision_note as "decisionNote",
            d.name as "approverName",
            ap.requested_at as "requestedAt",
+           /* Who ELSE is off on these days.
+            *
+            * "Else" is load-bearing and was missing: without the user check a
+            * person's own request could name them, which reads as a clash with
+            * themselves. And a REFUSED request is not somebody being off — it
+            * counted here, so the banner warned about two salesmen away in one
+            * week when one of them had already been told no. Waiting counts,
+            * because two requests decided one at a time by somebody who cannot
+            * see the other is the whole reason this column exists. */
            (select string_agg(distinct u2.name, ', ')
               from mbos_leave_requests l2
               join users u2 on u2.id = l2.user_id
+              left join mbos_approvals ap2
+                     on ap2.subject_id = l2.id and ap2.type = 'leave'
              where l2.id <> l.id
+               and l2.user_id <> l.user_id
                and l2.cancelled_at is null
+               and coalesce(ap2.state::text, 'pending') in ('pending', 'approved')
                and l2.from_date <= l.to_date
                and l2.to_date >= l.from_date) as "clashesWith"
       from mbos_leave_requests l

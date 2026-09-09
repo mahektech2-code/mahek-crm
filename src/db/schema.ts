@@ -5112,7 +5112,17 @@ export const mbosLeaveRequests = pgTable(
     toDate: date("to_date").notNull(),
     /** A single day taken as a half. Whole days otherwise. */
     halfDay: boolean("half_day").notNull().default(false),
-    /** Derived from the dates and the working calendar. Rebuilt, never typed. */
+    /**
+     * WORKING days spanned, both ends counted — Sundays and `mbos_holidays`
+     * excluded. Computed in `handleLeave` from `engines/leave.ts`, never taken
+     * from the payload: it is what a balance is debited by, and a number the
+     * handset can set is a number somebody can set.
+     *
+     * This is days ABSENT, not days spent: a half day is one day here with
+     * `halfDay` true, and costs half. Whole, because the column is an integer
+     * and half of one day is a fact about the day rather than a different
+     * quantity of them.
+     */
     days: integer("days").notNull().default(0),
     reason: text("reason"),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
@@ -5125,11 +5135,25 @@ export const mbosLeaveRequests = pgTable(
 );
 
 /**
- * §2.11 — entitlement and consumption, per person per year per type.
+ * §2.11 — what ONE PERSON is entitled to, where it differs from everybody
+ * else's.
  *
- * `usedDays` is a derived cache rebuilt from approved requests; the balance is
- * the subtraction and is not stored at all, because a stored balance is a
- * number two writers can disagree about.
+ * A row here is an override and nothing else. The ordinary entitlement is
+ * `mbos.leave.annualEntitlementDays` in the configuration registry, so a person
+ * with no row gets the company's answer — which is the whole reason this table
+ * stopped being the source of it. Nothing ever wrote an entitlement: the only
+ * code that created a row was the approval path, at zero days, so somebody had
+ * a row for a kind of leave only AFTER taking some and it read "-2 of 0 left".
+ * The handset builds its list of leave kinds from these, so before anybody had
+ * taken any leave the form could offer nothing but loss of pay.
+ *
+ * **`usedDays` is dead and must not be revived.** It was incremented on
+ * approval and decremented by nothing, so a reversed decision left it
+ * permanently wrong with no way to rebuild it. What has been spent is derived
+ * from the approved requests, in `leaveBalances` — the same shape as
+ * outstanding and the buying cycle. The column is left in place rather than
+ * dropped because doing so is a migration for no behaviour; it is read by
+ * nothing and written by nothing.
  */
 export const mbosLeaveBalances = pgTable(
   "mbos_leave_balances",

@@ -21,7 +21,11 @@ import { verifyPassword } from "../password";
 import { bearerFrom, verifyToken, signingKeyPresent } from "../mbos/token";
 import { today } from "../recompute";
 import { addDays, APP_TIMEZONE } from "../business-date";
-import type { PullDelta } from "../mbos/types";
+import {
+  leaveBalances as computeLeaveBalances,
+  leaveDebitDays,
+} from "../engines/leave";
+import { LEAVE_LABELS, type LeaveType, type PullDelta } from "../mbos/types";
 
 /* ---------------------------------------------------------------------------
  * MBOS — every read the handset makes.
@@ -1219,17 +1223,97 @@ async function attendanceToday(userId: string, day: string) {
   };
 }
 
+/**
+ * What leave somebody has, has spent, and has left — one row per kind they
+ * could ask for, whether or not anything has been stored about them.
+ *
+ * Read from three places, and NONE of them is `mbos_leave_balances.used_days`:
+ *
+ *  - the entitlement is `mbos.leave.annualEntitlementDays`, configuration,
+ *    because nothing in MahekOne ever set one. The only code that created a
+ *    balance row was the approval path, at zero days entitled, so a person had
+ *    a row for a kind of leave only after taking some — and the handset builds
+ *    its list of kinds from these rows, so before anybody had taken any leave
+ *    the form could offer nothing but loss of pay. Every request a salesman
+ *    could make was unpaid and no screen said why.
+ *  - a row in `mbos_leave_balances` overrides it for one person, which is what
+ *    that table is for now: somebody on different terms, stated deliberately.
+ *  - what has been SPENT is derived from the approved requests themselves,
+ *    never from the cached `used_days`. That column was incremented on approval
+ *    and decremented by nothing at all, so a request approved and then reversed
+ *    left the balance permanently short with no way to notice. Deriving is also
+ *    what makes a half day cost half a day: the debit is the request's own
+ *    arithmetic rather than a number somebody added up once.
+ *
+ * `year` is the calendar year the entitlement runs in. Only requests STARTING
+ * in it are counted — a leave straddling New Year is spent where it began,
+ * which is arbitrary but stated, and the alternative is splitting one absence
+ * across two balances so that neither reads as the leave anybody took.
+ */
 async function leaveBalances(userId: string, year: number) {
-  return db.execute<Record<string, unknown>>(sql`
-    select b.leave_type as kind, b.year::text as period,
-           b.entitled_days as entitled, b.used_days as used,
-           -- Derived here because the handset has a column for it and no
-           -- arithmetic to fill it with; the row is upserted verbatim.
-           (b.entitled_days - b.used_days) as available
-      from mbos_leave_balances b
-     where b.user_id = ${userId} and b.year = ${year}
-     order by b.leave_type asc
-  `);
+  const config = await getConfig();
+
+  const [overrideRows, usedRows] = await Promise.all([
+    db.execute<{ kind: string; entitled: number }>(sql`
+      select b.leave_type::text as kind, b.entitled_days as entitled
+        from mbos_leave_balances b
+       where b.user_id = ${userId} and b.year = ${year}
+    `),
+    /* The approved requests themselves, NOT a sum. What a request costs is
+       `leaveDebitDays`, and spelling that arithmetic out in SQL as well would
+       be two statements of one rule — the half-day half is exactly the sort
+       that drifts, and the drifting copy would be the one debiting somebody's
+       balance. A person's year is a few dozen rows. */
+    db.execute<{ kind: string; days: number; halfDay: boolean }>(sql`
+      select l.leave_type::text as kind, l.days, l.half_day as "halfDay"
+        from mbos_leave_requests l
+        join mbos_approvals a
+          on a.subject_id = l.id and a.type = 'leave' and a.state = 'approved'
+       where l.user_id = ${userId}
+         and l.cancelled_at is null
+         and extract(year from l.from_date) = ${year}
+    `),
+  ]);
+
+  const used: Record<string, number> = {};
+  for (const row of usedRows) {
+    used[row.kind] =
+      (used[row.kind] ?? 0) + leaveDebitDays(Number(row.days), row.halfDay);
+  }
+
+  const overrides = Object.fromEntries(
+    overrideRows.map((r) => [r.kind, Number(r.entitled)]),
+  );
+
+  return leaveBalanceRows(
+    config["mbos.leave.annualEntitlementDays"],
+    used,
+    overrides,
+    year,
+  );
+}
+
+/**
+ * The rows as the handset stores them. `period` is the year, which is the only
+ * thing on the handset's table saying which year a balance belongs to.
+ */
+function leaveBalanceRows(
+  entitlement: Readonly<Record<string, number>>,
+  used: Readonly<Record<string, number>>,
+  overrides: Readonly<Record<string, number>>,
+  year: number,
+): Record<string, unknown>[] {
+  return computeLeaveBalances(entitlement, used, overrides).map((b) => ({
+    /* The label, not the enum. This is what the handset draws its leave
+       buttons from, and it was sending `loss_of_pay` — see `LEAVE_LABELS`.
+       It comes back as its enum through `leaveTypeOf`, which reads the words
+       around the word. */
+    kind: LEAVE_LABELS[b.kind as LeaveType] ?? b.kind,
+    period: String(year),
+    entitled: b.entitled,
+    used: b.used,
+    available: b.available,
+  }));
 }
 
 /**
@@ -1582,6 +1666,12 @@ export async function buildPull(
     ? sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`
     : null;
 
+  /* The business day's year, not the server's. `today()` applies the working
+     day boundary in Asia/Kolkata; reading the year off a bare `Date` answers
+     in whatever zone the machine is set to, which on the last night of
+     December is a different year and a different leave balance. */
+  const deltaYear = Number((await today()).slice(0, 4));
+
   const [
     changedCustomers,
     changedProducts,
@@ -1746,22 +1836,14 @@ export async function buildPull(
 
       /* What leave he has left.
        *
-       * The handset's leave screen builds its list of kinds from these, so
-       * with none sent the only thing it could offer was Loss of pay — a
-       * salesman with twelve days of casual leave being shown no way to ask
-       * for any of it. The balance is a subtraction rather than a stored
-       * number, because a stored one is a figure two writers can disagree
-       * about. */
-      db.execute<Record<string, unknown>>(sql`
-        select b.leave_type::text as kind,
-               b.entitled_days as entitled,
-               b.used_days as used,
-               (b.entitled_days - b.used_days) as available
-          from mbos_leave_balances b
-         where b.user_id = ${principal.user.id}
-           and b.year = extract(year from (now() at time zone ${APP_TIMEZONE}))
-         order by b.leave_type asc
-      `),
+       * The SAME function the bootstrap calls, not a second spelling of it.
+       * This was one — four columns off `mbos_leave_balances`, a table that
+       * only ever got a row after somebody had already taken leave — and the
+       * two would now disagree about every person in the company, because the
+       * entitlement moved into configuration and the usage is derived from the
+       * requests. That is exactly the drift the delta test downstairs exists to
+       * catch, and the cheapest way to pass it is to have one query. */
+      leaveBalances(principal.user.id, deltaYear),
 
       holidaysFor(sinceIso),
 

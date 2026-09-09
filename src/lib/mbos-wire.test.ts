@@ -171,8 +171,24 @@ function payloadColumns(source: string, fn: string): string[] {
   }
 
   const obj = body.match(/\.select\(\{([\s\S]*?)\}\)/);
-  assert.ok(obj, `${fn} has neither a sql template nor a .select({}) to read`);
-  return [...obj[1].matchAll(/^\s*(\w+):/gm)].map((m) => m[1]);
+  if (obj) return [...obj[1].matchAll(/^\s*(\w+):/gm)].map((m) => m[1]);
+
+  /*
+   * A payload assembled in TypeScript rather than by the database.
+   *
+   * `leaveBalanceRows` is the one of these: its entitlement comes from
+   * configuration and its usage from a GROUP BY, so there is no single select
+   * whose columns are the row. Reading the object it maps to keeps this test
+   * pointed at the thing that actually goes on the wire — anchoring it on one
+   * of the two queries instead would have checked two of the five columns and
+   * reported the other three as safe.
+   */
+  const literal = body.match(/=>\s*\(\{([\s\S]*?)\}\)\)/);
+  assert.ok(
+    literal,
+    `${fn} has no sql template, no .select({}) and no mapped object to read`,
+  );
+  return [...literal[1].matchAll(/^\s*(\w+):/gm)].map((m) => m[1]);
 }
 
 /*
@@ -190,7 +206,7 @@ const WIRE: { fn: string; table: string; extra?: string[] }[] = [
   { fn: "journeyStops", table: "journey_stops", extra: ["lastSyncedAt"] },
   { fn: "schemeRows", table: "schemes" },
   { fn: "unreadNotifications", table: "notifications" },
-  { fn: "leaveBalances", table: "leave_balances", extra: ["lastSyncedAt"] },
+  { fn: "leaveBalanceRows", table: "leave_balances", extra: ["lastSyncedAt"] },
   { fn: "holidaysFor", table: "holidays", extra: ["lastSyncedAt"] },
   { fn: "visibleDocuments", table: "documents", extra: ["lastSyncedAt"] },
   { fn: "coursesFor", table: "courses", extra: ["lastSyncedAt"] },
@@ -241,15 +257,17 @@ const DELTA: { anchor: string; table: string }[] = [
   { anchor: 'select t.id, t.customer_id as "customerId"', table: "timeline_events" },
   { anchor: "select s.id,", table: "journey_stops" },
   /*
-   * `journey_days` is deliberately not here any more: the delta calls the same
-   * `planDaysFor` the bootstrap does, so there is no second spelling left to
-   * check, and the WIRE entry above covers it once. It moved for a stronger
-   * reason than tidiness — the bootstrap sent NO plan days at all, so a fresh
-   * sign-in got an empty Journey tab and the `updated_at`-gated delta could
-   * never make it up: a day proposed before this handset signed in arrived on
-   * no pass ever.
+   * TWO ENTRIES LEFT THIS LIST, one from each side of this merge, and both for
+   * the same reason: the delta now calls the same function the bootstrap does,
+   * so there is no second spelling left to check and the WIRE entry above
+   * covers each once. That is the state every remaining entry is waiting to
+   * reach.
+   *
+   * `journey_days` moved for a stronger reason than tidiness — the bootstrap
+   * sent NO plan days at all, so a fresh sign-in got an empty Journey tab and
+   * the `updated_at`-gated delta could never make it up: a day proposed before
+   * this handset signed in arrived on no pass, ever.
    */
-  { anchor: "select b.leave_type::text as kind", table: "leave_balances" },
 ];
 
 /* The history channels are sent by the SAME functions on both paths — the
