@@ -231,6 +231,14 @@ export const amRoleEnum = pgEnum("am_role", [
   "sales",
   "sales_manager",
   "back_office",
+  /**
+   * Who runs the RELATIONSHIP once a lead has become a customer — §Q's real
+   * requirement, which the brief had riding on `kind` instead. It is a fourth
+   * value here rather than a table of its own because "a seat on this account
+   * moved, from whom, to whom, why, and who did it" is one question with one
+   * answer shape, and `customer_am_changes` already answers it three times.
+   */
+  "relationship",
 ]);
 
 /**
@@ -1108,6 +1116,42 @@ export const customers = pgTable(
      * true of every row that existed when this column arrived.
      */
     amDecidedAt: timestamp("am_decided_at", { withTimezone: true }),
+
+    /**
+     * WHO OWNS THE RELATIONSHIP — the fifth seat, and the answer to §Q.
+     *
+     * The brief asks for the account to become a customer on the second order
+     * and for the relationship to pass to a customer manager in the same
+     * breath. Those are two facts about two different things: what the account
+     * IS, and who RUNS it. `kind` answers the first and flips on the first
+     * order (see `lead-conversion-service.ts`); this answers the second, and
+     * nothing derives one from the other.
+     *
+     * It is read by `scopedToUsers` — whoever is handed a relationship has to
+     * be able to open it, or they have been given work that is invisible to
+     * them — and deliberately NOT by `ASSIGNED_TO_SQL`. That is the same split
+     * `backOfficeAmId` and `leadManagerId` already live under, and here it is
+     * load-bearing: `ASSIGNED_TO_SQL` decides whose orders these are and whose
+     * target they count toward, so reading this there would move revenue
+     * between people as a side effect of naming a relationship manager. Moving
+     * money is `customer.reassign`, which is accounts' and admin's for exactly
+     * that reason; this is a manager's, and it can be because it moves none.
+     *
+     * Null on a lead, and on a customer nobody has handed over yet.
+     */
+    relationshipOwnerId: text("relationship_owner_id").references(() => users.id),
+    /**
+     * When the relationship was handed over, and the ONLY thing that says it
+     * has been.
+     *
+     * Whether a handover is OUTSTANDING is derived — converted, and this still
+     * null — never stored. A stored flag would be a cache with nothing
+     * rebuilding it, and this codebase has the scars: every derived value here
+     * is recomputed from the facts precisely so a screen and the ledger cannot
+     * drift. There is nothing to recompute if the question is asked of the
+     * column that already answers it.
+     */
+    handedOverAt: timestamp("handed_over_at", { withTimezone: true }),
     deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
     deactivatedById: text("deactivated_by_id").references(() => users.id),
     deactivationReason: text("deactivation_reason"),
@@ -1298,6 +1342,7 @@ export const customers = pgTable(
      * that is the row a transfer would otherwise scan the table for.
      */
     index("customers_sales_manager_idx").on(t.salesManagerId),
+    index("customers_relationship_owner_idx").on(t.relationshipOwnerId),
     index("customers_sales_manager_name_idx").on(t.salesManagerPersonName),
     index("customers_name_idx").on(t.name),
     index("customers_phone_idx").on(t.phone),

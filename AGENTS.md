@@ -2170,6 +2170,45 @@ account to them, on a customer they had never sold to, with the departed
 salesperson's name still on the screen because that is a different column.
 After `am_decided_at` the sales seat is read exactly as it stands.
 
+**AN ACCOUNT HAS A FIFTH SEAT, and it is the answer to §Q.** The brief asks
+for the account to become a customer on the second order and for the
+relationship to pass to a customer manager in the same breath. That is a
+sentence about what the account IS and a sentence about who RUNS it, joined by
+an "and" that hides the fact they are independent. `kind` answers the first and
+flips on the FIRST order — `lead-conversion-service.ts` has the whole argument,
+and it is settled. `relationship_owner_id` answers the second, and nothing
+derives one from the other.
+
+**It moves SIGHT, and deliberately not a rupee.** It is read by `scopedToUsers`
+and by `assertCustomerInScope`, because a seat that did not carry sight would
+announce to somebody that an account is theirs and then refuse them the screen —
+a failure this file already carries three paragraphs about, having shipped
+twice. It is NOT read by `ASSIGNED_TO_SQL`, and that is the load-bearing half:
+that expression decides who is credited for an account's orders and whose
+target it counts toward, so reading this there would move revenue between
+people as a side effect of naming a relationship manager. Moving money is
+`customer.reassign`, accounts' and admin's for exactly that reason.
+`customer.handOver` is a manager's, and it can be *because* it moves none —
+the same test the sales manager seat passes, one seat along. There is an
+integration test asserting a handover leaves `sales_am_id`, `owner_id`, `kind`
+and `am_decided_at` untouched, because that is the thing nobody would notice.
+
+**Whether a handover is OUTSTANDING is derived, never stored.** Converted, and
+`handed_over_at` still null. A flag would be a cache with nothing rebuilding it,
+and the only facts it could be rebuilt from are the two columns it would be
+caching. It is the same shape as the third-party filter listing shops with no
+distributor: a list that should be empty and is not, because a row nobody can
+account for is worse than one that says why it is there.
+
+**And the seat's LABEL comes from a map, not a chain.** `seat-labels.ts`, pure
+and client-safe like `complaint-labels` beside it. The record page rendered the
+three seats with a ternary whose last arm was "Back office", so adding a fourth
+relabelled it rather than failing — a handover reading on a customer's history
+as a back office change, silently, on the screen somebody opens to find out
+what happened to an account. `handover.test.ts` reads `amRoleEnum.enumValues`
+and asserts every one has a label, so a fifth seat fails at the schema rather
+than on the page.
+
 **A lead moves by `owner_id` and a customer by `sales_am_id`.** That is what
 `ASSIGNED_TO_SQL` reads, so writing only `sales_am_id` leaves every lead
 exactly where it was while the screen reports it moved.
