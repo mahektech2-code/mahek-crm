@@ -2733,8 +2733,12 @@ export async function managers(): Promise<ManagerRow[]> {
   return db.execute<ManagerRow>(sql`
     select u.id, u.name, u.email, u.role::text as role, u.active,
            coalesce(
+             -- REGIONS ONLY, and from the renamed table. It also holds a
+             -- salesman's working cities now, and listing one of those as a
+             -- manager's patch would show "Nagpur" as somewhere they oversee.
              (select array_agg(t.region order by t.region)
-                from mbos_manager_territories t where t.user_id = u.id),
+                from mbos_user_territories t
+               where t.user_id = u.id and t.kind = 'region'),
              '{}'
            ) as regions
       from users u
