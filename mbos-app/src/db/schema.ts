@@ -1306,6 +1306,22 @@ export const MIGRATIONS: string[][] = [
     `CREATE INDEX IF NOT EXISTS idx_customer_bills_cust
        ON customer_bills(customerId, billDate ASC);`,
   ],
+
+  /*
+   * v(next) — a day he started himself.
+   *
+   * The pull sends this for every day now, so the column has to exist or the
+   * generic upsert throws on an unknown column and takes the WHOLE pull down
+   * with it — customers, products, the price list, all of it. That is the one
+   * failure this schema can produce on its own, and the test at the top of
+   * `src/lib/mbos-wire.test.ts` is what catches it before an APK carries it.
+   *
+   * 0 for every day that already exists, which is all of them: until now the
+   * office proposed every day there was.
+   */
+  [
+    `ALTER TABLE journey_days ADD COLUMN selfPlanned INTEGER NOT NULL DEFAULT 0;`,
+  ],
 ];
 
 /**

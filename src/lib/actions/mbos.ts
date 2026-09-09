@@ -4573,6 +4573,11 @@ const planDaySchema = z.object({
   reason: z.string().max(2000).nullish(),
   /** Where he would rather go. Optional — "not this" is a legitimate answer. */
   counterCity: z.string().max(120).nullish(),
+  /* Only on a day he is STARTING. Both are required there and ignored
+     everywhere else — answering a proposed day may not move its date or
+     rewrite the city the office asked for. */
+  planDate: z.string().nullish(),
+  city: z.string().max(120).nullish(),
 });
 
 /**
@@ -4607,11 +4612,119 @@ async function handlePlanDay(principal: MbosPrincipal, item: SyncItem): Promise<
     .limit(1);
 
   if (!plan) {
-    return {
-      kind: "retry",
-      message:
-        "That day is not on the office's plan yet. It will be tried again once it is.",
-    };
+    /* A day he is STARTING, not answering.
+     *
+     * The negotiation this table was built for runs one way — the office
+     * proposes, he agrees or refuses — and it left him unable to plan a day
+     * nobody had proposed. He could not work on a Tuesday the office had not
+     * thought about, which is most Tuesdays.
+     *
+     * A created day is born `agreed`, because there is nobody to agree with:
+     * the whole content of `agreed` is "the city is settled, the shops are
+     * next", and that is exactly true of a day he chose. It is NOT born
+     * `planned` — that word means the shops are picked, and picking is
+     * `plan_stops`, a separate write on a separate screen.
+     */
+    if (item.op !== "create") {
+      return {
+        kind: "retry",
+        message:
+          "That day is not on the office's plan yet. It will be tried again once it is.",
+      };
+    }
+
+    const planDate = (p.planDate ?? "").trim();
+    const city = (p.city ?? "").trim();
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(planDate)) {
+      return {
+        kind: "rejected",
+        value: reject("validation", "A day needs the date it is for."),
+      };
+    }
+
+    /* THE CITY IS REQUIRED, and this is the check that matters most here.
+     *
+     * `pickCandidates` filters the shop list by the day's city and applies NO
+     * clause at all when it is empty — so a day created without one would open
+     * the picker on the entire book. That is precisely the unfiltered list
+     * Mahek overruled, and it would arrive silently, with nothing on the screen
+     * saying the filter had gone. Refusing here is the only place it cannot be
+     * got round: the handset asks for a city, and a handset is not a check. */
+    if (!city) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          "A day needs the city you are working. The shop list is filtered by it, and without one the picker would offer your whole book.",
+        ),
+      };
+    }
+
+    /* The business day in Asia/Kolkata, not the server's. `today()` applies
+       the configured day boundary; a bare Date would answer in whatever zone
+       the machine is set to and refuse a perfectly good tomorrow. */
+    const todayIso = await today();
+    if (planDate < todayIso) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          `${planDate} has already gone, so there is nothing left to plan. Pick today or a day ahead.`,
+        ),
+      };
+    }
+
+    /* `agreed` and nothing else. A handset may not mint a day already walked,
+     * already refused, or already planned — the states are reached by the acts
+     * that earn them. */
+    await db
+      .insert(mbosJourneyPlans)
+      .values({
+        id: item.entityId,
+        userId: principal.user.id,
+        planDate,
+        city,
+        dayState: "agreed",
+        selfPlanned: true,
+        respondedAt: new Date(),
+        clientCreatedAt: new Date(item.clientCreatedAt),
+        createdById: principal.user.id,
+        updatedById: principal.user.id,
+        deviceId: principal.deviceId,
+      })
+      /* One row per person per day, on `mbos_journey_plans_user_day_key`. A
+       * clash is the office having proposed that date between him opening the
+       * form and it reaching here, which is a real race on a slow connection
+       * and not an error in what he did. */
+      .onConflictDoNothing();
+
+    const [landed] = await db
+      .select({ id: mbosJourneyPlans.id })
+      .from(mbosJourneyPlans)
+      .where(eq(mbosJourneyPlans.id, item.entityId))
+      .limit(1);
+
+    if (!landed) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "duplicate",
+          `${planDate} is already on your plan — the office proposed it. Answer it on the Journey tab rather than starting a second one.`,
+        ),
+      };
+    }
+
+    /* The office is not asked, and is told. That is the difference between
+     * this and the negotiation, and the manager still sees the whole calendar
+     * rather than discovering the day from the visits that came off it. */
+    await notifyManagers(
+      principal.user.id,
+      `${principal.user.name} planned ${planDate}`,
+      `He is working ${city} on ${planDate}, his own plan rather than a proposed one. He picks the shops next.`,
+    );
+
+    return { kind: "accepted", value: { serverId: item.entityId } };
   }
 
   /* Already walked, or already picked. Answering it now would unpick a day
