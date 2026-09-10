@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, TextInput } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { color as C, HIT, radius, type, weight } from '../src/theme/tokens';
+import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
 import { Card, HealthPill, PrimaryButton } from '../src/components/ui/primitives';
 import { BottomSheet } from '../src/components/ui/overlays';
@@ -280,28 +280,51 @@ export default function Customers() {
         </Pressable>
       </View>
 
-      {/* LIST OR MAP. One tap, always visible, and the state is obvious from
-          which side is filled — a map hidden behind a menu is one nobody finds. */}
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
+      {/* LIST OR MAP. A tray with two joined halves rather than a third row of
+          free-standing chips, because this control is not a filter at all — it
+          does not change WHICH shops are in the book, only how the same book is
+          drawn. Three rows of identical pills stacked one under the other read
+          as one bank of nine buttons that all do the same kind of thing, and
+          the thing that separates a mode switch from a filter at a glance is
+          its GEOMETRY, not its position. It says "view" in both halves for the
+          same reason: "List" beside "Map" is two nouns, and a noun on a button
+          reads as the thing you are about to be shown rather than the way you
+          are about to be shown it. */}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignSelf: 'flex-start',
+          marginTop: 12,
+          padding: 3,
+          borderRadius: radius.md,
+          borderWidth: 1,
+          borderColor: C.border,
+          backgroundColor: C.wash,
+        }}>
         {([
-          { key: false, label: 'List' },
-          { key: true, label: 'Map' },
-        ] as const).map((chip) => {
-          const on = asMap === chip.key;
+          { key: false, label: 'List view' },
+          { key: true, label: 'Map view' },
+        ] as const).map((seg) => {
+          const on = asMap === seg.key;
           return (
             <Pressable
-              key={String(chip.key)}
-              onPress={() => setAsMap(chip.key)}
+              key={String(seg.key)}
+              onPress={() => setAsMap(seg.key)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: on }}
               style={{
-                paddingHorizontal: 14,
-                paddingVertical: 7,
+                paddingHorizontal: 16,
+                paddingVertical: 8,
                 borderRadius: radius.sm,
-                borderWidth: 1,
-                borderColor: on ? C.ink : C.border,
-                backgroundColor: on ? C.ink : C.surface,
+                backgroundColor: on ? C.surface : 'transparent',
+                boxShadow: on ? shadow.soft : undefined,
               }}>
-              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
-                {chip.label}
+              <Text
+                style={[
+                  { fontSize: 13, color: on ? C.ink : C.muted },
+                  weight(on ? 600 : 500),
+                ]}>
+                {seg.label}
               </Text>
             </Pressable>
           );
@@ -312,8 +335,15 @@ export default function Customers() {
           already narrowed to the territory he works. Drawn beside "where from"
           rather than buried in the filter sheet because it changes what the
           list IS, and a list whose subject is hidden behind a menu is one people
-          misread. */}
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
+          misread.
+
+          AND THE ROW IS NAMED. Two rows of identically drawn pills with nothing
+          saying what question each answers is why they read as one row of six:
+          "Leads" and "A–Z" are answers to different questions, and only the
+          label says so. The label is what carries it; the different fills below
+          are what let somebody who is not reading tell the rows apart. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, alignItems: 'center' }}>
+        <Text style={[type.label, { width: 42 }]}>Show</Text>
         {([
           { key: 'all', label: 'Everything' },
           { key: 'customers', label: 'Customers' },
@@ -324,10 +354,11 @@ export default function Customers() {
             <Pressable
               key={chip.key}
               onPress={() => setView(chip.key)}
+              accessibilityState={{ selected: on }}
               style={{
                 paddingHorizontal: 12,
                 paddingVertical: 7,
-                borderRadius: radius.sm,
+                borderRadius: radius.pill,
                 borderWidth: 1,
                 borderColor: on ? C.ink : C.border,
                 backgroundColor: on ? C.ink : C.surface,
@@ -342,8 +373,15 @@ export default function Customers() {
 
       {/* WHERE FROM. Three chips rather than a menu: it is one tap, it is
           always visible, and the one in use is the answer to "why is this shop
-          at the top". */}
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
+          at the top".
+
+          Its selected chip is TINTED rather than filled, and that is a
+          hierarchy rather than a decoration: the row above decides which shops
+          are in the book and this one only decides what order they come in, so
+          exactly one row on the screen is solid at a time. Two solid black rows
+          one under the other is what made them a single mush to look at. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, alignItems: 'center' }}>
+        <Text style={[type.label, { width: 42 }]}>Sort</Text>
         {[
           { key: 'me', label: 'Near me' },
           { key: 'city', label: cities.some((c) => c.city === originMode) ? originMode : 'By city' },
@@ -357,15 +395,20 @@ export default function Customers() {
             <Pressable
               key={chip.key}
               onPress={() => (chip.key === 'city' ? setPickingCity(true) : setOriginMode(chip.key))}
+              accessibilityState={{ selected: on }}
               style={{
                 paddingHorizontal: 12,
                 paddingVertical: 7,
-                borderRadius: radius.sm,
+                borderRadius: radius.pill,
                 borderWidth: 1,
-                borderColor: on ? C.ink : C.border,
-                backgroundColor: on ? C.ink : C.surface,
+                borderColor: on ? C.primaryEdge : C.border,
+                backgroundColor: on ? C.primaryTint : C.surface,
               }}>
-              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
+              <Text
+                style={[
+                  { fontSize: 13, color: on ? C.primaryDeep : C.body },
+                  weight(on ? 600 : 500),
+                ]}>
                 {chip.label}
               </Text>
             </Pressable>
