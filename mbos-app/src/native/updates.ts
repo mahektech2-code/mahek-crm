@@ -84,10 +84,12 @@ export function runningBuild(): { id: string; embedded: boolean; channel: string
  * It carries BOTH halves because there are two, and since `expo-updates` they
  * move independently. The native version is what an APK install pins; the
  * update id is which JavaScript bundle is running on top of it, and that is
- * what changes when a fix ships over the air. A version string carrying only
- * the first would have read `1.0.0` on every handset for ever — this project
- * has never bumped it, which is exactly why `runtimeVersion` uses the
- * fingerprint policy rather than the version.
+ * what changes when a fix ships over the air. The native half read `1.0.0` on
+ * every handset for the whole first year, because nothing bumped it until the
+ * check-in radius made "which build is he on" a question somebody had to
+ * answer at a shop door; DEPLOY.md now makes the bump part of releasing. It is
+ * still a number a person moves by hand, which is exactly why `runtimeVersion`
+ * uses the fingerprint policy rather than the version.
  *
  * `embedded` is a build running the bundle it shipped with — no update has
  * been applied yet — and is worth naming rather than leaving blank, because
