@@ -120,21 +120,32 @@ export function TabBar({
   onTab,
   onAction,
   bottomInset,
+  badges,
 }: {
   active: TabKey | null;
   onTab: (k: TabKey) => void;
   onAction: () => void;
   bottomInset: number;
+  /**
+   * A count to draw on a tab, by key. Absent or zero draws nothing.
+   *
+   * A tab bar is on every screen of the app, which is what makes it the only
+   * place a question can be put in front of somebody who is not looking for
+   * it. That is also why the bar must stay quiet: a pip that is lit all day is
+   * one nobody sees. Only counts that GO AWAY when they are dealt with belong
+   * here.
+   */
+  badges?: Partial<Record<TabKey, number>>;
 }) {
   return (
     <View style={[s.tabBar, { height: TAB_BAR_HEIGHT + bottomInset, paddingBottom: bottomInset }]}>
       {TABS.slice(0, 2).map((t) => (
-        <Tab key={t.k} tab={t} on={active === t.k} onPress={() => onTab(t.k)} />
+        <Tab key={t.k} tab={t} on={active === t.k} count={badges?.[t.k] ?? 0} onPress={() => onTab(t.k)} />
       ))}
       {/* The gap the raised button sits in. */}
       <View style={{ flex: 1 }} />
       {TABS.slice(2).map((t) => (
-        <Tab key={t.k} tab={t} on={active === t.k} onPress={() => onTab(t.k)} />
+        <Tab key={t.k} tab={t} on={active === t.k} count={badges?.[t.k] ?? 0} onPress={() => onTab(t.k)} />
       ))}
       <Pressable
         onPress={onAction}
@@ -146,15 +157,35 @@ export function TabBar({
   );
 }
 
-function Tab({ tab, on, onPress }: { tab: { k: TabKey; label: string; ic: string }; on: boolean; onPress: () => void }) {
+function Tab({
+  tab,
+  on,
+  count,
+  onPress,
+}: {
+  tab: { k: TabKey; label: string; ic: string };
+  on: boolean;
+  count: number;
+  onPress: () => void;
+}) {
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="tab"
       accessibilityState={{ selected: on }}
+      /* The count is read out as part of the tab rather than left as a
+         decoration a screen reader skips — it is the whole reason to press. */
+      accessibilityLabel={count > 0 ? `${tab.label}, ${count} waiting` : tab.label}
       style={{ flex: 1, minWidth: 0, alignItems: 'center', justifyContent: 'center', gap: 2 }}>
       <View style={{ height: 22, alignItems: 'center', justifyContent: 'center' }}>
         <Icon name={tab.ic} size={22} color={on ? C.primary : C.muted} />
+        {count > 0 ? (
+          <View style={s.tabBadge}>
+            <Text style={[{ color: '#fff', fontSize: 11, lineHeight: 16, textAlign: 'center' }, weight(500)]}>
+              {count > 9 ? '9+' : count}
+            </Text>
+          </View>
+        ) : null}
       </View>
       <Text style={[{ fontSize: 12, color: on ? C.primary : C.muted }, weight(on ? 500 : 400)]}>{tab.label}</Text>
     </Pressable>
@@ -163,6 +194,19 @@ function Tab({ tab, on, onPress }: { tab: { k: TabKey; label: string; ic: string
 
 const s = StyleSheet.create({
   iconBtn: { width: HIT, height: HIT, alignItems: 'center', justifyContent: 'center' },
+  /* Hung off the icon's top-right, like the bell's. Smaller, because it sits
+     in a 22pt row rather than a 48pt button and a badge that pushes the label
+     down would move the whole bar. */
+  tabBadge: {
+    position: 'absolute',
+    top: -5,
+    left: 12,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    backgroundColor: C.danger,
+  },
   bellBadge: {
     position: 'absolute',
     top: 8,

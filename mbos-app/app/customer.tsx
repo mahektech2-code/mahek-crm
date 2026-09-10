@@ -6,7 +6,8 @@ import { Icon } from '../src/components/ui/Icon';
 import { Badge, Card, HealthPill, Input, PrimaryButton } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
-import { customerSamples, type Sample } from '../src/data/requests';
+import { complaintsFor, customerSamples, type Complaint, type Sample } from '../src/data/requests';
+import { writeInternalNote } from '../src/data/internal-notes';
 import {
   competitorRecords,
   customerOrders,
@@ -34,7 +35,7 @@ import { callNumber, openWhatsApp } from '../src/lib/messaging';
  * know which he has.
  */
 
-const TABS = ['Overview', 'Timeline', 'Orders', 'Payments', 'Samples', 'Competitors'];
+const TABS = ['Overview', 'Timeline', 'Orders', 'Payments', 'Samples', 'Complaints', 'Competitors'];
 const TL_FILTERS = ['All', 'Visits', 'Orders', 'Payments', 'Calls', 'Complaints'];
 
 /** The stream's own event types, in the words the design puts on the badge. */
@@ -82,6 +83,9 @@ export default function CustomerRecord() {
   const [orders, setOrders] = React.useState<CustomerOrder[]>([]);
   const [receipts, setReceipts] = React.useState<CustomerPayment[]>([]);
   const [samples, setSamples] = React.useState<Sample[]>([]);
+  const [gripes, setGripes] = React.useState<Complaint[]>([]);
+  const [note, setNote] = React.useState('');
+  const [noteBusy, setNoteBusy] = React.useState(false);
   const [competitors, setCompetitors] = React.useState<Awaited<ReturnType<typeof competitorRecords>>>([]);
   const [compForm, setCompForm] = React.useState(false);
   const [comp, setComp] = React.useState({ name: '', rate: '', note: '', credit: '', delivery: '', strengths: '', weaknesses: '' });
@@ -97,10 +101,12 @@ export default function CustomerRecord() {
       customerOrders(id),
       customerPayments(id),
       customerSamples(id),
-    ]).then(([t, k, o, r, sm]) => {
+      complaintsFor(id),
+    ]).then(([t, k, o, r, sm, g]) => {
       setOrders(o);
       setReceipts(r);
       setSamples(sm);
+      setGripes(g);
       setEvents(t);
       setCompetitors(k);
     });
@@ -116,10 +122,12 @@ export default function CustomerRecord() {
       customerOrders(id),
       customerPayments(id),
       customerSamples(id),
-    ]).then(([t, k, o, r, sm]) => {
+      complaintsFor(id),
+    ]).then(([t, k, o, r, sm, g]) => {
       setOrders(o);
       setReceipts(r);
       setSamples(sm);
+      setGripes(g);
         if (!live) return;
         setEvents(t);
         setCompetitors(k);
@@ -301,6 +309,67 @@ export default function CustomerRecord() {
             {/* The last six bills, as the office scored them. Nothing is derived
                 here — payment behaviour is the server's to compute. */}
             <PayBehaviour raw={c.payBehaviour} />
+
+            {/* ---- a private note for the office ----
+
+                §R. `mbos_internal_notes` has had a table, a role list and a
+                bootstrap that narrows by role since the MBOS module shipped,
+                and `handleInternalNote` has been waiting on the server for a
+                payload no handset ever sent — a read path over a table nothing
+                could put a row in, exactly the shape competitor records were
+                in before they got a write path.
+
+                IT IS WRITE-ONLY HERE, and that is the feature rather than an
+                omission. `services/mbos-service.ts` never selects the table at
+                all, on its own stated reasoning: a note that could leak is not
+                on the device to leak, and a filter in the app is a filter
+                somebody can turn off. So nothing is stored locally either —
+                the note sits in the outbox until it goes, and after that this
+                phone has no copy. The screen says so rather than leaving him
+                to discover it by looking for a list that will never appear. */}
+            <Card>
+              <Text style={[type.label, { marginBottom: 6 }]}>A private note for the office</Text>
+              <Text style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginBottom: 10 }}>
+                Something about this shop the customer should never see. It goes to the office and
+                is not kept on this phone, so you will not see it here afterwards.
+              </Text>
+              <Input
+                value={note}
+                onChangeText={setNote}
+                placeholder="Pays on time but argues every rate — send the list in writing"
+                multiline
+              />
+              <Pressable
+                accessibilityRole="button"
+                disabled={noteBusy || !note.trim()}
+                onPress={() => {
+                  if (!id) return;
+                  setNoteBusy(true);
+                  void writeInternalNote({ customerId: id, body: note })
+                    .then((r) => {
+                      if (!r.ok) return notify(r.message);
+                      setNote('');
+                      notify('Sent to the office · not kept on this phone');
+                    })
+                    .finally(() => setNoteBusy(false));
+                }}
+                style={({ pressed }) => ({
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minHeight: 48,
+                  marginTop: 10,
+                  borderRadius: radius.sm,
+                  borderWidth: 1,
+                  borderColor: note.trim() ? C.primary : C.border,
+                  backgroundColor: pressed ? C.wash : note.trim() ? C.primaryTint : C.surface,
+                  opacity: noteBusy ? 0.6 : 1,
+                })}>
+                <Text
+                  style={[{ fontSize: 15, color: note.trim() ? C.primaryDeep : C.faint }, weight(500)]}>
+                  Send it to the office
+                </Text>
+              </Pressable>
+            </Card>
           </View>
         ) : null}
 
@@ -489,8 +558,65 @@ export default function CustomerRecord() {
           </View>
         ) : null}
 
-        {/* ---- competitors ---- */}
+        {/* ---- complaints ----
+
+            A complaint was WRITE-ONLY for as long as it has existed.
+            `logComplaint` wrote the row from the visit drawer and sent it to
+            the desk team, and nothing on this handset ever selected one back —
+            so the next time the salesman walked into the same shop and was
+            asked what had happened about it, the record could not tell him
+            even that it had been sent. The thing he is most likely to be asked
+            on his next visit was the one thing he could not look up.
+
+            `status` is the office's word and arrives on the sync, so an answer
+            appears here without anybody on this end doing anything. */}
         {pTab === 5 ? (
+          <View>
+            {gripes.length === 0 ? (
+              <Card style={{ paddingVertical: 24 }}>
+                <Text style={[type.small, { color: C.muted, textAlign: 'center' }]}>
+                  Nothing logged against this shop. A complaint is raised from the visit, under the
+                  Complaint outcome.
+                </Text>
+              </Card>
+            ) : (
+              <View style={{ gap: 10 }}>
+                {gripes.map((g) => (
+                  <Card key={g.id}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      {/* The stored value is already the word on the button.
+                          `logComplaint` writes the design's own label locally
+                          and only translates to MahekOne's enum on the WIRE —
+                          see `wireComplaintCategory` — so there is nothing to
+                          map back here, and a mapping would be a second
+                          vocabulary to keep in step with the first. */}
+                      <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(500)]}>
+                        {g.category}
+                      </Text>
+                      <Badge tone={g.status === 'open' ? 'amber' : 'success'}>
+                        {g.syncState === 'queued' ? 'Not sent' : g.status === 'open' ? 'Open' : 'Closed'}
+                      </Badge>
+                    </View>
+                    <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
+                      {g.description}
+                    </Text>
+                    <Text style={type.caption}>{pretty(isoDate(new Date(g.clientCreatedAt)))}</Text>
+                  </Card>
+                ))}
+                {/* No `Slice` here, unlike Orders and Payments above it. Those
+                    two are the OFFICE's lists, capped at ten by the server, so
+                    "older ones stay in the office" is literally true of them.
+                    Complaints are only ever raised on this handset and there
+                    is no pull channel bringing others down, so this list is
+                    the whole history and saying otherwise would be a false
+                    sentence on a screen somebody reads before ringing. */}
+              </View>
+            )}
+          </View>
+        ) : null}
+
+        {/* ---- competitors ---- */}
+        {pTab === 6 ? (
           <View>
             {!compForm ? (
               <Pressable

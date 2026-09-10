@@ -4,11 +4,11 @@ import { router, useFocusEffect } from 'expo-router';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { abandonLeg, openLegOf, type TravelLeg } from '../src/data/travel';
 import { legLine, travellingFor } from '../src/lib/travel-leg';
-import { DashedButton, Input, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
+import { Badge, Card, DashedButton, Input, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { VoiceField } from '../src/components/ui/dictate';
 import { ActionSheet, BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
-import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
+import { color as C, HIT, radius, shadow, type, weight, type BadgeTone } from '../src/theme/tokens';
 import {
   createDay,
   agreeDay,
@@ -20,7 +20,7 @@ import {
   type JourneyStop,
   type PlanDay,
 } from '../src/data/journey';
-import { requestTour } from '../src/data/requests';
+import { listTours, requestTour, type Tour } from '../src/data/requests';
 import { getConfig } from '../src/data/config';
 import { optimiseRoute } from '../src/engines/route';
 import { fixOf, getFix } from '../src/native/location';
@@ -94,6 +94,7 @@ export default function JourneyScreen() {
    */
   const [leg, setLeg] = React.useState<TravelLeg | null>(null);
   const [days, setDays] = React.useState<PlanDay[]>([]);
+  const [tours, setTours] = React.useState<Tour[]>([]);
   const [pastCounts, setPastCounts] = React.useState<Record<string, { total: number; done: number }>>({});
   const [now, setNow] = React.useState(() => Date.now());
   React.useEffect(() => {
@@ -124,6 +125,11 @@ export default function JourneyScreen() {
     });
     void stopCountsSince(historyFrom).then((r) => {
       if (live) setPastCounts(r);
+    });
+    /* The answer to a tour request comes down the sync onto `tours.state`, and
+       until now nothing read the row back — so he asked and never found out. */
+    void listTours().then((r) => {
+      if (live) setTours(r);
     });
     return () => {
       live = false;
@@ -943,6 +949,63 @@ export default function JourneyScreen() {
               </T>
             </View>
           ))}
+        </View>
+      ) : null}
+
+      {/* ---------------------------------------------------- tour requests --
+
+          Asking to work away for a few days was a one-way door: `requestTour`
+          wrote the row, raised the approval and sent both, the manager decided,
+          `applyApprovals` wrote the verdict and the reason onto `tours` — and
+          no screen in the app had ever selected from that table. So the answer
+          to "can I go to Nashik next week" arrived on the handset, was stored
+          correctly, and was invisible. He asked again, or he did not go. */}
+      {tours.length ? (
+        <View style={{ marginTop: 24 }}>
+          <T s="label" style={{ color: C.muted, marginBottom: 8 }}>
+            Your tour requests
+          </T>
+          {tours.map((t) => {
+            const tone: BadgeTone =
+              t.state === 'Approved' ? 'success' : t.state === 'Rejected' ? 'danger' : 'amber';
+            /* Stored as JSON because a tour covers several towns. A row that
+               cannot be parsed shows the dates rather than breaking the list —
+               this is the office's string, and the phone is the wrong place to
+               find out it was malformed. */
+            let cities: string[] = [];
+            try {
+              const parsed: unknown = JSON.parse(t.cities);
+              if (Array.isArray(parsed)) cities = parsed.map(String);
+            } catch {
+              cities = [];
+            }
+            return (
+              <Card key={t.id} style={{ marginBottom: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <T style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(500)]}>
+                    {dmy(t.startDate) + ' to ' + dmy(t.endDate)}
+                  </T>
+                  <Badge tone={tone}>{t.syncState === 'queued' ? 'Not sent' : t.state}</Badge>
+                </View>
+                <T s="caption" style={{ marginTop: 3 }}>
+                  {[cities.join(', ') || null, t.purpose].filter(Boolean).join(' · ')}
+                </T>
+                {/* The manager's own words. A refusal with no reason is one he
+                    will simply put in again next week. */}
+                {t.decisionNote ? (
+                  <T
+                    style={{
+                      fontSize: 13,
+                      lineHeight: 19,
+                      color: t.state === 'Rejected' ? C.danger : C.muted,
+                      marginTop: 4,
+                    }}>
+                    {t.decisionNote}
+                  </T>
+                ) : null}
+              </Card>
+            );
+          })}
         </View>
       ) : null}
 

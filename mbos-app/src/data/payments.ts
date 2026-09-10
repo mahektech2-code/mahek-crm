@@ -3,7 +3,7 @@ import { enqueue } from '../sync/queue';
 import { insertLocal, stamp } from './write';
 import { getConfig } from './config';
 import { notify } from './notifications';
-import { cashPosition } from '../engines/cash';
+import { cashPosition, collectionMode } from '../engines/cash';
 import { createTask } from './tasks';
 import { isoDate } from '../lib/format';
 
@@ -144,6 +144,7 @@ export async function collectPayment(args: {
 export type CashRow = {
   id: string; customerId: string; customerName: string | null; amountPaise: number;
   collectedAt: number; depositSlaDueAt: number | null; depositedAt: number | null;
+  mode: string;
 };
 
 /**
@@ -152,15 +153,25 @@ export type CashRow = {
  * Cash collections not yet deposited, with the oldest and anything past its
  * deadline surfaced. This is a real personal liability for the person holding
  * it, which is why the figure is on the home screen rather than buried.
+ *
+ * **THE MODE IS READ, and it was a constant.** Every undeposited row was
+ * handed to the engine as `mode: 'cash'`, so the filter one line inside it —
+ * the filter the whole engine is built around, documented at the top of
+ * `engines/cash.ts` as "cheque and UPI collections are not here" — matched
+ * everything it was given. A UPI receipt that was in the company's account
+ * before the salesman left the shop counted as notes in his pocket, on the
+ * home screen and against the deposit deadline. The comment saying the mode
+ * was load-bearing sat directly above the line that threw it away.
  */
 export async function cashInHand(userId: string, now = Date.now()) {
   /* The customer's name comes along because the escalation list has to say
      whose money it is, not just how much. */
   const rows = await all<CashRow>(
     `SELECT p.id, p.customerId, c.name AS customerName, p.amountPaise, p.collectedAt,
-            p.depositSlaDueAt, p.depositedAt
+            p.depositSlaDueAt, p.depositedAt, p.mode
        FROM payments p LEFT JOIN customers c ON c.id = p.customerId
-      WHERE p.userId = ? AND p.deposited = 0 ORDER BY p.collectedAt ASC`,
+      WHERE p.userId = ? AND p.deposited = 0 AND p.bounced = 0
+      ORDER BY p.collectedAt ASC`,
     [userId],
   );
   const slaHours = await getConfig<number>('mbos.payments.cashDepositSlaHours', 36);
@@ -170,9 +181,7 @@ export async function cashInHand(userId: string, now = Date.now()) {
       customerName: r.customerName ?? 'Unknown customer',
       amountPaise: r.amountPaise,
       collectedAt: r.collectedAt,
-      /* Only cash goes missing — the engine filters on this, so the mode is
-         load-bearing rather than decorative. */
-      mode: 'cash' as const,
+      mode: collectionMode(r.mode),
       depositedAt: r.depositedAt,
     })),
     slaHours,
@@ -207,12 +216,24 @@ export async function markDeposited(paymentIds: string[], proofMediaId: string |
  * customer now owes money he believes he has already paid, and somebody has to
  * ring him about it.
  */
-export async function markBounced(paymentId: string): Promise<void> {
-  const payment = await one<{ customerId: string; amountPaise: number; chequeNumber: string | null }>(
-    'SELECT customerId, amountPaise, chequeNumber FROM payments WHERE id = ?',
+export async function markBounced(paymentId: string, reason?: string): Promise<void> {
+  const payment = await one<{
+    customerId: string; amountPaise: number; chequeNumber: string | null; bounced: number;
+  }>(
+    'SELECT customerId, amountPaise, chequeNumber, bounced FROM payments WHERE id = ?',
     [paymentId],
   );
   if (!payment) return;
+
+  /*
+   * Already bounced, so there is nothing to do and doing it anyway would be
+   * wrong rather than merely wasteful: this function ADDS the amount back to
+   * the customer's outstanding, so a second pass bills them twice for one
+   * bounce. A double tap on a phone with a slow write is the ordinary way that
+   * happens, and the second task and the second notification would arrive to
+   * confirm it. Read-then-act, in one place, before anything is written.
+   */
+  if (payment.bounced) return;
 
   const customer = await one<{ name: string }>('SELECT name FROM customers WHERE id = ?', [payment.customerId]);
   const name = customer?.name ?? 'the customer';
@@ -228,14 +249,29 @@ export async function markBounced(paymentId: string): Promise<void> {
       sourceRecordId: paymentId,
       occurredAt: Date.now(),
       actor: 'You',
-      summary: `Cheque ${payment.chequeNumber ?? ''} bounced`,
+      /*
+       * The reason is KEPT, and it is kept LOCALLY.
+       *
+       * `paymentSchema` on the server takes `bounced` and `bouncedAt` and
+       * nothing else, and there is no `bounceReason` column at either end — so
+       * putting it on the wire would have it dropped by the parse in silence,
+       * which is the failure this codebase names over and over. It goes where
+       * it is actually read instead: the customer's timeline and the title of
+       * the task to ring them, both of which are in front of the salesman at
+       * the moment he makes that call.
+       */
+      summary:
+        `Cheque ${payment.chequeNumber ?? ''} bounced` +
+        (reason?.trim() ? ` — ${reason.trim()}` : ''),
     });
   });
 
   await enqueue({ entityType: 'payment', entityId: paymentId, op: 'update', payload: { id: paymentId, bounced: true, bouncedAt: Date.now() } });
 
   await createTask({
-    title: `Ring ${name} — the cheque bounced`,
+    title:
+      `Ring ${name} — the cheque bounced` +
+      (reason?.trim() ? ` (${reason.trim()})` : ''),
     customerId: payment.customerId,
     priority: 'High',
     dueDate: isoDate(new Date()),
@@ -249,8 +285,56 @@ export async function markBounced(paymentId: string): Promise<void> {
   });
 }
 
-export async function listPayments(customerId?: string) {
+/* ------------------------------------------------- what he has collected */
+
+/**
+ * One row of the collections list.
+ *
+ * The customer's NAME is joined in rather than left to the screen, for the
+ * same reason `cashInHand` joins it: a list of amounts with no names on it
+ * cannot be worked, and every screen that needed it would otherwise fetch the
+ * book a second time to get it.
+ */
+export type CollectedPayment = {
+  id: string;
+  customerId: string;
+  customerName: string | null;
+  amountPaise: number;
+  mode: string;
+  chequeNumber: string | null;
+  chequeDate: string | null;
+  collectedAt: number;
+  localReceiptRef: string;
+  deposited: number;
+  depositedAt: number | null;
+  depositSlaDueAt: number | null;
+  bounced: number;
+  bouncedAt: number | null;
+  syncState: string;
+};
+
+/**
+ * The money he has taken, newest first.
+ *
+ * This is HIS record, not the office's. The customer screen's Payments tab
+ * reads `customer_payments`, which is what the office has confirmed against a
+ * bank statement; this reads what he wrote down at the counter. The two are
+ * meant to be able to differ — that difference is the whole reason a deposit
+ * has two halves — and a screen that showed only the office's copy would be a
+ * screen where he could never act on his own.
+ *
+ * Capped like every other read of a list that grows for ever.
+ */
+export async function listPayments(customerId?: string): Promise<CollectedPayment[]> {
+  const select = `SELECT p.id, p.customerId, c.name AS customerName, p.amountPaise, p.mode,
+                         p.chequeNumber, p.chequeDate, p.collectedAt, p.localReceiptRef,
+                         p.deposited, p.depositedAt, p.depositSlaDueAt,
+                         p.bounced, p.bouncedAt, p.syncState
+                    FROM payments p LEFT JOIN customers c ON c.id = p.customerId`;
   return customerId
-    ? all('SELECT * FROM payments WHERE customerId = ? ORDER BY collectedAt DESC', [customerId])
-    : all('SELECT * FROM payments ORDER BY collectedAt DESC LIMIT 50');
+    ? all<CollectedPayment>(
+        `${select} WHERE p.customerId = ? ORDER BY p.collectedAt DESC LIMIT 100`,
+        [customerId],
+      )
+    : all<CollectedPayment>(`${select} ORDER BY p.collectedAt DESC LIMIT 100`);
 }

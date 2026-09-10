@@ -11,7 +11,7 @@ import { optimiseRoute, pickOrigin } from './route';
 import { assessOrder } from './credit';
 import { healthScore, type HealthInputs, type HealthThresholds, type HealthWeights } from './health';
 import { applySchemes, matches, type Scheme } from './schemes';
-import { cashPosition, type Collection } from './cash';
+import { cashPosition, collectionMode, type Collection } from './cash';
 import { deriveStatus, workedLabel } from './attendance';
 import { balanceAfter, leaveDays, overlaps } from './leave';
 import { canValueOrders, derivedQuantities, lineValuePaise } from './order';
@@ -450,6 +450,43 @@ test('cash carried is per-collection, and the SLA is too', () => {
   assert.equal(clean.totalPaise, 0);
   assert.equal(clean.oldest, null);
   assert.equal(clean.nextDeadline, null);
+});
+
+test('a stored payment mode reaches the engine as the engine spells it', () => {
+  /*
+   * THE BUG THIS PINS. `cashInHand` read every undeposited row and handed the
+   * engine `mode: 'cash'` as a literal, so the filter in `cashPosition` — the
+   * one the whole engine is built around — matched everything it was given.
+   * A UPI receipt that was in the company's account before the salesman left
+   * the shop was counted as notes in his pocket, on the home screen and
+   * against the deposit deadline he is chased on.
+   *
+   * The engine's own test above already proved it excludes a cheque. It could
+   * not catch this, because the caller never gave it one to exclude.
+   */
+  assert.equal(collectionMode('Cash'), 'cash');
+  assert.equal(collectionMode('Cheque'), 'cheque');
+  assert.equal(collectionMode('UPI'), 'upi');
+  assert.equal(collectionMode('Bank transfer'), 'neft');
+
+  /* An unknown mode must never read as cash. A fifth mode added to the
+     collection form and forgotten here costs one row missing from cash in
+     hand; read as cash it would put money in somebody's pocket that is not
+     there and chase them for banking it. */
+  assert.equal(collectionMode('Credit note'), 'other');
+  assert.equal(collectionMode(''), 'other');
+
+  /* And end to end: only the cash one is carried. */
+  const now = 1_000 * HOUR;
+  const rows: Collection[] = (['Cash', 'Cheque', 'UPI', 'Bank transfer'] as const).map((m, i) => ({
+    id: 'p' + i,
+    customerName: m,
+    amountPaise: 1_000_00,
+    collectedAt: now - HOUR,
+    mode: collectionMode(m),
+    depositedAt: null,
+  }));
+  assert.equal(cashPosition(rows, 48, now).totalPaise, 1_000_00);
 });
 
 /* ------------------------------------------------------------ attendance */

@@ -3303,6 +3303,35 @@ handset's schema is a string in a project `tsconfig.json` excludes, and the two
 are joined only inside a phone. It type-checks, it lints, the integration tests
 pass, and it is wrong.
 
+**A FUNCTION WITH NO CALLER IS A FEATURE NOBODY CAN USE, and nothing was
+checking for one.** An exported function that nothing imports is legal
+TypeScript and clean lint — it is exported, so no unused-symbol rule fires, and
+`tsc` has no opinion about who imports it. So a feature can be finished in
+`data/`, given a server handler, given a wire payload, pass every test in the
+suite, and simply have no screen. Nothing goes red and nothing looks wrong.
+`markDeposited` and `markBounced` were complete on both ends for months with no
+button anywhere, so cash in hand could only ever grow and a bounced cheque
+could not be reported at all; `listTours` meant a salesman asked to work away
+for a week and the manager's answer reached his phone, was stored, and was
+never shown to him. `validationsFor`, `listOrders`, `listPayments`, `touchLead`
+and `daysAwaitingAnswer` were the same shape. `mbos-app/src/data/reachable.test.ts`
+asserts every export in `data/` is named somewhere outside its own definition,
+with a `PARKED` allowlist that takes a REASON — the alternative is not "no
+allowlist", it is the list this app already had, held nowhere and known to
+nobody. It proves a function is reached, never that the path is one a person
+can walk; the cheap half is what was missing.
+
+**And a handler the handset never calls is the same bug across the wire.**
+`dispatchItem` is the whole list of things a salesman can send us, and a `case`
+with no matching `entityType:` on the handset means the server half shipped and
+the phone half never arrived — both compile perfectly alone. `internal_note`
+sat like that from the day the module shipped: §R had a table, a role list and
+a bootstrap that narrowed by role, and `handleInternalNote` waited for a
+payload nothing sent, so it was a read path over a table nothing could put a
+row in. `mbos-wire.test.ts` now reads the dispatcher against the handset's
+writes and fails on either direction, with a `SERVER_ONLY` map for the cases
+where "the office sends this one" is the honest answer.
+
 **A HAND-ROLLED HANDLER CANNOT THROW, and that is the trap rather than the
 safety.** Three tables — `tasks`, `leads`, `samples` — are written by a handler
 that types its column list out, because none of them is the same word twice on

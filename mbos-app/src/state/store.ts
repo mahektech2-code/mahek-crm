@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { useFocusEffect } from 'expo-router';
 import { getCustomer, type Customer } from '../data/customers';
 import { unreadCount } from '../data/notifications';
+import { daysAwaitingAnswer } from '../data/journey';
 import { pendingCount } from '../sync/queue';
 import type { OutcomeKey } from '../data/fixtures';
 
@@ -351,4 +352,19 @@ export function useUnreadCount(): number {
 /** The status strip's third cell, and the More list's Sync badge, read this. */
 export function usePendingCount(): number {
   return usePolledCount(pendingCount);
+}
+
+/**
+ * Days the office has proposed and he has not answered.
+ *
+ * `daysAwaitingAnswer` has existed since the plan conversation was built and
+ * nothing called it: the Journey screen derives its own "days to agree" list
+ * from `planDays`, so the list was right and there was NOTHING ANYWHERE ELSE
+ * that said to go and look at it. A plan is agreed rather than issued, and the
+ * office is waiting on the answer to lay out a week — but the only way to find
+ * out he had been asked was to happen to open the tab. This is what puts it on
+ * the tab itself.
+ */
+export function useDaysToAgreeCount(): number {
+  return usePolledCount(daysAwaitingAnswer);
 }

@@ -834,9 +834,26 @@ export default function Customers() {
 
       <BottomSheet open={!!rowMore} onClose={() => setRowMore(null)}>
         <Text style={[{ fontSize: 15, color: C.ink, marginBottom: 4 }, weight(600)]}>{rowMore?.name ?? ''}</Text>
+        {/*
+          THESE FOUR RAISED A TOAST AND DID NOTHING ELSE.
+
+          `Request sample` is wired now: `requestLeadSample` and the screen that
+          calls it both exist, and the screen already takes the shop from the
+          store — so the row that named the feature was the only part missing.
+          Choosing the shop here sets `custId`, which is what `app/samples.tsx`
+          reads as its subject.
+
+          The other three are still toasts and are deliberately left as they
+          are rather than pointed at the nearest screen that half-fits. A
+          complaint is raised from inside a visit, where the photographs and
+          the order it is about are to hand; quotations and a document library
+          for a customer do not exist in MBOS at all. Sending somebody to a
+          screen that cannot do the thing the row names is worse than the
+          toast, because it costs them the walk to find out.
+        */}
         {[
           { g: 'sample', l: 'Request sample', s: 'Sent for approval' },
-          { g: 'note', l: 'Log complaint', s: 'Goes to the desk team' },
+          { g: 'note', l: 'Log complaint', s: 'Raised from the visit' },
           { g: 'doc', l: 'Send quotation', s: 'From the price list' },
           { g: 'doc', l: 'Documents', s: 'Agreements and KYC' },
         ].map((i) => (
@@ -844,8 +861,14 @@ export default function Customers() {
             key={i.l}
             onPress={() => {
               const name = rowMore?.name ?? '';
+              const shop = rowMore;
               setRowMore(null);
-              notify(i.l === 'Documents' ? 'Documents' : i.l.replace('Request sample', 'Sample for ' + name).replace('Log complaint', 'Complaint for ' + name).replace('Send quotation', 'Quotation for ' + name));
+              if (i.l === 'Request sample') {
+                if (!shop) return;
+                set({ custId: shop.id });
+                return router.push('/samples?ask=1&from=customers');
+              }
+              notify(i.l === 'Documents' ? 'Documents' : i.l.replace('Log complaint', 'Complaint for ' + name).replace('Send quotation', 'Quotation for ' + name));
             }}
             style={{ flexDirection: 'row', alignItems: 'center', gap: 14, height: 60 }}>
             <View style={{ width: HIT, height: HIT, borderRadius: radius.sm, backgroundColor: C.primaryTint, alignItems: 'center', justifyContent: 'center' }}>

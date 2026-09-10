@@ -6,6 +6,7 @@ import { Badge, Card, Choice, DashedButton, Input, PrimaryButton, SecondaryButto
 import { BottomSheet } from '../src/components/ui/overlays';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import {
+  isSampleOverdue,
   listFunnelSamples,
   requestLeadSample,
   sampleReasons,
@@ -44,17 +45,6 @@ function toneFor(state: string): BadgeTone {
 }
 
 /** A sample nobody chased is a sample that was given away. */
-function isOverdue(x: FunnelSample, today: string): boolean {
-  return (
-    !!x.followUpDate &&
-    x.followUpDate < today &&
-    x.state !== 'Converted' &&
-    x.state !== 'Reviewed' &&
-    x.state !== 'Rejected' &&
-    x.state !== 'Cancelled'
-  );
-}
-
 export default function SamplesScreen() {
   const params = useLocalSearchParams<{ lead?: string; ask?: string }>();
   const back = useCameFrom('more');
@@ -146,7 +136,7 @@ export default function SamplesScreen() {
               key={x.id}
               onPress={() => router.push(`/sample?id=${x.id}&from=samples`)}
               accessibilityRole="button">
-              <Card style={isOverdue(x, today) ? { borderLeftWidth: 3, borderLeftColor: C.danger } : undefined}>
+              <Card style={isSampleOverdue(x, today) ? { borderLeftWidth: 3, borderLeftColor: C.danger } : undefined}>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <T style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{name}</T>
@@ -163,7 +153,7 @@ export default function SamplesScreen() {
 
                 <T s="caption" style={{ marginTop: 4 }}>{plural(days, 'day') + ' ago'}</T>
 
-                {isOverdue(x, today) ? (
+                {isSampleOverdue(x, today) ? (
                   <T style={[{ fontSize: 14, color: C.warnInk, marginTop: 4 }, weight(500)]}>
                     Feedback is late — worth a call
                   </T>
