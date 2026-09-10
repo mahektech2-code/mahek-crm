@@ -6,6 +6,7 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { getKv, setKv } from '../db';
 import { buildLabel } from '../native/updates';
+import { readDeviceState } from './device-state';
 
 /**
  * The one place a request leaves this app.
@@ -523,9 +524,28 @@ export async function markPulled(at = Date.now()): Promise<void> {
 export async function postPositions(
   positions: { id: string; at: number; lat: number; lng: number; accuracyM: number | null }[],
 ): Promise<{ ok: boolean; stored: number; tracking?: string }> {
+  /*
+   * THE BATTERY RIDES THIS REQUEST, because this request is already going.
+   *
+   * A flat phone is the commonest reason a trail simply stops mid-beat, and
+   * it is the one cause a manager can still do something about while the day
+   * is running. Reporting it needs no channel of its own: this batch runs
+   * every few minutes while a day is open, is already authenticated and
+   * already names the device. A poller would spend the battery to report it.
+   *
+   * It goes as a SIBLING of the array and never inside a position. A
+   * position's id is derived from its own reading (`at|lat|lng`), which is
+   * what makes a redelivered batch deduplicate — folding device state into a
+   * fix would put a changing value inside a key that must not change.
+   *
+   * The state can never fail the flush: a caught reading simply sends no such
+   * field, and the office reads an absent field as "not reported" rather than
+   * as an answer.
+   */
+  const state = await readDeviceState().catch(() => ({}));
   return request('/api/mbos/positions', {
     method: 'POST',
-    body: JSON.stringify({ positions, deviceId: await deviceId() }),
+    body: JSON.stringify({ positions, deviceId: await deviceId(), ...state }),
   });
 }
 
@@ -542,10 +562,27 @@ export async function registerPushToken(pushToken: string | null): Promise<{ ok:
  * permission — the office cannot know this any other way, since the OS's
  * answer to that prompt never reaches a server on its own. Called once per
  * `start()`, from `trail.ts`, right after the answer is known.
+ *
+ * IT SENDS MORE THAN THE BOOLEAN NOW, and the boolean is still first.
+ *
+ * `backgroundGranted` alone could not tell "Allow only while using the app"
+ * from "refused outright", nor either of those from the phone's own location
+ * switch being off — three different conversations to have with a salesman,
+ * drawn identically in the office. The richer fields ride the same request
+ * because the server treats a missing one as "not reported" rather than as an
+ * answer, so an older handset posting only the boolean goes on working
+ * exactly as it did.
+ *
+ * The boolean is NOT derived from the richer answer at this end. The server
+ * still reads it, every handset in the field still sends it, and computing it
+ * here from `locationPermission` would make one report two statements that
+ * could disagree.
  */
 export async function reportLocationPermission(backgroundGranted: boolean): Promise<{ ok: boolean }> {
+  /* Never allowed to cost the report: a failed reading omits its field. */
+  const state = await readDeviceState().catch(() => ({}));
   return request('/api/mbos/location-permission', {
     method: 'POST',
-    body: JSON.stringify({ backgroundGranted }),
+    body: JSON.stringify({ backgroundGranted, ...state }),
   });
 }

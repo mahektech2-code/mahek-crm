@@ -4575,6 +4575,69 @@ export const mbosDevices = pgTable(
      * phone's own settings does.
      */
     backgroundLocationGranted: boolean("background_location_granted"),
+    /**
+     * THE SAME QUESTION, ANSWERED IN THREE WAYS RATHER THAN TWO.
+     *
+     * `background_location_granted` above is a boolean, and a boolean cannot
+     * tell "Allow only while using the app" from "refused outright" — both
+     * arrive as `false`, and they send a manager to two different
+     * conversations. The first is a salesman who said yes to the wrong dialog
+     * and needs walking to one settings screen; the second is somebody who
+     * has turned location off for MahekOne entirely.
+     *
+     * `always` | `while_using` | `denied` | `undetermined` — the OS's own four
+     * answers, read from `getForegroundPermissionsAsync` and
+     * `getBackgroundPermissionsAsync` together. The old boolean is KEPT and
+     * still written: an APK cannot be recalled, so handsets in the field go on
+     * reporting only the boolean for as long as they are out there, and the
+     * screen has to keep reading it.
+     *
+     * Null means this build does not report it, which is not the same as
+     * `undetermined` — that is the OS saying nobody has been asked yet.
+     */
+    locationPermission: text("location_permission"),
+    /**
+     * Whether LOCATION ITSELF is switched on, which is not a permission.
+     *
+     * A salesman can have granted MahekOne everything and still have the
+     * phone's location toggle off — commonly to save battery — and the
+     * symptom on the Live map is identical to a refused permission while the
+     * fix is completely different. `hasServicesEnabledAsync` is the OS
+     * answering about the device rather than about us.
+     */
+    locationServicesEnabled: boolean("location_services_enabled"),
+    /**
+     * What the handset was connected by when it last spoke — wifi, cellular,
+     * or none at that moment.
+     *
+     * IT CAN NEVER SAY "THE INTERNET IS OFF". A phone with no connection
+     * cannot report that it has no connection, and a column that appeared to
+     * answer that question would be believed. Silence is what says it, and
+     * silence is measured server-side from `last_seen_at`. This answers the
+     * different and still useful question of what he was on when he could
+     * reach us — a day spent entirely on cellular in a market lane explains a
+     * sparse trail that wifi would not.
+     */
+    connectionType: text("connection_type"),
+    /** 0–100 at `device_state_at`. Never live — see that column. */
+    batteryPercent: integer("battery_percent"),
+    /** On charge at the same moment: 20% climbing is not 20% falling. */
+    batteryCharging: boolean("battery_charging"),
+    /**
+     * WHEN THE THREE READINGS ABOVE WERE TAKEN, and the reason they are
+     * useless without it.
+     *
+     * There is no such thing as a live battery reading here. The handset
+     * speaks when it syncs, so every figure is "at last contact" — minutes
+     * old during an open day, and hours or days old outside one. Rendered
+     * bare, "8%" reads as now and would have somebody ringing a salesman
+     * whose phone charged overnight.
+     *
+     * It is the same discipline `mbos_activity_locations` keeps for a fix's
+     * age and the On-your-way screen keeps for a distance: the reading is
+     * evidence, its age is part of it, and the screen prints both or neither.
+     */
+    deviceStateAt: timestamp("device_state_at", { withTimezone: true }),
   },
   (t) => [
     uniqueIndex("mbos_devices_device_key").on(t.deviceId),

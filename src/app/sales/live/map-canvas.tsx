@@ -2,6 +2,7 @@
 
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { formatDistance } from "@/lib/geo";
+import { handsetNotes, type HandsetThresholds, type NoteTone } from "@/lib/handset-health";
 import type { LastKnown } from "@/lib/services/sales-service";
 
 /**
@@ -19,18 +20,37 @@ import type { LastKnown } from "@/lib/services/sales-service";
  * somebody else — gives the map back to the whole team. Whoever has no fix
  * has nothing for the map to point at, so their row stays informational
  * rather than pretending a click would do something.
+ *
+ * **AND IT SAYS WHY THERE IS NO PIN, where the handset was able to tell us.**
+ * "No fix today" covers a refused permission, location switched off on the
+ * phone, no signal since breakfast and a flat battery — four different
+ * conversations, and a manager who cannot tell them apart rings the salesman
+ * to ask him to read out his own settings screen. `handsetNotes` is the one
+ * place those become words; the thresholds are configuration and arrive as a
+ * prop, because this is a client component and has no async config of its own.
+ *
+ * **Nothing is drawn for a healthy phone.** A row listing four green facts is
+ * a specification sheet, and the line that matters gets read as furniture.
  */
 export function TeamList({
   rows,
   distanceMetres,
   selectedId,
   onSelect,
+  thresholds,
+  nowMs,
 }: {
   rows: LastKnown[];
   /** Null outside the "today" view — there is no trail to measure yet. */
   distanceMetres: Map<string, number> | null;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  thresholds: HandsetThresholds;
+  /**
+   * Read on the server and passed down — the React Compiler rule this
+   * codebase runs under forbids reading the clock during render.
+   */
+  nowMs: number;
 }) {
   return (
     <div className="overflow-hidden rounded-[6px] border border-line bg-surface">
@@ -40,6 +60,14 @@ export function TeamList({
       {rows.map((r) => {
         const hasFix = r.lat != null && r.lng != null;
         const selected = selectedId === r.salesmanId;
+        /* An open day is one checked into and not yet out of. It changes what
+           silence MEANS — a quiet phone at nine at night is a phone in a
+           drawer, not a fault. */
+        const notes = handsetNotes(
+          { ...r, dayOpen: Boolean(r.checkInAt && !r.checkOutAt) },
+          thresholds,
+          nowMs,
+        );
         return (
           <button
             key={r.salesmanId}
@@ -69,14 +97,20 @@ export function TeamList({
                 {seenLine(r)}
                 {distanceMetres ? ` · ${formatDistance(distanceMetres.get(r.salesmanId) ?? 0)}` : ""}
               </span>
-              {r.backgroundTrackingGranted === false ? (
-                <span
-                  className="mt-0.5 block text-[12px] text-[#B3261E]"
-                  title="His trail will have real gaps no map can close. Ask him to open his phone's Settings and set MahekOne's Location permission to 'Allow all the time'."
-                >
-                  Background location off — trail has real gaps
+              {r.deviceModel ? (
+                <span className="block truncate text-[12px] text-muted" title={deviceTitle(r)}>
+                  {r.deviceModel}
                 </span>
               ) : null}
+              {notes.map((n) => (
+                <span
+                  key={n.text}
+                  className={"mt-0.5 block text-[12px] " + TONE[n.tone]}
+                  title={n.detail}
+                >
+                  {n.text}
+                </span>
+              ))}
             </span>
           </button>
         );
@@ -86,6 +120,32 @@ export function TeamList({
 }
 
 /* --------------------------------------------------------------- the words */
+
+/**
+ * Three tones, and the middle one is doing the real work.
+ *
+ * `bad` is a handset that cannot report at all, `warn` is one reporting with
+ * holes in it, `info` is context rather than a problem. A battery that is
+ * merely low reads `warn`; the same battery on charge reads `info`, because
+ * there is nothing to do about it.
+ */
+const TONE: Record<NoteTone, string> = {
+  bad: "text-[#B3261E]",
+  warn: "text-[#8A5A00]",
+  info: "text-muted",
+};
+
+/**
+ * The build, on hover rather than on the row.
+ *
+ * Which APK somebody is on matters exactly twice — when a feature is missing
+ * and when a bug is being chased — and on every other day it is noise on a
+ * panel that has to be scanned. The model itself stays visible, because that
+ * is what a manager says out loud when he rings the salesman.
+ */
+function deviceTitle(r: LastKnown): string {
+  return r.appVersion ? `${r.deviceModel} · MBOS ${r.appVersion}` : (r.deviceModel ?? "");
+}
 
 /**
  * What the row says under the name.

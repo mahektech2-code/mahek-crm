@@ -1760,6 +1760,28 @@ export const SETTINGS = [
     max: 86_400,
   },
   {
+    key: "mbos.location.handsetQuietMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How long a working handset may go silent before the Live map says so",
+    description:
+      "Minutes. A phone that cannot reach us cannot tell us it cannot reach us, so silence is the only evidence there is that a salesman is out of signal, out of battery or has closed the app — and this is where that silence starts being worth saying out loud. It changes what the Live map SAYS and nothing a handset does. It is deliberately not the same number as the Sync health screen's quiet hours: that one asks whether a phone has stopped syncing at all, over days, and this one asks whether a man who checked in this morning has gone quiet since — which on an open working day is a question measured in minutes.",
+    default: 30,
+    min: 5,
+    max: 720,
+  },
+  {
+    key: "mbos.location.lowBatteryPercent",
+    type: "integer",
+    category: "mbos-location",
+    label: "Battery level the Live map calls low",
+    description:
+      "Per cent, at or below which a salesman's handset is flagged on the team list. A flat phone in the middle of a beat is the commonest reason a trail simply stops, and it is the one cause a manager can still do something about while the day is running. The reading is never live — it is whatever the phone last reported — so the screen always prints the time it was taken beside it.",
+    default: 20,
+    min: 5,
+    max: 50,
+  },
+  {
     key: "mbos.sync.quietHours",
     type: "integer",
     category: "mbos-sync",
@@ -3426,6 +3448,8 @@ export type Config = {
   "mbos.location.trailGapMeters": number;
   "mbos.location.logActivityLocation": boolean;
   "mbos.location.activityFixMaxAgeSeconds": number;
+  "mbos.location.handsetQuietMinutes": number;
+  "mbos.location.lowBatteryPercent": number;
   "mbos.sync.quietHours": number;
 
   "mbos.orders.approvalThresholdPaise": number;
