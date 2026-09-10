@@ -1601,7 +1601,34 @@ async function recentTimeline(ids: string[], perCustomer: number) {
       from (
         select t.id, t.customer_id as "customerId", t.event_type as "eventType",
                t.source_app as "sourceApp", t.source_record_id as "sourceRecordId",
-               t.occurred_at as "occurredAt", t.actor_user_id as actor,
+               /* EPOCH MILLISECONDS, because that is what the handset's own
+                  writes put in this column. See the note in the handset's
+                  schema: timeline_events.occurredAt is INTEGER NOT NULL there,
+                  and data/visits.ts and data/orders.ts write Date.now() into
+                  it for the events this salesman raises himself.
+
+                  Sent as a timestamptz it came across as the STRING
+                  2026-09-11 01:28:55.168+05:30, which SQLite cannot convert to
+                  an integer and therefore stores as TEXT, in the same column,
+                  beside real integers.
+
+                  Two things break, and the second is the one nobody would look
+                  for. new Date(...) on that string gives the screen a date it
+                  renders as NaN undefined. And SQLite orders ALL integers
+                  before ALL text, so ordering by occurredAt desc puts every
+                  event the office sent on one side of every event the phone
+                  wrote, whatever the dates say - a timeline in an order that
+                  has nothing to do with time.
+
+                  double precision rather than bigint: the driver hands a
+                  bigint back as a string, which is this same bug one cast
+                  along. It is the spelling the journey and approval channels
+                  beside this one already use.
+
+                  NO BACKTICKS IN HERE. This comment sits inside a sql template
+                  literal, and one would end it. */
+               (extract(epoch from t.occurred_at) * 1000)::double precision as "occurredAt",
+               t.actor_user_id as actor,
                t.summary,
                row_number() over (
                  partition by t.customer_id order by t.occurred_at desc, t.id desc
