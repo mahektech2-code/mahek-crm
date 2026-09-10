@@ -862,3 +862,47 @@ test("the delta reads customers through the same function the bootstrap does", (
     "changedCustomersForDevice must hand its ids to customersForDevice so there is one column list",
   );
 });
+
+/* ---------------------------------------------------------------------------
+ * THE BOOK THE HANDSET IS ALLOWED TO HOLD, spelled the same at both ends.
+ *
+ * A pull adds and updates; only a tombstone removes. Tombstones are written
+ * when somebody EDITS an allocation, so a book that shrank any other way — a
+ * role changed, an account reassigned, a customer's city corrected — left the
+ * phone holding shops the server would no longer send, indefinitely, with
+ * nothing on any screen looking wrong. An associate with no territory at all
+ * is the clearest case: the server correctly sends him NO customers and his
+ * handset went on showing a book it had downloaded under an older rule.
+ *
+ * `bookIds` closes it, and like everything else on this wire the two halves
+ * are joined by a spelling and nothing else. Get it wrong and nothing fails:
+ * the field is simply absent, `reconcileBook` reads that as "an older server
+ * that does not speak this", touches nothing — which is the correct reading of
+ * absence and the wrong outcome here — and the stale book stays exactly where
+ * it was.
+ * ------------------------------------------------------------------------- */
+
+test("the book-reconcile field is spelled the same on both sides", () => {
+  const service = readFileSync(SERVICE, "utf8");
+  assert.ok(
+    /bookIds:\s*ids/.test(service),
+    "the server no longer states the whole book, so no handset can let go of a shop it should not hold",
+  );
+
+  const pull = readFileSync("mbos-app/src/sync/pull.ts", "utf8");
+  assert.ok(
+    pull.includes("pull.bookIds"),
+    "the handset no longer reads bookIds — a shrinking book will never reach it",
+  );
+
+  /* ABSENT IS NOT EMPTY, and the safety of the whole thing is that line. A
+   * handset meeting a deployment that predates this must touch nothing;
+   * reading silence as "you may hold nothing" would wipe every book in the
+   * field on the first pull. `Array.isArray` is what tells them apart, and a
+   * truthiness check — which is the obvious way to write this and is wrong —
+   * would treat the real empty answer as absence and never clear anything. */
+  assert.ok(
+    /if\s*\(!Array\.isArray\(bookIds\)\)\s*return 0;/.test(pull),
+    "reconcileBook must separate an absent list from an empty one with Array.isArray",
+  );
+});

@@ -50,6 +50,9 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await applyApprovals(pull.approvals);
     touched += await restoreAttendance(pull.attendanceToday);
     touched += await applyDeletions(pull.deletions);
+    /* AFTER the tombstones and after the customer upsert, because it is the
+       backstop for everything neither of them covered. */
+    touched += await reconcileBook(pull.bookIds);
   });
 
   /* Outside the transaction, because confirming a transcript deletes the audio
@@ -795,6 +798,77 @@ async function applyApprovals(rows: unknown[] | undefined): Promise<number> {
  * sync — not a rejected order, not a visit that lost a conflict.
  */
 const DELETABLE = new Set(['customers', 'products', 'timeline_events', 'journey_stops', 'documents', 'courses', 'notifications', 'schemes', 'holidays']);
+
+/**
+ * LETTING GO OF SHOPS THAT ARE NO LONGER HIS.
+ *
+ * A pull says what exists and a tombstone says what stopped, and there was a
+ * gap between the two that nothing was watching. `mbos_deletions` is written
+ * when somebody EDITS an allocation — so every OTHER way a book can shrink
+ * wrote no tombstone at all. A role changed under him, an account reassigned,
+ * a customer's city corrected: each one narrowed what the server would send
+ * and never told this phone to drop what it was already holding.
+ *
+ * The case that made it plain: a salesman with no territory. The server is
+ * right to send him nothing — `customerIdsInScope` short-circuits before it
+ * asks — and his handset went on showing a book downloaded under an older
+ * rule, indefinitely, because no pass had ever been asked to compare the two.
+ * He could open shops he is not allowed to see, and nothing on any screen
+ * looked wrong.
+ *
+ * So the server states the whole book on every pass and this drops the
+ * difference, rather than the difference being guessed at by whichever write
+ * path remembered to record one.
+ *
+ * ABSENT IS NOT EMPTY, and the safety of the whole thing is in that line.
+ * `undefined` is an older server that does not send this — touch nothing,
+ * because reading silence as "you may hold nothing" would wipe every book in
+ * the field the moment a handset met a deployment that predates it. `[]` is
+ * this server saying the book IS empty, which is a true answer, and it is
+ * acted on.
+ *
+ * ONLY REFERENCE DATA GOES. The customer row and the office history hanging
+ * off it — never a visit, an order, a payment or a lead this salesman
+ * authored. That is the rule the whole pull is built on and a shrinking book
+ * is not a licence to break it: work he did in a shop that has since moved to
+ * somebody else is still work he did, and it still has to reach the office.
+ */
+async function reconcileBook(bookIds: string[] | undefined): Promise<number> {
+  if (!Array.isArray(bookIds)) return 0;
+
+  /* A LEAD'S SHOP STAYS, whatever the territory says.
+   *
+   * `leads` is keyed on the same id as `customers` and rides its OWN channel,
+   * narrowed by who owns the lead rather than by where the shop is — so the
+   * office can legitimately send a lead whose customer row the territory
+   * clause excludes. Deleting that row would take the lead off the Customers
+   * view, which asks an EXISTS against this very table, while leaving it on
+   * the Leads one: the same shop present on one screen and gone from another.
+   * It is also his own work, and this is a sync. */
+  const local = await all<{ id: string }>(
+    'SELECT id FROM customers WHERE id NOT IN (SELECT id FROM leads)',
+  );
+  if (!local.length) return 0;
+  const keep = new Set(bookIds);
+  const gone = local.map((r) => r.id).filter((id) => !keep.has(id));
+  if (!gone.length) return 0;
+
+  /* Chunked: SQLite has a ceiling on bound variables — 999 on the builds this
+     app has shipped against — and a reassignment can move a whole book at
+     once. 400 keeps every statement below it with room to spare. */
+  for (let i = 0; i < gone.length; i += 400) {
+    const batch = gone.slice(i, i + 400);
+    const marks = batch.map(() => '?').join(',');
+    /* The office's history first, then the row it hangs off. Orphaned history
+       is what `applyDeletions` leaves behind today, and there is no screen
+       that could ever show it again. */
+    for (const t of ['timeline_events', 'customer_orders', 'customer_payments', 'customer_bills']) {
+      await run(`DELETE FROM ${t} WHERE customerId IN (${marks})`, batch);
+    }
+    await run(`DELETE FROM customers WHERE id IN (${marks})`, batch);
+  }
+  return gone.length;
+}
 
 async function applyDeletions(deletions: { entity: string; ids: string[] }[] | undefined): Promise<number> {
   if (!deletions?.length) return 0;
