@@ -37,7 +37,7 @@ export function LoginForm() {
           </span>
           <span className="relative block">
             <Icon
-              name="mail"
+              name="person"
               size={16}
               className="pointer-events-none absolute top-3 left-3 text-muted"
             />
@@ -45,7 +45,13 @@ export function LoginForm() {
               name="identifier"
               autoComplete="username"
               autoFocus
-              placeholder="priya@mahek.in"
+              /* BOTH, and the placeholder has to show both. This field has
+                 always taken either — `signIn` matches the last ten digits
+                 against `users.phone` as well as the whole string against the
+                 email — but it advertised one, so the telecallers and field
+                 staff who know their work number and not their office email
+                 had no way to find that out from the screen. */
+              placeholder="9820011001 or priya@mahek.in"
               className={cx(FIELD, failed ? "border-danger" : "border-line")}
             />
           </span>

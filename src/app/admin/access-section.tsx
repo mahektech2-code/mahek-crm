@@ -24,8 +24,10 @@ import type { AppId } from "@/lib/apps";
 import {
   candidatesForGrant,
   employeesToLink,
+  issueCredential,
   linkEmployee,
   setAccess,
+  type IssuedCredential,
 } from "@/lib/actions/access";
 import {
   endSessionsFor,
@@ -122,6 +124,11 @@ export function AccessSection({
   const [switching, setSwitching] = React.useState<AccessRow | null>(null);
   /** Saying which HRMS row this account is — see `EmployeeLinkDialog`. */
   const [linking, setLinking] = React.useState<AccessRow | null>(null);
+  /* THE SECOND DOOR ONTO A PASSWORD. The grant flow offers one at the moment
+     an account is set up, which is the moment most of them are needed — but
+     somebody set up in March who cannot get in today is not going to be given
+     access again to reach it. */
+  const [crediting, setCrediting] = React.useState<AccessRow | null>(null);
   /** A just-minted sign-in link, shown once so it can be copied. */
   const [linkFor, setLinkFor] = React.useState<{
     name: string;
@@ -260,6 +267,7 @@ export function AccessSection({
                           onSwitch={() => setSwitching(r)}
                           onOpen={() => onOpenUser(r.userId)}
                           onLinkEmployee={() => setLinking(r)}
+                          onCredential={() => setCrediting(r)}
                           onGotLink={setLinkFor}
                         />
                       </span>
@@ -280,6 +288,9 @@ export function AccessSection({
             say(r);
             closeDrawer();
           }}
+          /* Saved, and the dialog stays up to offer a password. The toast
+             fires either way, so the list behind it is already right. */
+          onSaved={say}
         />
       ) : null}
 
@@ -422,7 +433,33 @@ export function AccessSection({
             say(r);
             setManaging(null);
           }}
+          onSaved={say}
         />
+      ) : null}
+
+      {/* The same page the grant flow ends on, reached from a row. Keyed on
+          the person so a second person opens a fresh one rather than the last
+          one's password. */}
+      {crediting ? (
+        <Modal
+          open
+          onClose={() => setCrediting(null)}
+          width={720}
+          title={`A password for ${crediting.name}`}
+          footer={
+            <Button variant="primary" onClick={() => setCrediting(null)}>
+              Done
+            </Button>
+          }
+        >
+          <CredentialStep
+            key={crediting.userId}
+            userId={crediting.userId}
+            name={crediting.name}
+            created={false}
+            phone={crediting.phone}
+          />
+        </Modal>
       ) : null}
     </div>
   );
@@ -489,6 +526,7 @@ function PersonMenu({
   onSwitch,
   onOpen,
   onLinkEmployee,
+  onCredential,
   onGotLink,
 }: {
   row: AccessRow;
@@ -499,6 +537,7 @@ function PersonMenu({
   onSwitch: () => void;
   onOpen: () => void;
   onLinkEmployee: () => void;
+  onCredential: () => void;
   onGotLink: (link: { name: string; url: string; expiresInMinutes: number }) => void;
 }) {
   return (
@@ -526,8 +565,23 @@ function PersonMenu({
           onSelect: onLinkEmployee,
         },
         {
-          label: "Send a field-app password link",
+          /* Two ways to give somebody a password and they are not the same
+             act: this one goes to a mailbox and lets them choose it, which is
+             better wherever they have a work email they read. The one below
+             is for everybody else — most of the field staff. */
+          label: "Email a password-reset link",
+          disabled: !row.active,
+          title: row.active ? undefined : "This account cannot sign in",
           onSelect: () => void sendPasswordResetFor(row.userId).then(say),
+        },
+        {
+          label: "Generate a password to read out",
+          destructive: true,
+          disabled: !row.active,
+          title: row.active
+            ? "Replaces their current password and signs them out everywhere"
+            : "This account cannot sign in",
+          onSelect: onCredential,
         },
         {
           label: "End every session",
@@ -556,17 +610,20 @@ function PersonMenu({
 
 /* ------------------------------------------------------------- the dialog */
 
-type Step = "who" | "access" | "review";
+type Step = "who" | "access" | "review" | "done";
 
 function AccessDialog({
   person,
   onClose,
   onDone,
+  onSaved,
 }: {
   /** Somebody already on the list. Absent means start from the picker. */
   person?: AccessRow;
   onClose: () => void;
   onDone: (r: { ok: boolean; message?: string; error?: string }) => void;
+  /** Saved, but not finished with — the dialog is still open behind the toast. */
+  onSaved: (r: { ok: boolean; message?: string; error?: string }) => void;
 }) {
   const [step, setStep] = React.useState<Step>(person ? "access" : "who");
   const [chosen, setChosen] = React.useState<Candidate | null>(
@@ -633,6 +690,13 @@ function AccessDialog({
     setStep("access");
   };
 
+  /* WHAT THE SAVE PRODUCED, so the last page can ask the right question. A
+     brand new account has a password nobody has ever been told; an existing
+     one may have somebody signed in on theirs right now, and generating a
+     replacement takes that away. Only this component knows which, so the
+     wording lives here rather than being guessed at in the action. */
+  const [saved, setSaved] = React.useState<{ created: boolean; userId: string } | null>(null);
+
   const submit = () => {
     if (!chosen) return;
     setSaving(true);
@@ -660,6 +724,18 @@ function AccessDialog({
         setStep("access");
         return;
       }
+      /* SAVED, AND THE DIALOG STAYS OPEN TO ASK ONE MORE THING. The access is
+         written and the toast says so — nothing here is pending — but a person
+         who cannot sign in has not been set up, and the moment the office is
+         thinking about this person is the only moment they will do anything
+         about it. Closing on success is what left every new account holding a
+         password nobody knew. */
+      if (r.ok) {
+        setSaved({ created: r.data.created, userId: r.data.userId });
+        setStep("done");
+        onSaved(r);
+        return;
+      }
       onDone(r);
     });
   };
@@ -676,35 +752,45 @@ function AccessDialog({
           ? "Enable access — who"
           : step === "access"
             ? `What ${chosen?.name} can open`
-            : `Review — ${chosen?.name}`
+            : step === "review"
+              ? `Review — ${chosen?.name}`
+              : `${chosen?.name} can now sign in`
       }
       footer={
-        <>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              if (step === "review") return setStep("access");
-              if (step === "access" && !person) return setStep("who");
-              onClose();
-            }}
-          >
-            {step === "review" || (step === "access" && !person) ? "Back" : "Cancel"}
+        step === "done" ? (
+          /* One way out, and it is not "Cancel" — there is nothing left to
+             cancel. The access is written whatever happens on this page. */
+          <Button variant="primary" onClick={onClose}>
+            Done
           </Button>
-          {step === "access" ? (
-            <Button variant="primary" onClick={() => setStep("review")}>
-              Review
-            </Button>
-          ) : step === "review" ? (
+        ) : (
+          <>
             <Button
-              variant={changes.revoked.length ? "danger" : "primary"}
-              disabled={saving || !changes.any}
-              title={changes.any ? undefined : "Nothing has changed"}
-              onClick={submit}
+              variant="secondary"
+              onClick={() => {
+                if (step === "review") return setStep("access");
+                if (step === "access" && !person) return setStep("who");
+                onClose();
+              }}
             >
-              {saving ? "Saving…" : "Grant access"}
+              {step === "review" || (step === "access" && !person) ? "Back" : "Cancel"}
             </Button>
-          ) : null}
-        </>
+            {step === "access" ? (
+              <Button variant="primary" onClick={() => setStep("review")}>
+                Review
+              </Button>
+            ) : step === "review" ? (
+              <Button
+                variant={changes.revoked.length ? "danger" : "primary"}
+                disabled={saving || !changes.any}
+                title={changes.any ? undefined : "Nothing has changed"}
+                onClick={submit}
+              >
+                {saving ? "Saving…" : "Grant access"}
+              </Button>
+            ) : null}
+          </>
+        )
       }
     >
       {step === "who" ? (
@@ -726,7 +812,7 @@ function AccessDialog({
           accountRole={(person?.role as RoleId) ?? role}
           fieldError={fieldError}
         />
-      ) : (
+      ) : step === "review" ? (
         <ReviewStep
           name={chosen?.name ?? ""}
           creating={needsAccount}
@@ -737,8 +823,169 @@ function AccessDialog({
           roleDraft={roleDraft}
           accountRole={(person?.role as RoleId) ?? role}
         />
+      ) : (
+        <CredentialStep
+          userId={saved?.userId ?? ""}
+          name={chosen?.name ?? ""}
+          created={saved?.created ?? false}
+          phone={phone.trim() || chosen?.phone || null}
+        />
       )}
     </Modal>
+  );
+}
+
+/* --------------------------------------------------------------- step four */
+
+/**
+ * The page that ASKS.
+ *
+ * Granting access does not mint a password — the office decides. A credential
+ * that appeared unasked would be one left on a screen somebody walks away
+ * from, and on an existing account it would sign somebody out mid-call with no
+ * warning at all.
+ *
+ * What it exists to prevent is the state this flow used to end in: an account
+ * granted four apps, a welcome email telling the employee to wait for a code
+ * that is never sent, and a password `randomUUID()` chose. Everything was
+ * green and nobody could sign in.
+ */
+function CredentialStep({
+  userId,
+  name,
+  created,
+  phone,
+}: {
+  userId: string;
+  name: string;
+  /** Whether the grant that just ran created the account. */
+  created: boolean;
+  phone: string | null;
+}) {
+  const [issued, setIssued] = React.useState<IssuedCredential | null>(null);
+  const [working, setWorking] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [copied, setCopied] = React.useState(false);
+
+  const first = name.split(" ")[0];
+
+  const generate = () => {
+    setWorking(true);
+    setError(null);
+    void issueCredential(userId).then((r) => {
+      setWorking(false);
+      if (r.ok) setIssued(r.data);
+      else setError(r.error);
+    });
+  };
+
+  if (issued) {
+    return (
+      <div>
+        <div className="rounded-[4px] border border-line bg-canvas px-4 py-3.5">
+          <p className="text-[13px] text-body">
+            Read this out to {first}, or copy it into a message. {" "}
+            <span className="font-medium text-ink">
+              It is not stored anywhere and cannot be shown again
+            </span>{" "}
+            — closing this box is the last time anyone sees it.
+          </p>
+
+          <div className="mt-3 grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-2">
+            <span className="text-xs font-medium tracking-[0.04em] text-muted uppercase">
+              Signs in with
+            </span>
+            <span className="font-mono text-[15px] text-ink">{issued.signInWith}</span>
+
+            <span className="text-xs font-medium tracking-[0.04em] text-muted uppercase">
+              Password
+            </span>
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="rounded-[4px] border border-line bg-surface px-2.5 py-1 font-mono text-[19px] tracking-[0.08em] text-ink select-all">
+                {issued.password}
+              </span>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  void navigator.clipboard
+                    ?.writeText(issued.password)
+                    .then(() => setCopied(true))
+                    .catch(() => setError("This browser would not let the page copy. Read it out instead."));
+                }}
+              >
+                {copied ? "Copied" : "Copy"}
+              </Button>
+            </span>
+          </div>
+
+          {/* THE DASH COUNTS. It is in the string and in the hash, so somebody
+              who leaves it out is refused — which reads as a wrong password
+              rather than as a mistyped one. */}
+          <p className="mt-3 text-[13px] text-muted">
+            The dash is part of the password. Letters are capitals. Ask {first} to
+            change it once they are in, from Forgot password on the sign-in screen.
+          </p>
+        </div>
+
+        {issued.sessionsEnded > 0 ? (
+          <p className="mt-3 text-[13px] text-body">
+            {issued.sessionsEnded === 1
+              ? `${first} was signed in somewhere and has been signed out — the old password no longer works.`
+              : `${first} was signed in on ${issued.sessionsEnded} devices and has been signed out of all of them — the old password no longer works.`}
+          </p>
+        ) : null}
+
+        {error ? <p className="mt-3 text-[13px] text-danger">{error}</p> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="rounded-[4px] border border-line bg-canvas px-4 py-3.5">
+        <p className="text-[15px] font-medium text-ink">
+          {created
+            ? `Generate a password for ${first}?`
+            : `Give ${first} a new password?`}
+        </p>
+        <p className="mt-1.5 text-[13px] text-body">
+          {created ? (
+            <>
+              The account exists and the apps are granted, but nobody can sign into
+              it yet — a new account is created with a password nobody knows. Generate
+              one to read out, or leave it and let {first} set their own from the link
+              emailed to them.
+            </>
+          ) : (
+            <>
+              Only if they cannot get in. This{" "}
+              <span className="font-medium text-ink">replaces the password they have now</span>{" "}
+              and signs them out everywhere, so do not do it to somebody who is working.
+              A reset link from their row menu lets them choose their own instead.
+            </>
+          )}
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button
+            variant={created ? "primary" : "danger"}
+            disabled={working || !userId}
+            onClick={generate}
+          >
+            {working
+              ? "Generating…"
+              : created
+                ? "Generate a password"
+                : "Replace their password"}
+          </Button>
+          <span className="text-[13px] text-muted">
+            {phone
+              ? `They sign in with ${phone} and this password.`
+              : "They sign in with their work email and this password."}
+          </span>
+        </div>
+        {error ? <p className="mt-2.5 text-[13px] text-danger">{error}</p> : null}
+      </div>
+    </div>
   );
 }
 
@@ -932,8 +1179,9 @@ function AccessStep({
               {name} has no MahekOne account yet
             </span>
             <span className="text-[13px] text-muted">
-              One is created when you grant access. No password is typed here — they get a
-              link to choose their own, good once, for thirty minutes.
+              One is created when you grant access. No password is typed here — you can
+              generate one to read out on the last page, or they choose their own from a
+              link, good once, for thirty minutes.
             </span>
           </div>
           <div className="mt-2 grid grid-cols-[1.4fr_1fr_1fr] gap-2">

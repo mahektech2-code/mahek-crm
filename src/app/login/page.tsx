@@ -106,14 +106,14 @@ export default async function LoginPage({
             Welcome back
           </h1>
           <p className="mt-1 text-[15px] leading-[23px] text-muted">
-            Enter your work number and we&rsquo;ll send you a code. One
-            sign-in opens every app on your account.
+            Your work number or work email, and your password. One sign-in
+            opens every app on your account.
           </p>
 
           {justReset ? (
             <div className="mt-4 rounded-[4px] border border-success-soft border-l-[3px] border-l-success bg-success-soft px-3 py-2.5 text-sm text-ink">
-              The field app&rsquo;s password is set. Signing in here still
-              only needs your work number and a code.
+              Your password is set. It signs you in here and on the field
+              salesman app, with your work number either way.
             </div>
           ) : null}
 
@@ -131,14 +131,14 @@ export default async function LoginPage({
             <span className="font-medium text-ink">Ask your manager.</span>
           </p>
           <p className="mt-2 text-center text-[13px] leading-5 text-muted">
-            Setting up the field salesman app?{" "}
+            No password yet, or forgotten it?{" "}
             <Link
               href="/login/forgot"
               className="font-medium text-brand no-underline hover:underline"
             >
-              Manage its password
+              Set one from your work email
             </Link>
-            .
+            , or ask whoever gave you access to read you a new one.
           </p>
         </div>
       </div>
