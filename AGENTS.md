@@ -3470,6 +3470,39 @@ release path was written down nowhere anybody looks — which is why it is
 written here. Local `gradlew assembleRelease` is for trying a change on your own
 phone and nothing else. See DEPLOY.md, "Releasing the handset app".
 
+**A DELTA MUST SEND WHAT THE BOOTSTRAP SENDS, and the only way to be sure of
+that is for it to be the same function.** The customers channel was two
+queries — `customersForDevice` at sign-in and an anonymous `sql` template
+inside `buildPull` — and they had drifted eleven columns apart: `thirdParty`,
+`cycleDays`, `gstin`, `dealerCode`, `territoryRegion`, `customerType`,
+`potential`, `creditDays`, `visitFrequencyDays`, `gpsAccuracyM` and the
+`distributors` list, plus `healthBand`, which is in neither SELECT and is
+computed by `bandFor` on the way out of the bootstrap alone.
+
+**A MISSING COLUMN IS NOT A NULL, WHICH IS WHY IT LOOKED LIKE NOTHING.**
+`upsert` writes exactly the columns that ARRIVE, so an omitted one is not
+written over — the bootstrap's value sits on the row being right about the day
+the salesman signed in and wrong from then on. `pullCursor` is set once in
+`sync/engine.ts` and cleared nowhere: not by a migration, not by an app
+upgrade. So "then on" is the life of the installation, and a column added for a
+new screen reached a handset only if its owner happened to sign out and back
+in. It cost three things on the customers card — the "Third party" chip, the
+status dot and its word, and the reorder line — so a shop marked third-party in
+the office on Tuesday still read as an ordinary customer, and a customer who
+went dormant in March still read Active.
+
+**`mbos-wire.test.ts` could not have caught it, and its `DELTA` list says so in
+its own comment.** That test asks whether a payload sends something the handset
+CANNOT HOLD — an extra column, which throws and takes the whole pull with it.
+It cannot ask the opposite, because a column the delta merely omits is not a
+fault in any file, it is an absence, and an absence has to be measured against
+a second list. Retiring an entry from `DELTA` is therefore the goal rather than
+a chore: an entry leaves that list exactly when its channel starts calling the
+function the bootstrap calls, and at that point the `WIRE` entry above covers
+both. Three have left. The 2,000 cap and the `updated_at` ordering stay on the
+IDS, which is the half that has to be ordered — the cap must take the oldest
+changes first, or the ones it drops are never asked for again.
+
 **A pull says what exists; only a tombstone says what stopped.** A deleted row
 has no `updated_at` for a delta to notice, so without `mbos_deletions` a
 withdrawn document, a removed stop and a reassigned customer sit on the handset

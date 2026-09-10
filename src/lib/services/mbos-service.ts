@@ -1010,6 +1010,50 @@ export async function buildBootstrap(
  * is a template literal, and a backtick in a comment inside one ends the
  * string.
  */
+/**
+ * THE CUSTOMERS A DELTA SENDS — the same shape the bootstrap sends, because it
+ * is the same function.
+ *
+ * IT WAS A SECOND QUERY, and it was a SUBSET. `customersForDevice` selects
+ * thirty-one fields; the delta spelled out twenty of them inline, so eleven
+ * reached a handset at sign-in and never again: `thirdParty`, `cycleDays`,
+ * `gstin`, `dealerCode`, `territoryRegion`, `customerType`, `potential`,
+ * `creditDays`, `visitFrequencyDays`, `gpsAccuracyM` and the `distributors`
+ * list — plus `healthBand`, which is not in either SELECT at all but computed
+ * by `bandFor` on the way out of the bootstrap and nowhere else.
+ *
+ * Nothing looked wrong, because `upsert` writes exactly the columns that
+ * ARRIVE. A missing column is not written as null; it is simply not written,
+ * so the value from the bootstrap sits there being right about the day the
+ * salesman signed in and wrong from then on. `pullCursor` is set once and
+ * cleared nowhere, so "then on" is the life of the installation.
+ *
+ * What it cost is three things on the customers card. `thirdParty` is the
+ * "Third party" chip, `healthBand` is the whole status dot and its word, and
+ * `cycleDays` is the reorder line — so a shop marked third-party in the office
+ * on Tuesday still read as an ordinary customer, and a customer who went
+ * dormant in March still read Active. A column added for a new handset screen
+ * reached a phone only if its owner happened to sign out and back in.
+ *
+ * The 2,000 cap and the `updated_at` ordering stay where they were and on the
+ * IDS, which is the half that has to be ordered: the cap must take the oldest
+ * changes first or the ones it drops are never asked for again. Which order
+ * `customersForDevice` then returns them in does not matter, because the
+ * handset upserts them.
+ */
+async function changedCustomersForDevice(ids: string[], sinceIso: string) {
+  if (!ids.length) return [];
+  const idList = sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
+  const changed = await db.execute<{ id: string }>(sql`
+    select c.id
+      from customers c
+     where c.id in ${idList} and c.updated_at > ${sinceIso}
+     order by c.updated_at asc
+     limit 2000
+  `);
+  return customersForDevice(changed.map((r) => r.id));
+}
+
 async function customersForDevice(ids: string[]) {
   if (!ids.length) return [];
   const rows = await db.execute<Record<string, unknown>>(sql`
@@ -2112,26 +2156,7 @@ export async function buildPull(
     paymentHistoryChanges,
     billChanges,
   ] = await Promise.all([
-      idList
-        ? db.execute<Record<string, unknown>>(sql`
-            select c.id, c.name, c.contact_person as "contactPerson", c.phone,
-                   c.city, c.area, c.beat, c.status, c.kind,
-                   c.price_tag as "priceTag",
-                   c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
-                   c.credit_limit_paise as "creditLimitPaise",
-                   c.credit_blocked as "creditBlocked",
-                   c.credit_block_reason as "creditBlockReason",
-                   c.outstanding as "outstandingPaise",
-                   c.health_score as "healthScore",
-                   c.health_components as "healthComponents",
-                   c.last_order_date as "lastOrderDate",
-                   c.last_visit_date as "lastVisitDate"
-              from customers c
-             where c.id in ${idList} and c.updated_at > ${sinceIso}
-             order by c.updated_at asc
-             limit 2000
-          `)
-        : Promise.resolve([]),
+      changedCustomersForDevice(ids, sinceIso),
       db.execute<Record<string, unknown>>(sql`
         select p.id, p.name, p.pack_size as "packSize", p.packing,
                p.millilitres_per_can as "millilitresPerCan",
