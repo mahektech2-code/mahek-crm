@@ -7,7 +7,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, mbosApprovals, mbosExpenseExceptions } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { can, requireCapability } from "@/lib/access-control";
+import { requireCapability, canFor } from "@/lib/access-control";
 import { reopenDay, submitDay } from "@/lib/services/expense-submit-service";
 import { today } from "@/lib/recompute";
 import { err as fail, ok, okVoid, type Result } from "@/lib/result";
@@ -280,7 +280,7 @@ export async function reopenExpenseDay(input: unknown): Promise<Result> {
 /** Whether this viewer may decide claims. Read by the screens to draw controls. */
 export async function canDecideExpenses(): Promise<boolean> {
   const user = await requireUser();
-  return can(user.role, "order.approve");
+  return canFor(user, "order.approve");
 }
 
 

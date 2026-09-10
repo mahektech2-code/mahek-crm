@@ -288,7 +288,7 @@ const newUser = z.object({
     .optional()
     .transform((v) => (v ? v.replace(/\D/g, "").slice(-10) : undefined)),
   password: z.string().min(8, "Passwords must be at least 8 characters."),
-  role: z.enum(["telecaller", "manager"]),
+  role: z.enum(["associate", "manager"]),
   apps: z.array(z.enum(APP_IDS)).min(1, "Give them at least one app."),
 });
 

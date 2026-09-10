@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { can } from "@/lib/access-control";
+import { canFor } from "@/lib/access-control";
 import { customerLedger } from "@/lib/services/receipt-service";
 import { accountServing } from "@/lib/services/distributor-service";
 import { LedgerScreen } from "./ledger-screen";
@@ -34,7 +34,7 @@ export default async function Page({
 
   return (
     <LedgerScreen
-      canReverse={can(user.role, "payment.confirm")}
+      canReverse={await canFor(user, "payment.confirm")}
       ledger={ledger}
       serving={serving}
       from={params.from ?? ""}

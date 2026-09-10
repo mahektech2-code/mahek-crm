@@ -107,7 +107,7 @@ export type AccessGrantInput = {
    * dialog that does not send one, or a terminal that knows nothing about
    * them, goes on granting an app that works.
    */
-  role?: "telecaller" | "manager" | "accounts" | "admin" | null;
+  role?: "associate" | "manager" | "admin" | null;
 };
 
 export type SetAccessInput = {
@@ -121,7 +121,7 @@ export type SetAccessInput = {
   account?: {
     email: string;
     phone?: string | null;
-    role: "telecaller" | "manager" | "accounts" | "admin";
+    role: "associate" | "manager" | "admin";
   };
 };
 
@@ -182,7 +182,7 @@ function desiredState(grants: AccessGrantInput[]): {
 }
 
 /** The four, as a list, so an unknown one is refused rather than stored. */
-const ROLES = ["telecaller", "manager", "accounts", "admin"] as const;
+const ROLES = ["associate", "manager", "admin"] as const;
 
 /**
  * Write one app's module rows.
@@ -485,13 +485,14 @@ export async function setAccess(
      * manager hat in the CRM gives them their team on the day it is granted,
      * which is what the person granting it expects.
      */
-    const heldRoles = [...wanted.keys()].map(
-      (app) => (wantedRoles.get(app) ?? account.role) as Role,
-    );
-    if (heldRoles.length) {
+    const heldHats = [...wanted.keys()].map((app) => ({
+      app,
+      role: (wantedRoles.get(app) ?? account.role) as Role,
+    }));
+    if (heldHats.length) {
       await tx
         .update(users)
-        .set({ role: widestRole(heldRoles) })
+        .set({ role: widestRole(heldHats) })
         .where(eq(users.id, userId!));
     }
     for (const app of [...granted, ...changed]) {

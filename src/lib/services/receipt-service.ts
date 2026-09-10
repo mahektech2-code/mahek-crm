@@ -6,7 +6,7 @@ import { db } from "@/db";
 import { auditLog, bills, customers, paymentReceipts, payments } from "@/db/schema";
 import {
   assertCustomerInScope,
-  can,
+  canFor,
   requireCapability,
   resolveScope,
   scopedUserIds, scopedToUsers,} from "../access-control";
@@ -307,12 +307,18 @@ export async function recordReceipt(
   }
 
   /*
-   * Who is recording it decides whether it is believed. Accounts hold the bank
-   * statement, so what they enter is confirmed as it is written — asking them
-   * to confirm their own entry on a second screen would be a queue of their
-   * own keystrokes. Everybody else reports.
+   * Who is recording it decides whether it is believed. The Accounts desk
+   * holds the bank statement, so what they enter is confirmed as it is
+   * written — asking them to confirm their own entry on a second screen would
+   * be a queue of their own keystrokes. Everybody else reports.
+   *
+   * The union rather than this request's level: somebody standing in the CRM
+   * who is also an Accounts manager is still the person with the statement
+   * open, and making them re-enter it there would be a second queue of the
+   * same keystrokes.
    */
-  const confirms = can(ctx.role, "payment.confirm") && input.source !== "collections_call";
+  const confirms =
+    (await canFor(ctx.user, "payment.confirm")) && input.source !== "collections_call";
   const status = confirms ? "confirmed" : "reported";
 
   /*
@@ -402,6 +408,7 @@ export async function recordReceipt(
       actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
       action: "payment.record",
       entityType: "payment_receipt",
       entityId: receiptId,
@@ -849,6 +856,7 @@ export async function holdReceipt(
       actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
       action: "payment.hold",
       entityType: "payment_receipt",
       entityId: receiptId,
@@ -964,6 +972,7 @@ export async function confirmReceipt(
       actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
       action: "payment.confirm",
       entityType: "payment_receipt",
       entityId: receiptId,
@@ -1035,6 +1044,7 @@ export async function rejectReceipt(
       actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
       action: "payment.reject",
       entityType: "payment_receipt",
       entityId: receiptId,
@@ -1135,6 +1145,7 @@ export async function reverseReceipt(
       actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
       action: "payment.reverse",
       entityType: "payment_receipt",
       entityId: receiptId,
@@ -1237,6 +1248,7 @@ async function reallocate(
       actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
       action: "payment.reallocate",
       entityType: "payment_receipt",
       entityId: receipt.id,
@@ -1476,6 +1488,7 @@ export async function confirmAsMatch(input: {
     actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
     action: "payment.matchedToBankEntry",
     entityType: "payment_receipt",
     entityId: input.receiptId,

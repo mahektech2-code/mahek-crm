@@ -145,7 +145,7 @@ export async function provisionBackOffice(options: {
       // Not from the employee master's plaintext password column. That holds
       // credentials to another system and is nobody's business here.
       passwordHash: await hashPassword(options.password),
-      role: "telecaller",
+      role: "associate",
       initials: initialsOf(name),
       active: true,
     });

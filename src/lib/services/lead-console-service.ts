@@ -1,7 +1,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { can, type Capability } from "../access-control";
+import { canFor, type Capability } from "../access-control";
 import { bandOf, ladderFor } from "../engines/lead-ladder";
 import type { LeadGateInput } from "../engines/lead-gates";
 import {
@@ -82,15 +82,18 @@ export type LeadCapability = Extract<
    * `customer.reassign`. That one moves the sales seat, decides whose targets
    * an account counts toward, and stays accounts' and admin's; this panel
    * called it for a while and so could not be used by the people whose job the
-   * handover is. Listed here rather than reached for with a bare `can()`
+   * handover is. Listed here rather than reached for with a bare `canFor()`
    * beside this narrowing, because two doors onto one question is how one of
    * them ends up more generous.
    */
   | "customer.handOver"
 >;
 
-export function canLead(role: string, capability: LeadCapability): boolean {
-  return can(role, capability);
+export async function canLead(
+  user: { id: string; role: string },
+  capability: LeadCapability,
+): Promise<boolean> {
+  return canFor(user, capability);
 }
 
 /* ═══════════════════════════════════════════════ §7 §8 the verification queue */

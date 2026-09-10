@@ -77,7 +77,7 @@ let manager: typeof users.$inferSelect;
 let priya: typeof users.$inferSelect;
 let deepa: typeof users.$inferSelect;
 
-async function makeUser(name: string, role: "telecaller" | "manager" | "accounts") {
+async function makeUser(name: string, role: "associate" | "manager", app: "crm" | "accounts" = "crm") {
   const [row] = await db
     .insert(users)
     .values({
@@ -90,7 +90,41 @@ async function makeUser(name: string, role: "telecaller" | "manager" | "accounts
       initials: name.slice(0, 2).toUpperCase(),
     })
     .returning();
+  /*
+   * THE APP GRANT, because a level on its own is not one.
+   *
+   * A capability hangs on (app, level) now, so `role: "manager"` with no
+   * `app_access` row is a manager of nothing — which is right, and is what
+   * production looks like too: an app's layout refuses anybody without a
+   * grant, so a person who can reach a screen always has one. A fixture
+   * without it was testing somebody who cannot sign in.
+   *
+   * The CRM by default, because that is the book these tests work. The
+   * ledger desk asks for `accounts` instead and holds NOTHING else — Deepa
+   * is granted `apps: ["accounts"]` in the seed on purpose: "the person
+   * deciding whether a customer may take more credit is not the person
+   * chasing them for the next order".
+   */
+  await db.insert(appAccess).values({
+    id: id("aca"),
+    userId: row.id,
+    app,
+    role,
+  });
+
   return row;
+}
+
+/**
+ * The ledger desk, which is an APP GRANT and not a role any more.
+ *
+ * `role: "manager"` alone is a manager of nothing — the capabilities that make
+ * somebody accounts (approving an order, confirming a payment, issuing a
+ * credit note) hang on holding the Accounts app at manager level. A test that
+ * set only the level would be testing a person who cannot do the job.
+ */
+async function makeAccountsUser(name: string) {
+  return makeUser(name, "manager", "accounts");
 }
 
 async function makeCustomer(over: Partial<typeof customers.$inferInsert> = {}) {
@@ -173,8 +207,8 @@ beforeEach(async () => {
   await seedConfig();
 
   manager = await makeUser("Vikram", "manager");
-  priya = await makeUser("Priya", "telecaller");
-  deepa = await makeUser("Deepa", "accounts");
+  priya = await makeUser("Priya", "associate");
+  deepa = await makeAccountsUser("Deepa");
 
   setTestUser(deepa);
   TODAY = await today();
@@ -1189,12 +1223,9 @@ describe("The sidebar", () => {
 describe("The launcher tile", () => {
   test("counts all three queues, and the sentence names what the number is", async () => {
     const customer = await makeCustomer();
-    await db.insert(appAccess).values({
-      id: id("acc"),
-      userId: deepa.id,
-      app: "accounts",
-      grantedById: manager.id,
-    });
+    /* The grant is `makeAccountsUser`'s now — the ledger desk IS an app
+       grant rather than a role, so adding one here is a second row for the
+       same person and app. */
 
     await db.insert(orders).values({
       id: id("ord"),
@@ -1230,12 +1261,6 @@ describe("The launcher tile", () => {
   });
 
   test("an empty desk says so rather than showing a zero", async () => {
-    await db.insert(appAccess).values({
-      id: id("acc"),
-      userId: deepa.id,
-      app: "accounts",
-      grantedById: manager.id,
-    });
 
     const tile = (await launcherApps(deepa)).find((a) => a.id === "accounts");
     assert.equal(tile?.count, 0);
@@ -1305,7 +1330,7 @@ describe("Seeing a customer you hold only the back office seat on", () => {
     // Seema does the dispatch and the paperwork for this account and sells to
     // nobody on it. `scopedToUsers` puts it on her list; the row check used to
     // say it was not hers, so the list offered a row that could not be opened.
-    const seema = await makeUser("Seema", "telecaller");
+    const seema = await makeUser("Seema", "associate");
     const customer = await makeCustomer({
       ownerId: priya.id,
       salesAmId: priya.id,
@@ -1322,7 +1347,7 @@ describe("Seeing a customer you hold only the back office seat on", () => {
 
   test("and somebody holding neither seat still cannot", async () => {
     // The widening is both seats, not no check at all.
-    const stranger = await makeUser("Stranger", "telecaller");
+    const stranger = await makeUser("Stranger", "associate");
     const customer = await makeCustomer({
       ownerId: priya.id,
       salesAmId: priya.id,

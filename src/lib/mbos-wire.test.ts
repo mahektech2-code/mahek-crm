@@ -745,3 +745,65 @@ function readdirSyncDeep(dir: string, out: string[] = []): string[] {
   }
   return out;
 }
+
+/* ---------------------------------------------------------------------------
+ * THE MIGRATION IS THE ONLY PLACE THE OLD VOCABULARY STILL EXISTS.
+ *
+ * `telecaller` and `accounts` are gone from the enum, so a literal left behind
+ * anywhere in the source is either dead or wrong — and the failure it produces
+ * is the quiet kind. `role === "accounts"` is now permanently false rather than
+ * a type error, because these are compared against `string` in several places
+ * (`can(role: string)` used to be one), so nothing catches it but a grep.
+ * ------------------------------------------------------------------------- */
+
+test("no source file still names a role that no longer exists", () => {
+  /*
+   * EVERY file under src/, not a hand-kept list — and including SQL.
+   *
+   * The first version of this test read seven files it knew about and missed
+   * the one that mattered: `sales-target-service.ts` compares `u.role =
+   * 'telecaller'` inside a `sql` template, and Postgres refuses an enum label
+   * that does not exist. `/accounts/targets` answered 500 — not a wrong list,
+   * a dead page — and nothing but the link crawler saw it. TypeScript cannot:
+   * the literal is inside a string.
+   */
+  const offenders: string[] = [];
+  for (const file of readdirSyncDeep("src")) {
+    if (file.includes(".test.")) continue;
+    const src = readFileSync(file, "utf8");
+    let inBlock = false;
+    for (const [i, line] of src.split("\n").entries()) {
+      const opens = line.includes("/*");
+      const closes = line.includes("*/");
+      const wasInBlock = inBlock;
+      if (opens && !closes) inBlock = true;
+      if (closes) inBlock = false;
+      /* Prose is allowed to remember them — the paragraphs explaining WHY the
+       * vocabulary changed are the most valuable thing in these files, and a
+       * test that forbade the word would delete the reasoning to satisfy
+       * itself. Block comments are tracked rather than matched line by line,
+       * because those sentences run long and only the first carries a `*`. */
+      if (wasInBlock || (opens && !closes)) continue;
+      const code = line.replace(/\/\/.*$/, "").replace(/\/\*.*?\*\//g, "");
+      /* `'accounts'` is still a live APP id, so only the unambiguous one is
+       * matched by name; the app-shaped comparisons are caught by the role
+       * column being named beside them. */
+      /* One deliberate exception, marked at its own line rather than listed
+       * here: `{{telecaller}}` is a WhatsApp template variable and keeping the
+       * word is the point of it. An opt-out that has to be written beside the
+       * code is one whose reason is read; a list in this file is one nobody
+       * revisits. */
+      if (/role-name-ok/.test(src.split("\n")[i - 1] ?? "")) continue;
+      if (/["']telecaller["']/.test(code) || /\brole\s*=\s*'accounts'/.test(code)) {
+        offenders.push(`${file}:${i + 1} ${line.trim().slice(0, 90)}`);
+      }
+    }
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    `these name a role that no longer exists — in TypeScript it is silently false, in SQL it is a 500:\n  ${offenders.join("\n  ")}`,
+  );
+});
+

@@ -37,7 +37,7 @@ export default async function Page({
       mineCount={queue.mine}
       mineOnly={mineOnly}
       dueDays={config["leads.verificationDueDays"]}
-      canVerify={canLead(user.role, "lead.verify")}
+      canVerify={await canLead(user, "lead.verify")}
     />
   );
 }

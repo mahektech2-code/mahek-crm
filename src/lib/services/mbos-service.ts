@@ -65,7 +65,7 @@ import { listBills } from "./payment-service";
 export type MbosPrincipal = {
   user: User;
   deviceId: string;
-  role: "telecaller" | "manager" | "accounts" | "admin";
+  role: "associate" | "manager" | "admin";
   scope: DataScope;
 };
 

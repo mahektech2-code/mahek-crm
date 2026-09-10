@@ -46,7 +46,7 @@ import { MBOS_EVENT, writeTimelineEvent, type TimelineWriter } from "../timeline
 import { APP_TIMEZONE, calendarDate } from "../business-date";
 import { qualifyLead } from "../services/lead-qualification-service";
 import { convertLeadOnSecondOrder } from "../services/lead-conversion-service";
-import { canAny, grantingRole, rolesFor, scopedToUsers } from "../access-control";
+import { canAny, grantingHat, hatsFor, scopedToUsers } from "../access-control";
 import {
   applyLeadStageMove,
   evaluateLeadStageMove,
@@ -3363,14 +3363,15 @@ async function moveLeadFromHandset(
 ): Promise<Handled | null> {
   /*
    * The capability is checked HERE and not by the handset drawing a button.
-   * `lead.work` is held by every telecaller and every field salesman, so this
+   * `lead.work` is held by every associate who works a book — in the CRM or
+   * on a handset — so this
    * refuses almost nobody — which is exactly why it has to be written down: a
    * check that never fires is one somebody deletes as dead code, and the day an
    * accounts clerk is given a handset it is the only thing standing between
    * them and the funnel.
    */
-  const roles = await rolesFor(principal.user);
-  if (!canAny(roles, "lead.work")) {
+  const hats = await hatsFor(principal.user);
+  if (!canAny(hats, "lead.work")) {
     return {
       kind: "rejected",
       value: reject(
@@ -3443,7 +3444,7 @@ async function moveLeadFromHandset(
       /* The narrowest hat that carries it, exactly as `requireCapability`
          resolves it on the console side — so `audit_log.actor_role` reads the
          same whichever door the move came through. */
-      role: grantingRole(roles, "lead.work"),
+      hat: grantingHat(hats, "lead.work"),
       sourceApp: "mbos",
     },
     lead,

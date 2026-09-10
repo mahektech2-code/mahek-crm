@@ -41,12 +41,16 @@ import { relations, sql } from "drizzle-orm";
  * rather than a capability on the Orders app, so that being able to OPEN the
  * app and being able to ACCEPT an order stay separable.
  */
-export const roleEnum = pgEnum("role", [
-  "telecaller",
-  "manager",
-  "accounts",
-  "admin",
-]);
+/**
+ * A LEVEL, NOT A JOB TITLE.
+ *
+ * It held `telecaller` and `accounts` beside `manager` and `admin` — two job
+ * titles from two particular apps sitting in a list of seniority levels — so a
+ * grant for any third app had no honest word for "ordinary worker". The same
+ * three now apply in every app, and the app the grant is held under is what
+ * says which job it is. See `lib/access-control.ts` for the matrix.
+ */
+export const roleEnum = pgEnum("role", ["associate", "manager", "admin"]);
 
 /** How a login code reached somebody's phone. */
 export const otpChannelEnum = pgEnum("otp_channel", ["sms", "whatsapp"]);
@@ -576,7 +580,7 @@ export const users = pgTable(
     email: text("email").notNull(),
     phone: text("phone"),
     passwordHash: text("password_hash").notNull(),
-    role: roleEnum("role").notNull().default("telecaller"),
+    role: roleEnum("role").notNull().default("associate"),
     initials: text("initials").notNull(),
     /** The manager a telecaller reports to — drives a manager's team scope. */
     reportsToId: text("reports_to_id"),
@@ -2820,6 +2824,20 @@ export const auditLog = pgTable(
      * and anything written outside a capability check.
      */
     actorRole: roleEnum("actor_role"),
+    /**
+     * THE OTHER HALF OF WHICH HAT, and it became necessary the day roles
+     * stopped being job titles.
+     *
+     * `actor_role` alone answered the question while a role named the job:
+     * "accounts" said the clerk did it, "manager" said seniority carried it.
+     * `associate` says neither — the app is what distinguishes the person at
+     * the ledger desk from the person on the phones, and without it this
+     * column stops telling apart the two things it was added to tell apart.
+     *
+     * Null means not recorded, never "no app": every row that predates this,
+     * and anything authorised by the account's own role rather than a grant.
+     */
+    actorApp: appIdEnum("actor_app"),
     beforeState: jsonb("before_state"),
     afterState: jsonb("after_state"),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
@@ -5009,6 +5027,8 @@ export const leadStageTransitions = pgTable(
     actorId: text("actor_id").references(() => users.id),
     /** Which hat allowed it. Null means not recorded, never "no role". */
     actorRole: text("actor_role"),
+    /** And which app it was worn in — see `audit_log.actor_app`. */
+    actorApp: text("actor_app"),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

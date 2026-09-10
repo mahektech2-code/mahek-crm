@@ -22,7 +22,7 @@ import {
 import { orderCountsSql } from "../order-status";
 import { getConfig } from "../config/store";
 import { MBOS_EVENT, writeTimelineEvent } from "../timeline";
-import type { Role } from "../access-control";
+import type { Hat } from "../access-control";
 import {
   gateTo,
   PROSPECT_CONDITIONS,
@@ -795,8 +795,12 @@ export async function evaluateLeadStageMove(input: {
 
 export type LeadMoveActor = {
   userId: string;
-  /** The hat that carried it, for `audit_log.actor_role`. Null is not recorded. */
-  role: Role | null;
+  /**
+   * The hat that carried it — level AND app, for `actor_role` and `actor_app`.
+   * Null is not recorded. The app half became load-bearing when roles stopped
+   * being job titles: `associate` on its own no longer says who acted.
+   */
+  hat: Hat | null;
   sourceApp: "crm" | "mbos";
 };
 
@@ -856,7 +860,8 @@ export async function applyLeadStageMove(
       note: o.note ?? null,
       overriddenConditions: o.decision.overriddenConditions,
       actorId: actor.userId,
-      actorRole: actor.role,
+      actorRole: actor.hat?.role ?? null,
+      actorApp: actor.hat?.app ?? null,
     });
 
     const set: Partial<typeof customers.$inferInsert> = {
@@ -962,7 +967,8 @@ export async function applyLeadStageMove(
       action: promoted ? "lead.stage.promote" : "lead.stage.move",
       entityType: "customer",
       entityId: lead.id,
-      actorRole: actor.role,
+      actorRole: actor.hat?.role ?? null,
+      actorApp: actor.hat?.app ?? null,
       beforeState: { stage: from, kind: lead.kind, leadManagerId: lead.leadManagerId },
       afterState: {
         stage: to,

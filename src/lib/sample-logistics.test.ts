@@ -67,10 +67,29 @@ async function makeUser(name: string, phone: string) {
       email: `${name.toLowerCase()}-${randomUUID().slice(0, 4)}@test.local`,
       phone,
       passwordHash: "x",
-      role: "telecaller",
+      role: "associate",
       initials: name.slice(0, 2).toUpperCase(),
     })
     .returning();
+  /*
+   * THE APP GRANT, because a level on its own is not one.
+   *
+   * A capability hangs on (app, level) now, so `role: "manager"` with no
+   * `app_access` row is a manager of nothing — which is right, and is what
+   * production looks like too: an app's layout refuses anybody without a
+   * grant, so a person who can reach a screen always has one. A fixture
+   * without it was testing somebody who cannot sign in.
+   *
+   * The CRM, because that is the book these tests work. The ledger desk has
+   * `makeAccountsUser` where it is needed.
+   */
+  await db.insert(appAccess).values({
+    id: id("aca"),
+    userId: row.id,
+    app: "crm",
+    role: "associate",
+  });
+
   return row;
 }
 
@@ -146,7 +165,7 @@ beforeEach(async () => {
   principal = {
     user: salesman,
     deviceId: "probe-device",
-    role: "telecaller",
+    role: "associate",
     scope: { kind: "own", userIds: [salesman.id] },
   } as MbosPrincipal;
   setTestUser(salesman);

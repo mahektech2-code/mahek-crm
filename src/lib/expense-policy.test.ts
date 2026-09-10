@@ -49,7 +49,7 @@ const hhmm = (h: number, m = 0) => h * 60 + m;
 let admin: typeof users.$inferSelect;
 let salesman: typeof users.$inferSelect;
 
-async function makeUser(name: string, role: "telecaller" | "manager" | "admin" | "accounts") {
+async function makeUser(name: string, role: "associate" | "manager" | "admin", app: "crm" | "accounts" = "crm") {
   const [row] = await db
     .insert(users)
     .values({
@@ -62,7 +62,28 @@ async function makeUser(name: string, role: "telecaller" | "manager" | "admin" |
       initials: name.slice(0, 2).toUpperCase(),
     })
     .returning();
+  /* The app grant, because a level on its own is not one — a capability hangs
+     on (app, level) now, and `role: "manager"` with no `app_access` row is a
+     manager of nothing. */
+  await db.insert(appAccess).values({
+    id: id("aca"),
+    userId: row!.id,
+    app,
+    role,
+  });
   return row!;
+}
+
+/**
+ * The ledger desk, which is an APP GRANT and not a role any more.
+ *
+ * `role: "manager"` alone is a manager of nothing — the capabilities that make
+ * somebody accounts (approving an order, confirming a payment, issuing a
+ * credit note) hang on holding the Accounts app at manager level. A test that
+ * set only the level would be testing a person who cannot do the job.
+ */
+async function makeAccountsUser(name: string) {
+  return makeUser(name, "manager", "accounts");
 }
 
 /** A day at a fixed instant, so the wall-clock conversion is deterministic. */
@@ -208,7 +229,7 @@ beforeEach(async () => {
   await seedConfig();
 
   admin = await makeUser("Asha", "admin");
-  salesman = await makeUser("Mahesh", "telecaller");
+  salesman = await makeUser("Mahesh", "associate");
   await db.insert(appAccess).values({
     id: id("aa"),
     userId: salesman.id,
@@ -629,7 +650,7 @@ describe("who may do what", () => {
   });
 
   test("writing a policy and putting one in force are different permissions", async () => {
-    const accounts = await makeUser("Deepa", "accounts");
+    const accounts = await makeAccountsUser("Deepa");
     setTestUser(accounts);
 
     const draft = await createPolicyDraft({ title: "By accounts", effectiveFrom: "2027-06-01", notes: null });

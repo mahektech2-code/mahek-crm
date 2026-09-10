@@ -65,12 +65,20 @@ import { useAdmin } from "./store";
 
 const APPS = grantableApps();
 
-import { ROLE_CONFLICTS } from "@/lib/role-conflicts";
+import { conflictsFor } from "@/lib/role-conflicts";
 
+/*
+ * THE SAME THREE IN EVERY APP.
+ *
+ * This list used to carry `Telecaller` and `Accounts` beside `Manager` and
+ * `Admin` — two job titles from two particular apps in a list of seniority
+ * levels — so granting the Salesman App asked which kind of telecaller a
+ * field salesman was. What the app is, the row already says; this only has to
+ * say how senior they are in it.
+ */
 const ROLES = [
-  { id: "telecaller", label: "Telecaller" },
+  { id: "associate", label: "Associate" },
   { id: "manager", label: "Manager" },
-  { id: "accounts", label: "Accounts" },
   { id: "admin", label: "Admin" },
 ] as const;
 
@@ -602,13 +610,13 @@ function AccessDialog({
   const [roleDraft, setRoleDraft] = React.useState<Record<string, RoleId>>(() => {
     const out: Record<string, RoleId> = {};
     for (const g of person?.grants ?? []) {
-      out[g.app] = (g.role ?? person?.role ?? "telecaller") as RoleId;
+      out[g.app] = (g.role ?? person?.role ?? "associate") as RoleId;
     }
     return out;
   });
   const [email, setEmail] = React.useState(person?.email ?? "");
   const [phone, setPhone] = React.useState(person?.phone ?? "");
-  const [role, setRole] = React.useState<(typeof ROLES)[number]["id"]>("telecaller");
+  const [role, setRole] = React.useState<(typeof ROLES)[number]["id"]>("associate");
   const [saving, setSaving] = React.useState(false);
   const [fieldError, setFieldError] = React.useState<Record<string, string>>({});
 
@@ -1207,6 +1215,10 @@ function ReviewStep({
   accountRole: RoleId;
 }) {
   const appName = (id: AppId) => APPS.find((a) => a.id === id)?.name ?? id;
+  /* "Manager in Accounts", because a level on its own no longer names a hat
+     and "Associate and Associate" is not a warning anybody can act on. */
+  const hatName = (h: { app: string; level?: string }) =>
+    `${h.level ? roleName(h.level as RoleId) : "Anyone"} in ${appName(h.app as AppId)}`;
   const roleOf = (id: AppId) => roleDraft[id] ?? accountRole;
   const roleName = (id: RoleId) => ROLES.find((r) => r.id === id)?.label ?? id;
 
@@ -1220,10 +1232,14 @@ function ReviewStep({
    * here in the words of the rule it bends, on the page where somebody is
    * deciding.
    */
-  const held = [...new Set<RoleId>(Object.keys(draft).map((a) => roleOf(a as AppId)))];
-  const conflicts = ROLE_CONFLICTS.filter(
-    (c) => held.includes(c.roles[0]) && held.includes(c.roles[1]),
-  );
+  /* A hat is an app AND a level now, so the pair is compared on both — the
+     ledger desk clashes with the calling book, and it is the Accounts
+     MANAGER who decides, not the associate who records. */
+  const heldHats = Object.keys(draft).map((a) => ({
+    app: a,
+    role: roleOf(a as AppId) as string,
+  }));
+  const conflicts = conflictsFor(heldHats);
   const scope = (id: AppId) => {
     const n = (draft[id] ?? []).length;
     const total = ALL_OF(id).length;
@@ -1323,15 +1339,15 @@ function ReviewStep({
       {conflicts.length ? (
         <div className="mt-2 rounded-[4px] border border-warn bg-warn-soft px-3 py-2.5">
           <div className="text-[13px] font-medium text-warn-ink">
-            {name} will wear {held.length} hats at once
+            {name} will wear {heldHats.length} hats at once
           </div>
           {conflicts.map((c) => (
             <p
-              key={c.roles.join("+")}
+              key={c.hats.map((h) => `${h.app}:${h.level ?? "any"}`).join("+")}
               className="mt-1 text-[13px] leading-[19px] text-warn-ink"
             >
               <span className="font-medium">
-                {roleName(c.roles[0])} and {roleName(c.roles[1])}:
+                {hatName(c.hats[0])} and {hatName(c.hats[1])}:
               </span>{" "}
               {c.sentence}
             </p>

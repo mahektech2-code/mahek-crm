@@ -1,7 +1,7 @@
 import { isManager, requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { customerStatusLabel } from "@/lib/format";
-import { can } from "@/lib/access-control";
+import { canFor } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import {
   listAmFilterOptions,
@@ -87,12 +87,12 @@ export default async function Page({
       // The same question the action asks, so the button and the permission
       // cannot disagree. The action checks again regardless — a disabled
       // control is not a permission.
-      canClassify={can(user.role, "customer.classify")}
-      canReassign={can(user.role, "customer.reassign")}
+      canClassify={await canFor(user, "customer.classify")}
+      canReassign={await canFor(user, "customer.reassign")}
       // A different question, and a more generous answer: the sales manager
       // seat drives no queue, no scope and no target, so a manager may set it
       // while the two beside it stay accounts' and admin's.
-      canAssignSalesManager={can(user.role, "customer.assignSalesManager")}
+      canAssignSalesManager={await canFor(user, "customer.assignSalesManager")}
       amReasons={config["people.amChangeReasons"]}
       amSearchThreshold={config["people.pickerSearchThreshold"]}
       amOptions={amOptions}

@@ -53,7 +53,7 @@ function principalFor(user: typeof users.$inferSelect): MbosPrincipal {
   return {
     user,
     deviceId: "dev_test",
-    role: "telecaller",
+    role: "associate",
     scope: { kind: "own", userIds: [user.id] },
   };
 }
@@ -66,7 +66,7 @@ async function makeUser(name: string, email: string) {
       name,
       email,
       passwordHash: "x",
-      role: "telecaller",
+      role: "associate",
       initials: "XX",
     })
     .returning();

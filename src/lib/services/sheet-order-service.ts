@@ -311,6 +311,6 @@ export async function assignableOwners(): Promise<
   return db
     .select({ id: users.id, name: users.name, email: users.email, role: users.role })
     .from(users)
-    .where(and(eq(users.active, true), inArray(users.role, ["telecaller", "manager", "admin"])))
+    .where(and(eq(users.active, true), inArray(users.role, ["associate", "manager", "admin"])))
     .orderBy(asc(users.name));
 }

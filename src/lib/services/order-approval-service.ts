@@ -250,6 +250,7 @@ export async function approveOrder(orderId: string): Promise<Result> {
       actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
       action: "order.approve",
       entityType: "order",
       entityId: orderId,
@@ -340,6 +341,7 @@ export async function declineOrder(
       actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
       action: "order.decline",
       entityType: "order",
       entityId: orderId,

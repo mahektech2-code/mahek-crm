@@ -143,7 +143,7 @@ beforeEach(async () => {
       email: "mahesh@test.local",
       phone: "9820011007",
       passwordHash: "x",
-      role: "telecaller",
+      role: "associate",
       initials: "MP",
     })
     .returning();
@@ -183,7 +183,7 @@ beforeEach(async () => {
   principal = {
     user: salesman,
     deviceId: "probe-device",
-    role: "telecaller",
+    role: "associate",
     scope: { kind: "own", userIds: [salesman.id] },
   } as MbosPrincipal;
 });
@@ -714,7 +714,7 @@ describe("An attendance photograph survives the night and can be opened", () => 
         name: "Rakesh",
         email: "rakesh@test.local",
         passwordHash: "x",
-        role: "telecaller",
+        role: "associate",
         initials: "RK",
       })
       .returning();
@@ -777,7 +777,7 @@ describe("An attendance photograph survives the night and can be opened", () => 
         name: "Suresh",
         email: "suresh@test.local",
         passwordHash: "x",
-        role: "telecaller",
+        role: "associate",
         initials: "SP",
       })
       .returning();
@@ -1658,7 +1658,7 @@ describe("How many handsets one person may hold", () => {
         email: "rakesh@test.local",
         phone: "9820011002",
         passwordHash: "x",
-        role: "telecaller",
+        role: "associate",
         initials: "RK",
       })
       .returning();
@@ -1757,7 +1757,7 @@ describe("Releasing a handset", () => {
         email: `anjali-${randomUUID().slice(0, 6)}@test.local`,
         phone: `98200${Math.floor(10000 + Math.random() * 89999)}`,
         passwordHash: "x",
-        role: "telecaller",
+        role: "associate",
         initials: "AJ",
       })
       .returning();

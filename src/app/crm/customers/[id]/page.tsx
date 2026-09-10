@@ -25,7 +25,7 @@ import {
   distributorsFor,
   suggestedDistributors,
 } from "@/lib/services/distributor-service";
-import { can } from "@/lib/access-control";
+import { canFor } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { popularProducts } from "@/lib/services/product-service";
 import { quickNotes as quickNotesTable } from "@/db/schema";
@@ -274,13 +274,13 @@ export default async function CustomerRecordPage({
       distributorSuggestions={suggestions}
       // The same question the action asks, so a drawn control and a permitted
       // action cannot disagree. The action checks again regardless.
-      canClassify={can(user.role, "customer.classify")}
-      canReassign={can(user.role, "customer.reassign")}
+      canClassify={await canFor(user, "customer.classify")}
+      canReassign={await canFor(user, "customer.reassign")}
       // A different question, and a more generous answer: the sales manager
       // seat drives no queue, no scope and no target, so a manager may set it
       // while the two beside it stay accounts' and admin's.
-      canAssignSalesManager={can(user.role, "customer.assignSalesManager")}
-      canHandOver={can(user.role, "customer.handOver")}
+      canAssignSalesManager={await canFor(user, "customer.assignSalesManager")}
+      canHandOver={await canFor(user, "customer.handOver")}
       backOfficePeople={backOfficePeople}
       amReasons={config["people.amChangeReasons"]}
       amSearchThreshold={config["people.pickerSearchThreshold"]}
