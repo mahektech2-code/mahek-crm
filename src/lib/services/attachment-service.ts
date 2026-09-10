@@ -483,10 +483,41 @@ async function canReadAttendanceSelfie(attendanceId: string): Promise<boolean> {
   const ctx = await resolveScope();
   if (day.userId === ctx.user.id) return true;
 
+  /*
+   * THE `sales` GRANT IS ASKED FIRST, and it is what makes the third answer
+   * above true rather than merely intended.
+   *
+   * `managerScope` narrows a manager to their own salesmen — but it answers
+   * `salesmanIds: null`, meaning "national, sees everybody", for anybody with
+   * no `region` row in `mbos_user_territories`, and a plain field salesman has
+   * none. Three separate returns in that function do it: no session, no rows,
+   * no usable region key. So reading it straight through gave every salesman
+   * the national answer, and one could open a colleague's check-in photograph
+   * by id — exactly what the comment above this function has always said must
+   * not happen. It failed OPEN, which is the dangerous direction and the
+   * reason it survived: nothing looked broken, because everything worked.
+   *
+   * The narrowing is real for a REGIONAL manager and vacuous for everybody
+   * else, so it cannot be the whole check. It has to sit behind the question
+   * of whether this person may look at the field's work at all, and the answer
+   * to that is the `sales` grant — the same one `src/app/sales/layout.tsx`
+   * redirects on. Every OTHER caller of `managerScope` is a list inside
+   * `/sales/*`, already behind that layout; this one is reached from
+   * `/api/attachments/[id]`, which has no gate but a signed-in session, which
+   * is why the check belongs here.
+   *
+   * `canReadTravelLegPhoto` below is the same rule for the same reason, and
+   * these two are the only places in this file that ask.
+   */
+  const { listUserApps } = await import("../access");
+  const apps = await listUserApps(ctx.user.id);
+  if (!apps.includes("sales")) return false;
+
   const { managerScope } = await import("./sales-service");
   const scope = await managerScope();
   /* `null` is a national manager — everybody. See `onlyMine`, which reads the
-     same field to mean the same thing in SQL. */
+     same field to mean the same thing in SQL. Reached only by somebody who
+     already holds the Sales Dashboard. */
   if (scope.salesmanIds === null) return true;
   return scope.salesmanIds.includes(day.userId);
 }
