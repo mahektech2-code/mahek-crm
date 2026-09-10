@@ -26,6 +26,7 @@ import { optimiseRoute } from '../src/engines/route';
 import { fixOf, getFix } from '../src/native/location';
 import { dayLabel, dayLabelRelative, dmy, inr, isoDate, plural } from '../src/lib/format';
 import { openMaps, openRoute, shareText } from '../src/lib/messaging';
+import { NavigateButton } from '../src/components/ui/navigate';
 import { useBoot } from '../src/state/boot';
 import { useStore } from '../src/state/store';
 
@@ -686,7 +687,23 @@ export default function JourneyScreen() {
                   </T>
                 </View>
               </View>
-              <View style={{ flexDirection: 'row', gap: 10 }}>
+              {/*
+                NAVIGATION SURVIVES THE DEPARTURE, which it did not until now.
+                The Navigate button below is in the other arm of this ternary —
+                the one that draws BEFORE he sets off — so pressing "Start
+                visit" swapped this card in and took navigation away with it.
+                It was offered at every moment except the one where somebody is
+                actually on the road.
+              */}
+              <NavigateButton
+                variant="button"
+                lat={next.gpsLat}
+                lng={next.gpsLng}
+                name={leg.toLabel ?? next.customerName}
+                city={next.area}
+                style={{ marginTop: 12 }}
+              />
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
                 <SecondaryButton
                   label="Call it off"
                   onPress={() =>
@@ -718,18 +735,13 @@ export default function JourneyScreen() {
             </View>
           ) : (
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-            <SecondaryButton
-              label="Navigate"
-              onPress={async () => {
-                const out = await openMaps({
-                  lat: next.gpsLat,
-                  lng: next.gpsLng,
-                  name: next.customerName,
-                  city: next.area,
-                });
-                if (out.status !== 'opened') notify(out.reason);
-              }}
-              style={{ flex: 1, borderRadius: radius.xl }}
+            <NavigateButton
+              variant="button"
+              lat={next.gpsLat}
+              lng={next.gpsLng}
+              name={next.customerName}
+              city={next.area}
+              style={{ flex: 1 }}
             />
             <PrimaryButton
               label="Start visit"

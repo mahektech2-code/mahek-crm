@@ -18,7 +18,7 @@ import {
   type TravelLeg,
   type TravelMode,
 } from '../src/data/travel';
-import { arrivalPrompt, checkFare, legLine, travellingFor } from '../src/lib/travel-leg';
+import { arrivalPrompt, checkFare, legLine, navigationLine, travellingFor } from '../src/lib/travel-leg';
 import { suspectFor, visitCapThresholds } from '../src/data/leads';
 import { visitCapState, type VisitCapThresholds } from '../src/engines/leads';
 import { useCustomer, useStore } from '../src/state/store';
@@ -31,11 +31,17 @@ import { previousVisitNote, saveVisit, type PreviousNote } from '../src/data/vis
 import { logComplaint, requestSample } from '../src/data/requests';
 import { starterProducts } from '../src/data/customers';
 import { todayStops } from '../src/data/journey';
-import { checkInVerdict, visitLocationVerdict, type CheckInVerdict } from '../src/engines/geo';
+import {
+  checkInVerdict,
+  haversineMetres,
+  visitLocationVerdict,
+  type CheckInVerdict,
+} from '../src/engines/geo';
 import { fixOf, getFix, type Fix } from '../src/native/location';
 import { queueOdometerPhoto, queueRecording, takePhoto } from '../src/native/capture';
 import { discardQueuedMedia } from '../src/sync/media';
 import { VoiceField } from '../src/components/ui/dictate';
+import { NavigateButton } from '../src/components/ui/navigate';
 
 /**
  * Capturing a visit.
@@ -64,6 +70,21 @@ import { VoiceField } from '../src/components/ui/dictate';
  */
 
 type Product = { id: string; name: string; packSize: string | null };
+
+/*
+ * How often the On-your-way screen asks the radio where he is, and the range at
+ * which that question changes character.
+ *
+ * NEITHER IS A BUSINESS RULE, which is why neither is in the registry. Nothing
+ * is priced, refused or paid on these: the cadence is how often one line of
+ * text is refreshed while a screen that only exists mid-journey is open, and
+ * the range is where a distance stops meaning "is it worth going" and starts
+ * meaning "which doorway". What IS configuration is the age at which a reading
+ * is called stale — `mbos.location.activityFixMaxAgeSeconds`, read below —
+ * because that decides what a screen ASSERTS about a fix.
+ */
+const ROAD_FIX_EVERY_MS = 20_000;
+const APPROACHING_M = 1_000;
 
 export default function Visit() {
   const c = useCustomer();
@@ -232,6 +253,65 @@ export default function Visit() {
 
   const legMode = leg ? modes.find((m) => m.key === leg.modeKey) ?? null : null;
   const needsMeter = !!legMode?.requiresOdometer;
+
+  /* ---- how far there is left to go ----
+   *
+   * ONLY WHILE HE IS ON THE ROAD. This is the one screen in the app that is
+   * open precisely because somebody is travelling, and it closes the moment he
+   * says he is here — so a fix taken on a short cadence costs the radio a few
+   * minutes of a ride rather than a day, and buys the only number this screen
+   * was missing: whether the shop is round the corner or in the wrong town.
+   *
+   * The reading is BALANCED at range and PRECISE on the approach. Under a
+   * kilometre the figure stops being "is it worth going" and becomes "which
+   * doorway", and a fix good to a city block cannot answer the second — while
+   * paying for that accuracy over a ten-kilometre ride would buy nothing the
+   * rounding does not throw away. The check-in at the end is precise for the
+   * same reason, one step further along.
+   */
+  const onTheRoad = legLoaded && !!leg && leg.endedAt == null;
+  /* The pin as two numbers rather than as the customer, so the timer below
+     restarts when the SHOP moves and not every time the record is re-read. */
+  const pinLat = c?.gpsLat ?? null;
+  const pinLng = c?.gpsLng ?? null;
+  const [roadFix, setRoadFix] = React.useState<Fix | null>(null);
+  /* The same reading, reachable from inside the interval without becoming a
+     dependency of it: naming the state there would tear the timer down and
+     rebuild it on every fix, which is a cadence nobody chose. */
+  const roadFixRef = React.useRef<Fix | null>(null);
+  const [staleAfterS, setStaleAfterS] = React.useState(900);
+  React.useEffect(() => {
+    void getConfig<number>('mbos.location.activityFixMaxAgeSeconds', 900).then(setStaleAfterS);
+  }, []);
+  React.useEffect(() => {
+    if (!onTheRoad) return;
+    let live = true;
+    const shop = pinLat != null && pinLng != null ? { lat: pinLat, lng: pinLng } : null;
+
+    async function read() {
+      const near =
+        shop && roadFixRef.current
+          ? haversineMetres(roadFixRef.current, shop) < APPROACHING_M
+          : false;
+      const got = fixOf(
+        await getFix({ accuracyThresholdM: 100, timeoutMs: 12_000, precise: near }),
+      );
+      /* A failed reading leaves the previous one standing rather than blanking
+         the line — the last known distance with its age on it is worth more
+         than nothing at all, which is what `navigationLine` is built to say. */
+      if (live && got) {
+        roadFixRef.current = got;
+        setRoadFix(got);
+      }
+    }
+
+    void read();
+    const t = setInterval(() => void read(), ROAD_FIX_EVERY_MS);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [onTheRoad, pinLat, pinLng]);
 
   React.useEffect(() => {
     let live = true;
@@ -683,6 +763,13 @@ export default function Visit() {
       requiresOdometer: needsMeter,
       odometerStartKm: leg.odometerStartKm,
     });
+    const shopPin = pinLat != null && pinLng != null ? { lat: pinLat, lng: pinLng } : null;
+    const away = navigationLine({
+      hasPin: !!shopPin,
+      metresAway: roadFix && shopPin ? haversineMetres(roadFix, shopPin) : null,
+      fixAgeSeconds: roadFix ? Math.round((now - roadFix.at) / 1000) : null,
+      staleAfterSeconds: staleAfterS,
+    });
     return (
       <AppFrame
         title="On your way"
@@ -709,7 +796,24 @@ export default function Visit() {
               {'Set off on ' + leg.odometerStartKm.toLocaleString('en-IN') + ' km'}
             </Text>
           ) : null}
-          <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 12 }}>{prompt.line}</Text>
+          {/*
+            NAVIGATION SITS WITH THE JOURNEY, above the line about ending it.
+            The card is two halves and they are read at two different moments:
+            the top is the ride he is on and is read as he sets off, the bottom
+            is how the ride stops and is read when he gets there. Dropping the
+            button between the prompt and the button that answers it would split
+            the only pair on the card that belongs together.
+          */}
+          <NavigateButton
+            lat={c?.gpsLat}
+            lng={c?.gpsLng}
+            name={c?.name ?? leg.toLabel}
+            city={c?.area ?? c?.city}
+            detail={away}
+            style={{ marginTop: 12 }}
+          />
+
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 14 }}>{prompt.line}</Text>
 
           {/*
             THE REFUSAL, said with its number.

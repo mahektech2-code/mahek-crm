@@ -1,7 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { arrivalPrompt, checkFare, checkOdometer, legLine, travellingFor } from './travel-leg';
+import {
+  arrivalPrompt,
+  checkFare,
+  checkOdometer,
+  legLine,
+  navigationLine,
+  travellingFor,
+} from './travel-leg';
 
 /**
  * The rules a journey is measured by.
@@ -130,4 +137,54 @@ test('travelling time counts up and is never negative', () => {
   /* A phone whose clock stepped backwards mid-journey must not report a
      negative ride. */
   assert.equal(travellingFor(at, at - 60_000), '0 min');
+});
+
+
+/* ──────────────────────────────────────────────── how far there is to go */
+
+test('the distance to the shop is said plainly where the fix is fresh', () => {
+  assert.equal(
+    navigationLine({ hasPin: true, metresAway: 2_400, fixAgeSeconds: 30, staleAfterSeconds: 300 }),
+    '2.4 km away',
+  );
+  assert.equal(
+    navigationLine({ hasPin: true, metresAway: 80, fixAgeSeconds: 0, staleAfterSeconds: 300 }),
+    '80 m away',
+  );
+});
+
+test('a stale reading carries its age rather than passing as live', () => {
+  /* He has been riding for twelve minutes on a fix taken before he set off.
+     The number is still worth having — it is the difference between the next
+     lane and the next district — and printing it bare would be a lie by the
+     time he read it. */
+  assert.equal(
+    navigationLine({ hasPin: true, metresAway: 4_100, fixAgeSeconds: 12 * 60, staleAfterSeconds: 300 }),
+    '4.1 km away, from your last fix 12 min ago',
+  );
+});
+
+test('an unpinned shop says so, because navigating to it is a different act', () => {
+  /* Half this book has no coordinate. `openMaps` searches the name and the
+     town instead, which lands him near a name rather than on a doorway, and he
+     should learn that here rather than from the maps app. */
+  assert.equal(
+    navigationLine({ hasPin: false, metresAway: null, fixAgeSeconds: null, staleAfterSeconds: 300 }),
+    'No pin on this shop — maps will search for its name and town.',
+  );
+  /* The pin decides it, not the reading: a shop with no pin says so even where
+     a distance could somehow be computed. */
+  assert.equal(
+    navigationLine({ hasPin: false, metresAway: 500, fixAgeSeconds: 10, staleAfterSeconds: 300 }),
+    'No pin on this shop — maps will search for its name and town.',
+  );
+});
+
+test('no reading yet says nothing at all', () => {
+  /* The header already reports that the GPS is being looked for and the button
+     works regardless, so a third sentence about it would be noise. */
+  assert.equal(
+    navigationLine({ hasPin: true, metresAway: null, fixAgeSeconds: null, staleAfterSeconds: 300 }),
+    null,
+  );
 });

@@ -16,6 +16,12 @@
  * street with a camera is a rule nobody tests.
  */
 
+/* `format.ts` is import-free and pure, like this file — the one place the app
+   turns a number of metres into words a man walking a beat would use, so the
+   distance on the way to a shop and the distance quoted back in a refusal are
+   phrased the same. */
+import { distanceLabel } from './format';
+
 export type OdometerVerdict =
   | { ok: true; km: number; distanceKm: number | null }
   | { ok: false; why: string };
@@ -159,4 +165,47 @@ export function legLine(leg: {
     return `${leg.modeLabel} · ₹${Math.round(leg.ticketAmountPaise / 100)}`;
   }
   return leg.modeLabel;
+}
+
+/**
+ * How far there is left to go, said on the way.
+ *
+ * The On-your-way screen used to say nothing at all about the destination
+ * except its name, which is the one question a man on a bike is actually
+ * asking: is this shop round the corner, or has the book got it in the wrong
+ * town? The refusal at the door already answers it in metres — this answers it
+ * before he has ridden the wrong way for twenty minutes.
+ *
+ * **A SHOP WITH NO PIN SAYS SO.** Roughly half this book has no coordinate, and
+ * `openMaps` falls back to searching the name and the town — which is a good
+ * answer and a DIFFERENT one, because it lands him near a name rather than on a
+ * doorway. Printing nothing there would leave him to discover the difference
+ * from the maps app.
+ *
+ * **A STALE FIX IS PRINTED WITH ITS AGE, never hidden and never dressed up as
+ * live.** The distance is only as fresh as the reading behind it, and while he
+ * is moving that gap grows: "4.1 km away" from a fix taken before he set off is
+ * a lie by the time he is half way. Saying when it was taken costs a clause and
+ * keeps the number usable — the same rule the activity marks follow, where a
+ * stale position is drawn hollow rather than dropped.
+ */
+export function navigationLine(args: {
+  hasPin: boolean;
+  metresAway: number | null;
+  fixAgeSeconds: number | null;
+  staleAfterSeconds: number;
+}): string | null {
+  if (!args.hasPin) return 'No pin on this shop — maps will search for its name and town.';
+
+  const away = distanceLabel(args.metresAway);
+  /* No reading yet. The button still works and the header already says the GPS
+     is being looked for, so an apology here would be the third sentence on one
+     card saying the same thing. */
+  if (!away) return null;
+
+  const age = args.fixAgeSeconds;
+  const stale = age != null && age > args.staleAfterSeconds;
+  if (!stale) return `${away} away`;
+
+  return `${away} away, from your last fix ${travellingFor(0, (age ?? 0) * 1000)} ago`;
 }

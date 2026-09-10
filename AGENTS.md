@@ -338,6 +338,43 @@ service — real turn-by-turn needs a road network, a directions API and a
 connection, and the phone that most needs directions has one bar. An app that
 has already downloaded the roads beats all of that, free.
 
+**AND IT WAS DRAWN EVERYWHERE EXCEPT ON THE ROAD.** The button existed on the
+journey screen from the day it shipped — in the arm of the ternary that renders
+BEFORE he sets off. Pressing "Start visit" swapped that card for the open-leg
+one and took navigation away with it, and the On-your-way screen, which is the
+screen a salesman is looking at while he is actually travelling, never had one
+at all. So the deep link was offered at every moment except the only one it is
+for. `components/ui/navigate.tsx` is the one control now, in two shapes for two
+layouts and one behaviour: a second inline `openMaps` call site is how the
+failure message on one of them stops matching the other.
+
+**WHAT THAT SCREEN LACKED WAS A DISTANCE, and it is WORDS rather than tiles.**
+"Is this shop round the corner, or has the book got it in the wrong town" is the
+question a man on a bike is asking, and an in-app map answers it worse than a
+sentence does: it can draw a straight line between two dots and cannot say which
+road, and it costs tiles and battery on a moving handset to say less than the
+maps app he already has. `navigationLine` prints `distanceLabel` — the same
+words the check-in refusal quotes back at him at the door, so the two cannot
+phrase one distance two ways. **A stale reading carries its age** rather than
+passing as live: while he is moving the gap grows, and "4.1 km away" from a fix
+taken before he set off is a lie by the time he reads it. **A shop with no pin
+says so**, because `openMaps` then searches the name and the town — which is a
+good answer and a DIFFERENT one, landing him near a name rather than on a
+doorway, and roughly half this book has no coordinate.
+
+**The radio runs on a cadence there, which it does nowhere else.** The
+On-your-way screen exists only while somebody is travelling and closes the
+moment he says he is here, so a fix every twenty seconds costs a few minutes of
+a ride rather than a day — and `getFix` remembers what it takes, so the check-in
+gate at the end of the journey gets a warm fix instead of standing at a door
+waiting for a cold one. It is BALANCED at range and PRECISE under a kilometre:
+past that the figure answers "is it worth going" and the rounding throws the
+accuracy away anyway, and inside it the figure has become "which doorway", which
+a reading good to a city block cannot answer. Neither the cadence nor that range
+is in the registry — nothing is priced, refused or paid on either. What IS
+configuration is `mbos.location.activityFixMaxAgeSeconds`, because that decides
+what a screen ASSERTS about a reading rather than how often one is taken.
+
 **A POTENTIAL IS A JUDGEMENT and is stored with its author and its date.**
 `products.priceSource` is still `unset`, so nothing here can derive what a shop
 could spend. `potential_monthly_paise` is somebody's estimate, and an estimate
