@@ -274,16 +274,22 @@ test("every column MBOS sends has a column on the handset to land in", () => {
  * loudly rather than quietly stop being checked.
  */
 const DELTA: { anchor: string; table: string }[] = [
-  { anchor: 'select c.id, c.name, c.contact_person', table: "customers" },
   { anchor: 'select p.id, p.name, p.pack_size', table: "products" },
   { anchor: 'select t.id, t.customer_id as "customerId"', table: "timeline_events" },
   { anchor: "select s.id,", table: "journey_stops" },
   /*
-   * TWO ENTRIES LEFT THIS LIST, one from each side of this merge, and both for
-   * the same reason: the delta now calls the same function the bootstrap does,
-   * so there is no second spelling left to check and the WIRE entry above
-   * covers each once. That is the state every remaining entry is waiting to
-   * reach.
+   * THREE ENTRIES HAVE LEFT THIS LIST, all for the same reason: the delta now
+   * calls the same function the bootstrap does, so there is no second spelling
+   * left to check and the WIRE entry above covers each once. That is the state
+   * every remaining entry is waiting to reach.
+   *
+   * `customers` was the third, and it is the one that proves why the state is
+   * worth reaching. This test only ever asked whether the delta sends
+   * something the handset CANNOT HOLD — an extra column, which throws and
+   * takes the whole pull with it. It could not ask the opposite, because it
+   * has no second list to compare against: a column the delta simply omits is
+   * not a fault in any file, it is an absence, and eleven of them sat there
+   * for as long as the channel existed. See `changedCustomersForDevice`.
    *
    * `journey_days` moved for a stronger reason than tidiness — the bootstrap
    * sent NO plan days at all, so a fresh sign-in got an empty Journey tab and
@@ -807,3 +813,52 @@ test("no source file still names a role that no longer exists", () => {
   );
 });
 
+
+/* ---------------------------------------------------------------------------
+ * A DELTA MUST SEND WHAT THE BOOTSTRAP SENDS.
+ *
+ * The test above pins a payload against the handset's schema, function by
+ * function, by NAME — and every name in `WIRE` is a bootstrap one. The delta's
+ * channels were anonymous `sql` templates inside `buildPull`'s `Promise.all`,
+ * so they were in no list and nothing compared the two.
+ *
+ * The customers channel had drifted eleven columns apart. Nothing failed,
+ * because `upsert` writes exactly the columns that arrive: a missing one is
+ * not written as null, it is not written at all, so the bootstrap's value sits
+ * on the row being right about the day the salesman signed in. `pullCursor` is
+ * set once and cleared nowhere, so that is the life of the installation.
+ *
+ * The fix was one function for both. This is what stops somebody re-inlining
+ * it — the one change that would put the two back out of step, and the one
+ * nothing else in the suite can see.
+ * ------------------------------------------------------------------------- */
+test("the delta reads customers through the same function the bootstrap does", () => {
+  const src = readFileSync(SERVICE, "utf8");
+  const start = src.indexOf("export async function buildPull");
+  assert.ok(start > 0, "buildPull not found");
+  const body = src.slice(start);
+
+  assert.ok(
+    /changedCustomersForDevice\(/.test(body),
+    "buildPull no longer calls changedCustomersForDevice — a delta that builds its own customer projection is how eleven columns stopped reaching handsets in the field",
+  );
+
+  /* A projection of its own is the regression. `from customers c` is what one
+   * looks like; the id lookup that feeds the shared function lives in
+   * `changedCustomersForDevice`, above `buildPull`, so it is not in this
+   * slice. */
+  assert.equal(
+    (body.match(/from customers c\b/g) ?? []).length,
+    0,
+    "buildPull selects from customers directly — it must go through customersForDevice, or the delta and the bootstrap drift apart silently",
+  );
+
+  const helper = src.slice(
+    src.indexOf("async function changedCustomersForDevice"),
+    src.indexOf("async function customersForDevice"),
+  );
+  assert.ok(
+    /return customersForDevice\(/.test(helper),
+    "changedCustomersForDevice must hand its ids to customersForDevice so there is one column list",
+  );
+});
