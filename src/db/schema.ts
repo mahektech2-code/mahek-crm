@@ -4861,6 +4861,25 @@ export const mbosVisitOutcomeEnum = pgEnum("mbos_visit_outcome", [
 ]);
 
 /**
+ * WHAT A SALESMAN SAID ABOUT THE SHOP'S OWN PIN, and what was done about it.
+ *
+ * Raised only by somebody who was refused a check-in and passed it anyway: he
+ * is standing in the shop and the book disagrees, and one of the two is wrong.
+ * It is a REQUEST rather than a write, and that is the load-bearing part — the
+ * handset can already move a pin through `customer_update`, so letting the
+ * override do it directly would mean one override moved the pin to wherever he
+ * stood and the radius never refused him again. A manager decides, on the
+ * visit's own row, from the check-in fix that is already stored there.
+ *
+ * Null is the ordinary case: nobody asked.
+ */
+export const mbosPinCorrectionEnum = pgEnum("mbos_pin_correction", [
+  "requested",
+  "accepted",
+  "rejected",
+]);
+
+/**
  * §2.4 — one visit to one shop.
  *
  * Append-only in the protocol's sense: a visit created on two handsets is two
@@ -4958,6 +4977,34 @@ export const mbosVisits = pgTable(
     /** A manager overriding a mismatch — the visit still happened. */
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
     acceptedById: text("accepted_by_id"),
+
+    /* ---- the check-in gate, and the way past it ---- */
+    /**
+     * HIS OWN WORDS, given before a refused check-in was allowed through.
+     *
+     * Its own column rather than folded into `unverifiedReason`, for the same
+     * reason `deviationReason` and `distanceFromShopM` have theirs: the server
+     * composes a sentence out of this and a manager screen would otherwise be
+     * able to show what the salesman actually wrote only as prose, and only
+     * ever inside somebody else's sentence.
+     *
+     * Null means the check-in was never refused — which is every visit logged
+     * before the radius became a gate, and most of them after.
+     */
+    checkInOverrideReason: text("check_in_override_reason"),
+    /**
+     * "The pin is wrong, move it to where I stood." Null means nobody asked.
+     *
+     * There is deliberately no second pair of coordinates here: what he is
+     * proposing IS `checkInLat`/`checkInLng` on this very row, and a stored
+     * copy of two numbers already in the record is a copy that can disagree
+     * with it.
+     */
+    pinCorrection: mbosPinCorrectionEnum("pin_correction"),
+    pinCorrectionDecidedAt: timestamp("pin_correction_decided_at", {
+      withTimezone: true,
+    }),
+    pinCorrectionDecidedById: text("pin_correction_decided_by_id"),
   },
   (t) => [
     index("mbos_visits_customer_idx").on(t.customerId, t.checkInAt.desc()),

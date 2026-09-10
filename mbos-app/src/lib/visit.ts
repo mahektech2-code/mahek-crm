@@ -11,6 +11,13 @@ import type { OutcomeKey } from '../data/fixtures';
  * and the manager told. Blocking the save outright would teach people to stop
  * logging visits, which costs more than a handful of doubtful ones.
  *
+ * **That is still true, and the CHECK-IN is now a different question.** The
+ * gate Mahek asked for sits on the arrival — `checkInVerdict` in
+ * `engines/geo.ts` — where a refusal costs a walk to the right door rather
+ * than a day's work, because he has not typed anything yet. By the time this
+ * file is consulted the visit exists, the note is written and the photograph
+ * is taken, and there is nothing here worth refusing.
+ *
  * Pure on purpose — no clock, no GPS, no store. Everything it needs arrives as
  * an argument, so the thresholds can be tested without a device.
  */
@@ -72,6 +79,18 @@ export type VisitFacts = {
   minimumDwellSeconds: number;
   /** `mbos.location.visitMismatchM`. */
   maxMetresFromShop: number;
+  /**
+   * He was refused at the door and said in writing that the pin is wrong.
+   *
+   * The check reads OK on this, and that is not the gate leaking: the question
+   * "are you at the shop" has already been PUT to him, at the moment he was
+   * standing there, and answered with a sentence his manager will read. Asking
+   * it again on the save screen would be the app arguing with its own refusal
+   * and would cost a second typed reason for one visit. The visit still saves
+   * UNVERIFIED — `saveAndGo` sets that from the same reason — so nothing about
+   * what the office is told changes; what changes is that he is asked once.
+   */
+  checkInOverridden: boolean;
   hasShopPhoto: boolean;
   outcome: OutcomeKey | null;
   followOnCaptured: boolean;
@@ -94,14 +113,16 @@ export function visitChecks(f: VisitFacts): VisitCheck[] {
   return [
     {
       key: 'gps',
-      ok: f.gpsLocked && (unlocated || near),
-      line: !f.gpsLocked
-        ? 'No GPS fix yet'
-        : unlocated
-          ? 'This shop has no recorded location yet — nothing to compare against.'
-          : near
-            ? `At the shop · ${f.metresAway} m from the recorded address`
-            : `${f.metresAway} m from the shop — too far to count as a visit`,
+      ok: f.checkInOverridden || (f.gpsLocked && (unlocated || near)),
+      line: f.checkInOverridden
+        ? `Checked in ${f.metresAway ?? '?'} m from the recorded address — you said the shop’s pin is wrong`
+        : !f.gpsLocked
+          ? 'No GPS fix yet'
+          : unlocated
+            ? 'This shop has no recorded location yet — nothing to compare against.'
+            : near
+              ? `At the shop · ${f.metresAway} m from the recorded address`
+              : `${f.metresAway} m from the shop — too far to count as a visit`,
       why: 'A visit is logged against the shop’s address, not where the phone is.',
     },
     {

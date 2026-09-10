@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { money } from "@/lib/format";
 import { APP_TIMEZONE, addDays } from "@/lib/business-date";
 import { useToast } from "@/components/ui/toast";
-import { acceptVisit, askAboutVisit } from "@/lib/actions/sales";
+import { acceptVisit, askAboutVisit, decidePinCorrection } from "@/lib/actions/sales";
 import type { VisitRow } from "@/lib/services/sales-service";
 import {
   Cell,
@@ -65,6 +65,25 @@ export function VisitsScreen({
       return;
     }
     toast.push(result.message ?? "Accepted.");
+    router.refresh();
+  }
+
+  /**
+   * He said the shop is not where the book has it. One of the two is wrong,
+   * and this is where somebody decides which.
+   *
+   * No coordinates are sent: what is being accepted is the check-in fix
+   * already on the row, which is the point the manager can see on the map link
+   * beside it. It deliberately does not touch `verified` — accepting the pin
+   * says the book was wrong, and standing behind the visit is the item above.
+   */
+  async function decidePin(v: VisitRow, accept: boolean) {
+    const result = await decidePinCorrection({ visitId: v.id, accept });
+    if (!result.ok) {
+      toast.push(result.error);
+      return;
+    }
+    toast.push(result.message ?? "Done.");
     router.refresh();
   }
 
@@ -230,6 +249,24 @@ export function VisitsScreen({
                     <Pill>Off plan</Pill>
                   </span>
                 ) : null}
+                {/*
+                  A REQUEST IS A THING TO DO, so it is drawn as one rather than
+                  folded into the sentence underneath. "He says the shop is
+                  somewhere else" is the row a manager should be able to find
+                  by eye on a day of forty visits — the reason he gave is on
+                  the line below, and the two are different facts.
+                */}
+                {v.pinCorrection ? (
+                  <span className="ml-1.5">
+                    <Pill tone={v.pinCorrection === "requested" ? "warn" : "neutral"}>
+                      {v.pinCorrection === "requested"
+                        ? "Pin questioned"
+                        : v.pinCorrection === "accepted"
+                          ? "Pin moved"
+                          : "Pin kept"}
+                    </Pill>
+                  </span>
+                ) : null}
                 {v.unverifiedReason || v.deviationReason ? (
                   <span className="block truncate text-[12px] text-muted">
                     {v.unverifiedReason ?? v.deviationReason}
@@ -289,6 +326,29 @@ export function VisitsScreen({
                         setError(null);
                       },
                     },
+                    /*
+                      Only where somebody asked. Offered on every row it would
+                      be a way to move a shop's pin from a table of visits,
+                      which is a different thing to answering a request — and
+                      one nobody standing at the shop had made.
+                    */
+                    ...(v.pinCorrection === "requested"
+                      ? [
+                          {
+                            label: "Move the shop's pin here",
+                            run: () => void decidePin(v, true),
+                            disabled: v.checkInLat == null,
+                            title:
+                              v.checkInLat == null
+                                ? "That check-in carried no location to move it to."
+                                : undefined,
+                          },
+                          {
+                            label: "Leave the pin as it is",
+                            run: () => void decidePin(v, false),
+                          },
+                        ]
+                      : []),
                   ]}
                 />
               </Cell>

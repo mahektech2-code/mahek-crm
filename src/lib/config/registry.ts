@@ -1640,10 +1640,10 @@ export const SETTINGS = [
     key: "mbos.location.visitMismatchM",
     type: "integer",
     category: "mbos-location",
-    label: "Visit location mismatch distance",
+    label: "How close a check-in has to be",
     description:
-      "Metres between the check-in and the customer's own pin before the visit is flagged for a manager. It must be comfortably larger than the accuracy above, or an honest fix on a busy street reads as somebody checking in from the tea shop.",
-    default: 200,
+      "Metres between the salesman and the shop's own pin. Inside it the check-in goes ahead; outside it the handset refuses, and he can only pass by saying in writing that the pin is wrong — which reaches you as an unverified visit. It is ALSO the distance a saved visit is flagged at, because the distance a check-in is refused at and the distance one is questioned at are one fact. Keep it comfortably larger than the accuracy above: a fix that is itself 50 m wide cannot tell a doorway from the tea shop across the road, and every refusal it produces falls on somebody standing in the right place.",
+    default: 100,
     min: 20,
     max: 5000,
   },
@@ -3064,15 +3064,16 @@ export function checkConsistency(config: Config): string[] {
   // it would produce orders valued from a table that does not exist.
   /* ------------------------------------------------- MBOS — field sales */
 
-  // A fix the handset rates worse than the mismatch distance cannot tell the
-  // two apart: every honest check-in on a poor signal would read as somebody
-  // standing somewhere else, and a flag raised on all of them is a flag a
-  // manager stops opening.
+  // A fix the handset rates worse than the check-in radius cannot tell the two
+  // apart: every honest check-in on a poor signal would read as somebody
+  // standing somewhere else. This used only to raise a flag a manager stops
+  // opening; it now REFUSES the check-in, so the same misconfiguration turns
+  // into a salesman standing in the right shop being told he is not there.
   const accuracy = config["mbos.location.gpsAccuracyThresholdM"];
   const mismatch = config["mbos.location.visitMismatchM"];
   if (mismatch <= accuracy) {
     problems.push(
-      `A visit is flagged as a location mismatch at ${mismatch}m, but a fix is trusted down to ${accuracy}m of error. The mismatch distance must be comfortably larger than the accuracy threshold, or an honest check-in on a poor signal is flagged as a false one.`,
+      `A check-in is refused past ${mismatch}m from the shop, but a fix is trusted down to ${accuracy}m of error. The radius must be comfortably larger than the accuracy threshold, or an honest salesman on a poor signal is refused at the door of the right shop.`,
     );
   }
 

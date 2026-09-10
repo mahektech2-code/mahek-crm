@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { assessFix, haversineMetres, visitLocationVerdict, withinGeofence } from './geo';
+import { assessFix, checkInVerdict, haversineMetres, visitLocationVerdict, withinGeofence } from './geo';
 import { optimiseRoute, pickOrigin } from './route';
 import { assessOrder } from './credit';
 import { healthScore, type HealthInputs, type HealthThresholds, type HealthWeights } from './health';
@@ -79,6 +79,62 @@ test('a distant visit is flagged, and a customer with no coordinate is not', () 
   const noCoords = visitLocationVerdict(far, null, 150);
   assert.equal(noCoords.mismatch, false);
   assert.equal(noCoords.reason, 'customer_not_located');
+});
+
+/* ---- the check-in gate, which is the one thing in geo.ts that refuses ---- */
+
+test('a check-in beyond the radius is refused, and one inside it is not', () => {
+  const doorway = { lat: NAGPUR.lat + 30 / 111_320, lng: NAGPUR.lng, accuracyM: 12 };
+  const inside = checkInVerdict(doorway, NAGPUR, 100, 50);
+  assert.equal(inside.accepted, true);
+  assert.equal(inside.reason, 'ok');
+  assert.ok((inside.metresAway ?? 0) < 40);
+
+  const teaShop = { lat: NAGPUR.lat + 340 / 111_320, lng: NAGPUR.lng, accuracyM: 12 };
+  const refused = checkInVerdict(teaShop, NAGPUR, 100, 50);
+  assert.equal(refused.accepted, false);
+  assert.equal(refused.reason, 'too_far');
+  assert.ok(refused.sentence.includes('340 m'), 'the distance is said, not just the refusal');
+  assert.equal(refused.pinsTheShop, false, 'a refused check-in never moves the pin');
+});
+
+test('the radius includes its own edge, exactly as the geofence does', () => {
+  const at100 = { lat: NAGPUR.lat + 100 / 111_320, lng: NAGPUR.lng, accuracyM: 8 };
+  assert.equal(checkInVerdict(at100, NAGPUR, 100, 50).accepted, true);
+  assert.equal(checkInVerdict(at100, NAGPUR, 99, 50).accepted, false);
+});
+
+test('a fix that cannot prove he is there cannot prove he is not', () => {
+  // No fix at all — a concrete godown in a market lane.
+  const blind = checkInVerdict(null, NAGPUR, 100, 50);
+  assert.equal(blind.accepted, true);
+  assert.equal(blind.reason, 'unmeasurable');
+  assert.equal(blind.metresAway, null, 'zero would read as standing in the doorway');
+
+  // A fix wide enough that the shop is well inside its own error.
+  const wide = { lat: NAGPUR.lat + 300 / 111_320, lng: NAGPUR.lng, accuracyM: 400 };
+  const vague = checkInVerdict(wide, NAGPUR, 100, 50);
+  assert.equal(vague.accepted, true, 'refusing on a 400 m fix is refusing on nothing');
+  assert.equal(vague.reason, 'unmeasurable');
+});
+
+test('a shop with no pin lets the check-in through, and is pinned by it', () => {
+  const anywhere = { lat: NAGPUR.lat + 2, lng: NAGPUR.lng, accuracyM: 9 };
+  const first = checkInVerdict(anywhere, null, 100, 50);
+  assert.equal(first.accepted, true);
+  assert.equal(first.reason, 'unpinned');
+  assert.equal(first.pinsTheShop, true);
+});
+
+test('a poor fix never pins an unpinned shop', () => {
+  // The order of the ladder is the whole of this: judged the other way round,
+  // the first check-in on a bad afternoon drops the pin four hundred metres
+  // out and every honest visit afterwards is refused against it.
+  const poor = { lat: NAGPUR.lat, lng: NAGPUR.lng, accuracyM: 400 };
+  const verdict = checkInVerdict(poor, null, 100, 50);
+  assert.equal(verdict.accepted, true);
+  assert.equal(verdict.reason, 'unmeasurable');
+  assert.equal(verdict.pinsTheShop, false);
 });
 
 /* ----------------------------------------------------------------- route */

@@ -31,7 +31,7 @@ import { previousVisitNote, saveVisit, type PreviousNote } from '../src/data/vis
 import { logComplaint, requestSample } from '../src/data/requests';
 import { starterProducts } from '../src/data/customers';
 import { todayStops } from '../src/data/journey';
-import { visitLocationVerdict } from '../src/engines/geo';
+import { checkInVerdict, visitLocationVerdict, type CheckInVerdict } from '../src/engines/geo';
 import { fixOf, getFix, type Fix } from '../src/native/location';
 import { queueOdometerPhoto, queueRecording, takePhoto } from '../src/native/capture';
 import { discardQueuedMedia } from '../src/sync/media';
@@ -46,10 +46,21 @@ import { VoiceField } from '../src/components/ui/dictate';
  * told. A salesman who cannot log a visit stops logging visits, and then the
  * office knows nothing at all.
  *
- * The GPS follows the same rule one level down. A fix is EVIDENCE, never a
- * gate: no fix, a fix accurate to half a kilometre, or a shop whose recorded
- * coordinates are simply wrong all let the visit through and are recorded as
- * what they are.
+ * The GPS follows the same rule one level down, at the SAVE. A fix is evidence
+ * there, never a gate: no fix, a fix accurate to half a kilometre, or a shop
+ * whose recorded coordinates are simply wrong all let the visit through and
+ * are recorded as what they are.
+ *
+ * **THE ARRIVAL IS THE EXCEPTION, and it is the one thing on this screen that
+ * refuses.** Mahek asked for a check-in measurably outside the radius to be
+ * turned down rather than flagged, and the arrival is the only place that can
+ * honestly happen: nothing has been typed yet, so a refusal costs a walk to
+ * the right door instead of a day's work, and he can press the button again.
+ * `checkInVerdict` decides it and refuses only what a reading can prove — no
+ * fix, a fix too wide to trust and a shop with no pin all still go through.
+ * The way past a refusal is a typed sentence, which saves the visit unverified
+ * and goes to his manager: the pin in this book is very often the wrong one,
+ * and a salesman who cannot record being where he actually is stops recording.
  */
 
 type Product = { id: string; name: string; packSize: string | null };
@@ -132,7 +143,7 @@ export default function Visit() {
      as a mismatch are both a manager's to move. */
   const [minDwell, setMinDwell] = React.useState(120);
   const [maxLegKm, setMaxLegKm] = React.useState(400);
-  const [maxMetres, setMaxMetres] = React.useState(150);
+  const [maxMetres, setMaxMetres] = React.useState(100);
 
   /**
    * The dwell clock has to tick, because one of the save conditions is time.
@@ -158,6 +169,22 @@ export default function Visit() {
   const [modes, setModes] = React.useState<TravelMode[]>([]);
   const [arriving, setArriving] = React.useState(false);
   const [metering, setMetering] = React.useState(false);
+  /*
+   * The refusal, held so the card can say the distance rather than raise a
+   * toast that is gone before he has read it. Cleared on the next attempt: it
+   * describes ONE reading, and he has walked since.
+   */
+  const [refused, setRefused] = React.useState<CheckInVerdict | null>(null);
+  /*
+   * What he said to get past it, and what he was asked next.
+   *
+   * `overrideReason` rides all the way to the save — it is what makes the
+   * visit unverified and what his manager reads — and losing it between the
+   * door and the save is how a flagged visit quietly becomes a clean one.
+   */
+  const [overrideReason, setOverrideReason] = React.useState<string | null>(null);
+  const [pinAsk, setPinAsk] = React.useState(false);
+  const [pinRequested, setPinRequested] = React.useState(false);
   const answerOdometer = React.useRef<((r: OdometerResult) => void) | null>(null);
 
   /* ---- the ticket, asked once on the way out ---- */
@@ -210,7 +237,7 @@ export default function Visit() {
     let live = true;
     void Promise.all([
       getConfig<number>('mbos.visits.minimumDwellSeconds', 120),
-      getConfig<number>('mbos.location.visitMismatchM', 150),
+      getConfig<number>('mbos.location.visitMismatchM', 100),
       starterProducts(5),
       todayStops(),
       getConfig<number>('mbos.travel.maxLegKilometres', 400),
@@ -279,20 +306,51 @@ export default function Visit() {
     });
 
   /**
-   * He is here. This is where the visit actually begins.
+   * He is here. This is where the visit actually begins — or does not.
    *
-   * On a metered mode the camera comes FIRST and nothing is written if it is
-   * cancelled — the arrival reading is half of the distance claim, and a leg
-   * closed without it would be a journey the company pays for with no evidence
-   * of how far it was. Same order, same argument, as the departure.
+   * THE FIX COMES BEFORE THE CAMERA, which reverses the order this function
+   * shipped with. The two used to overlap deliberately: the radio settled
+   * while the meter was photographed, which cost nothing because nothing could
+   * turn the arrival down. Now something can. Photographing the meter first
+   * would mean taking a picture, queueing it, and then being told he is three
+   * hundred metres away — leaving a photograph of a reading he has to take
+   * again, attached to a leg that is still open. So the one thing that can
+   * refuse is asked first, and the camera only opens once the arrival is
+   * certain to happen.
+   *
+   * `precise` on the fix for the same reason: this reading now decides
+   * something. See `getFix`.
+   *
+   * `override` is his own sentence, given after a refusal. Passed in rather
+   * than read from state because the confirm dialog hands it back and state
+   * set a line earlier is not yet readable here.
    */
-  const arriveHere = async () => {
+  const arriveHere = async (override?: string) => {
     if (!leg || arriving) return;
     setArriving(true);
     try {
-      const threshold = await getConfig<number>('mbos.location.gpsAccuracyThresholdM', 100);
-      /* Started, not awaited: it settles while the photograph is taken. */
-      const fixing = getFix({ accuracyThresholdM: threshold });
+      const [threshold, radiusM] = await Promise.all([
+        getConfig<number>('mbos.location.gpsAccuracyThresholdM', 50),
+        getConfig<number>('mbos.location.visitMismatchM', 100),
+      ]);
+      const result = await getFix({ accuracyThresholdM: threshold, precise: true });
+      const got = fixOf(result);
+
+      const gate = checkInVerdict(
+        got ? { lat: got.lat, lng: got.lng, accuracyM: got.accuracyM } : null,
+        c && c.gpsLat != null && c.gpsLng != null ? { lat: c.gpsLat, lng: c.gpsLng } : null,
+        radiusM,
+        threshold,
+      );
+      if (!gate.accepted && !override) {
+        /* NOTHING IS WRITTEN. The leg stays open because he is still
+           travelling, the dwell clock does not start, and no meter has been
+           photographed — so pressing the button again from the right place
+           costs him nothing and leaves nothing behind. */
+        setRefused(gate);
+        return;
+      }
+      setRefused(null);
 
       let odometer: { km: number; photoId: string } | null = null;
       if (needsMeter) {
@@ -313,10 +371,11 @@ export default function Visit() {
        * and they must be the same reading — two acquisitions seconds apart
        * would let the arrival and the check-in disagree about where the shop
        * is, and a manager reading a mismatch would have no way to tell which
-       * of the two was being questioned.
+       * of the two was being questioned. It is also the reading the gate above
+       * was answered on, which is the third thing that must not drift: a
+       * salesman let through on one fix and recorded on another would read as
+       * having been allowed past a distance nobody measured.
        */
-      const result = await fixing;
-      const got = fixOf(result);
       setFix(got);
       setFixReason(result.status === 'ok' ? null : result.reason);
       set({ gps: got ? 'locked' : 'off' });
@@ -328,16 +387,44 @@ export default function Visit() {
         odometer,
       });
 
+      if (override) setOverrideReason(override);
       /* The dwell clock starts on the instant written onto the leg, not on a
          second reading of the clock — see `arrivedAt` in the store. */
       arrivedAt(at);
       loadLeg();
+      /*
+       * ASKED AFTER HE IS IN, never before. It is a second question about a
+       * different thing — the book, not him — and putting it in front of the
+       * arrival would make getting into the shop depend on answering it.
+       * Only where there is a pin to be wrong about: a shop with no pin is
+       * being pinned by this check-in already.
+       */
+      if (override && c?.gpsLat != null && c?.gpsLng != null) setPinAsk(true);
     } catch {
       notify('That arrival could not be recorded on this phone. Nothing has been lost — try again.');
     } finally {
       setArriving(false);
     }
   };
+
+  /**
+   * The way past a refusal, and the only one.
+   *
+   * A required sentence, because this is the whole of what a manager gets: the
+   * distance is already on the record and says nothing about which of the two
+   * readings is wrong. `askConfirm` refuses to close without it.
+   */
+  const overrideRefusal = () =>
+    askConfirm({
+      title: 'Are you at the shop?',
+      body:
+        'Say so and the visit is recorded from here, marked unverified, with your reason sent to your manager. The shop’s own location in MahekOne may simply be wrong — a lot of them are — and this is how that gets found out.',
+      reasonLabel: 'Where you actually are · required',
+      confirmLabel: 'I am at the shop',
+      run: (reason) => {
+        void arriveHere(reason);
+      },
+    });
 
   /**
    * The recording, queued for the office.
@@ -398,6 +485,7 @@ export default function Visit() {
     dwellSeconds,
     minimumDwellSeconds: minDwell,
     maxMetresFromShop: maxMetres,
+    checkInOverridden: !!overrideReason,
     hasShopPhoto: !!shots.shop,
     outcome,
     followOnCaptured: !!(outcome && visitDone[outcome]),
@@ -533,8 +621,24 @@ export default function Visit() {
         deviationReason: stopId ? null : offPlanReason,
         locationMismatch: verdictGeo.mismatch,
         metresFromShop: metresAway,
-        verified: unverifiedReason == null,
-        unverifiedReason,
+        /*
+         * AN OVERRIDDEN CHECK-IN IS NEVER A CLEAN VISIT, whatever the
+         * checklist showed.
+         *
+         * `visitChecks` lets the gps check read OK on an override so he is not
+         * asked for a second sentence at the save — but that is about not
+         * asking twice, and it must not become a claim that the visit
+         * verified. The server reaches the same answer from the same reason
+         * and does not trust this flag; what these two lines keep true is that
+         * the record on his OWN phone says what the office's says, and that
+         * `saveVisit` raises the "saved unverified" notice it should.
+         */
+        verified: unverifiedReason == null && !overrideReason,
+        unverifiedReason:
+          unverifiedReason ??
+          (overrideReason ? `Checked in past the ${maxMetres} m radius: ${overrideReason}` : null),
+        checkInOverrideReason: overrideReason,
+        pinCorrectionRequested: pinRequested,
         linkedComplaintId: linked.complaintId ?? null,
         linkedSampleId: linked.sampleId ?? null,
         suspectDecision: decision,
@@ -606,16 +710,60 @@ export default function Visit() {
             </Text>
           ) : null}
           <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 12 }}>{prompt.line}</Text>
+
+          {/*
+            THE REFUSAL, said with its number.
+            It sits above the button rather than in a toast because a toast is
+            gone before it has been read, and the one thing he needs from this
+            screen is how far off he is — which tells him whether to walk
+            twenty steps or whether the book has the shop in the wrong town.
+          */}
+          {refused ? (
+            <View
+              style={{
+                marginTop: 14,
+                borderWidth: 1,
+                borderColor: C.warnEdge,
+                backgroundColor: C.warnBg,
+                borderRadius: radius.lg,
+                paddingVertical: 12,
+                paddingHorizontal: 14,
+              }}>
+              <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(500)]}>
+                {refused.sentence}
+              </Text>
+              <Text style={[type.caption, { marginTop: 6 }]}>
+                Walk to the shop and press again — nothing has been recorded yet.
+              </Text>
+            </View>
+          ) : null}
+
           <View style={{ marginTop: 14 }}>
             <PrimaryButton
-              label={arriving ? 'One moment…' : prompt.button}
+              label={arriving ? 'One moment…' : refused ? 'Check again' : prompt.button}
               onPress={() => void arriveHere()}
               disabled={arriving}
               whyDisabled="Recording where you are."
             />
           </View>
           {/*
-            CALLING IT OFF IS THE ONLY OTHER WAY OUT, and it is not a skip.
+            OFFERED ONLY ONCE HE HAS BEEN REFUSED. Drawn from the start it
+            would be a way round the radius that nobody had to be refused by
+            first, which is a different feature.
+          */}
+          {refused ? (
+            <View style={{ marginTop: 10 }}>
+              <SecondaryButton
+                label="I am at the shop — its location here is wrong"
+                onPress={overrideRefusal}
+              />
+            </View>
+          ) : null}
+          {/*
+            CALLING IT OFF IS THE WAY OUT THAT IS NOT AN ARRIVAL, and it is
+            not a skip. (It was the only other way out before the radius could
+            refuse one; the override above is the second, and it ends with him
+            in the shop rather than on his way home.)
             The meter has already moved, so there is no version of this where
             nothing happened — what he chooses is whether the journey is
             recorded against a shop he reached or against a trip he abandoned,
@@ -1125,6 +1273,53 @@ export default function Visit() {
       </View>
 
       <View style={{ height: 96 }} />
+
+      {/*
+        ---- the shop's own pin, questioned by somebody standing at it ----
+
+        A REQUEST AND NEVER A WRITE. The handset can already move a pin through
+        `customer_update`, so letting the override move it directly would mean
+        one override put the pin wherever he happened to be and the radius
+        never refused him there again. A manager decides, on the visit's own
+        row, from the check-in fix already stored on it — which is why nothing
+        here sends a coordinate: what he is proposing IS the check-in, and a
+        second copy of two numbers already in the record is a copy that can
+        disagree with it.
+
+        Backing out is No. It is a question about the book, asked of somebody
+        who has a shopkeeper waiting, and a sheet that would not close until it
+        was answered would be answered at random.
+      */}
+      <BottomSheet open={pinAsk} onClose={() => setPinAsk(false)}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
+          <Text style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
+            Is this shop in the wrong place?
+          </Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
+            MahekOne has {c?.name ?? 'this shop'} about {metresAway ?? '?'} m from where you
+            checked in. If the shop is here and the map is wrong, ask your manager to move
+            it — the next visit will not be questioned, and nor will anybody else&rsquo;s.
+          </Text>
+
+          <View style={{ marginTop: 16, gap: 8 }}>
+            <PrimaryButton
+              label="Yes — ask my manager to move it here"
+              onPress={() => {
+                setPinRequested(true);
+                setPinAsk(false);
+                notify('Your manager will be asked to move it. It goes with this visit.');
+              }}
+            />
+            <SecondaryButton
+              label="No — leave it as it is"
+              onPress={() => {
+                setPinRequested(false);
+                setPinAsk(false);
+              }}
+            />
+          </View>
+        </View>
+      </BottomSheet>
 
       {/* ---- complaint, logged without leaving the visit ---- */}
       <BottomSheet open={form === 'complaint'} onClose={() => setForm(null)} scroll>

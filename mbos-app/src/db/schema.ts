@@ -1556,6 +1556,28 @@ export const MIGRATIONS: string[][] = [
        ON travel_legs (userId) WHERE endedAt IS NULL;`,
   ],
 
+  /* ---- v28 · the check-in is refused, and the way past it is recorded ----- */
+  [
+    /*
+     * A CHECK-IN MEASURABLY OUTSIDE THE RADIUS IS NOW REFUSED, and this is the
+     * one way past it: he says in writing that he is in the shop and the book
+     * has it in the wrong place.
+     *
+     * Stored locally as well as sent, like every other field on a visit: the
+     * row is written before it is queued, the phone is routinely reaped on the
+     * road, and an override held only in the payload would be gone from the
+     * record this handset keeps of his own day.
+     */
+    `ALTER TABLE visits ADD COLUMN checkInOverrideReason TEXT;`,
+    /*
+     * "The pin is wrong — move it to where I stood." A request and never a
+     * write: the handset can already move a pin through `customer_update`, so
+     * an override that moved it directly would mean one override put the pin
+     * wherever he was standing and the radius never refused him again.
+     */
+    `ALTER TABLE visits ADD COLUMN pinCorrectionRequested INTEGER NOT NULL DEFAULT 0;`,
+  ],
+
 ];
 
 /**
