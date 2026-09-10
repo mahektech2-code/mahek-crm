@@ -287,6 +287,18 @@ staged rollout and no rollback, so the person pressing the button is the
 release. `publish: false` builds it and attaches it to the run without putting
 it in front of anybody, which is how you try one before shipping it.
 
+**BUMP `expo.version` AND `android.versionCode` FIRST, in the same PR as the
+change or in one of its own.** It stayed at `1.0.0` for the first year, so
+every handset in the field reported the same string whatever it was running and
+`mbos_devices.app_version` could not answer the only question it exists for —
+"is this the bug we fixed, or has that fix not reached him". The first release
+where that bit was the check-in radius: it refuses a salesman at a shop door,
+so "it will not let me check in" is a support call, and the first thing the
+office needs is which build is in his hand. `versionCode` is what Android
+itself compares, and it is what `nativeBuildVersion` reports beside the
+version, so move both. Nothing pins either — `runtimeVersion` is the
+`fingerprint` policy precisely so that it does not.
+
 **`api_base` is baked into the bundle** and cannot be changed after the build,
 so a build made against the wrong one is a broken binary rather than a wrong
 setting. The workflow refuses anything that is not https or that ends in a
@@ -341,11 +353,12 @@ permission, an Expo SDK bump, and `EXPO_PUBLIC_API_BASE`, which is inlined into
 the bundle at build time. Those are an APK, always.
 
 **`runtimeVersion` is what enforces that**, and it is the `fingerprint` policy
-rather than `appVersion` on purpose. `appVersion` would read `1.0.0` — a number
-this project has never bumped — so every native change would keep the same
-runtime and an update would happily push JS to a build that cannot run it. A
-fingerprint hashes the native project, so it changes when the native side does,
-whether or not anybody remembered to.
+rather than `appVersion` on purpose. The version is bumped by hand at release
+time, which means it is bumped when somebody remembers — it sat at `1.0.0`
+through the whole first year — so tying the runtime to it would let a native
+change keep the same runtime and an update would happily push JS to a build
+that cannot run it. A fingerprint hashes the native project, so it changes when
+the native side does, whether or not anybody remembered anything.
 
 **An update never delays a launch.** `fallbackToCacheTimeout` is 0 and the check
 is not awaited: the app opens on the bundle it has, downloads the new one
