@@ -413,6 +413,7 @@ export async function updateAccountManagers(
           actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
           action: "customer.reassign",
           entityType: "customer",
           entityId: row.id,

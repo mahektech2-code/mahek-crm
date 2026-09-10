@@ -231,6 +231,7 @@ export async function applyOnAccount(
       actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
       action: "payment.apply_on_account",
       entityType: "bill",
       entityId: bill.id,

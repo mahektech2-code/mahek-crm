@@ -41,7 +41,7 @@ let manager: typeof users.$inferSelect;
 let priya: typeof users.$inferSelect;
 let deepa: typeof users.$inferSelect;
 
-async function makeUser(name: string, role: "telecaller" | "manager" | "accounts") {
+async function makeUser(name: string, role: "associate" | "manager", app: "crm" | "accounts" = "crm") {
   const [row] = await db
     .insert(users)
     .values({
@@ -54,7 +54,41 @@ async function makeUser(name: string, role: "telecaller" | "manager" | "accounts
       initials: name.slice(0, 2).toUpperCase(),
     })
     .returning();
+  /*
+   * THE APP GRANT, because a level on its own is not one.
+   *
+   * A capability hangs on (app, level) now, so `role: "manager"` with no
+   * `app_access` row is a manager of nothing — which is right, and is what
+   * production looks like too: an app's layout refuses anybody without a
+   * grant, so a person who can reach a screen always has one. A fixture
+   * without it was testing somebody who cannot sign in.
+   *
+   * The CRM by default, because that is the book these tests work. The
+   * ledger desk asks for `accounts` instead and holds NOTHING else — Deepa
+   * is granted `apps: ["accounts"]` in the seed on purpose: "the person
+   * deciding whether a customer may take more credit is not the person
+   * chasing them for the next order".
+   */
+  await db.insert(appAccess).values({
+    id: id("aca"),
+    userId: row.id,
+    app,
+    role,
+  });
+
   return row;
+}
+
+/**
+ * The ledger desk, which is an APP GRANT and not a role any more.
+ *
+ * `role: "manager"` alone is a manager of nothing — the capabilities that make
+ * somebody accounts (approving an order, confirming a payment, issuing a
+ * credit note) hang on holding the Accounts app at manager level. A test that
+ * set only the level would be testing a person who cannot do the job.
+ */
+async function makeAccountsUser(name: string) {
+  return makeUser(name, "manager", "accounts");
 }
 
 /** A real 1×1 PNG: the type is sniffed from the bytes, never from the name. */
@@ -97,8 +131,8 @@ beforeEach(async () => {
   await seedConfig();
 
   manager = await makeUser("Vikram", "manager");
-  priya = await makeUser("Priya", "telecaller");
-  deepa = await makeUser("Deepa", "accounts");
+  priya = await makeUser("Priya", "associate");
+  deepa = await makeAccountsUser("Deepa");
   setTestUser(priya);
 });
 
@@ -233,7 +267,15 @@ describe("Screenshots", () => {
     // No customer sits behind a feedback attachment, so the customer-scope
     // path cannot answer this — and answering it wrongly either leaks the file
     // or 404s the owner, which is how attachments stayed write-only for months.
-    setTestUser(deepa);
+    /*
+       A THIRD associate — neither the author nor anybody who may answer.
+       Deepa used to stand here because she was `accounts` and therefore not a
+       manager; she is a MANAGER of the Accounts app now and `canTriageFeedback`
+       lets any manager in, so she reads it legitimately. The person who must
+       not is a colleague with no part in the thread.
+    */
+    const bystander = await makeUser("Rakesh", "associate");
+    setTestUser(bystander);
     assert.equal(await canRead(file), false, "somebody the report was not written to");
   });
 
@@ -266,7 +308,15 @@ describe("Who may answer, and who may look", () => {
   test("a telecaller cannot triage somebody else's report or read it", async () => {
     const fb = await report();
 
-    setTestUser(deepa);
+    /*
+       A colleague, not Deepa and not the author. Deepa used to stand here
+       because she was `accounts` and therefore not a manager; she is a
+       MANAGER of the Accounts app now and any manager may triage. Priya
+       cannot stand here either — she WROTE the report, and both sides of a
+       thread reply through the same action.
+    */
+    const bystander = await makeUser("Rakesh", "associate");
+    setTestUser(bystander);
     const status = await setFeedbackStatus(fb, "done");
     assert.equal(status.ok, false);
     assert.equal(status.ok === false && status.code, "not_permitted");

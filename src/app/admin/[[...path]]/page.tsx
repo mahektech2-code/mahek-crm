@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { requireUser, isManager } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
 import { webApps } from "@/lib/apps";
-import { can } from "@/lib/access-control";
+import { canFor } from "@/lib/access-control";
 import { getConfig, configWarnings } from "@/lib/config/store";
 import { listCollections } from "@/lib/config/entity-collections";
 import { crmSchema, schemaFields, toConsole } from "@/lib/config/schema-contract";
@@ -80,7 +80,7 @@ export default async function Page({
   const apps = await listUserApps(user.id);
 
   const isPlatformAdmin = apps.includes("admin");
-  const canConfigureCrm = can(user.role, "config.write") && apps.includes("crm");
+  const canConfigureCrm = await canFor(user, "config.write") && apps.includes("crm");
   if (!isPlatformAdmin && !canConfigureCrm) redirect("/apps");
 
   const [config, warnings, collections] = await Promise.all([
@@ -149,8 +149,8 @@ export default async function Page({
   const expensePolicy = await expensePolicyData(
     await today(),
     one("policy"),
-    can(user.role, "expense.policy.write"),
-    can(user.role, "expense.policy.publish"),
+    await canFor(user, "expense.policy.write"),
+    await canFor(user, "expense.policy.publish"),
   );
   const secrets = await secretStatuses();
 

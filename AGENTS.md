@@ -80,16 +80,20 @@ Password for all of them: `mahek1234`
 
 Sign in with the email **or** the work number.
 
-| Email | Work number | Role | Apps | Lands on |
+The **Level** is the role on the account, and what it means depends on the app
+it is held in — see "A ROLE IS A LEVEL" below. The job in brackets is what that
+pair amounts to, not a value stored anywhere.
+
+| Email | Work number | Level | Apps | Lands on |
 |---|---|---|---|---|
-| `priya@mahek.in` | 9820011001 | telecaller | CRM | straight into the CRM |
-| `rakesh@mahek.in` | 9820011002 | telecaller | CRM | straight into the CRM |
-| `anjali@mahek.in` | 9820011003 | telecaller | CRM | straight into the CRM |
-| `suresh@mahek.in` | 9820011004 | telecaller | CRM | straight into the CRM |
-| `neha@mahek.in` | 9820011005 | telecaller | CRM, Reports | the launcher |
+| `priya@mahek.in` | 9820011001 | associate (telecaller) | CRM | straight into the CRM |
+| `rakesh@mahek.in` | 9820011002 | associate (telecaller) | CRM | straight into the CRM |
+| `anjali@mahek.in` | 9820011003 | associate (telecaller) | CRM | straight into the CRM |
+| `suresh@mahek.in` | 9820011004 | associate (telecaller) | CRM | straight into the CRM |
+| `neha@mahek.in` | 9820011005 | associate | CRM, Reports | the launcher |
 | `vikram@mahek.in` | 9820011006 | manager | CRM, Accounts, Reports, People, HRMS, Admin | the launcher |
-| `mahesh@mahek.in` | 9820011007 | field salesman | Salesman App | signs in on the web to `/apps`, which says there is nothing for him there — his app is MBOS, the mobile handset, not a browser |
-| `deepa@mahek.in` | 9820011008 | accounts | Accounts | straight into order approvals |
+| `mahesh@mahek.in` | 9820011007 | associate (field salesman) | Salesman App | signs in on the web to `/apps`, which says there is nothing for him there — his app is MBOS, the mobile handset, not a browser |
+| `deepa@mahek.in` | 9820011008 | manager (the ledger desk) | Accounts | straight into order approvals |
 
 ## How sign-in works
 
@@ -575,52 +579,119 @@ same split `back_office_am_id` already lives under, with the same consequence:
 one record legitimately appears on two lists. `lead_manager_decided_at` is the
 usual mark that a person chose, so an override survives the next org-chart pass.
 
-**A PERSON WEARS SEVERAL HATS, and the grant is where each one is worn.**
-`app_access.role` is the role an app is held under: Vikram is a manager in the
-CRM and a clerk in Accounts, which are different powers over different data
-rather than one power applied twice. Before it, `users.role` held one value and
-decided three separate things — what somebody may do, how much they may see,
-and which controls are drawn — so whoever set up the account of a person with
-four jobs picked the most powerful and everything else came with it silently.
-A grant with NO role means the account's own, which is what every grant meant
-before the column existed and what `npm run app:grant` still writes: a terminal
-that knows nothing about roles has to go on granting an app that works.
+**A ROLE IS A LEVEL. THE APP IS THE JOB.** There are three roles and there are
+three in every app: **associate, manager, admin**. There used to be four —
+`telecaller`, `manager`, `accounts`, `admin` — and they were two different
+ideas in one list: two levels of seniority beside two job titles borrowed from
+two particular apps. So a grant for any THIRD app had no honest word for
+"ordinary worker", and the Access screen offered the CRM's job title instead:
+it asked managers to make a field salesman a *telecaller*, and the seed agreed
+— `mahesh@mahek.in`, who has never made a phone call for this company, was
+stored as one. So was anybody on Reports, on the Sales Dashboard, or on HRMS.
+
+`telecaller` was ALREADY the base level rather than a job. The old `can()`
+ended with `return !MANAGER_ONLY.has(capability)` — you hold anything not
+explicitly withheld — which is the definition of an associate, and is exactly
+why a salesman could be given that value and still work correctly.
+
+**A HAT IS AN APP AND A LEVEL, and `can()` takes one.** `app_access` has
+stored one row per person per app since roles were split off `users.role`, so
+the pair was always there to be read; only the vocabulary is new. Associate on
+Accounts is the clerk, associate on the CRM is the telecaller, associate on the
+Salesman App is the field salesman — one level, three jobs, decided by the
+grant rather than by a word.
+
+**The matrix is one table, in `lib/access-control.ts`.** Each app names what
+its own two lower levels carry; `admin` holds everything everywhere and is not
+listed. The three bundles it hands out — `BOOK_WORK`, `BOOK_MANAGEMENT`,
+`LEDGER_DECISIONS` — are DERIVED from the capability sets above them rather
+than retyped, because those sets carry the reasoning for why each capability
+sits where it does, and a hand-typed copy would be a second answer that drifts
+from the argument that produced it. Tune WHERE a bundle goes in the table; tune
+WHAT is in it by moving a capability between the sets, beside the paragraph
+explaining it.
+
+**THE LEDGER APPS ARE WHY THIS IS PER-APP.** `order.approve`, `payment.confirm`,
+`creditnote.issue` and `customer.reassign` used to hang on a role called
+`accounts`, which is how they were kept away from managers — "the person
+chasing a target must not sign off the orders that hit it". With `accounts`
+gone as a role the Accounts APP carries them, so a CRM manager still cannot
+approve an order and an Accounts manager can. That is STRICTER than the old
+rule rather than looser: an accounts clerk who was also given the CRM used to
+carry order approval into it.
+
+**And inside that app the level decides.** An Accounts associate records and
+reads — `payment.record` is SHARED and `customer.read` is what a statement is
+made of — and every decision that moves money is the Accounts MANAGER's. That
+is why the migration maps the old `accounts` role to **manager**, not
+associate: mapping it "junior" because the word sounds junior would have taken
+order approval away from the only person who had it, and the approvals queue
+would have stopped on deploy day.
+
+**A LEVEL WITH NO GRANT IS NOT A GRANT.** A hat with no app carries only what
+every signed-in person carries. Reading the account's own role as a grant is
+how somebody with a `manager` account and no apps at all would quietly hold
+every manager capability in the building — which is what `can(user.role, …)`
+did at twenty-two call sites, all of them now `canFor(user, …)`, the union over
+real hats.
 
 **What you may DO is the union; what you may SEE is resolved PER APP.**
 Hold a capability under any hat and you hold it — `canAny`, and
-`requireCapability` checks the union. Scope is the other half and it is no
-longer one answer for the whole person: `src/proxy.ts` names the app on the
-request from its URL prefix, and `resolveScope` reads `app_access.role` for THAT
-app. Vikram is a manager on the Sales Dashboard and a telecaller in the CRM, and
-the CRM now shows him his own book.
+`requireCapability` checks the union. None of its 117 call sites changed when
+roles became levels, because it gathers the hats itself. Scope is the other
+half: `src/proxy.ts` names the app on the request from its URL prefix, and
+`resolveScope` reads the grant for THAT app.
 
-`users.role` stays derived — the widest role held anywhere — because two things
-still want "is this person a manager at all": `isManager`, on thirty-one screens
-deciding whether to DRAW a control, and the fallback where there is no app to
-ask about. That fallback is what makes this safe to have landed at all: a job, a
-test, a cron route and the MBOS API reach `resolveScope` with no app route
-behind them and get exactly the answer they got before.
+**THE LEDGER DESK SEES EVERY BOOK, and that is a fact about the app rather than
+the level.** The approval queue is every associate's orders and nobody's own
+book. It used to key on `role === "accounts"`; keying on the LEVEL instead
+would empty the queue from either end — an associate scoped to their own book,
+a manager scoped to their reports, and a clerk has neither. Where the request
+names an app, `hat.app === "accounts"` answers it. Where it names none — a job,
+a script, a test, the MBOS API — `hatInForce` asks the GRANTS instead and
+honours only the case that used to be expressible: somebody whose apps are the
+ledger desk and nothing else, which is exactly who `users.role = 'accounts'`
+meant. A person who also holds the CRM is left to the header, as they already
+were.
 
-**And it can only ever NARROW.** The derived role is the widest of the hats, so
+`users.role` stays derived — the widest LEVEL held anywhere — because two
+things still want "is this person a manager at all": `isManager`, on thirty-one
+screens deciding whether to DRAW a control, and the fallback where there is no
+app to ask about. One consequence is worth naming rather than discovering: an
+Accounts manager now passes `isManager`, where the old `accounts` role did not.
+That is the model working — a manager of the ledger is a manager — and it
+widens the handful of things gated on `isManager` alone rather than on a
+capability, feedback triage among them.
+
+**And it can only ever NARROW.** The derived level is the widest of the hats, so
 a per-app hat is by construction no wider. Resolving per app can lose reach and
 cannot gain it — which is why 73 call sites of `resolveScope` did not have to be
 audited one at a time. The header is stripped off the incoming request before
 the proxy writes it, so a client cannot post its own `x-mahek-app: admin`.
 
-**The audit records WHICH HAT allowed it.** With one role per person, "was he
-allowed to do this" was answerable from the person; with four it is not. The
-log said Vikram approved an order and nobody could tell whether he did it as
-the accounts clerk — ordinary — or because a manager hat carried it, which it
-does not and must not. `requireCapability` returns the granting role and every
-audited action writes it into `audit_log.actor_role`. It asks for the NARROWEST
-hat that carries the capability, not the most powerful: admin holds everything,
-so asking admin first would stamp "admin" on every action anybody senior took
-and the column would stop distinguishing the clerk doing their job from the
-administrator reaching past a rule. Null means not recorded, never "no role".
+**The audit records WHICH HAT allowed it, and that now takes TWO columns.**
+With one role per person, "was he allowed to do this" was answerable from the
+person; with several it is not. `requireCapability` returns the granting hat and
+every audited action writes `audit_log.actor_role` and `actor_app`. The second
+became necessary the day roles stopped being job titles: `accounts` said the
+clerk did it and `manager` said seniority carried it, and `associate` says
+neither — the app is what tells the person at the ledger desk from the person
+on the phones. It asks for the NARROWEST hat that carries the capability, not
+the most powerful, and prefers one naming an app over the account's own: admin
+holds everything, so asking admin first would stamp "admin" on every action
+anybody senior took. Null means not recorded, never "no role".
+
+**A refusal names what would have allowed it, and only when it can.** The app
+is named where exactly ONE carries the capability — `order.approve` is the
+Accounts desk's and nowhere else — and left out where several do, because
+`team.report` belongs to the manager level of five apps and naming whichever
+sorted first would send somebody to ask for the wrong grant. `requirementFor`
+searches the matrix rather than declaring an answer beside it, so the sentence
+cannot name a grant that does not exist.
 
 **Two hats that should not meet are named, never refused.** The matrix keeps
 `order.approve` away from managers on purpose — the person chasing a target
-must not sign off the orders that hit it — and a union of roles can put both on
+must not sign off the orders that hit it — and a union of hats can put both on
 one person. At nine people that is sometimes the only way the work gets done,
 and a system that refuses it is defeated in a minute by granting admin instead,
 which grants far more and records no reason. So the combination is allowed, the
@@ -628,7 +699,13 @@ review page says in words what it lets them do, and every action taken under it
 carries the hat that authorised it. The rules are in `lib/role-conflicts.ts`,
 pure and client-safe because the review page is a client component and a second
 copy typed into the screen would drift — and the half that drifts is always the
-half somebody reads.
+half somebody reads. **A conflict is between two HATS**, not two roles: it used
+to read "telecaller and accounts", which was a sentence only because two of the
+four role values were secretly app names. "Associate and associate" says
+nothing, so the pair names the apps, and the level sits beside it where the
+level is what makes the pair bite — an Accounts ASSOCIATE decides nothing and
+clashes with nobody. An admin matches every pair by construction, so they are
+told none: four warnings on every administrator is four warnings nobody reads.
 
 **Access is granted to a person, and the people are in HRMS.** The console's
 People section is one screen, Access, and its dialog reads the employee master

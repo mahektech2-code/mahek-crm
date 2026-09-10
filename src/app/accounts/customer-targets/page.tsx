@@ -1,4 +1,4 @@
-import { can, requireCapability } from "@/lib/access-control";
+import { canFor, requireCapability } from "@/lib/access-control";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { requireUser } from "@/lib/auth";
 import { currentPeriod, listAmFilterOptions } from "@/lib/queries";
@@ -49,7 +49,7 @@ export default async function Page({
   const scope = await getScope(user);
   const activePeriod = one("period") ?? (await currentPeriod());
 
-  const canSet = can(user.role, "target.set");
+  const canSet = await canFor(user, "target.set");
   const perPage = Number(one("per") ?? 25);
   const [page, amOptions] = await Promise.all([
     listTargetsPage(activePeriod, {
@@ -64,7 +64,7 @@ export default async function Page({
     }),
     listAmFilterOptions(),
   ]);
-  const shortfall = can(user.role, "target.shortfall")
+  const shortfall = await canFor(user, "target.shortfall")
     ? await shortfallAnalysis(activePeriod)
     : null;
 

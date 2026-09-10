@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { can } from "@/lib/access-control";
+import { canFor } from "@/lib/access-control";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { currentPeriod, listAmFilterOptions } from "@/lib/queries";
 import { listTargetsPage, shortfallAnalysis } from "@/lib/services/worklist-services";
@@ -28,7 +28,7 @@ export default async function TargetsPage({
   const scope = await getScope(user);
   const activePeriod = one("period") ?? (await currentPeriod());
 
-  const canSet = can(user.role, "target.set");
+  const canSet = await canFor(user, "target.set");
   const perPage = Number(one("per") ?? 25);
   const [page, amOptions] = await Promise.all([
     listTargetsPage(activePeriod, {
@@ -47,7 +47,7 @@ export default async function TargetsPage({
   ]);
   // Coverage gap or customer gap — a manager-or-accounts read, so a
   // telecaller simply does not get the section rather than getting an error.
-  const shortfall = can(user.role, "target.shortfall")
+  const shortfall = await canFor(user, "target.shortfall")
     ? await shortfallAnalysis(activePeriod)
     : null;
 

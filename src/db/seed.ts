@@ -130,35 +130,35 @@ const TEAM = [
     name: "Priya Sharma",
     email: "priya@mahek.in",
     phone: "9820011001",
-    role: "telecaller" as const,
+    role: "associate" as const,
     apps: ["crm"],
   },
   {
     name: "Rakesh Yadav",
     email: "rakesh@mahek.in",
     phone: "9820011002",
-    role: "telecaller" as const,
+    role: "associate" as const,
     apps: ["crm"],
   },
   {
     name: "Anjali Patel",
     email: "anjali@mahek.in",
     phone: "9820011003",
-    role: "telecaller" as const,
+    role: "associate" as const,
     apps: ["crm"],
   },
   {
     name: "Suresh Kumar",
     email: "suresh@mahek.in",
     phone: "9820011004",
-    role: "telecaller" as const,
+    role: "associate" as const,
     apps: ["crm"],
   },
   {
     name: "Neha Joshi",
     email: "neha@mahek.in",
     phone: "9820011005",
-    role: "telecaller" as const,
+    role: "associate" as const,
     apps: ["crm", "reports"],
   },
   {
@@ -176,7 +176,7 @@ const TEAM = [
     name: "Mahesh Parab",
     email: "mahesh@mahek.in",
     phone: "9820011007",
-    role: "telecaller" as const,
+    role: "associate" as const,
     apps: ["field"],
   },
   {
@@ -186,7 +186,10 @@ const TEAM = [
     name: "Deepa Nair",
     email: "deepa@mahek.in",
     phone: "9820011008",
-    role: "accounts" as const,
+    /* The ledger desk is a MANAGER of the Accounts app now, not a role called
+       "accounts". Approving an order and confirming a payment are the Accounts
+       manager's; an associate at that desk records and reads. */
+    role: "manager" as const,
     apps: ["accounts"],
   },
 ];
@@ -399,7 +402,7 @@ const HELP = [
     title: "Opening a cold call",
     category: "Call scripts",
     type: "call_script" as const,
-    roles: ["telecaller", "manager"],
+    roles: ["associate", "manager"],
     scriptBody:
       "Namaste, am I speaking to {contact name}? This is {your name} calling from Mahek Marketing India, Nashik. We supply thinners and coatings.\n\nIs this a good time to speak for two minutes?",
     body: "Say the company name in the first sentence. Most shopkeepers take the call if they recognise the supplier.\n\nIf they say it is a bad time, ask for a specific time later the same day and set a reminder before you hang up. Do not leave it at 'I will call back'.",
@@ -408,7 +411,7 @@ const HELP = [
     title: "Asking for an overdue payment",
     category: "Call scripts",
     type: "call_script" as const,
-    roles: ["telecaller", "manager"],
+    roles: ["associate", "manager"],
     scriptBody:
       "Namaste {contact name} ji. I am calling about bill {bill number} for {amount}, which was due on {due date}.\n\nCan you tell me a date by which we can expect the payment?",
     body: "Never ask 'when can you pay'. Ask for a date, and repeat it back. A date is a promise you can record; 'soon' is not.\n\nAlways record the promise in the app before the call ends - it creates the chase reminder for the day after.",
@@ -417,7 +420,7 @@ const HELP = [
     title: "Handling a short supply complaint",
     category: "Call scripts",
     type: "call_script" as const,
-    roles: ["telecaller", "manager"],
+    roles: ["associate", "manager"],
     scriptBody:
       "I am sorry that happened. Let me note exactly what was short - which product and how many drums?\n\nI am logging it now and our operations team will come back to you. You will hear from us either way.",
     body: "Log the complaint while the customer is still on the line, in their words. Do not promise a resolution date you cannot control - promise a call back instead.",
@@ -426,21 +429,21 @@ const HELP = [
     title: "Why a customer is held back from the queue",
     category: "SOPs",
     type: "sop" as const,
-    roles: ["telecaller", "manager"],
+    roles: ["associate", "manager"],
     body: "A customer is held back when:\n\n· a WhatsApp message was CONFIRMED sent inside the cooldown window\n· they were already called today, by anybody\n· they are active in the order system\n· they are marked do not contact\n\nA message you copied but never confirmed does NOT hold anyone back - the system cannot know it was sent. Held-back customers are always listed under the queue with the reason.",
   },
   {
     title: "Closing the day properly",
     category: "SOPs",
     type: "sop" as const,
-    roles: ["telecaller", "manager"],
+    roles: ["associate", "manager"],
     body: "Before you submit the EOD report:\n\n1. Every reminder due today must be closed or carried forward.\n2. Every call you made must have an outcome.\n3. Any order taken must have a value against it.\n\nThe EOD text is generated from what you logged, so a thin report means thin logging, not a thin day.",
   },
   {
     title: "Reading the payment stages",
     category: "SOPs",
     type: "sop" as const,
-    roles: ["telecaller", "manager"],
+    roles: ["associate", "manager"],
     body: "Stage 1 → WhatsApp only. The system will refuse a call attempt at this stage.\nStage 2 → alternates. If the last touch was WhatsApp, call; otherwise message.\nStage 3 → call.\n\nA disputed account holds at its current stage rather than escalating.",
   },
   {
@@ -636,6 +639,21 @@ async function main() {
         id: id("acc"),
         userId: userRows[i].id,
         app: app as never,
+        /*
+         * The level is the account's own unless the app needs it said.
+         *
+         * Accounts is the one that does. A grant with no level falls back to
+         * the account's, so Vikram — a `manager` who holds Accounts to SEE the
+         * queue — would resolve to manager-in-Accounts and be able to approve
+         * the orders that hit his own target, which is the single rule the
+         * matrix exists to enforce. He is an associate there: opens the app,
+         * decides nothing. Deepa's own level is manager and she holds nothing
+         * else, so hers needs no saying.
+         */
+        role:
+          app === "accounts" && t.email !== "deepa@mahek.in"
+            ? ("associate" as const)
+            : null,
         grantedById: managerId,
       })),
     ),

@@ -23,7 +23,7 @@ const EMAIL = "abhinaba@mahek.in"
 const PHONE = "8876249506"
 const PASSWORD = "mahek1234"
 const APP = "field" as const
-const ROLE = "telecaller" as const   // no "salesman" role exists; this is how Mahesh is seeded
+const ROLE = "associate" as const   // no "salesman" role exists; this is how Mahesh is seeded
 const DRY = process.argv.includes("--dry-run")
 
 const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`

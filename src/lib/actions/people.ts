@@ -132,7 +132,7 @@ export async function setUserApps(
 
 export async function setUserRole(
   userId: string,
-  role: "telecaller" | "manager" | "accounts" | "admin",
+  role: "associate" | "manager" | "admin",
 ): Promise<Result<null>> {
   let actor;
   try {
@@ -401,7 +401,7 @@ export async function createUser(input: {
   name: string;
   email: string;
   phone?: string | null;
-  role: "telecaller" | "manager" | "accounts" | "admin";
+  role: "associate" | "manager" | "admin";
   password: string;
   apps: string[];
 }): Promise<Result<{ id: string }>> {

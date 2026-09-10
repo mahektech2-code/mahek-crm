@@ -149,11 +149,12 @@ import {
 } from "@/lib/actions/crm";
 import { loadCustomerTimeline } from "@/lib/actions/crm";
 import {
+  hatInForce,
   canAny,
   conflictsFor,
-  grantingRole,
+  grantingHat,
   requireCapability,
-  rolesFor,
+  hatsFor,
   widestRole,
 } from "@/lib/access-control";
 import {
@@ -218,8 +219,15 @@ let deepa: typeof users.$inferSelect;
 
 async function makeUser(
   name: string,
-  role: "telecaller" | "manager" | "accounts" | "admin",
+  role: "associate" | "manager" | "admin",
   reportsToId?: string,
+  /**
+   * Which app the level is held in. The CRM is the book these tests work.
+   * `null` grants nothing, for the handful of tests that are ABOUT holding
+   * no app — a level with no grant is not a grant, and that has to be
+   * testable.
+   */
+  app: "crm" | "accounts" | null = "crm",
 ) {
   const [row] = await db
     .insert(users)
@@ -234,6 +242,27 @@ async function makeUser(
       reportsToId: reportsToId ?? null,
     })
     .returning();
+  /*
+   * THE APP GRANT, because a level on its own is not one.
+   *
+   * A capability hangs on (app, level) now, so `role: "manager"` with no
+   * `app_access` row is a manager of nothing — which is right, and is what
+   * production looks like too: an app's layout refuses anybody without a
+   * grant, so a person who can reach a screen always has one. A fixture
+   * without it was testing somebody who cannot sign in.
+   *
+   * The CRM, because that is the book these tests work. The ledger desk has
+   * `makeAccountsUser` where it is needed.
+   */
+  if (app) {
+    await db.insert(appAccess).values({
+      id: id("aca"),
+      userId: row.id,
+      app,
+      role,
+    });
+  }
+
   return row;
 }
 
@@ -288,9 +317,13 @@ beforeEach(async () => {
   await seedCatalogue();
 
   manager = await makeUser("Vikram", "manager");
-  priya = await makeUser("Priya", "telecaller", manager.id);
-  rakesh = await makeUser("Rakesh", "telecaller", manager.id);
-  deepa = await makeUser("Deepa", "accounts");
+  priya = await makeUser("Priya", "associate", manager.id);
+  rakesh = await makeUser("Rakesh", "associate", manager.id);
+  /* The ledger desk: a MANAGER of the Accounts app, and holding nothing else
+     — the seed grants Deepa `apps: ["accounts"]` on purpose, because "the
+     person deciding whether a customer may take more credit is not the person
+     chasing them for the next order". */
+  deepa = await makeUser("Deepa", "manager", undefined, "accounts");
 
   setTestUser(priya);
   TODAY = await today();
@@ -1334,7 +1367,7 @@ describe("Journey 6 - a telecaller sees their own book and nothing else", () => 
     );
 
     // And somebody with no seat at all is still refused.
-    const stranger = await makeUser("Stranger", "telecaller", manager.id);
+    const stranger = await makeUser("Stranger", "associate", manager.id);
     setTestUser(stranger);
     await assert.rejects(
       () => assertCustomerInScope(moved),
@@ -1382,10 +1415,10 @@ describe("Journey 6 - a telecaller sees their own book and nothing else", () => 
 
 describe("who may see a customer's target", () => {
   test("a salesman, their sales manager and back office each see the accounts they hold a seat on, and nothing else", async () => {
-    const owner = await makeUser("Book Owner", "telecaller");
-    const salesman = await makeUser("Field Salesman", "telecaller");
-    const salesManagerUser = await makeUser("Line Manager", "telecaller");
-    const backOfficeUser = await makeUser("Paperwork Clerk", "accounts");
+    const owner = await makeUser("Book Owner", "associate");
+    const salesman = await makeUser("Field Salesman", "associate");
+    const salesManagerUser = await makeUser("Line Manager", "associate");
+    const backOfficeUser = await makeUser("Paperwork Clerk", "manager");
 
     const theirs = await makeCustomer(owner.id, {
       salesAmId: salesman.id,
@@ -1441,8 +1474,8 @@ describe("who may see a customer's target", () => {
 
   test("a manager keeps their reports-to team, untouched by any of the three seats", async () => {
     const unrelatedManager = await makeUser("Unrelated Manager", "manager");
-    const owner = await makeUser("Book Owner", "telecaller");
-    const salesman = await makeUser("Field Salesman", "telecaller");
+    const owner = await makeUser("Book Owner", "associate");
+    const salesman = await makeUser("Field Salesman", "associate");
     // Named on the account by seat, but reports to nobody this manager
     // manages — the fixture that would matter if seats leaked into a
     // manager's view the way they do for everybody else.
@@ -5522,12 +5555,27 @@ describe("whose book a screen is showing", () => {
     assert.deepEqual(asked.scope.userIds, [priya.id]);
   });
 
-  test("accounts are never narrowed — they are shown no switch", async () => {
-    // `getScope` answers "mine" for every non-manager, so reading a preference
-    // for accounts would scope the approval queue to a clerk's own book.
-    const scope = await scopeForUser(deepa);
-    assert.equal(scope.role, "accounts");
-    assert.equal(scope.scope.kind, "all");
+  test("the ledger desk is never narrowed — it is shown no switch", async () => {
+    /*
+     * `getScope` answers "mine" for every non-manager, so reading a preference
+     * for the desk would scope the approval queue to a clerk's own book.
+     *
+     * It hangs on the APP now rather than on a role called `accounts`. The
+     * level is not the answer and cannot be: an associate at that desk would
+     * be scoped to their own book and a manager to their reports, and a clerk
+     * has neither. Both spellings are pinned, because both are reachable — a
+     * request that names the app, and one that does not and has to fall back
+     * to the grants.
+     */
+    const named = await scopeForUser(deepa, undefined, { app: "accounts", role: "manager" });
+    assert.equal(named.scope.kind, "all");
+
+    const fromGrants = await scopeForUser(deepa, undefined, await hatInForce(deepa));
+    assert.equal(
+      fromGrants.scope.kind,
+      "all",
+      "a request naming no app scoped the approval queue to a clerk's own book",
+    );
   });
 });
 
@@ -6108,7 +6156,7 @@ describe("the back office seat is a book too", () => {
   test("it does not reach somebody who holds neither seat", async () => {
     const customer = await makeCustomer(priya.id, { backOfficeAmId: rakesh.id });
 
-    const third = await makeUser("Third Person", "telecaller", manager.id);
+    const third = await makeUser("Third Person", "associate", manager.id);
     setTestUser(third);
     const page = await listCustomersPage({});
     assert.ok(
@@ -6142,7 +6190,7 @@ describe("choosing an account manager", () => {
   });
 
   test("an inactive account is never offered a book", async () => {
-    const leaver = await makeUser("Gone Away", "telecaller", manager.id);
+    const leaver = await makeUser("Gone Away", "associate", manager.id);
     await db.update(users).set({ active: false }).where(eq(users.id, leaver.id));
 
     const assignable = await listAssignableUsers();
@@ -8019,24 +8067,27 @@ describe("the sales manager seat, kept in step with the org chart", () => {
 describe("a person wears several hats", () => {
   test("capabilities are the union, and the narrowest hat is the one recorded", async () => {
     /*
-     * Vikram is the sales manager AND the accounts clerk. Before roles hung off
+     * Vikram runs the calling book AND the ledger desk. Before roles hung off
      * the grants he could be one of them, so whoever set the account up picked
      * the more powerful and everything else came with it silently.
      */
-    const vikram = await makeUser("Two Hats", "telecaller");
+    const vikram = await makeUser("Two Hats", "associate", undefined, null);
     await db.insert(appAccess).values([
       { id: id("aca"), userId: vikram.id, app: "crm", role: "manager" },
-      { id: id("aca"), userId: vikram.id, app: "accounts", role: "accounts" },
+      { id: id("aca"), userId: vikram.id, app: "accounts", role: "manager" },
     ]);
     setTestUser(vikram);
 
-    const roles = await rolesFor(vikram);
-    assert.deepEqual(roles.sort(), ["accounts", "manager", "telecaller"].sort());
+    const hats = await hatsFor(vikram);
+    assert.deepEqual(
+      hats.map((h) => `${h.app ?? "-"}:${h.role}`).sort(),
+      ["-:associate", "accounts:manager", "crm:manager"],
+    );
 
-    // Held under EITHER hat is held. Approving is accounts', config is a
-    // manager's, and this person does both.
-    assert.equal(canAny(roles, "customer.classify"), true);
-    assert.equal(canAny(roles, "order.approve"), true);
+    // Held under EITHER hat is held. Approving belongs to the Accounts desk,
+    // config to the CRM manager, and this person is both.
+    assert.equal(canAny(hats, "customer.classify"), true);
+    assert.equal(canAny(hats, "order.approve"), true);
 
     /*
      * WHICH hat, and it is the ordinary one rather than the powerful one. An
@@ -8044,19 +8095,62 @@ describe("a person wears several hats", () => {
      * every action anybody senior took and the log would stop telling the
      * clerk doing their job from the administrator reaching past a rule.
      */
-    assert.equal(grantingRole(roles, "order.approve"), "accounts");
-    assert.equal(grantingRole(roles, "config.write"), "manager");
-    // `customer.classify` is held under BOTH hats since it widened to
-    // accounts — the narrowest one that carries it still wins, and accounts
-    // is checked before manager in `ROLE_ORDER`.
-    assert.equal(grantingRole(roles, "customer.classify"), "accounts");
+    assert.deepEqual(grantingHat(hats, "order.approve"), {
+      app: "accounts",
+      role: "manager",
+    });
+    assert.deepEqual(grantingHat(hats, "config.write"), { app: "crm", role: "manager" });
   });
 
-  test("a grant with no hat of its own means the account's role", async () => {
+  test("A MANAGER OF THE CALLING BOOK STILL CANNOT APPROVE AN ORDER", async () => {
+    /*
+     * The rule the whole matrix exists for: the person chasing a target must
+     * not sign off the orders that hit it. It used to hang on a role called
+     * `accounts`; now it hangs on the Accounts APP, which is strictly tighter
+     * — an accounts clerk who was also given the CRM used to carry order
+     * approval into it.
+     */
+    const boss = await makeUser("CRM Boss", "manager", undefined, null);
+    await db.insert(appAccess).values({
+      id: id("aca"),
+      userId: boss.id,
+      app: "crm",
+      role: "manager",
+    });
+
+    const hats = await hatsFor(boss);
+    assert.equal(canAny(hats, "team.report"), true, "a CRM manager lost their own app");
+    assert.equal(canAny(hats, "order.approve"), false, "a CRM manager approved an order");
+    assert.equal(canAny(hats, "payment.confirm"), false, "a CRM manager confirmed a payment");
+    assert.equal(canAny(hats, "customer.reassign"), false, "a CRM manager moved a book");
+  });
+
+  test("AN ACCOUNTS ASSOCIATE RECORDS AND READS; THE DECISIONS ARE THE MANAGER'S", async () => {
+    /*
+     * The level inside the app matters as much as the app. Recording a receipt
+     * is everybody's — a telecaller told on a call has to be able to write it
+     * down — and deciding that the money really arrived is not.
+     */
+    const clerk = await makeUser("Desk Junior", "associate", undefined, null);
+    await db.insert(appAccess).values({
+      id: id("aca"),
+      userId: clerk.id,
+      app: "accounts",
+      role: "associate",
+    });
+
+    const hats = await hatsFor(clerk);
+    assert.equal(canAny(hats, "payment.record"), true, "a clerk could not write down a payment");
+    assert.equal(canAny(hats, "payment.confirm"), false, "an associate confirmed a payment");
+    assert.equal(canAny(hats, "order.approve"), false, "an associate approved an order");
+    assert.equal(canAny(hats, "creditnote.issue"), false, "an associate issued a credit note");
+  });
+
+  test("a grant with no hat of its own means the account's level", async () => {
     // What every grant meant before this column existed, and what
     // `npm run app:grant` still writes — a terminal that knows nothing about
     // roles has to go on granting an app that works.
-    const deepa = await makeUser("Inherits", "accounts");
+    const deepa = await makeUser("Inherits", "manager", undefined, null);
     await db.insert(appAccess).values({
       id: id("aca"),
       userId: deepa.id,
@@ -8064,39 +8158,83 @@ describe("a person wears several hats", () => {
       role: null,
     });
 
-    const roles = await rolesFor(deepa);
-    assert.deepEqual(roles, ["accounts"]);
-    assert.equal(canAny(roles, "order.approve"), true);
-    // `customer.classify` widened to accounts alongside `target.set` — an
-    // accounts clerk marking a converted shop is exactly the kind of account
-    // fact they already maintain when they change who bills a customer.
-    assert.equal(canAny(roles, "customer.classify"), true, "an accounts clerk did not classify");
+    const hats = await hatsFor(deepa);
+    assert.deepEqual(
+      hats.map((h) => `${h.app ?? "-"}:${h.role}`).sort(),
+      ["-:manager", "accounts:manager"],
+    );
+    assert.equal(canAny(hats, "order.approve"), true);
+    assert.equal(canAny(hats, "customer.classify"), true, "an accounts manager did not classify");
+  });
+
+  test("THE ACCOUNT'S OWN LEVEL IS NOT A GRANT", async () => {
+    /*
+     * A hat with no app carries only what every signed-in person carries.
+     * Reading it as a grant is how somebody with a `manager` account and no
+     * apps at all would have quietly held every manager capability in the
+     * building — which is exactly what the old `can(user.role, …)` did.
+     */
+    const stranded = await makeUser("No Apps", "manager", undefined, null);
+    const hats = await hatsFor(stranded);
+    assert.deepEqual(hats, [{ app: null, role: "manager" }]);
+    assert.equal(canAny(hats, "payment.record"), true, "the shared capability was withheld");
+    assert.equal(canAny(hats, "team.report"), false, "a role with no app granted a capability");
+    assert.equal(canAny(hats, "order.approve"), false);
+  });
+
+  test("AN ADMIN IS AN ADMIN EVERYWHERE, app row or not", async () => {
+    const root = await makeUser("Root", "admin", undefined, null);
+    const hats = await hatsFor(root);
+    assert.equal(canAny(hats, "order.approve"), true);
+    assert.equal(canAny(hats, "distributor.approve"), true);
+    assert.equal(canAny(hats, "config.write"), true);
   });
 
   test("the capability check refuses what no hat carries, and says which hats were worn", async () => {
-    const priyaOnly = await makeUser("One Hat", "telecaller");
+    const priyaOnly = await makeUser("One Hat", "associate", undefined, null);
     await db.insert(appAccess).values({
       id: id("aca"),
       userId: priyaOnly.id,
       app: "crm",
-      role: "telecaller",
+      role: "associate",
     });
     setTestUser(priyaOnly);
 
     await assert.rejects(
       () => requireCapability("order.approve"),
       /accounts/i,
-      "a telecaller approved an order",
+      "an associate approved an order",
     );
 
     // The refusal names every hat, so it can be argued with: "Vikram was
-    // refused" is unactionable, "Vikram, holding telecaller, was refused" says
-    // which grant is missing.
+    // refused" is unactionable, "Vikram, an associate in the CRM, was refused"
+    // says which grant is missing.
     const [denial] = await db
       .select({ after: auditLog.afterState })
       .from(auditLog)
       .where(eq(auditLog.action, "access.denied"));
-    assert.deepEqual((denial.after as { roles: string[] }).roles, ["telecaller"]);
+    assert.deepEqual(
+      (denial.after as { hats: { app: string | null; role: string }[] }).hats
+        .map((h) => `${h.app ?? "-"}:${h.role}`)
+        .sort(),
+      ["-:associate", "crm:associate"],
+    );
+  });
+
+  test("THE LEDGER DESK SEES EVERY BOOK, whatever its level", async () => {
+    /*
+     * The approval queue is every associate's orders and nobody's own book.
+     * This used to key on a role called `accounts`; keying on the LEVEL
+     * instead would empty the queue from either end — an associate scoped to
+     * their own book, a manager scoped to their reports, and a clerk has
+     * neither.
+     */
+    const clerk = await makeUser("Desk", "associate", undefined, null);
+    const wide = await scopeForUser(clerk, undefined, { app: "accounts", role: "associate" });
+    assert.equal(wide.scope.kind, "all", "the approval queue was scoped to a clerk's own book");
+
+    const narrow = await scopeForUser(clerk, undefined, { app: "crm", role: "associate" });
+    assert.equal(narrow.scope.kind, "own", "an associate saw more than their own book");
   });
 
   test("the primary role is the widest hat, so scope follows the grant", async () => {
@@ -8107,25 +8245,56 @@ describe("a person wears several hats", () => {
      * CRM has to give them their team on the day it is granted, which is what
      * whoever granted it expects.
      */
-    assert.equal(widestRole(["telecaller", "manager"]), "manager");
-    assert.equal(widestRole(["telecaller", "accounts"]), "accounts");
-    assert.equal(widestRole(["manager", "admin"]), "admin");
-    assert.equal(widestRole(["telecaller"]), "telecaller");
+    const hat = (app: string | null, role: "associate" | "manager" | "admin") =>
+      ({ app, role }) as Parameters<typeof widestRole>[0][number];
+    assert.equal(widestRole([hat("crm", "associate"), hat("crm", "manager")]), "manager");
+    assert.equal(widestRole([hat("crm", "manager"), hat(null, "admin")]), "admin");
+    assert.equal(widestRole([hat("crm", "associate")]), "associate");
   });
 
   test("two hats that should not meet are named, never refused", async () => {
     // The matrix keeps approving orders away from managers on purpose. At nine
     // people the same person does have to do both — so it is allowed, said in
     // words where it is granted, and recorded on every action taken under it.
-    const both = conflictsFor(["manager", "accounts"]);
-    assert.equal(both.length, 1);
-    assert.match(both[0].sentence, /should not sign off the orders that hit it/i);
+    const both = conflictsFor([
+      { app: "crm", role: "manager" },
+      { app: "accounts", role: "manager" },
+    ]);
+    assert.equal(both.length, 3, "the CRM manager / Accounts manager pair lost its warnings");
+    assert.match(
+      both.map((c) => c.sentence).join(" "),
+      /should not sign off the orders that hit it/i,
+    );
 
-    assert.deepEqual(conflictsFor(["telecaller", "manager"]), []);
+    // An associate at the desk decides nothing, so there is nothing to clash.
+    assert.deepEqual(
+      conflictsFor([
+        { app: "crm", role: "associate" },
+        { app: "accounts", role: "associate" },
+      ]),
+      [],
+      "an Accounts associate who cannot confirm a payment was warned about anyway",
+    );
+
+    // Reporting money and then confirming it is the classic one.
     assert.equal(
-      conflictsFor(["telecaller", "accounts"]).length,
+      conflictsFor([
+        { app: "crm", role: "associate" },
+        { app: "accounts", role: "manager" },
+      ]).length,
       2,
-      "reporting money and confirming it is one conflict; carrying a target and setting one is a second, since accounts gained target.set",
+      "reporting money and confirming it is one conflict; carrying a target and setting one is a second",
+    );
+
+    // Two levels of one app is not a conflict, and neither is an admin —
+    // four warnings on every administrator is four warnings nobody reads.
+    assert.deepEqual(conflictsFor([{ app: "crm", role: "manager" }]), []);
+    assert.deepEqual(
+      conflictsFor([
+        { app: "crm", role: "admin" },
+        { app: "accounts", role: "admin" },
+      ]),
+      [],
     );
   });
 });

@@ -23,6 +23,7 @@ import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
+  appAccess,
   customerAmChanges,
   customers,
   notifications,
@@ -41,7 +42,7 @@ const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 let manager: typeof users.$inferSelect;
 let desk: typeof users.$inferSelect;
 
-async function makeUser(name: string, role: "manager" | "telecaller") {
+async function makeUser(name: string, role: "manager" | "associate") {
   const [row] = await db
     .insert(users)
     .values({
@@ -54,6 +55,25 @@ async function makeUser(name: string, role: "manager" | "telecaller") {
       initials: name.slice(0, 2).toUpperCase(),
     })
     .returning();
+  /*
+   * THE APP GRANT, because a level on its own is not one.
+   *
+   * A capability hangs on (app, level) now, so `role: "manager"` with no
+   * `app_access` row is a manager of nothing — which is right, and is what
+   * production looks like too: an app's layout refuses anybody without a
+   * grant, so a person who can reach a screen always has one. A fixture
+   * without it was testing somebody who cannot sign in.
+   *
+   * The CRM, because that is the book these tests work. The ledger desk has
+   * `makeAccountsUser` where it is needed.
+   */
+  await db.insert(appAccess).values({
+    id: id("aca"),
+    userId: row.id,
+    app: "crm",
+    role,
+  });
+
   return row;
 }
 
@@ -106,7 +126,7 @@ beforeEach(async () => {
   await seedConfig();
 
   manager = await makeUser("Manager", "manager");
-  desk = await makeUser("Deskperson", "telecaller");
+  desk = await makeUser("Deskperson", "associate");
   setTestUser(manager);
 });
 
@@ -167,7 +187,7 @@ test("both sides are told, and nobody is told about a loss that did not happen",
 
   /* Now move it on, and the person losing it is told too — a book that
      shrinks silently reads as a bug in the queue. */
-  const third = await makeUser("Third", "telecaller");
+  const third = await makeUser("Third", "associate");
   await handOverRelationships({ customerIds: [c.id], toUserId: third.id, reasonCode: REASON });
 
   const round2 = await db.select().from(notifications);
@@ -184,7 +204,7 @@ test("a second handover is a second history row and a second timeline entry", as
    * because the conflict clause does nothing rather than failing.
    */
   const c = await makeConvertedCustomer();
-  const third = await makeUser("Third", "telecaller");
+  const third = await makeUser("Third", "associate");
 
   await handOverRelationships({ customerIds: [c.id], toUserId: desk.id, reasonCode: REASON });
   await handOverRelationships({ customerIds: [c.id], toUserId: third.id, reasonCode: REASON });

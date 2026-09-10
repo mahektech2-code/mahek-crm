@@ -18,7 +18,8 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { complaints, customers, orders, paymentReceipts, users } from "@/db/schema";
+import {
+  appAccess, complaints, customers, orders, paymentReceipts, users } from "@/db/schema";
 import { endOfMonth } from "@/lib/business-date";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
@@ -54,7 +55,7 @@ let rahul: typeof users.$inferSelect;
  */
 const thisMonth = () => ({ from: `${TODAY.slice(0, 7)}-01`, to: endOfMonth(TODAY.slice(0, 7)) });
 
-async function makeUser(name: string, role: "telecaller" | "admin") {
+async function makeUser(name: string, role: "associate" | "admin") {
   const [row] = await db
     .insert(users)
     .values({
@@ -67,6 +68,25 @@ async function makeUser(name: string, role: "telecaller" | "admin") {
       initials: name.slice(0, 2).toUpperCase(),
     })
     .returning();
+  /*
+   * THE APP GRANT, because a level on its own is not one.
+   *
+   * A capability hangs on (app, level) now, so `role: "manager"` with no
+   * `app_access` row is a manager of nothing — which is right, and is what
+   * production looks like too: an app's layout refuses anybody without a
+   * grant, so a person who can reach a screen always has one. A fixture
+   * without it was testing somebody who cannot sign in.
+   *
+   * The CRM, because that is the book these tests work. The ledger desk has
+   * `makeAccountsUser` where it is needed.
+   */
+  await db.insert(appAccess).values({
+    id: id("aca"),
+    userId: row.id,
+    app: "crm",
+    role,
+  });
+
   return row;
 }
 
@@ -136,7 +156,7 @@ beforeEach(async () => {
   await seedConfig();
 
   admin = await makeUser("Owner", "admin");
-  rahul = await makeUser("Rahul", "telecaller");
+  rahul = await makeUser("Rahul", "associate");
   // An admin, so scope resolves to the whole book — this is the owner's app.
   setTestUser(admin);
   TODAY = await today();
@@ -497,7 +517,7 @@ describe("the dashboard", () => {
   });
 
   test("a salesperson filter narrows every one of the five", async () => {
-    const other = await makeUser("Priya", "telecaller");
+    const other = await makeUser("Priya", "associate");
     const mine = await makeCustomer({ salesAmId: rahul.id });
     const theirs = await makeCustomer({ salesAmId: other.id, ownerId: other.id });
     await makeOrder(mine.id, 10_000_00, at(4));

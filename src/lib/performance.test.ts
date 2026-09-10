@@ -18,6 +18,7 @@ import { sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
+  appAccess,
   bills,
   customers,
   finishedGoods,
@@ -63,7 +64,7 @@ const beforePeriod = (daysBefore: number) =>
     .toISOString()
     .slice(0, 10);
 
-async function makeUser(name: string, role: "telecaller" | "manager") {
+async function makeUser(name: string, role: "associate" | "manager") {
   const [row] = await db
     .insert(users)
     .values({
@@ -76,6 +77,25 @@ async function makeUser(name: string, role: "telecaller" | "manager") {
       initials: name.slice(0, 2).toUpperCase(),
     })
     .returning();
+  /*
+   * THE APP GRANT, because a level on its own is not one.
+   *
+   * A capability hangs on (app, level) now, so `role: "manager"` with no
+   * `app_access` row is a manager of nothing — which is right, and is what
+   * production looks like too: an app's layout refuses anybody without a
+   * grant, so a person who can reach a screen always has one. A fixture
+   * without it was testing somebody who cannot sign in.
+   *
+   * The CRM, because that is the book these tests work. The ledger desk has
+   * `makeAccountsUser` where it is needed.
+   */
+  await db.insert(appAccess).values({
+    id: id("aca"),
+    userId: row.id,
+    app: "crm",
+    role,
+  });
+
   return row;
 }
 
@@ -230,8 +250,8 @@ beforeEach(async () => {
   await seedConfig();
 
   manager = await makeUser("Vikram", "manager");
-  rahul = await makeUser("Rahul", "telecaller");
-  poonam = await makeUser("Poonam", "telecaller");
+  rahul = await makeUser("Rahul", "associate");
+  poonam = await makeUser("Poonam", "associate");
   setTestUser(manager);
 
   TODAY = await today();

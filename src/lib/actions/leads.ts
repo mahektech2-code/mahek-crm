@@ -18,7 +18,7 @@ import {
   assertCustomerInScope,
   canAny,
   requireCapability,
-  rolesFor,
+  hatsFor,
 } from "@/lib/access-control";
 import { today } from "@/lib/recompute";
 import { writeTimelineEvent, MBOS_EVENT } from "@/lib/timeline";
@@ -106,7 +106,7 @@ async function reachableLead(
 
 /** Which hats this person is wearing, for the two manager-only questions. */
 async function holdsOverride(user: { id: string; role: string }): Promise<boolean> {
-  return canAny(await rolesFor(user), "lead.override");
+  return canAny(await hatsFor(user), "lead.override");
 }
 
 /* ═══════════════════════════════════════════════════ §28 the move itself */
@@ -216,13 +216,16 @@ export async function advanceLeadStage(input: {
      * hat that carried it, and stamping the transition with the hat is the
      * whole reason overrides are allowed at all.
      */
-    const authorisedBy =
+    /* Both halves — an override is the one move where WHICH hat allowed it is
+       the whole point of recording it at all. */
+    const overrode =
       decision.kind === "overridden" || decision.kind === "reverted"
-        ? (await requireCapability("lead.override")).authorisedBy
-        : ctx.authorisedBy;
+        ? await requireCapability("lead.override")
+        : ctx;
+    const authorisedBy = { app: overrode.authorisedIn, role: overrode.authorisedBy };
 
     const result = await applyLeadStageMove(
-      { userId: ctx.user.id, role: authorisedBy, sourceApp: "crm" },
+      { userId: ctx.user.id, hat: authorisedBy, sourceApp: "crm" },
       lead,
       to,
       {
@@ -323,6 +326,7 @@ export async function setLeadSalesType(
         entityType: "customer",
         entityId: customerId,
         actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
         beforeState: { salesType: was, stage },
         afterState: { salesType, reason: reason ?? null },
       });
@@ -386,6 +390,7 @@ export async function saveLeadQualification(
         entityType: "customer",
         entityId: customerId,
         actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
         beforeState: lead.leadQualification,
         afterState: merged,
       });
@@ -477,6 +482,7 @@ export async function saveProspectFields(
         entityType: "customer",
         entityId: customerId,
         actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
         afterState: f,
       });
     });
@@ -660,7 +666,7 @@ export async function assignLeadManager(
         .from(users)
         .where(eq(users.id, chosen))
         .limit(1);
-      if (!m || !m.active || m.role === "telecaller") {
+      if (!m || !m.active || m.role === "associate") {
         return err(
           "A lead manager has to be a sales manager who can sign in and work the list.",
           "validation",
@@ -698,6 +704,7 @@ export async function assignLeadManager(
         entityType: "customer",
         entityId: customerId,
         actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
         beforeState: { leadManagerId: lead.leadManagerId },
         afterState: { leadManagerId: chosen, defaulted: !managerId },
       });
@@ -876,6 +883,7 @@ export async function recordLeadValidationCall(
         entityType: "customer",
         entityId: customerId,
         actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
         afterState: { callId, verified: c.verified, answered: Object.keys(answers).length },
       });
     });
@@ -981,6 +989,7 @@ export async function recordCommunication(
         entityType: "customer",
         entityId: customerId,
         actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
         afterState: { actionCode: action.code, documentId: p.documentId ?? null },
       });
     });
@@ -1083,6 +1092,7 @@ export async function askForFirstOrder(
         entityType: "customer",
         entityId: customerId,
         actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
         afterState: { answers, expectedDate: p.expectedDate, expectedValuePaise: p.expectedValuePaise ?? null },
       });
     });

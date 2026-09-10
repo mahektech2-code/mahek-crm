@@ -24,7 +24,7 @@ export type Person = {
   email: string;
   /** The work number. How staff are identified to each other, and a login. */
   phone: string | null;
-  role: "telecaller" | "manager" | "accounts" | "admin";
+  role: "associate" | "manager" | "admin";
   initials: string;
   active: boolean;
   reportsToId: string | null;

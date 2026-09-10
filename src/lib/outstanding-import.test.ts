@@ -146,7 +146,7 @@ beforeEach(async () => {
     .values({
       id: id("usr"), name: "Priya", email: "priya@test.local",
       phone: String(9820000000 + Math.floor(Math.random() * 999999)),
-      passwordHash: "x", role: "telecaller", initials: "PR",
+      passwordHash: "x", role: "associate", initials: "PR",
     })
     .returning();
   priya = p;

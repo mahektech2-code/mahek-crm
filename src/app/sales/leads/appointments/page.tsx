@@ -28,7 +28,7 @@ export default async function Page() {
   return (
     <AppointmentsScreen
       rows={rows}
-      canApproveManagement={canLead(user.role, "distributor.approve")}
+      canApproveManagement={await canLead(user, "distributor.approve")}
       discountThreshold={config["leads.distributorDiscountApprovalPercent"]}
       creditLimitThresholdPaise={config["leads.distributorCreditLimitApprovalPaise"]}
       staleHours={config["payments.confirmationAgeWarningHours"]}

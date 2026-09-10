@@ -55,7 +55,7 @@ export type AccessRow = {
   name: string;
   email: string;
   phone: string | null;
-  role: "telecaller" | "manager" | "accounts" | "admin";
+  role: "associate" | "manager" | "admin";
   initials: string;
   active: boolean;
   /** The HRMS row this account matches, where there is one. */
@@ -242,16 +242,23 @@ export async function listAccess(): Promise<AccessRow[]> {
   }
 
   return accounts.map((u) => {
-    // Every hat, the account's own included: a grant with no role of its own
-    // is held under it, so it is one of the roles this person wears.
-    const heldRoles = [
-      ...new Set<Role>([
-        u.role as Role,
-        ...(appsByUser.get(u.id) ?? []).map(
-          (app) => rolesByUserApp.get(`${u.id}:${app}`) ?? (u.role as Role),
-        ),
-      ]),
+    /*
+     * Every hat, the account's own included: a grant with no role of its own
+     * is held under it, so it is one of the hats this person wears.
+     *
+     * The APP travels with the level now. A conflict is between two apps —
+     * the calling book and the ledger desk — and with roles reduced to levels
+     * a list of bare roles could no longer express one: "associate and
+     * associate" is not a sentence about anything.
+     */
+    const heldHats = [
+      { app: null as string | null, role: u.role as Role },
+      ...(appsByUser.get(u.id) ?? []).map((app) => ({
+        app: app as string | null,
+        role: rolesByUserApp.get(`${u.id}:${app}`) ?? (u.role as Role),
+      })),
     ];
+    const heldRoles = [...new Set<Role>(heldHats.map((h) => h.role))];
     /* The link somebody made first, and only then the guess — the same order
        lib/employee-link.ts applies in SQL for the salary figures, said once
        there and mirrored here because this screen reads the master in memory
@@ -285,7 +292,7 @@ export async function listAccess(): Promise<AccessRow[]> {
         (app) => rolesByUserApp.get(`${u.id}:${app}`) ?? null,
       ),
       roles: heldRoles,
-      conflicts: conflictsFor(heldRoles),
+      conflicts: conflictsFor(heldHats),
     };
   });
 }

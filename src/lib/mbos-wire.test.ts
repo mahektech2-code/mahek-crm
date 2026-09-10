@@ -745,3 +745,55 @@ function readdirSyncDeep(dir: string, out: string[] = []): string[] {
   }
   return out;
 }
+
+/* ---------------------------------------------------------------------------
+ * THE MIGRATION IS THE ONLY PLACE THE OLD VOCABULARY STILL EXISTS.
+ *
+ * `telecaller` and `accounts` are gone from the enum, so a literal left behind
+ * anywhere in the source is either dead or wrong — and the failure it produces
+ * is the quiet kind. `role === "accounts"` is now permanently false rather than
+ * a type error, because these are compared against `string` in several places
+ * (`can(role: string)` used to be one), so nothing catches it but a grep.
+ * ------------------------------------------------------------------------- */
+
+test("no source file still names a role that no longer exists", () => {
+  const files = [
+    "src/lib/access-control.ts",
+    "src/lib/role-conflicts.ts",
+    "src/lib/auth.ts",
+    "src/app/admin/access-section.tsx",
+    "src/lib/actions/access.ts",
+    "src/lib/services/access-service.ts",
+    "src/db/seed.ts",
+  ];
+
+  const offenders: string[] = [];
+  for (const file of files) {
+    const src = readFileSync(file, "utf8");
+    /* Prose is allowed to remember them — the paragraphs explaining WHY the
+     * vocabulary changed are the most valuable thing in these files, and a
+     * test that forbade the word would delete the reasoning to satisfy itself.
+     * Block comments are tracked rather than pattern-matched line by line,
+     * because the sentences here run to several lines and only the first
+     * carries a `*`. */
+    let inBlock = false;
+    for (const [i, line] of src.split("\n").entries()) {
+      const opens = line.includes("/*");
+      const closes = line.includes("*/");
+      const wasInBlock = inBlock;
+      if (opens && !closes) inBlock = true;
+      if (closes) inBlock = false;
+      if (wasInBlock || (opens && !closes)) continue;
+      const code = line.replace(/\/\/.*$/, "").replace(/\/\*.*?\*\//g, "");
+      if (/["'](telecaller)["']/.test(code)) {
+        offenders.push(`${file}:${i + 1} ${line.trim().slice(0, 80)}`);
+      }
+    }
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    `these compare against a role that no longer exists, so they are silently false:\n  ${offenders.join("\n  ")}`,
+  );
+});

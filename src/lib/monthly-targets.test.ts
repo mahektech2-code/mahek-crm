@@ -21,7 +21,8 @@ import { and, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { customers, monthlyTargets, users } from "@/db/schema";
+import {
+  appAccess, customers, monthlyTargets, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { seedMonthlyTargets } from "@/lib/recompute";
@@ -93,6 +94,15 @@ beforeEach(async () => {
       initials: "MG",
     })
     .returning();
+  /* The app grant, because a level on its own is not one: a capability hangs
+     on (app, level) now, and `role: "manager"` with no `app_access` row is a
+     manager of nothing. */
+  await db.insert(appAccess).values({
+    id: id("aca"),
+    userId: row.id,
+    app: "crm",
+    role: "manager",
+  });
   manager = row;
   setTestUser(manager);
 });

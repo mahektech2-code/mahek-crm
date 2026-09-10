@@ -278,6 +278,7 @@ export async function issueCreditNote(input: {
       actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
       action: "creditnote.issue",
       entityType: "complaint",
       entityId: input.complaintId,
@@ -350,6 +351,7 @@ export async function refuseCreditNote(
       actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
       action: "creditnote.refuse",
       entityType: "complaint",
       entityId: complaintId,

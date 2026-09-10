@@ -56,7 +56,7 @@ let manager: typeof users.$inferSelect;
 let shop: typeof customers.$inferSelect;
 let principal: MbosPrincipal;
 
-async function makeUser(name: string, role: "telecaller" | "manager") {
+async function makeUser(name: string, role: "associate" | "manager") {
   const [row] = await db
     .insert(users)
     .values({
@@ -69,6 +69,14 @@ async function makeUser(name: string, role: "telecaller" | "manager") {
       initials: name.slice(0, 2).toUpperCase(),
     })
     .returning();
+  /* The app grant, because a level on its own is not one — see the note in
+     `journeys.test.ts`. */
+  await db.insert(appAccess).values({
+    id: id("aca"),
+    userId: row!.id,
+    app: "crm",
+    role,
+  });
   return row!;
 }
 
@@ -145,8 +153,8 @@ beforeEach(async () => {
   invalidateConfig();
   await seedConfig();
 
-  salesman = await makeUser("Mahesh", "telecaller");
-  colleague = await makeUser("Ramesh", "telecaller");
+  salesman = await makeUser("Mahesh", "associate");
+  colleague = await makeUser("Ramesh", "associate");
   manager = await makeUser("Vikram", "manager");
 
   await db.insert(appAccess).values([
@@ -180,7 +188,7 @@ beforeEach(async () => {
   principal = {
     user: salesman,
     deviceId: "probe-device",
-    role: "telecaller",
+    role: "associate",
     scope: { kind: "own", userIds: [salesman.id] },
   } as MbosPrincipal;
 });

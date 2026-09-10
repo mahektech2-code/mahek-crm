@@ -113,7 +113,7 @@ async function main() {
     const reaching = await customerIdsInScope({
       user: u as unknown as typeof users.$inferSelect,
       deviceId: "diagnostic",
-      role: (isManager ? "manager" : "telecaller") as "manager" | "telecaller",
+      role: (isManager ? "manager" : "associate") as "manager" | "associate",
       scope:
         ids === null
           ? { kind: "all", userIds: null }

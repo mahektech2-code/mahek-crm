@@ -104,7 +104,8 @@ async function main() {
         name: e.name,
         email,
         phone: workNumber,
-        role: "accounts",
+        /* An Accounts MANAGER — the level that carries the decisions. */
+        role: "manager",
         initials: initialsOf(e.name),
         passwordHash,
         active: true,
