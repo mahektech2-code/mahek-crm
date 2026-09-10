@@ -43,6 +43,18 @@ export type SaveVisitArgs = {
   metresFromShop: number | null;
   verified: boolean;
   unverifiedReason: string | null;
+  /*
+   * PAST THE CHECK-IN GATE, in his own words.
+   *
+   * Null on every visit that was never refused, which is nearly all of them.
+   * It rides on the visit rather than going up as its own record for the same
+   * reason the Suspect decision does: the refusal, the sentence and the visit
+   * it let through are one act, and sending them apart is how a visit lands
+   * with the answer lost to a failed second request.
+   */
+  checkInOverrideReason?: string | null;
+  /** "The shop's pin is wrong — move it here." A request for his manager. */
+  pinCorrectionRequested?: boolean;
   /** Records already created from inside this visit, to be linked to it. */
   linkedOrderId?: string | null;
   linkedPaymentId?: string | null;
@@ -87,8 +99,9 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
          linkedOrderId, linkedPaymentId, linkedComplaintId, linkedSampleId,
          nextFollowUpDate, journeyStopId, wasPlanned, deviationReason,
          locationMismatch, metresFromShop, verified, unverifiedReason, openEnded,
+         checkInOverrideReason, pinCorrectionRequested,
          clientCreatedAt, deviceId, syncState
-       ) VALUES (?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?,?)`,
+       ) VALUES (?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?, ?,?,?)`,
       [
         base.id, args.customerId, args.userId,
         args.checkIn?.lat ?? null, args.checkIn?.lng ?? null, args.checkIn?.accuracyM ?? null, args.checkIn?.at ?? null,
@@ -99,6 +112,7 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
         args.nextFollowUpDate, args.journeyStopId, args.wasPlanned ? 1 : 0, args.deviationReason,
         args.locationMismatch ? 1 : 0, args.metresFromShop, args.verified ? 1 : 0, args.unverifiedReason,
         args.checkOut ? 0 : 1,
+        args.checkInOverrideReason ?? null, args.pinCorrectionRequested ? 1 : 0,
         base.clientCreatedAt, base.deviceId, 'queued',
       ],
     );
@@ -209,6 +223,8 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
       wasPlanned: args.wasPlanned,
       deviationReason: args.deviationReason ?? undefined,
       nextFollowUpDate: args.nextFollowUpDate ?? undefined,
+      checkInOverrideReason: args.checkInOverrideReason ?? undefined,
+      pinCorrectionRequested: args.pinCorrectionRequested ?? undefined,
       suspectDecision: args.suspectDecision ?? undefined,
       suspectReason: args.suspectReason ?? undefined,
       requirement: args.requirement ?? undefined,

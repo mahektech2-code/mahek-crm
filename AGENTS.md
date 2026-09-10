@@ -495,14 +495,88 @@ difference is what is lost: refusing a visit loses a record of work that really
 happened, while refusing an order loses nothing, because the order was never
 agreed with anybody who could agree it. The message names the way forward.
 
+**THE CHECK-IN IS REFUSED PAST THE RADIUS, AND THAT IS A REVERSAL.**
+`engines/geo.ts` states the principle the field product was built on — a
+reading is evidence, never a gate — and Mahek asked for the opposite on this
+one act: a salesman may check in to a shop only from within
+`mbos.location.visitMismatchM` of it. The old behaviour was to measure the same
+distance and raise a FLAG, which meant the answer was read hours later by
+somebody who could no longer tell, and a visit logged from a tea shop across
+the road counted as a visit until somebody went looking.
+
+**What pays for the reversal is that the ARRIVAL is where it sits, and that it
+refuses only what a reading can prove.** Refused at the door, before a word has
+been typed, the cost is a walk to the right shop and pressing the button again;
+`arriveHere` writes nothing, the travel leg stays open, the dwell clock does not
+start and no meter has been photographed — which is why the fix is now taken
+BEFORE the camera rather than beside it. Refusing the SAVE would be the old
+mistake exactly: the note, the photograph, the order and the day are already
+in the phone by then.
+
+**Three answers accept, and only one refuses.** No fix and a fix too wide to
+trust both go through — a reading that cannot show he is there cannot show he is
+not, and refusing on one would block every check-in inside a concrete godown. A
+shop with NO PIN goes through too, and this is the half nobody would guess at:
+487 of the 1,076 shops on a real handset have no coordinate, so refusing there
+would make half the book unvisitable to close a gap the salesman did not open.
+That check-in becomes the pin — guarded by `gps_lat is null` in the statement
+and not only in the branch above it, so two visits in flight cannot fight over
+it — and a POOR fix never pins a shop, because a pin dropped four hundred metres
+out would refuse every honest visit afterwards, which is this rule's own failure
+arriving by the back door.
+
+**The way past a refusal costs a sentence, and it is offered only after one.**
+The pin in this book was typed by hand, dropped in an office or inherited from a
+legacy CSV, so a salesman standing in the right shop is refused by the database
+being wrong about as often as by anything else. He says so in writing, the visit
+saves UNVERIFIED carrying his words in `check_in_override_reason`, and his
+manager reads them. Drawn before he has been refused it would be a way round the
+radius nobody had to be refused by, which is a different feature.
+
+**And "the pin is wrong" is a REQUEST, never a write.** The handset can already
+move a pin through `customer_update`, so an override that moved it directly
+would mean one override put the pin wherever somebody was standing and the
+radius never refused him there again. `mbos_visits.pin_correction` is the ask,
+answered by a manager on `/sales/visits`, and it carries NO coordinates —
+what is being accepted is the check-in fix already on that row, which is the
+point the manager can open on the map link beside it. A second copy of two
+numbers already in the record is a copy that can disagree with it. It does not
+touch `verified`: accepting the pin says the book was wrong, and standing behind
+the visit is `acceptVisit`, one menu item along.
+
+**The SERVER recomputes and never refuses, and that is not the gate leaking.**
+An APK cannot be recalled, so handsets in the field go on sending check-ins the
+old build never turned down, and every one of those is real work. Rejecting
+would put the visit in `/rejections` for ever and lose the note, the photograph
+and the order behind it. `handleVisit` measures the same distance, marks the
+row unverified with the distance said plainly, and where no override reason came
+with it says exactly that — which is also the only signal a payload that did not
+come from the app would leave.
+
+**ONE NUMBER, not two.** `mbos.location.visitMismatchM` is the distance a
+check-in is refused at AND the distance a saved visit is flagged at, because
+they are one fact: past the radius the only visits that exist are overrides, and
+every override is worth a manager's eye. Its default moved 200 → 100 in
+`0120_check_in_is_a_gate`, matching on `updated_by_id is null` so a team that
+chose 200 is left alone. `checkConsistency` still refuses a radius at or below
+`mbos.location.gpsAccuracyThresholdM` — that used to produce a flag nobody
+opened and now produces a salesman refused at the door of the right shop. The
+check-in is also the one fix in the app taken at `Accuracy.High`: everything
+else here asks for `Balanced`, which on Android is roughly a city block, and a
+reading that coarse cannot tell a doorway from the tea shop it is now deciding
+against.
+
 **A SUSPECT CANNOT BE VISITED FOR EVER, and the cap ASKS rather than refuses.**
 §B of the brief wants a maximum of three visits "enforced", and enforced as a
 block is the one shape this app must not use: `engines/geo.ts` states the
-principle the whole field product rests on — a reading is evidence, never a
-gate — because a salesman whose visit is refused stops recording visits, and the
-company loses the GPS, the competitor note and the reason in order to stop a
-number reaching four. What §B actually wants is that nobody keeps visiting a
-shop nobody has decided about, and that is bought by demanding an ANSWER.
+principle the rest of the field product rests on — a reading is evidence, never
+a gate — because a salesman whose visit is refused stops recording visits, and
+the company loses the GPS, the competitor note and the reason in order to stop a
+number reaching four. The check-in radius above is the one deliberate exception
+to it and buys its way out at the arrival, where nothing has been typed yet;
+this one has a visit already made and would be throwing that away. What §B
+actually wants is that nobody keeps visiting a shop nobody has decided about,
+and that is bought by demanding an ANSWER.
 
 So there are three states and none of them blocks the visit being made:
 `mbos.leads.visitsBeforeDecision` starts the warning, `mbos.leads.maxSuspectVisits`

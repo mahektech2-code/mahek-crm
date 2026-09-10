@@ -884,6 +884,21 @@ const visitSchema = z.object({
   deviationReason: z.string().max(500).nullish(),
   nextFollowUpDate: z.string().nullish(),
   /*
+   * PAST THE CHECK-IN GATE, and why he says he is allowed to be.
+   *
+   * The handset refuses a check-in measurably outside
+   * `mbos.location.visitMismatchM` and offers one way past it: a typed
+   * sentence. Its presence is what tells this handler that the salesman was
+   * asked and answered, rather than that an old build simply never asked.
+   *
+   * `pinCorrectionRequested` is the second half of the same moment — he is in
+   * the shop and the book has it somewhere else, so he asks for the pin to be
+   * moved to where he stood. It is a REQUEST: a manager decides, on the visit
+   * row, from the check-in fix already stored on it.
+   */
+  checkInOverrideReason: z.string().max(500).nullish(),
+  pinCorrectionRequested: z.boolean().nullish(),
+  /*
    * THE SUSPECT DECISION, answered on the visit that demanded it.
    *
    * `suspectDecision` is what the salesman chose — moving the lead on, or
@@ -980,11 +995,23 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
     }
   }
 
-  /* Verification is recorded, never enforced. A check-in 400 metres from the
-   * shop's pin is not proof of anything — the pin may be wrong, the fix may be
-   * poor, the shop may have moved — so the visit is saved with the mismatch
-   * and a reason beside it. Refusing loses a real visit; accepting silently
-   * makes every visit worth the same, which is worse. */
+  /*
+   * THE GATE IS ON THE HANDSET; THIS RECOMPUTES THE VERDICT AND NEVER REFUSES.
+   *
+   * A check-in measurably outside the radius is refused where the salesman is
+   * standing, which is the only moment refusing is any use — he can walk to
+   * the shop and press it again. By the time a visit reaches this handler it
+   * is a record of a day's work that has already happened, and rejecting it
+   * would put it in the outbox's `/rejections` list for ever: the office would
+   * lose the GPS, the note, the order and the photograph in order to punish a
+   * distance. So what is enforced here is that the ROW TELLS THE TRUTH.
+   *
+   * That is also what makes an un-updated handset safe. An APK cannot be
+   * recalled, phones in the field go on sending check-ins the old build never
+   * refused, and every one of those visits is real work. They land unverified
+   * with the distance said plainly, which is exactly what they landed as
+   * before the gate existed.
+   */
   let verified = false;
   let locationMismatch = false;
   let unverifiedReason: string | null = null;
@@ -992,14 +1019,39 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
    * read this number, only the sentence it got folded into for a mismatch,
    * and never at all for a visit that verified cleanly. */
   let distanceFromShopM: number | null = null;
+  /*
+   * The fix becomes the shop's pin where the shop has none.
+   *
+   * Guarded by `gps_lat is null` in the UPDATE itself and not only by this
+   * flag — the same guard `field_customer_pins` writes under, and for the same
+   * reason: two visits to one unpinned shop can be in flight at once, and the
+   * second must not move a pin the first has just set.
+   */
+  let pinFromThisCheckIn: { lat: number; lng: number; accuracyM: number | null } | null = null;
 
+  const radiusM = config["mbos.location.visitMismatchM"];
+  const accuracyThresholdM = config["mbos.location.gpsAccuracyThresholdM"];
   const accuracy = p.checkInAccuracyM ?? null;
+  const override = p.checkInOverrideReason?.trim() || null;
+
   if (p.checkInLat == null || p.checkInLng == null) {
     unverifiedReason = "No location was captured with this check-in.";
-  } else if (accuracy != null && accuracy > config["mbos.location.gpsAccuracyThresholdM"]) {
-    unverifiedReason = `The handset rated its own fix at ${accuracy} m, which is worse than the ${config["mbos.location.gpsAccuracyThresholdM"]} m needed to prove where anybody was standing.`;
+  } else if (accuracy != null && accuracy > accuracyThresholdM) {
+    unverifiedReason = `The handset rated its own fix at ${accuracy} m, which is worse than the ${accuracyThresholdM} m needed to prove where anybody was standing.`;
   } else if (customer.gpsLat == null || customer.gpsLng == null) {
-    unverifiedReason = `${customer.name} has no shop pin on MahekOne yet, so there is nothing to check the check-in against.`;
+    /*
+     * NOT A FAILURE, AND IT FIXES ITSELF. Roughly half the book has never been
+     * pinned, and this check-in is the best evidence anybody has ever had of
+     * where the shop is — so it becomes the pin. The visit is still not
+     * VERIFIED, because nothing was checked against anything; what changes is
+     * that the next visit here can be.
+     */
+    pinFromThisCheckIn = {
+      lat: p.checkInLat,
+      lng: p.checkInLng,
+      accuracyM: accuracy,
+    };
+    unverifiedReason = `${customer.name} had no shop pin on MahekOne, so there was nothing to check this check-in against — it has been pinned here.`;
   } else {
     const distance = metresBetween(
       p.checkInLat,
@@ -1008,13 +1060,34 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
       customer.gpsLng,
     );
     distanceFromShopM = Math.round(distance);
-    if (distance > config["mbos.location.visitMismatchM"]) {
+    if (distance > radiusM) {
       locationMismatch = true;
-      unverifiedReason = `The check-in was ${Math.round(distance)} m from ${customer.name}'s own pin.`;
+      unverifiedReason = override
+        ? `The check-in was ${Math.round(distance)} m from ${customer.name}'s own pin. ${principal.user.name} said: ${override}`
+        : /* No override, and past the radius. Either an un-updated handset or
+             a payload that did not come from one — the sentence says what is
+             known and accuses nobody of the difference. */
+          `The check-in was ${Math.round(distance)} m from ${customer.name}'s own pin, and no reason was given for it.`;
+    } else if (override) {
+      /* Refused, overridden, and then inside the radius after all — the fix
+         moved between the gate and the save. It is still not a clean visit:
+         he was asked and he answered, and losing that answer here would make
+         the record read as though the question was never put. */
+      unverifiedReason = `The check-in was allowed past the ${radiusM} m radius. ${principal.user.name} said: ${override}`;
     } else {
       verified = true;
     }
   }
+
+  /*
+   * A pin correction is only a question where there is a pin to question.
+   * Asked about a shop that has just been pinned FROM this check-in, it would
+   * be a manager asked to approve moving a pin onto the spot it already sits.
+   */
+  const pinCorrection =
+    p.pinCorrectionRequested && customer.gpsLat != null && customer.gpsLng != null
+      ? ("requested" as const)
+      : null;
 
   const checkInAt = p.checkInAt ? new Date(p.checkInAt) : new Date(item.clientCreatedAt);
   /*
@@ -1061,6 +1134,8 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
         verified,
         unverifiedReason,
         distanceFromShopM,
+        checkInOverrideReason: override,
+        pinCorrection,
         clientCreatedAt: new Date(item.clientCreatedAt),
         createdById: principal.user.id,
         updatedById: principal.user.id,
@@ -1088,6 +1163,37 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
              updated_at = now()
        where id = ${customer.id}
     `);
+
+    /*
+     * A SHOP NOBODY HAD PINNED IS PINNED BY BEING VISITED.
+     *
+     * 487 of the 1,076 shops on a real handset have no coordinate, and nothing
+     * in MahekOne was ever going to fill that in from a desk. A salesman who
+     * has just pressed "I have arrived" is standing at the door, which is the
+     * best evidence of where a shop is that this company will ever collect.
+     *
+     * `gps_lat is null` is in the statement rather than only in the branch
+     * above it — the same guard `field_customer_pins` applies for the same
+     * reason. Two visits to one unpinned shop can be in flight at once, and
+     * the second must not move a pin the first has just set. It is also why
+     * this cannot overwrite a real pin under any ordering of syncs.
+     *
+     * NOT the geocoded columns: those are a guess, deliberately kept out of
+     * visit verification, and writing a measurement into them would lose the
+     * distinction the pair exists to keep.
+     */
+    if (pinFromThisCheckIn) {
+      await tx.execute(sql`
+        update customers
+           set gps_lat = ${pinFromThisCheckIn.lat},
+               gps_lng = ${pinFromThisCheckIn.lng},
+               gps_accuracy_m = ${pinFromThisCheckIn.accuracyM},
+               gps_captured_at = now(),
+               updated_at = now()
+         where id = ${customer.id}
+           and gps_lat is null
+      `);
+    }
 
     if (p.journeyPlanStopId) {
       await tx.execute(sql`

@@ -772,6 +772,18 @@ export type VisitRow = {
   checkOutLat: number | null;
   checkOutLng: number | null;
   checkOutAccuracyM: number | null;
+  /**
+   * What the salesman typed to get past a refused check-in, in his own words.
+   *
+   * The server folds it into `unverifiedReason`'s sentence as well, because
+   * that is the column every existing screen reads — this is here so a screen
+   * can show what he actually wrote rather than only what was written about
+   * him, which is the same argument `distanceFromShopM` carries one field up.
+   */
+  checkInOverrideReason: string | null;
+  /** "The shop's pin is wrong" — asked, decided, or never raised. */
+  pinCorrection: "requested" | "accepted" | "rejected" | null;
+  pinCorrectionDecidedAt: Date | null;
 };
 
 /**
@@ -802,7 +814,10 @@ export async function visitsList(day: string): Promise<VisitRow[]> {
            v.check_in_lat as "checkInLat", v.check_in_lng as "checkInLng",
            v.check_in_accuracy_m as "checkInAccuracyM",
            v.check_out_lat as "checkOutLat", v.check_out_lng as "checkOutLng",
-           v.check_out_accuracy_m as "checkOutAccuracyM"
+           v.check_out_accuracy_m as "checkOutAccuracyM",
+           v.check_in_override_reason as "checkInOverrideReason",
+           v.pin_correction::text as "pinCorrection",
+           v.pin_correction_decided_at as "pinCorrectionDecidedAt"
       from mbos_visits v
       join users u on u.id = v.salesman_id
       join customers c on c.id = v.customer_id

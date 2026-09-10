@@ -1862,6 +1862,124 @@ export async function acceptVisit(input: { visitId: string }): Promise<Result> {
 }
 
 /**
+ * "The shop's pin is wrong — move it to where I stood."
+ *
+ * A salesman refused at the door types a sentence, the visit lands unverified
+ * carrying it, and he may ask for the shop's own pin to be corrected. This is
+ * where that is decided, and the decision belongs to a person for one reason:
+ * the handset can already move a pin through `customer_update`, so an override
+ * that moved it on its own would mean one override put the pin wherever
+ * somebody was standing and the radius would never refuse him there again.
+ *
+ * NO COORDINATES ARE PASSED IN. What is being accepted is the check-in fix
+ * already stored on this visit — taking them from the request would let the
+ * screen propose one point and the write land another, and the whole value of
+ * the correction is that it is the reading a manager can see on the row.
+ *
+ * It does NOT touch `verified`. Whether the visit was proved and whether the
+ * book was wrong are two questions: accepting the pin says the shop is where
+ * he said, and standing behind the visit is `acceptVisit`, one action along.
+ * Answering both from one click would move a figure nobody asked about.
+ */
+export async function decidePinCorrection(input: {
+  visitId: string;
+  accept: boolean;
+}): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const [visit] = await db
+      .select({
+        id: mbosVisits.id,
+        customerId: mbosVisits.customerId,
+        pinCorrection: mbosVisits.pinCorrection,
+        checkInLat: mbosVisits.checkInLat,
+        checkInLng: mbosVisits.checkInLng,
+        checkInAccuracyM: mbosVisits.checkInAccuracyM,
+      })
+      .from(mbosVisits)
+      .where(eq(mbosVisits.id, input.visitId))
+      .limit(1);
+    if (!visit) return err("That visit is no longer here.", "not_found");
+    if (visit.pinCorrection !== "requested") {
+      return err(
+        visit.pinCorrection
+          ? "Somebody has already answered this one."
+          : "Nobody asked for this shop's pin to be moved.",
+        "validation",
+      );
+    }
+    if (input.accept && (visit.checkInLat == null || visit.checkInLng == null)) {
+      /* A request raised on a check-in with no fix behind it. The handset
+         cannot produce one — the pin question is only asked after a refusal,
+         and a refusal needs a fix to have been measured — but a payload is
+         not a promise, and moving a pin to nowhere is the one outcome worth
+         refusing outright. */
+      return err(
+        "That check-in carried no location, so there is nothing to move the pin to.",
+        "validation",
+      );
+    }
+
+    const decidedAt = new Date();
+    await db.transaction(async (tx) => {
+      await tx
+        .update(mbosVisits)
+        .set({
+          pinCorrection: input.accept ? "accepted" : "rejected",
+          pinCorrectionDecidedAt: decidedAt,
+          pinCorrectionDecidedById: user.id,
+          updatedById: user.id,
+          updatedAt: decidedAt,
+        })
+        .where(eq(mbosVisits.id, input.visitId));
+
+      if (input.accept) {
+        /* `gps_captured_at` moves with it, because it is a NEW measurement and
+           a screen weighing a pin reads how old it is. Not the geocoded pair:
+           those hold a guess, deliberately kept out of visit verification, and
+           a measurement written into them would lose the distinction. */
+        await tx
+          .update(customers)
+          .set({
+            gpsLat: visit.checkInLat,
+            gpsLng: visit.checkInLng,
+            gpsAccuracyM: visit.checkInAccuracyM,
+            gpsCapturedAt: decidedAt,
+            updatedById: user.id,
+            updatedAt: decidedAt,
+          })
+          .where(eq(customers.id, visit.customerId));
+      }
+    });
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: input.accept ? "mbos.visit.pin.accept" : "mbos.visit.pin.reject",
+      entityType: "customer",
+      entityId: visit.customerId,
+      beforeState: { visitId: input.visitId, pinCorrection: "requested" } as never,
+      afterState: {
+        visitId: input.visitId,
+        pinCorrection: input.accept ? "accepted" : "rejected",
+        gpsLat: input.accept ? visit.checkInLat : undefined,
+        gpsLng: input.accept ? visit.checkInLng : undefined,
+      } as never,
+    });
+
+    refresh();
+    return okVoid(
+      input.accept
+        ? "Moved — the shop now sits where he checked in."
+        : "Left as it is.",
+    );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
  * Asking the salesman about a visit, rather than taking the phone's word for
  * it either way. A required reason, same as archiving a lead: the question
  * has to be a question, not a bare summons.
