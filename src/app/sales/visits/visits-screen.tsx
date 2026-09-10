@@ -22,6 +22,7 @@ import {
   Table,
 } from "../parts";
 import { VISIT_OUTCOME_LABEL, label } from "../words";
+import { travelLine } from "@/lib/mbos/travel-labels";
 
 /**
  * The interactive half of Visits — the table itself is server-rendered data,
@@ -158,7 +159,7 @@ export function VisitsScreen({
         />
       ) : (
         <Table
-          minWidth={1360}
+          minWidth={1510}
           head={
             <>
               <HeadCell width={170}>Salesman</HeadCell>
@@ -167,6 +168,12 @@ export function VisitsScreen({
               <HeadCell align="right" width={80}>Inside</HeadCell>
               <HeadCell align="right" width={110}>From shop</HeadCell>
               <HeadCell width={150}>Outcome</HeadCell>
+              {/* How he got here, and what the journey cost. One column,
+                  because the mode and the distance are one answer — "Bike"
+                  with the kilometres in a column of its own would leave a gap
+                  on every walk, and a gap in a numeric column reads as missing
+                  data rather than as nothing to measure. */}
+              <HeadCell width={150}>Travel</HeadCell>
               <HeadCell align="right" width={80}>Photos</HeadCell>
               <HeadCell align="right" width={130}>Value</HeadCell>
               <HeadCell>State</HeadCell>
@@ -209,6 +216,71 @@ export function VisitsScreen({
                 {v.distanceFromShopM != null ? `${v.distanceFromShopM} m` : <span className="text-muted">—</span>}
               </Cell>
               <Cell>{label(VISIT_OUTCOME_LABEL, v.outcome)}</Cell>
+              <Cell truncate={150}>
+                {v.travelMode ? (
+                  <>
+                    <span>{travelLine({
+                      mode: v.travelMode,
+                      distanceKm: v.travelDistanceKm,
+                      ticketFarePaise: v.travelTicketFarePaise == null ? null : Number(v.travelTicketFarePaise),
+                    })}</span>
+                    {/* The evidence, one click away. A distance nobody can
+                        check is a number a salesman typed about his own
+                        reimbursement — the two photographs are the whole point
+                        of asking for it, and a screen that held them without
+                        showing them would be the write-only attachment problem
+                        this codebase has already had once. */}
+                    {v.travelStartPhotoId || v.travelEndPhotoId || v.travelTicketPhotoId ? (
+                      <span className="mt-0.5 flex gap-2.5 text-[12px]">
+                        {v.travelStartPhotoId ? (
+                          <a
+                            href={`/api/attachments/${v.travelStartPhotoId}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-brand no-underline"
+                            title="The meter when he set off"
+                          >
+                            Start
+                          </a>
+                        ) : null}
+                        {v.travelEndPhotoId ? (
+                          <a
+                            href={`/api/attachments/${v.travelEndPhotoId}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-brand no-underline"
+                            title="The meter when he arrived"
+                          >
+                            End
+                          </a>
+                        ) : null}
+                        {v.travelTicketPhotoId ? (
+                          <a
+                            href={`/api/attachments/${v.travelTicketPhotoId}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-brand no-underline"
+                            title="The ticket he claimed"
+                          >
+                            Ticket
+                          </a>
+                        ) : null}
+                      </span>
+                    ) : null}
+                  </>
+                ) : (
+                  /* NOT a dash. A dash in this column would read as "walked",
+                     and what it actually means is that nobody was asked — the
+                     visit predates travel legs, or came off a handset that
+                     does not ask yet. */
+                  <span className="text-muted" title="This visit was logged without being asked how he travelled — either before travel was recorded at all, or from a handset that has not had the update.">
+                    Not recorded
+                  </span>
+                )}
+              </Cell>
               <Cell align="right">
                 {v.photos || <span className="text-muted">—</span>}
               </Cell>

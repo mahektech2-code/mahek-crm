@@ -59,6 +59,7 @@ export default async function CustomersPage({
         // into a clause that matches nothing, and an empty list reads as a
         // lost book.
         thirdParty: accountTypeParam(one("party")),
+        sort: one("sort"),
         page: Number(one("page") ?? 1) || 1,
         perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
       }),
@@ -104,6 +105,7 @@ export default async function CustomersPage({
         // The validated codes straight through — `,`-separated for more than
         // one. The screen turns codes back into the control's own words.
         accountType: accountTypeParam(one("party")) ?? "",
+        sort: one("sort") ?? "",
         perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
       }}
       pageInfo={{

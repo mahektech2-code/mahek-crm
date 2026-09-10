@@ -35,7 +35,7 @@ export default function Customers() {
   const custQ = useStore((s) => s.custQ);
   const set = useStore((s) => s.set);
   const notify = useStore((s) => s.notify);
-  const beginVisit = useStore((s) => s.beginVisit);
+  const askTravel = useStore((s) => s.askTravel);
   const sheet = useStore((s) => s.sheet);
 
   const [rowMore, setRowMore] = React.useState<Customer | null>(null);
@@ -60,6 +60,9 @@ export default function Customers() {
   const [billerQ, setBillerQ] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [rows, setRows] = React.useState<Customer[]>([]);
+  /* What the book actually holds, from SQLite. The list below is a slice of
+     it and the sentence under the list is the only thing that says so. */
+  const [total, setTotal] = React.useState(0);
   const [today] = React.useState(() => isoDate(new Date()));
 
   /* The search runs in SQLite, not over a list held in memory — the book is a
@@ -70,7 +73,9 @@ export default function Customers() {
     React.useCallback(() => {
       let live = true;
       void listCustomers(custQ).then((r) => {
-        if (live) setRows(r);
+        if (!live) return;
+        setRows(r.rows);
+        setTotal(r.total);
       });
       return () => {
         live = false;
@@ -257,7 +262,8 @@ export default function Customers() {
                   },
                 },
                 { g: 'nav', l: 'Navigate', run: () => notify('Maps to ' + x.name) },
-                { g: 'visit', l: 'Visit', run: () => { beginVisit(x.id); router.push('/visit'); } },
+                /* The travel question comes first — see `TravelGate`. */
+                { g: 'visit', l: 'Visit', run: () => askTravel({ customerId: x.id, customerName: x.name }) },
                 { g: 'order', l: 'Order', run: () => { set({ custId: x.id }); router.push('/order?from=customers'); } },
                 { g: 'dots', l: 'More', run: () => { set({ custId: x.id }); setRowMore(x); } },
               ].map((a) => (
@@ -277,6 +283,20 @@ export default function Customers() {
           );
         })}
       </View>
+
+      {/*
+        What the list is a slice OF.
+        The read is capped — see CUSTOMER_PAGE — because the whole book mounted
+        at once is what stopped this screen answering at all. A capped list
+        that says nothing reports sixty shops on a territory of a thousand, so
+        the sentence names the count and names the way past it, which is the
+        search box at the top of the screen.
+      */}
+      {total > rows.length ? (
+        <Text style={[type.small, { color: C.muted, paddingVertical: 14, textAlign: 'center' }]}>
+          {rows.length + ' of ' + total + ' shops — search for one that is not here'}
+        </Text>
+      ) : null}
 
       {rows.length === 0 ? (
         <Card style={{ marginTop: 8, paddingVertical: 40, paddingHorizontal: 20, alignItems: 'center' }}>

@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import { and, asc, desc, eq, inArray, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, or, sql, type Column, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import {
@@ -21,6 +21,7 @@ import {
   users,
 } from "@/db/schema";
 import { ASSIGNED_TO_SQL, resolveScope, scopedUserIds, scopedToUsers} from "./access-control";
+import { UNASSIGNED_FILTER_VALUE } from "./am-filters";
 import { isManager, requireUser } from "./auth";
 import { getScope } from "./scope";
 import { today as businessToday } from "./recompute";
@@ -429,6 +430,8 @@ export type CustomerListFilters = {
    * than one, validated by `accountTypeParam` before it ever reaches here.
    */
   thirdParty?: string;
+  /** "column:asc" or "column:desc" — see `resolveSort`. Absent sorts by name. */
+  sort?: string;
   page?: number;
   perPage?: number;
 };
@@ -625,15 +628,17 @@ export async function customerFilterClause(
   }
   if (filters.status) where.push(inList(STATUS_LABEL_SQL, filters.status));
   // The same expressions the column renders, so a name picked here always
-  // matches the rows showing that name.
+  // matches the rows showing that name. `inListOrUnassigned` rather than
+  // `inList`: these three are the only filters whose column can be NULL, and
+  // `=`/`in` never match NULL — a picked "Unassigned" needs its own clause.
   if (filters.salesAm) {
-    where.push(inList(SALES_AM_NAME_SQL, filters.salesAm));
+    where.push(inListOrUnassigned(SALES_AM_NAME_SQL, filters.salesAm));
   }
   if (filters.salesManager) {
-    where.push(inList(SALES_MANAGER_NAME_SQL, filters.salesManager));
+    where.push(inListOrUnassigned(SALES_MANAGER_NAME_SQL, filters.salesManager));
   }
   if (filters.backOfficeAm) {
-    where.push(inList(BACK_OFFICE_AM_NAME_SQL, filters.backOfficeAm));
+    where.push(inListOrUnassigned(BACK_OFFICE_AM_NAME_SQL, filters.backOfficeAm));
   }
   if (filters.thirdParty) {
     // Several of these are structurally different queries, not different
@@ -670,6 +675,49 @@ export function inList(expr: SQL, commaSeparated: string): SQL {
     values.map((v) => sql`${v}`),
     sql`, `,
   )})`;
+}
+
+/**
+ * Like `inList`, but for the three AM filters, whose expression coalesces to
+ * NULL when nobody holds the seat. `UNASSIGNED_FILTER_VALUE` is pulled out of
+ * the picked values and turned into its own `is null`, then OR'd with an
+ * `inList` over whatever real names are left — so "Unassigned" can be picked
+ * on its own or alongside actual people without either clause losing rows the
+ * other should have matched.
+ */
+export function inListOrUnassigned(expr: SQL, commaSeparated: string): SQL {
+  const values = splitMulti(commaSeparated);
+  const named = values.filter((v) => v !== UNASSIGNED_FILTER_VALUE);
+  const wantsUnassigned = named.length !== values.length;
+
+  const namedClause = named.length ? inList(expr, named.join(",")) : undefined;
+  const unassignedClause = wantsUnassigned ? sql`${expr} is null` : undefined;
+
+  if (namedClause && unassignedClause) return sql`(${or(namedClause, unassignedClause)})`;
+  return namedClause ?? unassignedClause ?? sql`false`;
+}
+
+/**
+ * A clickable column header, everywhere one exists: "column:asc" or
+ * "column:desc" in the URL, turned into an ORDER BY against a fixed map of
+ * sortable columns for that table. Unknown or missing input falls back to
+ * `fallback` at "asc" — a stale `?sort=` from before a column was renamed, or
+ * simply no sort picked yet, must read as the table's ordinary order rather
+ * than throwing or silently returning nothing.
+ *
+ * The map, not a bare column name from the URL, decides what CAN be sorted —
+ * `?sort=password_hash:asc` must not become a real ORDER BY on a column
+ * nobody offered.
+ */
+export function resolveSort<T extends string>(
+  columns: Record<T, SQL | Column>,
+  sort: string | undefined,
+  fallback: T,
+): SQL {
+  const [rawColumn, rawDirection] = (sort ?? "").split(":");
+  const column = (rawColumn && rawColumn in columns ? rawColumn : fallback) as T;
+  const direction = rawDirection === "desc" ? "desc" : "asc";
+  return direction === "desc" ? desc(columns[column]) : asc(columns[column]);
 }
 
 /** One account-type filter's own clause — the value `customerFilterClause` used to inline directly. */
@@ -712,6 +760,15 @@ function thirdPartyClause(value: string): SQL {
       return sql`false`;
   }
 }
+
+/** What the Customers list may be sorted by, and the expression each reads. */
+const CUSTOMER_SORT_COLUMNS = {
+  name: customers.name,
+  status: STATUS_LABEL_SQL,
+  outstanding: customers.outstanding,
+  lastOrder: customers.lastOrderDate,
+  city: customers.city,
+} satisfies Record<string, SQL | Column>;
 
 export async function listCustomersPage(
   filters: CustomerListFilters = {},
@@ -822,7 +879,7 @@ export async function listCustomersPage(
     .from(customers)
     .leftJoin(users, eq(users.id, customers.ownerId))
     .where(clause)
-    .orderBy(asc(customers.name))
+    .orderBy(resolveSort(CUSTOMER_SORT_COLUMNS, filters.sort, "name"))
     .limit(perPage)
     .offset((page - 1) * perPage);
 
@@ -1451,6 +1508,10 @@ export type DayActivity = Awaited<ReturnType<typeof eodMetricsFor>> & {
   connectRate: number;
 };
 
+// Numeric only. `noOrderReasons` and `promisedCustomers` are arrays, and
+// `+=` on an array is JavaScript coercing it to a string, not summing it —
+// they are merged separately in `rangeActivity`, the same way
+// `aggregateTeamEod` in the EOD engine already has to.
 const ZERO_METRICS = () => ({
   callsAttempted: 0,
   callsConnected: 0,
@@ -1461,6 +1522,8 @@ const ZERO_METRICS = () => ({
   ordersCaptured: 0,
   ordersCount: 0,
   ordersValue: 0,
+  ordersBoxes: 0,
+  ordersLooseCans: 0,
   followUpsMade: 0,
   promisesCount: 0,
   promisesValue: 0,
@@ -1470,6 +1533,13 @@ const ZERO_METRICS = () => ({
   remindersCarriedForward: 0,
   complaintsLogged: 0,
   whatsappSent: 0,
+  noOrderCount: 0,
+  queueAssigned: 0,
+  highPriorityPending: 0,
+  paymentAssigned: 0,
+  paymentCallsMade: 0,
+  paymentWaSent: 0,
+  paymentActioned: 0,
   targetAchieved: 0,
   targetAmount: 0,
 });
@@ -1497,17 +1567,29 @@ export async function rangeActivity(
   userId: string | null,
   range: DateRange,
 ): Promise<DayActivity> {
-  const metrics = userId
-    ? await eodMetricsForRange(userId, range)
-    : (
-        await Promise.all(
-          (await listTeam()).map((u) => eodMetricsForRange(u.id, range)),
-        )
-      ).reduce((acc, m) => {
-        for (const k of Object.keys(acc) as Array<keyof typeof acc>)
-          acc[k] += m[k];
-        return acc;
-      }, ZERO_METRICS());
+  const perPerson = userId
+    ? [await eodMetricsForRange(userId, range)]
+    : await Promise.all((await listTeam()).map((u) => eodMetricsForRange(u.id, range)));
+
+  const numeric = perPerson.reduce((acc, m) => {
+    for (const k of Object.keys(acc) as Array<keyof typeof acc>) acc[k] += m[k];
+    return acc;
+  }, ZERO_METRICS());
+
+  const noOrderReasons: Array<{ label: string; count: number }> = [];
+  for (const m of perPerson) {
+    for (const reason of m.noOrderReasons) {
+      const existing = noOrderReasons.find((x) => x.label === reason.label);
+      if (existing) existing.count += reason.count;
+      else noOrderReasons.push({ ...reason });
+    }
+  }
+
+  const metrics = {
+    ...numeric,
+    noOrderReasons,
+    promisedCustomers: perPerson.flatMap((m) => m.promisedCustomers),
+  };
 
   return {
     ...metrics,

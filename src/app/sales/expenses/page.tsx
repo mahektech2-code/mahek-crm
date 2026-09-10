@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { money, shortDate } from "@/lib/format";
+import { clock, money, shortDate } from "@/lib/format";
+import { travelModeLabel } from "@/lib/mbos/travel-labels";
 import { getConfig } from "@/lib/config/store";
 import { expenseClaims } from "@/lib/services/sales-service";
 import { Decide } from "../decide";
@@ -163,6 +164,26 @@ export default async function Page({
                 <Cell>{shortDate(e.expenseDate)}</Cell>
                 <Cell truncate={300}>
                   {e.remarks ?? <span className="text-muted">Nothing written</span>}
+                  {/*
+                    WHAT KIND OF CLAIM THIS IS, said before the approver
+                    decides. A fare lifted off a ticket at a shop door arrives
+                    with the shop, the time and the mode behind it; one typed
+                    on the Expenses screen has the bill photograph and nothing
+                    else. They need different questions asked of them, and the
+                    two were indistinguishable in this column until the origin
+                    was stored as a fact rather than left to be guessed from
+                    whatever the salesman happened to write in the remarks.
+                  */}
+                  {e.source === "travel_ticket" ? (
+                    <span className="block truncate text-[12px] text-muted">
+                      Ticket on a {travelModeLabel(e.travelMode).toLowerCase()} journey
+                      {e.travelCustomerName ? ` to ${e.travelCustomerName}` : ""}
+                      {/* Coerced: `db.execute` returns timestamps as strings
+                          whatever the row type says, and `clock` calls
+                          `getTime()` on what it is given. */}
+                      {e.travelDepartedAt ? ` · set off ${clock(new Date(e.travelDepartedAt))}` : ""}
+                    </span>
+                  ) : null}
                   {e.decisionNote ? (
                     <span className="block truncate text-[12px] text-muted">
                       “{e.decisionNote}”

@@ -5,7 +5,6 @@ import { db } from "@/db";
 import {
   customers,
   mbosApprovals,
-  mbosLeads,
   mbosSamples,
   mbosTasks,
   mbosVisits,
@@ -151,29 +150,35 @@ export async function ageLeads(): Promise<Counted> {
   const staleDays = config["mbos.leads.staleDays"];
   const archiveDays = config["mbos.leads.archiveDays"];
 
+  /* ONE LEAD, so this sweeps `customers`. "Not converted" is `kind = 'lead'`
+     now rather than a null pointer to a second row: a won lead has become the
+     customer, and archiving one for going quiet would file away an account
+     that is actively buying. */
   const archived = await db
-    .update(mbosLeads)
-    .set({ archived: true, archivedAt: new Date(), updatedAt: new Date() })
+    .update(customers)
+    .set({ leadArchived: true, leadArchivedAt: new Date(), updatedAt: new Date() })
     .where(
       and(
-        isNull(mbosLeads.convertedCustomerId),
-        eq(mbosLeads.archived, false),
-        lt(mbosLeads.lastActivityDate, sql`${TODAY} - ${archiveDays}::int`),
+        eq(customers.kind, "lead"),
+        isNotNull(customers.leadStage),
+        eq(customers.leadArchived, false),
+        lt(customers.leadLastActivityDate, sql`${TODAY} - ${archiveDays}::int`),
       ),
     )
-    .returning({ id: mbosLeads.id });
+    .returning({ id: customers.id });
 
   /* Counted rather than written: `stage` is the salesperson's own reading of
      the lead, and overwriting "Negotiation" with a staleness flag would lose
      what they knew. The threshold surfaces them; it does not relabel them. */
   const [stale] = await db
     .select({ n: sql<number>`count(*)::int` })
-    .from(mbosLeads)
+    .from(customers)
     .where(
       and(
-        isNull(mbosLeads.convertedCustomerId),
-        eq(mbosLeads.archived, false),
-        lt(mbosLeads.lastActivityDate, sql`${TODAY} - ${staleDays}::int`),
+        eq(customers.kind, "lead"),
+        isNotNull(customers.leadStage),
+        eq(customers.leadArchived, false),
+        lt(customers.leadLastActivityDate, sql`${TODAY} - ${staleDays}::int`),
       ),
     );
 

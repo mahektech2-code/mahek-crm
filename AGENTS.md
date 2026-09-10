@@ -50,6 +50,15 @@ npm run jobs -- revert-sheet-paid --dry-run
                            # what a default-settled run wrote over the Payment
                            # Status tab's word, and what undoing it gives back
 npm run jobs -- revert-sheet-paid          # undo it, then rebuild the caches
+npm run jobs -- customer-master-sync        # the EMP 2.0 shop master -> staging
+npm run jobs -- customer-master-project --dry-run
+                           # what the shop master would create, writing nothing
+npm run jobs -- customer-master-project    # publish it into customers
+npm run jobs:prod:sheets -- customer-master-sync
+                           # the same against prod: .env.local FIRST for the
+                           # Google credentials, .env.prod.local SECOND so its
+                           # DATABASE_URL wins. Reversed, a "prod" job writes
+                           # to the local database and reports success.
 npm run hrms:sync    # pull the employee sheet now
 npm run app:grant -- hrms vikram@mahek.in   # give somebody an app
 npm run catalogue:parse    # regenerate the product master from the document
@@ -320,6 +329,9 @@ src/
     catalogue-seed.ts      the product master, GENERATED from the document
   lib/
     apps.ts                the MahekOne app registry
+    mbos/travel-labels.ts  the six travel modes and their words — PURE and
+                           client-safe, and a CLOSED vocabulary: what each mode
+                           costs is configuration, which modes exist is not
     account-types.ts       direct customer / lead / third-party customer, their
                            filter and their labels — PURE, read by both lists
                            and both list pages
@@ -943,6 +955,83 @@ configured window first.
 everywhere. A failed upload leaves the complaint, call or follow-up intact and
 the message says how many files made it — never all-or-nothing, and never a
 lost call because a photograph did not upload.
+
+**THE ATTENDANCE SELFIE IS THE ONE EXCEPTION, and it is not an attachment.**
+Every MBOS check-in and every check-out takes a front-facing photograph inside
+the app, there is no path through `src/data/attendance.ts` that writes a
+session end without one, and the camera screen's only two exits are the
+photograph and abandoning the action. That reverses the rule above for exactly
+one file, on the reasoning the rule itself rests on: everything else here is a
+photograph OF something attached to a record that stands without it, and this
+one IS the record. An attendance mark on its own is a claim that somebody was
+somewhere at a time; the photograph is the only part of it that is evidence.
+Skippable — which is how it shipped, under a button reading "Start the day
+without a photo" — the two kinds of day were indistinguishable afterwards:
+some proved something, some proved nothing, and nothing on the record said
+which. The GPS fix is still never required, still recorded as missing when it
+is missing, and the day still starts outside the geofence with the reason
+asked for afterwards. A refused camera permission is therefore a real dead
+end, and the screen says so in words rather than working around itself.
+
+**A selfie is required PER SESSION, at BOTH ends.** A day is
+`[{ inAt, outAt }]` — a salesman breaks for lunch or comes out again in the
+evening — so "a selfie at check-in" would have meant one photograph covering
+three separate arrivals. `resumeDay` passed `selfieMediaId: null` and
+check-out took no photograph at all, so a day proved that somebody arrived
+once and proved nothing whatever about when they stopped, which is the half
+that decides the hours. Both are now required BY THE TYPE rather than by the
+screen: `checkIn` and `checkOut` take a non-nullable id, because a screen that
+forgets to ask is a screen and a parameter that cannot be omitted is the rule.
+Each session carries `inSelfieId` and `outSelfieId`, and the day-level
+`check_in_selfie_id`/`check_out_selfie_id` are the first-in and last-out
+mirrors, exactly as `check_in_at` and `check_out_at` already are.
+
+**THE SERVER HAD NO SESSIONS, so a day of three arrived as one pair.** The
+handset has modelled a day as a list since its own v2 migration and
+`mbos_attendance_days` kept two timestamps — so 9-to-1 plus 2-to-6 reached the
+office as nine hours on the record that feeds a payslip, with the break
+invisible. It is a `jsonb` column now, stored as the handset reports it and
+NOT a cache: rebuilding it from the two marks is precisely the loss it exists
+to prevent. It is also the only place N photographs can live, since a day with
+two breaks carries six.
+
+**A check-in is never refused because a photograph is still uploading.** Media
+is a separate queue that syncs AFTER its parent — that is the whole point of
+it — so an attendance row routinely names a file whose bytes are still on the
+phone, and the two selfie columns are foreign keys onto `attachments`. A key
+does not care about the reason: it would reject the check-in over a file in
+transit. So the id is written to those columns only once the attachment row
+exists, the handset re-sends as its media queue drains, and the `sessions`
+list holds every id from the first pass regardless — the mark is never lost to
+the ordering of an upload.
+
+**EVERY FIELD PHOTOGRAPH WAS BEING DELETED BY THE NIGHTLY JOB.** The worst bug
+in the subsystem and the quietest: `storeMbosMedia` never wrote `parent_type`
+or `parent_id`. The handset has sent both on every upload since it was
+written; the route read an `entityId` nothing sends, and the action dropped
+even that. So every selfie, cheque, bill and shop front landed in
+`attachments` with a null parent — and `sweepOrphans`, which runs nightly,
+selects exactly that (`parent_id is null` past
+`attachments.orphanCleanupHours`, 24 by default), removes the bytes from
+storage and marks the row removed. A photograph taken on Monday was gone on
+Tuesday. Until then it was readable by its uploader alone, because `canRead`
+falls back to "unbound and still the uploader's own" — so no manager had ever
+been able to open one either. The enum values (`mbos_visit`,
+`mbos_attendance`, …) had been declared a migration early with a comment
+saying they were used by nothing "yet"; nothing ever went back for them.
+`MBOS_PARENTS` is the mapping, an unrecognised name parents nothing rather
+than guessing, and the sweep still removes what genuinely belongs to nothing.
+
+**An attendance selfie has no customer behind it, and answered 404 to
+everybody.** The second half of the same story. `customerBehind` falls through
+to `calls` for any parent type it does not name, so an attendance id was
+looked up among calls, found nothing, and every read was refused — to the
+salesman in the photograph and to the manager it exists for. Who may open one
+is asked in `canReadAttendanceSelfie`: the person in it, and whoever can see
+his attendance, which is `managerScope` — the Sales Dashboard's own narrowing
+rather than a second opinion about it. Not "anybody holding the field app": a
+salesman must not be able to fetch a colleague's photograph by id, and these
+ids travel in payloads.
 
 **Removing an attachment is a status, not a delete.** It detaches from the
 parent and moves to `removed`; the bytes go only when retention says so. A
@@ -2130,6 +2219,51 @@ because the form that writes them runs in the browser and the service that
 reads them is `server-only`. `bug_reports` is the empty table this replaced —
 nothing writes to it; do not start.
 
+**A SHOP MASTER IS NOT AN ORDER HISTORY, so the kind is read off evidence.**
+The EMP 2.0 workbook's `Customer Details` tab is 5,292 shops and the only
+place a phone number for any of them exists — the Activity tab has twelve
+columns and not one is a contact detail, and the GPS pin export beside it
+carries `CustomerPhone1..3` with exactly one of 6,525 filled. What it does NOT
+carry is a single order, so `kind` cannot be read off it. It is decided from
+evidence of a purchase in the Activity log: a Payment Collection visit (you do
+not collect money from a prospect), the old app's own Stage 0/4/5 labels, or a
+High/Medium/Low Value rating. None of those is a LEAD, which is what a lead
+already means — an account that has never ordered. Every verdict is stored on
+the staging row WITH its reasons, because "why is this one a customer" is asked
+months later about one row, and re-running the rule then answers a question
+about today.
+
+**It writes neither `third_party` nor `active_in_order_system`, and that is the
+whole point of both rules.** The first is a person's judgement plus a named
+distributor and the schema says no import may set it; the second was cleared
+once already by `0021` after an import muted the entire book. The evidence for
+a third-party mark is kept in staging for whoever decides. `owner_id` is left
+null too: on five thousand rows it would be whoever ran the import, and every
+scoped list would read as their book — unassigned is said in words on a team
+list, a false owner is not said at all.
+
+**`Deactive` is the one status an import may write, because it is a decision.**
+`customers.status` is derived by `recomputeInactivity`, and the single value
+that engine never touches is `deactivated` — deactivation is a human decision.
+The sheet's `Deactive` is exactly that decision, made in the old app, so it
+maps straight through while everything else is left at `active` for the engine
+to move.
+
+**And it does not write `sales_person_name`, though the sheet names one.**
+`recomputeSalesPeople` rewrites that column nightly from the PARTY sheet for
+every customer without `am_decided_at`, INCLUDING back to null where the party
+sheet is silent — which it is for all 5,292 of these. Writing the name would
+last until the next nightly. Setting `am_decided_at` to protect it would be a
+lie, since no person decided anything, and would freeze both manager seats
+against a future sync as a side effect. The name stays on the staging row.
+
+**A number that is on 919 shops is a placeholder, and it is found by counting
+rather than by a literal.** The export carries one syntactically perfect Indian
+mobile on 952 rows; every validity check passes it. `flagSharedMobiles` marks
+any number on three or more shops — two is an ordinary proprietor with two
+counters — because the next export will use a different placeholder and a
+number written into the code would silently stop catching it.
+
 **The employee master is a mirror, and mirrors do not get edited.** HRMS reads
 the workbook's `Employee Details` tab and nothing on its screens can be
 changed, because HR maintains that sheet and a field edited here would be
@@ -2225,6 +2359,73 @@ rate that was withdrawn has to disappear, and a per-row upsert leaves it behind
 — an order priced from a rate nobody sells at. It is a few hundred rows of three
 columns; a delta would save nothing worth the way it fails.
 
+**THE HANDSET'S SCHEMA IS THE WIRE CONTRACT, and one extra column empties the
+phone.** `applyPull` upserts a pulled row by writing exactly the columns that
+arrived — `INSERT INTO customers (<every key in the payload>)` — so a field the
+server knows about and the handset has no place for throws on an unknown
+column. It is ONE transaction, so that throw rolls back the whole pull: not the
+customers, the pull. Products, the price list, the timeline, the journey, the
+configuration, all of it. Seven of the ten pulled tables disagreed —
+`customersForDevice` alone sent eleven columns that had nowhere to land — so no
+MBOS handset had ever received a single row of reference data, on any build,
+since the app shipped. What made it invisible is that everything a salesman
+AUTHORS goes up perfectly: check-ins, visits, orders, the trail and the Live
+map all worked, and only the book was empty.
+
+**And the second half of the silence was in the sign-in.** `signIn` applies the
+bootstrap inside the same `try` that wraps the network call, so the SQLite
+error fell to a catch that reads "not an `ApiError`, therefore no answer at
+all" and went down the OFFLINE path — which succeeds, because
+`rememberForOffline` ran three lines earlier. The salesman was signed in
+against an empty database with nothing on the screen to say so. A local
+storage failure is now its own answer: `payload`, the fifth of the five checks
+that screen already names.
+
+**So the payload is trimmed to the handset, never the handset widened to the
+payload.** An APK cannot be recalled — the server has to be able to move first,
+and a phone in somebody's pocket cannot. `upsert` drops a column this build
+does not know about rather than refusing the row, which is the same trade in
+the other direction: a field the screens cannot read costs nothing, and
+refusing it costs the book. `src/lib/mbos-wire.test.ts` reads both files as
+text and pins it, because nothing else can — the server's SQL is a string, the
+handset's schema is a string in a project `tsconfig.json` excludes, and the two
+are joined only inside a phone. It type-checks, it lints, the integration tests
+pass, and it is wrong.
+
+**A HAND-ROLLED HANDLER CANNOT THROW, and that is the trap rather than the
+safety.** Three tables — `tasks`, `leads`, `samples` — are written by a handler
+that types its column list out, because none of them is the same word twice on
+the two sides: `companyName` is `company`, a lower-case `won` is `Converted`,
+one note field is a list, and a sample's `state` is not on the wire at all. A
+typed list cannot fail on an unknown column, so a field the handler READS and
+the server never sends is simply `undefined` — and the `ON CONFLICT` clause
+then writes that NULL over whatever was there. `upsertTasks` read
+`completionNote`, `completionPhotoId` and `escalatedAt`, none of which were on
+the wire, so every pull erased the note and the photograph off any task the
+salesman had completed. Nothing failed, nothing logged, and the loss looked
+like the salesman never wrote one.
+
+**Leads and samples are the two OWNED tables with an office end, so a pull may
+not overwrite what the outbox still holds.** They were on the bootstrap from
+the day it was written, on no delta at all, and applied nowhere — so a lead
+raised at a desk reached the phone only on a fresh sign-in, and in practice
+never. They come down on every pass now, like `journeyStops` and `tasks`, and
+they land under `where syncState = 'synced'`: a queued row is one this handset
+has said something about and the office has not heard yet, so the local answer
+is the newer fact and it stands until it is sent. The note list is written on
+INSERT only, because it is APPENDED to locally and the wire carries one
+flattened string — restating it every pass would replace a salesman's own notes
+with the office's rendering of them.
+
+**And a date off the wire is not an instant until something names the
+midnight.** The fourth spelling of the rule, in JavaScript on a handset:
+`Date.parse('2026-09-08')` is specified to read a date-only string as UTC, so a
+`requestedDate` lands five and a half hours before the day it names. It is
+invisible in IST, where it still formats to the right date, and wrong the
+moment anything compares it to a local day boundary. `localInstant` spells a
+date as local midnight and leaves a full ISO instant alone, because that one
+carries its own zone.
+
 **A parameter is a string, not a Date.** `postgres` serialises a JS Date by
 asking Node to measure it as text, and on Node 25 that throws — inside the
 driver, where no type check sees it. Every query in the MBOS pull delta carried
@@ -2232,6 +2433,29 @@ the cursor, so every one of them failed and the whole pull answered 500 the
 moment a handset had a cursor; bootstrap passes no Date at all, which is exactly
 why sign-in worked and syncing after it did not. An ISO instant carries its own
 zone, so this is not the bare-cast rule in different clothes.
+
+**A NUMBER SUBTRACTED FROM A DATE NEEDS ITS TYPE SAID OUT LOUD, and this one
+took the whole delta down again.** Same endpoint, same 500, a different cause,
+and it outlived the fix above: `p.plan_date >= (now() at time zone $tz)::date -
+$days`. `$days` is a bind parameter and an untyped parameter beside a date lets
+Postgres resolve the subtraction as `date - date` — which yields an integer, so
+`date >= integer` has no operator and the query throws. `buildPull` ran two of
+these inside its `Promise.all`, so the rejection took every other channel with
+it: the journey, the customers, the products, the tasks, the price list, all of
+it, on every pull from a handset holding a cursor. Which is every pull after
+sign-in, because the bootstrap is what issues the first one. `::int` on the
+parameter is the whole fix and `planDaysFor` is the one copy of it.
+
+**And NOTHING HAD EVER EXECUTED `buildPull`** — that is why both of these
+lived there. The wire test reads the file as TEXT to compare column names
+against the handset's schema, which is a real check and cannot see a query that
+throws; `buildBootstrap` was exercised and the delta was not. Correct columns
+in a query nothing runs is exactly the state it was in for both bugs. There is
+a test in `activity-location.test.ts` that RUNS the delta with a cursor now,
+asserts every channel the handset applies came back as an array, and puts a
+real plan day and stop through it. Its point is not the date arithmetic: it is
+that the next query which only fails at the database fails there rather than on
+a phone in Nagpur.
 
 **And it came back, in the order handler, where it failed differently.**
 `handleOrder` bound `orderedAt` — a Date — into both `update customers set
@@ -2564,6 +2788,119 @@ MahekOne sets no monthly target for a field salesman and a figure with nothing
 to be computed from would be an invention on the one screen where a wrong number
 is least forgivable.
 
+**HOW HE GOT TO THE SHOP IS ASKED BEFORE THE VISIT, and "Start visit" now
+means "I am setting off".** Pressing it opens `TravelGate` — six modes, and
+two of them open a camera — and the visit screen stays LOCKED behind an "I
+have arrived" step until he says he is there. That reversal is the point:
+starting the dwell clock at the tap would count the ride as time in the shop,
+which is the one number the dwell check exists to be honest about. `mbos.travel.odometerModes` and
+`mbos.travel.ticketModes` decide what each mode costs, because a company that
+stops reimbursing car mileage should be able to say so without a release; the
+six modes THEMSELVES are a closed vocabulary in `lib/mbos/travel-labels.ts`,
+since each names a different kind of evidence and a seventh typed into a
+settings screen would arrive with no rule at all and behave silently like
+walking — the mode that proves nothing.
+
+**A LEG IS ITS OWN TABLE because it begins before the visit exists.** The
+visit row is written on the way out of the shop; `mbos_travel_legs` opens when
+he sets off, half an hour and twenty-three kilometres earlier, and "in
+between" is exactly the state the departure photograph is evidence of. A leg
+can also end in NO VISIT — he arrives, the shutter is down, he goes home — and
+the journey still happened and is still owed for, so `visit_id` is nullable in
+both of its meanings. `mbos_visits.travel_leg_id` is the same link from the
+other end and carries no foreign key deliberately: the leg is always the older
+row but may still be in an outbox when the visit lands, and a constraint would
+refuse the visit over the sync ORDER of the thing it is describing. On the
+handset it is an owned table, which is what makes "travelling" survive Android
+reaping the app on the road — a flag in memory would be gone by the time he
+arrived, with the departure photograph already taken and nothing to attach it
+to.
+
+**THE ODOMETER IS THE SECOND EXCEPTION to "a save is never blocked by an
+attachment", and it is the same argument as the attendance selfie.** That rule
+holds because a complaint photograph, a cheque and a shop front are pictures
+OF something attached to a record that stands without them. These two are not
+attached to the mileage claim — they ARE it: a distance with no photographs
+either side is a number a salesman typed about his own reimbursement. So the
+ids are in the SIGNATURES of `depart` and `arrive`, the only ways out of
+`OdometerCamera` are the photograph-plus-reading and abandoning the whole
+action, and a refused camera permission is a stated dead end. The READING and
+the PHOTOGRAPH are both required and are not redundant: two photographs cannot
+be subtracted, and a figure with no picture behind it cannot be checked by
+anybody who was not there.
+
+**It is our own camera, unlike every other rear-facing photograph.**
+`selfie-camera.tsx` argues that only the selfie should be ours, and every word
+of that still holds — it just does not decide this one, because this screen is
+not asking for a photograph. It is asking for a NUMBER with the photograph as
+its proof, and the two have to be one act. Handed to the system camera they
+become two: MBOS goes to the background where a battery manager reaps it, and
+the digits get typed against an image nobody is looking at any more.
+
+**The reading is refused while he is still at the meter, which is the only
+moment it can be.** An arrival below the departure is a digit dropped from the
+front, not a meter running backwards; a distance above
+`mbos.travel.maxLegKilometres` is a typo, not a long day. Both are checked in
+`lib/travel.ts` on the handset and AGAIN in `handleTravelLeg`, because a
+mileage claim is money and a check that lives only in an interface is not a
+check. A second arrival is IGNORED rather than applied — the outbox retries, so
+the same arrival lands twice and that is harmless, but a different second
+reading overwriting the first would move what somebody is paid.
+
+**A journey called off is abandoned with a reason, never deleted.** The meter
+has already moved, so deleting the leg would leave the next departure's
+reading with nothing to follow on from — a gap with no sentence against it,
+which is the pattern an audit stops on. Setting off for a second shop before
+arriving at the first abandons the first automatically and says so, because
+one open leg per person is a partial unique index at both ends rather than a
+rule in a service the next writer will not know about.
+
+**A BUS TICKET IS THE OPPOSITE AND STAYS OPTIONAL FOR EVER.** It is a scrap of
+paper that gets lost between the seat and the shop door, and refusing the
+journey over one would mean refusing to record a journey that happened. Saving
+a bus or train visit offers it; skipping is offered in words — the fare is
+still claimable on Expenses, where the ones he skipped are listed — so nobody
+skips it believing the money is gone. Attaching it writes a real
+`mbos_expenses` row through `claimExpense`, the SAME path, caps, bill rule and
+approval queue the Expenses screen uses, because a second way to record
+spending that never reached the claim queue would be a way to spend money
+nobody ever pays back. Over the cap flags it and never refuses it, exactly as
+everywhere else: the money is spent, and refusing to record it does not unspend
+it.
+
+**A claim says where it came from, and that is a column.**
+`mbos_expenses.source` is `manual` or `travel_ticket`, with `travel_leg_id`
+beside it. Two things read it. An approver needs to know which question to
+ask — a typed claim needs its bill checked, a ticketed leg already has the
+ticket, the shop, the time and an odometer either side — and the salesman needs
+to be told he has already claimed this fare, because otherwise the honest thing
+he does next is type it in again. One fare per journey is a partial unique
+index, and `handleExpense` asks the question FIRST and answers a duplicate as a
+rejection: a constraint violation comes out of the driver as `Failed query`,
+which is reported as a RETRY, and the outbox would resend the duplicate for
+ever with nothing on either end naming the cause.
+
+**The photographs are evidence about the SALESMAN, not about the customer.**
+So `canRead` does not fall through to the shop's scope, though a leg names one:
+read that way, a telecaller holding that shop's book could open a colleague's
+expense evidence. It is `canReadTravelLegPhoto` — the man in the saddle, and
+whoever holds the `sales` grant AND has him inside `managerScope`. The grant is
+asked FIRST and is not optional: `managerScope` answers "national, sees
+everybody" for anybody with no row in `mbos_manager_territories`, which is
+every plain salesman, so falling straight through to it would let one salesman
+fetch another's mileage by id. A test asserts a colleague is refused, and it
+failed the first time it was written.
+
+**The office sees journeys that produced nothing.** The visits list can only
+show legs that ended in a visit, and the ones that did not are what a manager
+most needs — so `/sales/visits` carries a Travel section reading
+`travelLegsForDay` and `travelTotalsForDay`. Kilometres and fares sit side by
+side and are never added: one is a distance on somebody's own vehicle and the
+other is money handed over. A metered leg with no distance is COUNTED as
+unmeasured rather than skipped — a total that quietly dropped those would fall
+through the day and rise again at night, which reads as a bug rather than as a
+queue.
+
 **Tracking runs between the check-in and the check-out and not one second either
 side.** A track that carried on after the day was closed would be following
 somebody home. The handset takes a fix every few minutes and posts batches to
@@ -2572,6 +2909,81 @@ hundred, worth nothing alone, and queueing them ahead of the visit behind them
 on a 2G connection buys nothing. `mbos.location.trackWhileWorking` is checked in
 the route as well as on the handset, because a hidden control is not a disabled
 feature.
+
+**And the fix is judged against the SESSION IT BELONGS TO, not against today.**
+That sentence used to be enforced by asking whether the sender is checked in
+right now, which is a different question. A batch is a queue catching up — its
+fixes were taken hours or days before they arrive — and any CLOSED day refused
+the whole batch, while `markMissedCheckouts` closes a forgotten day at the last
+position it can see. So a handset that lost its trail at eight in the morning
+had its day closed at eight in the morning, and every fix it took afterwards was
+then refused BECAUSE the day was closed, on the strength of a closing time that
+existed only because the fixes were missing. The route reads the attendance rows
+the batch actually spans and keeps a fix that falls inside one, however late it
+arrives. The privacy rule is unchanged and only now actually holds.
+
+**A batch with no session to file it against is KEPT, not dropped.** The handset
+deletes what it sends on any `ok`, so `ok: true, stored: 0` is an instruction to
+forget — and answering that to a batch whose check-in is still in the outbox
+destroys a morning to win a race by thirty seconds. `no-session-yet` is the one
+answer that means hold on to them, and the handset drops them itself after a
+week, because a queue that only ever grows is the other way to lose a day.
+
+**A POSITION IS ITS READING, and an id that is not derived from one is a
+duplicate generator.** Every fix was stored under a fresh `randomUUID()`, so
+`INSERT OR IGNORE` on the handset had nothing to ignore ON and neither did
+`onConflictDoNothing` here. Android redelivers a batch of deferred locations
+whenever the background task does not complete — which is every time the OS
+reaps the process — and each redelivery became new rows at both ends:
+production reached 33,000 rows for 4,000 real fixes, one of them ninety-three
+times across ninety-two separate uploads. The id is `at|lat|lng` now and
+`mbos_positions_fix_key` is the guard that does not depend on which build is in
+somebody's pocket.
+
+**A QUEUE DRAINED OLDEST-FIRST, ONE BATCH AT A TIME, CANNOT CATCH UP.** `flush()`
+sent exactly one batch of five hundred per sync tick, and the sync tick is a
+`setInterval` that only runs with the app open. That is ample at a fix every
+fifteen minutes and hopeless at the rate duplication actually produced: a phone
+uploaded three thousand rows in a day and moved its trail forward by three
+minutes of the PREVIOUS evening, while its owner walked a full beat. Nothing was
+lost and nothing looked broken — the uploads succeeded, the data connection was
+fine, and the Live map simply showed where somebody had been the night before.
+`flush()` loops until the queue is short now. The lesson is the general one: a
+drain whose rate is fixed and whose fill rate is not is a queue that reports
+success all the way down.
+
+**`timeInterval` NEVER REACHES ANDROID, and no error says so.** expo-location
+declares it `Long?` and reads it out of the task's persisted options with
+`map["timeInterval"] as? Long` — but task options are stored as JSON, so
+`org.json` hands back a boxed `Integer` and a strict `as?` yields null. The
+override is skipped in silence and `Accuracy.Balanced`'s own fallback of
+**3000 ms** stands. `distanceInterval` is declared `Int?` and survives the same
+round trip, which is why the parameter nobody meant to be load-bearing was the
+only one arriving. Production ran at a median gap of exactly 3.0 seconds for
+three days on a setting that asked for five minutes — a hundred times the fixes,
+a hundred times the battery, and a queue that could never drain. The cadence is
+enforced in `trail.ts` where no cast can lose it; `deferredUpdatesInterval` is
+set beside it because it is read with a coercing `getLong` and does arrive, and
+it is the battery half rather than the authority — expo bypasses it outright
+while the app is in the foreground.
+
+**A fix that is not KEPT is still REMEMBERED.** The trail wants one point every
+few minutes; `whereNow()` wants the freshest reading there is, and throttling it
+would age the position on every order and payment by the whole cadence.
+
+**Nothing restarts tracking except a check-in, and that is not enough.**
+`trail.start()` was called from two places, both a check-in, so once Android tore
+the location service down — which the battery managers on the handsets this team
+carries do routinely — nothing ever put it back. It is silent on both ends: the
+salesman sees a normal app, the office sees a Live map that simply stops. One
+salesman checked in at ten past midnight and produced no fixes at all until he
+happened to open the app at a quarter to eight that evening. `BootProvider` now
+restarts it on boot and on every resume where the LOCAL attendance row still has
+an open session — local, because a trail that only restarted where there was a
+connection would be off for exactly the part of a beat worth recording. Starting
+is idempotent and asks the OS whether it is already following before starting
+anything, because restarting the service is itself what replays a batch of
+deferred fixes.
 
 **Every activity is logged with where it was done, and it is written in ONE
 place.** Four MBOS tables carried a coordinate and twenty-three did not, so an

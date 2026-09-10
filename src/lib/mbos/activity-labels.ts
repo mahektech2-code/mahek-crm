@@ -27,6 +27,7 @@ const LABELS: Record<string, string> = {
   leave: "Leave request",
   plan_day: "Day agreed",
   plan_stops: "Shops picked",
+  travel_leg: "Journey to a shop",
 };
 
 export function activityLabel(entityType: string): string {

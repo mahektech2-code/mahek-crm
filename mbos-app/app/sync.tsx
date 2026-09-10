@@ -51,6 +51,9 @@ const KIND: Record<string, string> = {
   sample: 'Sample',
   complaint: 'Complaint',
   expense: 'Expense',
+  /* A journey to a shop. Named rather than left to the fallback, which would
+     print `travel_leg` to a salesman looking at his own outbox. */
+  travel_leg: 'Journey',
   leave: 'Leave',
   lead: 'Lead',
   approval: 'Approval',

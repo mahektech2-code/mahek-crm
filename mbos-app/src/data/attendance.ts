@@ -11,11 +11,30 @@ import * as trail from '../sync/trail';
 /**
  * Attendance.
  *
- * The rule that governs the whole module: **check-in is never blocked**. A
- * salesman outside the permitted radius is offered the field-visit override,
- * which records the override and tells his manager, and the day starts. A
- * salesman who cannot mark attendance cannot work, and an app that stops him
- * is an app the company stops using.
+ * **Check-in is never blocked BY A LOCATION.** A salesman outside the
+ * permitted radius is offered the field-visit override, which records the
+ * override and tells his manager, and the day starts. A missing or poor GPS
+ * fix is recorded as missing and the day starts. A salesman who cannot mark
+ * attendance cannot work, and an app that stops him is an app the company
+ * stops using.
+ *
+ * **The SELFIE is the exception, and it is deliberate.** Every check-in and
+ * every check-out takes one, and there is no path through this module that
+ * writes a session end without one. It is the one thing here that is not an
+ * attachment to a record — it IS the record, because the mark on its own is
+ * only a claim that somebody was somewhere at a time, and the photograph is
+ * the only part of it that is evidence. Skippable, the two kinds of day were
+ * indistinguishable afterwards: some proved something, some proved nothing,
+ * and nothing on the record said which. See `selfie-camera.tsx` for the whole
+ * argument and for what the dead end looks like when the camera is refused.
+ *
+ * **So a selfie is required PER SESSION, at both ends.** A day is
+ * `[{ inAt, outAt }]` and a salesman breaks for lunch, so "a selfie at
+ * check-in" would mean one photograph covering three separate arrivals. Each
+ * session carries `inSelfieId` and `outSelfieId`; the day-level
+ * `checkInSelfieId` and `checkOutSelfieId` mirror the FIRST in and the LAST
+ * out, exactly as `checkInAt` and `checkOutAt` already do, because that is
+ * what the screens read.
  */
 
 export type AttendanceDay = {
@@ -25,6 +44,9 @@ export type AttendanceDay = {
   /** First in and last out of the day. Hours are NOT computed from these. */
   checkInAt: number | null;
   checkOutAt: number | null;
+  /** The first in and last out SELFIES, mirroring the two marks above. */
+  checkInSelfieId: string | null;
+  checkOutSelfieId: string | null;
   checkInLat: number | null;
   checkInLng: number | null;
   withinRadius: number | null;
@@ -32,13 +54,27 @@ export type AttendanceDay = {
   overrideReason: string | null;
   workedMinutes: number | null;
   status: string | null;
-  /** JSON `[{ inAt, outAt }]`, oldest first, at most one open. */
+  /** JSON `[{ inAt, outAt, inSelfieId, outSelfieId }]`, oldest first, at most one open. */
   sessions: string | null;
   syncState: string;
 };
 
-/** One stretch of work. `outAt` null means it is still running. */
-export type Session = { inAt: number; outAt: number | null };
+/**
+ * One stretch of work. `outAt` null means it is still running.
+ *
+ * The two selfie ids are `media_queue` ids at first and `attachments` ids on
+ * the server — the same id either side, because the handset mints it. They are
+ * OPTIONAL on the type and required by every path that writes one: sessions
+ * recorded before the photograph was mandatory have none, and a type that
+ * refused to describe them would make the history unreadable rather than
+ * making the old days compliant.
+ */
+export type Session = {
+  inAt: number;
+  outAt: number | null;
+  inSelfieId?: string | null;
+  outSelfieId?: string | null;
+};
 
 export function sessionsOf(row: Pick<AttendanceDay, 'sessions'> | null): Session[] {
   if (!row?.sessions) return [];
@@ -112,7 +148,16 @@ export async function todayRow(userId: string): Promise<AttendanceDay | null> {
 export async function checkIn(args: {
   userId: string;
   fix: Fix | null;
-  selfieMediaId: string | null;
+  /**
+   * REQUIRED, and required by the type rather than by the screen.
+   *
+   * `resumeDay` used to pass null here and the second check-in of a day went
+   * unphotographed — a hole exactly where the record is least verifiable,
+   * since the afternoon session is the one nobody watched begin. A screen that
+   * forgets to ask is a screen; a parameter that cannot be omitted is the
+   * rule.
+   */
+  selfieMediaId: string;
   homeLocation?: { lat: number; lng: number } | null;
   overrideReason?: string | null;
 }): Promise<{ id: string; withinRadius: boolean | null; needsOverride: boolean }> {
@@ -134,11 +179,17 @@ export async function checkIn(args: {
       /* Already running. Checking in twice is a slip, not a second day. */
       return { id: existing.id, withinRadius, needsOverride: false };
     }
-    sessions.push({ inAt: Date.now(), outAt: null });
+    sessions.push({ inAt: Date.now(), outAt: null, inSelfieId: args.selfieMediaId });
     await run('UPDATE attendance_days SET sessions = ?, checkOutAt = NULL WHERE id = ?', [
       JSON.stringify(sessions),
       existing.id,
     ]);
+    /* The photograph belongs to this day's row. It was queued against
+       `'pending'` before the row was known — the ordinary
+       attachment-before-its-parent pattern — and only the FIRST check-in ever
+       bound it, so every afternoon selfie stayed parented to a string, which
+       is what the nightly orphan sweep deletes. */
+    await bindSelfie(args.selfieMediaId, existing.id);
     await enqueue({
       entityType: 'attendance',
       entityId: existing.id,
@@ -146,7 +197,16 @@ export async function checkIn(args: {
       /* `day` is on every attendance payload, update as well as create: the
          server keys one row per person per day off it, so an update without
          it names nothing. PROTOCOL.md §4.1. */
-      payload: { id: existing.id, day, sessions, resumedAt: Date.now() },
+      payload: {
+        id: existing.id,
+        day,
+        sessions,
+        resumedAt: Date.now(),
+        /* Every session and both of its photographs, so the office holds the
+           same list this handset does rather than a first-and-last summary of
+           it. */
+        selfieId: sessions[0]?.inSelfieId ?? undefined,
+      },
     });
     /* Back from lunch: the trail starts again with the session it belongs to.
        It was stopped at the check-out, and an afternoon with no line on the map
@@ -158,7 +218,7 @@ export async function checkIn(args: {
   const base = await stamp('att');
   const needsOverride = withinRadius === false && !args.overrideReason;
 
-  const opened: Session[] = [{ inAt: Date.now(), outAt: null }];
+  const opened: Session[] = [{ inAt: Date.now(), outAt: null, inSelfieId: args.selfieMediaId }];
 
   await run(
     `INSERT INTO attendance_days (id, userId, day, checkInAt, checkInLat, checkInLng, checkInAccuracyM,
@@ -174,9 +234,7 @@ export async function checkIn(args: {
     ],
   );
 
-  if (args.selfieMediaId) {
-    await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [base.id, args.selfieMediaId]);
-  }
+  await bindSelfie(args.selfieMediaId, base.id);
 
   await enqueue({
     entityType: 'attendance',
@@ -189,7 +247,8 @@ export async function checkIn(args: {
       checkInLat: args.fix?.lat ?? undefined,
       checkInLng: args.fix?.lng ?? undefined,
       checkInAccuracyM: args.fix?.accuracyM ?? undefined,
-      selfieId: args.selfieMediaId ?? undefined,
+      selfieId: args.selfieMediaId,
+      sessions: opened,
       /* `withinRadius` here, `withinGeofence` there — the same question about
          the same fix, asked in two vocabularies, and the answer was landing
          nowhere. A check-in outside the radius is never blocked; it is marked,
@@ -242,6 +301,15 @@ export async function setOverrideReason(id: string, reason: string): Promise<voi
 export async function checkOut(
   userId: string,
   fix: Fix | null,
+  /**
+   * REQUIRED, like the one on `checkIn` and for the same reason.
+   *
+   * Check-out took no photograph at all before this — so a day proved that
+   * somebody arrived and proved nothing whatever about when they stopped,
+   * which is the half that decides the hours. The type is what enforces it:
+   * this function has two callers and one of them is a screen.
+   */
+  selfieMediaId: string,
 ): Promise<{ ok: boolean; workedMinutes: number; reason?: string }> {
   const row = await todayRow(userId);
   if (!row) return { ok: false, workedMinutes: 0, reason: 'The day has not been started yet.' };
@@ -254,6 +322,8 @@ export async function checkOut(
 
   const at = Date.now();
   open.outAt = at;
+  open.outSelfieId = selfieMediaId;
+  await bindSelfie(selfieMediaId, row.id);
 
   const halfDay = await getConfig<number>('mbos.attendance.halfDayHours', 4);
   const fullDay = await getConfig<number>('mbos.attendance.fullDayHours', 8);
@@ -273,9 +343,15 @@ export async function checkOut(
 
   await run(
     `UPDATE attendance_days
-        SET sessions = ?, checkOutAt = ?, checkOutLat = ?, checkOutLng = ?, workedMinutes = ?, status = ?
+        SET sessions = ?, checkOutAt = ?, checkOutLat = ?, checkOutLng = ?,
+            checkOutSelfieId = ?, workedMinutes = ?, status = ?
       WHERE id = ?`,
-    [JSON.stringify(sessions), at, fix?.lat ?? null, fix?.lng ?? null, worked, verdict.status, row.id],
+    [
+      JSON.stringify(sessions), at, fix?.lat ?? null, fix?.lng ?? null,
+      /* The LAST out's photograph, mirroring `checkOutAt` beside it. The
+         per-session ids are the record; this is what a screen reads. */
+      selfieMediaId, worked, verdict.status, row.id,
+    ],
   );
 
   await enqueue({
@@ -290,6 +366,7 @@ export async function checkOut(
       checkOutAccuracyM: fix?.accuracyM ?? undefined,
       sessions,
       checkOutAt: at,
+      checkOutSelfieId: selfieMediaId,
       /* `workedMinutes` and `status` go for the record's own sake and the
          server ignores both: they are DERIVED there, rebuilt from the two
          marks, and a handset that could type them could type a full day onto
@@ -304,6 +381,23 @@ export async function checkOut(
   void trail.stop();
 
   return { ok: true, workedMinutes: worked };
+}
+
+/**
+ * Point a queued selfie at the attendance row it belongs to.
+ *
+ * Every selfie is queued against the literal `'pending'` before the row it
+ * belongs to is known — a photograph is taken, compressed and written to the
+ * media queue while the person is still looking at the preview, and the row id
+ * does not exist until they accept it. That is the ordinary
+ * attachment-before-its-parent pattern in this app, and the price of it is
+ * that something has to bind the parent afterwards. Only the first check-in
+ * of a day ever did, so an afternoon selfie stayed parented to a string
+ * literal — which is precisely what `sweepOrphans` deletes after the
+ * configured window. One function, called by all three writers.
+ */
+async function bindSelfie(mediaId: string, attendanceId: string): Promise<void> {
+  await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [attendanceId, mediaId]);
 }
 
 /** Is the day running right now? Drives which button Home shows. */

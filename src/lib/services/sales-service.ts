@@ -636,6 +636,21 @@ export type VisitRow = {
   checkOutLat: number | null;
   checkOutLng: number | null;
   checkOutAccuracyM: number | null;
+  /**
+   * How he got here, and what it cost.
+   *
+   * All five are null on every visit recorded before travel legs existed and
+   * on any taken by a handset that has not had the update — which is why the
+   * screen says "not recorded" rather than drawing a dash that reads like a
+   * walk. `travelDistanceKm` is null again on a bus or a train, where there is
+   * a fare instead of a distance and neither stands in for the other.
+   */
+  travelMode: string | null;
+  travelDistanceKm: number | null;
+  travelTicketFarePaise: number | null;
+  travelStartPhotoId: string | null;
+  travelEndPhotoId: string | null;
+  travelTicketPhotoId: string | null;
 };
 
 /**
@@ -666,15 +681,166 @@ export async function visitsList(day: string): Promise<VisitRow[]> {
            v.check_in_lat as "checkInLat", v.check_in_lng as "checkInLng",
            v.check_in_accuracy_m as "checkInAccuracyM",
            v.check_out_lat as "checkOutLat", v.check_out_lng as "checkOutLng",
-           v.check_out_accuracy_m as "checkOutAccuracyM"
+           v.check_out_accuracy_m as "checkOutAccuracyM",
+           tl.mode::text as "travelMode", tl.distance_km as "travelDistanceKm",
+           tl.ticket_fare_paise as "travelTicketFarePaise",
+           tl.start_odometer_photo_id as "travelStartPhotoId",
+           tl.end_odometer_photo_id as "travelEndPhotoId",
+           tl.ticket_photo_id as "travelTicketPhotoId"
       from mbos_visits v
       join users u on u.id = v.salesman_id
       join customers c on c.id = v.customer_id
+      /* LEFT, and it always will be. Every visit taken before travel legs
+         existed has no leg, and an inner join would silently empty this
+         screen of the entire history the day it shipped. */
+      left join mbos_travel_legs tl on tl.id = v.travel_leg_id
      where (v.check_in_at ${IST_DAY})::date = ${day}::date
        ${onlyMine(scope, "u.id")}
      order by v.check_in_at desc nulls last
      limit 400
   `) as unknown as VisitRow[];
+}
+
+
+/* ═════════════════════════════════════════════════════════ travel legs */
+
+export type TravelLegRow = {
+  id: string;
+  salesmanId: string;
+  salesmanName: string;
+  initials: string;
+  customerId: string;
+  customerName: string;
+  mode: string;
+  departedAt: Date | null;
+  arrivedAt: Date | null;
+  travelSeconds: number | null;
+  startOdometerKm: number | null;
+  endOdometerKm: number | null;
+  distanceKm: number | null;
+  startPhotoId: string | null;
+  endPhotoId: string | null;
+  ticketPhotoId: string | null;
+  ticketFarePaise: number | null;
+  ticketExpenseId: string | null;
+  /** Null where the journey produced no visit — see `state`. */
+  visitId: string | null;
+  abandonedAt: Date | null;
+  abandonReason: string | null;
+};
+
+/**
+ * Every journey on a day, whatever came of it.
+ *
+ * This is deliberately NOT a column on the visits list, though the visits list
+ * carries the mode too. The two answer different questions and the difference
+ * between them is the whole reason this exists: the visits list can only show
+ * journeys that ended in a visit, and the journeys that did NOT are the ones
+ * worth a manager's minute. A salesman who set off for a shop, arrived, found
+ * the shutter down and went home travelled twenty-three kilometres the company
+ * owes him for, and on a screen built out of visits he did nothing that
+ * morning at all.
+ *
+ * A leg still running is listed too. It is the ordinary state at any moment in
+ * a working day, and hiding it until it closed would make the live view lag
+ * the field by however long the drive takes.
+ */
+export async function travelLegsForDay(day: string): Promise<TravelLegRow[]> {
+  const scope = await managerScope();
+  return db.execute<TravelLegRow>(sql`
+    select tl.id, tl.user_id as "salesmanId", u.name as "salesmanName", u.initials,
+           tl.customer_id as "customerId", c.name as "customerName",
+           tl.mode::text as mode,
+           tl.departed_at as "departedAt", tl.arrived_at as "arrivedAt",
+           /* Only where both ends exist. A leg still running has no duration —
+              it has an elapsed time, which is a different thing and belongs to
+              the clock rather than to the record. */
+           case when tl.arrived_at is not null
+                then extract(epoch from (tl.arrived_at - tl.departed_at))::int
+           end as "travelSeconds",
+           tl.start_odometer_km as "startOdometerKm",
+           tl.end_odometer_km as "endOdometerKm",
+           tl.distance_km as "distanceKm",
+           tl.start_odometer_photo_id as "startPhotoId",
+           tl.end_odometer_photo_id as "endPhotoId",
+           tl.ticket_photo_id as "ticketPhotoId",
+           tl.ticket_fare_paise as "ticketFarePaise",
+           tl.ticket_expense_id as "ticketExpenseId",
+           tl.visit_id as "visitId",
+           tl.abandoned_at as "abandonedAt", tl.abandon_reason as "abandonReason"
+      from mbos_travel_legs tl
+      join users u on u.id = tl.user_id
+      join customers c on c.id = tl.customer_id
+     /* Dated from when he SET OFF, not from when he arrived. A leg begun at
+        ten to midnight belongs to the day it was begun on, and dating it from
+        the arrival would move it across the boundary and out of the day whose
+        odometer readings it sits between. */
+     where (tl.departed_at ${IST_DAY})::date = ${day}::date
+       ${onlyMine(scope, "tl.user_id")}
+     order by tl.departed_at desc
+     limit 400
+  `) as unknown as TravelLegRow[];
+}
+
+export type TravelTotals = {
+  salesmanId: string;
+  salesmanName: string;
+  initials: string;
+  legs: number;
+  /**
+   * Kilometres on his OWN vehicle, which is the only figure anybody is paid
+   * on. A bus ride contributes nothing here and its fare is counted beside it
+   * — adding the two would produce a number that is neither a distance nor an
+   * amount.
+   */
+  ownVehicleKm: number;
+  ticketPaise: number;
+  /**
+   * Journeys with a mode that should have been measured and were not, and
+   * ones called off. Counted rather than hidden: a total with a silent hole in
+   * it is worse than one that says how big the hole is.
+   */
+  unmeasured: number;
+  abandoned: number;
+};
+
+/**
+ * What each person travelled on a day, for the strip above the list.
+ *
+ * `unmeasured` is the honest half of this. A bike leg with no distance means
+ * the arrival never closed — he is still out, or the second reading never
+ * synced — and a total that quietly skipped those would fall as the day went
+ * on and rise again at night, which reads as a bug rather than as a queue.
+ */
+export async function travelTotalsForDay(day: string): Promise<TravelTotals[]> {
+  const scope = await managerScope();
+  /* Which modes SHOULD have been measured is configuration, not a literal in
+     this query — a company that stops reimbursing car mileage takes it off
+     the setting, and a list written out here would go on counting every car
+     journey as a hole in the figures. */
+  const { getConfig } = await import("../config/store");
+  const config = await getConfig();
+  const measured = config["mbos.travel.odometerModes"] as string[];
+  const measuredList = measured.length ? measured : ["__none__"];
+
+  return db.execute<TravelTotals>(sql`
+    select tl.user_id as "salesmanId", u.name as "salesmanName", u.initials,
+           count(*)::int as legs,
+           coalesce(sum(tl.distance_km), 0)::int as "ownVehicleKm",
+           coalesce(sum(tl.ticket_fare_paise), 0)::bigint as "ticketPaise",
+           count(*) filter (
+             where tl.mode::text in (${sql.join(measuredList.map((m) => sql`${m}`), sql`, `)})
+               and tl.distance_km is null
+               and tl.abandoned_at is null
+           )::int as unmeasured,
+           count(*) filter (where tl.abandoned_at is not null)::int as abandoned
+      from mbos_travel_legs tl
+      join users u on u.id = tl.user_id
+     where (tl.departed_at ${IST_DAY})::date = ${day}::date
+       ${onlyMine(scope, "tl.user_id")}
+     group by tl.user_id, u.name, u.initials
+     order by "ownVehicleKm" desc
+  `) as unknown as TravelTotals[];
 }
 
 /* ═════════════════════════════════════ field activity backfill (historical) */
@@ -853,28 +1019,44 @@ export type LeadRow = {
   customerOutstandingPaise: number | null;
 };
 
+/*
+ * ONE LEAD, so this reads `customers`.
+ *
+ * The screen shows anything that has ever been a lead — `lead_stage is not
+ * null` — rather than `kind = 'lead'`. Winning one now moves `kind` to
+ * `customer` on the SAME row, and filtering on the kind would drop it out of
+ * the funnel at the moment it succeeded, which is the one band a manager most
+ * wants to see. The stage survives the conversion; `lead_converted_at` is what
+ * says it happened.
+ *
+ * The customer-health columns used to come from a join to the converted
+ * record. There is no second record now, so they are this row's own, shown
+ * only once it has actually been won — an unconverted lead would otherwise
+ * report the column defaults as though they were a health reading.
+ */
 const LEAD_ROW_SELECT = sql`
-    select l.id, l.name, l.company_name as "companyName", l.mobile, l.city, l.area,
-           l.source::text as source,
-           l.estimated_potential_paise as "estimatedPotentialPaise",
-           l.stage::text as stage,
-           l.assigned_to_user_id as "salesmanId",
+    select c.id, c.name, c.company_name as "companyName", c.phone as mobile,
+           c.city, c.area,
+           c.lead_source as source,
+           c.lead_estimated_potential_paise as "estimatedPotentialPaise",
+           c.lead_stage::text as stage,
+           c.owner_id as "salesmanId",
            u.name as "salesmanName", u.initials,
-           l.next_follow_up_date::text as "nextFollowUpDate",
-           l.last_activity_date::text as "lastActivityDate",
-           l.notes,
-           (l.gps_lat is not null and l.gps_lng is not null) as "hasGps",
-           l.server_created_at as "createdAt",
-           l.archived,
-           l.archived_at as "archivedAt",
-           l.lost_reason as "lostReason",
-           l.converted_customer_id as "convertedCustomerId",
-           l.converted_at as "convertedAt",
-           c2.health_score as "customerHealthScore",
-           c2.status::text as "customerStatus",
-           c2.last_order_date::text as "customerLastOrderDate",
-           c2.cycle_days as "customerCycleDays",
-           c2.outstanding as "customerOutstandingPaise"
+           c.lead_next_follow_up_date::text as "nextFollowUpDate",
+           c.lead_last_activity_date::text as "lastActivityDate",
+           c.lead_notes as notes,
+           (c.gps_lat is not null and c.gps_lng is not null) as "hasGps",
+           c.created_at as "createdAt",
+           c.lead_archived as archived,
+           c.lead_archived_at as "archivedAt",
+           c.lead_lost_reason as "lostReason",
+           case when c.lead_converted_at is not null then c.id end as "convertedCustomerId",
+           c.lead_converted_at as "convertedAt",
+           case when c.lead_converted_at is not null then c.health_score end as "customerHealthScore",
+           case when c.lead_converted_at is not null then c.status::text end as "customerStatus",
+           case when c.lead_converted_at is not null then c.last_order_date::text end as "customerLastOrderDate",
+           case when c.lead_converted_at is not null then c.cycle_days end as "customerCycleDays",
+           case when c.lead_converted_at is not null then c.outstanding end as "customerOutstandingPaise"
 `;
 
 /** Prospects each salesman is working, and how long since anybody touched one. */
@@ -882,14 +1064,14 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
   const scope = await managerScope();
   return db.execute<LeadRow>(sql`
     ${LEAD_ROW_SELECT},
-           coalesce(${day}::date - l.last_activity_date, 0)::int as "quietDays",
-           (${day}::date - (l.server_created_at ${IST_DAY})::date)::int as "ageDays"
-      from mbos_leads l
-      left join users u on u.id = l.assigned_to_user_id
-      left join customers c2 on c2.id = l.converted_customer_id
-     where l.archived = false
-       ${onlyMine(scope, "l.assigned_to_user_id")}
-     order by l.next_follow_up_date asc nulls last, l.last_activity_date asc nulls last
+           coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
+           (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
+      from customers c
+      left join users u on u.id = c.owner_id
+     where c.lead_stage is not null
+       and c.lead_archived = false
+       ${onlyMine(scope, "c.owner_id")}
+     order by c.lead_next_follow_up_date asc nulls last, c.lead_last_activity_date asc nulls last
      limit 400
   `) as unknown as LeadRow[];
 }
@@ -907,14 +1089,14 @@ export async function archivedLeadsList(day: string): Promise<LeadRow[]> {
   const scope = await managerScope();
   return db.execute<LeadRow>(sql`
     ${LEAD_ROW_SELECT},
-           coalesce(${day}::date - l.last_activity_date, 0)::int as "quietDays",
-           (${day}::date - (l.server_created_at ${IST_DAY})::date)::int as "ageDays"
-      from mbos_leads l
-      left join users u on u.id = l.assigned_to_user_id
-      left join customers c2 on c2.id = l.converted_customer_id
-     where l.archived = true
-       ${onlyMine(scope, "l.assigned_to_user_id")}
-     order by l.archived_at desc nulls last
+           coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
+           (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
+      from customers c
+      left join users u on u.id = c.owner_id
+     where c.lead_stage is not null
+       and c.lead_archived = true
+       ${onlyMine(scope, "c.owner_id")}
+     order by c.lead_archived_at desc nulls last
      limit 400
   `) as unknown as LeadRow[];
 }
@@ -924,9 +1106,10 @@ export async function archivedLeadsCount(): Promise<number> {
   const scope = await managerScope();
   const rows = await db.execute<{ n: number }>(sql`
     select count(*)::int as n
-      from mbos_leads l
-     where l.archived = true
-       ${onlyMine(scope, "l.assigned_to_user_id")}
+      from customers c
+     where c.lead_stage is not null
+       and c.lead_archived = true
+       ${onlyMine(scope, "c.owner_id")}
   `);
   return Number(rows[0]?.n ?? 0);
 }
@@ -1384,6 +1567,21 @@ export type ExpenseRow = {
   decisionNote: string | null;
   /** What this person has already claimed in the same category this month. */
   monthToDatePaise: number;
+  /**
+   * WHERE THE CLAIM CAME FROM, which decides what an approver has to check.
+   *
+   * `manual` is somebody typing it on the Expenses screen and the bill
+   * photograph is the whole of the evidence. `travel_ticket` is a fare lifted
+   * off a ticket at a shop door, and it arrives with far more behind it — the
+   * shop, the time, the mode, and on a metered leg an odometer either side. An
+   * approver who cannot tell the two apart asks the same question of both, and
+   * the second question is the wrong one.
+   */
+  source: string;
+  travelLegId: string | null;
+  travelCustomerName: string | null;
+  travelMode: string | null;
+  travelDepartedAt: Date | null;
 };
 
 /**
@@ -1410,9 +1608,19 @@ export async function expenseClaims(): Promise<ExpenseRow[]> {
                       where e2.user_id = e.user_id
                         and e2.category = e.category
                         and date_trunc('month', e2.expense_date) =
-                            date_trunc('month', e.expense_date)), 0) as "monthToDatePaise"
+                            date_trunc('month', e.expense_date)), 0) as "monthToDatePaise",
+           e.source::text as source, e.travel_leg_id as "travelLegId",
+           tc.name as "travelCustomerName", tl.mode::text as "travelMode",
+           tl.departed_at as "travelDepartedAt"
       from mbos_expenses e
       join users u on u.id = e.user_id
+      /* LEFT, and doubly so: almost every claim has no journey behind it, and
+         one that does may still name a customer that has since been removed
+         from the book. Either inner join would drop real claims off the
+         approver's queue, which is the one screen where a missing row is
+         money nobody ever pays back. */
+      left join mbos_travel_legs tl on tl.id = e.travel_leg_id
+      left join customers tc on tc.id = tl.customer_id
       left join mbos_approvals ap
              on ap.subject_id = e.id and ap.type = 'expense_claim'
      where true ${onlyMine(scope, "e.user_id")}
@@ -2827,13 +3035,14 @@ export async function salesmanRecord(
          order by s.requested_date desc nulls last limit ${limit}
       `),
       db.execute(sql`
-        select l.id, l.name, l.company_name as "companyName", l.mobile, l.city,
-               l.stage::text as stage,
-               l.next_follow_up_date::text as "nextFollowUpDate",
-               l.last_activity_date::text as "lastActivityDate"
-          from mbos_leads l
-         where l.assigned_to_user_id = ${userId} and l.archived = false
-         order by l.last_activity_date desc nulls last limit ${limit}
+        select c.id, c.name, c.company_name as "companyName", c.phone as mobile, c.city,
+               c.lead_stage::text as stage,
+               c.lead_next_follow_up_date::text as "nextFollowUpDate",
+               c.lead_last_activity_date::text as "lastActivityDate"
+          from customers c
+         where c.owner_id = ${userId} and c.lead_stage is not null
+           and c.lead_archived = false
+         order by c.lead_last_activity_date desc nulls last limit ${limit}
       `),
       db.execute(sql`
         select t.id, t.title, t.priority::text as priority,

@@ -71,7 +71,35 @@ export async function signIn(args: {
        the book, the catalogue and the configuration real before the first
        screen renders. */
     args.onStep?.('payload');
-    await applyPull(out.bootstrap);
+    try {
+      await applyPull(out.bootstrap);
+    } catch (e) {
+      /*
+       * STORAGE SAID NO, and that is not the same as the network saying
+       * nothing.
+       *
+       * It used to fall out of this try into the catch below, where it is not
+       * an `ApiError`, so it was read as "no answer at all" and sent down the
+       * offline path — which SUCCEEDS, because the password was remembered
+       * three lines ago. The salesman was signed in against an empty database
+       * with nothing on the screen, and every screen after it was correct
+       * about having no data. That is what an empty book on a working handset
+       * looked like from the outside for as long as the payload and this
+       * schema disagreed about a single column.
+       *
+       * `payload` is the fifth of the five checks this screen already names.
+       * Failing there says which one went wrong, and the sign-in is not
+       * recorded as offline when the server plainly answered.
+       */
+      return {
+        ok: false,
+        step: 'payload',
+        message:
+          e instanceof Error && e.message
+            ? `Signed in, but the day's data could not be saved on this phone: ${e.message}`
+            : "Signed in, but the day's data could not be saved on this phone.",
+      };
+    }
 
     return { ok: true, session, offline: false };
   } catch (e) {

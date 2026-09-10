@@ -20,7 +20,7 @@
  *   conflict.
  */
 
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 14;
 
 /**
  * Every statement is idempotent, and migrations are applied in order by
@@ -827,6 +827,182 @@ export const MIGRATIONS: string[][] = [
       lastSyncedAt INTEGER NOT NULL DEFAULT 0
     );`,
   ],
+
+  /* ---- v11 · a position is its reading, so a redelivery is not a new row -- */
+  [
+    /*
+     * The trail queue had `id TEXT PRIMARY KEY` and nothing else unique, and
+     * every id was a fresh UUID — so `INSERT OR IGNORE` had nothing to ignore
+     * on. Android redelivers a batch of deferred locations whenever the task
+     * does not complete, and each redelivery became a new row: production
+     * carried 33,000 rows for 4,000 real fixes, one of them ninety-three times.
+     *
+     * The duplicates are collapsed FIRST — a unique index cannot be created
+     * over a table that already violates it, and a migration that throws here
+     * would leave the handset stuck on v10 for ever. `MIN(rowid)` keeps the
+     * copy that arrived first, which is the one already ordered against its
+     * neighbours.
+     *
+     * This is also what unblocks the phones in the field: the queue is drained
+     * OLDEST FIRST, so a backlog of duplicates is what stood between a
+     * salesman's current position and the Live map. Collapsing it here means
+     * the next flush sends today rather than the day before last, without
+     * anybody being asked to do anything.
+     */
+    `DELETE FROM positions
+      WHERE rowid NOT IN (SELECT MIN(rowid) FROM positions GROUP BY at, lat, lng);`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_fix ON positions(at, lat, lng);`,
+  ],
+
+  /* ---- v12 · the column every accepted plan_day was written to ----------- */
+  [
+    /*
+     * `setEntityState` writes `serverCreatedAt` on ACCEPT, for whatever table
+     * the entity type maps to — and an accept always carries a
+     * `serverReceivedAt`, so that branch is not the exception, it is the
+     * ordinary path. Thirteen of the fourteen tables in `ENTITY_TABLE` have
+     * the column. `journey_days` did not, so agreeing a day threw
+     * `no such column: serverCreatedAt` INSIDE the push loop — after the queue
+     * row had already been marked synced and before the rest of the batch or
+     * the pull had been applied. The results behind it stayed `syncing`, the
+     * whole delta was discarded, and the day itself was left reading
+     * "waiting for signal" for ever with the answer already on the server.
+     *
+     * Nothing writes a plan day's own `createdAt` — the office owns the row —
+     * so this is only ever the office's acknowledgement, which is exactly what
+     * the column means everywhere else.
+     */
+    `ALTER TABLE journey_days ADD COLUMN serverCreatedAt INTEGER;`,
+    /*
+     * WHICH shops were picked, as well as how many.
+     *
+     * `pickShops` writes the count and enqueues the ids, and `pickedFor` read
+     * them back out of `journey_stops` — which the office mints, so they
+     * arrive on the next pull and not before. Reopening the pick screen in
+     * between showed nothing ticked at all, on a screen whose own comment
+     * promises that reopening it is a correction rather than starting again.
+     * Twelve shops chosen in a shop doorway, gone the moment somebody backed
+     * out to check the date.
+     *
+     * The stops still WIN wherever they exist: this is what was asked for and
+     * they are what the office issued, and the second is the one to walk.
+     */
+    `ALTER TABLE journey_days ADD COLUMN pickedIds TEXT;`,
+  ],
+
+  /* ---- v13 · the check-OUT selfie, which had nowhere to go ---------------- */
+  [
+    /*
+     * Attendance took a photograph at one end of the day.
+     *
+     * `checkInSelfieId` has existed since v1 and there was no counterpart, so
+     * a day proved somebody arrived and proved nothing about when they
+     * stopped — which is the half that decides the hours. Both are now
+     * mandatory and this is where the last one lands.
+     *
+     * The MIRROR, not the record. Every session in `sessions` carries its own
+     * `inSelfieId` and `outSelfieId` — a day is three arrivals and three
+     * departures on a day with two breaks, and each of the six is photographed
+     * — and these two columns hold the first in and the last out, exactly as
+     * `checkInAt` and `checkOutAt` already do beside them. Screens read the
+     * mirrors; anybody auditing a session reads the list.
+     */
+    `ALTER TABLE attendance_days ADD COLUMN checkOutSelfieId TEXT;`,
+  ],
+
+  /* ---- v14 · how he got to the shop -------------------------------------- */
+  [
+    /*
+     * ONE JOURNEY TO ONE SHOP, and its own table rather than columns on
+     * `visits`.
+     *
+     * The reason that decides it: a leg BEGINS BEFORE THE VISIT EXISTS. The
+     * visit row is written when he saves it, on the way out of the shop; this
+     * row opens when he sets off, half an hour and twenty-three kilometres
+     * earlier — and the whole point of the departure photograph is that it was
+     * taken before the journey rather than reconstructed after it. Columns on
+     * `visits` would have nowhere to live in between, and "in between" is the
+     * state being photographed.
+     *
+     * A leg can also end in NO VISIT and that is not an error. He arrives, the
+     * shutter is down, he goes home; the fuel is spent and the company owes
+     * him for it. `visitId` is nullable and stays that way.
+     *
+     * It is an OWNED table — see `OWNED_TABLES` — so a sync never deletes from
+     * it, and an open leg survives the app being killed, which is the only
+     * thing that makes "travelling" a state rather than a screen.
+     */
+    `CREATE TABLE IF NOT EXISTS travel_legs (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      customerId TEXT NOT NULL,
+      /* Denormalised on purpose. The journey screen names the shop he is
+         travelling to while the book is being re-pulled underneath him, and a
+         join that briefly finds nothing would blank the one line on the
+         screen that says where he is going. */
+      customerName TEXT,
+      journeyStopId TEXT,
+      visitId TEXT,
+      mode TEXT NOT NULL,
+      departedAt INTEGER NOT NULL,
+      departLat REAL, departLng REAL, departAccuracyM INTEGER,
+      /* The reading AND the photograph of it, and they are not redundant: two
+         photographs cannot be subtracted, and a figure with no picture behind
+         it cannot be checked by anybody who was not standing there. */
+      startOdometerKm INTEGER,
+      startOdometerPhotoId TEXT,
+      arrivedAt INTEGER,
+      arriveLat REAL, arriveLng REAL, arriveAccuracyM INTEGER,
+      endOdometerKm INTEGER,
+      endOdometerPhotoId TEXT,
+      /* Arrival minus departure. Null on a mode with no meter and on a leg
+         still running — never zero, because zero is a real answer meaning he
+         came back to where he started. */
+      distanceKm INTEGER,
+      ticketPhotoId TEXT,
+      ticketFarePaise INTEGER,
+      ticketExpenseId TEXT,
+      abandonedAt INTEGER,
+      abandonReason TEXT,
+      clientCreatedAt INTEGER NOT NULL,
+      serverCreatedAt INTEGER,
+      deviceId TEXT NOT NULL,
+      syncState TEXT NOT NULL DEFAULT 'local',
+      syncMessage TEXT
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_travel_legs_user ON travel_legs(userId, departedAt DESC);`,
+    `CREATE INDEX IF NOT EXISTS idx_travel_legs_visit ON travel_legs(visitId);`,
+    /*
+     * ONE OPEN LEG AT A TIME, enforced by the store rather than by a service
+     * the next writer will not know about — the same reasoning as the primary
+     * distributor's partial unique index in MahekOne. A salesman cannot be
+     * travelling to two shops at once, and two open legs would mean the
+     * arrival photograph had a choice of which departure to close.
+     */
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_travel_legs_one_open
+       ON travel_legs(userId) WHERE arrivedAt IS NULL AND abandonedAt IS NULL;`,
+
+    /*
+     * The leg the visit came off, so the record reads correctly on this
+     * handset without waiting for a pull. Nothing pulls visits back down, so
+     * this is the only copy the phone will ever have.
+     */
+    `ALTER TABLE visits ADD COLUMN travelLegId TEXT;`,
+
+    /*
+     * WHERE A CLAIM CAME FROM, which is not what it was for.
+     *
+     * A bus fare attached at the shop door is filed through the SAME expense
+     * path as one typed on the Expenses screen — same caps, same approval —
+     * because a second way to record spending that skipped the claim queue
+     * would be a way to spend money nobody ever pays back. What these two
+     * columns buy is that the claim can say so: without a mark, the salesman
+     * who already attached the ticket has no way to know he has, and the
+     * honest thing he does next is type it in again.
+     */
+    `ALTER TABLE expenses ADD COLUMN source TEXT NOT NULL DEFAULT 'manual';`,
+    `ALTER TABLE expenses ADD COLUMN travelLegId TEXT;`,
+  ],
 ];
 
 /** Tables holding work the salesman authored. A sync never deletes from these. */
@@ -834,6 +1010,9 @@ export const OWNED_TABLES = [
   'visits', 'orders', 'order_lines', 'payments', 'attendance_days', 'tasks',
   'leads', 'samples', 'complaints', 'expenses', 'leave_requests', 'tours',
   'competitor_records', 'approvals',
+  /* A journey he made. Never deleted by a sync, and an OPEN one is what makes
+     "travelling" survive the app being killed on the road. */
+  'travel_legs',
 ] as const;
 
 /** Tables replaced wholesale by a pull. Safe to clear on sign-out. */

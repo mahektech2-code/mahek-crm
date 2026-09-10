@@ -95,6 +95,99 @@ export async function callNumber(phone: string): Promise<SendOutcome> {
   }
 }
 
+/* --------------------------------------------------------------- the map */
+
+export type Place = { lat: number; lng: number; label?: string | null };
+
+/**
+ * Hand a shop to whatever maps app is on the handset.
+ *
+ * The Navigate button on the route screen toasted the customer's NAME and did
+ * nothing else — on the one card the design says has to be readable while
+ * walking. It read as a maps app that had failed to open.
+ *
+ * `geo:` is the Android intent and takes every navigation app installed, which
+ * is the right first ask: a salesman uses whichever one he has. The Google
+ * Maps URL is the fallback and works on iOS and in a browser. The LABEL rides
+ * along where there is one, because "Karnataka Hardware" on the pin is what
+ * confirms he is walking to the right place; the coordinate alone is
+ * unreadable.
+ */
+export async function openMaps(place: Place): Promise<SendOutcome> {
+  const at = `${place.lat},${place.lng}`;
+  const label = place.label?.trim();
+  const geo = label ? `geo:${at}?q=${at}(${encodeURIComponent(label)})` : `geo:${at}?q=${at}`;
+  const web = `https://www.google.com/maps/search/?api=1&query=${at}`;
+
+  try {
+    if (await Linking.canOpenURL(geo)) {
+      await Linking.openURL(geo);
+      return { status: 'handed_off', channel: 'copy' };
+    }
+    await Linking.openURL(web);
+    return { status: 'handed_off', channel: 'copy' };
+  } catch {
+    return { status: 'failed', reason: 'No maps app on this phone would open.' };
+  }
+}
+
+/**
+ * How many stops one maps URL will carry.
+ *
+ * Google's directions URL takes a destination and waypoints before it, and
+ * stops honouring the list past about nine. A day is routinely longer than
+ * that, so the URL is built from the first nine and the screen SAYS so — a
+ * route silently truncated is worse than one that names its own limit,
+ * because the tenth shop is simply not walked.
+ */
+export const MAPS_WAYPOINT_LIMIT = 9;
+
+/**
+ * The whole day, in order, as one set of directions.
+ *
+ * Only a stop with a coordinate can go in, and the number that could not is
+ * returned rather than swallowed — the same answer `optimiseRoute` already
+ * gives about the same shops. Nothing here reorders anything: the order handed
+ * in is the order he means to walk, and a maps app rearranging it would
+ * quietly undo the reordering the route screen just did.
+ */
+export async function openRoute(
+  /* Nullable coordinates deliberately: a stop with no location is part of the
+     day and part of the count that could not be sent, and casting it to a
+     number to satisfy this signature would put NaN in a URL. */
+  places: { lat: number | null; lng: number | null; label?: string | null }[],
+): Promise<SendOutcome & { sent?: number; dropped?: number }> {
+  const usable = places.filter((p): p is Place =>
+    typeof p.lat === 'number' && typeof p.lng === 'number' &&
+    Number.isFinite(p.lat) && Number.isFinite(p.lng));
+  if (!usable.length) {
+    return { status: 'failed', reason: 'None of today’s stops has a location recorded.' };
+  }
+
+  const taken = usable.slice(0, MAPS_WAYPOINT_LIMIT + 1);
+  const at = (p: Place) => `${p.lat},${p.lng}`;
+  const destination = taken[taken.length - 1]!;
+  const between = taken.slice(0, -1);
+
+  const url =
+    'https://www.google.com/maps/dir/?api=1' +
+    `&destination=${at(destination)}` +
+    (between.length ? `&waypoints=${between.map(at).join('|')}` : '') +
+    '&travelmode=driving';
+
+  try {
+    await Linking.openURL(url);
+    return {
+      status: 'handed_off',
+      channel: 'copy',
+      sent: taken.length,
+      dropped: places.length - taken.length,
+    };
+  } catch {
+    return { status: 'failed', reason: 'No maps app on this phone would open.' };
+  }
+}
+
 /* ------------------------------------------------------------- the words */
 
 /**

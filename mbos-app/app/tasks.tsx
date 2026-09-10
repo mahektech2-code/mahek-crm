@@ -6,7 +6,7 @@ import { Card, Choice, DashedButton, Input, PrimaryButton, SecondaryButton, Sect
 import { BottomSheet } from '../src/components/ui/overlays';
 import { color as C, radius, shadow, weight } from '../src/theme/tokens';
 import { bucketOf, completeTask, createTask, listOpenTasks, snoozeTask, type Task } from '../src/data/tasks';
-import { daysSince, listCustomers, type Customer } from '../src/data/customers';
+import { customerNamesByIds, daysSince, listCustomers, type Customer } from '../src/data/customers';
 import { dmy, isoDate, plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 
@@ -41,7 +41,16 @@ export default function TasksScreen() {
   const askConfirm = useStore((s) => s.askConfirm);
 
   const [tasks, setTasks] = React.useState<Task[]>([]);
+  /* The names the task rows print, read BY ID rather than by loading the book
+     to look twelve of them up. The picker below is its own capped read, and
+     the ids on these rows are scattered through the whole territory rather
+     than through its first sixty names. */
+  const [names, setNames] = React.useState<Map<string, string>>(new Map());
+  /* The picker's page — capped, like every read of the book on this handset.
+     `custTotal` is what it is a slice of. */
   const [customers, setCustomers] = React.useState<Customer[]>([]);
+  const [custTotal, setCustTotal] = React.useState(0);
+  const [custQ, setCustQ] = React.useState('');
   const [today] = React.useState(() => isoDate(new Date()));
 
   const [formOpen, setFormOpen] = React.useState(false);
@@ -53,10 +62,13 @@ export default function TasksScreen() {
 
   const load = React.useCallback(() => {
     let live = true;
-    void Promise.all([listOpenTasks(), listCustomers()]).then(([t, c]) => {
+    void listOpenTasks().then(async (t) => {
       if (!live) return;
       setTasks(t);
-      setCustomers(c);
+      const m = await customerNamesByIds(
+        t.map((x) => x.customerId).filter((id): id is string => !!id),
+      );
+      if (live) setNames(m);
     });
     return () => {
       live = false;
@@ -65,11 +77,32 @@ export default function TasksScreen() {
 
   useFocusEffect(load);
 
-  const nameOf = (id: string | null) => customers.find((c) => c.id === id)?.name ?? '';
+  /* Only while the form is open, and re-read as he narrows it: the book is a
+     territory, not six rows, so this is a query rather than a filter over
+     something already in memory. */
+  React.useEffect(() => {
+    if (!formOpen) return;
+    let live = true;
+    void listCustomers(custQ).then((r) => {
+      if (!live) return;
+      setCustomers(r.rows);
+      setCustTotal(r.total);
+    });
+    return () => {
+      live = false;
+    };
+  }, [formOpen, custQ]);
+
+  const nameOf = (id: string | null) => (id ? names.get(id) ?? '' : '');
 
   const openForm = () => {
     setTitle('');
-    setCustId(customers[0]?.id ?? null);
+    setCustQ('');
+    /* Nobody, until he picks somebody. It used to open on whichever shop sorts
+       first alphabetically, which is a task quietly filed against a customer
+       nobody chose — and `customerId` is nullable precisely because a task
+       need not name one. */
+    setCustId(null);
     setWhen('Today');
     setPri('Normal');
     setTitleErr(false);
@@ -243,11 +276,20 @@ export default function TasksScreen() {
 
         <View style={{ marginTop: 12 }}>
           <SectionLabel style={{ marginBottom: 6 }}>Which customer</SectionLabel>
-          <View style={{ gap: 8 }}>
+          {/* The search is the way past the cap, so it sits above the list it
+              caps. Without it a book of a thousand offered its first sixty
+              names and the other nine hundred were unreachable. */}
+          <Input value={custQ} onChangeText={setCustQ} placeholder="Search the book" />
+          <View style={{ gap: 8, marginTop: 8 }}>
             {customers.map((x) => (
               <Choice key={x.id} label={x.name} selected={custId === x.id} onPress={() => setCustId(x.id)} />
             ))}
           </View>
+          {custTotal > customers.length ? (
+            <T s="small" style={{ color: C.muted, marginTop: 8 }}>
+              {customers.length + ' of ' + custTotal + ' shops — search for one that is not here'}
+            </T>
+          ) : null}
         </View>
 
         <View style={{ marginTop: 12 }}>

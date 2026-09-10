@@ -47,7 +47,6 @@ type State = {
   pw: string;
   dial: string;
   remember: boolean;
-  bio: boolean;
 
   /* ---- the day ---- */
   checkedIn: boolean;
@@ -76,6 +75,31 @@ type State = {
   nextDate: string;
   visitStart: number | null;
   visitSpent: string | null;
+  /**
+   * Why the next visit is off the plan.
+   *
+   * Set on the route screen, spent by the visit. It has to live here rather
+   * than travel as a route param because the two are separated by a THIRD
+   * screen — the reason is given on the route, the shop is chosen on the
+   * Customers list, and the visit is where both arrive. `visits` has carried
+   * `deviationReason` and `wasPlanned` since it was written and the handset
+   * sent null for the first of them on every visit ever logged; the button
+   * that was supposed to fill it raised a toast and wrote nothing, on a screen
+   * whose own words are "your manager sees the reason".
+   */
+  offPlanReason: string | null;
+  /**
+   * The shop he has just pressed "Start visit" on, waiting for the question
+   * that comes before the visit: how is he getting there.
+   *
+   * It is store state and not a route because the answer is a CAMERA on two of
+   * the six modes, and pushing a screen would take the flow off the stack
+   * half-way through — the same reason `askConfirm` and the selfie camera are
+   * overlays rather than routes. `TravelGate` in `AppFrame` is the one place
+   * it is answered, which is what lets all four Start-visit buttons in the app
+   * ask the question by setting one field.
+   */
+  travelTo: { customerId: string; customerName: string; journeyStopId: string | null } | null;
   /** What this visit has already produced, so returning to it shows the work is done. */
   visitDone: Partial<Record<OutcomeKey, string>>;
   overrodeReason: string | null;
@@ -97,7 +121,7 @@ type State = {
 
   /* ---- profile ---- */
   pfSaved: Record<string, string>;
-  pfPrefs: { wifi: boolean; push: boolean; bio: boolean };
+  pfPrefs: { wifi: boolean; push: boolean };
 };
 
 type Actions = {
@@ -108,6 +132,8 @@ type Actions = {
   signOut: () => void;
   startDay: () => void;
   beginVisit: (custId: string) => void;
+  askTravel: (to: { customerId: string; customerName: string; journeyStopId?: string | null }) => void;
+  arrivedAt: (at: number) => void;
   markVisitDone: (k: OutcomeKey, line: string) => void;
   setQty: (skuId: string, qty: string) => void;
   dropLine: (skuId: string) => void;
@@ -131,7 +157,6 @@ export const useStore = create<State & Actions>((set, get) => ({
   pw: '',
   dial: '+91',
   remember: true,
-  bio: true,
 
   checkedIn: false,
   gps: 'acquiring',
@@ -154,6 +179,8 @@ export const useStore = create<State & Actions>((set, get) => ({
   nextDate: NO_DATE_YET,
   visitStart: null,
   visitSpent: null,
+  offPlanReason: null,
+  travelTo: null,
   visitDone: {},
   overrodeReason: null,
   form: null,
@@ -170,7 +197,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   catQ: '',
 
   pfSaved: {},
-  pfPrefs: { wifi: true, push: true, bio: true },
+  pfPrefs: { wifi: true, push: true },
 
   set: (patch) => set(patch as Partial<State>),
 
@@ -197,12 +224,45 @@ export const useStore = create<State & Actions>((set, get) => ({
       note: '',
       outcome: null,
       nextDate: NO_DATE_YET,
-      visitStart: Date.now(),
+      /*
+       * NOT `Date.now()` any more, and that is the whole shape of the change.
+       *
+       * "Start visit" used to mean "I am standing in the shop", so the dwell
+       * clock began here. It now means "I am setting off" — the mode is asked,
+       * the odometer is photographed, and the journey happens between this
+       * moment and the arrival. Starting the clock here would count the ride
+       * as time in the shop, which is the one number the dwell check exists to
+       * be honest about. `arrivedAt` sets it.
+       */
+      visitStart: null,
       visitSpent: null,
       visitDone: {},
       overrodeReason: null,
       sheet: null,
+      /* `offPlanReason` is deliberately NOT reset here. It is set on the route
+         screen BEFORE the shop is chosen, and choosing the shop is what calls
+         this — clearing it would throw away the reason on the way to the very
+         visit it was written for. The visit clears it once, on save. */
     }),
+
+  askTravel: (to) =>
+    set({
+      travelTo: {
+        customerId: to.customerId,
+        customerName: to.customerName,
+        journeyStopId: to.journeyStopId ?? null,
+      },
+    }),
+
+  /**
+   * He is at the shop. The dwell clock starts HERE and nowhere else.
+   *
+   * It takes the arrival instant rather than reading the clock itself, because
+   * the caller has already written that instant onto the leg — two readings of
+   * `Date.now()` a few lines apart would put the record and the screen a
+   * second or two out of step for no reason anybody could later explain.
+   */
+  arrivedAt: (at) => set({ visitStart: at, travelTo: null }),
 
   markVisitDone: (k, line) => set({ visitDone: { ...get().visitDone, [k]: line } }),
 

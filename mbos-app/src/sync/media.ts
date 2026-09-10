@@ -14,7 +14,15 @@ import { backoffFor, MAX_ATTEMPTS } from './queue';
  * first, always; media follows and is allowed to take as long as it takes.
  */
 
-export type MediaKind = 'shop_photo' | 'customer_photo' | 'cheque_photo' | 'bill_photo' | 'selfie' | 'sample_proof' | 'deposit_proof' | 'task_proof' | 'voice_note';
+export type MediaKind =
+  | 'shop_photo' | 'customer_photo' | 'cheque_photo' | 'bill_photo' | 'selfie'
+  | 'sample_proof' | 'deposit_proof' | 'task_proof' | 'voice_note'
+  /* The two ends of a journey on his own vehicle, and the ticket where he
+     bought one. `odometer_photo` covers BOTH readings deliberately: which end
+     it is, is a fact about the leg it hangs off — `startOdometerPhotoId` or
+     `endOdometerPhotoId` — and duplicating that into the kind would give two
+     places to read one answer out of. */
+  | 'odometer_photo' | 'ticket_photo';
 
 /**
  * How big the file is, for the queue's own reporting.

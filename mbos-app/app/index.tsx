@@ -3,7 +3,6 @@ import { View, Text, Pressable, ScrollView, TextInput, KeyboardAvoidingView, Pla
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color as C, HIT, radius, type, weight } from '../src/theme/tokens';
-import { Icon } from '../src/components/ui/Icon';
 import { PrimaryButton, Toggle } from '../src/components/ui/primitives';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
@@ -45,7 +44,6 @@ export default function Login() {
   const pw = useStore((s) => s.pw);
   const dial = useStore((s) => s.dial);
   const remember = useStore((s) => s.remember);
-  const bio = useStore((s) => s.bio);
 
   const [stage, setStage] = React.useState<Stage>('form');
   const [step, setStep] = React.useState(0);
@@ -318,24 +316,7 @@ export default function Login() {
                   <Toggle on={remember} onPress={() => set({ remember: !remember })} />
                 </View>
 
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 16 }}>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={{ fontSize: 15, color: C.body }}>Use fingerprint next time</Text>
-                    <Text style={{ fontSize: 13, color: C.muted }}>Faster on site, no typing</Text>
-                  </View>
-                  <Toggle on={bio} onPress={() => set({ bio: !bio })} />
-                </View>
-
                 <PrimaryButton label="Sign in" onPress={() => void submit()} style={{ marginTop: 24 }} />
-
-                {bio ? (
-                  <Pressable
-                    onPress={() => void submit(true)}
-                    style={{ width: '100%', height: 52, marginTop: 12, borderRadius: radius.md, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-                    <Icon name="finger" size={24} color={C.primary} strokeWidth={1.5} />
-                    <Text style={[{ fontSize: 15, color: C.body }, weight(500)]}>Fingerprint</Text>
-                  </Pressable>
-                ) : null}
 
                 <Pressable
                   onPress={() => notify('Reset flow — three steps, mobile then OTP then new password')}

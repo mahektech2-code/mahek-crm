@@ -237,7 +237,7 @@ export function SalesShell({
               aria-label="Sign out"
               className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
             >
-              <SalesIcon name="close" size={16} />
+              <SalesIcon name="signOut" size={16} />
             </button>
           </form>
         </span>

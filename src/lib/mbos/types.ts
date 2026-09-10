@@ -78,6 +78,19 @@ export const SYNC_ENTITY_TYPES = [
    * which doors — he knows which of them are worth the walk on a Tuesday.
    */
   "plan_stops",
+  /**
+   * One journey to one shop: the mode, the odometer either side of it, and
+   * the ticket where somebody bought one.
+   *
+   * It is its OWN entity rather than fields on the visit because it opens
+   * before the visit exists and can close without producing one — see
+   * `mbosTravelLegs`. On the wire that means three items about the same leg:
+   * a `create` when he sets off, an `update` when he arrives, and a third
+   * `update` if a ticket is attached at the shop door. Each is idempotent on
+   * its own payload, so a leg that syncs half way and retries lands exactly
+   * once.
+   */
+  "travel_leg",
 ] as const;
 
 export type SyncEntityType = (typeof SYNC_ENTITY_TYPES)[number];
@@ -266,6 +279,22 @@ export type PullDelta = {
    * same as `performance` — this app writes no pay figure anywhere.
    */
   salary: unknown[];
+  /**
+   * A lead the OFFICE holds, and a sample the office has moved on.
+   *
+   * Both were on the bootstrap from the day it was written and on no delta at
+   * all — and the handset applied neither, so a lead raised at a desk reached
+   * the phone only if its owner signed out and back in, and never at all in
+   * practice. They come down on every pass now, for the same reason
+   * `journeyStops` and `tasks` do: work that appears in the office this
+   * afternoon has to arrive without the salesman signing out.
+   *
+   * They are the two OWNED tables that also have an office end, so a pulled
+   * row must never overwrite one this handset has not sent yet — that rule is
+   * enforced where the row lands, in `sync/pull.ts`, not here.
+   */
+  leads: unknown[];
+  samples: unknown[];
 };
 
 export type SyncResponse = {

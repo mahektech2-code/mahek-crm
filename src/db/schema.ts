@@ -433,6 +433,20 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
    * which a course has.
    */
   "mbos_course",
+  /**
+   * The two odometer photographs on a travel leg, and the bus or train ticket
+   * beside them.
+   *
+   * Its own parent for the same reason `mbos_course` is: `canRead` decides who
+   * may open a file FROM the parent kind, and a leg is not a visit. Filed as
+   * `mbos_visit` these would be read through the customer's scope — which is
+   * nearly right and wrong in the case that matters, because a leg exists
+   * before its visit does and often instead of one. A salesman who set off,
+   * arrived, found the shutter down and never saved a visit still travelled
+   * twenty-three kilometres, and the photograph proving it would have had a
+   * parent id resolving to nothing.
+   */
+  "mbos_travel_leg",
 ]);
 
 /**
@@ -719,6 +733,16 @@ export const impersonationTokens = pgTable(
 /* -------------------------------------------------------------- §3.3 customer */
 
 /** A record is one or the other, and the difference decides what is shown. */
+/** The qualification ladder. `won` is the stage a conversion leaves behind. */
+export const mbosLeadStageEnum = pgEnum("mbos_lead_stage", [
+  "new",
+  "contacted",
+  "qualified",
+  "negotiation",
+  "won",
+  "lost",
+]);
+
 export const customerKindEnum = pgEnum("customer_kind", ["lead", "customer"]);
 
 /**
@@ -778,6 +802,54 @@ export const customers = pgTable(
      */
     kind: customerKindEnum("kind").notNull().default("customer"),
     leadSource: text("lead_source"),
+
+    /* ---- working a lead ----
+     *
+     * ONE LEAD. These were `mbos_leads`, a second table for the same noun:
+     * the CRM had `kind = 'lead'` with no ladder, the handset had a ladder in
+     * a table of its own, and `leadsCreatedIn` had to read both and
+     * deduplicate them to answer "how many leads did we generate". Two tables
+     * for one word is how the telecaller's list, the manager's dashboard and
+     * the salesman's handset came to disagree about what a lead is.
+     *
+     * What that table held was never identity — it was the state of WORKING
+     * one — so it belongs beside the account it describes. A lead IS an
+     * account that has never ordered, which is the definition this codebase
+     * already used everywhere else.
+     *
+     * They are null on a customer, and that is meaningful rather than
+     * missing: a stage on an account that has been buying for four years
+     * would put the whole book on a funnel it left long ago.
+     *
+     * Winning one is `kind` moving to `customer`. There is no
+     * `convertedCustomerId` because there is no second row to point at, and
+     * the calls, the timeline and the GPS fix come with it because they never
+     * moved.
+     */
+    companyName: text("company_name"),
+    leadStage: mbosLeadStageEnum("lead_stage"),
+    /** Paise. What somebody THINKS it could be worth in a month, never measured. */
+    leadEstimatedPotentialPaise: bigint("lead_estimated_potential_paise", { mode: "number" }),
+    leadNextFollowUpDate: date("lead_next_follow_up_date"),
+    leadNotes: text("lead_notes"),
+    /** Required when the stage is `lost`: a loss nobody explained teaches nothing. */
+    leadLostReason: text("lead_lost_reason"),
+    /**
+     * A lead nobody has touched for the configured window archives itself. A
+     * flag rather than a delete, because a cold lead is exactly who a campaign
+     * goes back to next year.
+     */
+    leadArchived: boolean("lead_archived").notNull().default(false),
+    leadArchivedAt: timestamp("lead_archived_at", { withTimezone: true }),
+    /**
+     * Derived cache: the last day anything happened on this LEAD. Its own
+     * column rather than `lastContactDate`, which is the CRM's cache of calls
+     * and confirmed WhatsApp — folding the two would let a nightly recompute
+     * of one silently move the staleness clock of the other.
+     */
+    leadLastActivityDate: date("lead_last_activity_date"),
+    /** When it stopped being a lead. The row did not change identity. */
+    leadConvertedAt: timestamp("lead_converted_at", { withTimezone: true }),
 
     /*
      * A shop we deliver to, served through a distributor.
@@ -1071,6 +1143,14 @@ export const customers = pgTable(
     index("customers_sales_manager_name_idx").on(t.salesManagerPersonName),
     index("customers_name_idx").on(t.name),
     index("customers_phone_idx").on(t.phone),
+    /**
+     * The lead worklist, which the handset's pull and the manager's screen
+     * both ask for: this user's unarchived leads, soonest follow-up first.
+     * Partial, so it costs nothing on the customers that are not leads.
+     */
+    index("customers_lead_worklist_idx")
+      .on(t.ownerId, t.leadArchived, t.leadNextFollowUpDate)
+      .where(sql`kind = 'lead'`),
     index("customers_status_idx").on(t.status),
     uniqueIndex("customers_external_code_key").on(t.externalCode),
     /** The field team's two lists: a beat to walk, and a code to search by. */
@@ -3618,6 +3698,127 @@ export const fieldCustomerPins = pgTable(
   ],
 );
 
+/**
+ * The shop master of the same defunct prior system ("Mahek EMP 2.0") — its
+ * `Customer Details` tab, and the ONLY place a phone number for these shops
+ * exists. The Activity tab (`sheetFieldActivityRows`) has twelve columns and
+ * not one of them is a contact detail; the GPS pin export beside it
+ * (`fieldCustomerPins`) carries `CustomerPhone1..3` in its raw snapshot and
+ * has exactly one of 6,525 filled in. Between the three, this is the tab that
+ * makes a shop reachable rather than merely locatable.
+ *
+ * Staging, like every other sheet landing table here, and for the reason the
+ * order sheet learned the hard way: the projection reads this and never writes
+ * to it, so what the spreadsheet actually said stays derivable however badly
+ * the published side is later mangled.
+ *
+ * The natural key is the normalised name — the tab has no id column. That is
+ * weaker than `sheetFieldActivityRows`' own Activity ID and it is why
+ * duplicate names are COUNTED and reported rather than resolved by keeping
+ * whichever row was read last.
+ */
+export const sheetCustomerMasterRows = pgTable(
+  "sheet_customer_master_rows",
+  {
+    id: text("id").primaryKey(),
+    syncId: text("sync_id")
+      .notNull()
+      .references(() => sheetSyncRuns.id, { onDelete: "cascade" }),
+    /** 1-based row in the sheet, header included. */
+    rowNumber: integer("row_number").notNull(),
+
+    /** Every column as the sheet gave it. Never selected by a list query. */
+    raw: jsonb("raw").$type<Record<string, string>>().notNull(),
+    rowHash: text("row_hash").notNull(),
+
+    status: sheetRowStatusEnum("status").notNull().default("present"),
+    lastSeenSyncId: text("last_seen_sync_id"),
+
+    customerName: text("customer_name").notNull(),
+    /** `partyNameKey` of the name — the natural key, and the join to everything. */
+    nameKey: text("name_key").notNull(),
+
+    /*
+     * The cell as written, and the ten digits read out of it, kept apart.
+     * 5,121 of 5,292 rows hold a real Indian mobile; the rest hold something
+     * a person has to look at, and throwing away the original string would
+     * make "what did the sheet actually say" unanswerable.
+     */
+    mobileRaw: text("mobile_raw"),
+    mobile: text("mobile"),
+    altMobile: text("alt_mobile"),
+
+    address: text("address"),
+    /** The sheet's "Location" — a town, not a street. `customers.city` reads it. */
+    locationText: text("location_text"),
+    state: text("state"),
+
+    rating: text("rating"),
+    segmentation: text("segmentation"),
+    specialInstructions: text("special_instructions"),
+
+    /*
+     * The three seats, as NAMES. None of these are resolved to `users` here:
+     * the same lesson `customers.salesPersonName` records — most of the people
+     * the sheet names have never had a login, and linking only the few that
+     * match drops the rest on the floor and makes every screen fall back to
+     * whoever ran the import.
+     */
+    salesPersonName: text("sales_person_name"),
+    tagEmployeeName: text("tag_employee_name"),
+    backOfficeName: text("back_office_name"),
+
+    /** The old app's own Active/Deactive, verbatim — its casing is inconsistent. */
+    sheetStatus: text("sheet_status"),
+    deactivationRequest: text("deactivation_request"),
+    deactivationRemark: text("deactivation_remark"),
+
+    matchedCustomerId: text("matched_customer_id").references(() => customers.id, {
+      onDelete: "set null",
+    }),
+    customerMatchStatus: sheetMatchStatusEnum("customer_match_status")
+      .notNull()
+      .default("pending"),
+    matchNote: text("match_note"),
+
+    /**
+     * What the projection concluded, and the evidence it concluded it from.
+     *
+     * Kept beside the verdict deliberately. "Why is this shop a lead and that
+     * one a customer" is asked months later by somebody looking at one row,
+     * and re-running the rule from memory answers a question about today
+     * rather than about this row. `resolvedKind` is `lead` or `customer`;
+     * `resolvedStatus` is `active` or `deactivated`.
+     */
+    resolvedKind: text("resolved_kind"),
+    resolvedStatus: text("resolved_status"),
+    evidence: jsonb("evidence").$type<string[]>().notNull().default([]),
+
+    /**
+     * Set once this row has produced or updated its customer. Separate from
+     * the match for the reason `fieldCustomerPins.gpsAppliedAt` is separate:
+     * matching only decides WHICH customer and is safe to redo on every pass;
+     * projecting WRITES onto a row and must happen deliberately.
+     */
+    projectedCustomerId: text("projected_customer_id").references(() => customers.id, {
+      onDelete: "set null",
+    }),
+    projectedAt: timestamp("projected_at", { withTimezone: true }),
+
+    issues: jsonb("issues").$type<SheetRowIssue[]>().notNull().default([]),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sheet_customer_master_rows_name_key_idx").on(t.nameKey),
+    index("sheet_customer_master_rows_sync_idx").on(t.syncId),
+    index("sheet_customer_master_rows_mobile_idx").on(t.mobile),
+    /** The projection's own worklist: rows that have not yet produced a customer. */
+    index("sheet_customer_master_rows_unprojected_idx").on(t.status, t.projectedAt),
+  ],
+);
+
 /* ═══════════════════════════════════════════════════════ MBOS — field sales
  *
  * The Mahek Business Operating System's field app: a salesman's handset,
@@ -4030,11 +4231,189 @@ export const mbosVisits = pgTable(
     /** A manager overriding a mismatch — the visit still happened. */
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
     acceptedById: text("accepted_by_id"),
+
+    /**
+     * How he got here. Nullable, and it always will be: every visit recorded
+     * before travel legs existed has no leg behind it, and a handset that has
+     * not taken the update still saves visits the old way. Null means "not
+     * asked", never "walked".
+     *
+     * BOTH directions are stored — the leg carries `visitId` too — because
+     * each is asked from its own end: "how did he get to this visit" on the
+     * visits list, and "did this journey produce anything" on the travel one.
+     *
+     * NO foreign key, and that is the point of writing it as plain text. A
+     * leg's `visit_id` is a real reference and can be, because the leg is
+     * always the older row; this one points the other way, at a row that may
+     * still be in the handset's outbox when the visit lands. A constraint here
+     * would refuse the visit over the sync ORDER of the thing it is describing
+     * — which is the mistake the attendance selfie columns already made once,
+     * one table over.
+     */
+    travelLegId: text("travel_leg_id"),
   },
   (t) => [
     index("mbos_visits_customer_idx").on(t.customerId, t.checkInAt.desc()),
     index("mbos_visits_salesman_idx").on(t.salesmanId, t.checkInAt.desc()),
     index("mbos_visits_unverified_idx").on(t.verified, t.checkInAt),
+  ],
+);
+
+/* ----------------------------------------------------------- travel legs */
+
+/**
+ * How a salesman travelled to one shop. The vocabulary lives in
+ * `lib/mbos/travel-labels.ts`, which is where the argument for it being closed
+ * rather than configurable is written out.
+ */
+export const mbosTravelModeEnum = pgEnum("mbos_travel_mode", [
+  "personal_bike",
+  "personal_car",
+  "bus",
+  "train",
+  "walk",
+  "customer_vehicle",
+]);
+
+/**
+ * ONE JOURNEY TO ONE SHOP, and it is its own table rather than six columns on
+ * the visit.
+ *
+ * Three reasons, and the first is the one that decides it: a leg BEGINS BEFORE
+ * THE VISIT EXISTS. The visit row is written when the salesman saves it, on
+ * the way out of the shop; the leg opens when he sets off, which is half an
+ * hour and twenty-three kilometres earlier. Columns on `mbos_visits` would
+ * have nowhere to live in between, and "in between" is precisely the state the
+ * departure odometer photograph is evidence OF.
+ *
+ * Second, a leg can exist with no visit at all and that is not an error. He
+ * sets off, arrives, finds the shutter down and goes home; he travelled, the
+ * company owes him for it, and a model that could only record the journey as a
+ * property of a visit would either invent a visit that never happened or lose
+ * the journey. `visitId` is nullable and stays that way.
+ *
+ * Third, it is the same instinct as `mbos_activity_locations`: "how did this
+ * happen and what did it cost" is one question with one answer shape, and
+ * answering it in each table that might want it is answering it in most of
+ * them and forgetting one.
+ *
+ * What it is NOT is a route. A leg is a departure, an arrival and the
+ * odometer's own word about the distance between them — the shape of the
+ * journey is `mbos_positions`, which is a different record taken for a
+ * different reason and must not be added up into a mileage claim.
+ */
+export const mbosTravelLegs = pgTable(
+  "mbos_travel_legs",
+  {
+    ...mbosColumns(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /**
+     * Where he was going. Notnull: a leg with no destination is a drive, and
+     * this table is not a record of driving — it is a record of getting to a
+     * customer.
+     */
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /** The stop on today's plan, where this was a planned journey. */
+    journeyPlanStopId: text("journey_plan_stop_id").references(() => mbosJourneyStops.id, {
+      onDelete: "set null",
+    }),
+    /**
+     * The visit it produced, stamped by `handleVisit` when that arrives.
+     *
+     * Null covers two different things and the columns below say which: a leg
+     * still running, and one that ended in no visit. Both are ordinary.
+     */
+    visitId: text("visit_id").references(() => mbosVisits.id, { onDelete: "set null" }),
+
+    mode: mbosTravelModeEnum("mode").notNull(),
+
+    /* ---- setting off ---- */
+    departedAt: timestamp("departed_at", { withTimezone: true }).notNull(),
+    departLat: doublePrecision("depart_lat"),
+    departLng: doublePrecision("depart_lng"),
+    departAccuracyM: integer("depart_accuracy_m"),
+    /**
+     * What the odometer read when he set off, in whole kilometres, and the
+     * photograph showing it.
+     *
+     * The NUMBER and the PHOTOGRAPH are both required on a personal vehicle
+     * and they are not redundant. The photograph is the evidence — it is what
+     * makes the claim checkable months later by somebody who was not there.
+     * The number is the datum: two photographs cannot be subtracted, and a
+     * distance that only exists once a person has squinted at two images is a
+     * distance nobody will ever compute. Storing one without the other gives
+     * either an unverifiable figure or unusable evidence.
+     */
+    startOdometerKm: integer("start_odometer_km"),
+    startOdometerPhotoId: text("start_odometer_photo_id").references(() => attachments.id),
+
+    /* ---- arriving ---- */
+    arrivedAt: timestamp("arrived_at", { withTimezone: true }),
+    arriveLat: doublePrecision("arrive_lat"),
+    arriveLng: doublePrecision("arrive_lng"),
+    arriveAccuracyM: integer("arrive_accuracy_m"),
+    endOdometerKm: integer("end_odometer_km"),
+    endOdometerPhotoId: text("end_odometer_photo_id").references(() => attachments.id),
+    /**
+     * Arrival minus departure, stored rather than derived on read.
+     *
+     * It is not a cache of the two columns beside it: those are what the
+     * odometer SAID at two moments, and this is the claim made from them,
+     * which a manager may one day correct without touching either reading.
+     * Null on every mode that carries no odometer, and null on a leg still
+     * running — never zero, because zero is a real answer meaning he came back
+     * to where he started.
+     */
+    distanceKm: integer("distance_km"),
+
+    /* ---- the ticket, on a bus or a train ---- */
+    /**
+     * OPTIONAL, deliberately, and the only optional evidence on this table.
+     *
+     * A bus ticket is a scrap of paper that gets lost between the seat and the
+     * shop door, and refusing the leg over it would mean refusing to record a
+     * journey that happened. Skipping is offered in words — he can claim the
+     * fare later on the Expenses screen — so nobody skips it thinking the
+     * money is gone.
+     */
+    ticketPhotoId: text("ticket_photo_id").references(() => attachments.id),
+    /** Paise. What he says the fare was. Present only where the ticket is. */
+    ticketFarePaise: bigint("ticket_fare_paise", { mode: "number" }),
+    /**
+     * The expense the ticket became.
+     *
+     * Attaching a ticket writes a real `mbos_expenses` row through the same
+     * path and the same approval loop the Expenses screen uses — a second way
+     * to record spending that did not reach the claim queue would be a way to
+     * spend money nobody ever pays back. This is the link, so the leg can say
+     * what happened to it and the claim can say what it was for.
+     */
+    ticketExpenseId: text("ticket_expense_id").references(() => mbosExpenses.id, {
+      onDelete: "set null",
+    }),
+
+    /* ---- the way out ---- */
+    /**
+     * He set off and did not get there — turned back, diverted, called away.
+     *
+     * A leg is ABANDONED rather than deleted, and the reason is required by
+     * the handset, because the odometer already moved: the journey happened
+     * and the fuel is spent whether or not there was ever a shop at the end of
+     * it. Deleting it would make the next departure's reading jump with
+     * nothing on the record explaining the gap, which is exactly the pattern
+     * an audit is looking for.
+     */
+    abandonedAt: timestamp("abandoned_at", { withTimezone: true }),
+    abandonReason: text("abandon_reason"),
+  },
+  (t) => [
+    index("mbos_travel_legs_user_idx").on(t.userId, t.departedAt.desc()),
+    index("mbos_travel_legs_customer_idx").on(t.customerId, t.departedAt.desc()),
+    index("mbos_travel_legs_visit_idx").on(t.visitId),
   ],
 );
 
@@ -4051,15 +4430,8 @@ export const mbosLeadSourceEnum = pgEnum("mbos_lead_source", [
   "campaign",
 ]);
 
-/** The qualification ladder. `won` is the stage a conversion leaves behind. */
-export const mbosLeadStageEnum = pgEnum("mbos_lead_stage", [
-  "new",
-  "contacted",
-  "qualified",
-  "negotiation",
-  "won",
-  "lost",
-]);
+/* `mbosLeadStageEnum` now lives beside `customerKindEnum` — it is a column
+ * on `customers`, and a const must be defined before the table that reads it. */
 
 /**
  * §2.5 — a prospect the field team is working.
@@ -4133,6 +4505,29 @@ export const mbosExpenseCategoryEnum = pgEnum("mbos_expense_category", [
 ]);
 
 /**
+ * WHERE A CLAIM CAME FROM, which is not the same question as what it was for.
+ *
+ * `manual` is somebody typing it on the Expenses screen. `travel_ticket` is a
+ * bus or train fare attached to a travel leg at the shop door — filed through
+ * the SAME path, the same caps and the same approval queue, because a second
+ * way to record spending that never reached the claim queue would be a way to
+ * spend money nobody ever pays back.
+ *
+ * It is a column rather than a phrase in `remarks` for the ordinary reason: a
+ * screen that switched on the words in a free-text field breaks the day
+ * somebody writes them differently. Two things read it. An approver needs to
+ * know which question to ask — a typed claim needs its bill checked, a
+ * ticketed leg already has the ticket, the shop, the time and an odometer
+ * either side of it. And the salesman needs to be told he has already claimed
+ * this fare, because otherwise the honest thing he does next is type it in
+ * again.
+ */
+export const mbosExpenseSourceEnum = pgEnum("mbos_expense_source", [
+  "manual",
+  "travel_ticket",
+]);
+
+/**
  * A bundle of expense lines submitted together. The claim is what a manager
  * approves; the lines are what it is made of.
  *
@@ -4175,10 +4570,26 @@ export const mbosExpenses = pgTable(
     }),
     /** Set where the expense belongs to an outstation tour. */
     tourId: text("tour_id"),
+    /** Typed on the Expenses screen, or a ticket attached to a travel leg. */
+    source: mbosExpenseSourceEnum("source").notNull().default("manual"),
+    /**
+     * The leg whose ticket this fare is, where it is one.
+     *
+     * The link is stored at BOTH ends — `mbosTravelLegs.ticketExpenseId` is
+     * the other — because each is asked from its own screen: "what did this
+     * journey cost" on the travel list, and "what is this claim for" on the
+     * approver's. A unique partial index keeps a leg to one claim, and it
+     * lives in the database rather than in the handset because the handset is
+     * where the double-tap happens.
+     */
+    travelLegId: text("travel_leg_id"),
   },
   (t) => [
     index("mbos_expenses_user_idx").on(t.userId, t.expenseDate),
     index("mbos_expenses_claim_idx").on(t.claimId),
+    uniqueIndex("mbos_expenses_one_per_travel_leg")
+      .on(t.travelLegId)
+      .where(sql`${t.travelLegId} is not null`),
   ],
 );
 
@@ -4235,9 +4646,43 @@ export const mbosAttendanceDays = pgTable(
     checkOutLat: doublePrecision("check_out_lat"),
     checkOutLng: doublePrecision("check_out_lng"),
     checkOutAccuracyM: integer("check_out_accuracy_m"),
+    /** An `attachments` id — the selfie the check-OUT captured. */
+    checkOutSelfieId: text("check_out_selfie_id").references(() => attachments.id),
     checkOutAddress: text("check_out_address"),
     /** True where the day closed itself because nobody checked out. */
     autoCheckedOut: boolean("auto_checked_out").notNull().default(false),
+
+    /**
+     * THE DAY'S SESSIONS, and the two marks above are only its ends.
+     *
+     * `[{ inAt, outAt, inSelfieId, outSelfieId }]`, oldest first, at most one
+     * open — the handset's own shape, stored as it arrives. The handset has
+     * modelled a day this way since its v2 migration ("a salesman breaks for
+     * lunch, or goes home and comes out again for an evening call") and the
+     * server had nowhere to put it: a three-session day arrived here as one
+     * pair, so 9-to-1 plus 2-to-6 read as nine hours on the record that feeds
+     * a payslip, and the office could not see the break at all.
+     *
+     * It is also the only place N selfies can live. Every check-in and every
+     * check-out is photographed, so a day with two breaks carries six — and
+     * `checkInSelfieId`/`checkOutSelfieId` beside it are the first and the
+     * last of them, mirrors for the screens exactly as the two timestamps are.
+     *
+     * Stored rather than derived, and NOT a cache: it is what the handset
+     * reported, and rebuilding it from the two marks is precisely the loss it
+     * exists to stop. `workedSeconds` below is the cache.
+     */
+    sessions: jsonb("sessions")
+      .$type<
+        {
+          inAt: number;
+          outAt: number | null;
+          inSelfieId?: string | null;
+          outSelfieId?: string | null;
+        }[]
+      >()
+      .notNull()
+      .default([]),
 
     /** Derived cache: seconds between the two marks. Rebuilt, never typed. */
     workedSeconds: integer("worked_seconds"),
@@ -4854,7 +5299,22 @@ export const mbosPositions = pgTable(
     deviceId: text("device_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("mbos_positions_user_at_idx").on(t.userId, t.at)],
+  (t) => [
+    index("mbos_positions_user_at_idx").on(t.userId, t.at),
+    /*
+     * A position IS its reading, so the same reading is one row.
+     *
+     * The primary key is an id the handset mints, and it used to mint a fresh
+     * UUID for a fix it had already stored — Android redelivers a batch of
+     * deferred locations whenever the background task does not complete, so
+     * `onConflictDoNothing` had nothing to conflict ON and production reached
+     * 33,000 rows for 4,000 real fixes, one of them ninety-three times. The
+     * handset derives the id from the reading now; this is the guard that does
+     * not depend on which build is in somebody's pocket, and it is what makes
+     * a redelivery cost nothing rather than cost a row.
+     */
+    uniqueIndex("mbos_positions_fix_key").on(t.userId, t.at, t.lat, t.lng),
+  ],
 );
 
 /* ----------------------------------------------------- activity locations */

@@ -135,6 +135,7 @@ function label(entityType: string): string {
     payment: 'Payment',
     visit: 'Visit',
     expense: 'Expense claim',
+    travel_leg: 'Journey to a shop',
     leave: 'Leave request',
     sample: 'Sample request',
     complaint: 'Complaint',

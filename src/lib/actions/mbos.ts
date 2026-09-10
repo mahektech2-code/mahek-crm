@@ -4,6 +4,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
+  attachmentParentEnum,
   attachments,
   bills,
   complaints,
@@ -15,7 +16,6 @@ import {
   mbosConflicts,
   mbosDevices,
   mbosExpenses,
-  mbosLeads,
   mbosActivityLocations,
   mbosJourneyPlans,
   mbosJourneyStops,
@@ -25,6 +25,7 @@ import {
   mbosSamples,
   mbosSyncReceipts,
   mbosTasks,
+  mbosTravelLegs,
   mbosVisits,
   notifications,
   orders,
@@ -706,6 +707,8 @@ async function dispatchItem(
       return handlePlanDay(principal, item);
     case "plan_stops":
       return handlePlanStops(principal, item);
+    case "travel_leg":
+      return handleTravelLeg(principal, item);
     default:
       return {
         kind: "rejected",
@@ -829,6 +832,14 @@ const visitSchema = z.object({
   wasPlanned: z.boolean().nullish(),
   deviationReason: z.string().max(500).nullish(),
   nextFollowUpDate: z.string().nullish(),
+  /**
+   * The journey that ended at this shop.
+   *
+   * Nullish, so every handset built before travel legs existed sends nothing
+   * and means what it has always meant: nobody was asked how they got here.
+   * Null is never "walked" — see `mbosVisits.travelLegId`.
+   */
+  travelLegId: z.string().nullish(),
 });
 
 async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
@@ -919,6 +930,7 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
         journeyPlanStopId: p.journeyPlanStopId ?? null,
         wasPlanned: p.wasPlanned ?? false,
         deviationReason: p.deviationReason ?? null,
+        travelLegId: p.travelLegId ?? null,
         locationMismatch,
         verified,
         unverifiedReason,
@@ -957,6 +969,34 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
            set status = 'visited', actual_visit_at = ${checkInAtIso}, updated_at = now()
          where id = ${p.journeyPlanStopId}
       `);
+    }
+
+    /*
+     * THE LINK IS STAMPED FROM THIS END, because this is the end that knows.
+     *
+     * A leg closes at the shop door, minutes or hours before the visit is
+     * saved on the way out, so at its own arrival it cannot know a visit id
+     * that does not exist yet. Writing it here rather than making the handset
+     * send a fourth item about the leg also means the two rows agree even if
+     * that item were lost.
+     *
+     * Scoped to this salesman AND to a leg not already claimed: a visit id
+     * pasted onto somebody else's journey would be a way to attach a
+     * colleague's mileage to your own afternoon. `update … where` is the
+     * whole check — a leg that does not match is simply not touched, and the
+     * visit still saves, because a visit is never lost to a link.
+     */
+    if (p.travelLegId) {
+      await tx
+        .update(mbosTravelLegs)
+        .set({ visitId: item.entityId, updatedAt: new Date(), updatedById: principal.user.id })
+        .where(
+          and(
+            eq(mbosTravelLegs.id, p.travelLegId),
+            eq(mbosTravelLegs.userId, principal.user.id),
+            eq(mbosTravelLegs.customerId, customer.id),
+          ),
+        );
     }
   });
 
@@ -1810,9 +1850,9 @@ async function handleLeadUpdate(
   const p = parsed.data;
 
   const [existing] = await db
-    .select({ id: mbosLeads.id, name: mbosLeads.name })
-    .from(mbosLeads)
-    .where(eq(mbosLeads.id, item.entityId))
+    .select({ id: customers.id, name: customers.name })
+    .from(customers)
+    .where(eq(customers.id, item.entityId))
     .limit(1);
 
   if (!existing) {
@@ -1833,32 +1873,39 @@ async function handleLeadUpdate(
     };
   }
 
-  const changed: Partial<typeof mbosLeads.$inferInsert> = {
+  const changed: Partial<typeof customers.$inferInsert> = {
     /* Any edit is contact, and staleness is measured from the last thing that
      * happened — so working a lead moves the clock whatever else it changed. */
-    lastActivityDate: await today(),
+    leadLastActivityDate: await today(),
     updatedAt: new Date(),
-    updatedById: principal.user.id,
   };
   if (p.name != null) changed.name = p.name;
   if (p.companyName != null) changed.companyName = p.companyName;
-  if (p.mobile != null) changed.mobile = p.mobile;
+  if (p.mobile != null) changed.phone = p.mobile;
   if (p.city != null) changed.city = p.city;
   if (p.area != null) changed.area = p.area;
-  if (p.stage != null) changed.stage = p.stage;
-  if (p.nextFollowUpDate != null) changed.nextFollowUpDate = p.nextFollowUpDate;
-  if (p.notes != null) changed.notes = p.notes;
+  if (p.stage != null) changed.leadStage = p.stage;
+  if (p.nextFollowUpDate != null) changed.leadNextFollowUpDate = p.nextFollowUpDate;
+  if (p.notes != null) changed.leadNotes = p.notes;
   if (p.estimatedPotentialPaise != null) {
-    changed.estimatedPotentialPaise = p.estimatedPotentialPaise;
+    changed.leadEstimatedPotentialPaise = p.estimatedPotentialPaise;
   }
-  if (p.lostReason != null) changed.lostReason = p.lostReason;
-  if (p.archived != null) changed.archived = p.archived;
+  if (p.lostReason != null) changed.leadLostReason = p.lostReason;
+  if (p.archived != null) changed.leadArchived = p.archived;
+  /*
+   * ONE LEAD, so winning one is this row becoming a customer rather than a
+   * second row being written and pointed at. The handset still sends
+   * `convertedCustomerId` — its payload shape is unchanged — and what that now
+   * means is "this is won": `kind` moves, and the calls, timeline and GPS fix
+   * come with it because they never moved.
+   */
   if (p.convertedCustomerId != null) {
-    changed.convertedCustomerId = p.convertedCustomerId;
-    changed.convertedAt = new Date();
+    changed.kind = "customer";
+    changed.leadStage = "won";
+    changed.leadConvertedAt = new Date();
   }
 
-  await db.update(mbosLeads).set(changed).where(eq(mbosLeads.id, item.entityId));
+  await db.update(customers).set(changed).where(eq(customers.id, item.entityId));
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }
@@ -1884,9 +1931,9 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
    * carries. A second row for one shop is two salesmen working it. */
   if (item.op === "create") {
     const clash = await db
-      .select({ id: mbosLeads.id, name: mbosLeads.name })
-      .from(mbosLeads)
-      .where(and(eq(mbosLeads.mobile, p.mobile), eq(mbosLeads.archived, false)))
+      .select({ id: customers.id, name: customers.name })
+      .from(customers)
+      .where(and(eq(customers.phone, p.mobile), eq(customers.leadArchived, false)))
       .limit(1);
     if (clash.length && clash[0].id !== item.entityId) {
       return {
@@ -1900,45 +1947,52 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
   }
 
   const day = await today();
+  /*
+   * `customers.city` is NOT NULL and the handset's lead form does not require
+   * a town, so one is fallen back to rather than refusing a lead a salesman
+   * has already captured standing in the shop. The convert flow still insists
+   * on a real town before the account is opened — that is where it matters.
+   */
+  const city = p.city ?? p.area ?? "Unknown";
+
   await db
-    .insert(mbosLeads)
+    .insert(customers)
     .values({
       id: item.entityId,
       name: p.name,
       companyName: p.companyName ?? null,
-      mobile: p.mobile,
-      city: p.city ?? null,
+      phone: p.mobile,
+      city,
       area: p.area ?? null,
-      source: p.source ?? "manual",
-      estimatedPotentialPaise: p.estimatedPotentialPaise ?? null,
-      assignedToUserId: principal.user.id,
-      stage: p.stage ?? "new",
-      nextFollowUpDate: p.nextFollowUpDate ?? null,
-      notes: p.notes ?? null,
+      kind: "lead",
+      leadSource: p.source ?? "manual",
+      /* The salesman who raised it OWNS it, and that is what puts it on his
+       * handset AND in the scoped lists the office reads — `ASSIGNED_TO_SQL`
+       * resolves a lead through `owner_id`. One column, three screens. */
+      ownerId: principal.user.id,
+      leadStage: p.stage ?? "new",
+      leadEstimatedPotentialPaise: p.estimatedPotentialPaise ?? null,
+      leadNextFollowUpDate: p.nextFollowUpDate ?? null,
+      leadNotes: p.notes ?? null,
       gpsLat: p.gpsLat ?? null,
       gpsLng: p.gpsLng ?? null,
-      lostReason: p.lostReason ?? null,
-      lastActivityDate: day,
-      clientCreatedAt: new Date(item.clientCreatedAt),
-      createdById: principal.user.id,
-      updatedById: principal.user.id,
-      deviceId: principal.deviceId,
+      leadLostReason: p.lostReason ?? null,
+      leadLastActivityDate: day,
     })
     .onConflictDoUpdate({
-      target: mbosLeads.id,
+      target: customers.id,
       set: {
         name: p.name,
         companyName: p.companyName ?? null,
-        mobile: p.mobile,
-        city: p.city ?? null,
+        phone: p.mobile,
+        city,
         area: p.area ?? null,
-        stage: p.stage ?? "new",
-        nextFollowUpDate: p.nextFollowUpDate ?? null,
-        notes: p.notes ?? null,
-        lostReason: p.lostReason ?? null,
-        lastActivityDate: day,
+        leadStage: p.stage ?? "new",
+        leadNextFollowUpDate: p.nextFollowUpDate ?? null,
+        leadNotes: p.notes ?? null,
+        leadLostReason: p.lostReason ?? null,
+        leadLastActivityDate: day,
         updatedAt: new Date(),
-        updatedById: principal.user.id,
       },
     });
 
@@ -2103,6 +2157,22 @@ const expenseSchema = z.object({
   description: z.string().max(2000).nullish(),
   billPhotoId: z.string().nullish(),
   claimId: z.string().nullish(),
+  /*
+   * A BUS TICKET THAT BECAME MONEY, and the leg it came off.
+   *
+   * The fare goes through this handler and no other — the same caps, the same
+   * bill-photograph threshold, the same backdating window, the same approval
+   * queue. A second path for spending that skipped the claim queue would be a
+   * way to spend money nobody ever pays back, so there is not one.
+   *
+   * What the two fields buy is that the claim can SAY where it came from.
+   * "₹40 · Travel" typed on the Expenses screen and the same figure lifted off
+   * a ticket at a shop door need different questions asked of them, and
+   * without a mark the salesman who already attached it has no way to know,
+   * so the honest thing he does next is type it in again.
+   */
+  source: z.enum(["manual", "travel_ticket"]).nullish(),
+  travelLegId: z.string().nullish(),
 });
 
 async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<Handled> {
@@ -2147,6 +2217,36 @@ async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<
     };
   }
 
+  /*
+   * ONE FARE PER JOURNEY, refused in words rather than left to the index.
+   *
+   * `mbos_expenses_one_per_travel_leg` is a partial unique index and it is the
+   * real guarantee — the handset is where the double-tap happens, and a rule
+   * that lives only there is not a rule. But a constraint violation comes out
+   * of the driver as `Failed query`, which `ingestSyncBatch` reports as a
+   * RETRY: the outbox would resend the same duplicate for ever, the salesman
+   * would see a claim that never lands, and nothing on either end would name
+   * the cause. That is the worse of the two shapes and this codebase has been
+   * bitten by it three times, always with a raw query. So the question is
+   * asked first and answered as a rejection, which is a sentence he can read.
+   */
+  if (p.travelLegId) {
+    const [already] = await db
+      .select({ id: mbosExpenses.id })
+      .from(mbosExpenses)
+      .where(eq(mbosExpenses.travelLegId, p.travelLegId))
+      .limit(1);
+    if (already && already.id !== item.entityId) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "duplicate",
+          "That ticket has already been claimed against this journey. One trip is one fare — if the amount was wrong, ask your manager to correct the claim rather than sending a second one.",
+        ),
+      };
+    }
+  }
+
   await db
     .insert(mbosExpenses)
     .values({
@@ -2158,12 +2258,257 @@ async function handleExpense(principal: MbosPrincipal, item: SyncItem): Promise<
       remarks: p.description ?? null,
       billPhotoId: p.billPhotoId ?? null,
       claimId: p.claimId ?? null,
+      /* Defaulted rather than inferred from `travelLegId` being present: an
+         older handset sends neither and means `manual`, which is what it has
+         always meant, and a newer one says which in words. */
+      source: p.source ?? "manual",
+      travelLegId: p.travelLegId ?? null,
       clientCreatedAt: new Date(item.clientCreatedAt),
       createdById: principal.user.id,
       updatedById: principal.user.id,
       deviceId: principal.deviceId,
     })
     .onConflictDoNothing({ target: mbosExpenses.id });
+
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
+
+/* ------------------------------------------------------------ travel legs */
+
+/**
+ * ONE JOURNEY TO ONE SHOP, and it arrives in up to three pieces.
+ *
+ * `create` when he sets off, `update` when he arrives, and a third `update` if
+ * a ticket is attached at the shop door. That is not a quirk of the sync — it
+ * is what the record IS: the whole point of the departure photograph is that
+ * it was taken before the journey, and a leg that only reached the office once
+ * it was finished would be two readings typed at the same moment, which proves
+ * nothing at all.
+ *
+ * Which means the two halves are validated separately and neither may assume
+ * the other. An arrival for a leg this server has never seen is not an error
+ * to shout about — it is an outbox that lost its first item, and it is
+ * REJECTED rather than silently inserted as a whole leg, because a leg whose
+ * departure nobody witnessed is exactly the shape somebody would forge.
+ */
+const travelLegSchema = z.object({
+  customerId: z.string(),
+  mode: z.enum(["personal_bike", "personal_car", "bus", "train", "walk", "customer_vehicle"]),
+  departedAt: z.number(),
+  departLat: z.number().nullish(),
+  departLng: z.number().nullish(),
+  departAccuracyM: z.number().int().nullish(),
+  startOdometerKm: z.number().int().nonnegative().nullish(),
+  startOdometerPhotoId: z.string().nullish(),
+  journeyPlanStopId: z.string().nullish(),
+});
+
+/**
+ * The arrival, the ticket and the abandonment all come as an `update`, and it
+ * is PARTIAL — it names the id and what changed. A leg still travelling and
+ * one that ended in nothing are both ordinary, so every field here is
+ * optional and what arrived is what decides which of the three this was.
+ */
+const travelLegUpdateSchema = z.object({
+  arrivedAt: z.number().nullish(),
+  arriveLat: z.number().nullish(),
+  arriveLng: z.number().nullish(),
+  arriveAccuracyM: z.number().int().nullish(),
+  endOdometerKm: z.number().int().nonnegative().nullish(),
+  endOdometerPhotoId: z.string().nullish(),
+  ticketPhotoId: z.string().nullish(),
+  ticketFarePaise: z.number().int().nonnegative().nullish(),
+  ticketExpenseId: z.string().nullish(),
+  abandonedAt: z.number().nullish(),
+  abandonReason: z.string().max(500).nullish(),
+});
+
+async function handleTravelLeg(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const config = await getConfig();
+  const odometerModes = config["mbos.travel.odometerModes"] as string[];
+
+  if (item.op === "create") {
+    const parsed = travelLegSchema.safeParse(item.payload);
+    if (!parsed.success) return validationRejection(parsed.error);
+    const p = parsed.data;
+
+    const found = await scopedCustomer(principal, p.customerId);
+    if (!found.ok) return { kind: "rejected", value: found.value };
+
+    /*
+     * THE ODOMETER IS CHECKED HERE TOO, and not only on the handset.
+     *
+     * The camera screen refuses to open a bike leg without both the
+     * photograph and the reading, which is where this rule is actually
+     * enforced for a person. This is the rule surviving a build of the app
+     * that forgot it, or a payload somebody wrote by hand — a mileage claim is
+     * money, and a check that lives only in an interface is not a check. It is
+     * the same reasoning as `target.set` being verified in the action rather
+     * than by hiding a button.
+     */
+    if (odometerModes.includes(p.mode)) {
+      if (p.startOdometerKm == null || !p.startOdometerPhotoId) {
+        return {
+          kind: "rejected",
+          value: reject(
+            "validation",
+            `A journey by ${p.mode.replace(/_/g, " ")} is measured on your own odometer, so it needs the reading and the photograph of it before it can start. Nothing was recorded — take the photo and set off again.`,
+          ),
+        };
+      }
+    }
+
+    await db
+      .insert(mbosTravelLegs)
+      .values({
+        id: item.entityId,
+        userId: principal.user.id,
+        customerId: found.customer.id,
+        journeyPlanStopId: p.journeyPlanStopId ?? null,
+        mode: p.mode,
+        departedAt: new Date(p.departedAt),
+        departLat: p.departLat ?? null,
+        departLng: p.departLng ?? null,
+        departAccuracyM: p.departAccuracyM ?? null,
+        startOdometerKm: p.startOdometerKm ?? null,
+        startOdometerPhotoId: p.startOdometerPhotoId ?? null,
+        clientCreatedAt: new Date(item.clientCreatedAt),
+        createdById: principal.user.id,
+        updatedById: principal.user.id,
+        deviceId: principal.deviceId,
+      })
+      .onConflictDoNothing({ target: mbosTravelLegs.id });
+
+    return { kind: "accepted", value: { serverId: item.entityId } };
+  }
+
+  const parsed = travelLegUpdateSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+  const p = parsed.data;
+
+  const [leg] = await db
+    .select({
+      id: mbosTravelLegs.id,
+      userId: mbosTravelLegs.userId,
+      mode: mbosTravelLegs.mode,
+      startOdometerKm: mbosTravelLegs.startOdometerKm,
+      arrivedAt: mbosTravelLegs.arrivedAt,
+    })
+    .from(mbosTravelLegs)
+    .where(eq(mbosTravelLegs.id, item.entityId));
+
+  if (!leg) {
+    return {
+      kind: "rejected",
+      value: reject(
+        "validation",
+        "MahekOne has no record of that journey starting, so there is nothing to arrive at the end of. Sync and set off again — a journey the office never saw begin cannot be closed from this end.",
+      ),
+    };
+  }
+  /* His own leg, and nobody else's. These ids travel in payloads. */
+  if (leg.userId !== principal.user.id) {
+    return {
+      kind: "rejected",
+      value: reject("not_permitted", "That journey belongs to somebody else."),
+    };
+  }
+
+  const patch: Record<string, unknown> = {
+    updatedAt: new Date(),
+    updatedById: principal.user.id,
+  };
+
+  if (p.arrivedAt != null) {
+    /*
+     * A SECOND ARRIVAL IS IGNORED, not applied.
+     *
+     * The outbox retries, so the same arrival can land twice; that is
+     * idempotent and harmless. What is not harmless is a genuinely different
+     * second reading overwriting the first — the distance is what somebody is
+     * paid on, and the earliest close is the one taken at the shop door. So
+     * arrival fields are written only while the leg is still open.
+     */
+    if (leg.arrivedAt) return { kind: "accepted", value: { serverId: item.entityId } };
+
+    if (odometerModes.includes(leg.mode)) {
+      if (p.endOdometerKm == null || !p.endOdometerPhotoId) {
+        return {
+          kind: "rejected",
+          value: reject(
+            "validation",
+            "Arriving on your own vehicle needs the odometer read and photographed again — that second reading is the whole of the distance claim.",
+          ),
+        };
+      }
+      const start = leg.startOdometerKm;
+      if (start == null) {
+        return {
+          kind: "rejected",
+          value: reject(
+            "validation",
+            "This journey has no starting reading on it, so there is nothing to subtract an arrival from.",
+          ),
+        };
+      }
+      if (p.endOdometerKm < start) {
+        return {
+          kind: "rejected",
+          value: reject(
+            "validation",
+            `${p.endOdometerKm} km is lower than the ${start} km you set off on, and an odometer does not run backwards. Check the reading — it is usually a digit dropped from the front.`,
+          ),
+        };
+      }
+      const distance = p.endOdometerKm - start;
+      const max = config["mbos.travel.maxLegKilometres"];
+      if (distance > max) {
+        return {
+          kind: "rejected",
+          value: reject(
+            "validation",
+            `That is ${distance} km for one journey, and the longest a single trip may be recorded as is ${max} km. It is nearly always a mistyped reading rather than a long day — check the odometer again.`,
+          ),
+        };
+      }
+      patch.endOdometerKm = p.endOdometerKm;
+      patch.endOdometerPhotoId = p.endOdometerPhotoId;
+      patch.distanceKm = distance;
+    }
+
+    patch.arrivedAt = new Date(p.arrivedAt);
+    patch.arriveLat = p.arriveLat ?? null;
+    patch.arriveLng = p.arriveLng ?? null;
+    patch.arriveAccuracyM = p.arriveAccuracyM ?? null;
+  }
+
+  /* The ticket, attached when the visit was saved. It is never required and
+     its absence is never a failure — see `mbosTravelLegs.ticketPhotoId`. */
+  if (p.ticketPhotoId) patch.ticketPhotoId = p.ticketPhotoId;
+  if (p.ticketFarePaise != null) patch.ticketFarePaise = p.ticketFarePaise;
+  if (p.ticketExpenseId) patch.ticketExpenseId = p.ticketExpenseId;
+
+  if (p.abandonedAt != null) {
+    /* He set off and did not get there. The reason is required by the handset
+       and re-required here: the odometer already moved, and a gap in the
+       readings with no sentence against it is what an audit stops on. */
+    if (!p.abandonReason?.trim()) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          "A journey that was called off needs a reason — the odometer has already moved, and the next trip's reading will not add up without one.",
+        ),
+      };
+    }
+    patch.abandonedAt = new Date(p.abandonedAt);
+    patch.abandonReason = p.abandonReason.trim();
+  }
+
+  await db.update(mbosTravelLegs).set(patch).where(eq(mbosTravelLegs.id, leg.id));
 
   return { kind: "accepted", value: { serverId: item.entityId } };
 }
@@ -2181,6 +2526,31 @@ const attendanceSchema = z.object({
   checkOutLng: z.number().nullish(),
   checkOutAccuracyM: z.number().nullish(),
   selfieId: z.string().nullish(),
+  checkOutSelfieId: z.string().nullish(),
+  /**
+   * The day as the handset holds it, and the only place N selfies can live.
+   *
+   * Every check-in and every check-out is photographed, so a day with two
+   * breaks carries six — and `selfieId`/`checkOutSelfieId` above can hold two.
+   * Sent on every attendance write, create and update both, because the whole
+   * list is the answer: a shorter one is how a session is corrected, and
+   * merging here would make a correction impossible.
+   *
+   * Capped at a number no real day reaches. Twelve sessions is six breaks;
+   * past that it is a handset in a loop, and an unbounded list from a client
+   * is a column somebody can grow without limit.
+   */
+  sessions: z
+    .array(
+      z.object({
+        inAt: z.number(),
+        outAt: z.number().nullish(),
+        inSelfieId: z.string().nullish(),
+        outSelfieId: z.string().nullish(),
+      }),
+    )
+    .max(12)
+    .nullish(),
   notes: z.string().max(1000).nullish(),
   /** Whether the check-in was inside the permitted radius, where one is set. */
   withinGeofence: z.boolean().nullish(),
@@ -2210,6 +2580,38 @@ async function handleAttendance(
 
   const rowId = existing[0]?.id ?? item.entityId;
 
+  /*
+   * The selfies are checked before they are STORED against the day.
+   *
+   * These columns are foreign keys onto `attachments`, and media syncs AFTER
+   * its parent by design — the record goes up first so 840 KB of photograph
+   * never delays it. So on the create the attachment row does not exist yet
+   * and the key would be violated, which would reject the check-in over a file
+   * that is on its way. The id is kept only where the row is already there,
+   * and the handset re-sends the same payload as the media queue drains, so
+   * the second pass fills it in. `sessions` carries the ids regardless, since
+   * it is jsonb and holds what the handset reported whether or not the bytes
+   * have landed — the mark is never lost to the ordering of an upload.
+   */
+  const known = await knownAttachments([
+    p.selfieId,
+    p.checkOutSelfieId,
+    ...(p.sessions ?? []).flatMap((x) => [x.inSelfieId, x.outSelfieId]),
+  ]);
+  const selfieRef = (id: string | null | undefined) =>
+    id && known.has(id) ? id : null;
+
+  /* Normalised to the column's own shape: an open session is explicitly
+     `outAt: null`, never a missing key. `undefined` in jsonb is how a row
+     comes back with a field that reads as absent rather than as "still
+     running", and `openSession` on the handset keys on exactly that. */
+  const sessions = p.sessions?.map((x) => ({
+    inAt: x.inAt,
+    outAt: x.outAt ?? null,
+    inSelfieId: x.inSelfieId ?? null,
+    outSelfieId: x.outSelfieId ?? null,
+  }));
+
   await db
     .insert(mbosAttendanceDays)
     .values({
@@ -2220,11 +2622,13 @@ async function handleAttendance(
       checkInLat: p.checkInLat ?? null,
       checkInLng: p.checkInLng ?? null,
       checkInAccuracyM: round(p.checkInAccuracyM),
-      checkInSelfieId: p.selfieId ?? null,
+      checkInSelfieId: selfieRef(p.selfieId),
       checkOutAt: p.checkOutAt ? new Date(p.checkOutAt) : null,
       checkOutLat: p.checkOutLat ?? null,
       checkOutLng: p.checkOutLng ?? null,
       checkOutAccuracyM: round(p.checkOutAccuracyM),
+      checkOutSelfieId: selfieRef(p.checkOutSelfieId),
+      sessions: sessions ?? [],
       withinGeofence: p.withinGeofence ?? null,
       geofenceDistanceM: round(p.geofenceDistanceM),
       regularisationRequested: p.regularisationRequested ?? false,
@@ -2247,6 +2651,22 @@ async function handleAttendance(
         ...(p.checkOutAccuracyM != null
           ? { checkOutAccuracyM: round(p.checkOutAccuracyM) }
           : {}),
+        /*
+         * The photographs, and the sessions they hang off.
+         *
+         * Written on every arrival rather than only the first, unlike the
+         * check-in mark above — a day GROWS: the afternoon session and its two
+         * selfies are new facts about a row that already exists, and the whole
+         * list is what the handset sends. Each id is only stored once its
+         * attachment has actually landed (see `selfieRef`), so a re-send after
+         * the media queue drains is what fills the two key columns in; the
+         * jsonb list holds the ids from the first pass either way.
+         */
+        ...(sessions ? { sessions } : {}),
+        ...(selfieRef(p.selfieId) ? { checkInSelfieId: selfieRef(p.selfieId) } : {}),
+        ...(selfieRef(p.checkOutSelfieId)
+          ? { checkOutSelfieId: selfieRef(p.checkOutSelfieId) }
+          : {}),
         /* A correction asked for after the fact — the reason for a check-in
          * outside the radius, or a day somebody wants changed. It arrives as
          * its own write because the day starts when the button is pressed:
@@ -2264,6 +2684,27 @@ async function handleAttendance(
     });
 
   return { kind: "accepted", value: { serverId: rowId } };
+}
+
+/**
+ * Which of these attachment ids actually exist yet.
+ *
+ * Media syncs after its parent — that is the whole point of it being a
+ * separate queue — so an attendance row routinely names a photograph whose
+ * bytes are still on the phone. A foreign key does not care about the reason:
+ * it would refuse the check-in, which is the one write in this app that must
+ * not be refused over a file.
+ */
+async function knownAttachments(
+  ids: (string | null | undefined)[],
+): Promise<Set<string>> {
+  const wanted = [...new Set(ids.filter((x): x is string => !!x))];
+  if (!wanted.length) return new Set();
+  const rows = await db
+    .select({ id: attachments.id })
+    .from(attachments)
+    .where(inArray(attachments.id, wanted));
+  return new Set(rows.map((r) => r.id));
 }
 
 /** GPS accuracy arrives fractional; the columns it lands in are integers. */
@@ -3146,6 +3587,74 @@ async function handleCustomerCreate(
         .limit(1)
     : [];
 
+  /*
+   * ONE LEAD, so winning one PROMOTES the row rather than writing a second.
+   *
+   * The handset creates a customer locally with its own id and sends
+   * `fromLeadId` alongside — a field that has been in this schema since the
+   * convert flow shipped and was read by nothing, so the comment claiming the
+   * two records stayed joined up was never true. It is now the whole
+   * mechanism: the lead row becomes the customer, keeping its calls, its
+   * timeline, its GPS fix and its history, and the lead's id goes back as
+   * `serverId` so the handset points at the record that already exists.
+   *
+   * Without this the conversion would write a SECOND row for a shop that is
+   * already in the book — which is exactly the duplication collapsing the two
+   * tables was meant to end.
+   */
+  if (p.fromLeadId) {
+    const [lead] = await db
+      .select({ id: customers.id, kind: customers.kind })
+      .from(customers)
+      .where(eq(customers.id, p.fromLeadId))
+      .limit(1);
+
+    if (lead && lead.kind === "lead") {
+      await db
+        .update(customers)
+        .set({
+          kind: "customer",
+          name: p.name,
+          contactPerson: p.contactPerson || p.name,
+          phone: p.phone,
+          city,
+          address: p.address ?? null,
+          salesAmId: principal.user.id,
+          thirdParty: Boolean(p.thirdParty),
+          gpsLat: p.gpsLat ?? null,
+          gpsLng: p.gpsLng ?? null,
+          leadStage: "won",
+          leadConvertedAt: new Date(),
+          leadArchived: false,
+          updatedAt: new Date(),
+        })
+        .where(eq(customers.id, lead.id));
+
+      if (distributor) {
+        await db
+          .insert(customerDistributors)
+          .values({
+            id: `cd_${randomUUID().slice(0, 12)}`,
+            customerId: lead.id,
+            distributorCustomerId: distributor.id,
+            isPrimary: true,
+            note: "Opened in the field",
+            createdById: principal.user.id,
+            updatedById: principal.user.id,
+          })
+          .onConflictDoNothing();
+      }
+
+      await notifyManagers(
+        principal.user.id,
+        "A new account was opened in the field",
+        `${principal.user.name} converted ${p.name} in ${p.city} from a lead. It has no credit limit or terms yet — accounts decide those.`,
+      );
+
+      return { kind: "accepted", value: { serverId: lead.id } };
+    }
+  }
+
   await db.transaction(async (tx) => {
     await tx.insert(customers).values({
       id: item.entityId,
@@ -3570,12 +4079,48 @@ export type MediaOutcome =
  * the attachment id, which makes the dedupe a primary-key lookup rather than a
  * column somebody has to remember to index.
  */
+/**
+ * WHAT A FIELD FILE HANGS OFF, in the vocabulary `attachments.parent_type`
+ * speaks.
+ *
+ * The handset names its own tables — `attendance`, `visit`, `expense` — and
+ * the enum names them `mbos_*`, except for a payment, which lands in the CRM's
+ * own `payment_receipts` and so takes the CRM's own value. Mapping here rather
+ * than renaming either side: the enum values are shared with the CRM, and the
+ * handset's names are in an APK that cannot be recalled.
+ *
+ * An unrecognised name parents NOTHING rather than guessing. That is the state
+ * every MBOS upload was already in, so it is no worse than before — and it is
+ * visibly wrong the moment somebody looks, where a guess would file a
+ * photograph under a parent whose `canRead` rules do not apply to it.
+ */
+const MBOS_PARENTS: Record<string, (typeof attachmentParentEnum.enumValues)[number]> = {
+  attendance: "mbos_attendance",
+  visit: "mbos_visit",
+  expense: "mbos_expense",
+  sample: "mbos_sample",
+  task: "mbos_task",
+  /* Not `mbos_payment`: a field collection is written into `payment_receipts`,
+     the same table the CRM's own receipts use, so this is that parent and
+     `canRead` resolves it through the customer exactly as it does for one
+     captured at a desk. */
+  payment: "payment_receipt",
+  /* The two odometer photographs and the ticket. Its OWN parent rather than
+     `mbos_visit`, because a leg exists before its visit and often instead of
+     one — filed under the visit, a leg that produced none would have a parent
+     id resolving to nothing, and the nightly sweep deletes what belongs to
+     nothing. That is the bug this subsystem has already had once. */
+  travel_leg: "mbos_travel_leg",
+};
+
 export async function storeMbosMedia(
   principal: MbosPrincipal,
   input: {
     clientId: string;
     kind: string;
-    entityId?: string;
+    /** The handset's own name for the table — see `MBOS_PARENTS`. */
+    parentType?: string;
+    parentId?: string;
     filename: string;
     bytes: Uint8Array;
   },
@@ -3638,6 +4183,16 @@ export async function storeMbosMedia(
       contentType: actual,
     });
 
+    /* The parent, which nothing was recording — see the note in
+     * `api/mbos/media/route.ts`. A file with none is readable by its uploader
+     * alone and is deleted by the nightly orphan sweep, so this pair of
+     * columns is the difference between an attachment and a file with a
+     * twenty-four-hour life. */
+    const parentType = input.parentType
+      ? (MBOS_PARENTS[input.parentType] ?? null)
+      : null;
+    const parentId = parentType && input.parentId ? input.parentId : null;
+
     await db
       .insert(attachments)
       .values({
@@ -3648,6 +4203,8 @@ export async function storeMbosMedia(
         sizeBytes: stored.sizeBytes,
         thumbnailRef: actual.startsWith("image/") ? stored.ref : null,
         status: "available",
+        parentType,
+        parentId,
         uploadedById: principal.user.id,
       })
       .onConflictDoUpdate({
@@ -3657,6 +4214,10 @@ export async function storeMbosMedia(
           contentType: actual,
           sizeBytes: stored.sizeBytes,
           status: "available",
+          /* Re-parented on a re-upload only where this one names a parent: a
+             retry that has lost the name must not orphan a file that was
+             already filed correctly. */
+          ...(parentType ? { parentType, parentId } : {}),
           updatedAt: new Date(),
         },
       });

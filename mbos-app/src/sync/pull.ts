@@ -1,4 +1,4 @@
-import { run, tx } from '../db';
+import { all, run, tx } from '../db';
 import type { PullPayload } from './api';
 
 /**
@@ -35,6 +35,8 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertCourses(pull.courses, now);
     touched += await upsertPerformance(pull.performance, now);
     touched += await upsertTasks(pull.tasks, now);
+    touched += await upsertLeads(pull.leads, now);
+    touched += await upsertSamples(pull.samples, now);
     touched += await upsertSalary(pull.salary, now);
     touched += await applyApprovals(pull.approvals);
     touched += await applyDeletions(pull.deletions);
@@ -74,12 +76,45 @@ async function applyTranscripts(
 
 type Row = Record<string, unknown>;
 
-/** Upsert by primary key, writing only the columns the server actually sent. */
+/**
+ * What this table can actually hold, asked of SQLite rather than assumed.
+ *
+ * Cached for the life of the process: a migration runs once, on open, before
+ * any of this — so the answer cannot change underneath a sync.
+ */
+const columnsOf = new Map<string, Set<string>>();
+
+async function knownColumns(table: string): Promise<Set<string>> {
+  const cached = columnsOf.get(table);
+  if (cached) return cached;
+  const info = await all<{ name: string }>(`PRAGMA table_info(${table})`);
+  const cols = new Set(info.map((c) => c.name));
+  columnsOf.set(table, cols);
+  return cols;
+}
+
+/**
+ * Upsert by primary key, writing the columns the server sent THAT THIS
+ * HANDSET HAS SOMEWHERE TO PUT.
+ *
+ * The filter is the whole point, and it was missing. SQLite refuses a column
+ * it does not have, so one field the server knew about and this build did not
+ * threw — and because `applyPull` is a single transaction, that throw rolled
+ * back every table in the pull, not just the one. `signIn` then caught it,
+ * found it was not an `ApiError`, and signed the salesman in through the
+ * offline path with an empty database and nothing on the screen.
+ *
+ * An APK cannot be recalled, so the server has to be able to move first. A
+ * column this build does not know about is one it cannot use anyway; dropping
+ * it costs a field the screens never read, and refusing it costs the book.
+ */
 async function upsert(table: string, key: string, rows: unknown[] | undefined, extra: Row = {}): Promise<number> {
   if (!rows?.length) return 0;
+  const known = await knownColumns(table);
   for (const raw of rows) {
     const row = { ...(raw as Row), ...extra };
-    const cols = Object.keys(row);
+    const cols = Object.keys(row).filter((c) => known.has(c));
+    if (!cols.includes(key)) continue;
     const marks = cols.map(() => '?').join(',');
     const sets = cols.filter((c) => c !== key).map((c) => `${c} = excluded.${c}`).join(', ');
     await run(
@@ -208,6 +243,138 @@ async function upsertConfig(config: Record<string, unknown> | undefined, now: nu
  * outbox write still in flight for this same task is not lost, because the
  * outbox is what resends it and wins the next round trip.
  */
+/**
+ * A lead and a sample the OFFICE holds, coming home.
+ *
+ * These are the only two tables written from both ends. They are OWNED — the
+ * salesman raises them in the field — and they also have an office end, which
+ * is why a plain reference upsert is wrong for both: it would overwrite an
+ * edit sitting in the outbox with the older row the server still believes.
+ * `WHERE syncState = 'synced'` is what keeps that from happening. A queued row
+ * is one this handset has said something about and the office has not heard
+ * yet, so the local answer is the newer fact and it stands until it is sent.
+ *
+ * The words differ too, and not only in case — PROTOCOL.md §4.1 and
+ * `lib/wire.ts`. `companyName` is `company`, a lower-case `won` is
+ * `Converted`, one note field is a list, and a sample's `state` is not on the
+ * wire at all because MahekOne tracks the two timestamps behind it instead.
+ * That is exactly why neither of these can go through the generic upsert: it
+ * writes the keys it is given, and none of these five is the same word twice.
+ */
+async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<number> {
+  if (!rows?.length) return 0;
+  const { localNotes, localStage } = await import('../lib/wire');
+  for (const raw of rows) {
+    const l = raw as {
+      id: string;
+      name: string;
+      companyName?: string | null;
+      mobile?: string | null;
+      city?: string | null;
+      source?: string | null;
+      stage?: string;
+      estimatedPotentialPaise?: number | null;
+      nextFollowUpDate?: string | null;
+      notes?: string | null;
+      convertedCustomerId?: string | null;
+      lastActivityDate?: string | null;
+    };
+    await run(
+      `INSERT INTO leads (id, name, company, mobile, city, source, estimatedPotentialPaise,
+                          assigneeId, stage, nextFollowUpDate, notes, convertedCustomerId,
+                          archived, lastActivityDate, clientCreatedAt, serverCreatedAt,
+                          deviceId, syncState)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, 'server', 'synced')
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name, company = excluded.company, mobile = excluded.mobile,
+         city = excluded.city, source = excluded.source,
+         estimatedPotentialPaise = excluded.estimatedPotentialPaise,
+         stage = excluded.stage, nextFollowUpDate = excluded.nextFollowUpDate,
+         convertedCustomerId = excluded.convertedCustomerId,
+         lastActivityDate = excluded.lastActivityDate
+       WHERE leads.syncState = 'synced'`,
+      [
+        l.id,
+        l.name,
+        l.companyName ?? null,
+        l.mobile ?? null,
+        l.city ?? null,
+        l.source ?? null,
+        l.estimatedPotentialPaise ?? null,
+        localStage(l.stage),
+        l.nextFollowUpDate ?? null,
+        /* Only on INSERT. The note list is APPENDED to locally and the wire
+           carries one flattened string, so re-writing it on every pass would
+           replace a salesman's own notes with the office's rendering of them. */
+        localNotes(l.notes, now),
+        l.convertedCustomerId ?? null,
+        l.lastActivityDate ?? null,
+        now,
+        now,
+      ],
+    );
+  }
+  return rows.length;
+}
+
+async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<number> {
+  if (!rows?.length) return 0;
+  const { localInstant, localSampleState } = await import('../lib/wire');
+  for (const raw of rows) {
+    const s = raw as {
+      id: string;
+      customerId: string;
+      productId?: string | null;
+      productName?: string | null;
+      quantityCans?: number | null;
+      requestedDate?: string | null;
+      deliveredAt?: string | null;
+      deliveryPhotoId?: string | null;
+      trialOutcome?: string | null;
+      followUpDate?: string | null;
+      feedbackNotes?: string | null;
+      convertedOrderId?: string | null;
+    };
+    await run(
+      `INSERT INTO samples (id, customerId, productId, productName, cans, reason,
+                            requestedAt, state, deliveredAt, deliveryPhotoId, trialOutcome,
+                            followUpDate, convertedOrderId, clientCreatedAt, serverCreatedAt,
+                            deviceId, syncState)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
+       ON CONFLICT(id) DO UPDATE SET
+         productId = excluded.productId, productName = excluded.productName,
+         cans = excluded.cans, reason = excluded.reason, state = excluded.state,
+         deliveredAt = excluded.deliveredAt, deliveryPhotoId = excluded.deliveryPhotoId,
+         trialOutcome = excluded.trialOutcome, followUpDate = excluded.followUpDate,
+         convertedOrderId = excluded.convertedOrderId
+       WHERE samples.syncState = 'synced'`,
+      [
+        s.id,
+        s.customerId,
+        s.productId ?? null,
+        s.productName ?? null,
+        s.quantityCans ?? null,
+        /* `feedbackNotes` is what this app sends its `reason` as — the round
+           trip, not two different fields. See `requestSample`. */
+        s.feedbackNotes ?? null,
+        /* NOT NULL, and a sample with no requested date is still a sample:
+           the day it arrived is a worse answer than the day it was raised and
+           a better one than refusing the row. */
+        localInstant(s.requestedDate) ?? now,
+        localSampleState(s),
+        localInstant(s.deliveredAt),
+        s.deliveryPhotoId ?? null,
+        s.trialOutcome ?? null,
+        s.followUpDate ?? null,
+        s.convertedOrderId ?? null,
+        now,
+        now,
+      ],
+    );
+  }
+  return rows.length;
+}
+
 async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<number> {
   if (!rows?.length) return 0;
   const { localPriority } = await import('../lib/wire');

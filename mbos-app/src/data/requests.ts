@@ -64,6 +64,17 @@ export type Expense = {
   id: string; spentOn: string; category: string; amountPaise: number;
   billPhotoId: string | null; remarks: string | null; state: string;
   approvedAmountPaise: number | null; rejectionReason: string | null; syncState: string;
+  /**
+   * Typed on this screen, or lifted off a bus ticket at a shop door.
+   *
+   * A column and not a phrase in `remarks`, because a screen that switched on
+   * the words in free text breaks the day somebody writes them differently.
+   * It exists so the claim can say where it came from — without a mark, the
+   * salesman who already attached a ticket has no way to know he has, and the
+   * honest thing he does next is type the fare in again.
+   */
+  source: string;
+  travelLegId: string | null;
 };
 
 export async function listExpenses(): Promise<Expense[]> {
@@ -82,6 +93,9 @@ export async function claimExpense(args: {
   amountPaise: number;
   billPhotoId: string | null;
   remarks: string;
+  /** `travel_ticket` where a journey's ticket became this claim. */
+  source?: 'manual' | 'travel_ticket';
+  travelLegId?: string | null;
 }): Promise<{ expenseId: string; overCap: boolean }> {
   const base = await stamp('expense');
   const caps = await getConfig<Record<string, number>>('mbos.expenses.categoryCapsPaise', {});
@@ -106,6 +120,8 @@ export async function claimExpense(args: {
       billPhotoId: args.billPhotoId,
       remarks: args.remarks,
       state: 'Pending',
+      source: args.source ?? 'manual',
+      travelLegId: args.travelLegId ?? null,
     },
     /* `spentOn` and `remarks` are this table's words; MahekOne reads
        `expenseDate` and `description`, and the first of them is REQUIRED — so
@@ -115,6 +131,13 @@ export async function claimExpense(args: {
       overCap,
       expenseDate: args.spentOn,
       description: args.remarks || undefined,
+      /* Both spelled out rather than left to the spread, for the same reason
+         `expenseDate` is: `insertAndQueue` sends the ROW, and the row's words
+         and the wire's are not always the same. These two happen to match, and
+         naming them is what keeps that a fact rather than a coincidence
+         somebody relies on. */
+      source: args.source ?? 'manual',
+      travelLegId: args.travelLegId ?? undefined,
     },
   });
 

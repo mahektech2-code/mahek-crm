@@ -51,20 +51,67 @@ export type Customer = {
   lastSyncedAt: number;
 };
 
-export async function listCustomers(query = ''): Promise<Customer[]> {
+/**
+ * How many rows one read of the book returns.
+ *
+ * There was no cap at all, and the book on a real handset is a thousand shops
+ * — every one of them a card in the frame's plain ScrollView, so touching the
+ * Customers tab mounted the whole territory as native views at once and the
+ * app stopped answering. `PICK_PAGE` is the same number for the same reason
+ * and learned it first: what a cap costs is the shop somebody was going to
+ * reach by scrolling rather than by typing its name, and the search box is
+ * directly above the list.
+ */
+export const CUSTOMER_PAGE = 60;
+
+/**
+ * The book, capped, and what it is a slice OF.
+ *
+ * `total` is a `count(*)` rather than the length of what came back. A capped
+ * list that counts itself reports sixty shops on a book of a thousand and
+ * nothing on the screen says otherwise — the same rule the web app's timeline
+ * pills carry, and the reason the count is asked of SQLite instead of of the
+ * array.
+ */
+export async function listCustomers(
+  query = '',
+): Promise<{ rows: Customer[]; total: number }> {
   const q = query.trim().toLowerCase();
-  if (!q) return all<Customer>('SELECT * FROM customers ORDER BY name');
   /* Name, owner, city, phone and GST — because a salesman looking somebody up
      mid-conversation has whichever of those the customer just said. */
   const like = `%${q}%`;
-  return all<Customer>(
-    `SELECT * FROM customers
-      WHERE lower(name) LIKE ? OR lower(COALESCE(contactPerson,'')) LIKE ?
-         OR lower(COALESCE(city,'')) LIKE ? OR COALESCE(phone,'') LIKE ?
-         OR lower(COALESCE(gstin,'')) LIKE ? OR lower(COALESCE(dealerCode,'')) LIKE ?
-      ORDER BY name`,
-    [like, like, like, like, like, like],
+  const where = q
+    ? `WHERE lower(name) LIKE ? OR lower(COALESCE(contactPerson,'')) LIKE ?
+          OR lower(COALESCE(city,'')) LIKE ? OR COALESCE(phone,'') LIKE ?
+          OR lower(COALESCE(gstin,'')) LIKE ? OR lower(COALESCE(dealerCode,'')) LIKE ?`
+    : '';
+  const args: string[] = q ? [like, like, like, like, like, like] : [];
+
+  const counted = await one<{ n: number }>(`SELECT COUNT(*) AS n FROM customers ${where}`, args);
+  const rows = await all<Customer>(
+    `SELECT * FROM customers ${where} ORDER BY name LIMIT ${CUSTOMER_PAGE}`,
+    args,
   );
+  return { rows, total: counted?.n ?? rows.length };
+}
+
+/**
+ * Names for a handful of ids, whatever the cap above would have shown.
+ *
+ * A screen that lists work against customers — tasks, above all — needs the
+ * name of the shop each row names, and those ids are scattered through the
+ * whole book rather than through its first sixty rows. Reading the book to
+ * resolve them is what the cap exists to stop; reading the twelve rows the
+ * work actually points at costs nothing.
+ */
+export async function customerNamesByIds(ids: string[]): Promise<Map<string, string>> {
+  const wanted = Array.from(new Set(ids.filter(Boolean)));
+  if (!wanted.length) return new Map();
+  const rows = await all<{ id: string; name: string }>(
+    `SELECT id, name FROM customers WHERE id IN (${wanted.map(() => '?').join(',')})`,
+    wanted,
+  );
+  return new Map(rows.map((r) => [r.id, r.name]));
 }
 
 /**
@@ -99,9 +146,23 @@ export async function getCustomer(id: string): Promise<Customer | null> {
  * and visit validation both depend on coordinates, and if most of the book is
  * missing them then capturing them is an early field task rather than a
  * background nicety.
+ *
+ * Capped and counted like every other read of the book. Nothing calls this
+ * yet, which is exactly why the cap goes on now: 487 of the 1,076 shops on a
+ * real handset have no coordinate, so the screen this is waiting for would
+ * have mounted half the territory on its first render and frozen the app the
+ * way the Customers tab did.
  */
-export async function customersWithoutGps(): Promise<Customer[]> {
-  return all<Customer>('SELECT * FROM customers WHERE gpsLat IS NULL OR gpsLng IS NULL ORDER BY name');
+export async function customersWithoutGps(): Promise<{ rows: Customer[]; total: number }> {
+  const counted = await one<{ n: number }>(
+    'SELECT COUNT(*) AS n FROM customers WHERE gpsLat IS NULL OR gpsLng IS NULL',
+  );
+  const rows = await all<Customer>(
+    `SELECT * FROM customers
+      WHERE gpsLat IS NULL OR gpsLng IS NULL
+      ORDER BY name LIMIT ${CUSTOMER_PAGE}`,
+  );
+  return { rows, total: counted?.n ?? rows.length };
 }
 
 /**

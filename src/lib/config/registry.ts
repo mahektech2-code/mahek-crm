@@ -2018,6 +2018,17 @@ export const SETTINGS = [
       "On, somebody signed in on one phone is refused on a second until the first is released — brief §2.2, and the reason is that a field account is a person's own: two live handsets on one login means a day's visits, orders and cash-in-hand that nobody can attribute, and a phone that has quietly left the company still holding a book of customers. Off, the same login opens on as many handsets as it is typed into. Turn it off deliberately and for a reason — a salesman whose phone broke on a Tuesday, a shared handset between shifts — because nothing else in the app distinguishes the two devices afterwards. It does NOT let one person take over a handset registered to somebody else; that stays refused either way.",
     default: true,
   },
+  {
+    key: "mbos.devices.appLockGraceSeconds",
+    type: "integer",
+    category: "mbos-devices",
+    label: "App lock grace period",
+    description:
+      "Seconds the app may sit in the background before the fingerprint is asked for again. The lock exists because a field handset carries the whole book — every customer, what each owes, and the ability to place an order — and it spends the day on shop counters. But the app hands off constantly and deliberately: the system camera for a shop photo, WhatsApp to send a receipt, the dialler to ring a customer. Locking on every return would make the salesman prove himself twenty times a morning to finish jobs he was in the middle of, which is how a lock gets turned off. Long enough for a hand-off, short enough that a phone left on a counter closes itself. A cold start always asks, whatever this says.",
+    default: 180,
+    min: 0,
+    max: 3600,
+  },
 
   {
     key: "mbos.orders.numberSeriesPrefix",
@@ -2117,6 +2128,47 @@ export const SETTINGS = [
     default: 120,
     min: 0,
     max: 3600,
+  },
+
+  /* --------------------------------------------------------------- travel */
+  /*
+   * How he got to the shop.
+   *
+   * The six MODES are not configuration — they live in
+   * `lib/mbos/travel-labels.ts`, where the argument for that is written out:
+   * each names a different kind of evidence and a different code path, so a
+   * seventh typed into a settings screen would arrive with no rule at all and
+   * behave silently like walking. What each mode COSTS is configuration, which
+   * is what these three are, exactly as `payments.datedModes` is for a cheque.
+   */
+  {
+    key: "mbos.travel.odometerModes",
+    type: "structured",
+    category: "mbos-location",
+    label: "Modes that need an odometer photograph",
+    description:
+      "The salesman photographs his odometer when he sets off and again when he arrives, and types the reading beside each. Both are mandatory on these modes — there is no path through the handset that opens one of these legs without them, because the photograph IS the mileage claim rather than an attachment to it. Take a mode off this list and its journeys stop being measured; they are still recorded.",
+    default: ["personal_bike", "personal_car"],
+  },
+  {
+    key: "mbos.travel.ticketModes",
+    type: "structured",
+    category: "mbos-location",
+    label: "Modes that carry a ticket",
+    description:
+      "On these, saving the visit offers the ticket to be photographed and the fare typed, and what he attaches becomes a real travel expense with the ordinary caps and approval. Attaching is OPTIONAL and always will be — a bus ticket is a scrap of paper that gets lost between the seat and the shop door, and refusing the journey over it would mean refusing to record a journey that happened. He can claim it later on Expenses instead, and the screen says so.",
+    default: ["bus", "train"],
+  },
+  {
+    key: "mbos.travel.maxLegKilometres",
+    type: "integer",
+    category: "mbos-location",
+    label: "Longest single journey to one shop",
+    description:
+      "Kilometres. A guard against a mistyped odometer, not a limit on how far anybody may travel: 41,208 entered as 4,120 turns one journey into a claim for thirty-seven thousand kilometres, and nothing downstream would question it. Above this the handset refuses the reading while he is still standing at the odometer and can look again — which is the only moment anybody can.",
+    default: 400,
+    min: 1,
+    max: 5000,
   },
 
   /* ------------------------------------------------------------------ sync */
@@ -2538,6 +2590,56 @@ export function checkConsistency(config: Config): string[] {
     }
   }
 
+  /*
+   * A travel mode nobody can pick is a rule that can never fire, and it reads
+   * on the settings screen as though it does — the same trap as an expense cap
+   * on a category the form does not offer, above.
+   *
+   * It fails WORSE here than there, because these two lists decide what
+   * evidence is demanded: "car" instead of "personal_car" in the odometer list
+   * silently stops asking for the odometer on every car journey in the
+   * company, and nothing anywhere would look broken. The handset would open
+   * the leg, the visit would save, and the mileage would simply stop existing.
+   */
+  const MODES = [
+    "personal_bike",
+    "personal_car",
+    "bus",
+    "train",
+    "walk",
+    "customer_vehicle",
+  ];
+  for (const [key, label] of [
+    ["mbos.travel.odometerModes", "need an odometer photograph"],
+    ["mbos.travel.ticketModes", "carry a ticket"],
+  ] as const) {
+    const list = config[key];
+    if (!Array.isArray(list)) {
+      problems.push(`The travel modes that ${label} must be a list of mode names.`);
+      continue;
+    }
+    const unknown = list.filter((m) => !MODES.includes(m as string));
+    if (unknown.length) {
+      problems.push(
+        `These travel modes are set to ${label} but are not modes anybody can pick: ${unknown.join(", ")}. The modes are ${MODES.join(", ")}.`,
+      );
+    }
+  }
+  /*
+   * And a mode in BOTH lists would ask for an odometer and a ticket on one
+   * journey. That is not a contradiction in the data — it is a contradiction
+   * in what the company thinks it is paying for, and a salesman answering both
+   * questions about one bus ride would reasonably claim both.
+   */
+  const both = (config["mbos.travel.odometerModes"] as string[] | undefined)?.filter?.((m) =>
+    (config["mbos.travel.ticketModes"] as string[] | undefined)?.includes?.(m),
+  );
+  if (both?.length) {
+    problems.push(
+      `${both.join(", ")} would be asked for both an odometer reading and a ticket on the same journey, which is two claims for one trip. A mode belongs on one list or neither.`,
+    );
+  }
+
   if (config["products.priceSource"] === "pricelist") {
     problems.push(
       "Prices are set to come from a customer price list, but no price list exists yet - nothing is keyed on a pricelist tag. Until one is built, order value has to stay manual.",
@@ -2757,6 +2859,7 @@ export type Config = {
   "mbos.sync.accessTokenMinutes": number;
 
   "mbos.devices.onePerPerson": boolean;
+  "mbos.devices.appLockGraceSeconds": number;
 
   "mbos.leads.staleDays": number;
   "mbos.leads.archiveDays": number;
@@ -2766,6 +2869,11 @@ export type Config = {
   "mbos.tasks.requireCompletionNote": boolean;
   "mbos.approvals.escalationHours": number;
   "mbos.visits.minimumDwellSeconds": number;
+  /* The six modes themselves are a closed vocabulary in
+     `lib/mbos/travel-labels.ts`; what each one costs is what lives here. */
+  "mbos.travel.odometerModes": MbosTravelMode[];
+  "mbos.travel.ticketModes": MbosTravelMode[];
+  "mbos.travel.maxLegKilometres": number;
   "mbos.sync.mediaWifiOnly": boolean;
   "mbos.ai.retainAudioAfterTranscription": boolean;
 };
@@ -2780,6 +2888,22 @@ export type MbosHealthComponent =
 
 /** Mirrors `mbos_expense_category` in the schema. */
 export type MbosExpenseCategory = "travel" | "food" | "lodging" | "other";
+
+/**
+ * Kept in step with `lib/mbos/travel-labels.ts` by hand, and deliberately not
+ * imported from it: this module is the configuration registry and importing a
+ * vocabulary into it would invite the next person to make the vocabulary
+ * configurable, which is the one thing the file over there argues against.
+ * `checkConsistency` is what actually holds the two together, by refusing a
+ * setting that names a mode nobody can pick.
+ */
+export type MbosTravelMode =
+  | "personal_bike"
+  | "personal_car"
+  | "bus"
+  | "train"
+  | "walk"
+  | "customer_vehicle";
 
 export type QueueReasonKind =
   /** Money overdue and the collections engine says a call is due today. */

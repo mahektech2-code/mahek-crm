@@ -7,7 +7,8 @@ import { Header, StatusStrip, TabBar, type StripTone, type TabKey } from './Chro
 import { ActionSheet, ConfirmSheet, Toast } from '../ui/overlays';
 import { useKeyboardHeight } from '../ui/keyboard';
 import { Appear } from '../ui/motion';
-import { usePendingCount, useStore, useUnreadCount } from '../../state/store';
+import { useCustomer, usePendingCount, useStore, useUnreadCount } from '../../state/store';
+import { TravelGate } from './TravelGate';
 import { useBoot } from '../../state/boot';
 import { todayRow } from '../../data/attendance';
 import { plural } from '../../lib/format';
@@ -100,6 +101,7 @@ export function AppFrame({
 }) {
   const insets = useSafeAreaInsets();
   const keyboardHeight = useKeyboardHeight();
+  const [footerHeight, setFooterHeight] = React.useState(0);
   const unread = useUnreadCount();
   const waiting = usePendingCount();
   const checkInAt = useCheckInTime();
@@ -109,8 +111,10 @@ export function AppFrame({
   const clearToast = useStore((s) => s.clearToast);
   const sheet = useStore((s) => s.sheet);
   const set = useStore((s) => s.set);
-  const beginVisit = useStore((s) => s.beginVisit);
+  const askTravel = useStore((s) => s.askTravel);
+  const notify = useStore((s) => s.notify);
   const custId = useStore((s) => s.custId);
+  const customer = useCustomer();
   const confirm = useStore((s) => s.confirm);
   const confirmReason = useStore((s) => s.confirmReason);
   const confirmErr = useStore((s) => s.confirmErr);
@@ -130,15 +134,38 @@ export function AppFrame({
       onPress: () => router.push('/home'),
     },
     {
+      /*
+       * Nothing waiting is GOOD news, and it was drawn amber.
+       *
+       * The pip was `warn` unconditionally, so "0 to send" sat under an amber
+       * light on every screen of the app all day — which is how a warning
+       * light stops meaning anything: the one state worth noticing looked
+       * exactly like the ordinary one. And "0 to send" is a count of nothing,
+       * where the fact somebody wants is that the handset is clear.
+       */
       key: 'sync',
-      label: `${waiting} to send`,
-      tone: 'warn',
+      label: waiting === 0 ? 'All sent' : `${waiting} to send`,
+      tone: waiting === 0 ? 'ok' : 'warn',
       onPress: () => router.push('/sync?from=home'),
     },
   ];
 
   const actionItems = [
-    { glyph: 'visit', label: 'Start visit', sub: 'GPS, photos, voice note', run: () => { beginVisit(custId); router.push('/visit'); } },
+    /* It asks how he is getting there BEFORE it opens the visit — see
+       `TravelGate`. The sub-line says so, because a quick action that opens a
+       question rather than the screen it names reads as the wrong button
+       otherwise. `custName` comes from the store so the sheet can say which
+       shop it is asking about; an empty name is a customer nobody has chosen,
+       and the action is disabled for it rather than asking about nothing. */
+    {
+      glyph: 'visit',
+      label: 'Start visit',
+      sub: 'How you travel, then GPS and photos',
+      run: () => {
+        if (!custId) return notify('Choose the shop first, then start the visit.');
+        askTravel({ customerId: custId, customerName: customer?.name ?? 'this shop' });
+      },
+    },
     { glyph: 'order', label: 'Punch order', sub: 'From their usual products', run: () => router.push('/order?from=home') },
     { glyph: 'money', label: 'Collect payment', sub: 'Cash, cheque, UPI or transfer', run: () => router.push('/pay?from=home') },
     /* The form is asked for here and opened by the Leads screen, so the shop
@@ -184,7 +211,12 @@ export function AppFrame({
 
       {body}
 
-      {footer}
+      {/* Measured rather than guessed, so the toast can sit above whatever the
+          screen pinned here — see `Toast`. A screen with no footer measures 0
+          and nothing moves. */}
+      {footer ? (
+        <View onLayout={(e) => setFooterHeight(e.nativeEvent.layout.height)}>{footer}</View>
+      ) : null}
 
       {/* The tab bar is hidden while typing. Left in place it floats over the
           keyboard on Android, covering the top row of keys. */}
@@ -224,7 +256,13 @@ export function AppFrame({
         }}
       />
 
-      <Toast message={toast} onDone={clearToast} />
+      {/* Mounted HERE, once, because every screen in the app is inside an
+          AppFrame and four of them start visits. A gate each screen wired up
+          for itself would be four gates, and three of them would be right —
+          see `TravelGate`. */}
+      <TravelGate />
+
+      <Toast message={toast} onDone={clearToast} lift={footerHeight} />
     </View>
   );
 }

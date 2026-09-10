@@ -58,6 +58,7 @@ export default async function Page({
       salesAm: one("sales"),
       salesManager: one("salesmanager"),
       backOfficeAm: one("backoffice"),
+      sort: one("sort"),
       page: Number(one("page") ?? 1) || 1,
       perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
     }),
@@ -83,6 +84,7 @@ export default async function Page({
         salesAm: one("sales") ?? "",
         salesManager: one("salesmanager") ?? "",
         backOfficeAm: one("backoffice") ?? "",
+        sort: one("sort") ?? "",
         perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
       }}
       pageInfo={{

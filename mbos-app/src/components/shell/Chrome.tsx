@@ -87,6 +87,16 @@ export function StatusStrip({
 
 /* --------------------------------------------------------------- tab bar */
 
+/**
+ * The bar's own height, above the safe-area inset.
+ *
+ * Exported because the toast has to clear it and was guessing: `bottom: 88`
+ * happened to equal `64 + a 24pt gesture bar` on one handset and sat on top of
+ * the bar on every other. One number, read by the two things whose job is not
+ * to overlap.
+ */
+export const TAB_BAR_HEIGHT = 64;
+
 export type TabKey = 'home' | 'journey' | 'customers' | 'more';
 
 const TABS: { k: TabKey; label: string; ic: string }[] = [
@@ -108,7 +118,7 @@ export function TabBar({
   bottomInset: number;
 }) {
   return (
-    <View style={[s.tabBar, { height: 64 + bottomInset, paddingBottom: bottomInset }]}>
+    <View style={[s.tabBar, { height: TAB_BAR_HEIGHT + bottomInset, paddingBottom: bottomInset }]}>
       {TABS.slice(0, 2).map((t) => (
         <Tab key={t.k} tab={t} on={active === t.k} onPress={() => onTab(t.k)} />
       ))}
@@ -120,7 +130,7 @@ export function TabBar({
       <Pressable
         onPress={onAction}
         accessibilityLabel="What are you doing?"
-        style={[s.fab, { bottom: 64 + bottomInset - 52 + 20 }]}>
+        style={[s.fab, { bottom: TAB_BAR_HEIGHT + bottomInset - 52 + 20 }]}>
         <Text style={{ color: C.lime, fontSize: 26, lineHeight: 30 }}>+</Text>
       </Pressable>
     </View>

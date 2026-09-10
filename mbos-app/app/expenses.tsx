@@ -7,9 +7,11 @@ import { Badge, Choice, Input, ListCard, PrimaryButton, SecondaryButton, T } fro
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
 import { claimExpense, listExpenses, type Expense } from '../src/data/requests';
+import { attachTicket, travelRules, travelToday, unclaimedTicketLegs, type TravelLeg, type TravelToday } from '../src/data/travel';
+import { MODE_SHORT, type TravelMode } from '../src/lib/travel';
 import { getConfig } from '../src/data/config';
 import { takePhoto } from '../src/native/capture';
-import { dmy, inr, isoDate } from '../src/lib/format';
+import { dmy, inr, isoDate, plural } from '../src/lib/format';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { color as C, radius, weight, tabular, type BadgeTone } from '../src/theme/tokens';
@@ -38,6 +40,20 @@ export default function ExpensesScreen() {
   const boot = useBoot();
 
   const [rows, setRows] = React.useState<Expense[]>([]);
+  /*
+   * Fares he has already spent and not asked for.
+   *
+   * A bus leg he skipped the ticket on is money he is entitled to and has not
+   * claimed, and the ONLY moment anybody would ever notice is if something
+   * counts them — which is why this list is here, on the screen where he is
+   * already thinking about money, rather than left as a thing he might
+   * remember on the last day of the month. Claiming from here opens the
+   * ordinary sheet with the journey already named, so it is one screen and one
+   * set of rules, not a second way to claim.
+   */
+  const [unclaimed, setUnclaimed] = React.useState<TravelLeg[]>([]);
+  const [travel, setTravel] = React.useState<TravelToday | null>(null);
+  const [forLeg, setForLeg] = React.useState<TravelLeg | null>(null);
   /* Caps, the claim window and the bill threshold are all configuration —
      `mbos.expenses.*` — never numbers typed into this screen. */
   const [caps, setCaps] = React.useState<Record<string, number>>({});
@@ -51,20 +67,30 @@ export default function ExpensesScreen() {
 
   const load = React.useCallback(() => {
     let live = true;
+    const userId = boot.session?.user.id ?? '';
     void Promise.all([
       listExpenses(),
       getConfig<Record<string, number>>('mbos.expenses.categoryCapsPaise', {}),
       getConfig<number>('mbos.expenses.maxClaimAgeDays', 30),
-    ]).then(([e, c, age]) => {
+      travelRules(),
+    ]).then(async ([e, c, age, r]) => {
       if (!live) return;
       setRows(e);
       setCaps(c);
       setMaxAgeDays(age);
+      if (!userId) return;
+      const [legs, today] = await Promise.all([
+        unclaimedTicketLegs(userId, r.ticketModes),
+        travelToday(userId, r.ticketModes),
+      ]);
+      if (!live) return;
+      setUnclaimed(legs);
+      setTravel(today);
     });
     return () => {
       live = false;
     };
-  }, []);
+  }, [boot.session?.user.id]);
 
   useFocusEffect(load);
 
@@ -102,6 +128,31 @@ export default function ExpensesScreen() {
     setOpen(true);
   };
 
+  /**
+   * Claiming a fare he skipped at the shop door.
+   *
+   * It opens the SAME sheet, pre-filled, rather than a second little form of
+   * its own — the caps, the bill rule and the date window are all stated
+   * there, and a shortcut that bypassed them would be a second set of rules
+   * that eventually disagreed with the first. What it adds is the leg, held in
+   * `forLeg`, so the claim it writes carries its origin and the journey stops
+   * appearing on this list.
+   */
+  const claimFare = (leg: TravelLeg) => {
+    setFixing(false);
+    setErr(null);
+    setForLeg(leg);
+    const day = isoDate(new Date(leg.departedAt));
+    setEx({
+      ...EMPTY,
+      kind: 'travel',
+      when: dmy(day),
+      whenIso: day,
+      note: `${leg.mode === 'train' ? 'Train' : 'Bus'} ticket · ${leg.customerName ?? 'a shop'}`,
+    });
+    setOpen(true);
+  };
+
   const fix = (x: Expense) => {
     setFixing(true);
     setErr(null);
@@ -122,6 +173,7 @@ export default function ExpensesScreen() {
     setEx(EMPTY);
     setErr(null);
     setFixing(false);
+    setForLeg(null);
     setCal(false);
   };
 
@@ -141,6 +193,28 @@ export default function ExpensesScreen() {
     if (!ex.billMediaId) return setErr('bill');
     if (!ex.whenIso.trim()) return setErr('when');
     if (!ex.note.trim()) return setErr('note');
+
+    /* If this claim came off a journey, it says so — and `attachTicket` is
+       the path, not `claimExpense` directly, because that is the one function
+       that writes the claim AND puts it back on the leg. Two writes done here
+       would leave a fare claimed with the journey still asking for it. */
+    if (forLeg && ex.billMediaId) {
+      const claimed = await attachTicket({
+        legId: forLeg.id,
+        userId: boot.session?.user.id ?? '',
+        customerName: forLeg.customerName ?? 'a shop',
+        photoId: ex.billMediaId,
+        farePaise: exAmtPaise,
+      });
+      close();
+      load();
+      notify(
+        claimed.overCap
+          ? 'Claimed ' + inr(exAmtPaise / 100) + ' · over the cap, your manager has to allow it'
+          : 'Claimed ' + inr(exAmtPaise / 100) + ' · with your manager',
+      );
+      return;
+    }
 
     const { overCap } = await claimExpense({
       userId: boot.session?.user.id ?? '',
@@ -187,6 +261,77 @@ export default function ExpensesScreen() {
         {EX_RULE}
       </T>
 
+      {/* ---- what today's travelling came to ----
+          Kilometres and fares are shown SIDE BY SIDE and never added: one is a
+          distance on his own vehicle and the other is money he handed over,
+          and a single figure combining them would be neither. It is here
+          rather than on the home screen because this is where somebody is
+          already thinking about what they are owed. */}
+      {travel && travel.legs > 0 ? (
+        <ListCard style={{ marginTop: 16, paddingHorizontal: 16, paddingVertical: 14 }}>
+          <T s="label">Travelled today</T>
+          <View style={{ flexDirection: 'row', gap: 16, marginTop: 8 }}>
+            <View style={{ flex: 1 }}>
+              <T style={[{ fontSize: 20, color: C.ink }, weight(600), tabular]}>
+                {travel.ownVehicleKm.toLocaleString('en-IN') + ' km'}
+              </T>
+              <T s="caption">on your own vehicle</T>
+            </View>
+            <View style={{ flex: 1 }}>
+              <T style={[{ fontSize: 20, color: C.ink }, weight(600), tabular]}>
+                {inr(travel.ticketPaise / 100)}
+              </T>
+              <T s="caption">in tickets claimed</T>
+            </View>
+          </View>
+        </ListCard>
+      ) : null}
+
+      {/* ---- fares he has not asked for ----
+          Money already spent and not claimed. Listed with the shop and the day
+          on it, because "a bus ticket" three days ago is not a thing anybody
+          remembers and a prompt he cannot place is a prompt he dismisses. */}
+      {unclaimed.length ? (
+        <ListCard style={{ marginTop: 16 }}>
+          <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
+            <T s="label">Tickets you have not claimed</T>
+            <T s="caption" style={{ marginTop: 2 }}>
+              {plural(unclaimed.length, 'journey') + ' you paid a fare on. Claim them before they are too old.'}
+            </T>
+          </View>
+          {unclaimed.map((leg, i) => (
+            <View
+              key={leg.id}
+              style={{
+                paddingHorizontal: 16,
+                paddingVertical: 12,
+                marginTop: i ? 0 : 8,
+                borderTopWidth: 1,
+                borderTopColor: C.wash,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+              }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(500)]}>
+                  {(MODE_SHORT[leg.mode as TravelMode] ?? leg.mode) + ' · ' + (leg.customerName ?? 'a shop')}
+                </T>
+                <T s="caption" style={{ marginTop: 2 }}>
+                  {dmy(isoDate(new Date(leg.departedAt)))}
+                </T>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={'Claim the fare for ' + (leg.customerName ?? 'this journey')}
+                onPress={() => claimFare(leg)}
+                style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 4 }}>
+                <T style={[{ fontSize: 14, color: C.primary }, weight(600)]}>Claim it</T>
+              </Pressable>
+            </View>
+          ))}
+        </ListCard>
+      ) : null}
+
       <ListCard style={{ marginTop: 16 }}>
         {rows.map((e, i) => {
           const tone: BadgeTone = e.state === 'Approved' ? 'success' : e.state === 'Pending' ? 'amber' : 'danger';
@@ -203,6 +348,15 @@ export default function ExpensesScreen() {
               <T s="caption" style={{ marginTop: 3 }}>
                 {dmy(e.spentOn) + ' · ' + (e.remarks ?? '')}
               </T>
+              {/* WHERE IT CAME FROM, said on the row. Without it, the claim he
+                  made at the shop door looks identical to one he typed here —
+                  and the honest thing somebody does about a fare they cannot
+                  remember claiming is claim it again. */}
+              {e.source === 'travel_ticket' ? (
+                <T style={{ fontSize: 13, lineHeight: 19, color: C.muted }}>
+                  From the ticket you photographed on the journey
+                </T>
+              ) : null}
               <T style={{ fontSize: 13, lineHeight: 19, color: e.billPhotoId ? C.muted : C.warn }}>
                 {e.billPhotoId ? 'Bill attached' : 'No bill — may be rejected'}
               </T>

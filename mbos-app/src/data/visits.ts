@@ -43,6 +43,14 @@ export type SaveVisitArgs = {
   metresFromShop: number | null;
   verified: boolean;
   unverifiedReason: string | null;
+  /**
+   * The journey that ended at this shop, or null.
+   *
+   * Null is never "walked" — it is "not asked", which is what every visit
+   * logged before travel legs existed means and what any path that does not
+   * go through `TravelGate` still means. No screen may read it as a mode.
+   */
+  travelLegId?: string | null;
   /** Records already created from inside this visit, to be linked to it. */
   linkedOrderId?: string | null;
   linkedPaymentId?: string | null;
@@ -67,8 +75,9 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
          linkedOrderId, linkedPaymentId, linkedComplaintId, linkedSampleId,
          nextFollowUpDate, journeyStopId, wasPlanned, deviationReason,
          locationMismatch, metresFromShop, verified, unverifiedReason, openEnded,
+         travelLegId,
          clientCreatedAt, deviceId, syncState
-       ) VALUES (?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?,?)`,
+       ) VALUES (?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?, ?,?,?)`,
       [
         base.id, args.customerId, args.userId,
         args.checkIn?.lat ?? null, args.checkIn?.lng ?? null, args.checkIn?.accuracyM ?? null, args.checkIn?.at ?? null,
@@ -79,6 +88,7 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
         args.nextFollowUpDate, args.journeyStopId, args.wasPlanned ? 1 : 0, args.deviationReason,
         args.locationMismatch ? 1 : 0, args.metresFromShop, args.verified ? 1 : 0, args.unverifiedReason,
         args.checkOut ? 0 : 1,
+        args.travelLegId ?? null,
         base.clientCreatedAt, base.deviceId, 'queued',
       ],
     );
@@ -167,6 +177,7 @@ export async function saveVisit(args: SaveVisitArgs): Promise<string> {
       journeyPlanStopId: args.journeyStopId ?? undefined,
       wasPlanned: args.wasPlanned,
       deviationReason: args.deviationReason ?? undefined,
+      travelLegId: args.travelLegId ?? undefined,
       nextFollowUpDate: args.nextFollowUpDate ?? undefined,
       clientCreatedAt: base.clientCreatedAt,
       deviceId: base.deviceId,

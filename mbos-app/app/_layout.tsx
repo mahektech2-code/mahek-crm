@@ -8,6 +8,7 @@ import { Inter_500Medium } from '@expo-google-fonts/inter/500Medium';
 import { Inter_600SemiBold } from '@expo-google-fonts/inter/600SemiBold';
 import { color } from '../src/theme/tokens';
 import { BootProvider } from '../src/state/boot';
+import { AppLock } from '../src/components/shell/AppLock';
 import { animationFor, durationFor, ROUTE_MOTION, useReduceMotion } from '../src/components/ui/motion';
 /* Side-effect only: registers the trail's background task. The OS can launch
    the app headless, with no screen ever mounted, purely to deliver a location
@@ -44,32 +45,37 @@ export default function RootLayout() {
   return (
     <BootProvider>
       <StatusBar style="dark" />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: color.canvas },
-          /* The default is depth. Every screen that is NOT deeper says so
-             below, which makes the exceptions the thing you read. */
-          animation: animationFor('deeper', reduce),
-          animationDuration: durationFor('deeper', reduce),
-          /* iOS keeps its edge-swipe back; it is the gesture people already
-             have in their hands and losing it is worse than any transition. */
-          gestureEnabled: true,
-        }}>
-        {Object.entries(ROUTE_MOTION).map(([name, motion]) => (
-          <Stack.Screen
-            key={name}
-            name={name}
-            options={{
-              animation: animationFor(motion, reduce),
-              animationDuration: durationFor(motion, reduce),
-              /* Nothing swipes back out of a result — there is no longer
-                 anywhere behind it to go. */
-              gestureEnabled: motion !== 'result',
-            }}
-          />
-        ))}
-      </Stack>
+      {/* Over the whole Stack, so a lock raised on any screen covers the header
+          and the tab bar too — and inside BootProvider, because there is
+          nothing to lock until there is a session. */}
+      <AppLock>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: color.canvas },
+            /* The default is depth. Every screen that is NOT deeper says so
+               below, which makes the exceptions the thing you read. */
+            animation: animationFor('deeper', reduce),
+            animationDuration: durationFor('deeper', reduce),
+            /* iOS keeps its edge-swipe back; it is the gesture people already
+               have in their hands and losing it is worse than any transition. */
+            gestureEnabled: true,
+          }}>
+          {Object.entries(ROUTE_MOTION).map(([name, motion]) => (
+            <Stack.Screen
+              key={name}
+              name={name}
+              options={{
+                animation: animationFor(motion, reduce),
+                animationDuration: durationFor(motion, reduce),
+                /* Nothing swipes back out of a result — there is no longer
+                   anywhere behind it to go. */
+                gestureEnabled: motion !== 'result',
+              }}
+            />
+          ))}
+        </Stack>
+      </AppLock>
     </BootProvider>
   );
 }
