@@ -42,6 +42,10 @@ type FieldSpec = {
   half?: boolean;
 };
 
+/* `telecaller` here is a WhatsApp template VARIABLE — `{{telecaller}}`, the
+   name of whoever is writing — not a role. It keeps the word deliberately:
+   templates people have already written use it, and renaming it would empty
+   the placeholder in every one of them. role-name-ok */
 const PLACEHOLDERS = ["customer", "contact", "amount", "bill", "days", "date", "qty", "telecaller"];
 
 const SAMPLE: Record<string, string> = {

@@ -52,13 +52,23 @@ export type TargetRow = {
  * have no salesman. That fall-through reads `sales_am_id` and
  * `back_office_am_id`, which an account manager or an accounts clerk can end
  * up holding too, and a target screen with the whole company on it is not one
- * a manager can read at a glance. The default list is now SALES ROLES only —
- * `users.role = 'telecaller'`, which is what every telecaller and every field
- * salesman is seeded as, manager/accounts/admin being separate roles — and
- * still credited, so an account with no salesman still finds its back office
- * carrier. Anybody who already HAS a target for the period is kept regardless
- * of role: a target already given to somebody is a decision, and a role
- * filter must not make it disappear from under them.
+ * a manager can read at a glance. The default list is now the people who
+ * actually sell: an ASSOCIATE who holds a book — the CRM, the Salesman App or
+ * the Sales Dashboard — and is credited with a live account.
+ *
+ * It used to say `users.role = 'telecaller'`, which was the same set by
+ * accident: `telecaller` was the base level rather than a job, so every
+ * telecaller AND every field salesman was seeded as one. With roles reduced to
+ * levels that literal is not merely stale, it is a runtime error — Postgres
+ * refuses an enum label that no longer exists, and this query took
+ * `/accounts/targets` down with a 500 rather than showing an empty list.
+ *
+ * The app is named as well as the level because `associate` alone is now wider
+ * than the old `telecaller` was: a junior at the ledger desk is one too, and
+ * the whole point of this list is that it is not the whole company. Anybody
+ * who already HAS a target for the period is kept regardless: a target given
+ * to somebody is a decision, and a filter must not make it disappear from
+ * under them.
  */
 export async function targetableCandidates(period: string): Promise<TargetRow[]> {
   const rows = await db.execute<{
@@ -91,7 +101,11 @@ export async function targetableCandidates(period: string): Promise<TargetRow[]>
       left join sales_targets t on t.user_id = u.id and t.period = ${period}
      where u.active
        and (
-         (u.role = 'telecaller'
+         (u.role = 'associate'
+          and exists (
+            select 1 from app_access a
+             where a.user_id = u.id and a.app in ('crm', 'field', 'sales')
+          )
           and u.id in (select user_id from credited where user_id is not null))
          or t.id is not null
        )
