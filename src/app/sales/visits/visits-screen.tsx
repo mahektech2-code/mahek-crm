@@ -257,7 +257,18 @@ export function VisitsScreen({
                   the line below, and the two are different facts.
                 */}
                 {v.pinCorrection ? (
-                  <span className="ml-1.5">
+                  <span
+                    className="ml-1.5"
+                    /* Truthiness only, never formatted — `visitsList` runs
+                       raw SQL through `db.execute`, which hands back a STRING
+                       where the type says Date, and `acceptedAt` beside it is
+                       read the same way for the same reason. */
+                    title={
+                      v.pinCorrectionDecidedAt
+                        ? "Somebody has answered this."
+                        : "Waiting for somebody to answer this."
+                    }
+                  >
                     <Pill tone={v.pinCorrection === "requested" ? "warn" : "neutral"}>
                       {v.pinCorrection === "requested"
                         ? "Pin questioned"
@@ -270,6 +281,23 @@ export function VisitsScreen({
                 {v.unverifiedReason || v.deviationReason ? (
                   <span className="block truncate text-[12px] text-muted">
                     {v.unverifiedReason ?? v.deviationReason}
+                  </span>
+                ) : null}
+                {/*
+                  HIS OWN WORDS, IN FULL AND NOT TRUNCATED.
+
+                  The server folds this into `unverifiedReason` above, which is
+                  right — that is the column every other screen and any export
+                  reads. But that sentence leads with the distance and truncates
+                  at the column width, so the half that gets cut is the half a
+                  manager is actually deciding on: a salesman refused at a shop
+                  door typed this standing in front of the shopkeeper, and it is
+                  the only account anybody has of why the book and the man
+                  disagree. It gets its own line and wraps.
+                */}
+                {v.checkInOverrideReason ? (
+                  <span className="mt-0.5 block text-[12px] text-body italic">
+                    &ldquo;{v.checkInOverrideReason}&rdquo;
                   </span>
                 ) : null}
                 {v.checkInLat != null || v.checkOutLat != null ? (
