@@ -5993,11 +5993,25 @@ export const mbosUserTerritories = pgTable(
     kind: text("kind").notNull().default("region"),
     /** The value itself — kept as `region` for the column somebody may query. */
     region: text("region").notNull(),
+    /**
+     * WHAT THIS PLACE SITS INSIDE — a city's state, a beat's city.
+     *
+     * A territory is a hierarchy and a bare city row cannot express one:
+     * "Pune" is a different allocation depending on which state somebody had
+     * in mind, and there is an Aurangabad in Maharashtra and another in Bihar.
+     *
+     * Empty means NOT STATED, which is what every row written before this
+     * column means and what the clause goes on reading as "this place wherever
+     * it is". Empty rather than null so the key below collapses duplicates —
+     * Postgres treats two NULLs as distinct and would let the same place be
+     * allocated to one person twice.
+     */
+    parent: text("parent").notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id"),
   },
   (t) => [
-    uniqueIndex("mbos_user_territories_key").on(t.userId, t.kind, t.region),
+    uniqueIndex("mbos_user_territories_key").on(t.userId, t.kind, t.region, t.parent),
     index("mbos_user_territories_user_idx").on(t.userId, t.kind),
   ],
 );

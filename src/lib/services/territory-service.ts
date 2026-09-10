@@ -2,8 +2,13 @@ import "server-only";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { mbosUserTerritories } from "@/db/schema";
-import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "@/lib/territory-sql";
-import { stateVariants } from "@/lib/india-states";
+import { TERRITORY_REGION_SQL, qualify } from "@/lib/territory-sql";
+import {
+  territoryClause,
+  TERRITORY_KINDS,
+  type Territory,
+  type TerritoryKind,
+} from "@/lib/territory-rules";
 
 export { TERRITORY_REGION_SQL, qualify };
 
@@ -21,98 +26,61 @@ export { TERRITORY_REGION_SQL, qualify };
  * might delete a real check believing it redundant, and the failure would be
  * silent and in the wrong direction.
  *
- * NO TERRITORY MEANS NO NARROWING. Allocating cities to eight people and
- * forgetting the ninth must not empty her book. This codebase already has that
- * failure on record — reading one seat where two were meant gave Seema Roy
- * "queue cleared" on a day she had 195 accounts to work — and an empty screen
- * is the one outcome nobody debugs, because it looks like having no work.
+ * NO TERRITORY NOW MEANS NO BOOK, and that is a reversal — it meant no
+ * narrowing until this landed, and the reasoning for the old answer is worth
+ * keeping because it is still true and is now something to be paid for rather
+ * than avoided. Allocating cities to eight people and forgetting the ninth
+ * empties her handset, and an empty screen is the one outcome nobody debugs,
+ * because it looks like having no work. This codebase has that failure on
+ * record: reading one seat where two were meant gave Seema Roy "queue cleared"
+ * on a day she had 195 accounts to work.
+ *
+ * What makes the reversal survivable is that the emptiness is NAMED at both
+ * ends. `mbosTerritoryState` hands the handset the reason, so the Customers tab
+ * says "no area has been allocated to you yet" rather than "nothing in your
+ * book"; and the console counts the unallocated on the team screen, so the
+ * office sees whose handset it has switched off. An empty book that explains
+ * itself is a support call; one that does not is a fortnight of a salesman
+ * assuming the sync is broken.
+ *
+ * The reversal is deliberate and it is Mahek's: an unallocated salesman
+ * carrying the whole book is how five thousand shops end up on one phone, and
+ * a forcing function on the office is worth more than the safety valve.
  * ------------------------------------------------------------------------- */
 
-/** The kinds a territory can be, coarsest first. */
-export const TERRITORY_KINDS = ["state", "region", "city", "beat"] as const;
-export type TerritoryKind = (typeof TERRITORY_KINDS)[number];
+export {
+  PARENT_KIND,
+  TERRITORY_KINDS,
+  territoryClause,
+  type Territory,
+  type TerritoryKind,
+} from "@/lib/territory-rules";
 
-/**
- * Which customer expression each kind is matched against.
- *
- * `state` and `region` read the same geography and are two kinds rather than
- * one because they are allocated by different people for different reasons: a
- * `region` row is a MANAGER's oversight patch, read by `managerScope`, and a
- * `state` row is a salesman's own working area, read by `territoryClause`.
- * Folding them into one kind would mean allocating a salesman his state
- * silently widened or narrowed somebody's console — which is exactly what
- * `setWorkingTerritories` refuses to allow by never touching `region` rows.
- */
-const COLUMN: Record<TerritoryKind, string> = {
-  state: TERRITORY_REGION_SQL,
-  region: TERRITORY_REGION_SQL,
-  city: "city",
-  beat: "beat",
-};
-
-export type Territory = { kind: TerritoryKind; value: string };
-
-
-/** What this person works. Empty means everywhere they already had. */
+/** What this person works. Empty means they have been given nowhere. */
 export async function territoriesFor(userId: string): Promise<Territory[]> {
   const rows = await db
-    .select({ kind: mbosUserTerritories.kind, region: mbosUserTerritories.region })
+    .select({
+      kind: mbosUserTerritories.kind,
+      region: mbosUserTerritories.region,
+      parent: mbosUserTerritories.parent,
+    })
     .from(mbosUserTerritories)
     .where(eq(mbosUserTerritories.userId, userId));
 
   return rows
-    .filter((r): r is { kind: TerritoryKind; region: string } =>
+    .filter((r): r is { kind: TerritoryKind; region: string; parent: string } =>
       (TERRITORY_KINDS as readonly string[]).includes(r.kind),
     )
-    .map((r) => ({ kind: r.kind, value: r.region }));
+    .map((r) => ({ kind: r.kind, value: r.region, parent: r.parent || undefined }));
 }
 
-/**
- * The SQL that narrows a customer list to somebody's territories.
- *
- * `undefined` where there is nothing to narrow by — which every caller must
- * treat as "no filter" rather than "match nothing". That is the whole of the
- * no-territory rule, and it is expressed as an absent clause rather than as a
- * true one so a caller cannot accidentally AND it into oblivion.
- *
- * Comparison is case-insensitive and trimmed, because "Nagpur", "nagpur " and
- * "NAGPUR" are one city typed by three people, and a territory that matched
- * only one spelling would hide a book without saying so.
- */
-export function territoryClause(territories: Territory[]): SQL | undefined {
-  if (!territories.length) return undefined;
-
-  /* Each column inside the expression is qualified, not just the first. A bare
-     column name inside a correlated subquery binds to the INNER table and the
-     condition silently becomes false — the rule AGENTS.md records under "in raw
-     SQL, qualify every column of the outer table", which shipped once already
-     and passes both types and unit tests when it is wrong. */
-  const parts = territories.map((t) => {
-    const column = sql.raw(qualify(COLUMN[t.kind], "customers"));
-
-    /* A STATE IS MATCHED ON EVERY SPELLING OF IT, not on the one somebody
-       clicked. The sheet writes this column and holds Gujrat 97 beside Gujarat
-       31, so comparing the text made each spelling its own territory and a
-       chip saying "Gujarat" covered a quarter of Gujarat with nothing on the
-       screen saying so. The other kinds have no such list and stay a plain
-       comparison. */
-    if (t.kind === "state" || t.kind === "region") {
-      const keys = stateVariants(t.value);
-      if (!keys.length) return sql`false`;
-      return sql`${sql.raw(stateKeySql(qualify(COLUMN[t.kind], "customers")))} in ${sql`(${sql.join(
-        keys.map((k) => sql`${k}`),
-        sql`, `,
-      )})`}`;
-    }
-
-    return sql`lower(trim(coalesce(${column}, ''))) = ${t.value.trim().toLowerCase()}`;
-  });
-
-  return sql`(${sql.join(parts, sql` or `)})`;
+/** The working ones — everything the "where they work" dialog owns. */
+export async function workingTerritoriesFor(userId: string): Promise<Territory[]> {
+  return (await territoriesFor(userId)).filter((t) => t.kind !== "region");
 }
 
 /** The same, for a caller that has a user id and not a list. */
-export async function territoryClauseFor(userId: string): Promise<SQL | undefined> {
+export async function territoryClauseFor(userId: string): Promise<SQL> {
   return territoryClause(await territoriesFor(userId));
 }
 
@@ -148,6 +116,7 @@ export async function setWorkingTerritories(
           userId,
           kind: t.kind,
           region: t.value.trim(),
+          parent: t.parent?.trim() ?? "",
           createdById: actorId,
         })),
       );

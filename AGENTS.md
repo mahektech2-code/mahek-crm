@@ -199,15 +199,85 @@ can only remove rows from what they already allow.
 
 The distinction is worth stating because the two look alike from a distance, and
 a reader who mistakes this for the security boundary might delete a real check
-believing it redundant. `territoryClause` answers UNDEFINED rather than a false
-condition where nothing is allocated, so a caller cannot accidentally AND it
-into oblivion.
+believing it redundant.
 
-**NO TERRITORY MEANS NO NARROWING.** Allocating cities to eight people and
-forgetting the ninth must not empty her book — that failure is already on record
-here, where reading one seat instead of two gave Seema Roy "queue cleared" on a
-day she had 195 accounts to work. An empty screen is the one outcome nobody
-debugs, because it looks like having no work.
+**NO TERRITORY NOW MEANS NO BOOK, and that is a REVERSAL.** It meant no
+narrowing until this landed, and the old reasoning is still true rather than
+wrong: allocating cities to eight people and forgetting the ninth empties her
+handset, and an empty screen is the one outcome nobody debugs, because it looks
+like having no work. That failure is already on record here — reading one seat
+instead of two gave Seema Roy "queue cleared" on a day she had 195 accounts to
+work. What changed is that the other side of the trade turned out to cost more:
+an unallocated salesman carried the WHOLE book, which on this book is 2,587
+shops on one phone, and nothing anywhere said he should not have them.
+
+So `territoryClause` answers a FALSE condition where nothing is allocated,
+never `undefined` — an absent clause and a false one look alike in a type
+signature and are opposite answers to "what may this person see", and the
+dangerous one should be the loud one. `customerIdsInScope` short-circuits
+before the query is asked.
+
+**What pays for the reversal is that the emptiness is NAMED at both ends.**
+"Nothing in your book yet" sends a salesman to ask why nobody has given him
+shops; it is the wrong sentence when the answer is that nobody has allocated
+him an area, and it is what makes an unallocated handset look like a broken
+sync for a fortnight. `mbosTerritoryState` rides on the bootstrap AND on every
+delta — territory is changed at a desk in the middle of a working day and the
+shops leave the phone on the next pull — so the Customers tab says "no area set
+for you yet", prints the area where the count is, and the team screen counts
+the handsets the office has switched off. A handset with no area is a support
+call; one that does not say so is a fortnight of silence.
+
+**Managers and admins are carved out, and only they.** A field salesman works a
+beat somebody allocates him. A manager on a handset is not walking one — his
+scope has already answered the question — and emptying his phone for want of an
+allocation nobody would think to make reads as a broken sync rather than as a
+rule.
+
+**A TERRITORY IS A HIERARCHY, picked from the top.** A city belongs to a state
+and a beat to a city, so `mbos_user_territories.parent` says what a row was
+picked UNDER and `PARENT_KIND` is the one statement of the shape — the dialog
+reads it to decide what opens what, the action reads it to refuse a city
+arriving without its state, and the clause reads it to know which column a
+parent compares against. Empty means not stated, which is every row written
+before the column and is read as "this place wherever it is": a city allocated
+last month must not silently stop matching because a column arrived.
+
+Down a branch it is AND, across branches OR. Maharashtra plus Pune inside it
+means PUNE — so **the narrowest pick in a branch is the allocation** and the
+wider ones above it are the path to it rather than a second grant. Stored as
+both, the clause would OR them and hand him the whole state, which is the
+opposite of what picking a city meant and invisible on every screen afterwards,
+because "Maharashtra, Pune" reads like a narrowing either way. `setSalesmanTerritories`
+prunes to the leaves, on the server, because a server action is a URL and the
+dialog is not the only thing that can post to it.
+
+**The picker is a tree because a flat list was unusable.** `customers.city`
+holds whatever the sheet typed, and on the real book that is several hundred
+values most of which are whole postal addresses — "06, MAHADEV TOWERS CO-OP HSG
+SOC, LTD, LBS MARG, HARINIWAS CIRCLE, Thane, Maharashtra, 400602" offered as a
+city. Nesting does not clean that and cannot; it makes it REACHABLE, because a
+state's worth of it is a list somebody can search and the country's is not.
+`knownPlaces` returns the tree with a shop count on every node, biggest first,
+so the city somebody means is at the top and the long tail of addresses is
+below it. Shops naming no state are counted and said out loud: no territory can
+reach them, which is a real consequence of switching the default off.
+
+**Changing where somebody works TOMBSTONES the shops that leave.** A pull says
+what exists and only a tombstone says what stopped, so without this a salesman
+moved from Maharashtra to Gujarat keeps every Maharashtra shop on the phone for
+ever — and walks to one of them with nothing anywhere looking wrong. The
+difference is taken over HIS OWN book rather than over `customers`, or a
+reallocation would tombstone thousands of shops that were never on the phone.
+An empty BEFORE is read as everything he can see, which is the deploy: a handset
+that synced under the old rule holds shops `territoryClause([])` now says it
+never had, and diffing against an empty before would leave every one of them
+there.
+
+That is also what forced `deletionsSince` to hold the cursor back on a full
+page. The cursor moves to `now` at the top of a pull, so a tombstone past the
+2,000-row limit fell behind it and was never read again; a book of 2,587 shops
+moving to somebody else is 2,587 tombstones from one click.
 
 **One table, and each consumer asks for the kinds it means.** `managerScope`
 reads `kind = 'region'` and the handset's book reads the rest, so allocating a

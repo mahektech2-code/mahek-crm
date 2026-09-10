@@ -5,7 +5,7 @@ import { getCurrentUser, isManager } from "@/lib/auth";
 import { Credentials } from "./credentials";
 import { Managers } from "./managers";
 import { Territories, WorksCell } from "./territories";
-import { Cell, Empty, HeadCell, Pill, Row, ScreenHeader, Table } from "../parts";
+import { Banner, Cell, Empty, HeadCell, Pill, Row, ScreenHeader, Table } from "../parts";
 import { plural } from "../words";
 
 export const metadata = { title: "The team — Sales Dashboard — MahekOne" };
@@ -38,12 +38,45 @@ export default async function Page() {
      fails when it is pressed. */
   const canManageAccounts = !!me && isManager(me);
 
+  /* A CLOSED account is left out: its handset is not showing an empty book,
+     it is not signing in at all, and naming a leaver in a banner about work
+     going undone sends somebody to fix the wrong thing. */
+  const unallocated = team.filter((t) => t.active && !(t.territories ?? []).length);
+
   return (
     <div className="p-6">
       <ScreenHeader
         title="The team"
         subtitle="Everybody who can sign in to a handset. Open somebody to see everything MBOS has recorded for them — visits, orders, money, hours, leave, expenses and what they are working on."
       />
+
+      {/*
+        WHOSE HANDSET IS SWITCHED OFF, counted at the top rather than left to be
+        noticed a row at a time.
+
+        No area allocated now means no customers at all — a reversal, and the
+        whole risk of it is that an empty handset looks exactly like a quiet
+        week. The banner is what pays for the reversal: the office sees the
+        number the moment it opens this screen, and the salesman sees the reason
+        the moment he opens the app. An unallocated salesman with no banner
+        anywhere is the failure this feature would otherwise create.
+      */}
+      {unallocated.length ? (
+        <div className="mb-4">
+          <Banner
+            tone="danger"
+            title={`${plural(unallocated.length, "handset")} showing no customers`}
+            body={
+              <>
+                No area is set for {unallocated.map((t) => t.name).join(", ")}, so their
+                customer list is empty. Set one with <b>Where they work</b> on their row —
+                nothing of theirs is lost in the meantime, and the app tells them why it is
+                empty rather than showing a blank screen.
+              </>
+            }
+          />
+        </div>
+      ) : null}
 
       {team.length === 0 ? (
         <Empty
@@ -118,12 +151,7 @@ export default async function Page() {
               </Cell>
               <Cell align="right">
                 <span className="inline-flex items-center gap-2">
-                  <Territories
-                    salesman={t}
-                    states={regions}
-                    cities={places.cities}
-                    beats={places.beats}
-                  />
+                  <Territories salesman={t} places={places} />
                   <Link
                     href={`/sales/journeys?salesman=${t.id}`}
                     className="text-[13px] text-[#5223E0] no-underline"

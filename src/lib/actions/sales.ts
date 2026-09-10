@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
@@ -34,11 +34,15 @@ import { fieldBook, managerScope, onlyMine } from "@/lib/services/sales-service"
 import type { DocumentCategory } from "@/lib/mbos/library-labels";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
 import {
+  PARENT_KIND,
   setWorkingTerritories,
   territoriesFor,
+  territoryClause,
   TERRITORY_KINDS,
+  type Territory,
   type TerritoryKind,
 } from "@/lib/services/territory-service";
+import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
 import { notifyUsers } from "../notify";
 
 /** Count, noun and verb agree at every value. */
@@ -1203,9 +1207,51 @@ export async function withdrawScheme(id: string): Promise<Result> {
  * is the same kind of act as deciding who they report to, and it is already the
  * gate on this screen.
  */
+/**
+ * THE SHOPS THAT LEAVE HIS HANDSET when where he works changes.
+ *
+ * A pull says what exists and only a tombstone says what stopped, so without
+ * this a salesman moved from Maharashtra to Gujarat keeps every Maharashtra
+ * shop on the phone for ever — and walks to one of them, and nothing anywhere
+ * looks wrong.
+ *
+ * Read as a DIFFERENCE over his own book rather than over `customers`: the
+ * whole table would tombstone thousands of shops that were never on the phone,
+ * and the deletions channel is a queue somebody else's withdrawn product is
+ * also waiting in.
+ *
+ * THE EMPTY BEFORE IS THE DEPLOY, and it is the case worth spelling out. Under
+ * the rule this replaced, nowhere allocated meant the WHOLE book — so a phone
+ * that synced before the change holds shops that `territoryClause([])` now says
+ * it never had. Diffing against an empty before would tombstone nothing and
+ * leave every one of them there, which is precisely the handset the change
+ * exists to clear. So an empty before is read as "everything he can see".
+ */
+async function shopsLeavingTheBook(
+  userId: string,
+  wanted: Territory[],
+): Promise<string[]> {
+  const book = await bookIdsIgnoringTerritory(userId);
+  if (!book.length) return [];
+
+  const had = (await territoriesFor(userId)).filter((t) => t.kind !== "region");
+  const ids = (clause: SQL) =>
+    db
+      .select({ id: customers.id })
+      .from(customers)
+      .where(and(inArray(customers.id, book), clause))
+      .then((rows) => rows.map((r) => r.id));
+
+  const before = had.length ? await ids(territoryClause(had)) : book;
+  if (!before.length) return [];
+
+  const after = new Set(wanted.length ? await ids(territoryClause(wanted)) : []);
+  return before.filter((id) => !after.has(id));
+}
+
 export async function setSalesmanTerritories(input: {
   salesmanId: string;
-  territories: { kind: string; value: string }[];
+  territories: { kind: string; value: string; parent?: string }[];
 }): Promise<Result<void>> {
   try {
     const user = await requireSales();
@@ -1220,24 +1266,70 @@ export async function setSalesmanTerritories(input: {
     /* Only the kinds this screen owns. A `region` arriving here would clear a
        manager's patch as a side effect of allocating a salesman a city — see
        `setWorkingTerritories`, which refuses them for the same reason. */
-    const wanted = input.territories
+    const asked = input.territories
       .filter((t) => t.kind !== "region" && t.value.trim())
-      .map((t) => ({ kind: t.kind as TerritoryKind, value: t.value.trim() }));
+      .map((t) => ({
+        kind: t.kind as TerritoryKind,
+        value: t.value.trim(),
+        parent: t.parent?.trim() ?? "",
+      }));
 
-    const bad = wanted.filter(
+    const bad = asked.filter(
       (t) => !(TERRITORY_KINDS as readonly string[]).includes(t.kind),
     );
     if (bad.length) {
       return err(`Not a kind of place: ${bad.map((b) => b.kind).join(", ")}.`, "validation");
     }
 
+    /*
+     * A CITY WITHOUT ITS STATE IS NOT AN ALLOCATION, and the action says so
+     * rather than trusting the dialog to have asked in the right order. A
+     * server action is a URL: the screen that nests these is not the only
+     * thing that can post to it, and a bare "Pune" is genuinely ambiguous —
+     * there is an Aurangabad in Maharashtra and another in Bihar.
+     */
+    const orphan = asked.filter((t) => PARENT_KIND[t.kind] && !t.parent);
+    if (orphan.length) {
+      return err(
+        `Pick the ${PARENT_KIND[orphan[0].kind]} first — ${orphan
+          .map((o) => o.value)
+          .join(", ")} needs to sit inside one.`,
+        "validation",
+      );
+    }
+
+    /*
+     * THE NARROWEST PICK IN A BRANCH IS THE ALLOCATION, and the wider ones
+     * above it are the path to it rather than a second grant.
+     *
+     * Maharashtra plus Pune inside it has to mean Pune. Stored as both, the
+     * clause would OR them and hand him the whole state — the opposite of what
+     * somebody who took the trouble to pick a city meant, and invisible on
+     * every screen afterwards because "Maharashtra, Pune" reads like a
+     * narrowing. So a state with cities under it is dropped, and a city with
+     * beats under it is dropped, and what is stored is the leaves.
+     */
+    const parents = new Set(asked.map((t) => t.parent).filter(Boolean));
+    const wanted = asked.filter((t) => !parents.has(t.value));
+
     const before = await territoriesFor(input.salesmanId);
-    const key = (t: { kind: string; value: string }) => `${t.kind}:${t.value.toLowerCase()}`;
+    const key = (t: { kind: string; value: string; parent?: string }) =>
+      `${t.kind}:${(t.parent ?? "").toLowerCase()}:${t.value.toLowerCase()}`;
     const had = before.filter((t) => t.kind !== "region").map(key).sort();
     const now = wanted.map(key).sort();
     if (JSON.stringify(had) === JSON.stringify(now)) return okVoid("Nothing changed.");
 
+    /* The shops that leave his book, read BEFORE the change — afterwards they
+       are simply not his and there is nothing left to name. See `tombstone`:
+       a pull says what exists, and only a tombstone says what stopped, so
+       without this the shops he no longer works stay on the phone for ever. */
+    const leaving = await shopsLeavingTheBook(input.salesmanId, wanted);
+
     await setWorkingTerritories(input.salesmanId, wanted, user.id);
+
+    for (const id of leaving) {
+      await tombstone("customers", id, "territory", input.salesmanId);
+    }
 
     await db.insert(auditLog).values({
       id: gen("aud"),
@@ -1256,17 +1348,17 @@ export async function setSalesmanTerritories(input: {
      */
     await tell(
       input.salesmanId,
-      wanted.length ? "Where you work has changed" : "You now see your whole book",
+      wanted.length ? "Where you work has changed" : "Your handset has no area set",
       wanted.length
         ? `Your handset now shows your customers in ${wanted.map((t) => t.value).join(", ")}. Everything else is still yours — it is just not on this list.`
-        : "No territory is set for you any more, so your handset shows every customer of yours again.",
+        : "No area is set for you, so your customer list will be empty until the office sets one. Nothing of yours is lost.",
     );
 
     revalidatePath("/sales/people");
     return okVoid(
       wanted.length
         ? `${person.name} works ${wanted.map((t) => t.value).join(", ")}.`
-        : `${person.name} sees their whole book.`,
+        : `${person.name} has no area set, so their handset shows no customers at all.`,
     );
   } catch (e) {
     return err(

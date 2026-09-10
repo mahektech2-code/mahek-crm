@@ -28,6 +28,8 @@ import {
   type Origin,
 } from '../src/data/customer-query';
 import { ShopMap } from '../src/components/ui/shop-map';
+import { territoryState } from '../src/sync/pull';
+import type { TerritoryState } from '../src/sync/api';
 import { whereNow } from '../src/native/where';
 
 /**
@@ -96,6 +98,21 @@ export default function Customers() {
   const [hasMore, setHasMore] = React.useState(false);
   const [loadingMore, setLoadingMore] = React.useState(false);
   const [today] = React.useState(() => isoDate(new Date()));
+  /*
+   * WHAT THE OFFICE LAST SAID ABOUT WHERE HE WORKS.
+   *
+   * Read on focus rather than once on mount: territory is changed at a desk in
+   * the middle of a working day, the shops leave the handset on the next pull,
+   * and a screen that had cached "you have an area" would then show the wrong
+   * sentence over an empty list — the one failure this whole thing exists to
+   * remove.
+   *
+   * Null means the server has never said, which is an older server or a handset
+   * that has not pulled since this shipped. Null is NOT "no area": it draws the
+   * ordinary empty state, because telling somebody their area is unset when
+   * nobody has actually said so sends them to the office for nothing.
+   */
+  const [territory, setTerritory] = React.useState<TerritoryState | null>(null);
   /*
    * WHICH HALF OF THE BOOK. Customers, leads, or both.
    *
@@ -177,6 +194,9 @@ export default function Customers() {
         setTotal(p.total);
         setHasMore(p.hasMore);
       });
+      void territoryState().then((t) => {
+        if (live) setTerritory(t);
+      });
       return () => {
         live = false;
       };
@@ -247,6 +267,12 @@ export default function Customers() {
       setSaving(false);
     }
   };
+
+  /* Only ever true when the server has SAID so — see the state above. `exempt`
+     is a manager or an admin, for whom the rule does not apply at all and who
+     must not be told to go and ask for a territory. */
+  const noArea = territory !== null && !territory.exempt && !territory.allocated;
+  const area = territory?.allocated ? territory.places : [];
 
   return (
     <AppFrame title="Customers" activeTab="customers" contentStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}>
@@ -429,6 +455,16 @@ export default function Customers() {
         {origin && originMode !== 'me' && originMode !== 'name' ? ` \u00b7 nearest ${originMode} first` : ''}
       </Text>
 
+      {/* WHICH PLACES THIS IS CUT TO, printed where the count is rather than
+          buried in a profile screen. A salesman who cannot find a shop he knows
+          is his needs to see the area before he concludes the app has lost it —
+          and the answer is almost always that the shop is outside it. */}
+      {area.length ? (
+        <Text style={[type.caption, { marginTop: 2, color: C.muted }]}>
+          {'Your area: ' + area.join(', ')}
+        </Text>
+      ) : null}
+
       {/* Asked and could not is a different fact from never asked, and the
           salesman is the one who can do something about it. */}
       {noFix && originMode === 'me' ? (
@@ -437,21 +473,38 @@ export default function Customers() {
         </Text>
       ) : null}
 
-      {/* Nothing matched. The one thing worth offering is the thing he is
-          about to need — and the sentence says which kind of shop this opens,
-          because a record we bill is the office's to create. */}
+      {/* AN EMPTY BOOK AND A SWITCHED-OFF ONE ARE DIFFERENT FACTS, and no
+          screen may draw them alike.
+
+          "Nothing in your book yet" sends a salesman to ask why nobody has
+          given him shops. It is the wrong sentence when the real answer is that
+          no area has been allocated to him, and it is the sentence that makes
+          an unallocated handset look like a broken sync for a fortnight. The
+          office is told the same thing from the other end, on the team screen.
+
+          `noArea` is only ever true when the server has actually SAID so —
+          `territoryState` answers null on an older server and on a handset that
+          has not pulled since this shipped, and null draws the ordinary empty
+          state rather than accusing anybody. */}
       {rows.length === 0 ? (
         <Card style={{ marginTop: 12, alignItems: 'center', paddingVertical: 28 }}>
           <Text style={[{ fontSize: 15, color: C.ink, textAlign: 'center' }, weight(500)]}>
-            {custQ.trim() ? 'No shop matches that' : 'Nothing in your book yet'}
+            {custQ.trim()
+              ? 'No shop matches that'
+              : noArea
+                ? 'No area set for you yet'
+                : 'Nothing in your book yet'}
           </Text>
           <Text style={[type.caption, { marginTop: 4, textAlign: 'center', paddingHorizontal: 24 }]}>
-            If you are standing in a shop we deliver to on somebody else&apos;s bill, open it
-            here and take the order.
+            {noArea && !custQ.trim()
+              ? 'Your customer list stays empty until the office sets the area you work. Nothing of yours is lost — ask your manager to set it on the Sales Dashboard.'
+              : 'If you are standing in a shop we deliver to on somebody else\u2019s bill, open it here and take the order.'}
           </Text>
-          <View style={{ marginTop: 14, alignSelf: 'stretch', paddingHorizontal: 24 }}>
-            <PrimaryButton label="Add a delivery shop" onPress={openAdd} />
-          </View>
+          {noArea && !custQ.trim() ? null : (
+            <View style={{ marginTop: 14, alignSelf: 'stretch', paddingHorizontal: 24 }}>
+              <PrimaryButton label="Add a delivery shop" onPress={openAdd} />
+            </View>
+          )}
         </Card>
       ) : null}
 
