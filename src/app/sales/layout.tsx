@@ -53,6 +53,7 @@ export default async function SalesLayout({
           initials: initialsOf(user.name),
         }}
         teamLine={counts.teamLine}
+        scopeDetail={counts.scopeDetail}
         liveLine={counts.liveLine}
         counts={{
           "/sales/tasks": counts.tasks,

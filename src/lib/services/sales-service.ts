@@ -355,6 +355,8 @@ export async function teamDay(day?: string): Promise<TeamDay> {
 export type ConsoleCounts = {
   /** "11 salesmen · All India · 7 regions" */
   teamLine: string;
+  /** The full patch, for the header's hover — see `patch` below. */
+  scopeDetail: string;
   /** "National sales manager", or "South sales manager". From the scope. */
   title: string;
   /** "6 of 11 in the field" */
@@ -380,6 +382,20 @@ export type ConsoleCounts = {
  * A count is only ever what is WAITING — the design draws no badge at zero,
  * because a zero beside a heading reads as a problem rather than as an empty
  * queue. The numbers are returned raw and the shell decides that.
+ *
+ * THE "regions" COUNT MAY NOT READ `territory_region` DIRECTLY, which is what
+ * it did. That column is empty on every one of the 5,915 rows in production and
+ * `customers.region` is the one the sheet fills — `TERRITORY_REGION_SQL` is the
+ * fall-through and the ONE definition of this geography, and reading the raw
+ * column instead is exactly the failure that file was written about. It counted
+ * zero on every book in the company, so the console header has said "no
+ * territory set" since it shipped, printed beside the very list of states it
+ * was contradicting. Folded with `stateKeySql` as well, because the sheet holds
+ * Gujrat beside Gujarat and a distinct over the raw text counts one state
+ * twice.
+ *
+ * This note is out here rather than inside the query because the SQL is a
+ * template literal, and a backtick in a comment inside one ends the string.
  */
 export async function consoleCounts(
   day: string,
@@ -397,8 +413,12 @@ export async function consoleCounts(
          join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date
         where u.active and d.check_in_at is not null and d.check_out_at is null
           ${mine("u.id")}) as "live",
-      (select count(distinct c.territory_region)::int from customers c
-        where c.territory_region is not null and c.status = 'active'
+      -- WHERE THE BOOK ACTUALLY IS. See the note above this function for why
+      -- it may not read territory_region directly.
+      (select count(distinct ${sql.raw(stateKeySql(qualify(TERRITORY_REGION_SQL, "c")))})::int
+         from customers c
+        where ${sql.raw(qualify(TERRITORY_REGION_SQL, "c"))} is not null
+          and c.status = 'active'
           ${mine("coalesce(c.sales_am_id, c.owner_id)")}) as "regions",
 
       (select count(*)::int from mbos_tasks t
@@ -443,16 +463,54 @@ export async function consoleCounts(
   const team = n("team");
   const regions = n("regions");
 
+  /*
+   * THE PATCH, NAMED OR COUNTED — never spelled out at any length.
+   *
+   * This joined every region with a comma, so a manager holding five states got
+   * "Andhra Pradesh, Maharashtra, Odisha, Rajasthan, West Bengal" in a header
+   * bar that also has to hold a search box, three controls and his own name.
+   * It does not wrap and it did not shrink, so it pushed the user chip off the
+   * right edge of the screen — the whole right-hand end of the header was
+   * unreachable, and the design's own example is "11 salesmen · All India ·
+   * 7 states", a count rather than a list.
+   *
+   * One or two are still NAMED, because that is the answer somebody wants and
+   * it is short. Three or more is a count, with the full list on the hover of
+   * the element that prints it — the names are not lost, they stop being the
+   * thing that breaks the bar.
+   */
+  const patch = scope.national
+    ? "All India"
+    : scope.regions.length <= 2
+      ? scope.regions.join(" and ")
+      : `${scope.regions.length} states`;
+
   return {
     title: scope.national
       ? "National sales manager"
-      : `${scope.regions.join(", ")} sales manager`,
+      : scope.regions.length === 1
+        ? `${scope.regions[0]} sales manager`
+        : "Regional sales manager",
+    /* The full patch, for the hover. A count is quick to read and it is not an
+       answer, so the answer has to be one gesture away. */
+    scopeDetail: scope.national
+      ? "Every state — a national manager sees the whole field team"
+      : `Oversees ${scope.regions.join(", ")}`,
     teamLine: [
       `${team} ${team === 1 ? "salesman" : "salesmen"}`,
       /* The scope, not just the headcount. It is how a regional manager knows
        * at a glance that they are looking at their own patch. */
-      scope.national ? "All India" : scope.regions.join(", "),
-      regions ? `${regions} ${regions === 1 ? "region" : "regions"}` : "no territory set",
+      patch,
+      /*
+       * WHERE THE BOOK IS, which is a different question to where he may look,
+       * and worth printing only where the two can differ. A regional manager's
+       * customers are inside his patch by definition, so "5 states · 5 states"
+       * would be the same fact twice; a national manager's spread is the only
+       * thing in the line that is not a constant.
+       */
+      ...(scope.national
+        ? [regions ? `${regions} ${regions === 1 ? "state" : "states"}` : "no customer names a state"]
+        : []),
     ].join(" · "),
     liveLine: `${n("live")} of ${team} in the field`,
     tasks: n("tasks"),

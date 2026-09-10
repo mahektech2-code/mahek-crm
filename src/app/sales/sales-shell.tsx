@@ -115,6 +115,7 @@ export type SalesCounts = Partial<Record<string, number>>;
 export function SalesShell({
   user,
   teamLine,
+  scopeDetail,
   liveLine,
   counts,
   alertCount,
@@ -126,6 +127,8 @@ export function SalesShell({
   user: { name: string; title: string; initials: string };
   /** "11 salesmen · All India · 7 states" — the scope, not just the name. */
   teamLine: string;
+  /** The patch in full, for `teamLine`'s hover — it prints a count past two. */
+  scopeDetail: string;
   /** "6 of 11 in the field" */
   liveLine: string;
   /** Keyed by href. Only what is waiting; a zero is not drawn. */
@@ -180,9 +183,30 @@ export function SalesShell({
         </span>
 
         <span className="h-[22px] w-px flex-none bg-divider" />
-        <span className="flex-none text-[13px] whitespace-nowrap text-muted">{teamLine}</span>
+        {/*
+          IT SHRINKS AND TRUNCATES, and it did neither.
 
-        <span className="relative max-w-[380px] min-w-[160px] flex-[1_1_320px]">
+          `flex-none` beside `whitespace-nowrap` is a promise the bar cannot
+          keep: the line is built from the manager's own patch, so its length is
+          somebody's data rather than a constant, and a five-state manager got a
+          string wide enough to push the search box to its minimum and the user
+          chip clean off the right edge — under `overflow-hidden`, so it was cut
+          rather than scrollable, and the sign-out button with it.
+
+          `min-w-0` is the half that is easy to miss: a flex item defaults to
+          `min-width: auto`, which is its content, so `truncate` alone does
+          nothing here and the element goes on refusing to be smaller than its
+          own text. The service keeps this short as well — both, because a
+          layout that only holds while the data is polite is not a layout.
+        */}
+        <span
+          title={scopeDetail}
+          className="min-w-0 flex-initial truncate text-[13px] text-muted"
+        >
+          {teamLine}
+        </span>
+
+        <span className="relative min-w-[180px] max-w-[380px] flex-[1_1_320px]">
           <span className="pointer-events-none absolute top-[9px] left-2.5 flex text-muted">
             <SalesIcon name="search" size={16} />
           </span>
@@ -218,15 +242,32 @@ export function SalesShell({
           </span>
         </Link>
 
-        <span className="flex flex-none items-center gap-2">
+        {/*
+          THE NAME IS WHAT GIVES WAY, never the sign-out button.
+
+          The name is data too — "Pritesh Bipin Doshi" beside a five-state role
+          is wider than the two icons around it — so it is capped, truncated,
+          and the full pair kept on the hover. But a capped name in a `flex-none`
+          group is still a fixed width: at the shell's own 1100px floor the group
+          held its 256px and the sign-out button was the thing pushed past the
+          edge, which is the worst possible choice of casualty.
+
+          So the GROUP shrinks and the two icons inside it do not. Under
+          pressure the name gets narrower and the avatar, the badge and the way
+          out stay exactly where they are.
+        */}
+        <span className="flex min-w-0 flex-initial items-center gap-2">
           <span className="flex h-7 w-7 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]">
             {user.initials}
           </span>
-          <span className="leading-[14px]">
-            <span className="block text-[13px] font-medium whitespace-nowrap text-ink">
+          <span
+            className="min-w-0 flex-initial max-w-[180px] leading-[14px]"
+            title={`${user.name} — ${user.title}`}
+          >
+            <span className="block truncate text-[13px] font-medium text-ink">
               {user.name}
             </span>
-            <span className="block text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
+            <span className="block truncate text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
               {user.title}
             </span>
           </span>
