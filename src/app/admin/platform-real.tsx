@@ -60,7 +60,7 @@ export type PlatformData = {
   migrations: { applied: MigrationRow[]; pending: number };
   notifications: NotificationRow[];
   sessions: SessionRow[];
-  onboarding: Array<{ name: string; email: string; createdAt: string; apps: number }>;
+  onboarding: Array<{ name: string; email: string | null; createdAt: string; apps: number }>;
   queues: QueueOwner[];
 };
 

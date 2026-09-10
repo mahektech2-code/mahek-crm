@@ -577,7 +577,29 @@ export const users = pgTable(
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
-    email: text("email").notNull(),
+    /**
+     * EITHER OF THESE SIGNS SOMEBODY IN, and neither is guaranteed.
+     *
+     * `signIn` has always matched the last ten digits of the work number as
+     * readily as the whole email, so both are credentials — but only one of
+     * them is a thing every person here HAS. A field salesman is issued a
+     * handset and a number and no company mailbox, and requiring an address
+     * for him meant the office typed one in that nobody would ever read, which
+     * is a fact invented to satisfy a column.
+     *
+     * So the constraint is "at least one", and it lives in `setAccess` where
+     * the two can be weighed together rather than on either column, which can
+     * only ever see half the answer.
+     *
+     * Both are unique where present. `users_email_key` has always said so;
+     * `users_phone_key` is partial, because Postgres lets a unique index hold
+     * any number of NULLs and there is nothing to spread about an absent
+     * number. Without it two accounts could share a work number and `signIn`
+     * would take whichever row came back first — silently signing somebody in
+     * as a colleague, or refusing them because it checked the other one's
+     * password.
+     */
+    email: text("email"),
     phone: text("phone"),
     passwordHash: text("password_hash").notNull(),
     role: roleEnum("role").notNull().default("associate"),
@@ -653,6 +675,7 @@ export const users = pgTable(
   },
   (t) => [
     uniqueIndex("users_email_key").on(t.email),
+    uniqueIndex("users_phone_key").on(t.phone).where(sql`${t.phone} is not null`),
     index("users_reports_to_idx").on(t.reportsToId),
     /* One account per employee. Two accounts claiming one payroll row would
        show the same salary twice with no way to tell which was meant. */

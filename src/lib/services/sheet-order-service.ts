@@ -308,9 +308,16 @@ export function displayColumns() {
 export async function assignableOwners(): Promise<
   Array<{ id: string; name: string; email: string; role: string }>
 > {
-  return db
+  const rows = await db
     .select({ id: users.id, name: users.name, email: users.email, role: users.role })
     .from(users)
     .where(and(eq(users.active, true), inArray(users.role, ["associate", "manager", "admin"])))
     .orderBy(asc(users.name));
+  /* AN OWNER IS NAMED BY EMAIL, so somebody without one cannot be offered.
+     `npm run jobs -- project-sheet --owner=vikram@mahek.in` is the contract and
+     the job resolves it with `eq(users.email, …)`; an account that signs in on
+     a work number alone has nothing to put in that flag. Filtered here rather
+     than drawn and then refused, because a picker is where somebody finds out
+     what their options are. */
+  return rows.flatMap((r) => (r.email ? [{ ...r, email: r.email }] : []));
 }

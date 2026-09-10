@@ -195,7 +195,10 @@ export async function requestPasswordReset(
 
     const link = `${await appOrigin()}/login/reset?token=${token}`;
     await sendMail({
-      to: user.email,
+      /* The address this row was FOUND BY, rather than the column — which is
+         nullable now, and cannot be null on a row an email lookup returned.
+         Using `email` keeps that obvious instead of leaning on a `!`. */
+      to: email,
       subject: "Set a new MahekOne password",
       text: [
         `Hello ${user.name.split(" ")[0]},`,

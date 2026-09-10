@@ -221,6 +221,15 @@ test("THE AUDIT RECORDS THAT ONE WAS ISSUED AND NEVER WHAT IT WAS", async () => 
   );
 });
 
+test("an account with neither identifier is refused rather than handed a useless password", async () => {
+  /* A state `setAccess` will not create, and the columns still allow. */
+  await db.update(users).set({ phone: null, email: null }).where(eq(users.id, clerk.id));
+  const r = await issueCredential(clerk.id);
+  assert.equal(r.ok, false);
+  if (r.ok) return;
+  assert.match(r.error, /nothing to sign in with/i);
+});
+
 test("somebody who is not a manager cannot issue one at all", async () => {
   setTestUser(clerk);
   const r = await issueCredential(boss.id);
