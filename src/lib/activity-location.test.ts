@@ -128,7 +128,7 @@ beforeEach(async () => {
   await db.execute(sql`
     truncate table
       mbos_activity_locations, mbos_devices, mbos_visits, mbos_tasks,
-      mbos_positions, mbos_attendance_days,
+      mbos_positions, mbos_attendance_days, mbos_user_territories,
       audit_log, notifications, app_access, sessions, customers, users, app_settings
     restart identity cascade
   `);
@@ -666,7 +666,12 @@ describe("An attendance photograph survives the night and can be opened", () => 
     assert.equal(await canRead(clientId), true, "he cannot open a photograph of himself");
 
     /* A manager with no territory rows is national — `managerScope` says so,
-       and `onlyMine` reads the same field to mean the same thing in SQL. */
+       and `onlyMine` reads the same field to mean the same thing in SQL.
+       He HOLDS THE SALES APP, which is what this test was missing: "whoever
+       can see his attendance" means whoever can open `/sales/attendance`, and
+       that layout redirects anybody without the grant whatever their role. A
+       manager with no apps at all can see nothing in MahekOne, so asserting he
+       could open a photograph was asserting something no screen offers. */
     const [manager] = await db
       .insert(users)
       .values({
@@ -678,6 +683,7 @@ describe("An attendance photograph survives the night and can be opened", () => 
         initials: "VS",
       })
       .returning();
+    await db.insert(appAccess).values({ id: id("acc"), userId: manager.id, app: "sales" });
     setTestUser(manager);
     assert.equal(await canRead(clientId), true, "the manager the photograph exists for cannot see it");
   });
@@ -727,6 +733,104 @@ describe("An attendance photograph survives the night and can be opened", () => 
       false,
       "a salesman could fetch a colleague's photograph by id",
     );
+  });
+
+  /*
+   * THE SAME REFUSAL FOR THE SALESMAN THE TEST ABOVE CAREFULLY AVOIDS.
+   *
+   * That one gives the colleague a territory row on purpose — "so he is scoped
+   * rather than national" — and it passed for as long as it has existed. The
+   * hole was the case it stepped around: `managerScope` answers
+   * `salesmanIds: null`, meaning EVERYBODY, for anyone with no `region` row,
+   * and a plain field salesman has none. Which is nearly all of them. So the
+   * ordinary colleague — no territory, just the field app — got the national
+   * answer and could open anybody's check-in photograph by id.
+   *
+   * It failed OPEN, the dangerous direction, and that is why it lasted: nothing
+   * looked broken, because everything worked. The doc comment on
+   * `canReadAttendanceSelfie` has promised this refusal from the day it was
+   * written; only now does the code hold it.
+   */
+  test("nor may a salesman with no territory at all, which is most of them", async () => {
+    const attendanceId = id("mbos_att");
+    await db.execute(sql`
+      insert into mbos_attendance_days (id, user_id, day, check_in_at, status)
+      values (${attendanceId}, ${salesman.id},
+              (now() at time zone 'Asia/Kolkata')::date, now(), 'present')
+    `);
+    const clientId = `mbos_media_${randomUUID()}`;
+    await storeMbosMedia(principal, {
+      clientId,
+      kind: "selfie",
+      parentType: "attendance",
+      parentId: attendanceId,
+      filename: "selfie.jpg",
+      bytes: JPEG,
+    });
+
+    /* No `mbos_user_territories` row — the ordinary state of a field salesman,
+       and the one that used to resolve to "national, sees everybody". */
+    const [plain] = await db
+      .insert(users)
+      .values({
+        id: id("usr"),
+        name: "Suresh",
+        email: "suresh@test.local",
+        passwordHash: "x",
+        role: "telecaller",
+        initials: "SP",
+      })
+      .returning();
+    await db.insert(appAccess).values({ id: id("acc"), userId: plain.id, app: "field" });
+
+    setTestUser(plain);
+    assert.equal(
+      await canRead(clientId),
+      false,
+      "an unscoped salesman could open a colleague's check-in photograph",
+    );
+  });
+
+  /*
+   * And the grant is what separates the two, not the role.
+   *
+   * `/sales/layout.tsx` redirects anybody without the `sales` app whatever
+   * their role — there is no implicit access for an admin, because
+   * `listUserApps` reads `app_access` and nothing else. So a manager who was
+   * never given the Sales Dashboard has no screen on which to see anybody's
+   * attendance, and a photograph is not a back door to one.
+   */
+  test("a manager without the Sales Dashboard has no screen for it, and no file either", async () => {
+    const attendanceId = id("mbos_att");
+    await db.execute(sql`
+      insert into mbos_attendance_days (id, user_id, day, check_in_at, status)
+      values (${attendanceId}, ${salesman.id},
+              (now() at time zone 'Asia/Kolkata')::date, now(), 'present')
+    `);
+    const clientId = `mbos_media_${randomUUID()}`;
+    await storeMbosMedia(principal, {
+      clientId,
+      kind: "selfie",
+      parentType: "attendance",
+      parentId: attendanceId,
+      filename: "selfie.jpg",
+      bytes: JPEG,
+    });
+
+    const [ungranted] = await db
+      .insert(users)
+      .values({
+        id: id("usr"),
+        name: "Asha",
+        email: "asha@test.local",
+        passwordHash: "x",
+        role: "manager",
+        initials: "AS",
+      })
+      .returning();
+
+    setTestUser(ungranted);
+    assert.equal(await canRead(clientId), false, "a role is not a grant");
   });
 });
 

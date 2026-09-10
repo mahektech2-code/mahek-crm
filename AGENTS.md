@@ -1667,6 +1667,29 @@ rather than a second opinion about it. Not "anybody holding the field app": a
 salesman must not be able to fetch a colleague's photograph by id, and these
 ids travel in payloads.
 
+**AND THAT LAST SENTENCE WAS A PROMISE THE CODE DID NOT KEEP.**
+`managerScope` narrows a REGIONAL manager and is vacuous for everybody else: it
+answers `salesmanIds: null`, meaning everybody, for anyone with no `region` row
+in `mbos_user_territories` — three separate returns in it do so — and a plain
+field salesman has none. Which is nearly all of them. So the ordinary
+colleague, holding only the field app, got the national answer and could open
+anybody's check-in photograph by id. It failed OPEN, the dangerous direction,
+and lasted because nothing looked broken: everything worked. The test that
+should have caught it gave its colleague a territory row on purpose, "so he is
+scoped rather than national", and stepped around the only case that leaked.
+
+**So the `sales` GRANT is asked first, and the narrowing sits behind it.**
+"Whoever can see his attendance" means whoever can open `/sales/attendance`,
+and that layout redirects anybody without the grant whatever their role —
+`listUserApps` reads `app_access` and nothing else, so there is no implicit
+access for an admin. A manager who was never given the Sales Dashboard has no
+screen on which to see anybody's attendance, and a photograph is not a back
+door to one. Every OTHER caller of `managerScope` is a list inside `/sales/*`
+and is already behind that layout; the two in `attachment-service.ts` are
+reached from `/api/attachments/[id]`, which has no gate but a signed-in
+session, which is why the check belongs in them.
+`canReadTravelLegPhoto` is the same rule for the same reason.
+
 **AND IT IS THE ONE FILE HERE WITH A CLOCK ON IT.** Everything else in this
 subsystem is a photograph OF something — a damaged can, a cheque, a shop
 front — attached to a record that stands without it, and it is kept as long as
