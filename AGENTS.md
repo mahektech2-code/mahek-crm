@@ -3853,6 +3853,39 @@ before. `flush()` loops until the queue is short now. The general lesson is the
 one worth keeping: a drain whose rate is fixed and whose fill rate is not is a
 queue that reports success all the way down.
 
+**AND THE THREE SECONDS IN THAT PARAGRAPH WERE NOT A SETTING ANYBODY CHOSE.**
+`mbos.location.trackEveryMinutes` said five and the handset asked for five, and
+Android delivered at 3.0 seconds for three days. `timeInterval` NEVER REACHES
+IT: expo-location declares it `Long?` and reads it out of the task's persisted
+options with `map["timeInterval"] as? Long` — but options are stored as JSON,
+so `org.json` hands back a boxed `Integer` and a strict `as?` yields null. The
+override is skipped in silence and `Accuracy`'s own fallback of 3000 ms stands.
+`distanceInterval` is declared `Int?` and survives the same round trip, which
+is why the one parameter nobody meant to be load-bearing was the only one
+arriving. A hundred times the fixes, a hundred times the battery, and the queue
+above could never have drained whatever `flush()` did.
+
+**So the cadence is enforced where no cast can lose it, and that is
+JavaScript.** `deferredUpdatesInterval` is set beside `timeInterval` because it
+IS read with a coercing `getLong` and does arrive — but it is the battery half
+only, since expo bypasses it outright while the app is in the foreground
+through its own `shouldReportDeferredLocations`. The authority on what actually
+gets WRITTEN is `shouldKeepFix` in `engines/cadence.ts`, which is pure and
+tested. It is an engine rather than three lines inside `trail.ts` for exactly
+the reason the bug lasted three days: that file imports expo-location and
+TaskManager at module scope, so nothing in it can be exercised without a
+device, and a cadence nobody can test is a cadence nobody can be sure of. The
+mark lives in `kv` and not in `positions`, because the queue is emptied as it
+uploads — asking the table would answer "nothing kept recently" the moment a
+flush succeeded, and the cadence would collapse back to whatever the OS felt
+like delivering. A clock corrected BACKWARDS resets it rather than stalling,
+or a phone an hour fast would record nothing until it caught up with a mark
+from a future it no longer believes in.
+
+**A fix that is not kept is still REMEMBERED.** The trail wants one point every
+few minutes; `whereNow()` wants the freshest reading there is, and throttling
+that would age the position on every order and payment by the whole cadence.
+
 **A fix is judged against the SESSION IT BELONGS TO, not against today.** The
 sentence at the top of this section used to be enforced by asking whether the
 sender is checked in RIGHT NOW, which is a different question. A batch is a
