@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { and, eq, gte, isNotNull, isNull, lte, or } from "drizzle-orm";
 import { db } from "@/db";
-import { mbosAttendanceDays, mbosPositions } from "@/db/schema";
+import { mbosAttendanceDays, mbosDevices, mbosPositions } from "@/db/schema";
 import { authenticate } from "@/lib/services/mbos-service";
 import { getConfig } from "@/lib/config/store";
+import { readDeviceState } from "@/lib/mbos/device-state";
 
 /* ---------------------------------------------------------------------------
  * The trail.
@@ -85,9 +86,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, stored: 0, tracking: "off" });
   }
 
-  let body: { positions?: unknown };
+  let body: Record<string, unknown>;
   try {
-    body = (await request.json()) as { positions?: unknown };
+    body = (await request.json()) as Record<string, unknown>;
   } catch {
     return NextResponse.json(
       { ok: false, code: "validation", error: "That was not readable JSON." },
@@ -174,6 +175,34 @@ export async function POST(request: Request) {
   if (inside.length) {
     await db.insert(mbosPositions).values(inside).onConflictDoNothing();
   }
+
+  /*
+   * WHAT THE PHONE IS ITSELF DOING, on the one channel already open.
+   *
+   * A battery reading needs no request of its own: this batch runs every few
+   * minutes while a day is open, is already authenticated and already names
+   * the device. A second endpoint polling for battery would spend the battery
+   * to report it.
+   *
+   * IT IS RECORDED ONLY INSIDE A WORKING DAY, and the placement is the whole
+   * of that rule — everything above has already established that these fixes
+   * belong to a session that exists. `mbos.location.trackWhileWorking` off
+   * returned long before the body was read, and a batch with no session to
+   * file it against returned above. A handset that carried on reporting its
+   * battery after check-out would be a beacon on somebody's evening, which is
+   * the thing the trail itself is forbidden from being.
+   *
+   * `lastSeenAt` moves with it. It was written at sign-in and nowhere else,
+   * so four screens calling it "last synced" were in fact showing the last
+   * time somebody typed their password — a handset syncing perfectly for a
+   * week read as untouched since Monday. A position batch IS a sync, so this
+   * is the column finally meaning what those screens already say it does.
+   */
+  const state = readDeviceState(body);
+  await db
+    .update(mbosDevices)
+    .set({ ...state, lastSeenAt: new Date() })
+    .where(eq(mbosDevices.deviceId, auth.principal.deviceId));
 
   return NextResponse.json({
     ok: true,

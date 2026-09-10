@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import * as React from "react";
 import type { DwellStop } from "@/lib/engines/dwell";
 import type { ActivityPoint, LastKnown, TrackPoint } from "@/lib/services/sales-service";
+import type { HandsetThresholds } from "@/lib/handset-health";
 import { TeamList } from "./map-canvas";
 import { StreetMap } from "./street-map";
 
@@ -42,6 +43,8 @@ export function LivePanel({
   view,
   isToday,
   olaMapsKey,
+  handsetThresholds,
+  nowMs,
 }: {
   day: string;
   rows: LastKnown[];
@@ -58,6 +61,10 @@ export function LivePanel({
   staleAfterSeconds: number;
   view: "now" | "today";
   isToday: boolean;
+  /** What the Live map calls quiet and calls low — both configuration. */
+  handsetThresholds: HandsetThresholds;
+  /** Read on the server: the clock may not be read during render. */
+  nowMs: number;
   /** Read once, server-side, in `page.tsx` — see `street-map.tsx`'s doc comment. */
   olaMapsKey: string | null;
 }) {
@@ -99,6 +106,8 @@ export function LivePanel({
         distanceMetres={view === "today" ? distanceMetres : null}
         selectedId={selectedId}
         onSelect={toggle}
+        thresholds={handsetThresholds}
+        nowMs={nowMs}
       />
     </div>
   );

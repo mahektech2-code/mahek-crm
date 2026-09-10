@@ -848,6 +848,13 @@
       "when": 1789036829812,
       "tag": "0121_either_identifier_signs_you_in",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1789066028865,
+      "tag": "0122_what_the_handset_can_say_about_itself",
+      "breakpoints": true
     }
   ]
 }

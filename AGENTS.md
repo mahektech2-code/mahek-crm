@@ -4166,6 +4166,73 @@ destroys a morning to win a race by thirty seconds. `no-session-yet` is the one
 answer that means hold on to them, and the handset drops them itself after a
 week, because a queue that only ever grows is the other way to lose a day.
 
+**"NO FIX TODAY" WAS FOUR DIFFERENT PROBLEMS WEARING ONE SENTENCE.** The
+background permission set to "while using the app", location switched off on
+the phone itself, no signal since breakfast, and a flat battery — four causes,
+three of which somebody can act on, and the team list drew them identically. A
+manager reading that line had no way to tell which, so he rang the salesman and
+asked him to describe his own settings screen. `lib/handset-health.ts` is the
+one place any of it becomes words, pure and client-safe like `customer-health`
+beside it, because the panel is a client component and a second copy typed into
+a screen drifts inside a release.
+
+**A BOOLEAN COULD NOT SAY WHICH.** `background_location_granted` answers true or
+false, and its `false` covers both "while using the app" — a settings trip — and
+"refused outright", which is a different conversation entirely.
+`location_permission` carries the OS's own four answers, and the boolean is KEPT
+and still written beside it: an APK cannot be recalled, so handsets in the field
+go on sending only the boolean and the screen has to go on reading it. Its
+`false` renders as `restricted`, which says the trail has gaps without inventing
+a reason for them. The migration backfills `true` to `always` and deliberately
+leaves `false` alone — guessing there would put a fact on the screen that
+nobody established.
+
+**NULL IS NOT AN ANSWER, and three things depend on it.** A handset that has
+never reported reads null, which is not a refusal, not `undetermined` — that is
+the OS saying nobody has been asked — and not a fault to draw. `readDeviceState`
+OMITS a field rather than nulling it, so an old build's report cannot wipe the
+richer answers a newer one gave for the same phone; a partial report is a
+partial update. It is the same trade the wire already makes in the other
+direction, where an unknown column is dropped rather than the row refused.
+
+**THERE IS NO LIVE BATTERY READING AND THE SCREEN MAY NEVER IMPLY ONE.** A
+phone speaks when it syncs, so every figure is "at last contact" — minutes old
+inside a working day, hours outside one. `device_state_at` rides with it and a
+check constraint refuses the readings without it, because a bare "8%" reads as
+now and would have somebody ringing a salesman whose phone charged overnight.
+The row prints "Battery 8% — read 12 min ago", which is the discipline
+`mbos_activity_locations` already keeps for a fix's age and the On-your-way
+screen keeps for a distance.
+
+**IT RIDES CHANNELS ALREADY OPEN, and only inside a working day.** The battery
+goes up with the position batch, which is already authenticated, already names
+the device and already runs every few minutes — a poller of its own would spend
+the battery in order to report it. It is written after the session check in
+`positions/route.ts` and nowhere else, so a handset that carried on reporting
+after check-out would be a beacon on somebody's evening, which is precisely what
+the trail itself is forbidden from being. It is a SIBLING of the positions array
+and never a field inside a fix: a position's id is `at|lat|lng`, and folding a
+changing value into a key is how a redelivered batch stops deduplicating.
+
+**NOTHING CLAIMS SOMEBODY'S INTERNET IS OFF, because nothing could.** A phone
+with no connection cannot report having no connection, so any column saying so
+could only ever be written by a handset that was online at the time. SILENCE
+carries it, and silence is `last_seen_at` — which is also why that column now
+moves on every position batch rather than only at sign-in. It was written at
+login and nowhere else, so four screens calling it "last synced" were showing
+the last time somebody typed their password, and a handset syncing perfectly all
+week read as untouched since Monday.
+
+**A HEALTHY PHONE SAYS NOTHING AT ALL.** A row listing four green facts is a
+specification sheet, and the one line that matters gets read as furniture — the
+mistake the microphone made when it was drawn at the weight of the resize grip.
+`mbos.location.handsetQuietMinutes` and `mbos.location.lowBatteryPercent` decide
+when there is something to say, and they are configuration because they change
+what a screen ASSERTS, which is the same reason `activityFixMaxAgeSeconds` is.
+Neither is `mbos.sync.quietHours`: that one asks whether a phone has stopped
+syncing at all, over days, and this asks whether a man who checked in this
+morning has gone quiet since.
+
 **`SCHEMA_VERSION` COUNTS THE MIGRATIONS RATHER THAN BEING TYPED BESIDE THEM.**
 It was a literal and it drifted: travel and expense added an eleventh block and
 left the constant at 10, so `migrate()`'s own `current >= SCHEMA_VERSION` guard

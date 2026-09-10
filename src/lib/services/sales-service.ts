@@ -1744,6 +1744,46 @@ export type LastKnown = {
    * trail with real gaps in it. Null means never reported, not refused.
    */
   backgroundTrackingGranted: boolean | null;
+  /**
+   * WHY THE MAP IS EMPTY, where the handset was able to say.
+   *
+   * "No fix today" has four ordinary causes and used to be one sentence for
+   * all of them: the background permission refused, location switched off on
+   * the phone, no signal, or a flat battery. They are four different
+   * conversations — one is a settings screen, one is a charger, and one is
+   * nobody's fault at all — and a manager guessing between them rings a
+   * salesman to ask him to read out his own permissions.
+   *
+   * Every one of these is NULLABLE and stays drawn as unknown when it is
+   * null. Handsets already in the field report none of it and will go on
+   * doing so until they are updated, which is not a fault to display.
+   */
+  deviceModel: string | null;
+  appVersion: string | null;
+  locationPermission: string | null;
+  locationServicesEnabled: boolean | null;
+  connectionType: string | null;
+  batteryPercent: number | null;
+  batteryCharging: boolean | null;
+  /**
+   * When the three readings above were taken — NOT when they were drawn.
+   *
+   * There is no live reading here and the screen must never imply one: the
+   * handset speaks when it syncs, so a battery figure is minutes old inside a
+   * working day and hours old outside one. This is what lets the row say "64%
+   * at 09:14" instead of "64%", the same way a travelling salesman's distance
+   * carries the age of the fix it was measured from.
+   */
+  deviceStateAt: Date | null;
+  /**
+   * The last time the HANDSET SPOKE, which is the only honest answer to "is
+   * his internet off".
+   *
+   * A phone with no connection cannot report that it has no connection, so
+   * nothing the handset sends could ever carry that fact. Silence carries it,
+   * and this is the silence measured.
+   */
+  lastHeardAt: Date | null;
 };
 
 /**
@@ -1791,7 +1831,15 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
            d.check_in_at as "checkInAt", d.check_out_at as "checkOutAt",
            f.lat, f.lng, f.at as "seenAt", f.place, f.acc as "accuracyM",
            (d.status = 'on_leave') as "onLeave",
-           dev.background_location_granted as "backgroundTrackingGranted"
+           dev.background_location_granted as "backgroundTrackingGranted",
+           dev.model as "deviceModel", dev.app_version as "appVersion",
+           dev.location_permission as "locationPermission",
+           dev.location_services_enabled as "locationServicesEnabled",
+           dev.connection_type as "connectionType",
+           dev.battery_percent as "batteryPercent",
+           dev.battery_charging as "batteryCharging",
+           dev.device_state_at as "deviceStateAt",
+           dev.last_seen_at as "lastHeardAt"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date
