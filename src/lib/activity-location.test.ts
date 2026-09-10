@@ -1066,7 +1066,7 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
       mode: "NEFT",
       receivedAt: new Date().toISOString().slice(0, 10),
       status: "confirmed",
-      recordedById: salesman.id,
+      reportedById: salesman.id,
     });
     await db.insert(timelineEvents).values({
       id: id("tl"),
