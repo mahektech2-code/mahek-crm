@@ -454,6 +454,26 @@ export default function CustomerRecord() {
               })}
             </ScrollView>
 
+            {/* AN EMPTY TIMELINE HAD NOTHING TO SAY, which is not the same as
+                having nothing to show. Orders and Payments beside it both draw
+                an `Empty`; this tab drew the filter chips and then stopped, so
+                a shop with no history rendered as a blank space under a row of
+                pills — indistinguishable from a tab that had failed to load,
+                and reported as exactly that. The two causes are worth telling
+                apart in the words, because only one of them is the salesman's
+                to act on: a filter that excludes everything is undone by
+                pressing All, and an empty stream is the office's to fill. */}
+            {events.length === 0 ? (
+              <Empty
+                head={tlFilter === 'All' ? 'Nothing recorded yet' : 'Nothing under ' + tlFilter}
+                body={
+                  tlFilter === 'All'
+                    ? 'Visits, calls, orders and payments appear here as the office records them. A shop nobody has dealt with yet has nothing to show.'
+                    : 'This shop has history, but none of it is ' + tlFilter.toLowerCase() + '. Tap All to see the rest.'
+                }
+              />
+            ) : null}
+
             {events.map((e, i) => {
               const last = i === events.length - 1;
               const kind = KIND_LABEL[e.eventType] ?? 'Visit';

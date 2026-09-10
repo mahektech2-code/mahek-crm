@@ -33,8 +33,10 @@ import {
   mbosDevices,
   mbosUserTerritories,
   orders,
+  paymentReceipts,
   products,
   syncConflicts,
+  timelineEvents,
   users,
 } from "@/db/schema";
 import { invalidateConfig, seedConfig, updateSettings } from "@/lib/config/store";
@@ -1032,6 +1034,91 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
       );
     }
     assert.equal(typeof delta.config, "object", "the config is not optional");
+  });
+
+  /*
+   * AND THE CUSTOMER-HISTORY CHANNELS CARRY ROWS, which `Array.isArray` above
+   * cannot tell you.
+   *
+   * The customer record's Timeline, Orders and Payments tabs came back empty
+   * on real handsets and this file was the test that should have caught it —
+   * it asserted the three channels were arrays and stopped, which an empty
+   * array satisfies perfectly. The comment three lines below this one already
+   * says the rule for the journey channels: a query that returns nothing
+   * cannot tell you it would have worked. These three had never been held to
+   * it.
+   */
+  test("orders, payments and timeline arrive with rows behind them", async () => {
+    await db.insert(orders).values({
+      id: id("ord"),
+      customerId: shop.id,
+      userId: salesman.id,
+      orderedAt: new Date(),
+      status: "confirmed",
+      totalAmount: 250_000,
+      orderNo: "SO-1",
+    });
+    await db.insert(paymentReceipts).values({
+      id: id("rcp"),
+      customerId: shop.id,
+      idempotencyKey: id("idem"),
+      amount: 100_000,
+      mode: "NEFT",
+      receivedAt: new Date().toISOString().slice(0, 10),
+      status: "confirmed",
+      recordedById: salesman.id,
+    });
+    await db.insert(timelineEvents).values({
+      id: id("tl"),
+      customerId: shop.id,
+      eventType: "order",
+      sourceApp: "crm",
+      sourceRecordId: id("src"),
+      occurredAt: new Date(),
+      summary: "Order placed",
+    });
+
+    const boot = await buildBootstrap(principal);
+    assert.ok(
+      (boot.customerOrders as unknown[]).length > 0,
+      "the bootstrap carried no order history — the Orders tab is empty on the handset",
+    );
+    assert.ok(
+      (boot.customerPayments as unknown[]).length > 0,
+      "the bootstrap carried no receipts — the Payments tab is empty on the handset",
+    );
+    assert.ok(
+      (boot.timeline as unknown[]).length > 0,
+      "the bootstrap carried no timeline — that tab draws nothing at all when empty",
+    );
+
+    /*
+     * EPOCH MILLISECONDS, not a timestamp string.
+     *
+     * `timeline_events.occurredAt` is `INTEGER NOT NULL` on the handset and
+     * its own writes put `Date.now()` there. A string lands in the same column
+     * as TEXT, renders as `NaN undefined`, and — because SQLite orders every
+     * integer before every text value — sorts the office's events onto one
+     * side of the salesman's own whatever the dates say.
+     */
+    const event = (boot.timeline as Record<string, unknown>[])[0];
+    assert.equal(
+      typeof event.occurredAt,
+      "number",
+      "occurredAt must be epoch milliseconds — the handset stores this column as INTEGER",
+    );
+
+    /* And on the delta, which is every pull after sign-in. The two history
+       channels are deliberately not cursor-gated, so they come every time. */
+    const delta = await buildPull(principal, boot.cursor);
+    assert.ok(
+      (delta.customerOrders as unknown[]).length > 0,
+      "the delta carried no order history",
+    );
+    assert.ok(
+      (delta.customerPayments as unknown[]).length > 0,
+      "the delta carried no receipts",
+    );
   });
 
   /*
