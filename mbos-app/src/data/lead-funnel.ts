@@ -3,7 +3,7 @@ import { getConfig } from './config';
 import { getLead, notesOf, type Lead, type LeadResult } from './leads';
 import { updateAndQueue } from './write';
 import { isoDate } from '../lib/format';
-import { legacyStageFor, wireFunnelStage, wireNotes } from '../lib/wire';
+import { legacyStageFor, stageOf, wireFunnelStage, wireNotes } from '../lib/wire';
 import {
   gateForNext,
   gateTo,
@@ -106,25 +106,16 @@ export function salesTypeOf(lead: Lead): LeadSalesType | null {
   return t === 'direct' || t === 'distributor' || t === 'third_party' ? t : null;
 }
 
-/**
- * Where this lead is standing, as the engine's own word for it.
- *
- * A lead raised before the funnel existed has no `funnelStage` and is answered
- * from the six-word column instead, lower-cased — which is exactly the legacy
- * ladder's own vocabulary, so `nextStage` and `gateTo` need no special case
- * for an old lead. `Converted` is the one that is not the same word twice.
+/*
+ * `stageOf` MOVED TO `lib/wire.ts`, and is re-exported here so its callers did
+ * not have to. It is a pure translation of two stored columns into the
+ * engine's vocabulary, which is that file's whole job — and it had to leave
+ * this one because this one imports the database, so nothing that lives here
+ * can be tested without a handset. The card on the Customers list reads it
+ * now, and a rule that decides what four hundred rows SAY is a rule that needs
+ * a test more than most.
  */
-export function stageOf(lead: Lead): LeadStage {
-  const s = wireFunnelStage(lead.funnelStage);
-  if (s) return s as LeadStage;
-  const legacy = (lead.stage ?? 'New').trim().toLowerCase();
-  if (legacy === 'converted') return 'won';
-  if (legacy === 'lost') return 'lost';
-  if (legacy === 'contacted' || legacy === 'qualified' || legacy === 'negotiation') {
-    return legacy as LeadStage;
-  }
-  return 'new';
-}
+export { stageOf };
 
 /**
  * How many times somebody has been to this shop.

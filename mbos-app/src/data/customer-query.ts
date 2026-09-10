@@ -45,6 +45,37 @@ export type BookView = 'all' | 'customers' | 'leads';
 
 const IS_LEAD = `EXISTS (SELECT 1 FROM leads l WHERE l.id = customers.id AND l.archived = 0)`;
 
+/**
+ * WHAT THE CARD NEEDS TO SAY WHAT A ROW IS, added to the projection of both
+ * pages below.
+ *
+ * The list used to select `customers.*` and nothing else, which meant the card
+ * could name the account's KIND and never its RUNG — a lead sat in the book
+ * reading "Lead", or on a row whose `kind` had never been filled in, reading
+ * nothing at all. Suspect, Prospect and Negotiation are the whole of what a
+ * salesman is deciding between when he looks at this list, and they live in
+ * `leads`, one table over.
+ *
+ * `isLead` is the same EXISTS the view chips use, SELECTED rather than only
+ * filtered on. That is the rule this file's own header states — on the handset
+ * "is this a lead" is a correlated subquery and never a column read, because
+ * the office collapsed leads and customers into one `customers` row and
+ * `kind` on that row is not the answer.
+ *
+ * Correlated subqueries rather than a `LEFT JOIN leads`: both tables carry
+ * `id`, `name` and `city`, so a join turns every bare column in the WHERE and
+ * the ORDER BY ambiguous and the whole builder would have to be requalified to
+ * add one word to a card. `leads.id` is the PRIMARY KEY, so each of these is a
+ * point lookup.
+ *
+ * NONE OF THEM BINDS A PARAMETER, which is what keeps the note below about
+ * placeholder order true: the six in the projection are still the CASE's own,
+ * and they still come before the WHERE's.
+ */
+const LEAD_FACTS = `${IS_LEAD} AS isLead,
+    (SELECT l.funnelStage FROM leads l WHERE l.id = customers.id AND l.archived = 0) AS leadFunnelStage,
+    (SELECT l.stage FROM leads l WHERE l.id = customers.id AND l.archived = 0) AS leadStage`;
+
 /** The clause for a view, or null where everything is wanted. */
 function viewClause(view: BookView | undefined): string | null {
   if (view === 'leads') return IS_LEAD;
@@ -127,7 +158,7 @@ export function customerPageQuery(args: {
 
   if (!origin) {
     return {
-      sql: `SELECT * FROM customers ${where} ORDER BY name COLLATE NOCASE, id LIMIT ? OFFSET ?`,
+      sql: `SELECT *, ${LEAD_FACTS} FROM customers ${where} ORDER BY name COLLATE NOCASE, id LIMIT ? OFFSET ?`,
       params: [...whereParams, limit, offset],
     };
   }
@@ -136,7 +167,7 @@ export function customerPageQuery(args: {
   /* The SELECT list is bound BEFORE the WHERE, because that is the order the
      placeholders appear in the statement. Six of them, all in the projection. */
   return {
-    sql: `SELECT *,
+    sql: `SELECT *, ${LEAD_FACTS},
             CASE WHEN gpsLat IS NULL OR gpsLng IS NULL THEN NULL
                  ELSE ((gpsLat - ?) * (gpsLat - ?))
                     + (((gpsLng - ?) * ?) * ((gpsLng - ?) * ?))
