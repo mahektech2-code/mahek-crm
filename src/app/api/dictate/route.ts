@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
-import { voiceReadiness } from "@/lib/dictation";
+import { dictationAvailability } from "@/lib/dictation-requests";
 
 /* ---------------------------------------------------------------------------
  * Whether to draw a microphone, and what it is allowed to do.
@@ -16,6 +16,11 @@ import { voiceReadiness } from "@/lib/dictation";
  * The setting is checked here as well as in the interface. A hidden box is not
  * a disabled feature: /api/dictate/transcribe must refuse when dictation is
  * off, not merely be hard to reach.
+ *
+ * MBOS asks the same question a different way. A handset spends its day
+ * without signal, so it cannot ask an endpoint at the moment it draws a
+ * screen — the same answer rides down on its pull instead and is read from
+ * the local cache. Both come from `dictationAvailability`.
  * ------------------------------------------------------------------------- */
 
 export const dynamic = "force-dynamic";
@@ -24,58 +29,30 @@ export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ available: false }, { status: 401 });
 
+  const availability = await dictationAvailability();
+  if (!availability.available) {
+    return NextResponse.json({ available: false, reason: availability.reason });
+  }
+
   const config = await getConfig();
 
-  /*
-   * Two different reasons not to offer it, and they are worth telling apart in
-   * the response even though the button draws nothing either way: "a manager
-   * turned it off" is somebody's decision, "no credential" is a deploy that
-   * was never finished, and only one of them should be chased.
-   */
-  if (!config["voice.enabled"]) {
-    return NextResponse.json({ available: false, reason: "disabled" });
-  }
-
-  const ready = await voiceReadiness({
-    provider: config["voice.transcriptionProvider"],
-    fallbackToOpenai: config["voice.fallbackToOpenai"],
-    maxSeconds: config["voice.maxSeconds"],
-  });
-
-  /* No key that the chosen provider can use, no microphone — rather than a
-   * button that fails when pressed. */
-  if (!ready.canHear) {
-    return NextResponse.json({ available: false, reason: "not_configured" });
-  }
-
   return NextResponse.json({
-    available: true,
-    /*
-     * The EFFECTIVE limit, not the configured one. Where OpenAI has no key to
-     * catch the long recordings, this is Sarvam's own 30-second ceiling, and
-     * the recorder stops there — a limit that lets somebody talk for two
-     * minutes into a provider that will refuse it is a promise the deployment
-     * cannot keep.
-     */
-    maxSeconds: ready.maxSeconds,
-    maxSizeMb: config["voice.maxSizeMb"],
+    ...availability,
     /*
      * How the microphone itself is opened. The browser's defaults are tuned
      * for a conference call and cost us quiet speech, so they are decided
      * here rather than left to it — and they are settings, because how loud a
      * calling floor is differs by floor and nobody should need a deploy to
      * find out which way suits theirs.
+     *
+     * Browser-only. A handset records through a recording preset rather than
+     * a media-stream constraint, so these three mean nothing to MBOS and it
+     * is not sent them.
      */
     capture: {
       noiseSuppression: config["voice.noiseSuppression"],
       autoGainControl: config["voice.autoGainControl"],
       echoCancellation: config["voice.echoCancellation"],
     },
-    /*
-     * Tighten and Rewrite are a text call and need OpenAI even where Sarvam
-     * did the hearing. Told here so the modal can leave the buttons out
-     * rather than offer two that fail.
-     */
-    canRefine: ready.canRefine,
   });
 }

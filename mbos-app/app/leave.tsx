@@ -7,12 +7,12 @@ import {
   Badge,
   Card,
   Choice,
-  Input,
   ListCard,
   PrimaryButton,
   SecondaryButton,
   T,
 } from '../src/components/ui/primitives';
+import { VoiceField } from '../src/components/ui/dictate';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { applyForLeave, leaveBalances, listLeave, withdrawLeave, type LeaveRequest } from '../src/data/requests';
 import { dmy, isoDate, plural } from '../src/lib/format';
@@ -350,10 +350,9 @@ export default function LeaveScreen() {
           <T s="label" style={{ marginBottom: 6 }}>
             Why
           </T>
-          <Input
+          <VoiceField
             value={lv.reason}
             onChangeText={(v) => patch({ reason: v })}
-            multiline
             invalid={err === 'reason'}
             placeholder="Sister's wedding in Amravati"
           />

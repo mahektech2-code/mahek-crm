@@ -23,7 +23,7 @@ export default function Saved() {
   const c = useCustomer();
   const outcome = useStore((s) => s.outcome);
   const shots = useStore((s) => s.shots);
-  const rec = useStore((s) => s.rec);
+  const voice = useStore((s) => s.voice);
   const gps = useStore((s) => s.gps);
   const nextDate = useStore((s) => s.nextDate);
   const visitSpent = useStore((s) => s.visitSpent);
@@ -37,10 +37,13 @@ export default function Saved() {
       ? { l: 'Location and time recorded', ok: true }
       : { l: 'Saved without a location — flagged for your manager', ok: false },
     shotCount ? { l: plural(shotCount, 'photo') + ' compressed and queued', ok: false } : null,
-    rec === 'done'
-      ? { l: 'Voice note transcribed and attached', ok: true }
-      : rec === 'failed' || rec === 'rec' || rec === 'busy'
-        ? { l: 'Voice note kept, transcribing when you are back on', ok: false }
+    /* Two different facts, and the old code could report neither: `done` was
+       never set by anything and a successful recording set `failed`, so a
+       voice note that had uploaded perfectly said it was waiting for signal. */
+    voice === 'dictated'
+      ? { l: 'What you said is in the note, and the recording goes with it', ok: true }
+      : voice === 'queued'
+        ? { l: 'Voice note kept — the office writes it out when you are back on', ok: false }
         : null,
     { l: 'Follow-up set for ' + pretty(nextDate), ok: true },
     { l: 'Your manager notified', ok: true },

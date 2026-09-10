@@ -3,6 +3,7 @@ import { View, Pressable } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { DashedButton, Input, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
+import { VoiceField } from '../src/components/ui/dictate';
 import { ActionSheet, BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
 import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
@@ -1037,10 +1038,9 @@ export default function JourneyScreen() {
 
         <View style={{ marginTop: 14 }}>
           <T s="label" style={{ marginBottom: 6 }}>Why</T>
-          <Input
+          <VoiceField
             value={tour.purpose}
             onChangeText={(v) => setTour((t) => ({ ...t, purpose: v }))}
-            multiline
             placeholder="A new dealer to open in Amravati, and three accounts overdue for a visit"
           />
         </View>

@@ -23,7 +23,22 @@ import type { OutcomeKey } from '../data/fixtures';
  */
 
 export type GpsState = 'acquiring' | 'locked' | 'off';
-export type RecState = 'idle' | 'rec' | 'busy' | 'done' | 'failed';
+/**
+ * What became of the spoken half of a visit note.
+ *
+ * It replaced a five-value recorder state — idle, rec, busy, done, failed —
+ * which was a state MACHINE living in global storage while the machine itself
+ * lived on the screen. Two of the five were unreachable: nothing ever set
+ * `done`, so the "AI transcribed" badge it drew could not appear, and a
+ * successful recording set `failed`, so the visit-saved screen reported a
+ * voice note that had uploaded perfectly as one still waiting for signal.
+ *
+ * These three are facts about the visit rather than steps of a recording, so
+ * there is nothing here for a screen to leave stale. `dictated` means the
+ * words are in the note already and the audio goes with it; `queued` means
+ * there was no signal, the audio goes, and the office writes it out.
+ */
+export type VoiceState = 'none' | 'dictated' | 'queued';
 export type LoginMethod = 'password' | 'otp';
 /** `leadForm` is asked for on one screen and answered on another — the `+`
  *  sheet offers "Add lead" from anywhere, and the Leads screen opens the form
@@ -69,7 +84,7 @@ type State = {
   /** Media ids, not flags — the photograph is queued the moment it is taken,
    *  long before the visit it will belong to exists. */
   shots: { shop?: string; cust?: string };
-  rec: RecState;
+  voice: VoiceState;
   note: string;
   outcome: OutcomeKey | null;
   nextDate: string;
@@ -159,7 +174,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   tlFilter: 'All',
 
   shots: {},
-  rec: 'idle',
+  voice: 'none',
   note: '',
   outcome: null,
   nextDate: NO_DATE_YET,
@@ -205,7 +220,7 @@ export const useStore = create<State & Actions>((set, get) => ({
       custId,
       gps: 'acquiring',
       shots: {},
-      rec: 'idle',
+      voice: 'none',
       note: '',
       outcome: null,
       nextDate: NO_DATE_YET,

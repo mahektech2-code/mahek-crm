@@ -3,7 +3,8 @@ import { Pressable, TextInput, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Choice, Input, ListCard, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
+import { Badge, Choice, ListCard, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
+import { VoiceField } from '../src/components/ui/dictate';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
 import { claimExpense, listExpenses, type Expense } from '../src/data/requests';
@@ -373,10 +374,9 @@ export default function ExpensesScreen() {
           <T s="label" style={{ marginBottom: 6 }}>
             What it was for
           </T>
-          <Input
+          <VoiceField
             value={ex.note}
             onChangeText={(v) => patch({ note: v })}
-            multiline
             invalid={err === 'note'}
             placeholder="Nagpur – Kamptee – Nagpur, 84 km"
             style={{ minHeight: 72 }}
