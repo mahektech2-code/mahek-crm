@@ -7,7 +7,8 @@ import { Header, StatusStrip, TabBar, type StripTone, type TabKey } from './Chro
 import { ActionSheet, ConfirmSheet, Toast } from '../ui/overlays';
 import { useKeyboardHeight } from '../ui/keyboard';
 import { Appear } from '../ui/motion';
-import { usePendingCount, useStore, useUnreadCount } from '../../state/store';
+import { useCustomer, usePendingCount, useStore, useUnreadCount } from '../../state/store';
+import { TravelGate } from './TravelGate';
 import { useBoot } from '../../state/boot';
 import { todayRow } from '../../data/attendance';
 import { plural } from '../../lib/format';
@@ -135,7 +136,9 @@ export function AppFrame({
   const clearToast = useStore((s) => s.clearToast);
   const sheet = useStore((s) => s.sheet);
   const set = useStore((s) => s.set);
-  const beginVisit = useStore((s) => s.beginVisit);
+  const askTravel = useStore((s) => s.askTravel);
+  const customer = useCustomer();
+  const notify = useStore((s) => s.notify);
   const custId = useStore((s) => s.custId);
   const confirm = useStore((s) => s.confirm);
   const confirmReason = useStore((s) => s.confirmReason);
@@ -173,7 +176,18 @@ export function AppFrame({
   ];
 
   const actionItems = [
-    { glyph: 'visit', label: 'Start visit', sub: 'GPS, photos, voice note', run: () => { beginVisit(custId); router.push('/visit'); } },
+    /* It asks how he is getting there BEFORE the visit opens — see
+       `TravelGate`. The sub-line says so, because a quick action that raises a
+       question rather than the screen it names reads as the wrong button. */
+    {
+      glyph: 'visit',
+      label: 'Start visit',
+      sub: 'How you travel, then GPS and photos',
+      run: () => {
+        if (!custId) return notify('Choose the shop first, then start the visit.');
+        askTravel({ customerId: custId, customerName: customer?.name ?? 'this shop' });
+      },
+    },
     { glyph: 'order', label: 'Punch order', sub: 'From their usual products', run: () => router.push(`/order${fromHere}`) },
     { glyph: 'money', label: 'Collect payment', sub: 'Cash, cheque, UPI or transfer', run: () => router.push(`/pay${fromHere}`) },
     /* The form is asked for here and opened by the Leads screen, so the shop
@@ -271,6 +285,11 @@ export function AppFrame({
           closeConfirm();
         }}
       />
+
+      {/* Mounted HERE, once, because every screen is inside an AppFrame and
+          four of them start visits. A gate each screen wired up for itself
+          would be four gates, and three of them would be right. */}
+      <TravelGate />
 
       <Toast message={toast} onDone={clearToast} lift={footerHeight} />
     </View>

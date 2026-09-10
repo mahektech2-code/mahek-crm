@@ -74,6 +74,17 @@ type State = {
   outcome: OutcomeKey | null;
   nextDate: string;
   visitStart: number | null;
+  /**
+   * The shop he has just pressed "Start visit" on, waiting for the question
+   * that comes before the visit: how is he getting there.
+   *
+   * Store state and not a route, because the answer is a CAMERA on the metered
+   * modes and pushing a screen would take the flow off the stack half-way
+   * through — the same reason `askConfirm` and the selfie camera are overlays.
+   * `TravelGate` in `AppFrame` is the one place it is answered, which is what
+   * lets all four Start-visit buttons ask by setting one field.
+   */
+  travelTo: { customerId: string; customerName: string } | null;
   visitSpent: string | null;
   /**
    * Why the next visit is off the plan.
@@ -120,6 +131,8 @@ type Actions = {
   signOut: () => void;
   startDay: () => void;
   beginVisit: (custId: string) => void;
+  askTravel: (to: { customerId: string; customerName: string }) => void;
+  arrivedAt: (at: number) => void;
   markVisitDone: (k: OutcomeKey, line: string) => void;
   setQty: (skuId: string, qty: string) => void;
   dropLine: (skuId: string) => void;
@@ -164,6 +177,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   outcome: null,
   nextDate: NO_DATE_YET,
   visitStart: null,
+  travelTo: null,
   visitSpent: null,
   offPlanReason: null,
   visitDone: {},
@@ -209,7 +223,17 @@ export const useStore = create<State & Actions>((set, get) => ({
       note: '',
       outcome: null,
       nextDate: NO_DATE_YET,
-      visitStart: Date.now(),
+      /*
+       * NOT `Date.now()` any more, and that is the whole shape of the change.
+       *
+       * "Start visit" used to mean "I am standing in the shop", so the dwell
+       * clock began here. It now means "I am setting off" — the mode is asked,
+       * the meter is photographed, and the journey happens between this moment
+       * and the arrival. Starting the clock here would count the ride as time
+       * in the shop, which is the one number the dwell check exists to be
+       * honest about. `arrivedAt` sets it.
+       */
+      visitStart: null,
       visitSpent: null,
       visitDone: {},
       overrodeReason: null,
@@ -219,6 +243,18 @@ export const useStore = create<State & Actions>((set, get) => ({
          this — clearing it would throw away the reason on the way to the very
          visit it was written for. The visit clears it once, on save. */
     }),
+
+  askTravel: (to) => set({ travelTo: to }),
+
+  /**
+   * He is at the shop. The dwell clock starts HERE and nowhere else.
+   *
+   * It takes the arrival instant rather than reading the clock itself, because
+   * the caller has already written that instant onto the leg — two readings of
+   * `Date.now()` a few lines apart would put the record and the screen a
+   * second or two out of step for no reason anybody could later explain.
+   */
+  arrivedAt: (at) => set({ visitStart: at, travelTo: null }),
 
   markVisitDone: (k, line) => set({ visitDone: { ...get().visitDone, [k]: line } }),
 

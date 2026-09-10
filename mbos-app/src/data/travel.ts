@@ -71,6 +71,8 @@ export type TravelLeg = {
   odometerStartKm: number | null;
   odometerEndKm: number | null;
   odometerPhotoId: string | null;
+  odometerEndPhotoId: string | null;
+  origin: string;
   ticketAmountPaise: number | null;
   ticketPhotoId: string | null;
   ticketReference: string | null;
@@ -305,6 +307,10 @@ export async function addLeg(args: {
   ticketPhotoId?: string | null;
   ticketReference?: string | null;
   note?: string | null;
+  /** The meter on arrival, where the two readings were taken apart. */
+  odometerEndPhotoId?: string | null;
+  /** `day_log` | `visit`. See the note above `departForVisit`. */
+  origin?: 'day_log' | 'visit';
 }): Promise<string> {
   const base = await stamp('leg');
   const id = await insertAndQueue({
@@ -332,18 +338,20 @@ export async function addLeg(args: {
       odometerStartKm: args.odometerStartKm ?? null,
       odometerEndKm: args.odometerEndKm ?? null,
       odometerPhotoId: args.odometerPhotoId ?? null,
+      odometerEndPhotoId: args.odometerEndPhotoId ?? null,
       ticketAmountPaise: args.ticketAmountPaise ?? null,
       ticketPhotoId: args.ticketPhotoId ?? null,
       ticketReference: args.ticketReference ?? null,
       note: args.note ?? null,
+      origin: args.origin ?? 'day_log',
     },
     /* The day is a dependency: a leg that reached the office before the day it
        belongs to would open a second one. PROTOCOL.md §3. */
     dependsOn: [args.expenseDayId],
   });
 
-  if (args.odometerPhotoId) {
-    await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, args.odometerPhotoId]);
+  for (const mediaId of [args.odometerPhotoId, args.odometerEndPhotoId]) {
+    if (mediaId) await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, mediaId]);
   }
   if (args.ticketPhotoId) {
     await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, args.ticketPhotoId]);
@@ -645,3 +653,246 @@ export const CLAIM_KINDS: { key: ExpenseKind; category: string; label: string }[
   { key: 'local_transport', category: 'travel', label: 'Local transport' },
   { key: 'other', category: 'other', label: 'Other' },
 ];
+
+/* ══════════════════════════════════════ a leg walked, rather than logged */
+
+/**
+ * The journey opened when he presses Start visit, and closed when he arrives.
+ *
+ * **THIS IS A SECOND WAY IN, NOT A SECOND MODEL.** Everything below writes the
+ * same `travel_legs` rows the `/travel` screen writes, belongs to the same
+ * `expense_days`, and is priced by the same policy engine — so a day's
+ * reimbursement is one figure however its legs got there. What differs is
+ * WHEN: `/travel` is typed up once the journey is over, and this is opened
+ * while it is happening. `origin` is the column that says which, and it is the
+ * column the server holds a visit leg to a higher standard by.
+ *
+ * **A LEG IS A RECORD, NOT A SCREEN STATE.** It is written to SQLite the
+ * moment he picks the mode, before he has moved. Android reaps this app on the
+ * road constantly — a battery manager, a phone call, a map — and a
+ * "travelling" flag held in memory would be gone by the time he arrived, with
+ * the departure photograph already taken and nothing left to attach it to. He
+ * would then be asked to set off again from outside the shop, and the reading
+ * he typed would be the arrival reading twice over. So the state is a row with
+ * `endedAt IS NULL`, and the app finds out it is mid-journey by asking the
+ * store, exactly as it finds out the attendance day is open.
+ */
+
+/** The journey he is on, if he is on one. The ONE definition of travelling. */
+export async function openLegOf(userId: string): Promise<TravelLeg | null> {
+  return one<TravelLeg>(
+    `SELECT * FROM travel_legs
+      WHERE userId = ? AND endedAt IS NULL
+      ORDER BY startedAt DESC, clientCreatedAt DESC LIMIT 1`,
+    [userId],
+  );
+}
+
+/** The leg he took to this shop, closed and not yet spent on a visit. */
+export async function arrivedLegFor(userId: string, customerId: string): Promise<TravelLeg | null> {
+  return one<TravelLeg>(
+    `SELECT * FROM travel_legs
+      WHERE userId = ? AND customerId = ? AND origin = 'visit'
+        AND endedAt IS NOT NULL AND visitId IS NULL
+      ORDER BY endedAt DESC LIMIT 1`,
+    [userId, customerId],
+  );
+}
+
+/**
+ * Setting off for a shop.
+ *
+ * `odometer` is both the reading and its photograph or neither — a metered
+ * mode brings both, an unmetered one brings neither, and there is no third
+ * shape. The caller has already refused a reading it could not check (see
+ * `checkOdometer`); this is where it becomes a record.
+ */
+export async function departForVisit(args: {
+  userId: string;
+  day: string;
+  customerId: string;
+  customerName: string;
+  modeKey: string;
+  purpose: string | null;
+  fix: { lat: number; lng: number } | null;
+  odometer: { km: number; photoId: string } | null;
+}): Promise<{ ok: true; legId: string } | { ok: false; reason: string }> {
+  /*
+   * A LEG ALREADY OPEN IS CLOSED FIRST, at the reading it started from.
+   *
+   * The unique index would otherwise refuse the insert, and the refusal would
+   * land on somebody standing in the street being told nothing he can act on.
+   * It happens for an ordinary reason: he set off for one shop, changed his
+   * mind on the road and picked another off the list, which is exactly the
+   * flexibility the journey screen is built for.
+   *
+   * Closed at its own start rather than deleted, so it measures ZERO. The
+   * journey did not happen; the meter has not moved for it; and a row that
+   * quietly disappeared would leave the next departure's reading following on
+   * from nothing, which is the gap an audit stops at.
+   */
+  const running = await openLegOf(args.userId);
+  if (running) {
+    if (running.customerId === args.customerId) {
+      /* Same shop, still travelling. Pressing it twice is a slip, not a second
+         journey — and returning the leg he is already on is what makes the
+         arrival photograph close the departure he actually took. */
+      return { ok: true, legId: running.id };
+    }
+    await closeAbandoned(running, `Set off for ${args.customerName} instead.`);
+  }
+
+  const dayId = await openDay({ userId: args.userId, day: args.day });
+
+  const legId = await addLeg({
+    userId: args.userId,
+    expenseDayId: dayId,
+    day: args.day,
+    modeKey: args.modeKey,
+    fromLabel: null,
+    toLabel: args.customerName,
+    fromLat: args.fix?.lat ?? null,
+    fromLng: args.fix?.lng ?? null,
+    startedAt: Date.now(),
+    /* NULL, and it is the whole point: this is a leg still being travelled,
+       which is a state `/travel` has never been able to express. */
+    endedAt: null,
+    purpose: args.purpose,
+    customerId: args.customerId,
+    odometerStartKm: args.odometer?.km ?? null,
+    odometerPhotoId: args.odometer?.photoId ?? null,
+    origin: 'visit',
+  });
+
+  return { ok: true, legId };
+}
+
+/**
+ * Arriving.
+ *
+ * The distance is NOT computed here and never has been in this module — the
+ * policy engine decides what to pay on, from the odometer, the trail or a
+ * typed figure, and it does that when the day is priced. All this does is
+ * close the leg with what the meter said.
+ */
+export async function arriveForVisit(args: {
+  legId: string;
+  fix: { lat: number; lng: number } | null;
+  odometer: { km: number; photoId: string } | null;
+}): Promise<{ ok: boolean; reason?: string }> {
+  const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [args.legId]);
+  if (!leg) return { ok: false, reason: 'That journey is not on this phone.' };
+  if (leg.endedAt != null) return { ok: true };
+
+  await patchLeg(leg, {
+    endedAt: Date.now(),
+    toLat: args.fix?.lat ?? null,
+    toLng: args.fix?.lng ?? null,
+    odometerEndKm: args.odometer?.km ?? null,
+    odometerEndPhotoId: args.odometer?.photoId ?? null,
+  });
+  if (args.odometer) {
+    await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [leg.id, args.odometer.photoId]);
+  }
+  return { ok: true };
+}
+
+/** He set off and did not get there. The reason is required by the caller. */
+export async function abandonLeg(legId: string, reason: string): Promise<{ ok: boolean }> {
+  const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [legId]);
+  if (!leg) return { ok: false };
+  await closeAbandoned(leg, reason);
+  return { ok: true };
+}
+
+/**
+ * A journey called off, closed at the reading it started from so it measures
+ * nothing — and NAMED, because a leg worth zero with no sentence against it is
+ * indistinguishable from one somebody forgot to fill in.
+ */
+async function closeAbandoned(leg: TravelLeg, reason: string): Promise<void> {
+  await patchLeg(leg, {
+    endedAt: Date.now(),
+    odometerEndKm: leg.odometerStartKm,
+    note: leg.note ? `${leg.note} · ${reason}` : reason,
+  });
+}
+
+/** The visit this journey produced, stamped once the visit exists. */
+export async function bindLegToVisit(legId: string, visitId: string): Promise<void> {
+  const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [legId]);
+  if (leg) await patchLeg(leg, { visitId });
+}
+
+/** The ticket, on a bus or a train, attached on the way out of the shop. */
+export async function attachTicketToLeg(args: {
+  legId: string;
+  amountPaise: number;
+  photoId: string | null;
+  reference: string | null;
+}): Promise<{ ok: boolean }> {
+  const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [args.legId]);
+  if (!leg) return { ok: false };
+  await patchLeg(leg, {
+    ticketAmountPaise: args.amountPaise,
+    ticketPhotoId: args.photoId,
+    ticketReference: args.reference,
+  });
+  if (args.photoId) {
+    await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [leg.id, args.photoId]);
+  }
+  return { ok: true };
+}
+
+/**
+ * Change a leg and re-send it WHOLE.
+ *
+ * `handleTravelLeg` upserts with `onConflictDoUpdate` over its entire value
+ * set, so a partial payload would write nulls over every column it did not
+ * mention. That is not a bug in the server — a leg is a small record the
+ * handset owns outright and re-stating it is the simplest thing that cannot go
+ * wrong — but it does mean an update from here has to carry the row as it now
+ * stands rather than the fields that changed.
+ */
+async function patchLeg(leg: TravelLeg, patch: Record<string, string | number | null>): Promise<void> {
+  const cols = Object.keys(patch);
+  await run(
+    `UPDATE travel_legs SET ${cols.map((c) => `${c} = ?`).join(', ')}, syncState = 'queued' WHERE id = ?`,
+    [...cols.map((c) => patch[c]), leg.id],
+  );
+
+  const row = await one<TravelLeg & { odometerEndPhotoId: string | null; origin: string }>(
+    'SELECT * FROM travel_legs WHERE id = ?',
+    [leg.id],
+  );
+  if (!row) return;
+
+  const { enqueue } = await import('../sync/queue');
+  await enqueue({
+    entityType: 'travel_leg',
+    entityId: row.id,
+    op: 'update',
+    payload: {
+      expenseDayId: row.expenseDayId,
+      day: row.day,
+      modeKey: row.modeKey,
+      fromLabel: row.fromLabel,
+      toLabel: row.toLabel,
+      startedAt: row.startedAt,
+      endedAt: row.endedAt,
+      purpose: row.purpose,
+      customerId: row.customerId,
+      visitId: row.visitId,
+      manualMetres: row.manualMetres,
+      odometerStartKm: row.odometerStartKm,
+      odometerEndKm: row.odometerEndKm,
+      odometerPhotoId: row.odometerPhotoId,
+      odometerEndPhotoId: row.odometerEndPhotoId,
+      ticketAmountPaise: row.ticketAmountPaise,
+      ticketPhotoId: row.ticketPhotoId,
+      ticketReference: row.ticketReference,
+      note: row.note,
+      origin: row.origin,
+    },
+  });
+}

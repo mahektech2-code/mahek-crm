@@ -76,7 +76,7 @@ export default function CustomerRecord() {
   const tlFilter = useStore((s) => s.tlFilter);
   const set = useStore((s) => s.set);
   const notify = useStore((s) => s.notify);
-  const beginVisit = useStore((s) => s.beginVisit);
+  const askTravel = useStore((s) => s.askTravel);
 
   const [events, setEvents] = React.useState<TimelineEvent[]>([]);
   const [orders, setOrders] = React.useState<CustomerOrder[]>([]);
@@ -208,7 +208,11 @@ export default function CustomerRecord() {
 
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
           <Pressable
-            onPress={() => { beginVisit(c.id); router.push('/visit'); }}
+            /* Asks how he is getting there first — see `TravelGate`. The
+               shop's name goes with it so the question can name what it is
+               about; a sheet asking "how are you getting there?" with no
+               destination on it is a sheet somebody dismisses. */
+            onPress={() => askTravel({ customerId: c.id, customerName: c.name })}
             style={{ flex: 1, height: 52, borderRadius: radius.md, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
             <Text style={[{ fontSize: 15, color: '#FFFFFF' }, weight(600)]}>Visit</Text>
           </Pressable>

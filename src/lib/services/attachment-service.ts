@@ -11,6 +11,7 @@ import {
   mbosAttendanceDays,
   mbosCourses,
   mbosDocuments,
+  mbosTravelLegs,
   paymentReceipts,
 } from "@/db/schema";
 import { resolveScope, assertCustomerInScope } from "../access-control";
@@ -360,6 +361,29 @@ export async function canRead(attachmentId: string): Promise<boolean> {
     return canReadAttendanceSelfie(row.parentId);
   }
 
+  /*
+   * EVERY ODOMETER PHOTOGRAPH AND EVERY TICKET WAS A 404, to everybody.
+   *
+   * The same bug as the attendance selfie above, one parent type over, and it
+   * arrived with the expense module: `mbos_travel_leg` had a place in the
+   * enum, the media route filed files under it correctly, and nothing here
+   * named it — so `customerBehind` fell through to `calls`, looked a
+   * `mbos_travel_legs` id up among the calls, found nothing, and refused the
+   * read. To the salesman who took it and to the manager approving the claim
+   * it belongs to. It fails SHUT, which is the safe direction and exactly why
+   * it survived: the only screen that shows one is the claim review, and a
+   * broken image there reads as a photograph nobody took.
+   *
+   * It cannot be answered by the customer's scope either, though a leg often
+   * names a shop. An odometer photograph is not evidence about the customer —
+   * it is evidence about the SALESMAN, on a record somebody is eventually paid
+   * out on. Read through the shop, a telecaller holding that book could open a
+   * colleague's expense evidence.
+   */
+  if (row.parentType === "mbos_travel_leg") {
+    return canReadTravelLegPhoto(row.parentId);
+  }
+
   const customerId = await customerBehind(row.parentType, row.parentId);
   if (!customerId) return false;
 
@@ -465,6 +489,41 @@ async function canReadAttendanceSelfie(attendanceId: string): Promise<boolean> {
      same field to mean the same thing in SQL. */
   if (scope.salesmanIds === null) return true;
   return scope.salesmanIds.includes(day.userId);
+}
+
+/**
+ * Who may open a leg's odometer photographs or its ticket: the man who took
+ * them, and whoever can see his claims.
+ *
+ * The `sales` GRANT is asked first and `managerScope` alone is not enough.
+ * `managerScope` answers `salesmanIds: null` — "national, sees everybody" —
+ * for anybody with no row in `mbos_manager_territories`, and a plain field
+ * salesman has none, so falling straight through to it would let one salesman
+ * open another's mileage evidence by id. These ids travel in payloads. The
+ * grant is the same one `src/app/sales/layout.tsx` redirects on, which makes
+ * this the same question as "may you look at the field's work at all".
+ */
+async function canReadTravelLegPhoto(legId: string): Promise<boolean> {
+  const [leg] = await db
+    .select({ userId: mbosTravelLegs.userId })
+    .from(mbosTravelLegs)
+    .where(eq(mbosTravelLegs.id, legId));
+  if (!leg) return false;
+
+  const ctx = await resolveScope();
+  if (leg.userId === ctx.user.id) return true;
+
+  const { listUserApps } = await import("../access");
+  const apps = await listUserApps(ctx.user.id);
+  if (!apps.includes("sales")) return false;
+
+  const { managerScope } = await import("./sales-service");
+  const scope = await managerScope();
+  /* `null` is a national manager — everybody, the same meaning `onlyMine`
+     reads out of the same field in SQL. Reached only by somebody who already
+     holds the Sales Dashboard. */
+  if (scope.salesmanIds === null) return true;
+  return scope.salesmanIds.includes(leg.userId);
 }
 
 async function customerBehind(
