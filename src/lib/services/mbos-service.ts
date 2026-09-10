@@ -16,6 +16,7 @@ import {
   type DataScope, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
 import { readSecret } from "../secrets";
+import { dictationAvailability } from "../dictation-requests";
 import {
   territoriesFor,
   territoryClause,
@@ -460,6 +461,42 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
    */
   const mapKey = await readSecret("olamaps.apiKey").catch(() => null);
   if (mapKey) out["maps.olaKey"] = mapKey;
+
+  /*
+   * WHETHER A MICROPHONE MAY BE DRAWN, and how long it may listen for.
+   *
+   * The CRM asks `/api/dictate` at the moment it draws one, which is right for
+   * a browser and useless here: a salesman opens the expenses form in a godown
+   * with no bars, and a screen that had to ask a server whether it may offer a
+   * button would offer none exactly where speaking beats typing most. So the
+   * answer rides down on the pull like every other threshold and is read from
+   * the local cache.
+   *
+   * What crosses is the ANSWER, never the question. None of the `voice.*`
+   * settings go down this wire and neither do the keys behind them — unlike
+   * the map key above, which the handset must spend itself, nothing on a phone
+   * calls a transcription provider directly. A handset has no use for a model
+   * name and no business holding one; what it needs is whether to draw the
+   * mic, when to stop recording, and whether Tighten and Rewrite are worth
+   * showing.
+   *
+   * CAUGHT, like the map key above, and for a reason worth stating: this is a
+   * settings read and a secrets read, and it sits inside the payload that
+   * bootstraps a handset. A throw here would not disable dictation, it would
+   * fail the bootstrap — and a failed bootstrap is a salesman signed in
+   * against an empty database with a full day in front of him. The worst this
+   * may cost is a microphone that is not drawn.
+   */
+  const dictation = await dictationAvailability().catch(() => null);
+  out["mbos.ai.dictation"] =
+    dictation?.available === true
+      ? {
+          available: true,
+          maxSeconds: dictation.maxSeconds,
+          maxSizeMb: dictation.maxSizeMb,
+          canRefine: dictation.canRefine,
+        }
+      : { available: false, reason: dictation?.available === false ? dictation.reason : "unknown" };
 
   return out;
 }

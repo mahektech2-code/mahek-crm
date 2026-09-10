@@ -20,7 +20,9 @@ import { starterProducts } from '../src/data/customers';
 import { todayStops } from '../src/data/journey';
 import { visitLocationVerdict } from '../src/engines/geo';
 import { fixOf, getFix, type Fix } from '../src/native/location';
-import { queueRecording, takePhoto, useVoiceRecorder } from '../src/native/capture';
+import { queueRecording, takePhoto } from '../src/native/capture';
+import { discardQueuedMedia } from '../src/sync/media';
+import { VoiceField } from '../src/components/ui/dictate';
 
 /**
  * Capturing a visit.
@@ -44,7 +46,6 @@ export default function Visit() {
   const boot = useBoot();
   const gps = useStore((s) => s.gps);
   const shots = useStore((s) => s.shots);
-  const rec = useStore((s) => s.rec);
   const note = useStore((s) => s.note);
   const outcome = useStore((s) => s.outcome);
   const nextDate = useStore((s) => s.nextDate);
@@ -117,8 +118,6 @@ export default function Visit() {
      as a mismatch are both a manager's to move. */
   const [minDwell, setMinDwell] = React.useState(120);
   const [maxMetres, setMaxMetres] = React.useState(150);
-
-  const recorder = useVoiceRecorder();
 
   /**
    * The dwell clock has to tick, because one of the save conditions is time.
@@ -197,32 +196,31 @@ export default function Visit() {
     };
   }, [gps, set]);
 
-  const startRecording = async () => {
+  /**
+   * The recording, queued for the office.
+   *
+   * Called by the note's microphone in BOTH of its modes — dictated on signal,
+   * kept for later without — because a visit is the one place the audio is
+   * worth having either way: it is what the customer actually said, and the
+   * words in the box are somebody's reading of it.
+   *
+   * `pending` as the parent, exactly as a shop photograph is. The visit does
+   * not exist yet; `saveVisit` claims the media when it does.
+   */
+  const keepVoiceNote = async (uri: string, mode: 'dictate' | 'record') => {
     try {
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-      set({ rec: 'rec' });
-    } catch {
-      notify('The microphone could not start. Type the note instead.');
-    }
-  };
-
-  const stopRecording = async () => {
-    set({ rec: 'busy' });
-    try {
-      await recorder.stop();
-      const uri = recorder.uri;
-      if (!uri) {
-        set({ rec: 'failed' });
-        return;
-      }
-      /* Queued as it is. Re-encoding speech to save bytes loses the words, and
-         the audio is the only copy of what the customer actually said. */
+      /* Said again means the last one was not wanted. Dropped before the new
+         one is queued, so a visit carries the recording it kept and not every
+         attempt at it. */
+      if (voiceNoteId) await discardQueuedMedia(voiceNoteId);
       const mediaId = await queueRecording(uri, 'visit', 'pending');
       setVoiceNoteId(mediaId);
-      set({ rec: 'failed' });
+      set({ voice: mode === 'dictate' ? 'dictated' : 'queued' });
     } catch {
-      set({ rec: 'failed' });
+      /* A save is never blocked by a recording. The note he read and approved
+         is already in the box; losing the audio behind it costs the office a
+         second copy of something it can already read. */
+      notify('That recording could not be kept, but your note is safe.');
     }
   };
 
@@ -625,73 +623,44 @@ export default function Visit() {
       <Card style={{ marginTop: 12 }}>
         <Text style={type.label}>What was said</Text>
 
-        {rec === 'idle' ? (
-          <Pressable
-            onPress={startRecording}
-            style={{ width: '100%', height: 64, marginTop: 12, borderRadius: radius.sm, borderWidth: 1, borderColor: C.primary, backgroundColor: C.primaryTint, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-            <Icon name="mic" size={24} color={C.primaryDeep} strokeWidth={1.5} />
-            <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(600)]}>Hold to talk</Text>
-          </Pressable>
-        ) : null}
+        {/*
+          ONE MICROPHONE, and what it does depends on the signal.
 
-        {rec === 'rec' ? (
-          <View style={{ marginTop: 12, borderWidth: 1, borderColor: C.primary, backgroundColor: C.primaryTint, borderRadius: radius.sm, padding: 14 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: 4, height: 36 }}>
-              {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-                <View key={i} style={{ width: 5, height: 12 + (i % 4) * 8, borderRadius: 3, backgroundColor: C.primary }} />
-              ))}
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 12 }}>
-              <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(500)]}>
-                {'Recording · ' + elapsedLabel(Math.round(recorder.currentTime))}
-              </Text>
-              <Pressable
-                onPress={stopRecording}
-                style={{ height: HIT, paddingHorizontal: 16, borderRadius: radius.sm, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={[{ fontSize: 15, color: '#FFFFFF' }, weight(500)]}>Done</Text>
-              </Pressable>
-            </View>
-          </View>
-        ) : null}
+          It used to be two things on this card: a "Hold to talk" recorder that
+          queued the audio for the office to write out later, and a note box
+          underneath it. The recorder had never been reachable — nothing on any
+          path asked for the RECORD_AUDIO permission, so preparing threw and the
+          screen reported a broken microphone — and the card carried a state
+          called `done` that nothing ever set, so its "AI transcribed · edit
+          before saving" badge could not appear and the salesman had no way to
+          see the transcript at all. What he did see, after a recording that had
+          uploaded perfectly, was "No signal to transcribe".
 
-        {rec === 'busy' ? (
-          <View style={{ marginTop: 12, borderWidth: 1, borderColor: C.border, backgroundColor: C.wash, borderRadius: radius.sm, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <View style={{ width: 18, height: 18, borderWidth: 2, borderColor: C.primaryEdge, borderTopColor: C.primary, borderRadius: 9 }} />
-            <Text style={{ fontSize: 15, color: C.body }}>Turning that into text…</Text>
-          </View>
-        ) : null}
+          Both halves answer the same question, so they are one control now.
+          On signal it dictates: he speaks, reads the English, corrects it and
+          it lands in this box before he saves. Off signal it does what the old
+          recorder claimed to — the audio is queued and the office writes it out
+          — which is the honest fallback rather than an apology, and it is the
+          reason `keepAudio` exists at all.
 
-        {rec === 'failed' ? (
-          <View style={{ marginTop: 12, borderWidth: 1, borderColor: C.warnEdge, backgroundColor: C.warnBg, borderRadius: radius.sm, padding: 14 }}>
-            <Text style={{ fontSize: 13, lineHeight: 19, color: C.warnInk }}>
-              No signal to transcribe. The recording is saved and will be turned into text when you are back on.
+          The audio is kept in BOTH cases, unlike everywhere else this box
+          appears. A visit note is the one field where the recording is a record
+          of what a customer said rather than a keyboard, and the office keeps
+          it either way.
+        */}
+        <View style={{ marginTop: 12 }}>
+          <VoiceField
+            value={note}
+            onChangeText={(v) => set({ note: v })}
+            keepAudio="keep"
+            onRecording={(uri, _seconds, mode) => void keepVoiceNote(uri, mode)}
+          />
+          {voiceNoteId ? (
+            <Text style={[type.caption, { marginTop: 6 }]}>
+              The recording goes to the office with this visit.
             </Text>
-          </View>
-        ) : null}
-
-        {/* The note itself. The transcript is written server-side once the
-            recording lands, so what he types here is his own and is never
-            overwritten by it. */}
-        {rec !== 'rec' && rec !== 'busy' ? (
-          <View style={{ marginTop: 12 }}>
-            {rec === 'done' ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <View style={{ backgroundColor: C.infoBg, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
-                  <Text style={[{ fontSize: 12, color: C.info, textTransform: 'uppercase', letterSpacing: 0.36 }, weight(500)]}>
-                    AI transcribed
-                  </Text>
-                </View>
-                <Text style={type.caption}>Edit before saving</Text>
-              </View>
-            ) : null}
-            <TextInput
-              value={note}
-              onChangeText={(v) => set({ note: v })}
-              multiline
-              style={{ width: '100%', minHeight: 96, padding: 12, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm, fontSize: 14, lineHeight: 20, color: C.ink, backgroundColor: C.surface, textAlignVertical: 'top' }}
-            />
-          </View>
-        ) : null}
+          ) : null}
+        </View>
       </Card>
 
       {/* ---- how it went ---- */}
@@ -848,13 +817,12 @@ export default function Visit() {
         {formErr === 'cat' ? <Text style={{ fontSize: 13, color: C.danger }}>Pick what it is about.</Text> : null}
 
         <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>In their words</Text>
-        <TextInput
+        <VoiceField
           value={draft.what ?? ''}
           onChangeText={(v) => { setDraft({ ...draft, what: v }); setFormErr(null); }}
-          multiline
+          invalid={formErr === 'what'}
           placeholder="Two drums arrived dented and he refused them"
-          placeholderTextColor={C.faint}
-          style={{ width: '100%', minHeight: 90, padding: 12, borderWidth: 1, borderColor: formErr === 'what' ? C.danger : C.border, borderRadius: radius.lg, fontSize: 15, color: C.ink, textAlignVertical: 'top' }}
+          style={{ minHeight: 90 }}
         />
         {formErr === 'what' ? (
           <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Write what the customer actually said.</Text>
@@ -904,13 +872,12 @@ export default function Visit() {
         {formErr === 'sku' ? <Text style={{ fontSize: 13, color: C.danger }}>Pick the product he wants to try.</Text> : null}
 
         <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>Why he wants it</Text>
-        <TextInput
+        <VoiceField
           value={draft.why ?? ''}
           onChangeText={(v) => { setDraft({ ...draft, why: v }); setFormErr(null); }}
-          multiline
+          invalid={formErr === 'why'}
           placeholder="Comparing against what he buys from Asian"
-          placeholderTextColor={C.faint}
-          style={{ width: '100%', minHeight: 80, padding: 12, borderWidth: 1, borderColor: formErr === 'why' ? C.danger : C.border, borderRadius: radius.lg, fontSize: 15, color: C.ink, textAlignVertical: 'top' }}
+          style={{ minHeight: 80 }}
         />
         {formErr === 'why' ? (
           <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Your manager approves on this reason.</Text>

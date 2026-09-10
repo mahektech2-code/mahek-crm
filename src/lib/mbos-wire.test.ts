@@ -598,3 +598,76 @@ test("a hand-rolled handler writes no column the handset lacks", () => {
 
   assert.deepEqual(faults, [], `the handset has nowhere to put these:\n  ${faults.join("\n  ")}`);
 });
+
+/* ---------------------------------------------------------------------------
+ * A CONFIG KEY IS A WIRE CONTRACT TOO, and this one decides whether a control
+ * is drawn at all.
+ *
+ * Dictation's readiness cannot be worked out on a handset — it depends on a
+ * provider key that lives on the server and deliberately never crosses — so
+ * the server computes the answer and posts it under one string, and the phone
+ * reads it back under the same string. Nothing joins the two but the spelling.
+ *
+ * Get it wrong and NOTHING FAILS. `getConfig` falls through to the handset's
+ * own default, that default is `{ available: false }`, and every screen simply
+ * draws no microphone. No error, no log, no empty state — the feature is just
+ * absent, on a deployment that paid for it and switched it on. That is the
+ * same silence the payload bug above hid in, arriving through a different
+ * door: a value nobody sends and a default that looks like a decision.
+ * ------------------------------------------------------------------------- */
+
+test("the dictation readiness key is spelled the same on both sides", () => {
+  const KEY = "mbos.ai.dictation";
+
+  const service = readFileSync(SERVICE, "utf8");
+  assert.ok(
+    service.includes(`out["${KEY}"]`),
+    `mbosConfigPayload no longer publishes ${KEY} — every handset microphone goes dark`,
+  );
+
+  const dictate = readFileSync("mbos-app/src/components/ui/dictate.tsx", "utf8");
+  assert.ok(
+    dictate.includes(`'${KEY}'`),
+    `the handset no longer reads ${KEY}, so it will fall back to "no microphone" for ever`,
+  );
+
+  /* The default has to be the CLOSED one. An `available: true` default would
+   * draw a mic on a handset that has never heard from the office, which is a
+   * button that fails when pressed — the one thing this feature may not do. */
+  const config = readFileSync("mbos-app/src/data/config.ts", "utf8");
+  const line = config.slice(config.indexOf(`'${KEY}'`));
+  assert.match(
+    line.slice(0, line.indexOf("\n")),
+    /available:\s*false/,
+    "the handset's fallback for dictation must be unavailable, never available",
+  );
+});
+
+/* ---------------------------------------------------------------------------
+ * THE VOICE SETTINGS AND THE KEYS BEHIND THEM STAY ON THE SERVER.
+ *
+ * `mbosConfigPayload` ships everything prefixed `mbos.` or `leads.`, so a
+ * setting named `voice.*` would never cross by accident — but the map key
+ * above is proof that explicit additions happen, and a `voice.apiKey` added
+ * "so the handset can call the provider directly" is exactly the change that
+ * would look reasonable in review. Nothing on a phone calls a transcription
+ * provider: the audio goes to MahekOne and MahekOne spends the credential.
+ * ------------------------------------------------------------------------- */
+
+test("no voice setting and no provider key reaches a handset", () => {
+  const service = readFileSync(SERVICE, "utf8");
+  const payload = service.slice(
+    service.indexOf("export async function mbosConfigPayload"),
+  );
+  const body = payload.slice(0, payload.indexOf("\n}\n"));
+
+  const leaked = [...body.matchAll(/out\["([^"]+)"\]/g)]
+    .map((m) => m[1])
+    .filter((key) => key.startsWith("voice.") || /sarvam|openai|apiKey/i.test(key));
+
+  assert.deepEqual(
+    leaked,
+    [],
+    `these belong to the server alone and were about to be handed to a phone: ${leaked.join(", ")}`,
+  );
+});

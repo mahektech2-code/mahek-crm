@@ -129,6 +129,18 @@ const DEFAULTS: Record<string, unknown> = {
 
   /* ai */
   'mbos.ai.retainAudioAfterTranscription': false,
+  /*
+   * NO MICROPHONE UNTIL THE OFFICE SAYS THERE IS ONE.
+   *
+   * Unlike every other default here, this one is not "what the app uses before
+   * real configuration arrives" so much as the only honest answer to a
+   * question the handset cannot settle by itself. Whether dictation works
+   * depends on a provider key that lives on the server and never comes down
+   * this wire, so a handset that has never completed a bootstrap has no way to
+   * know — and drawing the mic on a guess is drawing a button that fails when
+   * pressed, which is the one thing this feature is not allowed to do.
+   */
+  'mbos.ai.dictation': { available: false },
 
   /* leads */
   'mbos.leads.staleDays': 30,

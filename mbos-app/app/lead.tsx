@@ -3,6 +3,7 @@ import { View, Pressable, ScrollView } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
+import { VoiceField } from '../src/components/ui/dictate';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { NextActionSheet } from '../src/components/leads/next-action-sheet';
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
@@ -493,11 +494,10 @@ export default function LeadRecord() {
         )}
 
         <View style={{ marginTop: 10 }}>
-          <Input
+          <VoiceField
             value={note}
             onChangeText={setNote}
             placeholder="Buys 20 cans a month from Asian, wants 45 days credit"
-            multiline
           />
           <PrimaryButton label="Add the note" onPress={saveNote} style={{ marginTop: 10 }} />
         </View>
