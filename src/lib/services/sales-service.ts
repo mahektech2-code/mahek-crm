@@ -177,7 +177,8 @@ export type Salesman = {
    * Regions are excluded: those are a manager's oversight patch, set on its own
    * screen, and a salesman's dialog must not appear able to change them.
    */
-  territories: { kind: string; value: string }[];
+  /** Where he works. `parent` is the state a city sits in — see `PARENT_KIND`. */
+  territories: { kind: string; value: string; parent: string }[];
 };
 
 /**
@@ -218,8 +219,9 @@ export async function fieldTeam(): Promise<Salesman[]> {
            -- patch, set on its own screen, and showing them here would read as
            -- something this dialog can change.
            coalesce((
-             select json_agg(json_build_object('kind', t.kind, 'value', t.region)
-                             order by t.kind, t.region)
+             select json_agg(json_build_object('kind', t.kind, 'value', t.region,
+                                               'parent', coalesce(t.parent, ''))
+                             order by t.parent, t.kind, t.region)
                from mbos_user_territories t
               where t.user_id = u.id and t.kind <> 'region'
            ), '[]'::json) as "territories"
@@ -3003,7 +3005,16 @@ export async function knownRegions(): Promise<string[]> {
 }
 
 /**
- * The cities and beats the BOOK actually uses.
+ * THE PLACES THE BOOK ACTUALLY USES, as the tree they form.
+ *
+ * A city belongs to a state and a beat to a city, so this is one query grouped
+ * rather than three flat lists. Flat lists are what the dialog had, and on this
+ * book that meant every city value in the country under one heading — several
+ * hundred of them, most of them not cities at all but whole postal addresses
+ * the sheet dropped into the column ("06, MAHADEV TOWERS CO-OP HSG SOC, LTD,
+ * LBS MARG, HARINIWAS CIRCLE, Thane, Maharashtra, 400602"). Nesting does not
+ * clean that data and cannot; what it does is make it reachable, because a
+ * state's worth of it is a list somebody can search and the country's is not.
  *
  * Read off `customers` rather than kept as a list of their own, exactly as
  * `knownRegions` is and for the same reason: a separate list would offer places
@@ -3013,28 +3024,103 @@ export async function knownRegions(): Promise<string[]> {
  * Trimmed and deduplicated case-insensitively, because "Nagpur", "nagpur " and
  * "NAGPUR" are one city typed by three people — and the filter that reads these
  * compares the same way, so the dialog must not offer three chips that behave
- * as one.
+ * as one. States are folded by `canonicalState`, the same fold the clause
+ * matches on, so a chip and the filter behind it cannot disagree about which
+ * customers a place has.
  */
-export async function knownPlaces(): Promise<{ cities: string[]; beats: string[] }> {
-  const rows = await db.execute<{ city: string | null; beat: string | null }>(sql`
-    select distinct
+export type BeatNode = { beat: string; shops: number };
+
+export type PlaceNode = {
+  city: string;
+  beats: BeatNode[];
+  /** How many shops carry it. The dialog prints it — a city of 1 is usually a typo. */
+  shops: number;
+};
+
+export type StateNode = {
+  state: string;
+  cities: PlaceNode[];
+  shops: number;
+};
+
+export type PlaceTree = {
+  states: StateNode[];
+  /**
+   * SHOPS THAT NAME NO STATE, counted and never hidden.
+   *
+   * They cannot be allocated: every branch of the tree starts at a state, and a
+   * row with nothing in `region` matches no state row. Under the old rule they
+   * reached whoever held their book anyway; under the new one they reach
+   * nobody, which is a real consequence of switching the default off and is
+   * therefore said out loud on the screen rather than left to be discovered.
+   */
+  statelessShops: number;
+};
+
+export async function knownPlaces(): Promise<PlaceTree> {
+  const rows = await db.execute<{
+    region: string | null;
+    city: string | null;
+    beat: string | null;
+    shops: number;
+  }>(sql`
+    select ${sql.raw(qualify(TERRITORY_REGION_SQL, "c"))} as region,
            nullif(trim(c.city), '') as city,
-           nullif(trim(c.beat), '') as beat
+           nullif(trim(c.beat), '') as beat,
+           count(*)::int as shops
       from customers c
+     group by 1, 2, 3
   `);
 
-  const pick = (get: (r: { city: string | null; beat: string | null }) => string | null) => {
-    const seen = new Map<string, string>();
-    for (const r of rows) {
-      const v = get(r);
-      if (!v) continue;
-      const key = v.toLowerCase();
-      if (!seen.has(key)) seen.set(key, v);
-    }
-    return [...seen.values()].sort((a, b) => a.localeCompare(b));
-  };
+  /* Keyed on the fold, valued on the first spelling seen, so the tree carries
+     one node per place however many ways the sheet spelled it. */
+  const states = new Map<string, StateNode>();
+  let statelessShops = 0;
 
-  return { cities: pick((r) => r.city), beats: pick((r) => r.beat) };
+  for (const r of rows) {
+    const state = canonicalState(r.region);
+    if (!state) {
+      statelessShops += r.shops;
+      continue;
+    }
+
+    const sKey = stateKey(state);
+    let node = states.get(sKey);
+    if (!node) {
+      node = { state, cities: [], shops: 0 };
+      states.set(sKey, node);
+    }
+    node.shops += r.shops;
+
+    if (!r.city) continue;
+    const cKey = r.city.toLowerCase();
+    let city = node.cities.find((c) => c.city.toLowerCase() === cKey);
+    if (!city) {
+      city = { city: r.city, beats: [], shops: 0 };
+      node.cities.push(city);
+    }
+    city.shops += r.shops;
+
+    if (r.beat) {
+      const beat = city.beats.find((b) => b.beat.toLowerCase() === r.beat!.toLowerCase());
+      if (beat) beat.shops += r.shops;
+      else city.beats.push({ beat: r.beat, shops: r.shops });
+    }
+  }
+
+  /* Biggest first inside a state: the city somebody means is almost always one
+     of the few with real shop counts, and the long tail is address strings. */
+  for (const node of states.values()) {
+    node.cities.sort((a, b) => b.shops - a.shops || a.city.localeCompare(b.city));
+    for (const c of node.cities) {
+      c.beats.sort((a, b) => b.shops - a.shops || a.beat.localeCompare(b.beat));
+    }
+  }
+
+  return {
+    states: [...states.values()].sort((a, b) => a.state.localeCompare(b.state)),
+    statelessShops,
+  };
 }
 
 /* ══════════════════════════════════════════════════ one salesman's record */

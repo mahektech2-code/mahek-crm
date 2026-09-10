@@ -241,8 +241,23 @@ export async function requestOtp(mobile: string): Promise<{ sent: boolean }> {
 
 /* -------------------------------------------------------------- bootstrap */
 
+/**
+ * WHY THE BOOK IS THE SIZE IT IS.
+ *
+ * Optional like every channel — an older server does not send it, and the app
+ * has to go on working against one. Absent is read as "the office has not told
+ * us", which draws the ordinary empty state rather than accusing anybody of
+ * forgetting a territory.
+ */
+export type TerritoryState = {
+  allocated: boolean;
+  exempt: boolean;
+  places: string[];
+};
+
 export type PullPayload = {
   cursor?: string;
+  territory?: TerritoryState;
   config?: Record<string, unknown>;
   customers?: unknown[];
   products?: unknown[];
@@ -388,6 +403,102 @@ export async function uploadMedia(args: {
   });
   if (!res.ok) throw new Error(`Upload failed (${res.status})`);
   return res.json() as Promise<{ remoteRef: string }>;
+}
+
+/* -------------------------------------------------------------- dictation */
+
+export type DictationHeard = {
+  ok: true;
+  /** The faithful English. Not a summary — that is a button somebody presses. */
+  english: string;
+  /** What was said, in the language it was said in. */
+  spoken: string;
+  language: string | null;
+};
+
+/**
+ * Speech in, an English note back, and NOTHING queued.
+ *
+ * Every other write in this app goes through the outbox because a record has
+ * to survive having no signal. This one deliberately does not: its whole point
+ * is that the salesman READS what came back before it reaches a form, and a
+ * dictation that arrived tomorrow would be a note nobody checked. So it fails
+ * where there is no connection, and the mic says so rather than pretending.
+ *
+ * A longer ceiling than `request`'s twenty seconds. That one is sized for a
+ * record going up; this is a minute of audio going up a village link and two
+ * provider calls at the far end, and giving up at twenty seconds would fail
+ * the recordings that most needed to be spoken rather than typed.
+ */
+export async function dictateTranscribe(args: {
+  uri: string;
+  /** Recorded seconds — PAUSED time excluded. The server routes on it. */
+  seconds: number;
+}): Promise<DictationHeard | { ok: false; error: string }> {
+  const form = new FormData();
+  /* React Native's FormData takes this shape for a file; it is not a Blob.
+     The name is cosmetic — the server sniffs the bytes. */
+  form.append('audio', {
+    uri: args.uri,
+    name: 'dictation.m4a',
+    type: 'audio/m4a',
+  } as unknown as Blob);
+  form.append('seconds', String(Math.round(args.seconds)));
+
+  const token = await accessToken();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 90_000);
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/api/mbos/dictate/transcribe`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        'x-mbos-device': await deviceId(),
+      },
+      body: form,
+      signal: controller.signal,
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error:
+        e instanceof Error && e.name === 'AbortError'
+          ? 'That took too long to send. Your recording is still here — try again.'
+          : 'No connection to MahekOne. Type the note instead.',
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const body = (await res.json().catch(() => null)) as
+    | (DictationHeard | { ok: false; error?: string })
+    | null;
+
+  /* The server's own sentence, every time it sent one. It knows which of the
+     six things went wrong and each one sends the person somewhere different;
+     a generic message here would throw all of that away. */
+  if (!body || !body.ok) {
+    return { ok: false, error: body?.error ?? 'That did not come back. Try recording again.' };
+  }
+  return body;
+}
+
+export async function dictateRefine(args: {
+  text: string;
+  mode: 'tighten' | 'rewrite';
+  instruction?: string;
+}): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+  try {
+    const out = await request<{ ok: true; text: string }>('/api/mbos/dictate/refine', {
+      method: 'POST',
+      body: JSON.stringify(args),
+    });
+    return out;
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'That did not come back.' };
+  }
 }
 
 /* --------------------------------------------------------------- last seen */

@@ -31,6 +31,7 @@ import {
   customerDistributors,
   customers,
   mbosDevices,
+  mbosUserTerritories,
   orders,
   products,
   syncConflicts,
@@ -148,6 +149,16 @@ beforeEach(async () => {
     .returning();
   salesman = row;
   await db.insert(appAccess).values({ id: id("acc"), userId: salesman.id, app: "field" });
+  /* ALLOCATED. Nowhere allocated now means no book at all, so without this
+     every pull in this file would come back empty and each assertion would
+     pass or fail for a reason that has nothing to do with what it tests. The
+     rule has its own tests in `field-book.test.ts`. */
+  await db.insert(mbosUserTerritories).values({
+    id: id("ut"),
+    userId: salesman.id,
+    kind: "state",
+    region: "Maharashtra",
+  });
 
   const [c] = await db
     .insert(customers)
@@ -157,6 +168,7 @@ beforeEach(async () => {
       phone: "9822200011",
       contactPerson: "Anil",
       city: "Nagpur",
+      region: "Maharashtra",
       kind: "customer",
       ownerId: salesman.id,
       salesAmId: salesman.id,
@@ -348,6 +360,7 @@ describe("The pull carries who bills each shop", () => {
         contactPerson: "Contact",
         phone: "9820000111",
         city: "Nashik",
+        region: "Maharashtra",
         ownerId: salesman.id,
         salesAmId: salesman.id,
       })
@@ -1233,6 +1246,7 @@ describe("A field order carries who was billed and where it went", () => {
         contactPerson: "Contact",
         phone: "9820000222",
         city: "Nashik",
+        region: "Maharashtra",
         ownerId: salesman.id,
         salesAmId: salesman.id,
       })
@@ -1327,6 +1341,7 @@ describe("A shop can be opened from the field", () => {
         contactPerson: "Contact",
         phone: "9820000333",
         city: "Nashik",
+        region: "Maharashtra",
         ownerId: salesman.id,
         salesAmId: salesman.id,
       })
@@ -1401,6 +1416,7 @@ describe("A shop can be opened from the field", () => {
         contactPerson: "Contact",
         phone: "9820000444",
         city: "Nashik",
+        region: "Maharashtra",
         ownerId: salesman.id,
         salesAmId: salesman.id,
         thirdParty: true,
@@ -1440,6 +1456,7 @@ describe("A shop can be opened from the field", () => {
         contactPerson: "Contact",
         phone: "98123 45678",
         city: "Nashik",
+        region: "Maharashtra",
         ownerId: salesman.id,
         salesAmId: salesman.id,
       })

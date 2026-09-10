@@ -199,15 +199,85 @@ can only remove rows from what they already allow.
 
 The distinction is worth stating because the two look alike from a distance, and
 a reader who mistakes this for the security boundary might delete a real check
-believing it redundant. `territoryClause` answers UNDEFINED rather than a false
-condition where nothing is allocated, so a caller cannot accidentally AND it
-into oblivion.
+believing it redundant.
 
-**NO TERRITORY MEANS NO NARROWING.** Allocating cities to eight people and
-forgetting the ninth must not empty her book — that failure is already on record
-here, where reading one seat instead of two gave Seema Roy "queue cleared" on a
-day she had 195 accounts to work. An empty screen is the one outcome nobody
-debugs, because it looks like having no work.
+**NO TERRITORY NOW MEANS NO BOOK, and that is a REVERSAL.** It meant no
+narrowing until this landed, and the old reasoning is still true rather than
+wrong: allocating cities to eight people and forgetting the ninth empties her
+handset, and an empty screen is the one outcome nobody debugs, because it looks
+like having no work. That failure is already on record here — reading one seat
+instead of two gave Seema Roy "queue cleared" on a day she had 195 accounts to
+work. What changed is that the other side of the trade turned out to cost more:
+an unallocated salesman carried the WHOLE book, which on this book is 2,587
+shops on one phone, and nothing anywhere said he should not have them.
+
+So `territoryClause` answers a FALSE condition where nothing is allocated,
+never `undefined` — an absent clause and a false one look alike in a type
+signature and are opposite answers to "what may this person see", and the
+dangerous one should be the loud one. `customerIdsInScope` short-circuits
+before the query is asked.
+
+**What pays for the reversal is that the emptiness is NAMED at both ends.**
+"Nothing in your book yet" sends a salesman to ask why nobody has given him
+shops; it is the wrong sentence when the answer is that nobody has allocated
+him an area, and it is what makes an unallocated handset look like a broken
+sync for a fortnight. `mbosTerritoryState` rides on the bootstrap AND on every
+delta — territory is changed at a desk in the middle of a working day and the
+shops leave the phone on the next pull — so the Customers tab says "no area set
+for you yet", prints the area where the count is, and the team screen counts
+the handsets the office has switched off. A handset with no area is a support
+call; one that does not say so is a fortnight of silence.
+
+**Managers and admins are carved out, and only they.** A field salesman works a
+beat somebody allocates him. A manager on a handset is not walking one — his
+scope has already answered the question — and emptying his phone for want of an
+allocation nobody would think to make reads as a broken sync rather than as a
+rule.
+
+**A TERRITORY IS A HIERARCHY, picked from the top.** A city belongs to a state
+and a beat to a city, so `mbos_user_territories.parent` says what a row was
+picked UNDER and `PARENT_KIND` is the one statement of the shape — the dialog
+reads it to decide what opens what, the action reads it to refuse a city
+arriving without its state, and the clause reads it to know which column a
+parent compares against. Empty means not stated, which is every row written
+before the column and is read as "this place wherever it is": a city allocated
+last month must not silently stop matching because a column arrived.
+
+Down a branch it is AND, across branches OR. Maharashtra plus Pune inside it
+means PUNE — so **the narrowest pick in a branch is the allocation** and the
+wider ones above it are the path to it rather than a second grant. Stored as
+both, the clause would OR them and hand him the whole state, which is the
+opposite of what picking a city meant and invisible on every screen afterwards,
+because "Maharashtra, Pune" reads like a narrowing either way. `setSalesmanTerritories`
+prunes to the leaves, on the server, because a server action is a URL and the
+dialog is not the only thing that can post to it.
+
+**The picker is a tree because a flat list was unusable.** `customers.city`
+holds whatever the sheet typed, and on the real book that is several hundred
+values most of which are whole postal addresses — "06, MAHADEV TOWERS CO-OP HSG
+SOC, LTD, LBS MARG, HARINIWAS CIRCLE, Thane, Maharashtra, 400602" offered as a
+city. Nesting does not clean that and cannot; it makes it REACHABLE, because a
+state's worth of it is a list somebody can search and the country's is not.
+`knownPlaces` returns the tree with a shop count on every node, biggest first,
+so the city somebody means is at the top and the long tail of addresses is
+below it. Shops naming no state are counted and said out loud: no territory can
+reach them, which is a real consequence of switching the default off.
+
+**Changing where somebody works TOMBSTONES the shops that leave.** A pull says
+what exists and only a tombstone says what stopped, so without this a salesman
+moved from Maharashtra to Gujarat keeps every Maharashtra shop on the phone for
+ever — and walks to one of them with nothing anywhere looking wrong. The
+difference is taken over HIS OWN book rather than over `customers`, or a
+reallocation would tombstone thousands of shops that were never on the phone.
+An empty BEFORE is read as everything he can see, which is the deploy: a handset
+that synced under the old rule holds shops `territoryClause([])` now says it
+never had, and diffing against an empty before would leave every one of them
+there.
+
+That is also what forced `deletionsSince` to hold the cursor back on a full
+page. The cursor moves to `now` at the top of a pull, so a tombstone past the
+2,000-row limit fell behind it and was never read again; a book of 2,587 shops
+moving to somebody else is 2,587 tombstones from one click.
 
 **One table, and each consumer asks for the kinds it means.** `managerScope`
 reads `kind = 'region'` and the handset's book reads the rest, so allocating a
@@ -772,6 +842,11 @@ src/
     mailer.ts              the one place mail leaves MahekOne
     dictation.ts           the one place speech becomes text — transcribe,
                            render into English, tighten, rewrite
+    dictation-requests.ts  the same feature as a REQUEST — readiness, the two
+                           calls, and the ONE copy of the six refusals. Two
+                           doors read it: the CRM's session-authenticated
+                           api/dictate/*, and the handset's token-authenticated
+                           api/mbos/dictate/*
     jobs.ts                scheduled work, idempotent and hand-triggerable
     result.ts              the Result type every action returns
     queries.ts             every scope-aware read
@@ -1875,6 +1950,84 @@ the default one. `VoiceTextarea` decides the joining and the `maxLength`
 ceiling in one place rather than at twenty call sites that would each get one
 of them slightly wrong — `maxLength` stops typing but not a programmatic set,
 so the box would otherwise accept more than the field will save.
+
+**THE SALESMAN GETS THE SAME MICROPHONE, and he needed it more than the
+telecaller did.** A telecaller types slowly with a customer on the line; a
+salesman types on a phone, one-handed, standing in a shop, in a language he
+does not write. MBOS had a microphone on exactly one box — a "Hold to talk"
+recorder on the visit screen — and the other seven prose fields on the app
+(the lead note, the leave reason, the expense note, the tour purpose, the
+complaint's "in their words", the sample's "why he wants it") had none. That
+recorder had also never been reachable: nothing on any path called
+`requestMicrophone`, so `RECORD_AUDIO` was never asked for and preparing
+threw, and the screen reported a broken handset rather than a dialog nobody
+put up. `VoiceField` is `VoiceTextarea`'s counterpart and every one of those
+boxes is one now.
+
+**It is the SAME hearing, through the same functions, behind a different
+door.** `lib/dictation-requests.ts` holds what used to be inside
+`/api/dictate/*`: read the configuration, ask `transcribeSpeech`, and turn
+each of the six ways it can fail into a status and a sentence. Only the
+authentication differs between the two doors — a browser session for the CRM,
+a device token for `/api/mbos/dictate/*` — and three of those six sentences
+are specific and hard-won ("record it in two shorter goes" is not "the service
+is down", and neither is "tell your manager, this one will not fix itself"), so
+a second copy of that ladder would drift within a release. The half that
+drifts is always the half somebody reads at the worst moment.
+
+**A handset cannot ASK whether it may draw a microphone.** The CRM's mic hits
+`/api/dictate` as it renders, which is right for a browser and useless in a
+godown with no bars — a screen that had to reach a server before offering a
+button would offer none exactly where speaking beats typing most. The answer
+rides down on the pull instead, as `mbos.ai.dictation`, and is read from the
+local cache. What crosses is the ANSWER and never the question: no `voice.*`
+setting goes down that wire and no key behind one, because nothing on a phone
+calls a transcription provider — the audio goes to MahekOne and MahekOne spends
+the credential. Two tests in `mbos-wire.test.ts` pin both halves, because the
+two sides are joined only by a spelling and getting it wrong FAILS SILENTLY:
+`getConfig` falls back to `{ available: false }` and every screen simply draws
+nothing, on a deployment that paid for the feature and switched it on.
+
+**No signal is a different refusal from no provider, and they are drawn
+differently.** No provider — dictation off, or no key — is permanent, so
+nothing is drawn at all, which is the rule the CRM already follows. No signal
+is temporary and changes minute to minute, so the mic stays where it is and
+goes dim; a control that appeared and vanished while somebody looked at the
+screen is one they learn is not there.
+
+**And one field has an answer to no signal rather than an apology.** The visit
+note is where the recording is a record of what a customer said rather than a
+keyboard, and a visit has somewhere to keep audio — so `keepAudio` there means
+the mic still works offline: it records, the file joins the media queue, and
+the office writes it out on the far side through the transcript channel that
+already existed. That is what the old "Hold to talk" recorder claimed to do.
+Everywhere else the audio is dropped the moment the words come back, exactly
+as the CRM's is, because a recording of a customer conversation is not a thing
+to hold without a reason.
+
+**A visit keeps the recording even when it was dictated.** The words in the box
+are somebody's reading of what was said; the audio is what was said. Handing it
+to the queue happens BEFORE the transcription is attempted, so a provider that
+does not answer costs the note and never the recording — and saying it again
+discards the superseded file rather than shipping every attempt.
+
+**Speech is not music, and the preset was for a band.**
+`RecordingPresets.HIGH_QUALITY` is 128 kbps of stereo at 44.1 kHz — about a
+megabyte a minute, crawling up a 2G link while somebody waits for their own
+words, or sitting in the media queue ahead of the payment behind it. None of it
+buys accuracy: every model this audio can reach downmixes to mono and resamples
+to 16 kHz first. 24 kHz mono at 32 kbps is a seventh of the size and still
+comfortably above what they use. `LOW_QUALITY` is the wrong floor in the other
+direction — AMR narrowband on Android is a telephone line, and a telephone line
+is where transcription of Indian-language speech starts losing names and
+numbers.
+
+**The bytes are sniffed here too, and for the second reason rather than the
+first.** The handset labels its own recordings `audio/m4a`, which names no
+container Sarvam recognises — and the extension there is the one place a media
+type is genuinely load bearing, since the service refuses the part before it
+reads a byte. The bytes say `audio/mp4`, which is both the truth and what
+Sarvam can take.
 
 **An order taken on a call is the customer saying yes, not the business.**
 Accounts check who they are and what they already owe before it is accepted,

@@ -1,16 +1,14 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getCurrentUser } from "@/lib/auth";
+import { authenticate } from "@/lib/services/mbos-service";
 import { refineRequest } from "@/lib/dictation-requests";
 
 /* ---------------------------------------------------------------------------
- * Tighten this, or rewrite it the way I just described.
+ * Tighten what I just said, or rewrite it the way I have described.
  *
- * Separate from transcription because it is a separate decision. The English
- * the modal shows first is faithful to what was said; shortening it is
- * something the person asks for, having read it, and can undo by pressing
- * Undo — which is why the previous text is kept on the client rather than
- * here. This endpoint holds nothing between calls.
+ * The handset's door onto the same text call the CRM's `/api/dictate/refine`
+ * makes. It holds nothing between calls: Undo lives on the phone, because the
+ * previous version is the phone's to remember.
  * ------------------------------------------------------------------------- */
 
 export const dynamic = "force-dynamic";
@@ -23,9 +21,12 @@ const Body = z.object({
 });
 
 export async function POST(request: Request) {
-  const user = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json({ ok: false, error: "Not signed in." }, { status: 401 });
+  const auth = await authenticate(request);
+  if (!auth.ok) {
+    return NextResponse.json(
+      { ok: false, code: auth.code, error: auth.error },
+      { status: auth.status },
+    );
   }
 
   const parsed = Body.safeParse(await request.json().catch(() => null));

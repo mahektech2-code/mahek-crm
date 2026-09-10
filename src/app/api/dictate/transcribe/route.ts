@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { getConfig } from "@/lib/config/store";
-import { transcribeSpeech } from "@/lib/dictation";
+import { transcribeRequest } from "@/lib/dictation-requests";
 
 /* ---------------------------------------------------------------------------
  * Audio in, an English note out.
@@ -14,6 +13,10 @@ import { transcribeSpeech } from "@/lib/dictation";
  * The bytes are read, sent to the model and dropped. Nothing is written to
  * `attachments`, nothing reaches blob storage, and there is no id to fetch it
  * back by, because there is nothing to fetch.
+ *
+ * Everything past the sign-in check lives in `lib/dictation-requests.ts`,
+ * which MBOS's own door reads too — the six refusals are worth saying well
+ * once rather than twice.
  * ------------------------------------------------------------------------- */
 
 export const dynamic = "force-dynamic";
@@ -25,14 +28,6 @@ export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ ok: false, error: "Not signed in." }, { status: 401 });
-  }
-
-  const config = await getConfig();
-  if (!config["voice.enabled"]) {
-    return NextResponse.json(
-      { ok: false, error: "Dictation is switched off." },
-      { status: 403 },
-    );
   }
 
   let audio: File | null = null;
@@ -52,77 +47,17 @@ export async function POST(request: Request) {
     );
   }
 
-  const maxBytes = config["voice.maxSizeMb"] * 1024 * 1024;
-  if (audio.size > maxBytes) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: `That recording is longer than dictation accepts — ${config["voice.maxSizeMb"]}MB. Record it in two goes.`,
-      },
-      { status: 413 },
-    );
-  }
-
-  /*
-   * The recorder counted this for the timer on screen. It decides whether
-   * Sarvam is even asked, since its ceiling is a documented 30 seconds — a
-   * missing or silly value simply reads as long, which routes to OpenAI, and
-   * that is the safe way for it to be wrong.
-   */
-  const seconds =
-    Number.isFinite(claimedSeconds) && claimedSeconds > 0
-      ? claimedSeconds
-      : Number.MAX_SAFE_INTEGER;
-
-  const outcome = await transcribeSpeech({
+  const answer = await transcribeRequest({
     audio: new Uint8Array(await audio.arrayBuffer()),
+    /*
+     * The browser's own word for what it recorded. Unlike an uploaded file,
+     * whose bytes are the authority, this one came from the MediaRecorder
+     * three lines of JavaScript ago rather than from a person — and Sarvam
+     * needs the container named to read the part at all.
+     */
     mediaType: audio.type || "audio/webm",
-    seconds,
-    provider: config["voice.transcriptionProvider"],
-    fallbackToOpenai: config["voice.fallbackToOpenai"],
-    sarvamModel: config["voice.transcriptionModel"],
-    openaiTranscriptionModel: config["voice.openaiTranscriptionModel"],
-    languageModel: config["voice.languageModel"],
+    seconds: claimedSeconds,
   });
 
-  if (!outcome.ok) {
-    const [status, error] =
-      outcome.reason === "not_configured"
-        ? [503, "Dictation is not set up on this deployment yet."]
-        : outcome.reason === "too_long"
-          ? /*
-             * Dictation IS set up — they were offered a microphone. What is
-             * missing is the second provider this particular recording needed,
-             * so the sentence names the recording rather than the deployment
-             * and says what to do with the one in hand.
-             */
-            [
-              503,
-              "That recording was too long for the service that hears them — it takes 30 seconds at a time. Say it again in shorter goes.",
-            ]
-          : outcome.reason === "provider_refused"
-            ? /*
-               * The service said no and will keep saying no. Asking a
-               * telecaller to try again is asking them to waste a second
-               * minute of a live call on something that cannot work, so this
-               * says the opposite: stop, type it, tell somebody. It is the one
-               * message here aimed past the person reading it.
-               */
-              [
-                503,
-                "Dictation is unavailable — the account behind it has stopped accepting requests, which nobody on this screen can fix. Type the note this time, and tell your manager so it gets sorted.",
-              ]
-            : outcome.reason === "no_speech"
-              ? [200, "Nothing was heard in that recording. Try again, closer to the microphone."]
-              : [502, "The transcription service did not answer. Your recording is still here — try again."];
-    return NextResponse.json({ ok: false, reason: outcome.reason, error }, { status });
-  }
-
-  return NextResponse.json({
-    ok: true,
-    english: outcome.english,
-    spoken: outcome.spoken,
-    language: outcome.language,
-    servedBy: outcome.servedBy,
-  });
+  return NextResponse.json(answer.body, { status: answer.status });
 }
