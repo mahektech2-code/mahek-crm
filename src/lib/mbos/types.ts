@@ -266,8 +266,31 @@ export type SyncResult =
       resolution: "server_wins" | "client_wins";
     };
 
+/**
+ * WHY THE BOOK IS THE SIZE IT IS.
+ *
+ * Not a table channel — applied by hand like `config` and `expensePolicy`, and
+ * replaced wholesale on every pass, because a territory taken away has to
+ * disappear and there is only ever one answer.
+ *
+ * It rides on the DELTA as well as the bootstrap on purpose: territory is
+ * changed in the office in the middle of a working day, and the shops leave the
+ * handset the moment it is. A phone whose book had emptied while it still
+ * believed it held an area would show "nothing in your book" — the exact
+ * sentence this exists to stop it showing.
+ */
+export type TerritoryState = {
+  /** False means nowhere has been allocated, which now means no book. */
+  allocated: boolean;
+  /** The rule does not apply to this person — a manager or an admin. */
+  exempt: boolean;
+  /** What to print. The narrowest name of each branch, already deduplicated. */
+  places: string[];
+};
+
 export type PullDelta = {
   cursor: string;
+  territory: TerritoryState;
   customers: unknown[];
   products: unknown[];
   timeline: unknown[];

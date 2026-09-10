@@ -241,8 +241,23 @@ export async function requestOtp(mobile: string): Promise<{ sent: boolean }> {
 
 /* -------------------------------------------------------------- bootstrap */
 
+/**
+ * WHY THE BOOK IS THE SIZE IT IS.
+ *
+ * Optional like every channel — an older server does not send it, and the app
+ * has to go on working against one. Absent is read as "the office has not told
+ * us", which draws the ordinary empty state rather than accusing anybody of
+ * forgetting a territory.
+ */
+export type TerritoryState = {
+  allocated: boolean;
+  exempt: boolean;
+  places: string[];
+};
+
 export type PullPayload = {
   cursor?: string;
+  territory?: TerritoryState;
   config?: Record<string, unknown>;
   customers?: unknown[];
   products?: unknown[];

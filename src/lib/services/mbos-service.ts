@@ -16,19 +16,28 @@ import {
   type DataScope, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
 import { readSecret } from "../secrets";
-import { territoryClauseFor } from "./territory-service";
+import {
+  territoriesFor,
+  territoryClause,
+  type Territory,
+} from "./territory-service";
 import { policyForDate, resolveSubject } from "./expense-policy-service";
 import { describeRule } from "../expense-rule-forms";
 import { verifyPassword } from "../password";
 import { bearerFrom, verifyToken, signingKeyPresent } from "../mbos/token";
 import { today } from "../recompute";
-import { addDays, APP_TIMEZONE, type BusinessDate } from "../business-date";
+import { addDays, asDate, APP_TIMEZONE, type BusinessDate } from "../business-date";
 import { bandFor } from "../engines/inactivity";
 import {
   leaveBalances as computeLeaveBalances,
   leaveDebitDays,
 } from "../engines/leave";
-import { LEAVE_LABELS, type LeaveType, type PullDelta } from "../mbos/types";
+import {
+  LEAVE_LABELS,
+  type LeaveType,
+  type PullDelta,
+  type TerritoryState,
+} from "../mbos/types";
 import { employeeJoinOn } from "../employee-link";
 /* The Accounts ledger's own read. See `customerBills` — the handset must not
    have a second opinion about what a shop owes. */
@@ -588,7 +597,30 @@ export async function customerIdsInScope(
    * still unrestricted. Both null-handling rules survive the pairing.
    */
   const visible = ids === null ? undefined : or(scopeIn(ids), namedByUsers(ids));
-  const territory = await territoryClauseFor(principal.user.id);
+
+  /*
+   * NO TERRITORY, NO BOOK — and the short-circuit is here rather than in the
+   * clause so the query is never asked at all.
+   *
+   * Who this applies to is the whole of the carve-out below: a field salesman
+   * works a beat somebody allocates him, and an unallocated one carrying five
+   * thousand shops is the failure this reverses. A MANAGER or an ADMIN on a
+   * handset is not walking a beat — the console is oversight, their scope has
+   * already answered the question, and emptying their phone for want of an
+   * allocation nobody would think to make reads as a broken sync rather than
+   * as a rule. `role` is the derived widest role, so this is the same answer
+   * `scopeForUser` gave a line earlier rather than a second reading of it.
+   *
+   * The emptiness is NAMED, never silent: `mbosTerritoryState` puts the reason
+   * on the handset and the team screen counts who it has switched off. An
+   * empty book that says why is a question; one that does not is a fortnight
+   * of somebody assuming the sync is broken.
+   */
+  const exempt = principal.role === "admin" || principal.role === "manager";
+  const territories = await territoriesFor(principal.user.id);
+  if (!exempt && !territories.length) return [];
+
+  const territory = territories.length ? territoryClause(territories) : undefined;
 
   const rows = await db
     .select({ id: customers.id })
@@ -597,9 +629,66 @@ export async function customerIdsInScope(
   return rows.map((r) => r.id);
 }
 
+/**
+ * WHY THE BOOK IS THE SIZE IT IS, in the shape the handset renders.
+ *
+ * Sent so the Customers tab can tell an empty book apart from a switched-off
+ * one. Those are different facts about somebody's day and no screen may draw
+ * them alike: "nothing in your book yet" sends a salesman to ask why nobody has
+ * given him shops, and "no area has been allocated to you" sends him to the one
+ * person who can fix it.
+ *
+ * `allocated` is the answer, `places` is what to print, and `exempt` says the
+ * rule does not apply to this principal at all — a manager whose handset is
+ * empty for want of customers must not be told to go and ask for a territory.
+ */
+/** The same, for a caller holding a principal and no list. */
+export async function territoryStateFor(
+  principal: MbosPrincipal,
+): Promise<TerritoryState> {
+  return mbosTerritoryState(principal, await territoriesFor(principal.user.id));
+}
+
+export function mbosTerritoryState(
+  principal: MbosPrincipal,
+  territories: Territory[],
+): TerritoryState {
+  const exempt = principal.role === "admin" || principal.role === "manager";
+  const working = territories.filter((t) => t.kind !== "region");
+  return {
+    allocated: working.length > 0,
+    exempt,
+    /* The narrowest name of each branch, which is what somebody recognises:
+       "Pune" rather than "Maharashtra, Pune" on a chip a phone has to fit. */
+    places: [...new Set(working.map((t) => t.value))].sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+/**
+ * HIS BOOK BEFORE TERRITORY IS APPLIED — the two seats and the party sheet.
+ *
+ * Exported for one caller: the action that changes where somebody works has to
+ * know which shops LEAVE the handset, and that is this set narrowed by the old
+ * territory minus the same set narrowed by the new one. Computing it from the
+ * whole `customers` table instead would tombstone thousands of shops that were
+ * never on the phone.
+ *
+ * It takes a user id rather than a principal because the office is holding
+ * neither a device nor a session for the person it is reallocating.
+ */
+export async function bookIdsIgnoringTerritory(userId: string): Promise<string[]> {
+  const rows = await db
+    .select({ id: customers.id })
+    .from(customers)
+    .where(or(scopeIn([userId]), namedByUsers([userId])));
+  return rows.map((r) => r.id);
+}
+
 export type BootstrapPayload = {
   serverTime: number;
   cursor: string;
+  /** Why the book is the size it is. See `TerritoryState`. */
+  territory: TerritoryState;
   user: {
     id: string;
     name: string;
@@ -744,6 +833,11 @@ export async function buildBootstrap(
   const now = new Date();
   const ids = await customerIdsInScope(principal);
   const day = await today();
+  /* Read again rather than threaded out of `customerIdsInScope`: that function
+     is the security path and is called from a dozen places, and widening its
+     return type to carry a screen's sentence is how a boundary picks up a
+     second job. Two cheap reads of one indexed table beat that. */
+  const territories = await territoriesFor(principal.user.id);
   /* A fortnight either side of today, matching `PLAN_HISTORY_DAYS` and the
      manager's own MAX_PLAN_DAYS (31) forward cap — so a fresh sign-in shows
      the whole relevant window immediately rather than waiting for it to
@@ -805,6 +899,7 @@ export async function buildBootstrap(
   return {
     serverTime: now.getTime(),
     cursor: encodeCursor(now),
+    territory: mbosTerritoryState(principal, territories),
     user: {
       id: principal.user.id,
       name: principal.user.name,
@@ -1777,14 +1872,16 @@ async function schemeRows(since: string | null) {
  * Grouped by table on the way out because that is the shape the handset
  * applies: one `DELETE … WHERE id IN` per entity rather than one per row.
  */
+const DELETIONS_PER_PULL = 2000;
+
 async function deletionsSince(userId: string, since: string) {
-  const rows = await db.execute<{ entity: string; entityId: string }>(sql`
-    select d.entity, d.entity_id as "entityId"
+  const rows = await db.execute<{ entity: string; entityId: string; at: Date | string }>(sql`
+    select d.entity, d.entity_id as "entityId", d.at
       from mbos_deletions d
      where d.at > ${since}
        and (d.user_id is null or d.user_id = ${userId})
      order by d.at asc
-     limit 2000
+     limit ${DELETIONS_PER_PULL}
   `);
 
   const byEntity = new Map<string, string[]>();
@@ -1793,7 +1890,30 @@ async function deletionsSince(userId: string, since: string) {
     if (list) list.push(row.entityId);
     else byEntity.set(row.entity, [row.entityId]);
   }
-  return [...byEntity].map(([entity, ids]) => ({ entity, ids }));
+
+  /*
+   * A PAGE THAT IS FULL HAS TO HOLD THE CURSOR BACK, or the rows past it are
+   * lost rather than delivered next time.
+   *
+   * The cursor moves to `now` at the top of the pull, so a deletion that did
+   * not fit in this page would fall behind it and never be read again — the
+   * handset would keep a shop it no longer works, for ever, with nothing
+   * anywhere looking wrong. Reallocating a whole territory is exactly the
+   * event that fills this page: a book of 2,587 shops moving to somebody else
+   * is 2,587 tombstones from one click.
+   *
+   * `lastAt` is what the caller clamps to. Re-sending the other channels back
+   * to that instant costs a few upserts and they are idempotent; losing a
+   * tombstone costs a wrong book nobody can see the cause of.
+   */
+  const full = rows.length === DELETIONS_PER_PULL;
+  const lastAt = full ? asDate(rows[rows.length - 1].at) : null;
+
+  return {
+    groups: [...byEntity].map(([entity, ids]) => ({ entity, ids })),
+    more: full,
+    lastAt,
+  };
 }
 
 /* ---------------------------------------------------------------- the delta */
@@ -1873,6 +1993,7 @@ export async function buildPull(
   if (!since) {
     return {
       cursor: nextCursor,
+      territory: await territoryStateFor(principal),
       customers: [],
       products: [],
       timeline: [],
@@ -2152,7 +2273,12 @@ export async function buildPull(
     ]);
 
   return {
-    cursor: nextCursor,
+    /* CLAMPED where a full page of tombstones was cut short — see
+       `deletionsSince`. Everything else is re-sent from that instant and is
+       idempotent; a tombstone that fell behind the cursor is a shop nobody can
+       get off the phone. */
+    cursor: deletionRows.lastAt ? encodeCursor(deletionRows.lastAt) : nextCursor,
+    territory: await territoryStateFor(principal),
     customers: changedCustomers as unknown[],
     products: changedProducts as unknown[],
     timeline: newTimeline as unknown[],
@@ -2168,7 +2294,7 @@ export async function buildPull(
     schemes: schemeChanges as unknown[],
     documents: documentChanges as unknown[],
     courses: courseChanges as unknown[],
-    deletions: deletionRows,
+    deletions: deletionRows.groups,
     performance: await performanceFor(principal.user.id, sinceIso),
     tasks: taskChanges as unknown[],
     salary: salaryRows as unknown[],

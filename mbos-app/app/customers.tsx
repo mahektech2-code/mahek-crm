@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, TextInput } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { color as C, HIT, radius, type, weight } from '../src/theme/tokens';
+import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
 import { Card, HealthPill, PrimaryButton } from '../src/components/ui/primitives';
 import { BottomSheet } from '../src/components/ui/overlays';
@@ -28,6 +28,8 @@ import {
   type Origin,
 } from '../src/data/customer-query';
 import { ShopMap } from '../src/components/ui/shop-map';
+import { territoryState } from '../src/sync/pull';
+import type { TerritoryState } from '../src/sync/api';
 import { whereNow } from '../src/native/where';
 
 /**
@@ -96,6 +98,21 @@ export default function Customers() {
   const [hasMore, setHasMore] = React.useState(false);
   const [loadingMore, setLoadingMore] = React.useState(false);
   const [today] = React.useState(() => isoDate(new Date()));
+  /*
+   * WHAT THE OFFICE LAST SAID ABOUT WHERE HE WORKS.
+   *
+   * Read on focus rather than once on mount: territory is changed at a desk in
+   * the middle of a working day, the shops leave the handset on the next pull,
+   * and a screen that had cached "you have an area" would then show the wrong
+   * sentence over an empty list — the one failure this whole thing exists to
+   * remove.
+   *
+   * Null means the server has never said, which is an older server or a handset
+   * that has not pulled since this shipped. Null is NOT "no area": it draws the
+   * ordinary empty state, because telling somebody their area is unset when
+   * nobody has actually said so sends them to the office for nothing.
+   */
+  const [territory, setTerritory] = React.useState<TerritoryState | null>(null);
   /*
    * WHICH HALF OF THE BOOK. Customers, leads, or both.
    *
@@ -177,6 +194,9 @@ export default function Customers() {
         setTotal(p.total);
         setHasMore(p.hasMore);
       });
+      void territoryState().then((t) => {
+        if (live) setTerritory(t);
+      });
       return () => {
         live = false;
       };
@@ -248,6 +268,12 @@ export default function Customers() {
     }
   };
 
+  /* Only ever true when the server has SAID so — see the state above. `exempt`
+     is a manager or an admin, for whom the rule does not apply at all and who
+     must not be told to go and ask for a territory. */
+  const noArea = territory !== null && !territory.exempt && !territory.allocated;
+  const area = territory?.allocated ? territory.places : [];
+
   return (
     <AppFrame title="Customers" activeTab="customers" contentStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}>
       <View style={{ position: 'relative' }}>
@@ -280,28 +306,51 @@ export default function Customers() {
         </Pressable>
       </View>
 
-      {/* LIST OR MAP. One tap, always visible, and the state is obvious from
-          which side is filled — a map hidden behind a menu is one nobody finds. */}
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
+      {/* LIST OR MAP. A tray with two joined halves rather than a third row of
+          free-standing chips, because this control is not a filter at all — it
+          does not change WHICH shops are in the book, only how the same book is
+          drawn. Three rows of identical pills stacked one under the other read
+          as one bank of nine buttons that all do the same kind of thing, and
+          the thing that separates a mode switch from a filter at a glance is
+          its GEOMETRY, not its position. It says "view" in both halves for the
+          same reason: "List" beside "Map" is two nouns, and a noun on a button
+          reads as the thing you are about to be shown rather than the way you
+          are about to be shown it. */}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignSelf: 'flex-start',
+          marginTop: 12,
+          padding: 3,
+          borderRadius: radius.md,
+          borderWidth: 1,
+          borderColor: C.border,
+          backgroundColor: C.wash,
+        }}>
         {([
-          { key: false, label: 'List' },
-          { key: true, label: 'Map' },
-        ] as const).map((chip) => {
-          const on = asMap === chip.key;
+          { key: false, label: 'List view' },
+          { key: true, label: 'Map view' },
+        ] as const).map((seg) => {
+          const on = asMap === seg.key;
           return (
             <Pressable
-              key={String(chip.key)}
-              onPress={() => setAsMap(chip.key)}
+              key={String(seg.key)}
+              onPress={() => setAsMap(seg.key)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: on }}
               style={{
-                paddingHorizontal: 14,
-                paddingVertical: 7,
+                paddingHorizontal: 16,
+                paddingVertical: 8,
                 borderRadius: radius.sm,
-                borderWidth: 1,
-                borderColor: on ? C.ink : C.border,
-                backgroundColor: on ? C.ink : C.surface,
+                backgroundColor: on ? C.surface : 'transparent',
+                boxShadow: on ? shadow.soft : undefined,
               }}>
-              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
-                {chip.label}
+              <Text
+                style={[
+                  { fontSize: 13, color: on ? C.ink : C.muted },
+                  weight(on ? 600 : 500),
+                ]}>
+                {seg.label}
               </Text>
             </Pressable>
           );
@@ -312,8 +361,15 @@ export default function Customers() {
           already narrowed to the territory he works. Drawn beside "where from"
           rather than buried in the filter sheet because it changes what the
           list IS, and a list whose subject is hidden behind a menu is one people
-          misread. */}
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
+          misread.
+
+          AND THE ROW IS NAMED. Two rows of identically drawn pills with nothing
+          saying what question each answers is why they read as one row of six:
+          "Leads" and "A–Z" are answers to different questions, and only the
+          label says so. The label is what carries it; the different fills below
+          are what let somebody who is not reading tell the rows apart. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, alignItems: 'center' }}>
+        <Text style={[type.label, { width: 42 }]}>Show</Text>
         {([
           { key: 'all', label: 'Everything' },
           { key: 'customers', label: 'Customers' },
@@ -324,10 +380,11 @@ export default function Customers() {
             <Pressable
               key={chip.key}
               onPress={() => setView(chip.key)}
+              accessibilityState={{ selected: on }}
               style={{
                 paddingHorizontal: 12,
                 paddingVertical: 7,
-                borderRadius: radius.sm,
+                borderRadius: radius.pill,
                 borderWidth: 1,
                 borderColor: on ? C.ink : C.border,
                 backgroundColor: on ? C.ink : C.surface,
@@ -342,8 +399,15 @@ export default function Customers() {
 
       {/* WHERE FROM. Three chips rather than a menu: it is one tap, it is
           always visible, and the one in use is the answer to "why is this shop
-          at the top". */}
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
+          at the top".
+
+          Its selected chip is TINTED rather than filled, and that is a
+          hierarchy rather than a decoration: the row above decides which shops
+          are in the book and this one only decides what order they come in, so
+          exactly one row on the screen is solid at a time. Two solid black rows
+          one under the other is what made them a single mush to look at. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, alignItems: 'center' }}>
+        <Text style={[type.label, { width: 42 }]}>Sort</Text>
         {[
           { key: 'me', label: 'Near me' },
           { key: 'city', label: cities.some((c) => c.city === originMode) ? originMode : 'By city' },
@@ -357,15 +421,20 @@ export default function Customers() {
             <Pressable
               key={chip.key}
               onPress={() => (chip.key === 'city' ? setPickingCity(true) : setOriginMode(chip.key))}
+              accessibilityState={{ selected: on }}
               style={{
                 paddingHorizontal: 12,
                 paddingVertical: 7,
-                borderRadius: radius.sm,
+                borderRadius: radius.pill,
                 borderWidth: 1,
-                borderColor: on ? C.ink : C.border,
-                backgroundColor: on ? C.ink : C.surface,
+                borderColor: on ? C.primaryEdge : C.border,
+                backgroundColor: on ? C.primaryTint : C.surface,
               }}>
-              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
+              <Text
+                style={[
+                  { fontSize: 13, color: on ? C.primaryDeep : C.body },
+                  weight(on ? 600 : 500),
+                ]}>
                 {chip.label}
               </Text>
             </Pressable>
@@ -386,6 +455,16 @@ export default function Customers() {
         {origin && originMode !== 'me' && originMode !== 'name' ? ` \u00b7 nearest ${originMode} first` : ''}
       </Text>
 
+      {/* WHICH PLACES THIS IS CUT TO, printed where the count is rather than
+          buried in a profile screen. A salesman who cannot find a shop he knows
+          is his needs to see the area before he concludes the app has lost it —
+          and the answer is almost always that the shop is outside it. */}
+      {area.length ? (
+        <Text style={[type.caption, { marginTop: 2, color: C.muted }]}>
+          {'Your area: ' + area.join(', ')}
+        </Text>
+      ) : null}
+
       {/* Asked and could not is a different fact from never asked, and the
           salesman is the one who can do something about it. */}
       {noFix && originMode === 'me' ? (
@@ -394,21 +473,38 @@ export default function Customers() {
         </Text>
       ) : null}
 
-      {/* Nothing matched. The one thing worth offering is the thing he is
-          about to need — and the sentence says which kind of shop this opens,
-          because a record we bill is the office's to create. */}
+      {/* AN EMPTY BOOK AND A SWITCHED-OFF ONE ARE DIFFERENT FACTS, and no
+          screen may draw them alike.
+
+          "Nothing in your book yet" sends a salesman to ask why nobody has
+          given him shops. It is the wrong sentence when the real answer is that
+          no area has been allocated to him, and it is the sentence that makes
+          an unallocated handset look like a broken sync for a fortnight. The
+          office is told the same thing from the other end, on the team screen.
+
+          `noArea` is only ever true when the server has actually SAID so —
+          `territoryState` answers null on an older server and on a handset that
+          has not pulled since this shipped, and null draws the ordinary empty
+          state rather than accusing anybody. */}
       {rows.length === 0 ? (
         <Card style={{ marginTop: 12, alignItems: 'center', paddingVertical: 28 }}>
           <Text style={[{ fontSize: 15, color: C.ink, textAlign: 'center' }, weight(500)]}>
-            {custQ.trim() ? 'No shop matches that' : 'Nothing in your book yet'}
+            {custQ.trim()
+              ? 'No shop matches that'
+              : noArea
+                ? 'No area set for you yet'
+                : 'Nothing in your book yet'}
           </Text>
           <Text style={[type.caption, { marginTop: 4, textAlign: 'center', paddingHorizontal: 24 }]}>
-            If you are standing in a shop we deliver to on somebody else&apos;s bill, open it
-            here and take the order.
+            {noArea && !custQ.trim()
+              ? 'Your customer list stays empty until the office sets the area you work. Nothing of yours is lost — ask your manager to set it on the Sales Dashboard.'
+              : 'If you are standing in a shop we deliver to on somebody else\u2019s bill, open it here and take the order.'}
           </Text>
-          <View style={{ marginTop: 14, alignSelf: 'stretch', paddingHorizontal: 24 }}>
-            <PrimaryButton label="Add a delivery shop" onPress={openAdd} />
-          </View>
+          {noArea && !custQ.trim() ? null : (
+            <View style={{ marginTop: 14, alignSelf: 'stretch', paddingHorizontal: 24 }}>
+              <PrimaryButton label="Add a delivery shop" onPress={openAdd} />
+            </View>
+          )}
         </Card>
       ) : null}
 

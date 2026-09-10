@@ -1,5 +1,8 @@
-import { all, run, tx } from '../db';
-import { deviceId, type PullPayload } from './api';
+import { all, getKv, run, setKv, tx } from '../db';
+import { deviceId, type PullPayload, type TerritoryState } from './api';
+
+/** Where `storeTerritory` files it, and where `territoryState` reads it back. */
+export const TERRITORY_KEY = 'territory';
 
 /**
  * Applying what came down.
@@ -31,6 +34,7 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertStops(pull.journeyStops, now);
     touched += await upsertPlanDays(pull.planDays, now);
     touched += await upsertConfig(pull.config, now);
+    touched += await storeTerritory(pull.territory);
     touched += await upsertNotifications(pull.notifications);
     touched += await upsertLeaveBalances(pull.leaveBalances, now);
     touched += await upsertHolidays(pull.holidays, now);
@@ -311,6 +315,48 @@ function upsertDocuments(rows: unknown[] | undefined, now: number) {
 
 function upsertCourses(rows: unknown[] | undefined, now: number) {
   return upsert('courses', 'id', rows, { lastSyncedAt: now });
+}
+
+/**
+ * WHY THE BOOK IS THE SIZE IT IS — kept so a screen can tell an empty book
+ * apart from a switched-off one.
+ *
+ * In `kv` rather than `config`: `config` mirrors the thresholds the Admin
+ * Console holds and is the same for everybody on the team, and this is a fact
+ * about ONE salesman that changes when the office moves him. Filing it there
+ * would make the next person reading a config key wonder why it is personal.
+ *
+ * Replaced wholesale on every pass, because an area taken away has to
+ * disappear and there is only ever one answer. Absent leaves what was there:
+ * an older server sends nothing, and forgetting a real allocation on a pull
+ * from one would make the handset accuse the office of not having set it.
+ */
+/**
+ * What the office last said about where he works.
+ *
+ * Null means it has never been told — an older server, or a handset that has
+ * not completed a pull since this shipped. The screens read that as "we do not
+ * know" and draw the ordinary empty state, because telling a salesman his area
+ * is unset when nobody has actually said so sends him to the office for
+ * nothing.
+ */
+export async function territoryState(): Promise<TerritoryState | null> {
+  const raw = await getKv(TERRITORY_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as TerritoryState;
+    return typeof parsed?.allocated === 'boolean' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function storeTerritory(
+  territory: PullPayload['territory'],
+): Promise<number> {
+  if (!territory) return 0;
+  await setKv(TERRITORY_KEY, JSON.stringify(territory));
+  return 1;
 }
 
 async function upsertConfig(config: Record<string, unknown> | undefined, now: number): Promise<number> {
