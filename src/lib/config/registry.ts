@@ -678,9 +678,13 @@ export const SETTINGS = [
   },
   /* -------------------------------------------------------------- sign-in */
   /*
-   * There is no password on the web. A work number and a code sent to it is
-   * the whole credential, so these thresholds are the security of the login
-   * screen itself and none of them may be a constant.
+   * NOTHING READS THESE YET, and a reader should know it before tuning one.
+   * They were written for a sign-in where a work number and a code sent to it
+   * are the whole credential. That flow is not built: `otp_channel` is an enum
+   * in the schema with no table, no sender and no route behind it, and `signIn`
+   * asks for a work number or an email AND a password. They are kept because
+   * the thresholds are the right ones for the day it is built and none of them
+   * may be a constant then — but until then, changing one changes nothing.
    */
   {
     key: "auth.otp.codeLength",

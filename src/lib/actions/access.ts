@@ -10,11 +10,13 @@ import {
   auditLog,
   employees,
   passwordResets,
+  sessions,
   users,
 } from "@/db/schema";
 import { APP_IDS, getApp, type AppId } from "@/lib/apps";
 import { getModule, moduleKeysForApp } from "@/lib/modules";
 import { hashPassword, isManager, requireUser } from "@/lib/auth";
+import { newPassword } from "@/lib/password";
 import { initialsOf } from "@/lib/format";
 import { mailConfigured, sendMail } from "@/lib/mailer";
 import {
@@ -282,9 +284,10 @@ export async function setAccess(
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
       return fieldErr("email", "That does not look like an email address.");
     }
-    // The web has no password any more — a work number and a code sent to it
-    // is the whole credential, so an account with no number is one nobody can
-    // ever sign into.
+    // A work number is how nearly everybody here signs in — `signIn` matches
+    // the last ten digits of it as readily as the whole email — and it is the
+    // only one of the two that a telecaller or a field salesman reliably
+    // knows. Required, therefore, rather than merely accepted.
     if (!phone) {
       return fieldErr("phone", "A work number is required — it's how they sign in.");
     }
@@ -309,14 +312,18 @@ export async function setAccess(
     created = true;
 
     /*
-     * A password nobody knows.
+     * A password nobody knows, and the account is UNUSABLE until somebody
+     * issues one.
      *
-     * The web needs none — a code sent to the work number above is what makes
-     * the account usable, immediately. This hash exists only in case the same
-     * account is ever paired with MBOS, the field salesman handset app, which
-     * still authenticates the old way over its own API and cannot be changed
-     * from here. Typing a real one into this dialog would mean somebody
-     * reading it out over a phone, so it stays one nobody knows.
+     * This used to claim the web needed no password because a code was sent to
+     * the work number. No code was ever sent — `otp_channel` is an enum in the
+     * schema that nothing reads — so what this actually produced was an
+     * account that could not be signed into at all, with a welcome email
+     * telling the employee to wait for something that was never coming.
+     *
+     * A real password is still not typed into the dialog, because that is a
+     * password somebody chooses badly and reuses. `issueCredential` generates
+     * one on the step after this and shows it once.
      */
     const passwordHash = await hashPassword(randomUUID() + randomUUID());
     const apps = [...wanted.keys()];
@@ -368,10 +375,10 @@ export async function setAccess(
 
     return ok(
       { userId, created, resetLinkSent, granted: apps, revoked: [], changed: [] },
-      `${personName} can now open ${describe(apps)} — sign-in is a code sent to ${phone}. ${
+      `${personName} can now open ${describe(apps)}. They sign in with their work number, ${phone} — generate a password to read out to them, or ${
         resetLinkSent
-          ? "A link to set a field-app password has also been emailed to them, in case they are ever paired with MBOS."
-          : "No mail is configured on this deployment, so that field-app password link went to the server log instead of to them."
+          ? "let them use the link just emailed to them to choose their own."
+          : "have them use Forgot password (no mail is configured on this deployment, so the link just minted went to the server log rather than to them)."
       }`,
     );
   }
@@ -589,19 +596,166 @@ async function mailResetLink(
     text: [
       `Hello ${name.split(" ")[0]},`,
       "",
-      `${actorName} has set you up on MahekOne. To sign in on the web, open`,
-      `MahekOne and enter your work number, ${phone} — we send a code to it,`,
-      "no password needed.",
+      `${actorName} has set you up on MahekOne. You sign in with your work`,
+      `number, ${phone}, and a password.`,
       "",
-      "The link below is only for the MBOS field salesman app, which pairs",
-      "with a password rather than a code. Skip it unless you use that app:",
-      `Open this link to choose one — it works once and expires in ${RESET_TTL_MINUTES} minutes:`,
+      `${actorName} may read a password out to you. If not, use the link below`,
+      `to choose your own — it works once and expires in ${RESET_TTL_MINUTES} minutes:`,
       "",
       `${await appOrigin()}/login/reset?token=${token}`,
+      "",
+      "The same work number and password open the MBOS field salesman app.",
     ].join("\n"),
   });
 
   return mailConfigured();
+}
+
+/* ------------------------------------------------------- the credential */
+
+export type IssuedCredential = {
+  userId: string;
+  name: string;
+  /** What they type into the first box. The work number where there is one. */
+  signInWith: string;
+  phone: string | null;
+  email: string;
+  /** SHOWN ONCE. Never stored, never audited, never readable again. */
+  password: string;
+  /** Signed out everywhere, because the password they held is now wrong. */
+  sessionsEnded: number;
+};
+
+/**
+ * Mint a sign-in this person can be told over the telephone.
+ *
+ * THIS IS THE FIX FOR AN ONBOARDING PATH THAT DID NOT WORK. `setAccess`
+ * creates an account with `hashPassword(randomUUID() + randomUUID())` — a
+ * password nobody knows — and then told the person granting access that
+ * "sign-in is a code sent to {phone}", while the welcome email told the
+ * employee to enter their work number because "we send a code to it, no
+ * password needed". THERE IS NO CODE. `otp_channel` is an enum in the schema
+ * that nothing reads: no table, no sender, no route. So the only door was the
+ * reset link the same email filed under "skip this unless you use MBOS", which
+ * needs mail configured AND a work email the person actually reads — and most
+ * of the field staff this screen exists to set up have neither.
+ *
+ * So the office generates one and reads it out, which is what it was doing
+ * with `mahek1234` anyway, only now the password is unguessable and the fact
+ * that it was issued is on the record.
+ *
+ * **IT IS NEVER AUTOMATIC.** Granting access does not mint a credential; the
+ * screen ASKS. A password that appears unasked is one that gets left on a
+ * screen somebody walks away from, and on an existing account it would be a
+ * silent lockout of whoever was using the old one.
+ *
+ * **A MANAGER MAY NOT MINT A WAY INTO AN ACCOUNT WIDER THAN THEIR OWN.**
+ * Everything else on this screen is checked against the actor and this is the
+ * one action where seeing the result IS the access — `sendPasswordResetFor`
+ * can be pointed at anybody precisely because what it produces goes to a
+ * mailbox the actor cannot read. This produces a password on the actor's own
+ * screen, so a manager asking for one on an admin's account would be granting
+ * themselves admin and leaving "issued a credential" in the log rather than
+ * "escalated". Admin is admin's alone.
+ *
+ * The old password stops working the moment this is called, so every session
+ * on that account goes with it — a live session is somebody signed in on a
+ * credential that no longer exists — and any outstanding reset link is spent,
+ * because a link minted before this would quietly set a THIRD password and
+ * neither the office nor the employee would know which one was live.
+ */
+export async function issueCredential(
+  userId: string,
+): Promise<Result<IssuedCredential>> {
+  let me;
+  try {
+    me = await actor();
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
+  }
+
+  const [account] = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      phone: users.phone,
+      role: users.role,
+      active: users.active,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!account) return fail("That account no longer exists.", "not_found");
+
+  if (!account.active) {
+    // Disabling a sign-in and revoking access are different questions — see
+    // the Access screen, which answers both in one row. Handing somebody a
+    // password for an account that refuses every sign-in is a support call
+    // dressed up as a solution.
+    return fail(
+      `${account.name}'s sign-in is disabled, so a password would not let them in. Enable it first.`,
+      "rule_violation",
+    );
+  }
+
+  if (ROLES.indexOf(account.role as Role) > ROLES.indexOf(me.role as Role)) {
+    return fail(
+      `Only an administrator can issue a password for ${account.name}, whose account is an administrator.`,
+      "not_permitted",
+    );
+  }
+
+  /* WHETHER THIS TAKES SOMETHING AWAY IS THE CALLER'S TO SAY, not this
+     function's to guess. A brand new account carries a password nobody has
+     ever been told and loses nothing; every other account may have somebody
+     signed in on the old one right now. The only signals here — open sessions,
+     a null `last_login_at` — are both false negatives on an account that is
+     simply not signed in at the moment, or that predates the column being
+     written at all. The dialog knows for certain, because it created the
+     account a second ago, so the sentence is written there. */
+  const password = newPassword();
+  const passwordHash = await hashPassword(password);
+
+  const ended = await db.transaction(async (tx) => {
+    await tx
+      .update(users)
+      .set({ passwordHash, updatedAt: new Date() })
+      .where(eq(users.id, userId));
+    await tx
+      .update(passwordResets)
+      .set({ usedAt: new Date() })
+      .where(and(eq(passwordResets.userId, userId), isNull(passwordResets.usedAt)));
+    const gone = await tx
+      .delete(sessions)
+      .where(eq(sessions.userId, userId))
+      .returning({ id: sessions.id });
+    return gone.length;
+  });
+
+  /* WHAT WAS ISSUED, NEVER WHAT IT WAS. An audit row is read by more people
+     than this screen was, and a password in it is a password in every backup
+     of the log. That it happened, to whom, and by whose hand is the whole of
+     what anybody needs later. */
+  await audit(
+    me.id,
+    "issue-credential",
+    userId,
+    `Sign-in password issued to ${account.name}${
+      ended ? ` · ${ended} session${ended === 1 ? "" : "s"} ended` : ""
+    }`,
+  );
+  refresh();
+
+  return ok({
+    userId,
+    name: account.name,
+    signInWith: account.phone ?? account.email,
+    phone: account.phone,
+    email: account.email,
+    password,
+    sessionsEnded: ended,
+  });
 }
 
 /** The picker's list, re-read on demand so a fresh HRMS sync shows up. */

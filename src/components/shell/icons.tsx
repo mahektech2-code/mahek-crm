@@ -48,6 +48,16 @@ const PATHS: Record<string, React.ReactNode> = {
       <circle cx="12" cy="12" r="2.5" />
     </>
   ),
+  /* ONE person, where `people` is a group. The sign-in field takes a work
+     number or an email — "who you are" rather than either of the two ways of
+     saying it — so a mail glyph in front of it advertised half of what the box
+     accepts, and two heads would read as a team. */
+  person: (
+    <>
+      <circle cx="12" cy="7.5" r="3.75" />
+      <path d="M19 20v-1.5a4.5 4.5 0 0 0-4.5-4.5h-5A4.5 4.5 0 0 0 5 18.5V20" />
+    </>
+  ),
   people: (
     <>
       <path d="M16 20v-1.5a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4V20" />
