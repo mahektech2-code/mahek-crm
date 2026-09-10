@@ -801,7 +801,7 @@ export async function liveSessions(): Promise<SessionRow[]> {
 
 /** Accounts that exist but have never been used, and what is missing. */
 export async function onboardingRows(): Promise<
-  Array<{ name: string; email: string; createdAt: string; apps: number }>
+  Array<{ name: string; email: string | null; createdAt: string; apps: number }>
 > {
   const rows = await db
     .select({

@@ -45,8 +45,8 @@ export type ProvisionInput = {
 
 export type ProvisionResult = {
   userId: string;
-  before: { name: string; email: string; role: string; apps: string[] };
-  after: { name: string; email: string; role: string; apps: string[] };
+  before: { name: string; email: string | null; role: string; apps: string[] };
+  after: { name: string; email: string | null; role: string; apps: string[] };
   changed: string[];
 };
 

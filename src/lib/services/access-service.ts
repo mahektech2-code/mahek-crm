@@ -53,7 +53,8 @@ export type AppGrant = {
 export type AccessRow = {
   userId: string;
   name: string;
-  email: string;
+  /** Null where somebody signs in with their work number alone. */
+  email: string | null;
   phone: string | null;
   role: "associate" | "manager" | "admin";
   initials: string;

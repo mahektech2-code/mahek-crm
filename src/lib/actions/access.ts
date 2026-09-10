@@ -18,13 +18,6 @@ import { getModule, moduleKeysForApp } from "@/lib/modules";
 import { hashPassword, isManager, requireUser } from "@/lib/auth";
 import { newPassword } from "@/lib/password";
 import { initialsOf } from "@/lib/format";
-import { mailConfigured, sendMail } from "@/lib/mailer";
-import {
-  appOrigin,
-  hashResetToken,
-  newResetToken,
-  RESET_TTL_MINUTES,
-} from "@/lib/password-reset";
 import { err as fail, fieldErr, ok, type Result } from "@/lib/result";
 import { widestRole, type Role } from "@/lib/access-control";
 import {
@@ -121,7 +114,8 @@ export type SetAccessInput = {
   grants: AccessGrantInput[];
   /** Only read when an account has to be created. */
   account?: {
-    email: string;
+    /** At least one of these two. Both is fine and often better. */
+    email?: string | null;
     phone?: string | null;
     role: "associate" | "manager" | "admin";
   };
@@ -130,8 +124,6 @@ export type SetAccessInput = {
 export type SetAccessResult = {
   userId: string;
   created: boolean;
-  /** Said plainly rather than assumed — mail may not be configured. */
-  resetLinkSent: boolean;
   granted: string[];
   revoked: string[];
   changed: string[];
@@ -240,7 +232,6 @@ export async function setAccess(
 
   let userId = input.userId ?? null;
   let created = false;
-  let resetLinkSent = false;
   let personName = "";
 
   /* ------------------------------------------------------ a new account */
@@ -279,31 +270,48 @@ export async function setAccess(
       );
     }
 
-    const email = input.account.email.trim().toLowerCase();
+    /*
+     * EITHER ONE SIGNS THEM IN, so either one will do.
+     *
+     * `signIn` matches the last ten digits of a work number as readily as it
+     * matches a whole email, and has since it was written — so both of these
+     * are credentials and neither is the credential. Demanding both meant that
+     * setting up a field salesman, who is issued a handset and a number and no
+     * company mailbox, required somebody to type an address into the box that
+     * nobody would ever read: a fact invented to satisfy a column.
+     *
+     * The rule is therefore "at least one", and it can only live HERE, where
+     * the two are weighed together. A NOT NULL on either column can see half
+     * the answer and would refuse the very case this exists for.
+     */
+    const email = input.account.email?.trim().toLowerCase() || null;
     const phone = input.account.phone ? input.account.phone.replace(/\D/g, "").slice(-10) : null;
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+
+    if (!email && !phone) {
+      return fieldErr(
+        "phone",
+        "Give them a work number or an email — one of the two is how they sign in.",
+      );
+    }
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
       return fieldErr("email", "That does not look like an email address.");
     }
-    // A work number is how nearly everybody here signs in — `signIn` matches
-    // the last ten digits of it as readily as the whole email — and it is the
-    // only one of the two that a telecaller or a field salesman reliably
-    // knows. Required, therefore, rather than merely accepted.
-    if (!phone) {
-      return fieldErr("phone", "A work number is required — it's how they sign in.");
-    }
-    if (!/^[6-9]\d{9}$/.test(phone)) {
+    if (phone && !/^[6-9]\d{9}$/.test(phone)) {
       return fieldErr("phone", "A work number is ten digits, starting 6 to 9.");
     }
 
     // Both are sign-ins, so both have to be unique or the login form has two
-    // answers to one question.
+    // answers to one question. `users_email_key` and the partial
+    // `users_phone_key` say the same thing at the database; this checks first
+    // so the refusal can name which box to fix rather than surfacing as a
+    // constraint violation naming neither.
     const clash = await db
       .select({ id: users.id, email: users.email, phone: users.phone })
       .from(users);
-    if (clash.some((c) => c.email === email)) {
+    if (email && clash.some((c) => c.email === email)) {
       return fieldErr("email", "An account already uses that email.");
     }
-    if (clash.some((c) => c.phone === phone)) {
+    if (phone && clash.some((c) => c.phone === phone)) {
       return fieldErr("phone", "An account already uses that work number.");
     }
 
@@ -361,8 +369,6 @@ export async function setAccess(
       }
     });
 
-    resetLinkSent = await mailResetLink(userId, employee.name, email, phone, me.name);
-
     await audit(
       me.id,
       "create-user",
@@ -374,12 +380,10 @@ export async function setAccess(
     refresh();
 
     return ok(
-      { userId, created, resetLinkSent, granted: apps, revoked: [], changed: [] },
-      `${personName} can now open ${describe(apps)}. They sign in with their work number, ${phone} — generate a password to read out to them, or ${
-        resetLinkSent
-          ? "let them use the link just emailed to them to choose their own."
-          : "have them use Forgot password (no mail is configured on this deployment, so the link just minted went to the server log rather than to them)."
-      }`,
+      { userId, created, granted: apps, revoked: [], changed: [] },
+      `${personName} can now open ${describe(apps)}. They sign in with ${
+        phone ?? email
+      } and a password — generate one on the next page.`,
     );
   }
 
@@ -536,7 +540,7 @@ export async function setAccess(
   ].filter(Boolean);
 
   return ok(
-    { userId, created: false, resetLinkSent: false, granted, revoked, changed },
+    { userId, created: false, granted, revoked, changed },
     `${personName} ${said.join(" · ")}.` +
       (revoked.length && !wanted.size
         ? " They can still sign in, and the launcher will say plainly that they have nothing."
@@ -568,49 +572,6 @@ async function hrmsBlock(userId: string): Promise<string | null> {
   return match?.blocked ?? null;
 }
 
-/** Mint and send a single-use reset link. Returns whether it actually went. */
-async function mailResetLink(
-  userId: string,
-  name: string,
-  email: string,
-  phone: string,
-  actorName: string,
-): Promise<boolean> {
-  const token = newResetToken();
-  await db.transaction(async (tx) => {
-    await tx
-      .update(passwordResets)
-      .set({ usedAt: new Date() })
-      .where(and(eq(passwordResets.userId, userId), isNull(passwordResets.usedAt)));
-    await tx.insert(passwordResets).values({
-      id: newId("rst"),
-      userId,
-      tokenHash: hashResetToken(token),
-      expiresAt: new Date(Date.now() + RESET_TTL_MINUTES * 60_000),
-    });
-  });
-
-  await sendMail({
-    to: email,
-    subject: "Your MahekOne sign-in",
-    text: [
-      `Hello ${name.split(" ")[0]},`,
-      "",
-      `${actorName} has set you up on MahekOne. You sign in with your work`,
-      `number, ${phone}, and a password.`,
-      "",
-      `${actorName} may read a password out to you. If not, use the link below`,
-      `to choose your own — it works once and expires in ${RESET_TTL_MINUTES} minutes:`,
-      "",
-      `${await appOrigin()}/login/reset?token=${token}`,
-      "",
-      "The same work number and password open the MBOS field salesman app.",
-    ].join("\n"),
-  });
-
-  return mailConfigured();
-}
-
 /* ------------------------------------------------------- the credential */
 
 export type IssuedCredential = {
@@ -619,7 +580,7 @@ export type IssuedCredential = {
   /** What they type into the first box. The work number where there is one. */
   signInWith: string;
   phone: string | null;
-  email: string;
+  email: string | null;
   /** SHOWN ONCE. Never stored, never audited, never readable again. */
   password: string;
   /** Signed out everywhere, because the password they held is now wrong. */
@@ -699,6 +660,18 @@ export async function issueCredential(
     );
   }
 
+  /* NEITHER IDENTIFIER IS A STATE THAT SHOULD NOT EXIST — `setAccess` refuses
+     to create one and the login form has nothing to match on — but the column
+     allows it, so this says so rather than printing a password beside a blank
+     space and leaving somebody to work out why it never worked. */
+  const signInWith = account.phone ?? account.email;
+  if (!signInWith) {
+    return fail(
+      `${account.name} has neither a work number nor an email on their account, so there is nothing to sign in with. Add one on their record first.`,
+      "rule_violation",
+    );
+  }
+
   if (ROLES.indexOf(account.role as Role) > ROLES.indexOf(me.role as Role)) {
     return fail(
       `Only an administrator can issue a password for ${account.name}, whose account is an administrator.`,
@@ -750,7 +723,7 @@ export async function issueCredential(
   return ok({
     userId,
     name: account.name,
-    signInWith: account.phone ?? account.email,
+    signInWith,
     phone: account.phone,
     email: account.email,
     password,

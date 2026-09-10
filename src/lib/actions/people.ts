@@ -303,6 +303,18 @@ export async function sendPasswordResetFor(userId: string): Promise<Result<null>
   const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   if (!user) return fail("That account no longer exists.", "not_found");
   if (!user.active) return fail("That account is deactivated, so it cannot be signed in to.");
+  /* AN ACCOUNT NEED NOT HAVE AN EMAIL. A work number and a password is a whole
+     credential, and a field salesman issued a handset and a number has no
+     company mailbox to send anything to. There is nowhere for this link to go,
+     so the refusal names the thing that does work rather than reporting a
+     failure the person reading it cannot act on. */
+  if (!user.email) {
+    return fail(
+      `${user.name} has no work email on their account, so there is nowhere to send a link. Generate a password to read out to them instead.`,
+      "rule_violation",
+    );
+  }
+  const to = user.email;
 
   const token = newResetToken();
   const expiresAt = new Date(Date.now() + RESET_TTL_MINUTES * 60_000);
@@ -322,7 +334,7 @@ export async function sendPasswordResetFor(userId: string): Promise<Result<null>
 
   const link = `${await appOrigin()}/login/reset?token=${token}`;
   await sendMail({
-    to: user.email,
+    to,
     subject: "Set a new MahekOne password",
     text: [
       `Hello ${user.name.split(" ")[0]},`,
@@ -336,7 +348,7 @@ export async function sendPasswordResetFor(userId: string): Promise<Result<null>
     ].join("\n"),
   });
 
-  await audit(actor.id, "send-password-reset", user.id, `Link sent to ${user.email}`);
+  await audit(actor.id, "send-password-reset", user.id, `Link sent to ${to}`);
   refresh();
 
   // Said plainly rather than claimed: without a key the mail goes to the
@@ -344,7 +356,7 @@ export async function sendPasswordResetFor(userId: string): Promise<Result<null>
   return ok(
     null,
     mailConfigured()
-      ? `Reset link sent to ${user.email}. It expires in ${RESET_TTL_MINUTES} minutes.`
+      ? `Reset link sent to ${to}. It expires in ${RESET_TTL_MINUTES} minutes.`
       : "No mail is configured on this deployment, so the link was written to the server log instead of sent.",
   );
 }

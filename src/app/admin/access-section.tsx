@@ -713,7 +713,7 @@ function AccessDialog({
       })),
       account: chosen.userId
         ? undefined
-        : { email: email.trim(), phone: phone.trim() || null, role },
+        : { email: email.trim() || null, phone: phone.trim() || null, role },
     }).then((r) => {
       setSaving(false);
       if (!r.ok && r.fieldErrors?.length) {
@@ -817,6 +817,7 @@ function AccessDialog({
           name={chosen?.name ?? ""}
           creating={needsAccount}
           email={email}
+          phone={phone}
           role={role}
           changes={changes}
           draft={draft}
@@ -951,10 +952,11 @@ function CredentialStep({
         <p className="mt-1.5 text-[13px] text-body">
           {created ? (
             <>
-              The account exists and the apps are granted, but nobody can sign into
-              it yet — a new account is created with a password nobody knows. Generate
-              one to read out, or leave it and let {first} set their own from the link
-              emailed to them.
+              The account exists and the apps are granted, but nobody can sign into it
+              yet — a new account is created with a password nobody knows, and nothing
+              has been emailed to anyone. Generate one to read out or paste into a
+              message. If {first} has a work email they can set their own instead, from
+              Forgot password on the sign-in screen.
             </>
           ) : (
             <>
@@ -1179,17 +1181,37 @@ function AccessStep({
               {name} has no MahekOne account yet
             </span>
             <span className="text-[13px] text-muted">
-              One is created when you grant access. No password is typed here — you can
-              generate one to read out on the last page, or they choose their own from a
-              link, good once, for thirty minutes.
+              One is created when you grant access. Give them a work number or an email —
+              either one signs them in, and with both they pick. No password is typed
+              here; you generate one to read out on the last page.
             </span>
           </div>
           <div className="mt-2 grid grid-cols-[1.4fr_1fr_1fr] gap-2">
-            <Field label="Sign-in email" error={fieldError.email}>
-              <Input value={email} onChange={(e) => onEmail(e.target.value)} />
+            {/* NEITHER IS STARRED, because neither on its own is required —
+                what is required is one of the two, which is a sentence about
+                the pair and belongs above them rather than on either. */}
+            <Field
+              label="Work email"
+              hint={phone.trim() ? "Optional" : undefined}
+              error={fieldError.email}
+            >
+              <Input
+                value={email}
+                placeholder="priya@mahek.in"
+                onChange={(e) => onEmail(e.target.value)}
+              />
             </Field>
-            <Field label="Work number" error={fieldError.phone}>
-              <Input value={phone} onChange={(e) => onPhone(e.target.value)} />
+            <Field
+              label="Work number"
+              hint={email.trim() ? "Optional" : undefined}
+              error={fieldError.phone}
+            >
+              <Input
+                value={phone}
+                placeholder="9820011001"
+                inputMode="numeric"
+                onChange={(e) => onPhone(e.target.value)}
+              />
             </Field>
             <Field label="Role">
               <Select value={role} onChange={(e) => onRole(e.target.value as typeof role)}>
@@ -1446,6 +1468,7 @@ function ReviewStep({
   name,
   creating,
   email,
+  phone,
   role,
   changes,
   draft,
@@ -1454,6 +1477,7 @@ function ReviewStep({
 }: {
   name: string;
   creating: boolean;
+  phone: string;
   email: string;
   role: string;
   changes: Changes;
@@ -1512,7 +1536,15 @@ function ReviewStep({
             tone: "success" as const,
             tag: "Create",
             what: name,
-            detail: `signs in with ${email} as a ${role} — a link to choose a password is emailed to them.`,
+            /* WHAT THEY WILL TYPE INTO THE FIRST BOX, and nothing about mail.
+               Granting access sends nothing now: it used to mint and email a
+               reset link every time, which is a thing the office cannot see
+               happen, cannot repeat, and which reaches nobody at all on an
+               account with no address. The password is generated on the next
+               page and read out. */
+            detail: `${role}, signing in with ${[phone, email].filter(Boolean).join(" or ")}${
+              phone && email ? " — whichever they prefer" : ""
+            }.`,
           },
         ]
       : []),

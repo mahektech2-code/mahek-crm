@@ -729,7 +729,11 @@ export type BootstrapPayload = {
   user: {
     id: string;
     name: string;
-    email: string;
+    /* Null where somebody signs in with a work number alone — which on a
+       handset is most of them. `mbos-app/src/sync/api.ts` has typed this
+       nullable since it was written, so the wire needed nothing; it was only
+       ever the server insisting on a value it could not always have. */
+    email: string | null;
     phone: string | null;
     role: string;
     initials: string;
