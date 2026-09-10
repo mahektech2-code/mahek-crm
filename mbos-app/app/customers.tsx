@@ -12,7 +12,7 @@ import { distanceLabel, inr, isoDate, plural, pretty, shopName } from '../src/li
 import { reorderLabel, reorderState } from '../src/engines/leads';
 import { callNumber, openMaps, openWhatsApp } from '../src/lib/messaging';
 import {
-  accountType,
+  accountLine,
   addFieldShop,
   billableCustomers,
   cityOrigins,
@@ -121,6 +121,9 @@ export default function Customers() {
    * salesman's book.
    */
   const [view, setView] = React.useState<BookView>('all');
+  /* What the count below is counting. `all` holds both, and calling that
+     "customers" is the screen arguing with its own Leads chip. */
+  const counted = view === 'leads' ? 'lead' : view === 'customers' ? 'customer' : 'account';
   /*
    * LIST OR MAP, and the tap means a different thing on each SCREEN rather than
    * on each mode: here it opens the record, and on the journey screen the same
@@ -444,13 +447,19 @@ export default function Customers() {
 
       {/* A CAPPED LIST SAYS WHAT IT IS A SLICE OF, and the count comes from
           SQL rather than from what happens to be loaded — otherwise the first
-          page of a book of six hundred reads as a book of fifteen. */}
+          page of a book of six hundred reads as a book of fifteen.
+
+          AND IT NAMES WHAT IT COUNTED. Under Everything this read "2,317
+          customers" about a list that is customers AND leads, on a screen whose
+          own chips have just offered those as two different things — so the one
+          sentence that exists to say what is on screen contradicted the control
+          directly above it. The chip picks the noun. */}
       <Text style={[type.caption, { marginTop: 10 }]}>
         {total === 0
           ? 'Nothing in your book yet'
           : rows.length < total
-            ? `Showing ${rows.length} of ${plural(total, 'customer')}`
-            : plural(total, 'customer') + ' \u00b7 your territory'}
+            ? `Showing ${rows.length} of ${plural(total, counted)}`
+            : plural(total, counted) + ' \u00b7 your territory'}
         {origin && originMode === 'me' ? ' \u00b7 nearest first' : ''}
         {origin && originMode !== 'me' && originMode !== 'name' ? ` \u00b7 nearest ${originMode} first` : ''}
       </Text>
@@ -538,7 +547,9 @@ export default function Customers() {
           const dues = x.outstandingPaise / 100;
           const stage = customerStage(x);
           const seenDays = daysSince(x.lastVisitDate, today);
-          const type_ = accountType(x);
+          /* "Lead · Suspect", not "Lead". The rung is what the salesman is
+             choosing between on this screen — see `accountLine`. */
+          const type_ = accountLine(x);
           /* Only where the origin is the salesman himself. A distance from the
              middle of a town he picked is not how far HE has to walk, and
              printing it as though it were would be a lie of the most useful
@@ -548,8 +559,25 @@ export default function Customers() {
           <Card key={x.id} padded={false} style={{ overflow: 'hidden' }}>
             <Pressable
               onPress={() => {
+                /*
+                 * A LEAD OPENS THE LEAD SCREEN, and everything else opens the
+                 * customer record.
+                 *
+                 * Both used to open `/customer`, which for a lead is a page of
+                 * empty ledgers — no dues, no bills, no order history — and,
+                 * far worse, the only screen in the app with no route to the
+                 * funnel on it. The ladder, the §28 gates and both forms live
+                 * on `/lead`, and `/leads` was the single door to them. So a
+                 * salesman who found a shop the obvious way, through the tab
+                 * he already had open, could not see which rung it was on or
+                 * move it.
+                 *
+                 * `custId` is set either way: `/lead` links across to the
+                 * record, and the record is what the back button lands on.
+                 */
                 set({ custId: x.id, pTab: 0 });
-                router.push('/customer');
+                if (x.isLead) router.push(`/lead?id=${x.id}&from=customers`);
+                else router.push('/customer');
               }}
               style={{ padding: 16 }}>
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
@@ -624,25 +652,43 @@ export default function Customers() {
                   justifyContent: 'space-between',
                   marginTop: 8,
                 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <View
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: 4,
-                      /* Dormant and Lost are the far end of the same scale
-                         and must not fall through to green, which is what the
-                         old 'Overdue' check did the moment the words changed. */
-                      backgroundColor:
-                        stage === 'Dormant' || stage === 'Lost'
-                          ? C.danger
-                          : stage === 'At risk'
-                            ? C.warn
-                            : C.success,
-                    }}
-                  />
-                  <Text style={{ fontSize: 14, color: C.body }}>{stage}</Text>
-                </View>
+                {/*
+                  NO VERDICT, NO DOT.
+
+                  `customerStage` answers null for an account nothing has been
+                  measured on — never ordered, so no cycle, so no band — and
+                  its own contract says the caller draws no verdict rather than
+                  inventing one. This drew the dot unconditionally and only the
+                  WORD was conditional, so a shop nobody has ever sold to got a
+                  bare GREEN dot: the most reassuring mark on the card, on the
+                  row that deserves it least, with nothing beside it to say what
+                  it meant. On a fresh book that is most of the screen.
+                */}
+                {stage ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 4,
+                        /* Dormant and Lost are the far end of the same scale
+                           and must not fall through to green, which is what the
+                           old 'Overdue' check did the moment the words changed.
+                           `Closed` is somebody's decision to stop dealing with
+                           this shop and is the same: it is not a green dot. */
+                        backgroundColor:
+                          stage === 'Dormant' || stage === 'Lost' || stage === 'Closed'
+                            ? C.danger
+                            : stage === 'At risk'
+                              ? C.warn
+                              : C.success,
+                      }}
+                    />
+                    <Text style={{ fontSize: 14, color: C.body }}>{stage}</Text>
+                  </View>
+                ) : (
+                  <View />
+                )}
 
                 {/* Quiet, and on the other side of the row: it is a fact about
                     the account rather than about today, so it should be

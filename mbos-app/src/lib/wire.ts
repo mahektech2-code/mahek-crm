@@ -349,3 +349,30 @@ const COMPLAINT_CATEGORIES: Record<string, string> = {
 export function wireComplaintCategory(category: string): string {
   return COMPLAINT_CATEGORIES[category.trim().toLowerCase()] ?? 'other';
 }
+
+/**
+ * Where this lead is standing, as the engine's own word for it.
+ *
+ * A lead raised before the funnel existed has no `funnelStage` and is answered
+ * from the six-word column instead, lower-cased — which is exactly the legacy
+ * ladder's own vocabulary, so `nextStage` and `gateTo` need no special case
+ * for an old lead. `Converted` is the one that is not the same word twice.
+ */
+export function stageOf(lead: {
+  funnelStage: string | null;
+  /* Nullable here and NOT NULL in the table on purpose: a `Lead` satisfies
+     this, and so does a row off the customers list, where the column is
+     reached through a correlated subquery and is null for anything that is
+     not a lead. The `?? 'New'` below was already the whole handling. */
+  stage: string | null;
+}): LeadStage {
+  const s = wireFunnelStage(lead.funnelStage);
+  if (s) return s as LeadStage;
+  const legacy = (lead.stage ?? 'New').trim().toLowerCase();
+  if (legacy === 'converted') return 'won';
+  if (legacy === 'lost') return 'lost';
+  if (legacy === 'contacted' || legacy === 'qualified' || legacy === 'negotiation') {
+    return legacy as LeadStage;
+  }
+  return 'new';
+}

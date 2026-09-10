@@ -6,6 +6,9 @@ import { Icon } from '../src/components/ui/Icon';
 import { Badge, Card, HealthPill, Input, PrimaryButton } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
+import { getLead, type Lead } from '../src/data/leads';
+import { stageOf } from '../src/data/lead-funnel';
+import { stageLabel } from '../src/engines/funnel';
 import { complaintsFor, customerSamples, type Complaint, type Sample } from '../src/data/requests';
 import { writeInternalNote } from '../src/data/internal-notes';
 import {
@@ -73,6 +76,17 @@ function freshness(at: number): string {
 
 export default function CustomerRecord() {
   const c = useCustomer();
+  /*
+   * IS THIS SHOP ALSO A LEAD, and where is it standing?
+   *
+   * Asked of the `leads` table rather than read off `c.kind`, which is the
+   * rule `customer-query.ts` states: the office keeps one `customers` row for
+   * both and the lead arrives down its own channel keyed on the same id.
+   *
+   * `getCustomer` selects from `customers` alone, so the row in the store
+   * cannot answer this — hence a second read rather than another column.
+   */
+  const [lead, setLead] = React.useState<Lead | null>(null);
   const pTab = useStore((s) => s.pTab);
   const tlFilter = useStore((s) => s.tlFilter);
   const set = useStore((s) => s.set);
@@ -160,6 +174,17 @@ export default function CustomerRecord() {
     reload();
   };
 
+  React.useEffect(() => {
+    let live = true;
+    if (!c?.id) return;
+    void getLead(c.id).then((row) => {
+      if (live) setLead(row && !row.archived ? row : null);
+    });
+    return () => {
+      live = false;
+    };
+  }, [c?.id]);
+
   /* A record that has not arrived on this handset yet is said plainly rather
      than rendered as somebody else's figures under a blank name. */
   if (!c) {
@@ -193,6 +218,45 @@ export default function CustomerRecord() {
             <HealthPill value={c.healthScore ?? null} band={c.healthBand ?? null} large />
           ) : null}
         </View>
+
+        {/*
+          THE WAY TO THE FUNNEL, from the record.
+
+          The ladder, the §28 gates and both forms live on `/lead`, and `/leads`
+          was the only door to any of them — so this screen, which a salesman
+          reaches from search, from a journey stop and from a visit, could show
+          him a lead and give him no way to see which rung it was on, let alone
+          move it. It says the rung rather than just "Lead" because the rung is
+          the thing he is deciding about, and because a link whose label is a
+          category teaches nobody that there is a funnel behind it.
+        */}
+        {lead ? (
+          <Pressable
+            onPress={() => router.push(`/lead?id=${lead.id}&from=customer`)}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              marginTop: 12,
+              paddingVertical: 10,
+              paddingHorizontal: 12,
+              borderRadius: radius.md,
+              borderWidth: 1,
+              borderColor: C.border,
+              backgroundColor: C.wash,
+            }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={[{ fontSize: 14, color: C.ink }, weight(500)]}>
+                {'Lead · ' + stageLabel(stageOf(lead))}
+              </Text>
+              <Text style={[type.caption, { marginTop: 2 }]}>
+                Open the funnel to move it on, or see what it is waiting for
+              </Text>
+            </View>
+            <Text style={{ fontSize: 18, lineHeight: 18, color: C.muted }}>›</Text>
+          </Pressable>
+        ) : null}
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.hairline }}>
           <View>

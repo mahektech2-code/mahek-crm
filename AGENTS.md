@@ -187,6 +187,31 @@ table, never a column read. `archived = 0` is part of it: an archived lead is
 one filed out of the way, and letting it remove a shop from the Customers view
 too would leave that shop on no screen at all.
 
+**AND THE CARD SAYS WHICH IT IS AND WHICH RUNG, because "Lead" alone answers a
+question nobody asked.** A salesman reading this list is choosing between a
+Suspect he has visited twice, a Prospect that owes him a qualification and a
+shop already in Negotiation, and those are three different mornings. The rung
+lives in `leads`, so `LEAD_FACTS` selects it — the same `EXISTS` the chips
+filter on, plus the two stage columns, as correlated subqueries rather than a
+`LEFT JOIN`, because both tables carry `id`, `name` and `city` and a join makes
+every bare column in the builder ambiguous. `accountLine` composes the words
+from `stageOf`, the SAME resolver `/lead` draws its ladder from, so the list and
+the record cannot disagree about one shop.
+
+**A LEAD'S CARD OPENS `/lead`, and everything else opens `/customer`.** Both
+went to `/customer`, which for a lead is a page of empty ledgers and — far
+worse — the only screen in the app with no route to the funnel on it. The
+ladder, the §28 gates and both forms are on `/lead`, and `/leads` was the single
+door to them, so a salesman who found a shop through the tab he already had open
+could neither see its rung nor move it. The record carries a link back the other
+way, for arrivals from search, a journey stop or a visit.
+
+**These three rules are PURE and live in `lib/account-label.ts`,** the handset's
+counterpart to MahekOne's own `lib/account-types.ts` and pure for the same
+reason. They were in `data/customers.ts`, which imports the database — so
+nothing that decided the words on four hundred rows a day could be tested
+without a handset, which is exactly how the `customerStage` bug below survived.
+
 The Everything / Customers / Leads chips are a VIEW and not a scope. All three
 show only his own book, already narrowed to the territory he works, and nothing
 there reaches another salesman's. They sit beside the origin chips rather than
@@ -3707,6 +3732,25 @@ The handset's `customerStage` was the worst of the five — `< 40 ? 'Overdue' :
 < 60 ? 'At risk'`, a third pair of thresholds, neither of them configuration,
 and an unscored customer falling through to "Active", which is a verdict about
 somebody nothing had measured.
+
+**AND THE FIX LEFT ITS OWN WRECKAGE, which took a year to notice.** The
+replacement kept a branch reading `status === 'Overdue' || 'At risk' ||
+'Active'`, while `customer_status` is an enum of exactly `active`, `inactive`
+and `deactivated` — lower case, and two of those three literals name nothing
+that exists anywhere in MahekOne. So the branch could never once fire, every
+account fell through to the band, and a shop somebody had deliberately
+DEACTIVATED read as whatever its buying cycle happened to say. `deactivated` is
+the one that has to win, because `recomputeInactivity` derives every other value
+and pointedly never writes that one. `inactive` gets no word of its own: it is
+the same fact the `dormant` band states, from the same threshold.
+
+**A null verdict now draws NO DOT, which is the half that was on the screen.**
+The function has always answered null for an account nothing has been measured
+on, and its contract says the caller invents nothing — but the card drew the dot
+unconditionally and made only the WORD conditional. So a shop nobody has ever
+sold to got a bare GREEN dot with nothing beside it: the most reassuring mark on
+the card, on the row that has earned it least. On a fresh book that is most of
+the screen.
 
 `lib/customer-health.ts` is the one place either becomes words, pure and
 client-safe like `account-types` and `seat-labels` beside it. The band gets the

@@ -10,6 +10,18 @@ import {
 import { enqueue } from '../sync/queue';
 import { insertAndQueue, insertLocal, stamp } from './write';
 
+/*
+ * WHAT A CARD SAYS ABOUT A ROW lives in `lib/account-label.ts` and is
+ * re-exported here, where every caller already looked for it.
+ *
+ * It left because this file imports the database and therefore cannot be
+ * tested without a handset — and these three decide the words on four hundred
+ * rows a salesman reads a day. `customerStage` shipped with a branch comparing
+ * against two values the `customer_status` enum cannot produce, so it could
+ * never fire, and nothing anywhere noticed: there was no test that could.
+ */
+export { accountLine, accountType, customerStage } from '../lib/account-label';
+
 /**
  * The retention band, exactly as the server computes and sends it.
  *
@@ -51,6 +63,15 @@ export type Customer = {
   creditBlockReason: string | null;
   outstandingPaise: number;
   submittedNotInvoicedPaise: number;
+  /**
+   * The lead's own facts, from `LEAD_FACTS` in `customer-query.ts`. Absent on
+   * every other read of this table — `getCustomer` selects `*` from
+   * `customers` alone — which is why all three are optional rather than
+   * nullable: undefined means nobody asked, and null would claim we did.
+   */
+  isLead?: number;
+  leadFunnelStage?: string | null;
+  leadStage?: string | null;
   healthScore: number | null;
   /**
    * The retention band, computed by the server from the customer's own buying
@@ -231,66 +252,6 @@ export async function customerBills(id: string): Promise<CustomerBill[]> {
     'SELECT * FROM customer_bills WHERE customerId = ? ORDER BY billDate ASC, id ASC',
     [id],
   );
-}
-
-/**
- * What KIND of account this is, in one word.
- *
- * The mark wins over the kind, which is the rule MahekOne's own
- * `lib/account-types.ts` states for the web list and for the same reason:
- * "Lead · Third party" is two facts fighting over one glance, and on a phone
- * there is even less room to lose the argument in. A shop we deliver to and do
- * not bill is a third party whatever its kind says.
- *
- * `null` where the row predates migration v12 and nothing has re-synced it —
- * saying "Customer" on no evidence would be a guess, and this is the one field
- * whose whole job is to stop the salesman guessing.
- */
-export function accountType(c: Pick<Customer, 'kind' | 'thirdParty'>): string | null {
-  if (c.thirdParty) return 'Third party';
-  if (c.kind === 'lead') return 'Lead';
-  if (c.kind === 'customer') return 'Customer';
-  return null;
-}
-
-/**
- * The word on the card.
- *
- * IT USED TO DERIVE ONE FROM THE SCORE, and that was the fifth and worst of
- * the renderings B3-16 was raised about: `< 40 ? 'Overdue' : < 60 ? 'At risk'`
- * — a third pair of thresholds, neither of them configuration, producing the
- * phrase "At risk" from a question that is not the one that phrase answers.
- * The owner's report calls a customer at risk when they are 1.25 of their own
- * cycles overdue; this called one at risk for owing money while ordering every
- * week. Worse, an unscored customer fell through to 'Active' — a verdict about
- * somebody nothing had measured.
- *
- * The band is the answer now, and it arrives from the server already computed
- * by the one engine `customers.status`, the Call Log and the owner's retention
- * report all read. `status` still wins where MahekOne has stated one, because
- * that is a decision somebody made and this is a derivation.
- *
- * Null where there is nothing to say — the caller draws no verdict rather than
- * inventing one.
- */
-export function customerStage(
-  c: Pick<Customer, 'status' | 'healthBand'>,
-): 'Active' | 'At risk' | 'Dormant' | 'Lost' | null {
-  if (c.status === 'Overdue' || c.status === 'At risk' || c.status === 'Active') {
-    return c.status === 'Overdue' ? 'At risk' : c.status;
-  }
-  switch (c.healthBand) {
-    case 'active':
-      return 'Active';
-    case 'at-risk':
-      return 'At risk';
-    case 'dormant':
-      return 'Dormant';
-    case 'lost':
-      return 'Lost';
-    default:
-      return null;
-  }
 }
 
 /** Whole days since a `YYYY-MM-DD`, or null when there is no date to count from. */
