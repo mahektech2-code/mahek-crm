@@ -439,6 +439,38 @@ export type PullDelta = {
    * still his own `payments` row, and still `reported` until accounts find it.
    */
   customerBills: unknown[];
+  /**
+   * THE WHOLE BOOK, AS IDS — what this handset is allowed to hold right now.
+   *
+   * A pull says what EXISTS and a tombstone says what STOPPED, and between
+   * them sat a gap wide enough to walk a salesman through: a tombstone is
+   * written when somebody EDITS an allocation, so every other way a book can
+   * shrink wrote none. A role changed from under him, an account reassigned,
+   * a customer's city corrected — each quietly narrowed what the server would
+   * send and never told the phone to let go of what it already had.
+   *
+   * The case that made it plain: an associate with no territory at all. The
+   * server correctly returns NO customers for him — `customerIdsInScope`
+   * short-circuits before it asks — and his handset went on showing a book it
+   * had downloaded under an older rule, for ever, because nothing had ever
+   * been asked to reconcile the two. He could open shops he is not allowed to
+   * see, and no screen anywhere was wrong about anything.
+   *
+   * So the authoritative set travels with every pull rather than the
+   * DIFFERENCE being guessed at by whoever remembered to write one. It is the
+   * same list the payload was already built from — `customerIdsInScope` is
+   * computed once at the top of both builders — so it costs a serialisation
+   * and no query. Beside the ten orders and ten receipts a customer that the
+   * delta already re-sends unconditionally, a few thousand ids is nothing.
+   *
+   * ABSENT AND EMPTY MEAN DIFFERENT THINGS, and the whole safety of this rests
+   * on it. `undefined` is an older server that does not speak this — the
+   * handset must touch nothing. `[]` is this server saying the book is empty,
+   * which is a real and correct answer for an unallocated salesman, and the
+   * handset must act on it.
+   */
+  bookIds?: string[];
+
 };
 
 export type SyncResponse = {

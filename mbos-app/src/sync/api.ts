@@ -275,6 +275,15 @@ export type PullPayload = {
       one instead of being spread oldest-first. Optional like every other
       channel: an older server simply does not send it. */
   customerBills?: unknown[];
+  /**
+   * THE WHOLE BOOK AS IDS — what this handset is allowed to hold.
+   *
+   * `applyPull` drops every local customer that is not in here. See
+   * `reconcileBook`, which is where the difference between ABSENT and EMPTY
+   * is enforced: undefined is an older server that does not speak this and
+   * must change nothing, `[]` is this server saying the book is empty.
+   */
+  bookIds?: string[];
   leads?: unknown[];
   notifications?: unknown[];
   documents?: unknown[];

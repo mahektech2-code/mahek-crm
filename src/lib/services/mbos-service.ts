@@ -773,6 +773,9 @@ export type BootstrapPayload = {
   customerPayments: unknown[];
   /** The open bills behind `outstandingPaise`. See `customerBills`. */
   customerBills: unknown[];
+  /** The whole book as ids, so the handset can let go of what left it. See
+      `bookIds` in `lib/mbos/types.ts` for why this travels on every pass. */
+  bookIds: string[];
   leaveBalances: unknown[];
   /**
    * TODAY'S ATTENDANCE, so a fresh install is not blind about a day it already
@@ -963,6 +966,8 @@ export async function buildBootstrap(
     customerOrders: orderHistoryRows,
     customerPayments: paymentHistoryRows,
     customerBills: billRows,
+    /* The same list every channel above was built from. */
+    bookIds: ids,
     leaveBalances: leaveRows,
     attendanceToday: attendanceRow,
     holidays: holidayRows,
@@ -2402,5 +2407,9 @@ export async function buildPull(
     customerOrders: orderHistoryChanges as unknown[],
     customerPayments: paymentHistoryChanges as unknown[],
     customerBills: billChanges as unknown[],
+    /* The same list every channel above was built from — including the empty
+       one an unallocated salesman gets, which is exactly the answer his
+       handset has never been told. */
+    bookIds: ids,
   };
 }

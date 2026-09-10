@@ -33,6 +33,7 @@ import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { appAccess, customers, mbosUserTerritories, users } from "@/db/schema";
+import { buildBootstrap } from "@/lib/services/mbos-service";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { scopedToUsers } from "@/lib/access-control";
 import { customerIdsInScope, type MbosPrincipal } from "@/lib/services/mbos-service";
@@ -290,6 +291,26 @@ describe("a field salesman's book", () => {
       principalFor({ ...salesman, salesPersonName: AS_A_PERSON_TYPES_IT }),
     );
     assert.deepEqual(ids, [], "a linked salesman with nowhere allocated must hold nothing");
+
+    /*
+     * AND THE PULL HAS TO SAY SO, or the handset never finds out.
+     *
+     * Returning nothing is only half the rule. A pull ADDS and UPDATES; the
+     * only thing that removes a shop from a phone is a tombstone, and
+     * tombstones are written when somebody EDITS an allocation — so a book
+     * that shrank any other way (a role changed, an account reassigned, a
+     * city corrected) left the handset holding shops the server would no
+     * longer send it, for ever. `bookIds` is the authoritative set travelling
+     * with every pass so the handset can drop the difference itself.
+     */
+    const boot = await buildBootstrap(
+      principalFor({ ...salesman, salesPersonName: AS_A_PERSON_TYPES_IT }),
+    );
+    assert.deepEqual(
+      boot.bookIds,
+      [],
+      "the pull must STATE the empty book — a handset cannot let go of what it is never told about",
+    );
   });
 
   test("a city narrows INSIDE its state rather than beside it", async () => {
