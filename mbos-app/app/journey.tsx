@@ -2,6 +2,8 @@ import React from 'react';
 import { View, Pressable } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { AppFrame } from '../src/components/shell/AppFrame';
+import { abandonLeg, openLegOf, type TravelLeg } from '../src/data/travel';
+import { legLine, travellingFor } from '../src/lib/travel-leg';
 import { DashedButton, Input, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
 import { VoiceField } from '../src/components/ui/dictate';
 import { ActionSheet, BottomSheet, Calendar } from '../src/components/ui/overlays';
@@ -60,6 +62,9 @@ export default function JourneyScreen() {
   const notify = useStore((s) => s.notify);
   const askConfirm = useStore((s) => s.askConfirm);
   const set = useStore((s) => s.set);
+  const askTravel = useStore((s) => s.askTravel);
+  /* Still needed for the Continue button below: the leg is already open, so
+     that path only prepares the visit screen — it does not ask again. */
   const beginVisit = useStore((s) => s.beginVisit);
   const boot = useBoot();
   const [moreOpen, setMoreOpen] = React.useState(false);
@@ -77,6 +82,17 @@ export default function JourneyScreen() {
   const [ownErr, setOwnErr] = React.useState<string | null>(null);
   const [ownBusy, setOwnBusy] = React.useState(false);
   const [stops, setStops] = React.useState<JourneyStop[]>([]);
+  /*
+   * The journey he is on, if he is on one.
+   *
+   * Read from SQLite rather than from React state, because Android reaps this
+   * app on the road constantly and a flag held in memory would be gone by the
+   * time he arrived — with the departure photograph already taken and nothing
+   * left to attach it to. Coming back to this screen and finding "On your way
+   * to Sai Paint Depot · 14 min" is what tells him the app has not lost its
+   * place.
+   */
+  const [leg, setLeg] = React.useState<TravelLeg | null>(null);
   const [days, setDays] = React.useState<PlanDay[]>([]);
   const [pastCounts, setPastCounts] = React.useState<Record<string, { total: number; done: number }>>({});
   const [now, setNow] = React.useState(() => Date.now());
@@ -95,6 +111,12 @@ export default function JourneyScreen() {
     void todayStops().then((r) => {
       if (live) setStops(r);
     });
+    const uid = boot.session?.user.id;
+    if (uid) {
+      void openLegOf(uid).then((r) => {
+        if (live) setLeg(r);
+      });
+    }
     /* The whole window — past and future both — read once and sliced below,
        rather than three separate reads that could disagree about "now". */
     void planDays(historyFrom).then((r) => {
@@ -106,7 +128,7 @@ export default function JourneyScreen() {
     return () => {
       live = false;
     };
-  }, [historyFrom]);
+  }, [historyFrom, boot.session?.user.id]);
 
   useFocusEffect(load);
 
@@ -616,6 +638,79 @@ export default function JourneyScreen() {
                 ? 'They owe ' + inr(next.outstandingPaise / 100) + ' — collection is the reason this stop is on the list.'
                 : 'Nothing outstanding against them.')}
           </T>
+          {/*
+            ON THE ROAD, this card stops offering to start a journey and
+            reports the one he is on.
+
+            Two buttons both reading "Start visit" — one for the shop he is
+            riding towards and one for the next stop — is how a second leg gets
+            opened by accident, and opening one closes the first. So while a
+            leg is running the card says where he is going, how long he has
+            been going there, and gives him the two things he can actually do.
+          */}
+          {leg ? (
+            <View style={{ marginTop: 14, gap: 10 }}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 10,
+                  backgroundColor: C.primaryTint,
+                  borderRadius: radius.md,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                }}>
+                <Icon name="nav" size={18} color={C.primaryDeep} strokeWidth={1.8} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(600)]}>
+                    {'On your way to ' + (leg.toLabel ?? 'the shop')}
+                  </T>
+                  <T style={{ fontSize: 12, lineHeight: 16, color: C.primaryDeep }}>
+                    {legLine({
+                      modeLabel: leg.modeKey,
+                      odometerStartKm: null,
+                      odometerEndKm: null,
+                      ticketAmountPaise: null,
+                    }) +
+                      ' · ' +
+                      travellingFor(leg.startedAt ?? Date.now(), now) +
+                      (leg.odometerStartKm != null
+                        ? ' · set off on ' + leg.odometerStartKm.toLocaleString('en-IN') + ' km'
+                        : '')}
+                  </T>
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <SecondaryButton
+                  label="Call it off"
+                  onPress={() =>
+                    askConfirm({
+                      title: 'Not going after all?',
+                      body:
+                        'The trip stays on your record with the reason you give, measuring nothing — the meter has already moved, and a journey that vanished would leave the next one following on from a gap.',
+                      reasonLabel: 'Why · required',
+                      confirmLabel: 'Call off the trip',
+                      run: (reason) => {
+                        void abandonLeg(leg.id, reason).then(() => {
+                          setLeg(null);
+                          notify('Trip called off');
+                        });
+                      },
+                    })
+                  }
+                  style={{ flex: 1, borderRadius: radius.xl }}
+                />
+                <PrimaryButton
+                  label="Continue"
+                  onPress={() => {
+                    beginVisit(leg.customerId ?? next.customerId);
+                    router.push('/visit');
+                  }}
+                  style={{ flex: 1, borderRadius: radius.xl }}
+                />
+              </View>
+            </View>
+          ) : (
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
             <SecondaryButton
               label="Navigate"
@@ -632,13 +727,15 @@ export default function JourneyScreen() {
             />
             <PrimaryButton
               label="Start visit"
-              onPress={() => {
-                beginVisit(next.customerId);
-                router.push('/visit');
-              }}
+              /* Asks how he is getting there and takes the meter photograph
+                 before anything opens — see `TravelGate`. */
+              onPress={() =>
+                askTravel({ customerId: next.customerId, customerName: next.customerName })
+              }
               style={{ flex: 1, borderRadius: radius.xl }}
             />
           </View>
+          )}
         </View>
       ) : null}
 

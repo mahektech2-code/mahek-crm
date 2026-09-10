@@ -64,6 +64,20 @@ export async function queueSelfie(uri: string, parentId: string): Promise<string
   return captureImage({ uri, parentType: 'attendance', parentId, kind: 'selfie' });
 }
 
+/**
+ * An odometer photograph our OWN camera took, queued.
+ *
+ * The same split as `queueSelfie` above, for a related but distinct reason.
+ * The selfie is ours because handing off opens the camera rear-facing; this
+ * one is ours because the screen is asking for a NUMBER with the photograph as
+ * its proof, and the two have to be one act — see `odometer-camera.tsx`. Only
+ * the queueing half lives here, which keeps `sync/media` reached from one
+ * module rather than two.
+ */
+export async function queueOdometerPhoto(uri: string, parentId: string): Promise<string> {
+  return captureImage({ uri, parentType: 'travel_leg', parentId, kind: 'odometer_photo' });
+}
+
 export async function requestMicrophone(): Promise<boolean> {
   const status = await AudioModule.requestRecordingPermissionsAsync();
   return status.granted;

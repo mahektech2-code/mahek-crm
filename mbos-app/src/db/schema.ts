@@ -1513,6 +1513,49 @@ export const MIGRATIONS: string[][] = [
       syncMessage TEXT
     );`,
   ],
+  /* ---- v27 · the meter at both ends of a journey ------------------------- */
+  [
+    /*
+     * A LEG OPENED WHEN HE SETS OFF AND CLOSED WHEN HE ARRIVES.
+     *
+     * `travel_legs` has held both odometer readings since the module shipped
+     * and exactly one photograph beside them, which was right for the screen
+     * it was built for: `/travel` is an after-the-fact day log, so the two
+     * readings are typed together from memory and one picture of the meter as
+     * it stands is all there is to take.
+     *
+     * It stops being right the moment the readings are taken when they
+     * actually happen. Two numbers half an hour apart cannot share a
+     * photograph, and the one that would be missing is the DEPARTURE — the
+     * reading nobody can go back and check, because by then the meter has
+     * moved. `odometerPhotoId` keeps its meaning as the reading at the start;
+     * this is its counterpart.
+     */
+    `ALTER TABLE travel_legs ADD COLUMN odometerEndPhotoId TEXT;`,
+    /*
+     * WHERE THE LEG CAME FROM, which decides what may be demanded of it.
+     *
+     * A `day_log` leg is typed on `/travel` once the journey is over: the
+     * photograph is optional and always will be, because refusing to record a
+     * journey that already happened only means nobody finds out. A `visit` leg
+     * is opened as he presses Start visit and closed as he says he has
+     * arrived, so the app is present at both ends and CAN insist on the meter
+     * being photographed with the reading typed against it.
+     *
+     * Defaulted, so every leg already on a handset keeps exactly the meaning
+     * it had and adding this moves nothing.
+     */
+    `ALTER TABLE travel_legs ADD COLUMN origin TEXT NOT NULL DEFAULT 'day_log';`,
+    /*
+     * The one still running. A partial index rather than a scan, because the
+     * journey screen, the visit screen and the app's own resume all ask this
+     * question and the answer has to be instant — it is what tells the app it
+     * is mid-journey after Android has reaped it on the road.
+     */
+    `CREATE INDEX IF NOT EXISTS travel_legs_open
+       ON travel_legs (userId) WHERE endedAt IS NULL;`,
+  ],
+
 ];
 
 /**

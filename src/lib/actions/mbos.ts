@@ -4321,10 +4321,14 @@ const travelLegSchema = z.object({
   odometerStartKm: z.number().int().min(0).nullish(),
   odometerEndKm: z.number().int().min(0).nullish(),
   odometerPhotoId: z.string().nullish(),
+  /** The meter on arrival. See `mbosTravelLegs.odometerEndPhotoId`. */
+  odometerEndPhotoId: z.string().nullish(),
   ticketAmountPaise: z.number().int().min(0).nullish(),
   ticketPhotoId: z.string().nullish(),
   ticketReference: z.string().max(100).nullish(),
   note: z.string().max(2000).nullish(),
+  /** `day_log` | `visit`. See `mbosTravelLegs.origin`. */
+  origin: z.enum(["day_log", "visit"]).nullish(),
 });
 
 /**
@@ -4345,7 +4349,7 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
   const p = parsed.data;
 
   const [mode] = await db
-    .select({ key: mbosTravelModes.key })
+    .select({ key: mbosTravelModes.key, requiresOdometer: mbosTravelModes.requiresOdometer })
     .from(mbosTravelModes)
     .where(and(eq(mbosTravelModes.key, p.modeKey), eq(mbosTravelModes.active, true)))
     .limit(1);
@@ -4396,6 +4400,60 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
     if (!scoped.ok) return { kind: "rejected", value: scoped.value };
   }
 
+  /*
+   * A VISIT LEG IS HELD TO THE STANDARD THE APP WAS PRESENT FOR.
+   *
+   * `mbos.travel.odometerModes` does not exist and should not: whether a mode
+   * needs a meter read is already `mbos_travel_modes.requires_odometer`, a row
+   * an admin edits, and a second answer in a settings file would be a second
+   * answer. What this adds is that on a leg the handset opened AT THE MOMENT
+   * OF TRAVELLING, the reading and its photograph are both required — the
+   * camera screen refuses to open one without them, and this is that rule
+   * surviving a build that forgot it or a payload somebody wrote by hand. A
+   * mileage claim is money, and a check that lives only in an interface is not
+   * a check.
+   *
+   * A `day_log` leg is deliberately untouched. It is typed from memory once
+   * the journey is over; refusing it for want of a photograph nobody can now
+   * take would mean refusing to record a journey that happened, which is the
+   * rule the whole expense module is built on.
+   */
+  if (p.origin === "visit" && mode.requiresOdometer) {
+    if (p.odometerStartKm == null || !p.odometerPhotoId) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          "A journey on your own vehicle is measured on your own meter, so it needs the reading at the start and the photograph showing it. Nothing was recorded — take the photo and set off again.",
+        ),
+      };
+    }
+    /* Only once it has ENDED. A leg still on the road has no arrival reading
+       yet and that is its ordinary state, not a fault. */
+    if (p.endedAt != null && (p.odometerEndKm == null || !p.odometerEndPhotoId)) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          "Arriving on your own vehicle needs the meter read and photographed again — that second reading is the whole of the distance claim.",
+        ),
+      };
+    }
+    if (
+      p.odometerEndKm != null &&
+      p.odometerStartKm != null &&
+      p.odometerEndKm < p.odometerStartKm
+    ) {
+      return {
+        kind: "rejected",
+        value: reject(
+          "validation",
+          `${p.odometerEndKm} km is lower than the ${p.odometerStartKm} km you set off on, and a meter does not run backwards. It is usually a digit dropped from the front — check the reading.`,
+        ),
+      };
+    }
+  }
+
   const values = {
     expenseDayId: dayId,
     modeKey: p.modeKey,
@@ -4415,10 +4473,12 @@ async function handleTravelLeg(principal: MbosPrincipal, item: SyncItem): Promis
     odometerStartKm: p.odometerStartKm ?? null,
     odometerEndKm: p.odometerEndKm ?? null,
     odometerPhotoId: p.odometerPhotoId ?? null,
+    odometerEndPhotoId: p.odometerEndPhotoId ?? null,
     ticketAmountPaise: p.ticketAmountPaise ?? null,
     ticketPhotoId: p.ticketPhotoId ?? null,
     ticketReference: p.ticketReference ?? null,
     note: p.note ?? null,
+    origin: p.origin ?? "day_log",
     updatedAt: new Date(),
     updatedById: principal.user.id,
   };
@@ -6361,6 +6421,24 @@ const MBOS_PARENTS: Record<string, (typeof attachmentParentEnum.enumValues)[numb
      `canRead` resolves it through the customer exactly as it does for one
      captured at a desk. */
   payment: "payment_receipt",
+  /*
+   * THE ODOMETER PHOTOGRAPHS AND THE TICKET, which were being DELETED nightly.
+   *
+   * `mbos_travel_leg` has been in the attachment enum since the expense module
+   * shipped and the handset has sent `parentType: 'travel_leg'` on every one of
+   * these uploads — but this map never named it, so `storeMbosMedia` resolved
+   * no parent and every file landed with `parent_id` null. `sweepOrphans`
+   * selects exactly that past `attachments.orphanCleanupHours` and removes the
+   * bytes: a meter photographed on Monday was gone on Tuesday. Until then it
+   * was readable by its uploader alone, because `canRead` falls back to
+   * "unbound and still the uploader's own" — so no approver had ever been able
+   * to open one either.
+   *
+   * It is the same bug AGENTS.md already records for the whole MBOS media
+   * subsystem, one parent type over, arriving with the module that was written
+   * after the fix.
+   */
+  travel_leg: "mbos_travel_leg",
 };
 
 /**

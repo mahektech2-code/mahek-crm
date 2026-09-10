@@ -46,6 +46,7 @@ const files = [
   "src/lib/owner-dashboard.test.ts",
   "src/lib/founder-dashboard.test.ts",
   "src/lib/expense-policy.test.ts",
+  "src/lib/travel-on-visit.test.ts",
   "src/lib/storage-fallback.test.ts",
   "src/lib/relationship-handover.test.ts",
   "src/lib/sample-logistics.test.ts",

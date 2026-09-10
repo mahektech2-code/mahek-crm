@@ -5669,7 +5669,21 @@ export const mbosTravelLegs = pgTable(
     odometerStartKm: integer("odometer_start_km"),
     odometerEndKm: integer("odometer_end_km"),
     odometerMetres: integer("odometer_metres"),
+    /** The meter as he SET OFF. See `odometerEndPhotoId` below. */
     odometerPhotoId: text("odometer_photo_id").references(() => attachments.id),
+    /**
+     * The meter as he SET OFF, and as he ARRIVED. Two photographs, because one
+     * cannot show two readings taken half an hour apart.
+     *
+     * `odometerPhotoId` is the older column and keeps exactly the meaning it
+     * had — a leg logged after the fact on `/travel` types both readings at
+     * once and photographs the meter as it stands, which is a picture of the
+     * START of the next leg as much as the end of this one. What changes is
+     * that a leg opened from "Start visit" can now hold the pair, and the
+     * departure reading is the one that matters: by the time anybody thinks to
+     * check it, the meter has moved.
+     */
+    odometerEndPhotoId: text("odometer_end_photo_id").references(() => attachments.id),
 
     /** What the policy said to pay on, and where it came from. Derived. */
     chosenMetres: integer("chosen_metres"),
@@ -5684,6 +5698,18 @@ export const mbosTravelLegs = pgTable(
     ticketReference: text("ticket_reference"),
 
     note: text("note"),
+    /**
+     * `day_log` | `visit` — and it decides what may be DEMANDED of the leg.
+     *
+     * A day-log leg is typed on `/travel` from memory once the journey is
+     * over, so the photograph is optional and always will be: refusing to
+     * record a journey that already happened only means nobody finds out.
+     * A visit leg is opened as he sets off and closed as he arrives, so the
+     * app is present at both ends and can insist on the meter being
+     * photographed with the reading typed against it — which is the only
+     * reason asking at the moment of travelling is worth the two taps.
+     */
+    origin: text("origin").notNull().default("day_log"),
   },
   (t) => [
     index("mbos_travel_legs_user_idx").on(t.userId, t.startedAt.desc()),

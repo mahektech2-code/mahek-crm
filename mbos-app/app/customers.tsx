@@ -49,7 +49,7 @@ export default function Customers() {
   const custQ = useStore((s) => s.custQ);
   const set = useStore((s) => s.set);
   const notify = useStore((s) => s.notify);
-  const beginVisit = useStore((s) => s.beginVisit);
+  const askTravel = useStore((s) => s.askTravel);
   const sheet = useStore((s) => s.sheet);
 
   /* The two health thresholds. Read from configuration, never typed here —
@@ -707,7 +707,8 @@ export default function Customers() {
                     if (out.status !== 'opened') notify(out.reason);
                   },
                 },
-                { g: 'shop', l: 'Visit', run: () => { beginVisit(x.id); router.push('/visit'); } },
+                /* The travel question comes first — see `TravelGate`. */
+                { g: 'shop', l: 'Visit', run: () => askTravel({ customerId: x.id, customerName: x.name }) },
                 { g: 'order', l: 'Order', run: () => { set({ custId: x.id }); router.push('/order?from=customers'); } },
                 { g: 'dots', l: 'More', run: () => { set({ custId: x.id }); setRowMore(x); } },
               ].map((a) => (

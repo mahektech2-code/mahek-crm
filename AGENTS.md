@@ -3711,6 +3711,89 @@ MahekOne sets no monthly target for a field salesman and a figure with nothing
 to be computed from would be an invention on the one screen where a wrong number
 is least forgivable.
 
+**HOW HE GOT TO THE SHOP IS ASKED WHEN HE SETS OFF, and "Start visit" now
+means "I am setting off".** Pressing it opens `TravelGate` — the modes from
+`mbos_travel_modes`, an admin's rows rather than a list in a screen — and the
+visit stays LOCKED behind an "I have arrived" step until he says he is there.
+That reversal is the point: starting the dwell clock at the tap would count the
+ride as time in the shop, which is the one number the dwell check exists to be
+honest about. Nothing new is priced by this. A leg it opens is the same
+`mbos_travel_legs` row `/travel` writes, on the same `mbos_expense_days`, and
+the policy engine decides what it is worth exactly as before — so a day's
+reimbursement is one figure however its legs got there.
+
+**A LEG NOW HAS A REAL GAP BETWEEN ITS TWO ENDS, which is a state `/travel`
+could never express.** The day log writes `started_at` and `ended_at` in the
+same breath, because it is typed up once the journey is over; a leg opened from
+a visit sits with `ended_at` null while he is on the road. It is a ROW and not a
+screen state — Android reaps this app on the road constantly, and a "travelling"
+flag in memory would be gone by the time he arrived with the departure
+photograph already taken and nothing left to attach it to. A partial unique
+index keeps one open leg per person, at both ends: he cannot be travelling to
+two shops at once, and two open legs would mean the arrival photograph had a
+choice of which departure to close.
+
+**THE METER IS PHOTOGRAPHED AT BOTH ENDS, because one photograph cannot show
+two readings.** `odometer_photo_id` keeps exactly the meaning it had — a
+day-log leg types both readings at once and photographs the meter as it stands
+— and `odometer_end_photo_id` is its counterpart. The one that would otherwise
+be missing is the DEPARTURE: the reading nobody can go back and check, because
+by then the meter has moved. Both the reading and the picture are required and
+neither is redundant — two photographs cannot be subtracted, and a figure with
+no picture behind it cannot be checked by anybody who was not standing there.
+
+**`origin` is what lets the server be strict about one and not the other.** A
+`day_log` leg is typed from memory once the journey is over: the photograph is
+optional and always will be, because refusing it for want of a picture nobody
+can now take would mean refusing to record a journey that happened. A `visit`
+leg was opened as he set off and closed as he arrived, so the app was present
+at both ends and CAN insist. Without the column the strictness would silently
+have broken the screen that shipped first, which is the whole reason it is a
+column rather than a guess from which fields happen to be filled in.
+
+**It is our own camera, unlike every other rear-facing photograph.**
+`selfie-camera.tsx` argues that only the selfie should be ours and every word of
+that still holds — it just does not decide this one, because `OdometerCamera` is
+not asking for a photograph. It is asking for a NUMBER with the photograph as
+its proof, and the two have to be one act. Handed to the system camera they
+become two: MBOS goes to the background where a battery manager reaps it, and
+the digits get typed against an image nobody is looking at any more. The only
+ways out are both together, or abandoning the journey.
+
+**The reading is refused while he is still at the meter, which is the only
+moment it can be.** An arrival below the departure is a digit dropped from the
+front, not a meter running backwards; a distance above
+`mbos.travel.maxLegKilometres` is a typo, not a long day. Checked in
+`lib/travel-leg.ts` on the handset and AGAIN in `handleTravelLeg`, because a
+mileage claim is money and a check that lives only in an interface is not a
+check. A journey called off is CLOSED AT ITS OWN READING so it measures nothing
+and carries the reason — deleting it would leave the next departure following on
+from a gap, which is the pattern an audit stops at.
+
+**A bus or train ticket is offered on the way out and never demanded.** It is a
+scrap of paper that gets lost between the seat and the shop door, and refusing
+the visit over one would mean refusing to record a visit that happened. Skipping
+says in words that the fare can still be added on `/travel`, so nobody skips it
+believing the money is gone; the PNR is optional beside it, because a local bus
+ticket has no number and that is what a duplicate would be caught on.
+
+**EVERY ODOMETER PHOTOGRAPH WAS BEING DELETED NIGHTLY, and none of them could be
+opened.** Both halves of the bug AGENTS.md already records for the whole MBOS
+media subsystem, arriving again with the module written after the fix.
+`MBOS_PARENTS` did not name `travel_leg`, so `storeMbosMedia` resolved no parent
+and every file landed with `parent_id` null — which is exactly what
+`sweepOrphans` removes past `attachments.orphanCleanupHours`. A meter
+photographed on Monday was gone on Tuesday, and until then only its uploader
+could open it, because `canRead` named no rule for `mbos_travel_leg` either and
+`customerBehind` fell through to `calls`. Who may open one is
+`canReadTravelLegPhoto`: the man who took it, and whoever holds the `sales`
+grant with him inside `managerScope`. The grant is asked FIRST and is not
+optional — `managerScope` answers "national, sees everybody" for anybody with no
+row in `mbos_manager_territories`, which is every plain salesman, so falling
+straight through would let one salesman open another's mileage evidence by id.
+It is not read through the customer's scope either, though a leg names a shop:
+this is evidence about a person's expense claim, not about the customer.
+
 **Tracking runs between the check-in and the check-out and not one second either
 side.** A track that carried on after the day was closed would be following
 somebody home. The handset takes a fix every few seconds — dense enough that

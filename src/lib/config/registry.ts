@@ -2713,6 +2713,17 @@ export const SETTINGS = [
     min: 0,
     max: 3600,
   },
+  {
+    key: "mbos.travel.maxLegKilometres",
+    type: "integer",
+    category: "mbos-location",
+    label: "Longest single journey to one shop",
+    description:
+      "Kilometres. A guard against a mistyped odometer, not a limit on how far anybody may travel: 41,208 entered as 4,120 turns one journey into a claim for thirty-seven thousand kilometres, and the policy engine would price it without a murmur. Above this the handset refuses the reading while he is still standing at the meter and can look again — which is the only moment anybody can. It applies to a journey opened from Start visit; a leg typed up afterwards on the Travel screen is a different kind of evidence and is not held to it.",
+    default: 400,
+    min: 1,
+    max: 5000,
+  },
 
   /* ------------------------------------------------------------------ sync */
   {
@@ -3509,6 +3520,7 @@ export type Config = {
   "mbos.tasks.requireCompletionNote": boolean;
   "mbos.approvals.escalationHours": number;
   "mbos.visits.minimumDwellSeconds": number;
+  "mbos.travel.maxLegKilometres": number;
   "mbos.sync.mediaWifiOnly": boolean;
   "mbos.ai.retainAudioAfterTranscription": boolean;
 };
