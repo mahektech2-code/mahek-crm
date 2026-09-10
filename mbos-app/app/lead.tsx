@@ -4,6 +4,7 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { VoiceField } from '../src/components/ui/dictate';
+import { Icon } from '../src/components/ui/Icon';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { NextActionSheet } from '../src/components/leads/next-action-sheet';
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
@@ -13,8 +14,11 @@ import {
   leadThresholds,
   setArchived,
   setFollowUp,
+  touchLead,
   type Lead,
 } from '../src/data/leads';
+import { validationsFor } from '../src/data/validations';
+import { callNumber } from '../src/lib/messaging';
 import {
   addLeadNote,
   advanceStage,
@@ -98,18 +102,29 @@ export default function LeadRecord() {
   const [ladderOpen, setLadderOpen] = React.useState(false);
   const [parties, setParties] = React.useState(false);
 
+  const [checks, setChecks] = React.useState<Awaited<ReturnType<typeof validationsFor>>>([]);
+
   const load = React.useCallback(() => {
     let live = true;
     if (!id) return;
-    void Promise.all([leadFunnelView(id), leadEvents(id), leadThresholds(), currentSession()]).then(
-      ([v, e, t, s]) => {
-        if (!live) return;
-        setView(v);
-        setEvents(e);
-        setCfg(t);
-        setMe(s ? { id: s.user.id, name: s.user.name } : null);
-      },
-    );
+    void Promise.all([
+      leadFunnelView(id),
+      leadEvents(id),
+      leadThresholds(),
+      currentSession(),
+      /* §E — the office's own call to this shop. Recorded by `app/validate.tsx`
+         and read back by nothing until now, so the one thing this call
+         produces that nothing else could — the office's answer beside the
+         salesman's — was written down and never shown to either of them. */
+      validationsFor(id),
+    ]).then(([v, e, t, s, calls]) => {
+      if (!live) return;
+      setView(v);
+      setEvents(e);
+      setCfg(t);
+      setMe(s ? { id: s.user.id, name: s.user.name } : null);
+      setChecks(calls);
+    });
     return () => {
       live = false;
     };
@@ -239,7 +254,52 @@ export default function LeadRecord() {
 
         <View style={{ gap: 8 }}>
           <Line label="Kind of sale" value={salesTypeLabel(salesType)} />
-          <Line label="Mobile" value={lead.mobile ?? 'Not taken'} />
+          {/* THE NUMBER IS NOW DIALLABLE, and it was text.
+              A lead is a shop nobody has sold to yet, so ringing them is most
+              of the work — and this screen printed the number as a label with
+              no way to call it, while the customer record two taps away has
+              had a call button since it was written.
+
+              Ringing is also the one thing `touchLead` was written for and
+              never got: staleness, the archive prompt and the untouched-lead
+              escalation all measure from `lastActivityDate`, the stage and
+              note paths bump it themselves, and its docstring names "a call
+              placed" as the case nothing covered. So a lead worked hardest by
+              phone was the one the app decided had been abandoned. */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Line label="Mobile" value={lead.mobile ?? 'Not taken'} />
+            </View>
+            {lead.mobile ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={'Ring ' + title}
+                onPress={() => {
+                  void callNumber(lead.mobile!).then((out) => {
+                    if (out.status === 'failed') return notify(out.reason);
+                    /* The clock moves on the ATTEMPT, not on a connected call:
+                       the handset cannot tell us whether they picked up, and
+                       treating an unanswered ring as no work would age exactly
+                       the leads somebody is chasing hardest. */
+                    void touchLead(lead.id, today).then(load);
+                  });
+                }}
+                style={({ pressed }) => ({
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 6,
+                  minHeight: 48,
+                  paddingHorizontal: 14,
+                  borderRadius: radius.sm,
+                  borderWidth: 1,
+                  borderColor: C.primary,
+                  backgroundColor: pressed ? C.wash : C.primaryTint,
+                })}>
+                <Icon name="call" size={16} color={C.primaryDeep} />
+                <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(500)]}>Ring</T>
+              </Pressable>
+            ) : null}
+          </View>
           <Line
             label="Might buy"
             value={lead.estimatedPotentialPaise ? inr(lead.estimatedPotentialPaise / 100) + ' a month' : 'Not estimated'}
@@ -460,6 +520,63 @@ export default function LeadRecord() {
           </Pressable>
         </View>
       )}
+
+      {/* ---------------------------------------------- §E validation calls --
+
+          The office rings the shop the working day after a lead is qualified
+          and asks what the visit was actually like. `app/validate.tsx` records
+          it, `recordValidation` stores it and sends it — and `validationsFor`,
+          written beside them, was called by nothing. So the answers sat in
+          `lead_validations` where neither the salesman who raised the lead nor
+          the person who made the call could read them back.
+
+          `confirmedRequirement` is the point of the whole exercise: what the
+          office was told on the phone, kept apart from what the salesman was
+          told standing in the shop, precisely so the two can disagree. */}
+      {checks.length ? (
+        <View style={{ marginTop: 20 }}>
+          <SectionLabel style={{ marginBottom: 10 }}>The office rang them</SectionLabel>
+          <View style={{ gap: 10 }}>
+            {checks.map((v) => {
+              const tone: BadgeTone =
+                v.verdict === 'confirmed'
+                  ? 'success'
+                  : v.verdict === 'not_qualified'
+                    ? 'danger'
+                    : v.verdict === 'on_hold'
+                      ? 'amber'
+                      : 'neutral';
+              return (
+                <Card key={v.id}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <T style={[{ flex: 1, minWidth: 0, fontSize: 14, color: C.ink }, weight(500)]}>
+                      {/* Whether anybody picked up is the first thing worth
+                          knowing: a verdict off a call that never connected is
+                          a verdict about nothing. */}
+                      {v.reached ? 'Spoke to them' : 'Could not reach them'}
+                    </T>
+                    <Badge tone={tone}>{verdictWord(v.verdict)}</Badge>
+                  </View>
+                  <T s="caption" style={{ marginTop: 3 }}>
+                    {pretty(isoDate(new Date(v.calledAt)))}
+                    {v.syncState === 'queued' ? ' · not sent yet' : ''}
+                  </T>
+                  {v.confirmedRequirement ? (
+                    <T style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
+                      {'They told the office: ' + v.confirmedRequirement}
+                    </T>
+                  ) : null}
+                  {v.verdictReason ? (
+                    <T style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginTop: 4 }}>
+                      {v.verdictReason}
+                    </T>
+                  ) : null}
+                </Card>
+              );
+            })}
+          </View>
+        </View>
+      ) : null}
 
       {/* ------------------------------------------------- §25 the timeline */}
       <View style={{ marginTop: 20 }}>
@@ -831,4 +948,20 @@ function PartiesSheet({
       </View>
     </BottomSheet>
   );
+}
+
+/**
+ * The stored verdict, in words somebody would say.
+ *
+ * `not_qualified` on a badge is the database talking. Anything unrecognised
+ * falls through to "Waiting" rather than being printed raw — a verdict added
+ * at a desk should read as pending on an older handset, not as an enum.
+ */
+function verdictWord(v: string): string {
+  switch (v) {
+    case 'confirmed': return 'Confirmed';
+    case 'not_qualified': return 'Not qualified';
+    case 'on_hold': return 'On hold';
+    default: return 'Waiting';
+  }
 }

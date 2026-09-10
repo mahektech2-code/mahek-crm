@@ -22,6 +22,7 @@ import {
 } from '../src/data/attendance';
 import { useTicker } from '../src/components/ui/use-ticker';
 import { collectionDue } from '../src/data/customers';
+import { listPerformance, shortfalls, type PerformanceMonth } from '../src/data/performance';
 import { getConfig } from '../src/data/config';
 import { ordersToday } from '../src/data/orders';
 import { cashInHand } from '../src/data/payments';
@@ -107,6 +108,10 @@ export default function Home() {
   const askConfirm = useStore((s) => s.askConfirm);
 
   const [day, setDay] = React.useState<Day>(EMPTY);
+  /* `undefined` is still reading, `null` is read and there is nothing. Two
+     different sentences, and collapsing them shows "no target" for a frame to
+     somebody who has one. */
+  const [month, setMonth] = React.useState<PerformanceMonth | null | undefined>(undefined);
   const [starting, setStarting] = React.useState(false);
 
   /*
@@ -155,7 +160,12 @@ export default function Home() {
       listOpenTasks(),
       todayRow(userId),
       dayState(userId),
-    ]).then(([stops, due, follow, orders, visits, cash, tasks, attendance, state]) => {
+      /* Two months come down; the first is the current one. Read here rather
+         than on a focus of its own so the card and the six figures above it
+         describe the same moment. */
+      listPerformance(),
+    ]).then(([stops, due, follow, orders, visits, cash, tasks, attendance, state, months]) => {
+      setMonth(months[0] ?? null);
       setDay({
         stops: stops.total,
         stopsDone: stops.done,
@@ -547,18 +557,59 @@ export default function Home() {
 
       {/* ---- how the period is going ----
 
-          The office computes targets and sends none, so this panel used to
-          render a fixture: ₹18,42,000 of ₹26,00,000, a progress bar and 71%,
-          with "These figures are not live yet" in grey underneath. A number
-          with a bar under it is read as fact at a glance and the caption is
-          not read at all — and this is the first screen after sign-in. It says
-          what it knows instead, which is nothing. */}
-      <Card style={{ marginTop: 12, padding: 14 }}>
-        <Text style={type.label}>Your target</Text>
-        <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
-          The office has not set one. Today&rsquo;s orders, visits and collections are in the six figures above.
-        </Text>
-      </Card>
+          This panel used to render a fixture — ₹18,42,000 of ₹26,00,000, a
+          progress bar and 71%, with "These figures are not live yet" in grey
+          underneath. A number with a bar under it is read as fact at a glance
+          and the caption is not read at all, and this is the first screen
+          after sign-in. So it was replaced with the truth as it stood: the
+          office computes targets and sends none.
+
+          IT SENDS THEM NOW, and this card went on saying it did not. The
+          office publishes a target per person, scores the month against it,
+          and the whole thing comes down the sync as a row per month —
+          `app/performance.tsx` has rendered it for as long as it has existed.
+          A sentence that was honest when it was written became the one place
+          in the app that contradicted the rest of it, on the screen a salesman
+          sees first. It reads the same cache that screen does. */}
+      <Pressable
+        onPress={() => router.push('/performance?from=home')}
+        style={{ marginTop: 12 }}>
+        <Card style={{ padding: 14 }}>
+          <Text style={type.label}>Your target</Text>
+          {month === undefined ? (
+            <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>Reading…</Text>
+          ) : month === null || !month.hasTarget ? (
+            <Text style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
+              The office has not set one. Today&rsquo;s orders, visits and collections are in the six
+              figures above.
+            </Text>
+          ) : (
+            <>
+              {/* Revenue and volume together, never revenue alone. A price
+                  revision moves the first and cannot move the second, so a
+                  month at target on rupees and short on litres is a month that
+                  sold LESS and billed more — and it is exactly the month
+                  somebody would otherwise be congratulated for. The score is
+                  the office's and is printed, never recomputed here. */}
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 2 }}>
+                <Text style={[{ fontSize: 22, lineHeight: 28, color: C.ink }, weight(600), tabular]}>
+                  {month.totalScoreBp == null ? '—' : (month.totalScoreBp / 100).toFixed(0)}
+                </Text>
+                <Text style={{ fontSize: 13, color: C.muted }}>out of 100</Text>
+                {month.rating ? (
+                  <Text style={{ fontSize: 13, color: C.muted }}>{'· ' + month.rating}</Text>
+                ) : null}
+              </View>
+              <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 4 }}>
+                {shortfalls(month)[0] ?? 'You are at or above every target set for you.'}
+              </Text>
+              <Text style={[type.caption, { marginTop: 4 }]}>
+                {'As the office scored it' + (month.computedAt ? ' · tap for the rest' : '')}
+              </Text>
+            </>
+          )}
+        </Card>
+      </Pressable>
 
       <SelfieCamera
         open={selfieOpen}

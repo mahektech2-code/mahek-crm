@@ -367,6 +367,38 @@ export async function logComplaint(args: {
   return id;
 }
 
+export type Complaint = {
+  id: string;
+  customerId: string;
+  visitId: string | null;
+  category: string;
+  description: string;
+  status: string;
+  clientCreatedAt: number;
+  syncState: string;
+};
+
+/**
+ * This shop's complaints, newest first.
+ *
+ * A complaint was WRITE-ONLY for as long as it has existed: `logComplaint`
+ * wrote the row and sent it, and nothing on the handset ever selected one
+ * back. So the salesman raised it standing in the shop, and the next time the
+ * same customer asked him what had happened about it he had no way to answer —
+ * not even to say it had been sent. The thing he is most likely to be asked
+ * about on his next visit was the one thing the record could not tell him.
+ *
+ * `status` is the office's word and arrives on the sync, so an answer shows up
+ * here without anybody on this end doing anything.
+ */
+export async function complaintsFor(customerId: string): Promise<Complaint[]> {
+  return all<Complaint>(
+    `SELECT id, customerId, visitId, category, description, status, clientCreatedAt, syncState
+       FROM complaints WHERE customerId = ? ORDER BY clientCreatedAt DESC LIMIT 50`,
+    [customerId],
+  );
+}
+
 /* -------------------------------------------------------------- samples */
 
 export type Sample = {
@@ -452,92 +484,15 @@ export async function requestSample(args: {
   return id;
 }
 
-/**
- * Feedback still pending past its follow-up date is flagged. A sample nobody
- * chased is a sample that was given away.
- */
-export async function overdueSamples(today: string): Promise<Sample[]> {
-  return all<Sample>(
-    `SELECT * FROM samples WHERE state NOT IN ('Converted','Rejected') AND followUpDate IS NOT NULL AND followUpDate < ?`,
-    [today],
-  );
-}
-
-/* ------------------------------------------------- a sample, moved along */
-
-/**
- * §I, §J and §K — what happens to a sample after it is asked for.
+/*
+ * A sample after it is asked for lives in `data/lead-samples.ts`, not here.
  *
- * Three dates and never one, because they are three assertions by three
- * parties: `dispatchedAt` is us saying it went, `deliveredAt` is the carrier or
- * our own man saying it arrived, and `receivedAt` is the SHOP saying it is in
- * their hands. §J turns entirely on the third, and the review call is dated
- * from it — a review timed from dispatch rings a customer still waiting for the
- * parcel, which teaches them we do not know where our own stock is.
+ * `overdueSamples`, `updateSample`, `sampleRefusal` and `SampleProgress` stood
+ * in this file and were called by nothing: the funnel module took the same
+ * `samples` table over and answered the same questions in more detail, and the
+ * two screens that show a sample — `app/samples.tsx` and `app/sample.tsx` —
+ * both read it. Two modules over one table is how the same question gets two
+ * answers, so the half nobody was reading has gone rather than been wired to a
+ * second screen. `requestSample` and `customerSamples` stay because the visit
+ * drawer and the customer record still call them.
  */
-export type SampleProgress = {
-  dispatchedAt?: number | null;
-  courierName?: string | null;
-  trackingNumber?: string | null;
-  deliveredAt?: number | null;
-  deliveryPhotoId?: string | null;
-  /** The CUSTOMER's word. Never inferred from a delivery. */
-  receivedAt?: number | null;
-  trialStartedAt?: number | null;
-  trialCompletedAt?: number | null;
-  trialOutcome?: 'pending' | 'approved' | 'rejected' | null;
-  satisfaction?: string | null;
-  additionalRequirement?: string | null;
-  rejectionReason?: string | null;
-  followUpDate?: string | null;
-  feedbackNotes?: string | null;
-};
-
-/**
- * Why this cannot be saved, or null.
- *
- * The same rule the server enforces, and stated here so the salesman is told
- * before he loses the screen rather than by a rejection hours later. A sample
- * turned down with nothing written down teaches nobody anything, and the next
- * one goes out exactly the same.
- */
-export function sampleRefusal(p: SampleProgress): string | null {
-  if (p.trialOutcome === 'rejected' && !String(p.rejectionReason ?? '').trim()) {
-    return 'Say what was wrong with it — the next one goes out the same otherwise.';
-  }
-  return null;
-}
-
-export async function updateSample(
-  id: string,
-  p: SampleProgress,
-): Promise<{ ok: boolean; message?: string }> {
-  const refusal = sampleRefusal(p);
-  if (refusal) return { ok: false, message: refusal };
-
-  /* Only what actually changed. `updateAndQueue` writes the local row and the
-     wire payload from one object, so a column named here and not on the wire is
-     a column the office never hears about. */
-  const patch: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(p)) if (v != null) patch[k] = v;
-  if (!Object.keys(patch).length) return { ok: true };
-
-  /* The handset's own state word, so the list reads correctly before the sync
-     lands. `state` is this app's column and the office has no such field —
-     PROTOCOL.md §4.1 — so it is set locally and deliberately not sent. */
-  const localState =
-    p.trialOutcome === 'approved'
-      ? 'Approved'
-      : p.trialOutcome === 'rejected'
-        ? 'Rejected'
-        : p.receivedAt
-          ? 'Received'
-          : p.dispatchedAt
-            ? 'Dispatched'
-            : null;
-
-  await updateAndQueue({ table: 'samples', entityType: 'sample', id, patch });
-  if (localState) await run('UPDATE samples SET state = ? WHERE id = ?', [localState, id]);
-
-  return { ok: true };
-}

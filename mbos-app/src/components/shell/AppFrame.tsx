@@ -7,7 +7,7 @@ import { Header, StatusStrip, TabBar, type StripTone, type TabKey } from './Chro
 import { ActionSheet, ConfirmSheet, Toast } from '../ui/overlays';
 import { useKeyboardHeight } from '../ui/keyboard';
 import { Appear } from '../ui/motion';
-import { useCustomer, usePendingCount, useStore, useUnreadCount } from '../../state/store';
+import { useCustomer, useDaysToAgreeCount, usePendingCount, useStore, useUnreadCount } from '../../state/store';
 import { TravelGate } from './TravelGate';
 import { useBoot } from '../../state/boot';
 import { todayRow } from '../../data/attendance';
@@ -129,6 +129,7 @@ export function AppFrame({
   const [footerHeight, setFooterHeight] = React.useState(0);
   const unread = useUnreadCount();
   const waiting = usePendingCount();
+  const daysToAgree = useDaysToAgreeCount();
   const checkInAt = useCheckInTime();
   const checkedIn = checkInAt != null;
   const gps = useStore((s) => s.gps);
@@ -256,6 +257,11 @@ export function AppFrame({
           bottomInset={insets.bottom}
           onTab={(k) => router.replace(`/${k}`)}
           onAction={() => set({ sheet: 'action' })}
+          /* The office proposes a day and waits on the answer to plan a week.
+             The Journey screen has always listed those days at the top; what
+             it could not do was say so from anywhere else in the app, so being
+             asked and never noticing looked identical to having no plan. */
+          badges={{ journey: daysToAgree }}
         />
       ) : null}
 

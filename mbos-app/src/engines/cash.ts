@@ -52,6 +52,32 @@ export type CashPosition = {
   sentence: string;
 };
 
+/**
+ * A stored payment mode, in this engine's vocabulary.
+ *
+ * The collection form writes `PaymentMode` — 'Cash', 'Cheque', 'UPI', 'Bank
+ * transfer' — and this engine speaks in lower case with 'neft' for the last of
+ * them. The translation lives HERE, with the vocabulary it translates into,
+ * because the alternative is every caller doing it and one of them getting it
+ * wrong. One did: `cashInHand` passed the literal `'cash'` for every row, so
+ * the filter below matched everything it was given and a UPI receipt already
+ * sitting in the company's account was counted as notes in a salesman's
+ * pocket.
+ *
+ * Anything unrecognised is `other`, which `cashPosition` excludes. That is the
+ * safe direction — a mode nobody has taught this function about must not read
+ * as cash somebody is carrying.
+ */
+export function collectionMode(stored: string): Collection['mode'] {
+  switch (stored) {
+    case 'Cash': return 'cash';
+    case 'Cheque': return 'cheque';
+    case 'UPI': return 'upi';
+    case 'Bank transfer': return 'neft';
+    default: return 'other';
+  }
+}
+
 const MS_PER_HOUR = 3_600_000;
 
 export function cashPosition(

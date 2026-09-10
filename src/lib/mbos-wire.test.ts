@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 
 /* ---------------------------------------------------------------------------
  * THE HANDSET'S SCHEMA IS THE WIRE CONTRACT, and nothing was checking it.
@@ -671,3 +671,77 @@ test("no voice setting and no provider key reaches a handset", () => {
     `these belong to the server alone and were about to be handed to a phone: ${leaked.join(", ")}`,
   );
 });
+
+/* ---------------------------------------------------------------------------
+ * A HANDLER THE HANDSET NEVER CALLS IS A FEATURE NOBODY CAN USE.
+ *
+ * `dispatchItem` is the whole list of things a salesman can send us, and it is
+ * the one place the two halves of a feature are named in the same vocabulary.
+ * A `case` with no matching `entityType:` on the handset means the server side
+ * was finished and the phone side never arrived — and nothing anywhere goes
+ * red, because both halves compile perfectly on their own.
+ *
+ * That is exactly what happened to `internal_note`. §R had a table, a role
+ * list and a bootstrap that narrowed by role from the day the module shipped,
+ * and `handleInternalNote` sat waiting for a payload that no handset ever
+ * sent: a read path over a table nothing could put a row in. It was found by
+ * reading the dispatcher against the handset by hand, which is not a plan.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Handled on the server, deliberately never sent by a phone, and why.
+ *
+ * Empty today — and it is here rather than absent because the honest answer to
+ * a future mismatch is sometimes "the office sends this one", and that answer
+ * should have to be written down next to the reason.
+ */
+const SERVER_ONLY: Record<string, string> = {};
+
+test("every entity the sync dispatcher handles is one a handset can send", () => {
+  const actions = readFileSync("src/lib/actions/mbos.ts", "utf8");
+  const dispatcher = actions.slice(actions.indexOf("async function dispatchItem"));
+  const body = dispatcher.slice(0, dispatcher.indexOf("\n}\n"));
+
+  const handled = [...body.matchAll(/case "([a-z_]+)":/g)].map((m) => m[1]);
+  assert.ok(handled.length > 15, `expected the whole dispatcher, found ${handled.length} cases`);
+
+  /* What the handset actually enqueues, read as text for the same reason this
+     whole file reads text: the two projects are joined only inside a phone. */
+  const sent = new Set<string>();
+  for (const file of ["mbos-app/src/data", "mbos-app/app"]) {
+    for (const found of readdirSyncDeep(file)) {
+      for (const m of readFileSync(found, "utf8").matchAll(/entityType: ['"]([a-z_]+)['"]/g)) {
+        sent.add(m[1]);
+      }
+    }
+  }
+  assert.ok(sent.size > 15, `expected the handset's writes, found ${sent.size} entity types`);
+
+  const stranded = handled.filter((e) => !sent.has(e) && !SERVER_ONLY[e]);
+  assert.deepEqual(
+    stranded,
+    [],
+    "the server can save these and no handset ever sends one — build the screen, " +
+      `or record it in SERVER_ONLY with a reason: ${stranded.join(", ")}`,
+  );
+
+  /* And the other direction, which fails LOUDER but only at runtime: a handset
+     sending an entity the dispatcher does not know gets a rejection reading
+     "MahekOne does not know how to save a ..." — after the salesman has done
+     the work. */
+  const unknown = [...sent].filter((e) => !handled.includes(e));
+  assert.deepEqual(
+    unknown,
+    [],
+    `a handset sends these and the server would refuse them: ${unknown.join(", ")}`,
+  );
+});
+
+function readdirSyncDeep(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const path = `${dir}/${entry}`;
+    if (statSync(path).isDirectory()) readdirSyncDeep(path, out);
+    else if (/\.tsx?$/.test(entry) && !entry.includes(".test.")) out.push(path);
+  }
+  return out;
+}

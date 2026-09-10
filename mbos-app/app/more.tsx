@@ -11,6 +11,8 @@ import { signOut as signOutReal } from '../src/data/session';
 import { bucketOf, listOpenTasks } from '../src/data/tasks';
 import { leaveBalances, listExpenses, listSamples } from '../src/data/requests';
 import { priceDay } from '../src/data/travel';
+import { cashInHand } from '../src/data/payments';
+import { overdueSamples } from '../src/data/lead-samples';
 import { openLeadCount } from '../src/data/leads';
 import { pendingCount, queueCounts } from '../src/sync/queue';
 import { savedMaps } from '../src/data/offline-maps';
@@ -30,6 +32,8 @@ type Item = { label: string; badge: string; route?: string };
 
 type Counts = {
   savedMaps: number;
+  toBank: number;
+  lateSamples: number;
   overdueTasks: number;
   openLeads: number;
   leaveLeft: number;
@@ -44,6 +48,8 @@ type Counts = {
 
 const EMPTY: Counts = {
   savedMaps: 0,
+  toBank: 0,
+  lateSamples: 0,
   overdueTasks: 0,
   openLeads: 0,
   leaveLeft: 0,
@@ -63,9 +69,24 @@ function groupsFor(n: Counts): { label: string; items: Item[] }[] {
       items: [
         { label: 'Tasks', badge: n.overdueTasks ? plural(n.overdueTasks, 'overdue', 'overdue') : '', route: 'tasks' },
         { label: 'Leads', badge: n.openLeads ? plural(n.openLeads, 'open', 'open') : '', route: 'leads' },
-        { label: 'Orders', badge: '', route: 'order' },
-        { label: 'Payments', badge: '', route: 'pay' },
-        { label: 'Samples', badge: n.openSamples ? plural(n.openSamples, 'open', 'open') : '', route: 'samples' },
+        /* These two named a LIST and opened a capture form — the only two
+           rows here that did. Punching an order and taking money both start
+           at the + button, like every other capture; what was missing was
+           anywhere to see what he had already done. */
+        { label: 'Orders', badge: '', route: 'orders' },
+        { label: 'Payments', badge: n.toBank ? plural(n.toBank, 'to bank', 'to bank') : '', route: 'collections' },
+        /* LATE beats OPEN. Both are true, only one is a thing to do
+           today, and a badge that is lit whenever anything is open is a badge
+           that stops meaning anything. */
+        {
+          label: 'Samples',
+          badge: n.lateSamples
+            ? plural(n.lateSamples, 'late', 'late')
+            : n.openSamples
+              ? plural(n.openSamples, 'open', 'open')
+              : '',
+          route: 'samples',
+        },
         { label: 'Reports', badge: '', route: 'reports' },
       ],
     },
@@ -149,10 +170,16 @@ export default function MoreScreen() {
         queueCounts(),
         priceDay(boot.session?.user.id ?? '', today),
         savedMaps().catch(() => []),
-      ]).then(([tasks, openLeads, balances, expenses, samples, toSend, queue, today_, maps]) => {
+        /* Cash he is carrying, as a COUNT of collections rather than a figure:
+           a rupee amount in a menu badge reads as something owed to him. */
+        cashInHand(boot.session?.user.id ?? ''),
+        overdueSamples(today),
+      ]).then(([tasks, openLeads, balances, expenses, samples, toSend, queue, today_, maps, cash, late]) => {
         if (!live) return;
         setCounts({
           savedMaps: maps.length,
+          toBank: cash.carried.length,
+          lateSamples: late.length,
           overdueTasks: tasks.filter((t) => bucketOf(t.dueDate, today) === 'Overdue').length,
           openLeads,
           leaveLeft: Math.round(balances.reduce((a, b) => a + b.available, 0)),

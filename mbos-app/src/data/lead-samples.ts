@@ -95,6 +95,44 @@ export async function feedbackFor(sampleId: string): Promise<SampleFeedback | nu
   return one<SampleFeedback>('SELECT * FROM sample_feedback WHERE sampleId = ?', [sampleId]);
 }
 
+/**
+ * Feedback that is late.
+ *
+ * The finished states are excluded rather than the open ones listed — a state
+ * added later is far more likely to be another rung of the ladder than another
+ * way of being done, and an unrecognised state going UNCHASED is the failure
+ * this exists to prevent.
+ *
+ * It is HERE rather than in `app/samples.tsx`, which is where it was written,
+ * because the screen is no longer the only thing that asks: the More menu
+ * needs the same question answered to decide whether to draw a badge, and the
+ * copy that drifts is always the one somebody reads.
+ */
+export function isSampleOverdue(s: FunnelSample, today: string): boolean {
+  if (!s.followUpDate || s.followUpDate >= today) return false;
+  return !['Reviewed', 'Converted', 'Rejected', 'Cancelled'].includes(s.state);
+}
+
+/**
+ * Trials nobody has chased, oldest first.
+ *
+ * `requestLeadSample` has set a follow-up date on every sample since it was
+ * written — a week out where the salesman does not choose one — and its own
+ * comment calls that date "what the overdue strip reads". The strip existed on
+ * the samples screen; nothing anywhere else read the date, so the only way to
+ * discover a trial had gone cold was to open that screen and look. A sample
+ * given away and never chased is a sample given away.
+ *
+ * Filtered in JavaScript against `isSampleOverdue` rather than repeated as a
+ * WHERE clause: one rule, and samples are tens of rows rather than thousands.
+ */
+export async function overdueSamples(today: string): Promise<FunnelSample[]> {
+  const rows = await listFunnelSamples();
+  return rows
+    .filter((s) => isSampleOverdue(s, today))
+    .sort((a, b) => (a.followUpDate ?? '').localeCompare(b.followUpDate ?? ''));
+}
+
 /** §10 — the ten answers to "why does this customer want a trial?" */
 export async function sampleReasons(): Promise<CodedOption[]> {
   return getConfig<CodedOption[]>('leads.sampleReasons');
