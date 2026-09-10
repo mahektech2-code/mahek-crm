@@ -541,6 +541,149 @@ describe("what a whole day comes to, and where it goes", () => {
   });
 });
 
+/* ------------------------------------------------------ the DAY's own caps */
+
+/*
+ * `dailyKmCap` and `capPerDayPaise` were typed on the rules, validated on the
+ * admin form and read back to the manager in the policy summary's own English
+ * — and read by nothing. A cap set on a Monday and confirmed in words on the
+ * screen cost nobody a rupee. These are the cases that say it now does, and
+ * the last one is the one that says it landed inert where no cap is set.
+ */
+describe("a limit that belongs to the day, not to one leg or one claim", () => {
+  const capped = (extra: PolicyRule[] = []) => policy(extra);
+
+  test("the KM cap is spent by the earliest legs and trims the one it falls in", () => {
+    const p = capped([{ ...ANY, kind: "per_km", modeKey: "own_bike", paisePerKm: 350, dailyKmCap: 50 }]);
+    const r = computeDay(p, SUBJECT, day({
+      legs: [
+        leg({ id: "a", odometerMetres: 30_000 }),
+        leg({ id: "b", odometerMetres: 30_000 }),
+        leg({ id: "c", odometerMetres: 10_000 }),
+      ],
+    }));
+
+    /* The morning is paid in full, the leg the day ran out on is paid in part,
+       and the one after it earns nothing at all. */
+    assert.equal(r.legs[0]!.eligiblePaise, 10500, "30 km × ₹3.50");
+    assert.equal(r.legs[1]!.eligiblePaise, 7000, "only 20 km of the second leg is left inside the cap");
+    assert.equal(r.legs[2]!.eligiblePaise, 0);
+
+    /* Never refused: the distance is still a fact about the day, and what the
+       cap took is recorded as excess rather than vanishing. */
+    assert.equal(r.legs[1]!.excessPaise, 3500);
+    assert.equal(r.legs[2]!.excessPaise, 3500);
+    assert.equal(r.totalMetres, 70_000);
+
+    assert.equal(r.travelPaise, 17500, "50 km × ₹3.50 — the cap, exactly");
+    assert.equal(
+      r.legs.reduce((n, l) => n + l.eligiblePaise, 0),
+      r.travelPaise,
+      "the legs and the day's travel total may never be two answers",
+    );
+
+    const over = r.exceptions.filter((e) => e.kind === "over_cap");
+    assert.equal(over.length, 2);
+    assert.equal(over[0]!.severity, "warn");
+    assert.equal(over[0]!.legId, "b");
+    assert.equal(over[1]!.legId, "c");
+    assert.match(over[0]!.message, /50 km limit/);
+    assert.match(over[0]!.message, /whole day's, not this leg's/);
+  });
+
+  test("two modes carry two caps, and neither spends the other's", () => {
+    const p = capped([
+      { ...ANY, kind: "per_km", modeKey: "own_bike", paisePerKm: 350, dailyKmCap: 20 },
+      { ...ANY, kind: "per_km", modeKey: "own_car", paisePerKm: 900, dailyKmCap: 100 },
+    ]);
+    const r = computeDay(p, SUBJECT, day({
+      legs: [
+        leg({ id: "a", odometerMetres: 30_000 }),
+        leg({ id: "b", modeKey: "own_car", odometerMetres: 30_000 }),
+      ],
+    }));
+    assert.equal(r.legs[0]!.eligiblePaise, 7000, "20 km of bike × ₹3.50");
+    assert.equal(r.legs[1]!.eligiblePaise, 27000, "the car is nowhere near its own 100 km");
+    assert.equal(r.travelPaise, 34000);
+    assert.deepEqual(
+      r.exceptions.filter((e) => e.kind === "over_cap").map((e) => e.legId),
+      ["a"],
+    );
+  });
+
+  test("a day of tickets is capped in total, however cheap each one was", () => {
+    const p = capped([
+      { ...ANY, kind: "actuals", scopeKey: "travel_mode:bus", capPerInstancePaise: null, capPerDayPaise: 40000 },
+    ]);
+    const r = computeDay(p, SUBJECT, day({
+      legs: [
+        leg({ id: "a", modeKey: "bus", ticketAmountPaise: 25000, hasTicketProof: true }),
+        leg({ id: "b", modeKey: "bus", ticketAmountPaise: 25000, hasTicketProof: true }),
+      ],
+    }));
+    assert.equal(r.legs[0]!.eligiblePaise, 25000);
+    assert.equal(r.legs[1]!.eligiblePaise, 15000);
+    assert.equal(r.legs[1]!.excessPaise, 10000);
+    assert.equal(r.travelPaise, 40000);
+    const over = r.exceptions.filter((e) => e.kind === "over_cap");
+    assert.equal(over.length, 1);
+    assert.equal(over[0]!.legId, "b");
+    assert.match(over[0]!.message, /the day's total, not one ticket's/);
+  });
+
+  test("three fares each inside what one fare may cost, and still too much auto for a day", () => {
+    /* The base policy already allows ₹300 a fare and ₹600 a day. */
+    const r = computeDay(policy(), SUBJECT, day({
+      lines: [
+        { id: "l1", kind: "local_transport", claimedPaise: 25000, hasProof: true },
+        { id: "l2", kind: "local_transport", claimedPaise: 25000, hasProof: true },
+        { id: "l3", kind: "local_transport", claimedPaise: 25000, hasProof: true },
+      ],
+    }));
+    assert.equal(r.otherClaimedPaise, 75000);
+    assert.equal(r.otherEligiblePaise, 60000, "the day's ₹600, exactly");
+    const over = r.exceptions.filter((e) => e.kind === "over_cap");
+    assert.equal(over.length, 1, "not one of them is over the per-fare limit");
+    assert.equal(over[0]!.lineId, "l3");
+    assert.match(over[0]!.message, /the day's total, not one claim's/);
+  });
+
+  test("the per-claim limit and the day's both bite, and they are two sentences", () => {
+    const p = capped([
+      { ...ANY, kind: "actuals", scopeKey: "category:local_transport", capPerInstancePaise: 30000, capPerDayPaise: 50000 },
+    ]);
+    const r = computeDay(p, SUBJECT, day({
+      lines: [
+        { id: "l1", kind: "local_transport", claimedPaise: 40000, hasProof: true },
+        { id: "l2", kind: "local_transport", claimedPaise: 40000, hasProof: true },
+      ],
+    }));
+    /* ₹400 → ₹300 a fare, then ₹300 + ₹300 → ₹500 for the day. */
+    assert.equal(r.otherEligiblePaise, 50000);
+    const over = r.exceptions.filter((e) => e.kind === "over_cap");
+    assert.equal(over.length, 3);
+    assert.deepEqual(over.map((e) => e.lineId), ["l1", "l2", "l2"]);
+    assert.match(over[1]!.message, /against a ₹300 limit/);
+    assert.match(over[2]!.message, /limit for the day/);
+  });
+
+  test("a policy naming no day cap pays exactly what it paid before", () => {
+    /* The regression guard: this landed inert wherever a manager has not set
+       one, which is every policy that existed the day it shipped. */
+    const r = computeDay(policy(), SUBJECT, day({
+      legs: [
+        leg({ id: "a", odometerMetres: 200_000 }),
+        leg({ id: "b", odometerMetres: 200_000 }),
+      ],
+      lines: [{ id: "l1", kind: "other", claimedPaise: 90000, hasProof: true }],
+    }));
+    assert.equal(r.travelPaise, 140000, "400 km × ₹3.50, untouched");
+    assert.equal(r.legs[1]!.excessPaise, 0);
+    assert.equal(r.otherEligiblePaise, 90000, "no rule for `other` at all, so no cap of either kind");
+    assert.equal(r.exceptions.filter((e) => e.kind === "over_cap").length, 0);
+  });
+});
+
 /* ------------------------------------------------------- §C16 GPS distance */
 
 describe("distance from the day's track", () => {

@@ -4,6 +4,8 @@ import { getConfig } from './config';
 import { leaveDays, overlaps, balanceAfter } from '../engines/leave';
 import { isoDate } from '../lib/format';
 import { wireComplaintCategory } from '../lib/wire';
+import type { ClaimedLine } from './travel';
+import type { ExpenseKind } from '../engines/generated/expense-policy';
 
 /**
  * The things that need somebody's permission: expenses, leave, samples.
@@ -68,6 +70,44 @@ export type Expense = {
 
 export async function listExpenses(): Promise<Expense[]> {
   return all<Expense>('SELECT * FROM expenses ORDER BY spentOn DESC');
+}
+
+/**
+ * The claims already standing on one day, for pricing what a new one earns.
+ *
+ * `listExpenses` cannot answer this and should not be made to: it is the whole
+ * list this handset holds, newest first, and its type does not carry `kind` —
+ * which is the column the policy actually prices on, and the one place
+ * `category` is not a synonym for it, since `local_transport` is stored under
+ * the category `travel`. A day priced off the category puts every auto fare
+ * under the wrong cap.
+ *
+ * **A REFUSED CLAIM EATS NO HEADROOM.** The office turned it down, it will pay
+ * nothing, and counting it would tell a salesman he has less left today than he
+ * has — the same failure the day's headroom exists to fix, pointing the other
+ * way. It matters most on the one screen that reopens a refused line:
+ * correcting a ₹300 claim writes a NEW row rather than editing the old one, so
+ * a rejected ₹300 counted here would read as ₹300 already spent the moment he
+ * opened it to put it right.
+ */
+export async function expensesOn(spentOn: string): Promise<ClaimedLine[]> {
+  const rows = await all<{
+    id: string;
+    kind: string | null;
+    category: string;
+    amountPaise: number;
+    billPhotoId: string | null;
+  }>(
+    `SELECT id, kind, category, amountPaise, billPhotoId FROM expenses
+      WHERE spentOn = ? AND state <> 'Rejected'`,
+    [spentOn],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    kind: ((r.kind ?? r.category) as ExpenseKind) ?? 'other',
+    claimedPaise: r.amountPaise,
+    hasProof: r.billPhotoId != null,
+  }));
 }
 
 /**

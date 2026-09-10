@@ -787,6 +787,119 @@ function clockOf(minutes: number): string {
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
 
+/**
+ * The two caps that are a DAY's and not a leg's, applied across the day's legs.
+ *
+ * **This cannot live in `computeLeg`, and that is the whole reason it is
+ * here.** That function prices one leg in isolation — it is handed a leg and
+ * cannot see the leg before it — so a limit on what a day of own-vehicle KM
+ * earns, or on what a day of bus tickets is worth, is a question it is
+ * structurally unable to answer. Both were typed on the rule, both were
+ * rendered back to the manager in the policy screen's English summary, and
+ * neither was read by anything: a cap set on Monday and confirmed in words
+ * cost nobody a rupee.
+ *
+ * The legs are MUTATED rather than replaced, because the caller returns the
+ * same objects in `legs[]` and sums them into `travelPaise`. A leg list that
+ * adds up to more than the day's travel total is the two-answers bug this
+ * codebase argues against everywhere else, and the surest way to get one is to
+ * trim a copy.
+ *
+ * **The cap eats the EARLIEST legs first**, since the legs arrive in day
+ * order: the morning's riding is what the allowance bought, and the leg the
+ * limit falls in the middle of is trimmed rather than dropped. The exception
+ * hangs off that crossing leg, so the screen underlines the ride the day ran
+ * out on rather than the whole day at once.
+ */
+function applyDailyCaps(
+  policy: Policy,
+  subject: PolicySubject,
+  legs: LegComputation[],
+): void {
+  const modeKeys = [...new Set(legs.map((l) => l.modeKey))];
+
+  /* ---- kilometres: beyond the cap the day's own-vehicle KM stops earning --- */
+  for (const modeKey of modeKeys) {
+    const perKm = ruleFor(policy, "per_km", subject, (r) => r.modeKey === modeKey);
+    if (!perKm || perKm.dailyKmCap === null) continue;
+    const capMetres = perKm.dailyKmCap * 1000;
+
+    let spentMetres = 0;
+    for (const l of legs) {
+      /* `paisePerKm` is the mark of a leg that was actually priced by distance:
+         a zero-rated mode and an unpriced one both come back null, and neither
+         is spending any of the day's allowance. */
+      if (l.modeKey !== modeKey || l.paisePerKm === null) continue;
+      const metres = l.chosenMetres ?? 0;
+      const earning = Math.max(0, Math.min(metres, capMetres - spentMetres));
+      spentMetres += metres;
+      if (earning >= metres) continue;
+
+      const eligible = kmValue(earning, l.paisePerKm);
+      const lost = l.eligiblePaise - eligible;
+      l.eligiblePaise = eligible;
+      l.excessPaise = Math.max(0, l.claimedPaise - eligible);
+      l.exceptions.push({
+        kind: "over_cap",
+        severity: "warn",
+        message: `${km(metres)} on ${modeKey.replace(/_/g, " ")} takes the day past its ${perKm.dailyKmCap} km limit — ${km(metres - earning)} of this leg earns nothing, ${rupees(lost)} less. That limit is the whole day's, not this leg's.`,
+        detail: {
+          legMetres: metres,
+          earningMetres: earning,
+          dailyKmCap: perKm.dailyKmCap,
+          lostPaise: lost,
+          modeKey,
+        },
+        legId: l.legId,
+      });
+    }
+  }
+
+  /* ---- tickets: what a day of one mode is worth in total ---- */
+  for (const modeKey of modeKeys) {
+    /* A zero-rated mode never reaches the actuals branch in `computeLeg`, so it
+       must not reach this one either — reading the actuals rule alone would
+       start charging a day's ticket allowance against legs that were never
+       priced as tickets. */
+    if (ruleFor(policy, "zero_rated", subject, (r) => r.modeKey === modeKey)) continue;
+    const actuals = ruleFor(
+      policy,
+      "actuals",
+      subject,
+      (r) => r.scopeKey === `travel_mode:${modeKey}`,
+    );
+    if (!actuals || actuals.capPerDayPaise === null) continue;
+    const cap = actuals.capPerDayPaise;
+
+    let spent = 0;
+    for (const l of legs) {
+      if (l.modeKey !== modeKey) continue;
+      /* Already trimmed to `capPerInstancePaise` by `computeLeg`, which is a
+         different limit and stays exactly as it was: one ticket may be within
+         what a ticket may cost and still be the one that empties the day. */
+      const eligible = l.eligiblePaise;
+      const earning = Math.max(0, Math.min(eligible, cap - spent));
+      spent += eligible;
+      if (earning >= eligible) continue;
+
+      l.eligiblePaise = earning;
+      l.excessPaise = Math.max(0, l.claimedPaise - earning);
+      l.exceptions.push({
+        kind: "over_cap",
+        severity: "warn",
+        message: `${rupees(spent)} of ${modeKey.replace(/_/g, " ")} today, against a ${rupees(cap)} limit for the day — ${rupees(eligible - earning)} of this ticket is over. That limit is the day's total, not one ticket's.`,
+        detail: {
+          dayClaimedPaise: spent,
+          capPerDayPaise: cap,
+          overPaise: eligible - earning,
+          modeKey,
+        },
+        legId: l.legId,
+      });
+    }
+  }
+}
+
 /* -------------------------------------------------------------- the whole */
 
 export function computeDay(
@@ -806,6 +919,10 @@ export function computeDay(
   }
 
   const legs = day.legs.map((leg) => computeLeg(policy, subject, leg));
+  /* Before the day's exceptions are collected, so a trim raised here reaches
+     the day's list by the same path a leg's own exceptions do — and before
+     `travelPaise` is summed, so the legs and the total cannot disagree. */
+  applyDailyCaps(policy, subject, legs);
   for (const l of legs) exceptions.push(...l.exceptions);
 
   const travelPaise = legs.reduce((n, l) => n + l.eligiblePaise, 0);
@@ -902,13 +1019,17 @@ export function computeDay(
   /* ---- everything else ---- */
   let otherClaimed = 0;
   let otherEligible = 0;
+  /* What each category has spent of its own day limit so far. A running total
+     rather than a second pass, because the lines are already in the order the
+     day was recorded in and the earliest claim is the one the allowance
+     bought — the same discipline the legs above follow. */
+  const spentByKind = new Map<ExpenseKind, number>();
   for (const line of day.lines) {
     if (line.kind === "lodging") continue;
     otherClaimed += line.claimedPaise;
     const rule = ruleFor(policy, "actuals", subject, (r) => r.scopeKey === `category:${line.kind}`);
     const cap = rule?.capPerInstancePaise ?? null;
-    const eligible = cap === null ? line.claimedPaise : Math.min(line.claimedPaise, cap);
-    otherEligible += eligible;
+    let eligible = cap === null ? line.claimedPaise : Math.min(line.claimedPaise, cap);
     if (cap !== null && line.claimedPaise > cap) {
       exceptions.push({
         kind: "over_cap",
@@ -918,6 +1039,35 @@ export function computeDay(
         lineId: line.id,
       });
     }
+
+    /* And then the day's own limit, which is a different question and asked
+       second: three auto fares can each be well inside what one fare may cost
+       and still be more auto than a day is worth. Trimming the crossing line
+       rather than refusing it keeps the arithmetic somebody can follow down
+       the screen — every line before it paid in full, this one paid part. */
+    const dayCap = rule?.capPerDayPaise ?? null;
+    if (dayCap !== null) {
+      const spent = spentByKind.get(line.kind) ?? 0;
+      const earning = Math.max(0, Math.min(eligible, dayCap - spent));
+      spentByKind.set(line.kind, spent + eligible);
+      if (earning < eligible) {
+        exceptions.push({
+          kind: "over_cap",
+          severity: "warn",
+          message: `${rupees(spent + eligible)} of ${line.kind.replace(/_/g, " ")} today, against a ${rupees(dayCap)} limit for the day — ${rupees(eligible - earning)} of this claim is over. That limit is the day's total, not one claim's.`,
+          detail: {
+            dayEligiblePaise: spent + eligible,
+            capPerDayPaise: dayCap,
+            overPaise: eligible - earning,
+            kind: line.kind,
+          },
+          lineId: line.id,
+        });
+        eligible = earning;
+      }
+    }
+    otherEligible += eligible;
+
     const proofAt = proofThresholdFor(policy, subject, `category:${line.kind}`);
     if (proofAt !== null && line.claimedPaise >= proofAt && !line.hasProof) {
       exceptions.push({
