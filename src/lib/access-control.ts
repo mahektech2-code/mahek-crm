@@ -940,6 +940,7 @@ const MATRIX: Record<AppId, AppMatrix> = {
      inside it yet, and inventing one nothing checks would be worse. */
   hrms: { associate: [], manager: [] },
   people: { associate: [], manager: [] },
+  enquiries: { associate: [], manager: [] },
   /* The console. Its own screens are gated by holding the app; `config.write`
      is what separates reading the settings from changing them. */
   admin: { associate: [], manager: ["config.write"] },
