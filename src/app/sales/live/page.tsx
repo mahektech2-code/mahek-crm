@@ -5,7 +5,7 @@ import { dwellStops, type DwellStop } from "@/lib/engines/dwell";
 import { dropInaccurateFixes } from "@/lib/engines/trail-gaps";
 import { nowMs, shortDateWithYear } from "@/lib/format";
 import { metresBetween } from "@/lib/geo";
-import { trailHasGaps } from "@/lib/handset-health";
+import { trailHasGaps, trailIsDead } from "@/lib/handset-health";
 import { today } from "@/lib/recompute";
 import { readSecret } from "@/lib/secrets";
 import {
@@ -113,6 +113,27 @@ export default async function Page({
      never counted: it means the handset has not reported, which is not the
      same claim as "refused". */
   const noBackgroundTracking = rows.filter((r) => trailHasGaps(r) && !r.onLeave);
+  /* Read once and shared, so the banner and every row beneath it are counting
+     against the same instant — and because the React Compiler rule this
+     codebase runs under forbids the client half reading a clock at all. */
+  const clockMs = nowMs();
+  /* A HANDSET REPORTING PERFECTLY AND PRODUCING NO TRAIL is its own count and
+     its own sentence, because it is nothing like the row above it: those are
+     phones whose trail has holes, and these are phones that have not produced
+     one. It is asked only of TODAY — "checked in 4 hr ago" measured against
+     this afternoon's clock says nothing whatever about a Tuesday in March, and
+     a day left open by a forgotten check-out would read as a fault for ever. */
+  const deadTrail = isToday
+    ? rows.filter(
+        (r) =>
+          !r.onLeave &&
+          trailIsDead(
+            { ...r, dayOpen: Boolean(r.checkInAt && !r.checkOutAt) },
+            { noTrailMinutes: config["mbos.location.noTrailMinutes"] },
+            clockMs,
+          ),
+      )
+    : [];
 
   return (
     <div className="p-6">
@@ -202,6 +223,14 @@ export default async function Page({
         />
       ) : null}
 
+      {deadTrail.length ? (
+        <Banner
+          tone="danger"
+          title={`${plural(deadTrail.length, "salesman", "salesmen")} out today with no trail at all`}
+          body="Checked in, the handset reporting, and not one position recorded since — which is the tracking service on the phone rather than a signal problem, however long the row underneath says it has been quiet. Their Location permission is usually correct and worth nothing here: these handsets start the service properly and then kill it, so the fix is to allow MahekOne to autostart and set its battery usage to unrestricted, in the phone's own battery settings, then check out and back in. Each row says how long the man has been out, and names the permission itself only where that is also wrong."
+        />
+      ) : null}
+
       {/* Keyed, so a change of day or view remounts the map — and the
           selection sitting above it — rather than asking an effect to
           rebuild either in place. See `live-panel.tsx` and `street-map.tsx`. */}
@@ -222,9 +251,10 @@ export default async function Page({
         olaMapsKey={olaMapsKey}
         handsetThresholds={{
           quietMinutes: config["mbos.location.handsetQuietMinutes"],
+          noTrailMinutes: config["mbos.location.noTrailMinutes"],
           lowBatteryPercent: config["mbos.location.lowBatteryPercent"],
         }}
-        nowMs={nowMs()}
+        nowMs={clockMs}
       />
 
       <p className="mt-3 max-w-[820px] text-[13px] text-pretty text-muted">

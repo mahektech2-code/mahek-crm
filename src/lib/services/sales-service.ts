@@ -1784,6 +1784,19 @@ export type LastKnown = {
    * and this is the silence measured.
    */
   lastHeardAt: Date | null;
+  /**
+   * THE TRAIL'S OWN NEWEST FIX, which `seenAt` above cannot answer.
+   *
+   * `seenAt` is the newest of three sources — the trail, the check-in and each
+   * visit — and that is right for "where is he", which is what it is for. It
+   * is the wrong reading of "is his tracking working", because a check-in
+   * leaves a fix whatever the trail is doing: a salesman whose tracking never
+   * started once ran a whole day with a pin, a place and a time on this list
+   * and not one position in `mbos_positions`, and nothing on any screen could
+   * tell that apart from a man standing still. Null means the trail has
+   * produced nothing at all today — see `trailIsDead` in `handset-health`.
+   */
+  trailSeenAt: Date | null;
 };
 
 /**
@@ -1826,6 +1839,15 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
     latest as (
       select distinct on (uid) uid, lat, lng, at, place, acc
         from fixes order by uid, at desc
+    ),
+    /* The trail ALONE, deliberately not folded into the fixes above: the whole
+       point of it is to be readable apart from the check-in and the visits
+       that would otherwise stand in for it. See trailSeenAt on the type. */
+    trail as (
+      select p.user_id as uid, max(p.at) as at
+        from mbos_positions p
+       where (p.at ${IST_DAY})::date = ${day}::date
+       group by p.user_id
     )
     select u.id as "salesmanId", u.name as "salesmanName", u.initials, u.active,
            d.check_in_at as "checkInAt", d.check_out_at as "checkOutAt",
@@ -1839,11 +1861,13 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
            dev.battery_percent as "batteryPercent",
            dev.battery_charging as "batteryCharging",
            dev.device_state_at as "deviceStateAt",
-           dev.last_seen_at as "lastHeardAt"
+           dev.last_seen_at as "lastHeardAt",
+           tr.at as "trailSeenAt"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date
       left join latest f on f.uid = u.id
+      left join trail tr on tr.uid = u.id
       left join mbos_devices dev on dev.user_id = u.id and dev.active
      where u.active ${onlyMine(scope, "u.id")}
      order by f.at desc nulls last, u.name asc

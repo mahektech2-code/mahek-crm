@@ -4,6 +4,7 @@ import { all, getKv, run, setKv } from '../db';
 import { getConfig } from '../data/config';
 import { getFix, fixOf, rememberFix } from '../native/location';
 import { shouldKeepFix } from '../engines/cadence';
+import { trailVerdict } from '../engines/trail-watchdog';
 import { postPositions, reportLocationPermission } from './api';
 
 /**
@@ -180,6 +181,20 @@ let foregroundTimer: ReturnType<typeof setInterval> | null = null;
  */
 let mode: 'background' | 'foreground' | null = null;
 
+/**
+ * When the OS last said yes to the background task, and whether it has since
+ * been caught delivering nothing.
+ *
+ * In memory rather than in the kv store, deliberately: both describe THIS
+ * process's belief about a task this process started, and a fresh process —
+ * which is what the OS hands back after it reaps a backgrounded app — has to
+ * start the whole judgement again rather than inherit a verdict about a
+ * registration it no longer knows the fate of.
+ */
+let backgroundStartedAt = 0;
+let backgroundProvedSilent = false;
+let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+
 async function takeForeground(): Promise<void> {
   try {
     const result = await getFix({ accuracyThresholdM: 50, timeoutMs: 15_000 });
@@ -268,6 +283,124 @@ async function startBackground(everyMs: number): Promise<boolean> {
   }
 }
 
+/* ----------------------------------------------------------- the watchdog */
+
+/**
+ * NOTICING THAT THE OS LIED.
+ *
+ * `startLocationUpdatesAsync` succeeding is not the same fact as fixes
+ * arriving, and on these handsets it is routinely not even close. A salesman on
+ * a vivo V2403 checked in at 04:16 and had posted no position at all by half
+ * past twelve — none ever, since the day the phone was bound. The check-in
+ * landed, its selfie landed, the device heartbeat was ninety minutes old, and
+ * `background_location_granted` read TRUE, which is written from one place only:
+ * the end of `start()`, with the answer this function's subject gave. The task
+ * was registered and Funtouch's battery manager killed the service behind it.
+ * Oppo and Xiaomi do the same thing, and between the three of them that is most
+ * of the handsets in this field force.
+ *
+ * So the app has to be able to disbelieve the OS, and silence is the only
+ * evidence there is. The rule itself is pure and lives in
+ * `engines/trail-watchdog.ts` — not here, because nothing in this file can be
+ * exercised without a device, which is the whole reason the `timeInterval` bug
+ * above ran for three days.
+ *
+ * IT IS A TIMER, AND A TIMER IS THE RIGHT INSTRUMENT FOR EXACTLY THIS ONE JOB.
+ * A `setInterval` only advances while the app is open, which is the limitation
+ * this whole file exists to work around — but what it falls back TO is the
+ * foreground floor, which only records while the app is open either. There is
+ * nothing to notice in the background that could be acted on there, and the
+ * handset in the incident had its app open at 11:04 with seven hours of
+ * silence behind it and no mechanism anywhere to re-evaluate.
+ *
+ * It asks the OS for NOTHING — no permission call, no restart of the task. The
+ * note above `start()` says why: a handset that keeps being asked is a handset
+ * somebody turns off. This reads two numbers out of the local database and
+ * compares them.
+ */
+async function watch(): Promise<void> {
+  if (mode !== 'background') return;
+
+  try {
+    const gap = await minGapMs();
+    const misses = await getConfig<number>('mbos.location.trailStalledAfterMisses', 4);
+    const raw = await getKv(LAST_KEPT);
+
+    const verdict = trailVerdict({
+      now: Date.now(),
+      startedAt: backgroundStartedAt,
+      lastKeptAt: raw ? Number(raw) : 0,
+      gapMs: gap,
+      silentCadences: misses,
+    });
+
+    /* The clock went backwards under us. The window starts again from here
+       rather than being read as either "just started" or "silent for ever". */
+    if (verdict === 'restart-the-clock') {
+      backgroundStartedAt = Date.now();
+      return;
+    }
+    if (verdict === 'stalled') await fallBackToFloor();
+  } catch {
+    /* A watchdog is not allowed to cost a fix or break a day. Whatever could
+       not be read here is read again on the next tick. */
+  }
+}
+
+/**
+ * The task was accepted and is delivering nothing. Take what we can while the
+ * app is open, and tell the office what is really happening.
+ *
+ * THE BACKGROUND TASK IS LEFT REGISTERED, which looks like the wrong half of
+ * the decision and is not. Stopping it would buy nothing — it is already
+ * delivering nothing — and would throw away the one good outcome still
+ * available: a battery manager that relents, or a salesman who plugs the phone
+ * in, and fixes start arriving again. `keep()` gates whatever does arrive at
+ * the same cadence the floor is keeping, and the id of a position is its own
+ * reading, so the two mechanisms cannot double anything between them.
+ *
+ * It does not try the upgrade again either, for the rest of this process.
+ * `start()` retrying on every resume would clear the floor's timer each time,
+ * hand the dead task another whole window to prove itself, and leave the day
+ * full of holes exactly the size of the window — the retry is right where the
+ * answer might have changed (a permission granted in Settings) and wrong where
+ * the OS has already said yes and meant nothing by it. A fresh process starts
+ * the judgement over, which is what a phone reaped and reopened is.
+ *
+ * `false` is the honest thing to report. The column means "is a real background
+ * trail running", and it is not — while `locationPermission`, riding the same
+ * request, still reads `always`, so the office can tell this apart from a
+ * salesman who refused the prompt. Those are two different conversations to
+ * have with him, and only one of them is about the phone.
+ */
+async function fallBackToFloor(): Promise<void> {
+  backgroundProvedSilent = true;
+  stopWatching();
+  mode = 'foreground';
+
+  /* One fix straight away, for the same reason the first start takes one: the
+     alternative is a gap that starts the moment we noticed. */
+  void takeForeground();
+  if (!foregroundTimer) {
+    const seconds = await getConfig<number>('mbos.location.trackEverySeconds', 3);
+    foregroundTimer = setInterval(() => void takeForeground(), Math.max(3, seconds) * 1_000);
+  }
+
+  void reportLocationPermission(false).catch(() => {});
+}
+
+function startWatching(everyMs: number): void {
+  stopWatching();
+  watchdogTimer = setInterval(() => void watch(), everyMs);
+}
+
+function stopWatching(): void {
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer);
+    watchdogTimer = null;
+  }
+}
+
 /** Is the trail running right now, one way or the other? */
 export function isTracking(): boolean {
   return mode !== null;
@@ -278,14 +411,23 @@ export function isTracking(): boolean {
  *
  * Safe to call repeatedly — on check-in, on app resume, on a cold start
  * while the day is already open, and after a sign-in — and it is meant to
- * be, because it is also the only mechanism that notices a permission
- * granted mid-session. Already on the real background task, it does
- * nothing; still on the foreground floor, it retries the upgrade every
- * time, which costs nothing when the answer is still no and is the only
- * way it ever becomes yes without a check-out. A handset whose permission
- * keeps being refused takes no fixes beyond the floor and says nothing more
- * than the one report below — asking the OS again on every fix is how
- * somebody turns the app off.
+ * be, because it is the mechanism that notices a permission granted
+ * mid-session. Already on the real background task, it does nothing; still
+ * on the foreground floor, it retries the upgrade every time, which costs
+ * nothing when the answer is still no and is the only way it ever becomes
+ * yes without a check-out. A handset whose permission keeps being refused
+ * takes no fixes beyond the floor and says nothing more than the one report
+ * below — asking the OS again on every fix is how somebody turns the app off.
+ *
+ * WHAT IT DOES NOT DO IS RETRY A TASK THE OS HAS ALREADY ACCEPTED, and this
+ * comment used to claim otherwise. "It retries the upgrade every time" is true
+ * of the foreground floor and was never true of a background task that has
+ * silently died: the first line of this function returned, so once the OS had
+ * said yes, this process believed it was tracking for the rest of the day
+ * whatever arrived. That is exactly the state a vivo handset spent eight hours
+ * in with nothing on any screen and nothing in the office saying so. Noticing
+ * is the watchdog's job, above; the early return is honest again because
+ * something else is now doing the re-evaluating.
  */
 export async function start(): Promise<void> {
   if (mode === 'background') return;
@@ -296,7 +438,9 @@ export async function start(): Promise<void> {
   const seconds = await getConfig<number>('mbos.location.trackEverySeconds', 3);
   const every = Math.max(3, seconds) * 1_000;
 
-  const backgroundStarted = await startBackground(every);
+  /* Caught delivering nothing once already in this process. See
+     `fallBackToFloor` for why that answer stands until the process does not. */
+  const backgroundStarted = backgroundProvedSilent ? false : await startBackground(every);
   if (backgroundStarted) {
     /* Upgrading off the floor — its timer is now redundant, and running
        both would double the very sampling this exists to fix. */
@@ -305,6 +449,12 @@ export async function start(): Promise<void> {
       foregroundTimer = null;
     }
     mode = 'background';
+    /* From here the OS's word is on probation. The window is measured from
+       this moment, and it is ticked at the cadence because a watchdog that
+       looked less often than the thing it is watching would be reporting on a
+       silence it had not actually waited through. */
+    backgroundStartedAt = Date.now();
+    startWatching(await minGapMs());
   } else if (mode !== 'foreground') {
     /* First start, floor only: one fix straight away, so a check-in puts a
        point on the map rather than a gap at the start of every day. A retry
@@ -331,6 +481,11 @@ export async function start(): Promise<void> {
  */
 async function stopTicking(): Promise<void> {
   mode = null;
+  /* The day is over, so there is nothing left to watch — and `backgroundStartedAt`
+     goes with it, because a mark left standing would have the next check-in's
+     task judged on the silence of the one before it. */
+  stopWatching();
+  backgroundStartedAt = 0;
   if (foregroundTimer) {
     clearInterval(foregroundTimer);
     foregroundTimer = null;

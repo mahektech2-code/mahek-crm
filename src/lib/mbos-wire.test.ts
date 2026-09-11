@@ -650,6 +650,55 @@ test("the dictation readiness key is spelled the same on both sides", () => {
 });
 
 /* ---------------------------------------------------------------------------
+ * AND SO IS THE ONE THAT DECIDES WHETHER A TRAIL IS BELIEVED.
+ *
+ * `mbos.location.trailStalledAfterMisses` is how many of its own position
+ * intervals a handset may spend recording nothing before it concludes the
+ * background task the OS accepted is dead, falls back to taking fixes while the
+ * app is open, and reports what it is really doing. `mbosConfigPayload` ships
+ * every `mbos.*` key, so the registry entry is the whole of the publishing
+ * half — and the reading half is one string inside `sync/trail.ts`.
+ *
+ * Get either wrong and NOTHING FAILS, in the same silence the dictation key
+ * above hides in: `getConfig` falls through to the handset's compiled default,
+ * the watchdog goes on running at a number nobody chose, and a manager who
+ * changes it on the Settings screen changes it in the office and nowhere else.
+ * ------------------------------------------------------------------------- */
+
+test("the trail watchdog's window is spelled the same on both sides", () => {
+  const KEY = "mbos.location.trailStalledAfterMisses";
+
+  const registry = readFileSync("src/lib/config/registry.ts", "utf8");
+  const at = registry.indexOf(`key: "${KEY}"`);
+  assert.ok(
+    at > -1,
+    `${KEY} has left the registry, so no office can change how long a dead trail is believed`,
+  );
+  const entry = registry.slice(at);
+
+  const trail = readFileSync("mbos-app/src/sync/trail.ts", "utf8");
+  assert.ok(
+    trail.includes(`'${KEY}'`),
+    `the handset no longer reads ${KEY} — the watchdog will run on its compiled default for ever`,
+  );
+
+  /* And the two DEFAULTS agree. The handset's exists only for a phone that has
+   * never bootstrapped; a different number there is a second policy, held by
+   * exactly the handsets nobody has ever configured. */
+  const declared = entry.slice(0, entry.indexOf("},")).match(/default:\s*(\d+)/);
+  assert.ok(declared, `${KEY} has no default in the registry`);
+
+  const config = readFileSync("mbos-app/src/data/config.ts", "utf8");
+  const fallback = config.slice(config.indexOf(`'${KEY}'`)).match(/:\s*(\d+)/);
+  assert.ok(fallback, `${KEY} has no fallback on the handset`);
+  assert.equal(
+    fallback[1],
+    declared[1],
+    "the handset's fallback and the registry's default are two different policies",
+  );
+});
+
+/* ---------------------------------------------------------------------------
  * THE VOICE SETTINGS AND THE KEYS BEHIND THEM STAY ON THE SERVER.
  *
  * `mbosConfigPayload` ships everything prefixed `mbos.` or `leads.`, so a
@@ -904,5 +953,111 @@ test("the book-reconcile field is spelled the same on both sides", () => {
   assert.ok(
     /if\s*\(!Array\.isArray\(bookIds\)\)\s*return 0;/.test(pull),
     "reconcileBook must separate an absent list from an empty one with Array.isArray",
+  );
+});
+
+/* ---------------------------------------------------------------------------
+ * EVERY KEY THE HANDSET ASKS FOR, NOT JUST THE ONES SOMEBODY REMEMBERED.
+ *
+ * The two tests above each pin one key by name, which is worth having and is
+ * not the shape of the bug. `getConfig` answers a key the office has never
+ * heard of with the handset's own compiled default and no error anywhere —
+ * so a key that was never added to the registry behaves EXACTLY like one that
+ * was, right up until a manager changes it on the Settings screen and nothing
+ * on any phone moves. Nobody reports that as a bug; they report that the
+ * setting does not work, months later, if at all.
+ *
+ * `mbos.location.trackEveryMinutes` is how this was found. It is read by
+ * `minGapMs()` in `sync/trail.ts` — the authority on what is actually WRITTEN
+ * to the trail — and it had never been published at all. AGENTS.md's own
+ * account of the three-second incident says "`mbos.location.trackEveryMinutes`
+ * said five and the handset asked for five". It said nothing. The compiled
+ * default happened to be five, which is precisely why nobody noticed, and it
+ * means the trail cadence has never once been something the office could
+ * change.
+ *
+ * OUTSTANDING is the seven that were already like that when this test was
+ * written, each with the reason it is still on the list. The alternative is
+ * not "no allowlist" — it is what this module had before, which was seven
+ * unpublishable settings recorded nowhere and known to nobody. Adding an
+ * eighth now fails the build; taking one off the list is a registry entry,
+ * which needs a label, a description and a range somebody has actually
+ * decided on.
+ * ------------------------------------------------------------------------- */
+
+/*
+ * COMPUTED INTO THE PAYLOAD RATHER THAN STORED, which is a different thing
+ * from missing and must not be confused with it. `mbos.ai.dictation` is an
+ * ANSWER — whether this deployment can hear, worked out from the voice
+ * settings and the provider keys, neither of which may cross the wire — so
+ * there is nothing for a manager to type and a registry entry would be a
+ * second, editable copy of a conclusion. `mbos-service.ts` writes it into the
+ * payload and the test above pins its spelling.
+ */
+const INJECTED = new Set(["mbos.ai.dictation"]);
+
+const OUTSTANDING: Record<string, string> = {
+  "mbos.attendance.baseLocation":
+    "The office's own coordinates, which the geofence is measured from. Not a " +
+    "number in a box — it wants a map to pick it on, and the Settings screen " +
+    "has no such control yet.",
+  "mbos.expenses.maxClaimAgeDays":
+    "How far back a claim may be dated on the handset. The server has its own " +
+    "`mbos.expenses.backdatedDaysAllowed`, which IS published and IS enforced, " +
+    "so the handset's copy is a courtesy refusal in front of a real one — the " +
+    "two should be one key, and that is a decision rather than an entry.",
+  "mbos.route.averageSpeedKmph":
+    "Route engine tuning. The four below are one set and belong to whoever " +
+    "owns how a day is ordered; publishing them one at a time would put half " +
+    "a control on the Settings screen.",
+  "mbos.route.maxStopsForTwoOpt": "See `mbos.route.averageSpeedKmph`.",
+  "mbos.route.maxTwoOptPasses": "See `mbos.route.averageSpeedKmph`.",
+  "mbos.route.minutesPerStop": "See `mbos.route.averageSpeedKmph`.",
+  "mbos.tasks.escalateAfterHours":
+    "The handset reads it to draw a task as overdue; the escalation itself is " +
+    "the server's, on `mbosHourly`. Same question as the expenses one — one " +
+    "key or two, decided rather than declared.",
+};
+
+test("every mbos.* key the handset reads is one the office can publish", () => {
+  const sources = [
+    ...readdirSyncDeep("mbos-app/src"),
+    ...readdirSyncDeep("mbos-app/app"),
+  ].filter((f) => /\.tsx?$/.test(f) && !f.endsWith(".test.ts"));
+  const asked = new Map<string, string>();
+  for (const file of sources) {
+    const text = readFileSync(file, "utf8");
+    for (const m of text.matchAll(/getConfig<[^>]*>\(\s*'(mbos\.[A-Za-z0-9._]+)'/g)) {
+      asked.set(m[1]!, file);
+    }
+  }
+  assert.ok(asked.size > 20, "found almost no getConfig calls — the scan is broken, not the code");
+
+  const registry = readFileSync("src/lib/config/registry.ts", "utf8");
+  const missing: string[] = [];
+  for (const [key, file] of asked) {
+    if (OUTSTANDING[key] || INJECTED.has(key)) continue;
+    if (!registry.includes(`key: "${key}"`)) {
+      missing.push(`${key} — read in ${file.replace(/^.*mbos-app\//, "mbos-app/")}`);
+    }
+  }
+
+  assert.deepEqual(
+    missing,
+    [],
+    "these keys are read by the handset and declared nowhere, so they run on a " +
+      "compiled default that no office can change and nothing says so:\n" +
+      missing.join("\n"),
+  );
+});
+
+test("nothing lingers on the outstanding list after it has been published", () => {
+  const registry = readFileSync("src/lib/config/registry.ts", "utf8");
+  const published = Object.keys(OUTSTANDING).filter((k) => registry.includes(`key: "${k}"`));
+  assert.deepEqual(
+    published,
+    [],
+    "these are in the registry now and should come off OUTSTANDING, or the list " +
+      "stops meaning anything: " + published.join(", "),
   );
 });
