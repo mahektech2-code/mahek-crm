@@ -150,3 +150,98 @@ test('a city is offered as an origin only where the book has pinned a shop in it
   assert.ok(Math.abs(thane.lat - 19.2183) < 0.001, 'the centre is the mean of its own shops');
   db.close();
 });
+
+/* ------------------------------------------------------- customers vs leads */
+
+/**
+ * A LEAD IS A ROW IN BOTH TABLES on this handset.
+ *
+ * The office collapsed the two into one `customers` row long ago, but the wire
+ * still sends leads down their own channel into `leads`, keyed on the same id —
+ * so "is this a lead" has to be an EXISTS against that table rather than a
+ * column read. These run against the real schema, which is the only way to know
+ * the correlated subquery actually resolves.
+ */
+function seedBook(db: DatabaseSync) {
+  const add = (id: string, name: string) =>
+    db.exec(
+      `INSERT INTO customers (id, name, city) VALUES ('${id}', '${name}', 'Nagpur')`,
+    );
+  add('c1', 'Ganesh Paints');
+  add('c2', 'Shree Hardware');
+  add('l1', 'New Shop On The Corner');
+  add('l2', 'Filed Away Traders');
+
+  const lead = (id: string, archived: number) =>
+    db.exec(
+      `INSERT INTO leads (id, name, stage, archived, clientCreatedAt, deviceId)
+       VALUES ('${id}', 'x', 'New', ${archived}, 0, 'd1')`,
+    );
+  lead('l1', 0);
+  lead('l2', 1);
+}
+
+test('the customers view excludes live leads and keeps archived ones', () => {
+  const db = handset();
+  seedBook(db);
+
+  const q = customerPageQuery({ view: 'customers', limit: 50 });
+  const rows = db.prepare(q.sql).all(...q.params) as { id: string }[];
+  const ids = rows.map((r) => r.id).sort();
+
+  /* `l2` is an ARCHIVED lead — filed out of the way, not a live prospect — so
+     its customer row belongs in the customers view. An archived lead removing
+     a shop from both views is a shop that exists on no screen. */
+  assert.deepEqual(ids, ['c1', 'c2', 'l2']);
+});
+
+test('the leads view is only the live leads', () => {
+  const db = handset();
+  seedBook(db);
+
+  const q = customerPageQuery({ view: 'leads', limit: 50 });
+  const rows = db.prepare(q.sql).all(...q.params) as { id: string }[];
+  assert.deepEqual(rows.map((r) => r.id), ['l1']);
+});
+
+test('no view means the whole book', () => {
+  const db = handset();
+  seedBook(db);
+
+  const q = customerPageQuery({ limit: 50 });
+  const rows = db.prepare(q.sql).all(...q.params) as { id: string }[];
+  assert.equal(rows.length, 4);
+});
+
+test('the count agrees with the page it counts', () => {
+  /* Two queries answering one question is how a screen comes to say "18 shops"
+     over a list of eleven. */
+  const db = handset();
+  seedBook(db);
+
+  for (const view of ['all', 'customers', 'leads'] as const) {
+    const page = customerPageQuery({ view, limit: 50 });
+    const count = customerCountQuery(undefined, view);
+    const rows = db.prepare(page.sql).all(...page.params) as unknown[];
+    const n = (db.prepare(count.sql).get(...count.params) as { n: number }).n;
+    assert.equal(n, rows.length, `${view}: counted ${n}, listed ${rows.length}`);
+  }
+});
+
+test('a view and a search narrow together, and the distance sort survives both', () => {
+  /* The binding order is the thing at risk: the projection binds six origin
+     parameters BEFORE the search binds six of its own, and the view clause is
+     spliced between them carrying none. Get that wrong and the book sorts by
+     nonsense without throwing. */
+  const db = handset();
+  seedBook(db);
+
+  const q = customerPageQuery({
+    view: 'customers',
+    query: 'ganesh',
+    origin: { lat: 21.1458, lng: 79.0882 },
+    limit: 50,
+  });
+  const rows = db.prepare(q.sql).all(...q.params) as { id: string }[];
+  assert.deepEqual(rows.map((r) => r.id), ['c1']);
+});

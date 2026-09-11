@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { can } from "@/lib/access-control";
+import { canFor } from "@/lib/access-control";
 import { distributorCandidates } from "@/lib/services/distributor-service";
 
 /**
@@ -18,7 +18,7 @@ import { distributorCandidates } from "@/lib/services/distributor-service";
 export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ hits: [] }, { status: 401 });
-  if (!can(user.role, "customer.classify")) {
+  if (!await canFor(user, "customer.classify")) {
     return NextResponse.json({ hits: [] }, { status: 403 });
   }
 

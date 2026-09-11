@@ -14,7 +14,15 @@ import { backoffFor, MAX_ATTEMPTS } from './queue';
  * first, always; media follows and is allowed to take as long as it takes.
  */
 
-export type MediaKind = 'shop_photo' | 'customer_photo' | 'cheque_photo' | 'bill_photo' | 'selfie' | 'sample_proof' | 'deposit_proof' | 'task_proof' | 'voice_note';
+export type MediaKind =
+  | 'shop_photo' | 'customer_photo' | 'cheque_photo' | 'bill_photo' | 'selfie'
+  | 'sample_proof' | 'deposit_proof' | 'task_proof' | 'voice_note'
+  /* The meter at either end of a journey, and the ticket where he bought one.
+     ONE kind covers both readings deliberately: which end a photograph is, is
+     a fact about the leg it hangs off — `odometerPhotoId` or
+     `odometerEndPhotoId` — and duplicating that into the kind would give two
+     places to read one answer out of. */
+  | 'odometer_photo' | 'ticket_photo';
 
 /**
  * How big the file is, for the queue's own reporting.
@@ -79,6 +87,31 @@ export async function queueAudio(args: { uri: string; parentType: string; parent
     [id, args.parentType, args.parentId, args.uri, byteSize(args.uri), Date.now()],
   );
   return id;
+}
+
+/**
+ * Throw away a queued file nobody is going to claim.
+ *
+ * A salesman who records a visit note, listens to himself and says it again
+ * leaves the first recording behind: it is in the queue with a parent of
+ * `pending`, which no visit will ever adopt, so it uploads, lands on the
+ * server parented to nothing, and is swept the next night. The bytes go, but
+ * the trip up a 2G link was paid for and a row somebody has to account for
+ * sat in the office in between.
+ *
+ * Only ever called on a file that has NOT been sent — `state = 'queued'` is
+ * in the where clause rather than assumed, because a row already in flight is
+ * the server's problem and deleting our record of it would lose the retry.
+ */
+export async function discardQueuedMedia(mediaId: string): Promise<void> {
+  const rows = await all<MediaRow>(
+    "SELECT * FROM media_queue WHERE id = ? AND state = 'queued'",
+    [mediaId],
+  );
+  const row = rows[0];
+  if (!row) return;
+  await run('DELETE FROM media_queue WHERE id = ?', [mediaId]);
+  await maybeDeleteLocal(row);
 }
 
 type MediaRow = {

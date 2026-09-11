@@ -21,10 +21,11 @@ import type { AppId } from "@/lib/apps";
 export type Person = {
   id: string;
   name: string;
-  email: string;
+  /** Null where somebody signs in with their work number alone. */
+  email: string | null;
   /** The work number. How staff are identified to each other, and a login. */
   phone: string | null;
-  role: "telecaller" | "manager" | "accounts" | "admin";
+  role: "associate" | "manager" | "admin";
   initials: string;
   active: boolean;
   reportsToId: string | null;

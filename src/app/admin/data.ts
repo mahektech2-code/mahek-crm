@@ -210,7 +210,7 @@ export type AdminUser = {
   status: UserStatus;
   apps: string[];
   /** The account's one role. There is no role per app. */
-  platformRole: "telecaller" | "manager" | "accounts" | "admin";
+  platformRole: "associate" | "manager" | "admin";
   /** Customers whose book this account holds. Real work, not a decoration. */
   customers: number;
   reportsTo?: string;

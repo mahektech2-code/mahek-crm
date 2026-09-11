@@ -351,12 +351,61 @@ function startOfToday(): number {
   return d.getTime();
 }
 
-export async function listOrders(customerId?: string) {
+/* --------------------------------------------------- what he has punched */
+
+export type PunchedOrder = {
+  id: string;
+  customerId: string;
+  customerName: string | null;
+  orderNumber: string | null;
+  orderedAt: number;
+  deliveryDate: string | null;
+  status: string;
+  netTotalPaise: number | null;
+  valueUnavailable: number;
+  cancelReason: string | null;
+  syncState: string;
+  syncMessage: string | null;
+};
+
+/**
+ * The orders he has taken, newest first.
+ *
+ * HIS record, like `listPayments` beside it, and not the office's: the
+ * customer record's Orders tab reads `customer_orders`, which is what the
+ * office has accepted and billed. This reads `orders` — what he punched,
+ * including the one still sitting in the outbox because he was in a basement.
+ * A salesman who cannot see what he took this morning has no way to answer
+ * "did that go through?" except by asking somebody at a desk.
+ *
+ * The customer's NAME is joined rather than left to the caller, for the same
+ * reason every other list here joins it: a list of amounts cannot be worked.
+ */
+export async function listOrders(customerId?: string): Promise<PunchedOrder[]> {
+  const select = `SELECT o.id, o.customerId, c.name AS customerName, o.orderNumber, o.orderedAt,
+                         o.deliveryDate, o.status, o.netTotalPaise, o.valueUnavailable,
+                         o.cancelReason, o.syncState, o.syncMessage
+                    FROM orders o LEFT JOIN customers c ON c.id = o.customerId`;
   return customerId
-    ? all('SELECT * FROM orders WHERE customerId = ? ORDER BY orderedAt DESC', [customerId])
-    : all('SELECT * FROM orders ORDER BY orderedAt DESC LIMIT 50');
+    ? all<PunchedOrder>(
+        `${select} WHERE o.customerId = ? ORDER BY o.orderedAt DESC LIMIT 100`,
+        [customerId],
+      )
+    : all<PunchedOrder>(`${select} ORDER BY o.orderedAt DESC LIMIT 100`);
 }
 
-export async function orderLines(orderId: string) {
-  return all('SELECT * FROM order_lines WHERE orderId = ?', [orderId]);
+export type PunchedLine = {
+  id: string;
+  productName: string;
+  cans: number;
+  litres: number | null;
+  lineTotalPaise: number | null;
+};
+
+/** What was on it. Opened a row at a time, so the list itself stays cheap. */
+export async function orderLines(orderId: string): Promise<PunchedLine[]> {
+  return all<PunchedLine>(
+    'SELECT id, productName, cans, litres, lineTotalPaise FROM order_lines WHERE orderId = ?',
+    [orderId],
+  );
 }

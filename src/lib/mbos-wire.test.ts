@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 
 /* ---------------------------------------------------------------------------
  * THE HANDSET'S SCHEMA IS THE WIRE CONTRACT, and nothing was checking it.
@@ -80,6 +80,22 @@ function selectedNames(query: string): string[] {
   let depth = 0;
 
   /*
+   * COMMENTS COME OUT FIRST, before anything scans for a keyword.
+   *
+   * They were stripped further down, after the loop that finds the `from`
+   * closing the select list — so a prose comment inside the select containing
+   * the word "from" ended the scan early and every column after it read as one
+   * the server never sends. It is a false POSITIVE, which is the tolerable
+   * direction, but it is triggered by ordinary house style: these queries carry
+   * paragraphs, and "reached the office perfectly from the first build" is not
+   * a sentence anybody would suspect.
+   *
+   * Parentheses inside a comment went into the depth count too, which could
+   * unbalance it in either direction.
+   */
+  query = query.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
+
+  /*
    * The OUTERMOST select, which is not always the first one. `salaryFor`
    * opens with a CTE and `recentTimeline` selects from a subquery, so both
    * have a select the handset never sees the columns of — reading the first
@@ -106,8 +122,7 @@ function selectedNames(query: string): string[] {
     clause += ch;
   }
 
-  /* Comments carry commas and column-shaped words. */
-  clause = clause.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
+  /* Comments are already out — see the top of this function. */
   clause = clause.slice(clause.search(/\bselect\b/i) + 6);
 
   depth = 0;
@@ -171,8 +186,24 @@ function payloadColumns(source: string, fn: string): string[] {
   }
 
   const obj = body.match(/\.select\(\{([\s\S]*?)\}\)/);
-  assert.ok(obj, `${fn} has neither a sql template nor a .select({}) to read`);
-  return [...obj[1].matchAll(/^\s*(\w+):/gm)].map((m) => m[1]);
+  if (obj) return [...obj[1].matchAll(/^\s*(\w+):/gm)].map((m) => m[1]);
+
+  /*
+   * A payload assembled in TypeScript rather than by the database.
+   *
+   * `leaveBalanceRows` is the one of these: its entitlement comes from
+   * configuration and its usage from a GROUP BY, so there is no single select
+   * whose columns are the row. Reading the object it maps to keeps this test
+   * pointed at the thing that actually goes on the wire — anchoring it on one
+   * of the two queries instead would have checked two of the five columns and
+   * reported the other three as safe.
+   */
+  const literal = body.match(/=>\s*\(\{([\s\S]*?)\}\)\)/);
+  assert.ok(
+    literal,
+    `${fn} has no sql template, no .select({}) and no mapped object to read`,
+  );
+  return [...literal[1].matchAll(/^\s*(\w+):/gm)].map((m) => m[1]);
 }
 
 /*
@@ -187,10 +218,17 @@ const WIRE: { fn: string; table: string; extra?: string[] }[] = [
   { fn: "recentTimeline", table: "timeline_events" },
   { fn: "recentOrders", table: "customer_orders", extra: ["lastSyncedAt"] },
   { fn: "recentPayments", table: "customer_payments", extra: ["lastSyncedAt"] },
+  /*
+   * `customerBills` assembles its row in TypeScript rather than in SQL — it
+   * reads the Accounts ledger through `listBills` and TRIMS the result, so the
+   * mapped object literal is the thing that actually goes on the wire. That is
+   * the `leaveBalanceRows` case, and `payloadColumns` reads it the same way.
+   */
+  { fn: "customerBills", table: "customer_bills", extra: ["lastSyncedAt"] },
   { fn: "journeyStops", table: "journey_stops", extra: ["lastSyncedAt"] },
   { fn: "schemeRows", table: "schemes" },
   { fn: "unreadNotifications", table: "notifications" },
-  { fn: "leaveBalances", table: "leave_balances", extra: ["lastSyncedAt"] },
+  { fn: "leaveBalanceRows", table: "leave_balances", extra: ["lastSyncedAt"] },
   { fn: "holidaysFor", table: "holidays", extra: ["lastSyncedAt"] },
   { fn: "visibleDocuments", table: "documents", extra: ["lastSyncedAt"] },
   { fn: "coursesFor", table: "courses", extra: ["lastSyncedAt"] },
@@ -236,12 +274,28 @@ test("every column MBOS sends has a column on the handset to land in", () => {
  * loudly rather than quietly stop being checked.
  */
 const DELTA: { anchor: string; table: string }[] = [
-  { anchor: 'select c.id, c.name, c.contact_person', table: "customers" },
   { anchor: 'select p.id, p.name, p.pack_size', table: "products" },
   { anchor: 'select t.id, t.customer_id as "customerId"', table: "timeline_events" },
   { anchor: "select s.id,", table: "journey_stops" },
-  { anchor: 'select p.id, p.plan_date::text as "planDate"', table: "journey_days" },
-  { anchor: "select b.leave_type::text as kind", table: "leave_balances" },
+  /*
+   * THREE ENTRIES HAVE LEFT THIS LIST, all for the same reason: the delta now
+   * calls the same function the bootstrap does, so there is no second spelling
+   * left to check and the WIRE entry above covers each once. That is the state
+   * every remaining entry is waiting to reach.
+   *
+   * `customers` was the third, and it is the one that proves why the state is
+   * worth reaching. This test only ever asked whether the delta sends
+   * something the handset CANNOT HOLD — an extra column, which throws and
+   * takes the whole pull with it. It could not ask the opposite, because it
+   * has no second list to compare against: a column the delta simply omits is
+   * not a fault in any file, it is an absence, and eleven of them sat there
+   * for as long as the channel existed. See `changedCustomersForDevice`.
+   *
+   * `journey_days` moved for a stronger reason than tidiness — the bootstrap
+   * sent NO plan days at all, so a fresh sign-in got an empty Journey tab and
+   * the `updated_at`-gated delta could never make it up: a day proposed before
+   * this handset signed in arrived on no pass, ever.
+   */
 ];
 
 /* The history channels are sent by the SAME functions on both paths — the
@@ -267,6 +321,77 @@ test("the delta's own queries send nothing the handset cannot hold either", () =
   }
 
   assert.deepEqual(faults, [], `the delta would throw on the handset:\n  ${faults.join("\n  ")}`);
+});
+
+/* ---------------------------------------------------------------------------
+ * THE OTHER DIRECTION: what an ACCEPT writes back onto the record.
+ *
+ * `setEntityState` in `mbos-app/src/sync/queue.ts` reflects a queue item's
+ * fate onto the row itself, so a screen can say what state an order is in
+ * without joining the outbox. It writes `syncState` and `syncMessage` always,
+ * and `serverCreatedAt` whenever the server sent a time — which an ACCEPT
+ * always does, so that is the ordinary path and not the exception.
+ *
+ * `journey_days` was in `ENTITY_TABLE` without a `serverCreatedAt` column, so
+ * every accepted `plan_day` threw `no such column` INSIDE the push loop:
+ * after the queue row had been marked synced, before the rest of the batch had
+ * been read, and before `applyPull` ran at all. So agreeing a day silently
+ * threw away that tick's whole delta — the stops for the day just agreed
+ * included — and left the day reading "waiting for signal" for ever with the
+ * answer already on the server. Every OTHER table in that map had the column,
+ * which is exactly why nothing caught it.
+ *
+ * Same shape as the pull contract above and the same reason nothing else can
+ * catch it: one file's `UPDATE` is a string, the other file's schema is a
+ * string, and they meet only inside a phone.
+ * ------------------------------------------------------------------------- */
+
+const QUEUE = "mbos-app/src/sync/queue.ts";
+
+test("every table a sync verdict is written onto can hold the verdict", () => {
+  const queue = readFileSync(QUEUE, "utf8");
+  const tables = handsetTables();
+
+  const map = queue.match(/const ENTITY_TABLE[^=]*=\s*\{([\s\S]*?)\n\};/);
+  assert.ok(map, "ENTITY_TABLE is gone from sync/queue.ts — this test needs updating with it");
+
+  /* `'visits'` in `visit: 'visits',` — the quoted half, so a comment
+     mentioning a table name cannot be read as an entry. */
+  const targets = [...map[1].matchAll(/^\s*\w+:\s*'(\w+)'/gm)].map((m) => m[1]);
+  assert.ok(targets.length > 10, `only ${targets.length} entity tables parsed — the shape changed`);
+
+  /* Read off `setEntityState` rather than typed out here, so a fourth column
+     added to that UPDATE is checked without anybody remembering to. */
+  const from = queue.indexOf("async function setEntityState");
+  assert.ok(from > -1, "setEntityState is gone from sync/queue.ts");
+  /* That function's body only — the file goes on to UPDATE `sync_queue`
+     itself, and those columns belong to a different table. */
+  const writes = queue.slice(from, queue.indexOf("\n}", from));
+  const written = [...new Set([...writes.matchAll(/SET ([^`]*?) WHERE/g)]
+    .flatMap((m) => [...m[1].matchAll(/(\w+)\s*=\s*\?/g)].map((c) => c[1])))];
+  assert.ok(
+    written.includes("syncState") && written.includes("serverCreatedAt"),
+    `setEntityState no longer writes what this test thinks: ${written.join(", ")}`,
+  );
+
+  const faults: string[] = [];
+  for (const table of new Set(targets)) {
+    const local = tables.get(table);
+    if (!local) {
+      faults.push(`${table} does not exist on the handset at all`);
+      continue;
+    }
+    const missing = written.filter((c) => !local.has(c));
+    if (missing.length) faults.push(`${table}: ${missing.join(", ")}`);
+  }
+
+  assert.deepEqual(
+    faults,
+    [],
+    "An accept writes these onto the row, and a missing column throws inside " +
+      "the push loop — which abandons the rest of the batch AND the pull " +
+      "behind it:\n  " + faults.join("\n  "),
+  );
 });
 
 /*
@@ -321,6 +446,149 @@ test("a hand-rolled handler reads no field the server forgets to send", () => {
   );
 });
 
+/*
+ * What the server sends that the handler never reads — the third direction,
+ * and the one that had nothing looking down it.
+ *
+ * The two checks above watch the handler: what it READS that nothing sends,
+ * and what it WRITES that the table lacks. Neither can see a field going the
+ * other way. The generic upsert cannot lose one silently — it inserts exactly
+ * the keys that arrived, so an unknown column throws and the test at the top
+ * of this file catches it before it ships. A hand-rolled handler types its
+ * column list out, so a field nobody listed is simply absent: no error on the
+ * server, none on the handset, and a column of nulls in between.
+ *
+ * `openLeads` sent `gpsLat` and `gpsLng` from the day leads existed and the
+ * handset had nowhere to put them, so every lead on every handset had a null
+ * place — found by hand, long after. Writing this test found the next one
+ * unaided: `area`, sent by the same query, dropped the same way, while the
+ * customer row beside it showed a locality from the very same two fields.
+ *
+ * A field that is deliberately not stored is named in NOT_STORED with the
+ * reason, so the list of exceptions stays short enough to read and nobody
+ * silences a real drop by adding a line to it without saying why.
+ */
+const NOT_STORED: Record<string, string> = {
+  /* The delta's own cursor. It is compared on the server to decide what to
+     send and is not a fact about the row — the handset stamps its own
+     `lastSyncedAt` instead. */
+  updatedAt: "the delta cursor, never a column on the handset",
+};
+
+test("a hand-rolled handler drops nothing the server sends", () => {
+  const service = readFileSync(SERVICE, "utf8");
+  const pull = readFileSync("mbos-app/src/sync/pull.ts", "utf8");
+  const faults: string[] = [];
+
+  for (const { handler, fns } of HANDLERS) {
+    const read = new Set(fieldsRead(pull, handler));
+    for (const fn of fns) {
+      const dropped = payloadColumns(service, fn).filter(
+        (f) => !read.has(f) && !(f in NOT_STORED),
+      );
+      if (dropped.length) {
+        faults.push(`${fn} sends what ${handler} never reads: ${dropped.join(", ")}`);
+      }
+    }
+  }
+
+  assert.deepEqual(
+    faults,
+    [],
+    "a typed column list cannot throw on a field it does not know, so these " +
+      "arrive, are ignored, and leave a column of nulls with nothing failing " +
+      `at either end:\n  ${faults.join("\n  ")}`,
+  );
+});
+
+/* ---------------------------------------------------------------------------
+ * THE FUNNEL'S ENGINES ARE COMPILED TWICE, and a copy can drift.
+ *
+ * `lead-gates.ts` says it in its own header: three callers, one answer. The
+ * handset draws the next rung disabled with the missing conditions under it,
+ * the server action refuses on the same function before it writes, and the
+ * console shows a manager what a lead is stuck behind. That only holds while
+ * the two copies ARE one answer.
+ *
+ * The handset cannot import these files — it is a separate TypeScript program
+ * that this one excludes and that excludes this one, joined only inside a
+ * phone. So they are copied, and this is what stops the copy going stale: the
+ * two are read as text and compared, allowing only the import PATH to differ,
+ * because that is the one line a copy has to change.
+ *
+ * A drift here is the worst shape of bug this repo has: the salesman is told a
+ * rung is open, does the work, and the save refuses in different words. He
+ * concludes the app is lying, which it is.
+ * ------------------------------------------------------------------------- */
+
+const ENGINE_COPIES: { server: string; handset: string }[] = [
+  { server: "src/lib/lead-labels.ts", handset: "mbos-app/src/engines/funnel/lead-labels.ts" },
+  { server: "src/lib/engines/lead-ladder.ts", handset: "mbos-app/src/engines/funnel/lead-ladder.ts" },
+  { server: "src/lib/engines/lead-gates.ts", handset: "mbos-app/src/engines/funnel/lead-gates.ts" },
+];
+
+/** The import lines are the one difference allowed, so they are normalised. */
+function normalisedEngine(source: string): string {
+  return source.replace(/from "\.[^"]*\/?(lead-labels|lead-ladder)"/g, 'from "<engine>/$1"');
+}
+
+test("the handset's copy of the funnel engines has not drifted", () => {
+  const faults: string[] = [];
+
+  for (const { server, handset } of ENGINE_COPIES) {
+    const a = normalisedEngine(readFileSync(server, "utf8"));
+    const b = normalisedEngine(readFileSync(handset, "utf8"));
+    if (a === b) continue;
+
+    /* The first differing line, because "these files differ" on a 600-line
+       engine is a message somebody has to diff by hand anyway. */
+    const left = a.split("\n");
+    const right = b.split("\n");
+    let at = 0;
+    while (at < left.length && at < right.length && left[at] === right[at]) at++;
+    faults.push(
+      `${handset} differs from ${server} at line ${at + 1}:\n` +
+        `    server:  ${left[at] ?? "<end of file>"}\n` +
+        `    handset: ${right[at] ?? "<end of file>"}`,
+    );
+  }
+
+  assert.deepEqual(
+    faults,
+    [],
+    "Edit the server's copy and copy it across — never the handset's. " +
+      "While these differ, a rung the phone says is open is a rung the save " +
+      "may refuse, in different words:\n  " + faults.join("\n  "),
+  );
+});
+
+/*
+ * And the handset's own stage list, which is neither a copy nor derivable.
+ *
+ * `wire.ts` validates an outgoing funnel stage against a `Set` of strings,
+ * because `LeadStage` is a TypeScript union and the wire carries text. A rung
+ * missing from that set is sent as `undefined` — which is the safe direction
+ * and completely silent: the lead moves on the phone and stays where it was in
+ * the office, with nothing anywhere saying so.
+ */
+test("the handset validates every stage the ladder can reach", () => {
+  const labels = readFileSync("src/lib/lead-labels.ts", "utf8");
+  const union = labels.slice(labels.indexOf("export type LeadStage ="));
+  const stages = [...union.slice(0, union.indexOf(";")).matchAll(/"(\w+)"/g)].map((m) => m[1]);
+  assert.ok(stages.length > 6, "LeadStage no longer reads as a union of string literals");
+
+  const wire = readFileSync("mbos-app/src/lib/wire.ts", "utf8");
+  const set = wire.slice(wire.indexOf("const FUNNEL_STAGES"));
+  const known = new Set([...set.slice(0, set.indexOf("]")).matchAll(/'(\w+)'/g)].map((m) => m[1]));
+
+  const missing = stages.filter((s) => !known.has(s));
+  assert.deepEqual(
+    missing,
+    [],
+    `these rungs would be silently dropped on the way out of the handset: ${missing.join(", ")}`,
+  );
+});
+
 test("a hand-rolled handler writes no column the handset lacks", () => {
   const tables = handsetTables();
   const pull = readFileSync("mbos-app/src/sync/pull.ts", "utf8");
@@ -335,4 +603,306 @@ test("a hand-rolled handler writes no column the handset lacks", () => {
   }
 
   assert.deepEqual(faults, [], `the handset has nowhere to put these:\n  ${faults.join("\n  ")}`);
+});
+
+/* ---------------------------------------------------------------------------
+ * A CONFIG KEY IS A WIRE CONTRACT TOO, and this one decides whether a control
+ * is drawn at all.
+ *
+ * Dictation's readiness cannot be worked out on a handset — it depends on a
+ * provider key that lives on the server and deliberately never crosses — so
+ * the server computes the answer and posts it under one string, and the phone
+ * reads it back under the same string. Nothing joins the two but the spelling.
+ *
+ * Get it wrong and NOTHING FAILS. `getConfig` falls through to the handset's
+ * own default, that default is `{ available: false }`, and every screen simply
+ * draws no microphone. No error, no log, no empty state — the feature is just
+ * absent, on a deployment that paid for it and switched it on. That is the
+ * same silence the payload bug above hid in, arriving through a different
+ * door: a value nobody sends and a default that looks like a decision.
+ * ------------------------------------------------------------------------- */
+
+test("the dictation readiness key is spelled the same on both sides", () => {
+  const KEY = "mbos.ai.dictation";
+
+  const service = readFileSync(SERVICE, "utf8");
+  assert.ok(
+    service.includes(`out["${KEY}"]`),
+    `mbosConfigPayload no longer publishes ${KEY} — every handset microphone goes dark`,
+  );
+
+  const dictate = readFileSync("mbos-app/src/components/ui/dictate.tsx", "utf8");
+  assert.ok(
+    dictate.includes(`'${KEY}'`),
+    `the handset no longer reads ${KEY}, so it will fall back to "no microphone" for ever`,
+  );
+
+  /* The default has to be the CLOSED one. An `available: true` default would
+   * draw a mic on a handset that has never heard from the office, which is a
+   * button that fails when pressed — the one thing this feature may not do. */
+  const config = readFileSync("mbos-app/src/data/config.ts", "utf8");
+  const line = config.slice(config.indexOf(`'${KEY}'`));
+  assert.match(
+    line.slice(0, line.indexOf("\n")),
+    /available:\s*false/,
+    "the handset's fallback for dictation must be unavailable, never available",
+  );
+});
+
+/* ---------------------------------------------------------------------------
+ * THE VOICE SETTINGS AND THE KEYS BEHIND THEM STAY ON THE SERVER.
+ *
+ * `mbosConfigPayload` ships everything prefixed `mbos.` or `leads.`, so a
+ * setting named `voice.*` would never cross by accident — but the map key
+ * above is proof that explicit additions happen, and a `voice.apiKey` added
+ * "so the handset can call the provider directly" is exactly the change that
+ * would look reasonable in review. Nothing on a phone calls a transcription
+ * provider: the audio goes to MahekOne and MahekOne spends the credential.
+ * ------------------------------------------------------------------------- */
+
+test("no voice setting and no provider key reaches a handset", () => {
+  const service = readFileSync(SERVICE, "utf8");
+  const payload = service.slice(
+    service.indexOf("export async function mbosConfigPayload"),
+  );
+  const body = payload.slice(0, payload.indexOf("\n}\n"));
+
+  const leaked = [...body.matchAll(/out\["([^"]+)"\]/g)]
+    .map((m) => m[1])
+    .filter((key) => key.startsWith("voice.") || /sarvam|openai|apiKey/i.test(key));
+
+  assert.deepEqual(
+    leaked,
+    [],
+    `these belong to the server alone and were about to be handed to a phone: ${leaked.join(", ")}`,
+  );
+});
+
+/* ---------------------------------------------------------------------------
+ * A HANDLER THE HANDSET NEVER CALLS IS A FEATURE NOBODY CAN USE.
+ *
+ * `dispatchItem` is the whole list of things a salesman can send us, and it is
+ * the one place the two halves of a feature are named in the same vocabulary.
+ * A `case` with no matching `entityType:` on the handset means the server side
+ * was finished and the phone side never arrived — and nothing anywhere goes
+ * red, because both halves compile perfectly on their own.
+ *
+ * That is exactly what happened to `internal_note`. §R had a table, a role
+ * list and a bootstrap that narrowed by role from the day the module shipped,
+ * and `handleInternalNote` sat waiting for a payload that no handset ever
+ * sent: a read path over a table nothing could put a row in. It was found by
+ * reading the dispatcher against the handset by hand, which is not a plan.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Handled on the server, deliberately never sent by a phone, and why.
+ *
+ * Empty today — and it is here rather than absent because the honest answer to
+ * a future mismatch is sometimes "the office sends this one", and that answer
+ * should have to be written down next to the reason.
+ */
+const SERVER_ONLY: Record<string, string> = {};
+
+test("every entity the sync dispatcher handles is one a handset can send", () => {
+  const actions = readFileSync("src/lib/actions/mbos.ts", "utf8");
+  const dispatcher = actions.slice(actions.indexOf("async function dispatchItem"));
+  const body = dispatcher.slice(0, dispatcher.indexOf("\n}\n"));
+
+  const handled = [...body.matchAll(/case "([a-z_]+)":/g)].map((m) => m[1]);
+  assert.ok(handled.length > 15, `expected the whole dispatcher, found ${handled.length} cases`);
+
+  /* What the handset actually enqueues, read as text for the same reason this
+     whole file reads text: the two projects are joined only inside a phone. */
+  const sent = new Set<string>();
+  for (const file of ["mbos-app/src/data", "mbos-app/app"]) {
+    for (const found of readdirSyncDeep(file)) {
+      for (const m of readFileSync(found, "utf8").matchAll(/entityType: ['"]([a-z_]+)['"]/g)) {
+        sent.add(m[1]);
+      }
+    }
+  }
+  assert.ok(sent.size > 15, `expected the handset's writes, found ${sent.size} entity types`);
+
+  const stranded = handled.filter((e) => !sent.has(e) && !SERVER_ONLY[e]);
+  assert.deepEqual(
+    stranded,
+    [],
+    "the server can save these and no handset ever sends one — build the screen, " +
+      `or record it in SERVER_ONLY with a reason: ${stranded.join(", ")}`,
+  );
+
+  /* And the other direction, which fails LOUDER but only at runtime: a handset
+     sending an entity the dispatcher does not know gets a rejection reading
+     "MahekOne does not know how to save a ..." — after the salesman has done
+     the work. */
+  const unknown = [...sent].filter((e) => !handled.includes(e));
+  assert.deepEqual(
+    unknown,
+    [],
+    `a handset sends these and the server would refuse them: ${unknown.join(", ")}`,
+  );
+});
+
+function readdirSyncDeep(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const path = `${dir}/${entry}`;
+    if (statSync(path).isDirectory()) readdirSyncDeep(path, out);
+    else if (/\.tsx?$/.test(entry) && !entry.includes(".test.")) out.push(path);
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------------------------
+ * THE MIGRATION IS THE ONLY PLACE THE OLD VOCABULARY STILL EXISTS.
+ *
+ * `telecaller` and `accounts` are gone from the enum, so a literal left behind
+ * anywhere in the source is either dead or wrong — and the failure it produces
+ * is the quiet kind. `role === "accounts"` is now permanently false rather than
+ * a type error, because these are compared against `string` in several places
+ * (`can(role: string)` used to be one), so nothing catches it but a grep.
+ * ------------------------------------------------------------------------- */
+
+test("no source file still names a role that no longer exists", () => {
+  /*
+   * EVERY file under src/, not a hand-kept list — and including SQL.
+   *
+   * The first version of this test read seven files it knew about and missed
+   * the one that mattered: `sales-target-service.ts` compares `u.role =
+   * 'telecaller'` inside a `sql` template, and Postgres refuses an enum label
+   * that does not exist. `/accounts/targets` answered 500 — not a wrong list,
+   * a dead page — and nothing but the link crawler saw it. TypeScript cannot:
+   * the literal is inside a string.
+   */
+  const offenders: string[] = [];
+  for (const file of readdirSyncDeep("src")) {
+    if (file.includes(".test.")) continue;
+    const src = readFileSync(file, "utf8");
+    let inBlock = false;
+    for (const [i, line] of src.split("\n").entries()) {
+      const opens = line.includes("/*");
+      const closes = line.includes("*/");
+      const wasInBlock = inBlock;
+      if (opens && !closes) inBlock = true;
+      if (closes) inBlock = false;
+      /* Prose is allowed to remember them — the paragraphs explaining WHY the
+       * vocabulary changed are the most valuable thing in these files, and a
+       * test that forbade the word would delete the reasoning to satisfy
+       * itself. Block comments are tracked rather than matched line by line,
+       * because those sentences run long and only the first carries a `*`. */
+      if (wasInBlock || (opens && !closes)) continue;
+      const code = line.replace(/\/\/.*$/, "").replace(/\/\*.*?\*\//g, "");
+      /* `'accounts'` is still a live APP id, so only the unambiguous one is
+       * matched by name; the app-shaped comparisons are caught by the role
+       * column being named beside them. */
+      /* One deliberate exception, marked at its own line rather than listed
+       * here: `{{telecaller}}` is a WhatsApp template variable and keeping the
+       * word is the point of it. An opt-out that has to be written beside the
+       * code is one whose reason is read; a list in this file is one nobody
+       * revisits. */
+      if (/role-name-ok/.test(src.split("\n")[i - 1] ?? "")) continue;
+      if (/["']telecaller["']/.test(code) || /\brole\s*=\s*'accounts'/.test(code)) {
+        offenders.push(`${file}:${i + 1} ${line.trim().slice(0, 90)}`);
+      }
+    }
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    `these name a role that no longer exists — in TypeScript it is silently false, in SQL it is a 500:\n  ${offenders.join("\n  ")}`,
+  );
+});
+
+
+/* ---------------------------------------------------------------------------
+ * A DELTA MUST SEND WHAT THE BOOTSTRAP SENDS.
+ *
+ * The test above pins a payload against the handset's schema, function by
+ * function, by NAME — and every name in `WIRE` is a bootstrap one. The delta's
+ * channels were anonymous `sql` templates inside `buildPull`'s `Promise.all`,
+ * so they were in no list and nothing compared the two.
+ *
+ * The customers channel had drifted eleven columns apart. Nothing failed,
+ * because `upsert` writes exactly the columns that arrive: a missing one is
+ * not written as null, it is not written at all, so the bootstrap's value sits
+ * on the row being right about the day the salesman signed in. `pullCursor` is
+ * set once and cleared nowhere, so that is the life of the installation.
+ *
+ * The fix was one function for both. This is what stops somebody re-inlining
+ * it — the one change that would put the two back out of step, and the one
+ * nothing else in the suite can see.
+ * ------------------------------------------------------------------------- */
+test("the delta reads customers through the same function the bootstrap does", () => {
+  const src = readFileSync(SERVICE, "utf8");
+  const start = src.indexOf("export async function buildPull");
+  assert.ok(start > 0, "buildPull not found");
+  const body = src.slice(start);
+
+  assert.ok(
+    /changedCustomersForDevice\(/.test(body),
+    "buildPull no longer calls changedCustomersForDevice — a delta that builds its own customer projection is how eleven columns stopped reaching handsets in the field",
+  );
+
+  /* A projection of its own is the regression. `from customers c` is what one
+   * looks like; the id lookup that feeds the shared function lives in
+   * `changedCustomersForDevice`, above `buildPull`, so it is not in this
+   * slice. */
+  assert.equal(
+    (body.match(/from customers c\b/g) ?? []).length,
+    0,
+    "buildPull selects from customers directly — it must go through customersForDevice, or the delta and the bootstrap drift apart silently",
+  );
+
+  const helper = src.slice(
+    src.indexOf("async function changedCustomersForDevice"),
+    src.indexOf("async function customersForDevice"),
+  );
+  assert.ok(
+    /return customersForDevice\(/.test(helper),
+    "changedCustomersForDevice must hand its ids to customersForDevice so there is one column list",
+  );
+});
+
+/* ---------------------------------------------------------------------------
+ * THE BOOK THE HANDSET IS ALLOWED TO HOLD, spelled the same at both ends.
+ *
+ * A pull adds and updates; only a tombstone removes. Tombstones are written
+ * when somebody EDITS an allocation, so a book that shrank any other way — a
+ * role changed, an account reassigned, a customer's city corrected — left the
+ * phone holding shops the server would no longer send, indefinitely, with
+ * nothing on any screen looking wrong. An associate with no territory at all
+ * is the clearest case: the server correctly sends him NO customers and his
+ * handset went on showing a book it had downloaded under an older rule.
+ *
+ * `bookIds` closes it, and like everything else on this wire the two halves
+ * are joined by a spelling and nothing else. Get it wrong and nothing fails:
+ * the field is simply absent, `reconcileBook` reads that as "an older server
+ * that does not speak this", touches nothing — which is the correct reading of
+ * absence and the wrong outcome here — and the stale book stays exactly where
+ * it was.
+ * ------------------------------------------------------------------------- */
+
+test("the book-reconcile field is spelled the same on both sides", () => {
+  const service = readFileSync(SERVICE, "utf8");
+  assert.ok(
+    /bookIds:\s*ids/.test(service),
+    "the server no longer states the whole book, so no handset can let go of a shop it should not hold",
+  );
+
+  const pull = readFileSync("mbos-app/src/sync/pull.ts", "utf8");
+  assert.ok(
+    pull.includes("pull.bookIds"),
+    "the handset no longer reads bookIds — a shrinking book will never reach it",
+  );
+
+  /* ABSENT IS NOT EMPTY, and the safety of the whole thing is that line. A
+   * handset meeting a deployment that predates this must touch nothing;
+   * reading silence as "you may hold nothing" would wipe every book in the
+   * field on the first pull. `Array.isArray` is what tells them apart, and a
+   * truthiness check — which is the obvious way to write this and is wrong —
+   * would treat the real empty answer as absence and never clear anything. */
+  assert.ok(
+    /if\s*\(!Array\.isArray\(bookIds\)\)\s*return 0;/.test(pull),
+    "reconcileBook must separate an absent list from an empty one with Array.isArray",
+  );
 });

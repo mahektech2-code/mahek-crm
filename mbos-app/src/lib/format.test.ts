@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { distanceLabel, shopName } from './format';
+import {
+  dataSize,
+  dayLabel,
+  dayLabelRelative,
+  distanceLabel,
+  hoursInWords,
+  inr,
+  shopName,
+} from './format';
 
 /**
  * Every example here is a real customer name off the production book, or the
@@ -70,4 +78,100 @@ test('no fix, no figure', () => {
   assert.equal(distanceLabel(undefined), null);
   assert.equal(distanceLabel(Number.NaN), null);
   assert.equal(distanceLabel(-5), null);
+});
+
+
+/* ------------------------------------------------------- the day's own words
+ *
+ * `dayLabel` lived inside `app/journey.tsx`, so the pick screen one tap away
+ * printed the raw `2026-09-09` on the card naming the very day the route
+ * screen called `Wed 9 Sep`. It is shared now, which is what makes it worth
+ * pinning: two screens read it, and a change to either has to keep both right.
+ */
+
+test('a calendar day is named the way somebody says it out loud', () => {
+  assert.equal(dayLabel('2026-09-09'), 'Wed 9 Sep');
+  assert.equal(dayLabel('2026-01-01'), 'Thu 1 Jan');
+  assert.equal(dayLabel('2026-12-31'), 'Thu 31 Dec');
+});
+
+test('it is built in UTC, so no zone can shift the date', () => {
+  /* A local `new Date(2026, 2, 29)` in a zone that springs forward at midnight
+     lands on the 28th. These are calendar days with no time of day in them, so
+     there is nothing to convert and nothing to get wrong. */
+  assert.equal(dayLabel('2026-03-29'), 'Sun 29 Mar');
+  assert.equal(dayLabel('2026-10-25'), 'Sun 25 Oct');
+});
+
+test('a date nobody can parse comes back as itself, never as NaN', () => {
+  assert.equal(dayLabel(''), '');
+  assert.equal(dayLabel('not-a-date'), 'not-a-date');
+});
+
+test('the two days anybody acts on are named in words', () => {
+  const today = '2026-09-09';
+  assert.equal(dayLabelRelative(today, today), 'Today');
+  assert.equal(dayLabelRelative('2026-09-10', today), 'Tomorrow');
+  assert.equal(dayLabelRelative('2026-09-11', today), 'Fri 11 Sep');
+  /* Yesterday is deliberately a date: past days sit under Recently, where one
+     relative word among a column of dates reads as a different kind of row. */
+  assert.equal(dayLabelRelative('2026-09-08', today), 'Tue 8 Sep');
+});
+
+test('tomorrow crosses a month and a year without the arithmetic going wrong', () => {
+  assert.equal(dayLabelRelative('2026-10-01', '2026-09-30'), 'Tomorrow');
+  assert.equal(dayLabelRelative('2027-01-01', '2026-12-31'), 'Tomorrow');
+  /* February in a leap year, which a naive +1 on the date string gets wrong. */
+  assert.equal(dayLabelRelative('2028-02-29', '2028-02-28'), 'Tomorrow');
+  assert.equal(dayLabelRelative('2026-03-01', '2026-02-28'), 'Tomorrow');
+});
+
+/*
+ * `inr` takes RUPEES, and the pick screen handed it PAISE — so a shop owing
+ * ₹2,360 was listed as owing ₹2,36,000 on the row somebody plans a morning
+ * from. Pinned because the mistake is invisible: both are valid figures.
+ */
+test('rupees are grouped the Indian way', () => {
+  assert.equal(inr(2360), '₹2,360');
+  assert.equal(inr(236000), '₹2,36,000');
+  assert.equal(inr(1243405), '₹12,43,405');
+  assert.equal(inr(999), '₹999');
+});
+
+/* ------------------------------------------------------------- data size */
+
+test('a download is said in the unit the decision is made in', () => {
+  assert.equal(dataSize(314_572_800), '315 MB');
+  assert.equal(dataSize(1_400_000_000), '1.4 GB');
+  assert.equal(dataSize(45_000), '45 KB');
+});
+
+test('a size nobody could work out reads as an em dash, never as zero', () => {
+  /* A pack whose status will not load has no size. Printing "0 MB" against it
+     would read as an empty download rather than an unreadable one. */
+  assert.equal(dataSize(null), '—');
+  assert.equal(dataSize(undefined), '—');
+  assert.equal(dataSize(NaN), '—');
+});
+
+/* --------------------------------------------------------- a span of hours */
+
+test('a retention window is said in days where it is whole days', () => {
+  /* This is read by the salesman being photographed, so it has to be the
+     sentence he would say, not the number the office typed. */
+  assert.equal(hoursInWords(72), '3 days');
+  assert.equal(hoursInWords(24), '24 hours');
+  assert.equal(hoursInWords(168), '7 days');
+});
+
+test('and stays in hours where it is not, rather than rounding to a lie', () => {
+  /* 36 hours is not "2 days", and being approximate about how long somebody's
+     photograph is kept is exactly the wrong place to be approximate. */
+  assert.equal(hoursInWords(36), '36 hours');
+  assert.equal(hoursInWords(1), '1 hour');
+});
+
+test('a nonsense window says nothing rather than something confident', () => {
+  assert.equal(hoursInWords(0), '0 hours');
+  assert.equal(hoursInWords(NaN), '0 hours');
 });

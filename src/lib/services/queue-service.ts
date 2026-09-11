@@ -330,6 +330,10 @@ async function queueInputs(
       lastConfirmedWhatsappDate: c.lastConfirmedWhatsappDate,
       activeInOrderSystem: c.activeInOrderSystem,
       thirdParty: c.thirdParty,
+      // Which funnel ladder the field team is working this lead up, if any.
+      // Null is every lead in the book before the funnel existed, and it is
+      // chased on the prospect cadence exactly as it always was.
+      leadSalesType: c.leadSalesType ?? null,
       calledToday: Boolean(calledToday),
       doNotContact: c.doNotContact,
       skippedTodayReason: skipReason.get(c.id) ?? null,

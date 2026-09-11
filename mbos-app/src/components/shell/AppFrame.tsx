@@ -7,7 +7,8 @@ import { Header, StatusStrip, TabBar, type StripTone, type TabKey } from './Chro
 import { ActionSheet, ConfirmSheet, Toast } from '../ui/overlays';
 import { useKeyboardHeight } from '../ui/keyboard';
 import { Appear } from '../ui/motion';
-import { usePendingCount, useStore, useUnreadCount } from '../../state/store';
+import { useCustomer, useDaysToAgreeCount, usePendingCount, useStore, useUnreadCount } from '../../state/store';
+import { TravelGate } from './TravelGate';
 import { useBoot } from '../../state/boot';
 import { todayRow } from '../../data/attendance';
 import { plural } from '../../lib/format';
@@ -44,6 +45,11 @@ export const FROM_LABEL: Record<string, string> = {
   notifications: 'Notifications',
   leads: 'Leads',
   lead: 'Lead',
+  sample: 'Sample',
+  'lead-prospect': 'Prospect details',
+  'lead-qualify': 'Qualification',
+  maps: 'Offline maps',
+  pick: 'Pick your shops',
 };
 
 /** Reads the recorded entry route, so the label and the destination agree. */
@@ -120,8 +126,10 @@ export function AppFrame({
   const here = (pathname ?? '').replace(/^\/+/, '').split('/')[0] || 'home';
   const fromHere = `?from=${here}`;
   const keyboardHeight = useKeyboardHeight();
+  const [footerHeight, setFooterHeight] = React.useState(0);
   const unread = useUnreadCount();
   const waiting = usePendingCount();
+  const daysToAgree = useDaysToAgreeCount();
   const checkInAt = useCheckInTime();
   const checkedIn = checkInAt != null;
   const gps = useStore((s) => s.gps);
@@ -129,7 +137,9 @@ export function AppFrame({
   const clearToast = useStore((s) => s.clearToast);
   const sheet = useStore((s) => s.sheet);
   const set = useStore((s) => s.set);
-  const beginVisit = useStore((s) => s.beginVisit);
+  const askTravel = useStore((s) => s.askTravel);
+  const customer = useCustomer();
+  const notify = useStore((s) => s.notify);
   const custId = useStore((s) => s.custId);
   const confirm = useStore((s) => s.confirm);
   const confirmReason = useStore((s) => s.confirmReason);
@@ -151,14 +161,34 @@ export function AppFrame({
     },
     {
       key: 'sync',
-      label: `${waiting} to send`,
-      tone: 'warn',
+      /*
+       * Nothing waiting is GOOD news, and it was drawn amber.
+       *
+       * The pip was `warn` unconditionally, so "0 to send" sat under an amber
+       * light on every screen of the app all day — which is how a warning
+       * light stops meaning anything: the one state worth noticing looked
+       * exactly like the ordinary one. And "0 to send" is a count of nothing,
+       * where the fact somebody wants is that the handset is clear.
+       */
+      label: waiting === 0 ? 'All sent' : `${waiting} to send`,
+      tone: waiting === 0 ? 'ok' : 'warn',
       onPress: () => router.push(`/sync${fromHere}`),
     },
   ];
 
   const actionItems = [
-    { glyph: 'visit', label: 'Start visit', sub: 'GPS, photos, voice note', run: () => { beginVisit(custId); router.push('/visit'); } },
+    /* It asks how he is getting there BEFORE the visit opens — see
+       `TravelGate`. The sub-line says so, because a quick action that raises a
+       question rather than the screen it names reads as the wrong button. */
+    {
+      glyph: 'visit',
+      label: 'Start visit',
+      sub: 'How you travel, then GPS and photos',
+      run: () => {
+        if (!custId) return notify('Choose the shop first, then start the visit.');
+        askTravel({ customerId: custId, customerName: customer?.name ?? 'this shop' });
+      },
+    },
     { glyph: 'order', label: 'Punch order', sub: 'From their usual products', run: () => router.push(`/order${fromHere}`) },
     { glyph: 'money', label: 'Collect payment', sub: 'Cash, cheque, UPI or transfer', run: () => router.push(`/pay${fromHere}`) },
     /* The form is asked for here and opened by the Leads screen, so the shop
@@ -212,7 +242,12 @@ export function AppFrame({
 
       {body}
 
-      {footer}
+      {/* Measured rather than guessed, so the toast can sit above whatever the
+          screen pinned here — see `Toast`. A screen with no footer measures 0
+          and nothing moves. */}
+      {footer ? (
+        <View onLayout={(e) => setFooterHeight(e.nativeEvent.layout.height)}>{footer}</View>
+      ) : null}
 
       {/* The tab bar is hidden while typing. Left in place it floats over the
           keyboard on Android, covering the top row of keys. */}
@@ -222,6 +257,11 @@ export function AppFrame({
           bottomInset={insets.bottom}
           onTab={(k) => router.replace(`/${k}`)}
           onAction={() => set({ sheet: 'action' })}
+          /* The office proposes a day and waits on the answer to plan a week.
+             The Journey screen has always listed those days at the top; what
+             it could not do was say so from anywhere else in the app, so being
+             asked and never noticing looked identical to having no plan. */
+          badges={{ journey: daysToAgree }}
         />
       ) : null}
 
@@ -252,7 +292,12 @@ export function AppFrame({
         }}
       />
 
-      <Toast message={toast} onDone={clearToast} />
+      {/* Mounted HERE, once, because every screen is inside an AppFrame and
+          four of them start visits. A gate each screen wired up for itself
+          would be four gates, and three of them would be right. */}
+      <TravelGate />
+
+      <Toast message={toast} onDone={clearToast} lift={footerHeight} />
     </View>
   );
 }

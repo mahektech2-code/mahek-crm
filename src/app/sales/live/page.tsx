@@ -3,8 +3,9 @@ import { addDays } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { dwellStops, type DwellStop } from "@/lib/engines/dwell";
 import { dropInaccurateFixes } from "@/lib/engines/trail-gaps";
-import { shortDateWithYear } from "@/lib/format";
+import { nowMs, shortDateWithYear } from "@/lib/format";
 import { metresBetween } from "@/lib/geo";
+import { trailHasGaps } from "@/lib/handset-health";
 import { today } from "@/lib/recompute";
 import { readSecret } from "@/lib/secrets";
 import {
@@ -107,10 +108,11 @@ export default async function Page({
 
   const out = rows.filter((r) => r.checkInAt && !r.checkOutAt && !r.onLeave);
   const noSignal = rows.filter((r) => !r.seenAt && !r.onLeave);
-  /* False, never null — null means the app has not reported yet, which is
-     not the same claim as "refused". See `mbos_devices.background_location_
-     granted`'s own comment for what the difference actually costs a trail. */
-  const noBackgroundTracking = rows.filter((r) => r.backgroundTrackingGranted === false && !r.onLeave);
+  /* `trailHasGaps` rather than the raw boolean, so the banner counts exactly
+     the rows that explain themselves underneath — see its own comment. Null is
+     never counted: it means the handset has not reported, which is not the
+     same claim as "refused". */
+  const noBackgroundTracking = rows.filter((r) => trailHasGaps(r) && !r.onLeave);
 
   return (
     <div className="p-6">
@@ -195,8 +197,8 @@ export default async function Page({
       {view === "today" && noBackgroundTracking.length ? (
         <Banner
           tone="warn"
-          title={`${plural(noBackgroundTracking.length, "salesman", "salesmen")} without background location`}
-          body="Their trail will have real gaps that no sampling interval or map styling can close — the phone stops taking fixes the moment its screen locks. Ask them to open their phone's own Settings and set MahekOne's Location permission to “Allow all the time”."
+          title={`${plural(noBackgroundTracking.length, "salesman", "salesmen")} whose trail will have gaps`}
+          body="Their phones stop taking fixes the moment the screen locks, or cannot take them at all — gaps no sampling interval or map styling can close. Each row says which of those it is; the fix is theirs to make, in their phone's own Settings, under MahekOne's Location permission."
         />
       ) : null}
 
@@ -218,6 +220,11 @@ export default async function Page({
         view={view}
         isToday={isToday}
         olaMapsKey={olaMapsKey}
+        handsetThresholds={{
+          quietMinutes: config["mbos.location.handsetQuietMinutes"],
+          lowBatteryPercent: config["mbos.location.lowBatteryPercent"],
+        }}
+        nowMs={nowMs()}
       />
 
       <p className="mt-3 max-w-[820px] text-[13px] text-pretty text-muted">

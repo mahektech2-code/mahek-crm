@@ -1,5 +1,8 @@
-import { all, run, tx } from '../db';
-import { deviceId, type PullPayload } from './api';
+import { all, getKv, run, setKv, tx } from '../db';
+import { deviceId, type PullPayload, type TerritoryState } from './api';
+
+/** Where `storeTerritory` files it, and where `territoryState` reads it back. */
+export const TERRITORY_KEY = 'territory';
 
 /**
  * Applying what came down.
@@ -27,9 +30,11 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await upsertTimeline(pull.timeline);
     touched += await upsertCustomerOrders(pull.customerOrders, now);
     touched += await upsertCustomerPayments(pull.customerPayments, now);
+    touched += await upsertCustomerBills(pull.customerBills, now);
     touched += await upsertStops(pull.journeyStops, now);
     touched += await upsertPlanDays(pull.planDays, now);
     touched += await upsertConfig(pull.config, now);
+    touched += await storeTerritory(pull.territory);
     touched += await upsertNotifications(pull.notifications);
     touched += await upsertLeaveBalances(pull.leaveBalances, now);
     touched += await upsertHolidays(pull.holidays, now);
@@ -45,6 +50,9 @@ export async function applyPull(pull: PullPayload): Promise<number> {
     touched += await applyApprovals(pull.approvals);
     touched += await restoreAttendance(pull.attendanceToday);
     touched += await applyDeletions(pull.deletions);
+    /* AFTER the tombstones and after the customer upsert, because it is the
+       backstop for everything neither of them covered. */
+    touched += await reconcileBook(pull.bookIds);
   });
 
   /* Outside the transaction, because confirming a transcript deletes the audio
@@ -222,6 +230,28 @@ async function upsertPriceList(rows: unknown[] | undefined) {
   return rows.length;
 }
 
+/**
+ * The open bills, REPLACED WHOLESALE — the price list's rule, for the same
+ * reason it has it.
+ *
+ * A rate that was withdrawn has to disappear; so does a bill that has been
+ * settled. A per-row upsert leaves it behind, and a bill left behind is one
+ * the picker goes on offering — so a salesman names it, the server refuses the
+ * allocation with `bill_settled`, and the refusal looks like the app being
+ * wrong rather than the phone being stale. The server sends the CURRENT open
+ * set for every customer on this handset on every pass, never a delta, which
+ * is what makes replacing correct.
+ *
+ * `!rows?.length` guards it exactly as the price list does: an empty payload
+ * is the no-cursor pull saying nothing, not the office saying every bill in
+ * the book has been paid.
+ */
+async function upsertCustomerBills(rows: unknown[] | undefined, now: number) {
+  if (!rows?.length) return 0;
+  await run('DELETE FROM customer_bills');
+  return upsert('customer_bills', 'id', rows, { lastSyncedAt: now });
+}
+
 function upsertSchemes(rows: unknown[] | undefined) {
   return upsert('schemes', 'id', rows);
 }
@@ -290,6 +320,48 @@ function upsertCourses(rows: unknown[] | undefined, now: number) {
   return upsert('courses', 'id', rows, { lastSyncedAt: now });
 }
 
+/**
+ * WHY THE BOOK IS THE SIZE IT IS — kept so a screen can tell an empty book
+ * apart from a switched-off one.
+ *
+ * In `kv` rather than `config`: `config` mirrors the thresholds the Admin
+ * Console holds and is the same for everybody on the team, and this is a fact
+ * about ONE salesman that changes when the office moves him. Filing it there
+ * would make the next person reading a config key wonder why it is personal.
+ *
+ * Replaced wholesale on every pass, because an area taken away has to
+ * disappear and there is only ever one answer. Absent leaves what was there:
+ * an older server sends nothing, and forgetting a real allocation on a pull
+ * from one would make the handset accuse the office of not having set it.
+ */
+/**
+ * What the office last said about where he works.
+ *
+ * Null means it has never been told — an older server, or a handset that has
+ * not completed a pull since this shipped. The screens read that as "we do not
+ * know" and draw the ordinary empty state, because telling a salesman his area
+ * is unset when nobody has actually said so sends him to the office for
+ * nothing.
+ */
+export async function territoryState(): Promise<TerritoryState | null> {
+  const raw = await getKv(TERRITORY_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as TerritoryState;
+    return typeof parsed?.allocated === 'boolean' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function storeTerritory(
+  territory: PullPayload['territory'],
+): Promise<number> {
+  if (!territory) return 0;
+  await setKv(TERRITORY_KEY, JSON.stringify(territory));
+  return 1;
+}
+
 async function upsertConfig(config: Record<string, unknown> | undefined, now: number): Promise<number> {
   if (!config) return 0;
   for (const [key, value] of Object.entries(config)) {
@@ -335,6 +407,14 @@ async function upsertConfig(config: Record<string, unknown> | undefined, now: nu
  * wire at all because MahekOne tracks the two timestamps behind it instead.
  * That is exactly why neither of these can go through the generic upsert: it
  * writes the keys it is given, and none of these five is the same word twice.
+ *
+ * NEITHER READS A FUNNEL COLUMN, deliberately. The lead row now carries a
+ * sales type, a rung, the eight prospect answers and a qualification object,
+ * and `openLeads` sends none of them yet — so reading them here would be
+ * exactly the `upsertTasks` bug again, one release later: an undefined field
+ * becomes NULL and the `ON CONFLICT` clause writes it over the answers a
+ * salesman typed standing in the shop. They are added to the list below ONLY
+ * in the same change that adds them to the server's query.
  */
 async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<number> {
   if (!rows?.length) return 0;
@@ -346,6 +426,9 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       companyName?: string | null;
       mobile?: string | null;
       city?: string | null;
+      /* The locality inside the city. Sent since leads existed and
+         dropped until this table had a column for it. */
+      area?: string | null;
       source?: string | null;
       stage?: string;
       estimatedPotentialPaise?: number | null;
@@ -353,20 +436,99 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
       notes?: string | null;
       convertedCustomerId?: string | null;
       lastActivityDate?: string | null;
+      /*
+       * THE FUNNEL, ARRIVING — and every one of these is now on the wire.
+       *
+       * The rule this obeys is the one `upsertTasks` broke: a field READ here
+       * that the server does not send is `undefined`, and the `ON CONFLICT`
+       * clause then writes that NULL over whatever the row held. That is how
+       * every completed task lost its note and its photograph. So these are
+       * added in the same change as `openLeads`, never ahead of it — and the
+       * list below is the whole of what `openLeads` selects, no more.
+       */
+      salesType?: string | null;
+      stageSince?: string | null;
+      customerType?: string | null;
+      /* `lead_monthly_volume_litres` under its wire name. The server holds one
+         column for the fact and aliases it to this. */
+      monthlyLitres?: number | null;
+      competitor?: string | null;
+      requiredProductId?: string | null;
+      requiredProductName?: string | null;
+      contactPerson?: string | null;
+      decisionMaker?: string | null;
+      creditDaysWanted?: number | null;
+      application?: string | null;
+      gstin?: string | null;
+      qualification?: unknown;
+      nextAction?: string | null;
+      nextActionDate?: string | null;
+      nextActionOwnerId?: string | null;
+      nextActionOutcome?: string | null;
+      suspectDecidedAt?: string | null;
+      verifiedAt?: string | null;
+      thirdParty?: boolean | null;
+      distributorSalesmanId?: string | null;
+      distributorSalesmanName?: string | null;
+      expectedOrderDate?: string | null;
+      expectedOrderValuePaise?: number | null;
+      /* Sent since leads existed and dropped on the floor until the
+         `a lead has a place` migration gave this table somewhere to put
+         them — a lead map with no coordinates. */
+      gpsLat?: number | null;
+      gpsLng?: number | null;
+      /* The coordinating seat, and the name beside it. Reference data: it does
+         not move the lead out of this salesman's book. */
+      leadManagerId?: string | null;
+      leadManagerName?: string | null;
+      /* Counted by the office over every visit, not just this phone's — see
+         `visitsHere`, which adds what has not synced yet. */
+      visitCount?: number | null;
+      holdReason?: string | null;
     };
     await run(
-      `INSERT INTO leads (id, name, company, mobile, city, source, estimatedPotentialPaise,
+      `INSERT INTO leads (id, name, company, mobile, city, area, source, estimatedPotentialPaise,
                           assigneeId, stage, nextFollowUpDate, notes, convertedCustomerId,
-                          archived, lastActivityDate, clientCreatedAt, serverCreatedAt,
-                          deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, 'server', 'synced')
+                          archived, lastActivityDate, gpsLat, gpsLng,
+                          leadManagerId, leadManagerName, visitCount, holdReason,
+                          clientCreatedAt, serverCreatedAt, deviceId, syncState,
+                          salesType, funnelStage, stageSince, customerType, monthlyLitres,
+                          competitor, requiredProductId, requiredProductName, contactPerson,
+                          decisionMaker, creditDaysWanted, application, gstin, qualification,
+                          nextAction, nextActionDate, nextActionOwnerId, nextActionOutcome,
+                          suspectDecidedAt, verifiedAt, thirdParty, distributorSalesmanId,
+                          distributorSalesmanName, expectedOrderDate, expectedOrderValuePaise)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced',
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name, company = excluded.company, mobile = excluded.mobile,
-         city = excluded.city, source = excluded.source,
+         city = excluded.city, area = excluded.area, source = excluded.source,
          estimatedPotentialPaise = excluded.estimatedPotentialPaise,
          stage = excluded.stage, nextFollowUpDate = excluded.nextFollowUpDate,
          convertedCustomerId = excluded.convertedCustomerId,
-         lastActivityDate = excluded.lastActivityDate
+         lastActivityDate = excluded.lastActivityDate,
+         gpsLat = excluded.gpsLat, gpsLng = excluded.gpsLng,
+         leadManagerId = excluded.leadManagerId,
+         leadManagerName = excluded.leadManagerName,
+         visitCount = excluded.visitCount,
+         holdReason = excluded.holdReason,
+         salesType = excluded.salesType, funnelStage = excluded.funnelStage,
+         stageSince = excluded.stageSince, customerType = excluded.customerType,
+         monthlyLitres = excluded.monthlyLitres, competitor = excluded.competitor,
+         requiredProductId = excluded.requiredProductId,
+         requiredProductName = excluded.requiredProductName,
+         contactPerson = excluded.contactPerson, decisionMaker = excluded.decisionMaker,
+         creditDaysWanted = excluded.creditDaysWanted, application = excluded.application,
+         gstin = excluded.gstin, qualification = excluded.qualification,
+         nextAction = excluded.nextAction, nextActionDate = excluded.nextActionDate,
+         nextActionOwnerId = excluded.nextActionOwnerId,
+         nextActionOutcome = excluded.nextActionOutcome,
+         suspectDecidedAt = excluded.suspectDecidedAt, verifiedAt = excluded.verifiedAt,
+         thirdParty = excluded.thirdParty,
+         distributorSalesmanId = excluded.distributorSalesmanId,
+         distributorSalesmanName = excluded.distributorSalesmanName,
+         expectedOrderDate = excluded.expectedOrderDate,
+         expectedOrderValuePaise = excluded.expectedOrderValuePaise
        WHERE leads.syncState = 'synced'`,
       [
         l.id,
@@ -374,6 +536,7 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         l.companyName ?? null,
         l.mobile ?? null,
         l.city ?? null,
+        l.area ?? null,
         l.source ?? null,
         l.estimatedPotentialPaise ?? null,
         localStage(l.stage),
@@ -384,8 +547,46 @@ async function upsertLeads(rows: unknown[] | undefined, now: number): Promise<nu
         localNotes(l.notes, now),
         l.convertedCustomerId ?? null,
         l.lastActivityDate ?? null,
+        l.gpsLat ?? null,
+        l.gpsLng ?? null,
+        l.leadManagerId ?? null,
+        l.leadManagerName ?? null,
+        l.visitCount ?? 0,
+        l.holdReason ?? null,
         now,
         now,
+        l.salesType ?? null,
+        /* The specification's rung, kept apart from `stage`. `stage` is what the
+           filter chips select on and only ever holds one of the original six —
+           writing `sample_review` into it makes a lead findable on no chip. */
+        l.stage ?? null,
+        l.stageSince ?? null,
+        l.customerType ?? null,
+        l.monthlyLitres ?? null,
+        l.competitor ?? null,
+        l.requiredProductId ?? null,
+        l.requiredProductName ?? null,
+        l.contactPerson ?? null,
+        l.decisionMaker ?? null,
+        l.creditDaysWanted ?? null,
+        l.application ?? null,
+        l.gstin ?? null,
+        /* jsonb arrives as an object and SQLite holds text. */
+        l.qualification == null ? '{}' : JSON.stringify(l.qualification),
+        l.nextAction ?? null,
+        l.nextActionDate ?? null,
+        l.nextActionOwnerId ?? null,
+        l.nextActionOutcome ?? null,
+        /* An ISO instant carries its own zone, so `Date.parse` is right here —
+           it is a date-ONLY string that would be read as UTC and land five and a
+           half hours early. */
+        l.suspectDecidedAt ? Date.parse(l.suspectDecidedAt) : null,
+        l.verifiedAt ? Date.parse(l.verifiedAt) : null,
+        l.thirdParty ? 1 : 0,
+        l.distributorSalesmanId ?? null,
+        l.distributorSalesmanName ?? null,
+        l.expectedOrderDate ?? null,
+        l.expectedOrderValuePaise ?? null,
       ],
     );
   }
@@ -409,19 +610,40 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
       followUpDate?: string | null;
       feedbackNotes?: string | null;
       convertedOrderId?: string | null;
+      /* The lifecycle, §I–§K. `receivedAt` is the shop's own word and is what
+         the review call is dated from — never inferred from `deliveredAt`. */
+      dispatchedAt?: string | null;
+      courierName?: string | null;
+      trackingNumber?: string | null;
+      receivedAt?: string | null;
+      trialStartedAt?: string | null;
+      trialCompletedAt?: string | null;
+      satisfaction?: string | null;
+      additionalRequirement?: string | null;
+      rejectionReason?: string | null;
     };
     await run(
       `INSERT INTO samples (id, customerId, productId, productName, cans, reason,
                             requestedAt, state, deliveredAt, deliveryPhotoId, trialOutcome,
-                            followUpDate, convertedOrderId, clientCreatedAt, serverCreatedAt,
-                            deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
+                            followUpDate, convertedOrderId,
+                            dispatchedAt, courierName, trackingNumber, receivedAt,
+                            trialStartedAt, trialCompletedAt, satisfaction,
+                            additionalRequirement, rejectionReason,
+                            clientCreatedAt, serverCreatedAt, deviceId, syncState)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          productId = excluded.productId, productName = excluded.productName,
          cans = excluded.cans, reason = excluded.reason, state = excluded.state,
          deliveredAt = excluded.deliveredAt, deliveryPhotoId = excluded.deliveryPhotoId,
          trialOutcome = excluded.trialOutcome, followUpDate = excluded.followUpDate,
-         convertedOrderId = excluded.convertedOrderId
+         convertedOrderId = excluded.convertedOrderId,
+         dispatchedAt = excluded.dispatchedAt, courierName = excluded.courierName,
+         trackingNumber = excluded.trackingNumber, receivedAt = excluded.receivedAt,
+         trialStartedAt = excluded.trialStartedAt,
+         trialCompletedAt = excluded.trialCompletedAt,
+         satisfaction = excluded.satisfaction,
+         additionalRequirement = excluded.additionalRequirement,
+         rejectionReason = excluded.rejectionReason
        WHERE samples.syncState = 'synced'`,
       [
         s.id,
@@ -442,6 +664,18 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
         s.trialOutcome ?? null,
         s.followUpDate ?? null,
         s.convertedOrderId ?? null,
+        /* Instants off the wire. `localInstant` is already imported here for
+           `deliveredAt` — a date-only string parses as UTC and lands five and a
+           half hours before the day it names. */
+        s.dispatchedAt ? localInstant(s.dispatchedAt) : null,
+        s.courierName ?? null,
+        s.trackingNumber ?? null,
+        s.receivedAt ? localInstant(s.receivedAt) : null,
+        s.trialStartedAt ? localInstant(s.trialStartedAt) : null,
+        s.trialCompletedAt ? localInstant(s.trialCompletedAt) : null,
+        s.satisfaction ?? null,
+        s.additionalRequirement ?? null,
+        s.rejectionReason ?? null,
         now,
         now,
       ],
@@ -465,6 +699,9 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
       customerId?: string | null;
       status: string;
       completionNote?: string | null;
+      /* What KIND of work this is, so the list can open the right screen. */
+      sourceType?: string | null;
+      sourceId?: string | null;
       completionPhotoId?: string | null;
       snoozedTo?: string | null;
       snoozeReason?: string | null;
@@ -477,13 +714,15 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
     await run(
       `INSERT INTO tasks (id, title, description, assigneeId, assignerId, priority, dueDate,
                           customerId, status, completionNote, completionPhotoId, snoozeHistory,
+                          sourceType, sourceId,
                           escalated, clientCreatedAt, serverCreatedAt, deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'server', 'synced')
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          title = excluded.title, description = excluded.description,
          priority = excluded.priority, dueDate = excluded.dueDate, customerId = excluded.customerId,
          status = excluded.status, completionNote = excluded.completionNote,
          completionPhotoId = excluded.completionPhotoId, escalated = excluded.escalated,
+         sourceType = excluded.sourceType, sourceId = excluded.sourceId,
          syncState = 'synced'`,
       [
         t.id,
@@ -498,6 +737,8 @@ async function upsertTasks(rows: unknown[] | undefined, now: number): Promise<nu
         t.completionNote ?? null,
         t.completionPhotoId ?? null,
         snoozeHistory,
+        t.sourceType ?? null,
+        t.sourceId ?? null,
         t.escalatedAt ? 1 : 0,
         now,
       ],
@@ -557,6 +798,77 @@ async function applyApprovals(rows: unknown[] | undefined): Promise<number> {
  * sync — not a rejected order, not a visit that lost a conflict.
  */
 const DELETABLE = new Set(['customers', 'products', 'timeline_events', 'journey_stops', 'documents', 'courses', 'notifications', 'schemes', 'holidays']);
+
+/**
+ * LETTING GO OF SHOPS THAT ARE NO LONGER HIS.
+ *
+ * A pull says what exists and a tombstone says what stopped, and there was a
+ * gap between the two that nothing was watching. `mbos_deletions` is written
+ * when somebody EDITS an allocation — so every OTHER way a book can shrink
+ * wrote no tombstone at all. A role changed under him, an account reassigned,
+ * a customer's city corrected: each one narrowed what the server would send
+ * and never told this phone to drop what it was already holding.
+ *
+ * The case that made it plain: a salesman with no territory. The server is
+ * right to send him nothing — `customerIdsInScope` short-circuits before it
+ * asks — and his handset went on showing a book downloaded under an older
+ * rule, indefinitely, because no pass had ever been asked to compare the two.
+ * He could open shops he is not allowed to see, and nothing on any screen
+ * looked wrong.
+ *
+ * So the server states the whole book on every pass and this drops the
+ * difference, rather than the difference being guessed at by whichever write
+ * path remembered to record one.
+ *
+ * ABSENT IS NOT EMPTY, and the safety of the whole thing is in that line.
+ * `undefined` is an older server that does not send this — touch nothing,
+ * because reading silence as "you may hold nothing" would wipe every book in
+ * the field the moment a handset met a deployment that predates it. `[]` is
+ * this server saying the book IS empty, which is a true answer, and it is
+ * acted on.
+ *
+ * ONLY REFERENCE DATA GOES. The customer row and the office history hanging
+ * off it — never a visit, an order, a payment or a lead this salesman
+ * authored. That is the rule the whole pull is built on and a shrinking book
+ * is not a licence to break it: work he did in a shop that has since moved to
+ * somebody else is still work he did, and it still has to reach the office.
+ */
+async function reconcileBook(bookIds: string[] | undefined): Promise<number> {
+  if (!Array.isArray(bookIds)) return 0;
+
+  /* A LEAD'S SHOP STAYS, whatever the territory says.
+   *
+   * `leads` is keyed on the same id as `customers` and rides its OWN channel,
+   * narrowed by who owns the lead rather than by where the shop is — so the
+   * office can legitimately send a lead whose customer row the territory
+   * clause excludes. Deleting that row would take the lead off the Customers
+   * view, which asks an EXISTS against this very table, while leaving it on
+   * the Leads one: the same shop present on one screen and gone from another.
+   * It is also his own work, and this is a sync. */
+  const local = await all<{ id: string }>(
+    'SELECT id FROM customers WHERE id NOT IN (SELECT id FROM leads)',
+  );
+  if (!local.length) return 0;
+  const keep = new Set(bookIds);
+  const gone = local.map((r) => r.id).filter((id) => !keep.has(id));
+  if (!gone.length) return 0;
+
+  /* Chunked: SQLite has a ceiling on bound variables — 999 on the builds this
+     app has shipped against — and a reassignment can move a whole book at
+     once. 400 keeps every statement below it with room to spare. */
+  for (let i = 0; i < gone.length; i += 400) {
+    const batch = gone.slice(i, i + 400);
+    const marks = batch.map(() => '?').join(',');
+    /* The office's history first, then the row it hangs off. Orphaned history
+       is what `applyDeletions` leaves behind today, and there is no screen
+       that could ever show it again. */
+    for (const t of ['timeline_events', 'customer_orders', 'customer_payments', 'customer_bills']) {
+      await run(`DELETE FROM ${t} WHERE customerId IN (${marks})`, batch);
+    }
+    await run(`DELETE FROM customers WHERE id IN (${marks})`, batch);
+  }
+  return gone.length;
+}
 
 async function applyDeletions(deletions: { entity: string; ids: string[] }[] | undefined): Promise<number> {
   if (!deletions?.length) return 0;

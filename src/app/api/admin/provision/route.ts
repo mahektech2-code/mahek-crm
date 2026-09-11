@@ -48,7 +48,7 @@ export async function GET(request: Request) {
   }
 
   const role = p.get("role");
-  if (role && !["telecaller", "manager", "accounts", "admin"].includes(role)) {
+  if (role && !["associate", "manager", "admin"].includes(role)) {
     return NextResponse.json(
       { ok: false, error: `"${role}" is not a role.` },
       { status: 400 },
@@ -60,7 +60,7 @@ export async function GET(request: Request) {
       user,
       name: p.get("name") ?? undefined,
       email: p.get("email") ?? undefined,
-      role: (role as "telecaller" | "manager" | "accounts" | "admin") ?? undefined,
+      role: (role as "associate" | "manager" | "admin") ?? undefined,
       apps: list(p.get("apps")),
       addApps: list(p.get("addApps")),
     });

@@ -116,7 +116,9 @@ function toAdminUser(p: Person): AdminUser {
     name: p.name,
     code: p.phone ?? "",
     dept: roleLabel,
-    contact: p.email,
+    /* Blank where there is no email, which is a true thing to say — the
+       mobile column beside it carries the number they actually sign in with. */
+    contact: p.email ?? "",
     mobile: p.phone ?? "",
     status: p.active ? "Active" : "Deactivated",
     apps: p.apps,

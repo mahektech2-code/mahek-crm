@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
-import { getConfig } from "@/lib/config/store";
-import { refineText } from "@/lib/dictation";
+import { refineRequest } from "@/lib/dictation-requests";
 
 /* ---------------------------------------------------------------------------
  * Tighten this, or rewrite it the way I just described.
@@ -29,46 +28,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "Not signed in." }, { status: 401 });
   }
 
-  const config = await getConfig();
-  if (!config["voice.enabled"]) {
-    return NextResponse.json(
-      { ok: false, error: "Dictation is switched off." },
-      { status: 403 },
-    );
-  }
-
   const parsed = Body.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "Nothing to work on." }, { status: 400 });
   }
 
-  /* A rewrite with no instruction is a reword nobody asked for. */
-  if (parsed.data.mode === "rewrite" && !parsed.data.instruction) {
-    return NextResponse.json(
-      { ok: false, error: "Say what to change." },
-      { status: 400 },
-    );
-  }
-
-  const outcome = await refineText({
-    text: parsed.data.text,
-    mode: parsed.data.mode,
-    instruction: parsed.data.instruction,
-    languageModel: config["voice.languageModel"],
-  });
-
-  if (!outcome.ok) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error:
-          outcome.reason === "not_configured"
-            ? "Dictation is not set up on this deployment yet."
-            : "That did not come back. Your text is unchanged.",
-      },
-      { status: outcome.reason === "not_configured" ? 503 : 502 },
-    );
-  }
-
-  return NextResponse.json({ ok: true, text: outcome.text });
+  const answer = await refineRequest(parsed.data);
+  return NextResponse.json(answer.body, { status: answer.status });
 }

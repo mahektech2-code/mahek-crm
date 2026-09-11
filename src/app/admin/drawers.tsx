@@ -42,6 +42,10 @@ type FieldSpec = {
   half?: boolean;
 };
 
+/* `telecaller` here is a WhatsApp template VARIABLE — `{{telecaller}}`, the
+   name of whoever is writing — not a role. It keeps the word deliberately:
+   templates people have already written use it, and renaming it would empty
+   the placeholder in every one of them. role-name-ok */
 const PLACEHOLDERS = ["customer", "contact", "amount", "bill", "days", "date", "qty", "telecaller"];
 
 const SAMPLE: Record<string, string> = {
@@ -481,9 +485,9 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
                 email: v("contact", ""),
                 phone: v("mobile", "") || null,
                 role: v("userRole", "Telecaller").toLowerCase() as
-                  | "telecaller"
+                  | "associate"
                   | "manager"
-                  | "accounts"
+                  
                   | "admin",
                 password: v("password", ""),
                 apps: [v("apps", "crm")],
@@ -510,7 +514,7 @@ function DrawerBody({ drawer, onClose }: { drawer: DrawerState; onClose: () => v
               if (wanted !== user.designation.toLowerCase()) {
                 const r = await setUserRole(
                   user.id,
-                  wanted as "telecaller" | "manager" | "accounts" | "admin",
+                  wanted as "associate" | "manager" | "admin",
                 );
                 if (!r.ok) {
                   notify(r.error ?? "The role did not change.");

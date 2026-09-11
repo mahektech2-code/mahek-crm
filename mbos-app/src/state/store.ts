@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { useFocusEffect } from 'expo-router';
 import { getCustomer, type Customer } from '../data/customers';
 import { unreadCount } from '../data/notifications';
+import { daysAwaitingAnswer } from '../data/journey';
 import { pendingCount } from '../sync/queue';
 import type { OutcomeKey } from '../data/fixtures';
 
@@ -23,7 +24,22 @@ import type { OutcomeKey } from '../data/fixtures';
  */
 
 export type GpsState = 'acquiring' | 'locked' | 'off';
-export type RecState = 'idle' | 'rec' | 'busy' | 'done' | 'failed';
+/**
+ * What became of the spoken half of a visit note.
+ *
+ * It replaced a five-value recorder state — idle, rec, busy, done, failed —
+ * which was a state MACHINE living in global storage while the machine itself
+ * lived on the screen. Two of the five were unreachable: nothing ever set
+ * `done`, so the "AI transcribed" badge it drew could not appear, and a
+ * successful recording set `failed`, so the visit-saved screen reported a
+ * voice note that had uploaded perfectly as one still waiting for signal.
+ *
+ * These three are facts about the visit rather than steps of a recording, so
+ * there is nothing here for a screen to leave stale. `dictated` means the
+ * words are in the note already and the audio goes with it; `queued` means
+ * there was no signal, the audio goes, and the office writes it out.
+ */
+export type VoiceState = 'none' | 'dictated' | 'queued';
 export type LoginMethod = 'password' | 'otp';
 /** `leadForm` is asked for on one screen and answered on another — the `+`
  *  sheet offers "Add lead" from anywhere, and the Leads screen opens the form
@@ -69,12 +85,36 @@ type State = {
   /** Media ids, not flags — the photograph is queued the moment it is taken,
    *  long before the visit it will belong to exists. */
   shots: { shop?: string; cust?: string };
-  rec: RecState;
+  voice: VoiceState;
   note: string;
   outcome: OutcomeKey | null;
   nextDate: string;
   visitStart: number | null;
+  /**
+   * The shop he has just pressed "Start visit" on, waiting for the question
+   * that comes before the visit: how is he getting there.
+   *
+   * Store state and not a route, because the answer is a CAMERA on the metered
+   * modes and pushing a screen would take the flow off the stack half-way
+   * through — the same reason `askConfirm` and the selfie camera are overlays.
+   * `TravelGate` in `AppFrame` is the one place it is answered, which is what
+   * lets all four Start-visit buttons ask by setting one field.
+   */
+  travelTo: { customerId: string; customerName: string } | null;
   visitSpent: string | null;
+  /**
+   * Why the next visit is off the plan.
+   *
+   * Set on the route screen, spent by the visit. It has to live here rather
+   * than travel as a route param because the two are separated by a THIRD
+   * screen — the reason is given on the route, the shop is chosen on the
+   * Customers list, and the visit is where both arrive. `visits` has carried
+   * `deviationReason` and `wasPlanned` since it was written and the handset
+   * sent null for the first of them on every visit ever logged; the button
+   * that was supposed to fill it raised a toast and wrote nothing, on a screen
+   * whose own words are "your manager sees the reason".
+   */
+  offPlanReason: string | null;
   /** What this visit has already produced, so returning to it shows the work is done. */
   visitDone: Partial<Record<OutcomeKey, string>>;
   overrodeReason: string | null;
@@ -107,6 +147,8 @@ type Actions = {
   signOut: () => void;
   startDay: () => void;
   beginVisit: (custId: string) => void;
+  askTravel: (to: { customerId: string; customerName: string }) => void;
+  arrivedAt: (at: number) => void;
   markVisitDone: (k: OutcomeKey, line: string) => void;
   setQty: (skuId: string, qty: string) => void;
   dropLine: (skuId: string) => void;
@@ -146,12 +188,14 @@ export const useStore = create<State & Actions>((set, get) => ({
   tlFilter: 'All',
 
   shots: {},
-  rec: 'idle',
+  voice: 'none',
   note: '',
   outcome: null,
   nextDate: NO_DATE_YET,
   visitStart: null,
+  travelTo: null,
   visitSpent: null,
+  offPlanReason: null,
   visitDone: {},
   overrodeReason: null,
   form: null,
@@ -191,16 +235,42 @@ export const useStore = create<State & Actions>((set, get) => ({
       custId,
       gps: 'acquiring',
       shots: {},
-      rec: 'idle',
+      voice: 'none',
       note: '',
       outcome: null,
       nextDate: NO_DATE_YET,
-      visitStart: Date.now(),
+      /*
+       * NOT `Date.now()` any more, and that is the whole shape of the change.
+       *
+       * "Start visit" used to mean "I am standing in the shop", so the dwell
+       * clock began here. It now means "I am setting off" — the mode is asked,
+       * the meter is photographed, and the journey happens between this moment
+       * and the arrival. Starting the clock here would count the ride as time
+       * in the shop, which is the one number the dwell check exists to be
+       * honest about. `arrivedAt` sets it.
+       */
+      visitStart: null,
       visitSpent: null,
       visitDone: {},
       overrodeReason: null,
       sheet: null,
+      /* `offPlanReason` is deliberately NOT reset here. It is set on the route
+         screen BEFORE the shop is chosen, and choosing the shop is what calls
+         this — clearing it would throw away the reason on the way to the very
+         visit it was written for. The visit clears it once, on save. */
     }),
+
+  askTravel: (to) => set({ travelTo: to }),
+
+  /**
+   * He is at the shop. The dwell clock starts HERE and nowhere else.
+   *
+   * It takes the arrival instant rather than reading the clock itself, because
+   * the caller has already written that instant onto the leg — two readings of
+   * `Date.now()` a few lines apart would put the record and the screen a
+   * second or two out of step for no reason anybody could later explain.
+   */
+  arrivedAt: (at) => set({ visitStart: at, travelTo: null }),
 
   markVisitDone: (k, line) => set({ visitDone: { ...get().visitDone, [k]: line } }),
 
@@ -282,4 +352,19 @@ export function useUnreadCount(): number {
 /** The status strip's third cell, and the More list's Sync badge, read this. */
 export function usePendingCount(): number {
   return usePolledCount(pendingCount);
+}
+
+/**
+ * Days the office has proposed and he has not answered.
+ *
+ * `daysAwaitingAnswer` has existed since the plan conversation was built and
+ * nothing called it: the Journey screen derives its own "days to agree" list
+ * from `planDays`, so the list was right and there was NOTHING ANYWHERE ELSE
+ * that said to go and look at it. A plan is agreed rather than issued, and the
+ * office is waiting on the answer to lay out a week — but the only way to find
+ * out he had been asked was to happen to open the tab. This is what puts it on
+ * the tab itself.
+ */
+export function useDaysToAgreeCount(): number {
+  return usePolledCount(daysAwaitingAnswer);
 }

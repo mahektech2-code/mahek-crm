@@ -255,7 +255,38 @@ jobs:
             # second copy of a decision — and it drifted from the one CI would
             # have tested, which is how Caddy came to never be started.
             bash restart.sh
-            docker image prune -f --filter 'until=168h'
+
+            # `-f` ALONE PRUNES NOTHING HERE, and says it worked.
+            #
+            # `docker image prune` without `-a` removes DANGLING images only —
+            # ones no tag points at. Every image on this box is tagged
+            # `…/app:<sha>`, so the dangling set has been empty since the first
+            # deploy and this step has been a no-op reporting success on every
+            # run since it was written. It came to light at 151 app images,
+            # 12.4 GB of a 24 GB disk, when Postgres could no longer write a
+            # temp file and the MBOS pull's ranking queries — which spill to
+            # temp files on a real book — began failing. A handset then keeps
+            # the book it already had and quietly receives nothing, which looks
+            # like an app bug and is a disk.
+            #
+            # `-a --filter until=168h` is not the fix either: at this deploy
+            # rate a week is dozens of images, and the age of an image is not
+            # what decides whether it is worth keeping. What decides that is
+            # the same rule the registry prune below already follows — the
+            # newest few, plus WHAT PRODUCTION IS ACTUALLY ON, which after a
+            # run of failed deploys is not among the newest few.
+            KEEP=3
+            # `|| true`: the whole step runs under `bash -euo pipefail`, and a
+            # grep that matches nothing exits 1 — which would abort the deploy
+            # over a tidy-up, after the app had already been restarted.
+            live="$(grep '^IMAGE=' .env | head -1 || true)"; live="${live##*:}"
+            docker images registry.digitalocean.com/mahekone/app \
+              --format '{{.Tag}}' | tail -n +$((KEEP + 1)) \
+              | grep -vx "$live" \
+              | sed 's|^|registry.digitalocean.com/mahekone/app:|' \
+              | xargs -r docker rmi >/dev/null 2>&1 || true
+            docker image prune -f >/dev/null
+            df -h / | tail -1
           EOF
 
       # An exit code from `docker compose up` says the container started, not

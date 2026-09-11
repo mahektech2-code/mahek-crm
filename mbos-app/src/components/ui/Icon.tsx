@@ -106,6 +106,20 @@ const ICONS: Record<string, Shape[]> = {
     { p: 'M16 14v1a8 8 0 0 1-.5 2.8' },
   ],
   lock: [{ r: [4, 11, 16, 10, 2] }, { p: 'M8 11V8a4 4 0 0 1 8 0v3' }],
+
+  /* THE MAP'S OWN CONTROLS, and the three glyphs here that the design does not
+     carry — it has no map screen in it to have drawn them on. Same 24×24 box
+     and same 1.6 stroke as everything above, which is the whole of what makes
+     these read as part of the set rather than as three icons borrowed from
+     somewhere else. `zoomIn` repeats `add`'s geometry under the name its call
+     site means, exactly as `pin` already repeats `visit`'s. */
+  zoomIn: [{ p: 'M12 5v14M5 12h14' }],
+  zoomOut: [{ p: 'M5 12h14' }],
+  locate: [
+    { c: [12, 12, 6.6] },
+    { c: [12, 12, 2.2] },
+    { p: 'M12 2.4v3M12 18.6v3M2.4 12h3M18.6 12h3' },
+  ],
 };
 
 export type IconName = keyof typeof ICONS;

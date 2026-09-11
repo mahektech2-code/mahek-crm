@@ -691,15 +691,183 @@
     {
       "idx": 98,
       "version": "7",
-      "when": 1789024482756,
-      "tag": "0098_enquiries_app",
+      "when": 1787502340000,
+      "tag": "0098_attendance_selfies",
       "breakpoints": true
     },
     {
       "idx": 99,
       "version": "7",
-      "when": 1789024482757,
-      "tag": "0099_website_enquiries",
+      "when": 1787502400000,
+      "tag": "0099_lead_manager_seat",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1787502460000,
+      "tag": "0100_lead_capture_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1787502520000,
+      "tag": "0101_lead_hold_and_visit_cap",
+      "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1787502580000,
+      "tag": "0102_lead_validation_call",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1787502640000,
+      "tag": "0103_sample_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1787502700000,
+      "tag": "0104_order_delivery_and_terms",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1787502760000,
+      "tag": "0105_customer_potential",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1787502820000,
+      "tag": "0106_user_territories",
+      "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1787502880000,
+      "tag": "0107_relationship_handover",
+      "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1787503060000,
+      "tag": "0109_user_employee_link",
+      "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1787503120000,
+      "tag": "0110_road_legs_and_geocodes",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1788989061650,
+      "tag": "0111_salesman_plans_a_day",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1788989121650,
+      "tag": "0112_lead_funnel_enum_values",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1788989181650,
+      "tag": "0113_lead_funnel",
+      "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1788989241650,
+      "tag": "0114_distributor_facts_are_three_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1788989301650,
+      "tag": "0115_distributor_agreement_attachment",
+      "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "7",
+      "when": 1788989361650,
+      "tag": "0116_lead_validation_full_questions",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "7",
+      "when": 1788989421650,
+      "tag": "0117_territory_is_a_hierarchy",
+      "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1788989481650,
+      "tag": "0118_odometer_at_both_ends",
+      "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1789034092396,
+      "tag": "0119_roles_are_levels_not_job_titles",
+      "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1789036769812,
+      "tag": "0120_check_in_is_a_gate",
+      "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "7",
+      "when": 1789036829812,
+      "tag": "0121_either_identifier_signs_you_in",
+      "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1789066028865,
+      "tag": "0122_what_the_handset_can_say_about_itself",
+      "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1789113485702,
+      "tag": "0123_enquiries_app",
+      "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1789113485703,
+      "tag": "0124_website_enquiries",
       "breakpoints": true
     }
   ]

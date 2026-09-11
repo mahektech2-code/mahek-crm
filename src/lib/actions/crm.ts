@@ -134,7 +134,7 @@ function refreshAll() {
 
 export async function setScope(scope: "mine" | "team") {
   const ctx = await resolveScope();
-  if (ctx.role === "telecaller") return;
+  if (ctx.role === "associate") return;
   const jar = await cookies();
   jar.set(SCOPE_COOKIE_NAME, scope, { path: "/", maxAge: 60 * 60 * 24 * 365 });
   refreshAll();
@@ -926,6 +926,7 @@ export async function decideDeactivation(
       actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
       action: approve
         ? "customer.deactivate"
         : "customer.deactivation_rejected",
@@ -1089,6 +1090,7 @@ export async function decideReactivation(
       actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
       action: approve ? "customer.reactivate" : "customer.reactivation_rejected",
       entityType: "customer",
       entityId: customerId,

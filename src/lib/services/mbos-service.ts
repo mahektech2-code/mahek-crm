@@ -15,13 +15,34 @@ import {
   scopedUserIds,
   type DataScope, scopedToUsers,} from "../access-control";
 import { getConfig } from "../config/store";
+import { readSecret } from "../secrets";
+import { dictationAvailability } from "../dictation-requests";
+import {
+  territoriesFor,
+  territoryClause,
+  type Territory,
+} from "./territory-service";
 import { policyForDate, resolveSubject } from "./expense-policy-service";
 import { describeRule } from "../expense-rule-forms";
 import { verifyPassword } from "../password";
 import { bearerFrom, verifyToken, signingKeyPresent } from "../mbos/token";
 import { today } from "../recompute";
-import { addDays, APP_TIMEZONE } from "../business-date";
-import type { PullDelta } from "../mbos/types";
+import { addDays, asDate, APP_TIMEZONE, type BusinessDate } from "../business-date";
+import { bandFor } from "../engines/inactivity";
+import {
+  leaveBalances as computeLeaveBalances,
+  leaveDebitDays,
+} from "../engines/leave";
+import {
+  LEAVE_LABELS,
+  type LeaveType,
+  type PullDelta,
+  type TerritoryState,
+} from "../mbos/types";
+import { employeeJoinOn } from "../employee-link";
+/* The Accounts ledger's own read. See `customerBills` — the handset must not
+   have a second opinion about what a shop owes. */
+import { listBills } from "./payment-service";
 
 /* ---------------------------------------------------------------------------
  * MBOS — every read the handset makes.
@@ -44,7 +65,7 @@ import type { PullDelta } from "../mbos/types";
 export type MbosPrincipal = {
   user: User;
   deviceId: string;
-  role: "telecaller" | "manager" | "accounts" | "admin";
+  role: "associate" | "manager" | "admin";
   scope: DataScope;
 };
 
@@ -401,9 +422,82 @@ export async function mbosConfigPayload(): Promise<Record<string, unknown>> {
   const config = (await getConfig()) as unknown as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(config)) {
-    if (key.startsWith("mbos.")) out[key] = value;
+    /*
+     * `leads.` as well as `mbos.`, and the prefix test is why it had to be
+     * said out loud.
+     *
+     * The funnel's settings were named for the FEATURE rather than for the app
+     * — `leads.suspectMaxVisits`, `leads.prospectReasons`, `leads.lostReasons`
+     * — because the console reads them too. This loop sent only `mbos.*`, so
+     * none of them reached a handset: the phone fell back to the defaults
+     * compiled into it, and a manager who changed the suspect window on the
+     * Settings screen changed it in the office and nowhere else. Silent in both
+     * directions, since a defaulted value is a plausible value.
+     *
+     * The salesman is the person those settings are actually about, so they go
+     * where he is.
+     */
+    if (key.startsWith("mbos.") || key.startsWith("leads.")) out[key] = value;
   }
   out["products.priceSource"] = config["products.priceSource"];
+
+  /*
+   * THE MAP KEY, and it is the one credential that goes down this wire.
+   *
+   * The handset draws the same maps the console does and must ask Ola for the
+   * same tiles — a key that never left the server could not load a single
+   * street. It is the exception `lib/secrets.ts` already names for the browser,
+   * one client further out, and the caveat is written there: a browser key is
+   * restricted to a domain and a phone has none, so a separate revocable key
+   * with a spend cap is the honest mitigation.
+   *
+   * It goes only to a device that has already authenticated as a bound handset
+   * — this payload is behind the MBOS bearer token — which is the most this
+   * side can do about it.
+   *
+   * Absent where no key is set, and the map screens draw nothing rather than a
+   * grey rectangle: a map that fails when opened is worse than one never
+   * offered, which is the same rule the microphone follows.
+   */
+  const mapKey = await readSecret("olamaps.apiKey").catch(() => null);
+  if (mapKey) out["maps.olaKey"] = mapKey;
+
+  /*
+   * WHETHER A MICROPHONE MAY BE DRAWN, and how long it may listen for.
+   *
+   * The CRM asks `/api/dictate` at the moment it draws one, which is right for
+   * a browser and useless here: a salesman opens the expenses form in a godown
+   * with no bars, and a screen that had to ask a server whether it may offer a
+   * button would offer none exactly where speaking beats typing most. So the
+   * answer rides down on the pull like every other threshold and is read from
+   * the local cache.
+   *
+   * What crosses is the ANSWER, never the question. None of the `voice.*`
+   * settings go down this wire and neither do the keys behind them — unlike
+   * the map key above, which the handset must spend itself, nothing on a phone
+   * calls a transcription provider directly. A handset has no use for a model
+   * name and no business holding one; what it needs is whether to draw the
+   * mic, when to stop recording, and whether Tighten and Rewrite are worth
+   * showing.
+   *
+   * CAUGHT, like the map key above, and for a reason worth stating: this is a
+   * settings read and a secrets read, and it sits inside the payload that
+   * bootstraps a handset. A throw here would not disable dictation, it would
+   * fail the bootstrap — and a failed bootstrap is a salesman signed in
+   * against an empty database with a full day in front of him. The worst this
+   * may cost is a microphone that is not drawn.
+   */
+  const dictation = await dictationAvailability().catch(() => null);
+  out["mbos.ai.dictation"] =
+    dictation?.available === true
+      ? {
+          available: true,
+          maxSeconds: dictation.maxSeconds,
+          maxSizeMb: dictation.maxSizeMb,
+          canRefine: dictation.canRefine,
+        }
+      : { available: false, reason: dictation?.available === false ? dictation.reason : "unknown" };
+
   return out;
 }
 
@@ -518,29 +612,128 @@ export async function customerIdsInScope(
   principal: MbosPrincipal,
 ): Promise<string[]> {
   const ids = scopedUserIds(principal.scope);
+  /*
+   * WHO MAY SEE IT, AND WHERE HE WORKS — two clauses doing two different jobs,
+   * and they are ANDed rather than folded together.
+   *
+   * The first is the security boundary and is main's: the three seats decide
+   * whose book a record is in, `namedByUsers` adds the salesman the customer
+   * master NAMES, and `null` short-circuits BEFORE the `or` because
+   * `scopeIn(null)` is `undefined` — Drizzle drops an undefined operand, so
+   * `or(undefined, namedBy…)` would collapse to the name match alone and NARROW
+   * an admin to it, which is the opposite of what null means.
+   *
+   * The second is the territory, and it can only ever REMOVE rows from what the
+   * first allows. Nobody is given sight of another salesman's customer by being
+   * allocated a city. `territoryClauseFor` answers undefined where nothing is
+   * allocated and `and()` drops it, so a person with no territory keeps the
+   * whole book they had — allocating cities to eight people and forgetting the
+   * ninth must not empty her handset.
+   *
+   * `and(undefined, undefined)` is undefined, so an admin with no territory is
+   * still unrestricted. Both null-handling rules survive the pairing.
+   */
+  const visible = ids === null ? undefined : or(scopeIn(ids), namedByUsers(ids));
 
   /*
-   * `null` is unrestricted, and it has to short-circuit BEFORE the `or` below.
-   * `scopeIn(null)` is `undefined` — Drizzle drops an undefined operand — so
-   * `or(undefined, namedBy…)` would collapse to the name match alone and
-   * NARROW an admin to it, which is the opposite of what null means.
+   * NO TERRITORY, NO BOOK — and the short-circuit is here rather than in the
+   * clause so the query is never asked at all.
+   *
+   * Who this applies to is the whole of the carve-out below: a field salesman
+   * works a beat somebody allocates him, and an unallocated one carrying five
+   * thousand shops is the failure this reverses. A MANAGER or an ADMIN on a
+   * handset is not walking a beat — the console is oversight, their scope has
+   * already answered the question, and emptying their phone for want of an
+   * allocation nobody would think to make reads as a broken sync rather than
+   * as a rule. `role` is the derived widest role, so this is the same answer
+   * `scopeForUser` gave a line earlier rather than a second reading of it.
+   *
+   * The emptiness is NAMED, never silent: `mbosTerritoryState` puts the reason
+   * on the handset and the team screen counts who it has switched off. An
+   * empty book that says why is a question; one that does not is a fortnight
+   * of somebody assuming the sync is broken.
    */
-  const where = ids === null ? undefined : or(scopeIn(ids), namedByUsers(ids));
+  const exempt = principal.role === "admin" || principal.role === "manager";
+  const territories = await territoriesFor(principal.user.id);
+  if (!exempt && !territories.length) return [];
+
+  const territory = territories.length ? territoryClause(territories) : undefined;
 
   const rows = await db
     .select({ id: customers.id })
     .from(customers)
-    .where(where);
+    .where(and(visible, territory));
+  return rows.map((r) => r.id);
+}
+
+/**
+ * WHY THE BOOK IS THE SIZE IT IS, in the shape the handset renders.
+ *
+ * Sent so the Customers tab can tell an empty book apart from a switched-off
+ * one. Those are different facts about somebody's day and no screen may draw
+ * them alike: "nothing in your book yet" sends a salesman to ask why nobody has
+ * given him shops, and "no area has been allocated to you" sends him to the one
+ * person who can fix it.
+ *
+ * `allocated` is the answer, `places` is what to print, and `exempt` says the
+ * rule does not apply to this principal at all — a manager whose handset is
+ * empty for want of customers must not be told to go and ask for a territory.
+ */
+/** The same, for a caller holding a principal and no list. */
+export async function territoryStateFor(
+  principal: MbosPrincipal,
+): Promise<TerritoryState> {
+  return mbosTerritoryState(principal, await territoriesFor(principal.user.id));
+}
+
+export function mbosTerritoryState(
+  principal: MbosPrincipal,
+  territories: Territory[],
+): TerritoryState {
+  const exempt = principal.role === "admin" || principal.role === "manager";
+  const working = territories.filter((t) => t.kind !== "region");
+  return {
+    allocated: working.length > 0,
+    exempt,
+    /* The narrowest name of each branch, which is what somebody recognises:
+       "Pune" rather than "Maharashtra, Pune" on a chip a phone has to fit. */
+    places: [...new Set(working.map((t) => t.value))].sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+/**
+ * HIS BOOK BEFORE TERRITORY IS APPLIED — the two seats and the party sheet.
+ *
+ * Exported for one caller: the action that changes where somebody works has to
+ * know which shops LEAVE the handset, and that is this set narrowed by the old
+ * territory minus the same set narrowed by the new one. Computing it from the
+ * whole `customers` table instead would tombstone thousands of shops that were
+ * never on the phone.
+ *
+ * It takes a user id rather than a principal because the office is holding
+ * neither a device nor a session for the person it is reallocating.
+ */
+export async function bookIdsIgnoringTerritory(userId: string): Promise<string[]> {
+  const rows = await db
+    .select({ id: customers.id })
+    .from(customers)
+    .where(or(scopeIn([userId]), namedByUsers([userId])));
   return rows.map((r) => r.id);
 }
 
 export type BootstrapPayload = {
   serverTime: number;
   cursor: string;
+  /** Why the book is the size it is. See `TerritoryState`. */
+  territory: TerritoryState;
   user: {
     id: string;
     name: string;
-    email: string;
+    /* Null where somebody signs in with a work number alone — which on a
+       handset is most of them. `mbos-app/src/sync/api.ts` has typed this
+       nullable since it was written, so the wire needed nothing; it was only
+       ever the server insisting on a value it could not always have. */
+    email: string | null;
     phone: string | null;
     role: string;
     initials: string;
@@ -558,6 +751,16 @@ export type BootstrapPayload = {
    * tomorrow" the moment somebody plans one.
    */
   journeyStops: unknown[];
+  /**
+   * The days themselves, and how far each has got in being agreed.
+   *
+   * The stops channel above carries a day only once it is PLANNED, so without
+   * this a fresh sign-in showed nothing on the Journey tab — no day to agree,
+   * no day to pick shops for, no history — and the delta could not make it up
+   * afterwards, being gated on `updated_at`: a day proposed before this
+   * handset signed in and never touched again would arrive on no pass ever.
+   */
+  planDays: unknown[];
   /** In force today. See `priceListRows` — the handset replaces it wholesale. */
   priceList: unknown[];
   /** Live promotions, as data. Nothing here interprets eligibility or benefit. */
@@ -568,6 +771,11 @@ export type BootstrapPayload = {
   timeline: unknown[];
   customerOrders: unknown[];
   customerPayments: unknown[];
+  /** The open bills behind `outstandingPaise`. See `customerBills`. */
+  customerBills: unknown[];
+  /** The whole book as ids, so the handset can let go of what left it. See
+      `bookIds` in `lib/mbos/types.ts` for why this travels on every pass. */
+  bookIds: string[];
   leaveBalances: unknown[];
   /**
    * TODAY'S ATTENDANCE, so a fresh install is not blind about a day it already
@@ -669,6 +877,11 @@ export async function buildBootstrap(
   const now = new Date();
   const ids = await customerIdsInScope(principal);
   const day = await today();
+  /* Read again rather than threaded out of `customerIdsInScope`: that function
+     is the security path and is called from a dozen places, and widening its
+     return type to carry a screen's sentence is how a boundary picks up a
+     second job. Two cheap reads of one indexed table beat that. */
+  const territories = await territoriesFor(principal.user.id);
   /* A fortnight either side of today, matching `PLAN_HISTORY_DAYS` and the
      manager's own MAX_PLAN_DAYS (31) forward cap — so a fresh sign-in shows
      the whole relevant window immediately rather than waiting for it to
@@ -680,6 +893,7 @@ export async function buildBootstrap(
     customerRows,
     productRows,
     journeyRows,
+    planDayRows,
     priceRows,
     schemeRowsForBootstrap,
     taskRows,
@@ -688,6 +902,7 @@ export async function buildBootstrap(
     timelineRows,
     orderHistoryRows,
     paymentHistoryRows,
+    billRows,
     leaveRows,
     attendanceRow,
     holidayRows,
@@ -701,6 +916,9 @@ export async function buildBootstrap(
     customersForDevice(ids),
     activeCatalogue(),
     journeyStops(principal.user.id, planFrom, planTo),
+    /* Null, so the whole window comes down rather than a delta of it — see
+       `planDaysFor`. */
+    planDaysFor(principal.user.id, null),
     priceListRows(),
     schemeRows(null),
     openTasks(principal.user.id),
@@ -709,6 +927,7 @@ export async function buildBootstrap(
     recentTimeline(ids, TIMELINE_PER_CUSTOMER),
     recentOrders(ids, HISTORY_PER_CUSTOMER),
     recentPayments(ids, HISTORY_PER_CUSTOMER),
+    customerBills(principal, ids, HISTORY_PER_CUSTOMER),
     leaveBalances(principal.user.id, Number(day.slice(0, 4))),
     attendanceToday(principal.user.id, day),
     holidaysFor(),
@@ -724,6 +943,7 @@ export async function buildBootstrap(
   return {
     serverTime: now.getTime(),
     cursor: encodeCursor(now),
+    territory: mbosTerritoryState(principal, territories),
     user: {
       id: principal.user.id,
       name: principal.user.name,
@@ -736,6 +956,7 @@ export async function buildBootstrap(
     customers: customerRows,
     products: productRows,
     journeyStops: journeyRows,
+    planDays: planDayRows,
     priceList: priceRows,
     schemes: schemeRowsForBootstrap,
     tasks: taskRows,
@@ -744,6 +965,9 @@ export async function buildBootstrap(
     timeline: timelineRows,
     customerOrders: orderHistoryRows,
     customerPayments: paymentHistoryRows,
+    customerBills: billRows,
+    /* The same list every channel above was built from. */
+    bookIds: ids,
     leaveBalances: leaveRows,
     attendanceToday: attendanceRow,
     holidays: holidayRows,
@@ -791,9 +1015,53 @@ export async function buildBootstrap(
  * is a template literal, and a backtick in a comment inside one ends the
  * string.
  */
+/**
+ * THE CUSTOMERS A DELTA SENDS — the same shape the bootstrap sends, because it
+ * is the same function.
+ *
+ * IT WAS A SECOND QUERY, and it was a SUBSET. `customersForDevice` selects
+ * thirty-one fields; the delta spelled out twenty of them inline, so eleven
+ * reached a handset at sign-in and never again: `thirdParty`, `cycleDays`,
+ * `gstin`, `dealerCode`, `territoryRegion`, `customerType`, `potential`,
+ * `creditDays`, `visitFrequencyDays`, `gpsAccuracyM` and the `distributors`
+ * list — plus `healthBand`, which is not in either SELECT at all but computed
+ * by `bandFor` on the way out of the bootstrap and nowhere else.
+ *
+ * Nothing looked wrong, because `upsert` writes exactly the columns that
+ * ARRIVE. A missing column is not written as null; it is simply not written,
+ * so the value from the bootstrap sits there being right about the day the
+ * salesman signed in and wrong from then on. `pullCursor` is set once and
+ * cleared nowhere, so "then on" is the life of the installation.
+ *
+ * What it cost is three things on the customers card. `thirdParty` is the
+ * "Third party" chip, `healthBand` is the whole status dot and its word, and
+ * `cycleDays` is the reorder line — so a shop marked third-party in the office
+ * on Tuesday still read as an ordinary customer, and a customer who went
+ * dormant in March still read Active. A column added for a new handset screen
+ * reached a phone only if its owner happened to sign out and back in.
+ *
+ * The 2,000 cap and the `updated_at` ordering stay where they were and on the
+ * IDS, which is the half that has to be ordered: the cap must take the oldest
+ * changes first or the ones it drops are never asked for again. Which order
+ * `customersForDevice` then returns them in does not matter, because the
+ * handset upserts them.
+ */
+async function changedCustomersForDevice(ids: string[], sinceIso: string) {
+  if (!ids.length) return [];
+  const idList = sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
+  const changed = await db.execute<{ id: string }>(sql`
+    select c.id
+      from customers c
+     where c.id in ${idList} and c.updated_at > ${sinceIso}
+     order by c.updated_at asc
+     limit 2000
+  `);
+  return customersForDevice(changed.map((r) => r.id));
+}
+
 async function customersForDevice(ids: string[]) {
   if (!ids.length) return [];
-  return db.execute<Record<string, unknown>>(sql`
+  const rows = await db.execute<Record<string, unknown>>(sql`
     select c.id, c.name, c.contact_person as "contactPerson", c.phone,
            c.city, c.area, c.beat,
            c.territory_region as "territoryRegion", c.dealer_code as "dealerCode",
@@ -835,6 +1103,39 @@ async function customersForDevice(ids: string[]) {
      where c.id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}
      order by c.name asc
   `);
+
+  /*
+   * THE RETENTION BAND, computed here rather than in the SQL above.
+   *
+   * `bandFor` is the one definition of "has this customer gone quiet" — the
+   * same function `customers.status`, the Call Log and the owner's retention
+   * report all read. Spelling it as a CASE expression in the query would have
+   * been a second copy of a rule whose whole point is that there is one, and
+   * the copy would drift the first time somebody changed a multiplier.
+   *
+   * It is sent rather than computed on the handset for the reason the score
+   * beside it is: one answer, made once. A phone that derived its own would
+   * derive it from a book that is hours old, and two salesmen standing in one
+   * shop would read different words about it.
+   *
+   * Null is a real answer and means the customer has never ordered — they have
+   * not stopped buying, they have not started, and the handset says so in
+   * words rather than drawing a band it invented.
+   */
+  const config = await getConfig();
+  const day = await today();
+  return rows.map((r) => ({
+    ...r,
+    healthBand:
+      bandFor(
+        {
+          lastOrderDate: (r.lastOrderDate as BusinessDate | null) ?? null,
+          cycleDays: Number(r.cycleDays ?? 0),
+        },
+        day,
+        config,
+      )?.band ?? null,
+  }));
 }
 
 /**
@@ -901,6 +1202,51 @@ async function journeyStops(userId: string, fromDate: string, toDate: string) {
      order by p.plan_date asc, s.sequence asc
   `);
   return rows;
+}
+
+/**
+ * The days themselves, and how far each has got in being agreed.
+ *
+ * A STOP ONLY EXISTS ONCE A DAY IS PLANNED, so the stops channel cannot show
+ * a salesman a day he is merely being asked about — which, on a month laid out
+ * in advance, is nearly all of them. This is the channel that can, and the
+ * bootstrap did not carry it: a fresh sign-in got an empty Journey tab and had
+ * to wait for a delta, which is `updated_at`-gated, so a day proposed before
+ * that handset signed in and never touched again arrived NEVER. It is the same
+ * failure `journeyStops` above already carries a note about — built, sent by
+ * one channel, and applied by nothing on the other.
+ *
+ * `since` null is the bootstrap asking for the whole window, exactly as
+ * `holidaysFor` and `openLeads` are asked.
+ *
+ * **A NUMBER SUBTRACTED FROM A DATE NEEDS ITS TYPE SAID OUT LOUD.**
+ * `${PLAN_HISTORY_DAYS}` is a bind parameter, and an untyped parameter next to
+ * a date lets Postgres resolve `date - $n` as `date - date` — which yields an
+ * integer, and `date >= integer` has no operator, so the query throws. It is
+ * the same family as the bare-cast rules in AGENTS.md and it hides the same
+ * way: the SQL is correct-looking, `tsc` sees a string, and nothing fails
+ * until the query actually runs. `::int` is the fix and the two callers of
+ * this now share one copy of it.
+ */
+async function planDaysFor(userId: string, since: string | null) {
+  return db.execute<Record<string, unknown>>(sql`
+    select p.id, p.plan_date::text as "planDate", p.city, p.beat,
+           p.day_state::text as "dayState",
+           p.refusal_reason as "refusalReason",
+           p.counter_city as "counterCity",
+           p.self_planned as "selfPlanned",
+           (extract(epoch from p.proposed_at) * 1000)::double precision as "proposedAt",
+           m.name as "proposedBy",
+           (select count(*)::int from mbos_journey_stops s where s.plan_id = p.id)
+             as "picked"
+      from mbos_journey_plans p
+      left join users m on m.id = p.proposed_by_id
+     where p.user_id = ${userId}
+       and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}::int
+       ${since ? sql`and p.updated_at > ${since}` : sql``}
+     order by p.plan_date asc
+     limit 200
+  `);
 }
 
 async function openTasks(userId: string) {
@@ -979,8 +1325,20 @@ async function openSamples(userId: string, customerIds: string[], since?: string
            pr.name as "productName",
            s.quantity_cans as "quantityCans",
            s.requested_date::text as "requestedDate",
+           -- Three assertions by three parties, and never collapsed: we sent
+           -- it, the carrier says it arrived, the shop says it has it. Only
+           -- the third starts the review clock.
+           s.dispatched_at as "dispatchedAt",
+           s.courier_name as "courierName",
+           s.tracking_number as "trackingNumber",
            s.delivered_at as "deliveredAt",
            s.delivery_photo_id as "deliveryPhotoId",
+           s.received_at as "receivedAt",
+           s.trial_started_at as "trialStartedAt",
+           s.trial_completed_at as "trialCompletedAt",
+           s.satisfaction,
+           s.additional_requirement as "additionalRequirement",
+           s.rejection_reason as "rejectionReason",
            s.trial_outcome as "trialOutcome",
            s.follow_up_date::text as "followUpDate",
            s.feedback_notes as "feedbackNotes",
@@ -1013,13 +1371,83 @@ async function openLeads(userId: string, since?: string | null) {
            c.lead_next_follow_up_date::text as "nextFollowUpDate",
            c.lead_notes as notes,
            c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
+           -- The coordinating seat, and the NAME beside it: a salesman with a
+           -- commercial question needs somebody to ring, and an id is not a
+           -- person. Resolved here rather than on the handset because the
+           -- handset holds no user table.
+           c.lead_manager_id as "leadManagerId",
+           lm.name as "leadManagerName",
+           c.lead_hold_reason as "holdReason",
+           -- How many times anybody has stood in this shop.
+           --
+           -- Counted rather than cached: a cached count needs a recompute
+           -- path, an invalidation on every visit write, and a way to be
+           -- wrong. This is count(*) on mbos_visits_customer_idx for the
+           -- handful of open leads one salesman owns.
+           (select count(*)::int from mbos_visits v
+             where v.customer_id = c.id) as "visitCount",
            case when c.lead_converted_at is not null then c.id end as "convertedCustomerId",
            c.lead_last_activity_date::text as "lastActivityDate",
+           /*
+            * THE FUNNEL, SENT — and it was not, which made the whole thing
+            * one-way.
+            *
+            * Everything a salesman AUTHORS reached the office perfectly from
+            * the first build: the sales type, the eight answers, the checklist,
+            * all of it went up. None of it came back. So a lead the office
+            * verified, re-typed or corrected showed the phone the version it
+            * had already had — and a lead created on the Leads screen in the
+            * console arrived on the handset as a bare name with no ladder,
+            * where every gate refused it for want of answers that existed.
+            * Exactly the shape of the bug that left MBOS with no reference data
+            * at all: the authored half worked, so nothing looked broken.
+            *
+            * Both sides in ONE change, always. A column added here that the
+            * handset has no place for throws inside applyPull and rolls back
+            * the entire pull, not just the leads.
+            *
+            * (And no backticks in this comment: it lives inside a sql template
+            * literal, where one would end the literal mid-query.)
+            */
+           c.lead_sales_type as "salesType",
+           c.lead_stage_since::text as "stageSince",
+           c.customer_type as "customerType",
+           c.lead_monthly_volume_litres as "monthlyLitres",
+           c.lead_competitor as competitor,
+           c.lead_required_product_id as "requiredProductId",
+           p.name as "requiredProductName",
+           c.contact_person as "contactPerson",
+           c.lead_decision_maker as "decisionMaker",
+           c.lead_credit_days_wanted as "creditDaysWanted",
+           c.lead_application as application,
+           c.gstin,
+           c.lead_qualification as qualification,
+           c.lead_next_action as "nextAction",
+           c.lead_next_action_date::text as "nextActionDate",
+           c.lead_next_action_owner_id as "nextActionOwnerId",
+           c.lead_next_action_outcome as "nextActionOutcome",
+           c.lead_suspect_decided_at as "suspectDecidedAt",
+           c.lead_verified_at as "verifiedAt",
+           c.third_party as "thirdParty",
+           c.lead_distributor_salesman_id as "distributorSalesmanId",
+           ds.name as "distributorSalesmanName",
+           c.lead_expected_order_date::text as "expectedOrderDate",
+           c.lead_expected_order_value_paise as "expectedOrderValuePaise",
            c.updated_at as "updatedAt"
       from customers c
-     where c.owner_id = ${userId}
+      left join products p on p.id = c.lead_required_product_id
+      left join distributor_salesmen ds on ds.id = c.lead_distributor_salesman_id
+      left join users lm on lm.id = c.lead_manager_id
+      -- The lead manager reads it too, not only the salesman who raised it.
+      -- The commercial half of a lead is his to answer, and a screen that
+      -- listed only what a person OWNS would hide every lead he was named on.
+     where (c.owner_id = ${userId} or c.lead_manager_id = ${userId})
        and c.lead_stage is not null
        and c.lead_archived = false
+       -- on_hold is deliberately NOT excluded. A held lead is a live
+       -- prospect with a reason it is not moving, and taking it off the
+       -- handset would make "on hold" mean "gone" — which is exactly the
+       -- conflation the status exists to end.
        and c.lead_stage not in ('won', 'lost')
        ${since ? sql`and c.updated_at > ${since}` : sql``}
      order by c.lead_next_follow_up_date asc nulls last
@@ -1099,6 +1527,77 @@ async function recentPayments(ids: string[], perCustomer: number) {
   `);
 }
 
+/**
+ * WHAT THE MONEY IS AGAINST — the open bills, read off the Accounts ledger.
+ *
+ * The handset has always carried `outstandingPaise`, one number, and a
+ * salesman could tell a shop it owed ₹47,000 without being able to say which
+ * invoices that was. Worse, `handlePayment` has accepted `billIds` since it
+ * was written — it validates each against the customer's open bills and runs
+ * the same pure `allocate` the record form runs — and nothing on the handset
+ * ever filled it. So every rupee collected in the field was spread OLDEST
+ * FIRST, including from the customer standing there paying against the
+ * invoice in his hand. AGENTS.md says newest-first exists for exactly that
+ * person; the field was the one place it could not be expressed.
+ *
+ * IT IS THE ACCOUNTS READ, not a second one. `listBills` is what the ledger,
+ * the Outstanding screen and `listOutstandingByCustomer` all go through, so
+ * the due date resolved from the customer's term, the aging and
+ * `paymentPosition` are worked out once. A handset totalling a debt from its
+ * own query is how a salesman and an accounts clerk come to disagree about a
+ * bill in front of the customer.
+ *
+ * `openOnly` is deliberate and it is the collections question rather than the
+ * ledger one: a settled bill is most of a year and none of it is collectable.
+ * It is also NOT cut by financial year — the oldest debt on an account is
+ * usually last year's, and it is the first thing anybody chases.
+ *
+ * The payload is TRIMMED rather than forwarded. `listBills` returns the
+ * customer's name, the status and the bucket, none of which the handset has a
+ * column for, and one extra key on the wire empties the phone.
+ */
+async function customerBills(
+  principal: MbosPrincipal,
+  ids: string[],
+  perCustomer: number,
+) {
+  if (!ids.length) return [];
+
+  const rows = await listBills({ openOnly: true, customerIds: ids }, principal);
+
+  /* Oldest first within each customer: that is the order they get chased in,
+     and it is the order the automatic spread would settle them in. */
+  const byCustomer = new Map<string, typeof rows>();
+  for (const b of [...rows].sort((a, z) => a.billDate.localeCompare(z.billDate))) {
+    const held = byCustomer.get(b.customerId) ?? [];
+    if (held.length >= perCustomer) continue;
+    held.push(b);
+    byCustomer.set(b.customerId, held);
+  }
+
+  return [...byCustomer.values()].flat().map((b) => ({
+    id: b.id,
+    customerId: b.customerId,
+    billNo: b.billNo,
+    billDate: b.billDate,
+    dueDate: b.dueDate,
+    amountPaise: b.amount,
+    paidPaise: b.paid,
+    balancePaise: b.balance,
+    overdueDays: b.overdueDays,
+    disputed: b.disputed ? 1 : 0,
+    /*
+     * Whether anybody has spoken for this bill, carried so the screen can say
+     * which kind of number the balance is. On an `unstated` bill it is the
+     * full amount purely because nothing has been recorded against it either
+     * way — it is not a debt, `recomputeOutstanding` keeps it out of the
+     * figure above it, and drawing it as one would be the imported-book
+     * mistake arriving on a phone.
+     */
+    paymentPosition: b.paymentPosition,
+  }));
+}
+
 async function recentTimeline(ids: string[], perCustomer: number) {
   if (!ids.length) return [];
   return db.execute<Record<string, unknown>>(sql`
@@ -1107,7 +1606,34 @@ async function recentTimeline(ids: string[], perCustomer: number) {
       from (
         select t.id, t.customer_id as "customerId", t.event_type as "eventType",
                t.source_app as "sourceApp", t.source_record_id as "sourceRecordId",
-               t.occurred_at as "occurredAt", t.actor_user_id as actor,
+               /* EPOCH MILLISECONDS, because that is what the handset's own
+                  writes put in this column. See the note in the handset's
+                  schema: timeline_events.occurredAt is INTEGER NOT NULL there,
+                  and data/visits.ts and data/orders.ts write Date.now() into
+                  it for the events this salesman raises himself.
+
+                  Sent as a timestamptz it came across as the STRING
+                  2026-09-11 01:28:55.168+05:30, which SQLite cannot convert to
+                  an integer and therefore stores as TEXT, in the same column,
+                  beside real integers.
+
+                  Two things break, and the second is the one nobody would look
+                  for. new Date(...) on that string gives the screen a date it
+                  renders as NaN undefined. And SQLite orders ALL integers
+                  before ALL text, so ordering by occurredAt desc puts every
+                  event the office sent on one side of every event the phone
+                  wrote, whatever the dates say - a timeline in an order that
+                  has nothing to do with time.
+
+                  double precision rather than bigint: the driver hands a
+                  bigint back as a string, which is this same bug one cast
+                  along. It is the spelling the journey and approval channels
+                  beside this one already use.
+
+                  NO BACKTICKS IN HERE. This comment sits inside a sql template
+                  literal, and one would end it. */
+               (extract(epoch from t.occurred_at) * 1000)::double precision as "occurredAt",
+               t.actor_user_id as actor,
                t.summary,
                row_number() over (
                  partition by t.customer_id order by t.occurred_at desc, t.id desc
@@ -1160,17 +1686,97 @@ async function attendanceToday(userId: string, day: string) {
   };
 }
 
+/**
+ * What leave somebody has, has spent, and has left — one row per kind they
+ * could ask for, whether or not anything has been stored about them.
+ *
+ * Read from three places, and NONE of them is `mbos_leave_balances.used_days`:
+ *
+ *  - the entitlement is `mbos.leave.annualEntitlementDays`, configuration,
+ *    because nothing in MahekOne ever set one. The only code that created a
+ *    balance row was the approval path, at zero days entitled, so a person had
+ *    a row for a kind of leave only after taking some — and the handset builds
+ *    its list of kinds from these rows, so before anybody had taken any leave
+ *    the form could offer nothing but loss of pay. Every request a salesman
+ *    could make was unpaid and no screen said why.
+ *  - a row in `mbos_leave_balances` overrides it for one person, which is what
+ *    that table is for now: somebody on different terms, stated deliberately.
+ *  - what has been SPENT is derived from the approved requests themselves,
+ *    never from the cached `used_days`. That column was incremented on approval
+ *    and decremented by nothing at all, so a request approved and then reversed
+ *    left the balance permanently short with no way to notice. Deriving is also
+ *    what makes a half day cost half a day: the debit is the request's own
+ *    arithmetic rather than a number somebody added up once.
+ *
+ * `year` is the calendar year the entitlement runs in. Only requests STARTING
+ * in it are counted — a leave straddling New Year is spent where it began,
+ * which is arbitrary but stated, and the alternative is splitting one absence
+ * across two balances so that neither reads as the leave anybody took.
+ */
 async function leaveBalances(userId: string, year: number) {
-  return db.execute<Record<string, unknown>>(sql`
-    select b.leave_type as kind, b.year::text as period,
-           b.entitled_days as entitled, b.used_days as used,
-           -- Derived here because the handset has a column for it and no
-           -- arithmetic to fill it with; the row is upserted verbatim.
-           (b.entitled_days - b.used_days) as available
-      from mbos_leave_balances b
-     where b.user_id = ${userId} and b.year = ${year}
-     order by b.leave_type asc
-  `);
+  const config = await getConfig();
+
+  const [overrideRows, usedRows] = await Promise.all([
+    db.execute<{ kind: string; entitled: number }>(sql`
+      select b.leave_type::text as kind, b.entitled_days as entitled
+        from mbos_leave_balances b
+       where b.user_id = ${userId} and b.year = ${year}
+    `),
+    /* The approved requests themselves, NOT a sum. What a request costs is
+       `leaveDebitDays`, and spelling that arithmetic out in SQL as well would
+       be two statements of one rule — the half-day half is exactly the sort
+       that drifts, and the drifting copy would be the one debiting somebody's
+       balance. A person's year is a few dozen rows. */
+    db.execute<{ kind: string; days: number; halfDay: boolean }>(sql`
+      select l.leave_type::text as kind, l.days, l.half_day as "halfDay"
+        from mbos_leave_requests l
+        join mbos_approvals a
+          on a.subject_id = l.id and a.type = 'leave' and a.state = 'approved'
+       where l.user_id = ${userId}
+         and l.cancelled_at is null
+         and extract(year from l.from_date) = ${year}
+    `),
+  ]);
+
+  const used: Record<string, number> = {};
+  for (const row of usedRows) {
+    used[row.kind] =
+      (used[row.kind] ?? 0) + leaveDebitDays(Number(row.days), row.halfDay);
+  }
+
+  const overrides = Object.fromEntries(
+    overrideRows.map((r) => [r.kind, Number(r.entitled)]),
+  );
+
+  return leaveBalanceRows(
+    config["mbos.leave.annualEntitlementDays"],
+    used,
+    overrides,
+    year,
+  );
+}
+
+/**
+ * The rows as the handset stores them. `period` is the year, which is the only
+ * thing on the handset's table saying which year a balance belongs to.
+ */
+function leaveBalanceRows(
+  entitlement: Readonly<Record<string, number>>,
+  used: Readonly<Record<string, number>>,
+  overrides: Readonly<Record<string, number>>,
+  year: number,
+): Record<string, unknown>[] {
+  return computeLeaveBalances(entitlement, used, overrides).map((b) => ({
+    /* The label, not the enum. This is what the handset draws its leave
+       buttons from, and it was sending `loss_of_pay` — see `LEAVE_LABELS`.
+       It comes back as its enum through `leaveTypeOf`, which reads the words
+       around the word. */
+    kind: LEAVE_LABELS[b.kind as LeaveType] ?? b.kind,
+    period: String(year),
+    entitled: b.entitled,
+    used: b.used,
+    available: b.available,
+  }));
 }
 
 /**
@@ -1297,9 +1903,11 @@ async function salaryFor(userId: string): Promise<Record<string, unknown>[]> {
 
       from periods p
       left join users u on u.id = ${userId}
-      left join employees e
-             on lower(e.email) = lower(u.email)
-             or (e.company_mobile is not null and e.company_mobile = u.phone)
+      /* The same join the Sales Dashboard's Salary screen makes, from the same
+         file, so the figure on a handset and the figure in the office cannot
+         come from two different readings of who this person is. See
+         lib/employee-link.ts. */
+      left join employees e on ${employeeJoinOn("u", "e")}
      order by p."from" desc
   `);
 }
@@ -1381,14 +1989,16 @@ async function schemeRows(since: string | null) {
  * Grouped by table on the way out because that is the shape the handset
  * applies: one `DELETE … WHERE id IN` per entity rather than one per row.
  */
+const DELETIONS_PER_PULL = 2000;
+
 async function deletionsSince(userId: string, since: string) {
-  const rows = await db.execute<{ entity: string; entityId: string }>(sql`
-    select d.entity, d.entity_id as "entityId"
+  const rows = await db.execute<{ entity: string; entityId: string; at: Date | string }>(sql`
+    select d.entity, d.entity_id as "entityId", d.at
       from mbos_deletions d
      where d.at > ${since}
        and (d.user_id is null or d.user_id = ${userId})
      order by d.at asc
-     limit 2000
+     limit ${DELETIONS_PER_PULL}
   `);
 
   const byEntity = new Map<string, string[]>();
@@ -1397,7 +2007,30 @@ async function deletionsSince(userId: string, since: string) {
     if (list) list.push(row.entityId);
     else byEntity.set(row.entity, [row.entityId]);
   }
-  return [...byEntity].map(([entity, ids]) => ({ entity, ids }));
+
+  /*
+   * A PAGE THAT IS FULL HAS TO HOLD THE CURSOR BACK, or the rows past it are
+   * lost rather than delivered next time.
+   *
+   * The cursor moves to `now` at the top of the pull, so a deletion that did
+   * not fit in this page would fall behind it and never be read again — the
+   * handset would keep a shop it no longer works, for ever, with nothing
+   * anywhere looking wrong. Reallocating a whole territory is exactly the
+   * event that fills this page: a book of 2,587 shops moving to somebody else
+   * is 2,587 tombstones from one click.
+   *
+   * `lastAt` is what the caller clamps to. Re-sending the other channels back
+   * to that instant costs a few upserts and they are idempotent; losing a
+   * tombstone costs a wrong book nobody can see the cause of.
+   */
+  const full = rows.length === DELETIONS_PER_PULL;
+  const lastAt = full ? asDate(rows[rows.length - 1].at) : null;
+
+  return {
+    groups: [...byEntity].map(([entity, ids]) => ({ entity, ids })),
+    more: full,
+    lastAt,
+  };
 }
 
 /* ---------------------------------------------------------------- the delta */
@@ -1477,6 +2110,7 @@ export async function buildPull(
   if (!since) {
     return {
       cursor: nextCursor,
+      territory: await territoryStateFor(principal),
       customers: [],
       products: [],
       timeline: [],
@@ -1501,6 +2135,7 @@ export async function buildPull(
       samples: [],
       customerOrders: [],
       customerPayments: [],
+      customerBills: [],
       deletions: [],
     };
   }
@@ -1522,6 +2157,12 @@ export async function buildPull(
   const idList = ids.length
     ? sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`
     : null;
+
+  /* The business day's year, not the server's. `today()` applies the working
+     day boundary in Asia/Kolkata; reading the year off a bare `Date` answers
+     in whatever zone the machine is set to, which on the last night of
+     December is a different year and a different leave balance. */
+  const deltaYear = Number((await today()).slice(0, 4));
 
   const [
     changedCustomers,
@@ -1545,27 +2186,9 @@ export async function buildPull(
     sampleChanges,
     orderHistoryChanges,
     paymentHistoryChanges,
+    billChanges,
   ] = await Promise.all([
-      idList
-        ? db.execute<Record<string, unknown>>(sql`
-            select c.id, c.name, c.contact_person as "contactPerson", c.phone,
-                   c.city, c.area, c.beat, c.status, c.kind,
-                   c.price_tag as "priceTag",
-                   c.gps_lat as "gpsLat", c.gps_lng as "gpsLng",
-                   c.credit_limit_paise as "creditLimitPaise",
-                   c.credit_blocked as "creditBlocked",
-                   c.credit_block_reason as "creditBlockReason",
-                   c.outstanding as "outstandingPaise",
-                   c.health_score as "healthScore",
-                   c.health_components as "healthComponents",
-                   c.last_order_date as "lastOrderDate",
-                   c.last_visit_date as "lastVisitDate"
-              from customers c
-             where c.id in ${idList} and c.updated_at > ${sinceIso}
-             order by c.updated_at asc
-             limit 2000
-          `)
-        : Promise.resolve([]),
+      changedCustomersForDevice(ids, sinceIso),
       db.execute<Record<string, unknown>>(sql`
         select p.id, p.name, p.pack_size as "packSize", p.packing,
                p.millilitres_per_can as "millilitresPerCan",
@@ -1678,43 +2301,23 @@ export async function buildPull(
        *
        * A stop only exists once a day is PLANNED, so the stops channel alone
        * cannot show a salesman the days he is being asked about — which, on a
-       * month laid out in advance, is nearly all of them. */
-      db.execute<Record<string, unknown>>(sql`
-        select p.id, p.plan_date::text as "planDate", p.city, p.beat,
-               p.day_state::text as "dayState",
-               p.refusal_reason as "refusalReason",
-               p.counter_city as "counterCity",
-               (extract(epoch from p.proposed_at) * 1000)::double precision as "proposedAt",
-               m.name as "proposedBy",
-               (select count(*)::int from mbos_journey_stops s where s.plan_id = p.id)
-                 as "picked"
-          from mbos_journey_plans p
-          left join users m on m.id = p.proposed_by_id
-         where p.user_id = ${principal.user.id}
-           and p.plan_date >= (now() at time zone ${APP_TIMEZONE})::date - ${PLAN_HISTORY_DAYS}::int
-           and p.updated_at > ${sinceIso}
-         order by p.plan_date asc
-         limit 200
-      `),
+       * month laid out in advance, is nearly all of them.
+       *
+       * The SAME function the bootstrap calls, for the reason `leaveBalances`
+       * beside it carries: two spellings of one channel drift, and the half
+       * that drifts is the one nobody is looking at. */
+      planDaysFor(principal.user.id, sinceIso),
 
       /* What leave he has left.
        *
-       * The handset's leave screen builds its list of kinds from these, so
-       * with none sent the only thing it could offer was Loss of pay — a
-       * salesman with twelve days of casual leave being shown no way to ask
-       * for any of it. The balance is a subtraction rather than a stored
-       * number, because a stored one is a figure two writers can disagree
-       * about. */
-      db.execute<Record<string, unknown>>(sql`
-        select b.leave_type::text as kind,
-               b.entitled_days as entitled,
-               b.used_days as used,
-               (b.entitled_days - b.used_days) as available
-          from mbos_leave_balances b
-         where b.user_id = ${principal.user.id}
-           and b.year = extract(year from (now() at time zone ${APP_TIMEZONE}))
-         order by b.leave_type asc
-      `),
+       * The SAME function the bootstrap calls, not a second spelling of it.
+       * This was one — four columns off `mbos_leave_balances`, a table that
+       * only ever got a row after somebody had already taken leave — and the
+       * two would now disagree about every person in the company, because the
+       * entitlement moved into configuration and the usage is derived from the
+       * requests. That is exactly the drift the delta test downstairs exists to
+       * catch, and the cheapest way to pass it is to have one query. */
+      leaveBalances(principal.user.id, deltaYear),
 
       holidaysFor(sinceIso),
 
@@ -1758,10 +2361,22 @@ export async function buildPull(
          query that would work out which ten changed. */
       recentOrders(ids, HISTORY_PER_CUSTOMER),
       recentPayments(ids, HISTORY_PER_CUSTOMER),
+
+      /* Not `since`-gated either, and for a second reason on top of the one
+         above: a bill's balance changes when a RECEIPT is confirmed, and that
+         touches `bills.updated_at` — but a bill leaving the open set because
+         it was settled has no row left to carry a cursor. Sending the current
+         open set is the only reading that lets a settled bill disappear. */
+      customerBills(principal, ids, HISTORY_PER_CUSTOMER),
     ]);
 
   return {
-    cursor: nextCursor,
+    /* CLAMPED where a full page of tombstones was cut short — see
+       `deletionsSince`. Everything else is re-sent from that instant and is
+       idempotent; a tombstone that fell behind the cursor is a shop nobody can
+       get off the phone. */
+    cursor: deletionRows.lastAt ? encodeCursor(deletionRows.lastAt) : nextCursor,
+    territory: await territoryStateFor(principal),
     customers: changedCustomers as unknown[],
     products: changedProducts as unknown[],
     timeline: newTimeline as unknown[],
@@ -1777,7 +2392,7 @@ export async function buildPull(
     schemes: schemeChanges as unknown[],
     documents: documentChanges as unknown[],
     courses: courseChanges as unknown[],
-    deletions: deletionRows,
+    deletions: deletionRows.groups,
     performance: await performanceFor(principal.user.id, sinceIso),
     tasks: taskChanges as unknown[],
     salary: salaryRows as unknown[],
@@ -1791,5 +2406,10 @@ export async function buildPull(
     samples: sampleChanges as unknown[],
     customerOrders: orderHistoryChanges as unknown[],
     customerPayments: paymentHistoryChanges as unknown[],
+    customerBills: billChanges as unknown[],
+    /* The same list every channel above was built from — including the empty
+       one an unallocated salesman gets, which is exactly the answer his
+       handset has never been told. */
+    bookIds: ids,
   };
 }

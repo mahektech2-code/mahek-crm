@@ -80,16 +80,20 @@ Password for all of them: `mahek1234`
 
 Sign in with the email **or** the work number.
 
-| Email | Work number | Role | Apps | Lands on |
+The **Level** is the role on the account, and what it means depends on the app
+it is held in — see "A ROLE IS A LEVEL" below. The job in brackets is what that
+pair amounts to, not a value stored anywhere.
+
+| Email | Work number | Level | Apps | Lands on |
 |---|---|---|---|---|
-| `priya@mahek.in` | 9820011001 | telecaller | CRM | straight into the CRM |
-| `rakesh@mahek.in` | 9820011002 | telecaller | CRM | straight into the CRM |
-| `anjali@mahek.in` | 9820011003 | telecaller | CRM | straight into the CRM |
-| `suresh@mahek.in` | 9820011004 | telecaller | CRM | straight into the CRM |
-| `neha@mahek.in` | 9820011005 | telecaller | CRM, Reports | the launcher |
+| `priya@mahek.in` | 9820011001 | associate (telecaller) | CRM | straight into the CRM |
+| `rakesh@mahek.in` | 9820011002 | associate (telecaller) | CRM | straight into the CRM |
+| `anjali@mahek.in` | 9820011003 | associate (telecaller) | CRM | straight into the CRM |
+| `suresh@mahek.in` | 9820011004 | associate (telecaller) | CRM | straight into the CRM |
+| `neha@mahek.in` | 9820011005 | associate | CRM, Reports | the launcher |
 | `vikram@mahek.in` | 9820011006 | manager | CRM, Accounts, Reports, People, HRMS, Admin | the launcher |
-| `mahesh@mahek.in` | 9820011007 | field salesman | Salesman App | signs in on the web to `/apps`, which says there is nothing for him there — his app is MBOS, the mobile handset, not a browser |
-| `deepa@mahek.in` | 9820011008 | accounts | Accounts | straight into order approvals |
+| `mahesh@mahek.in` | 9820011007 | associate (field salesman) | Salesman App | signs in on the web to `/apps`, which says there is nothing for him there — his app is MBOS, the mobile handset, not a browser |
+| `deepa@mahek.in` | 9820011008 | manager (the ledger desk) | Accounts | straight into order approvals |
 
 ## How sign-in works
 
@@ -143,42 +147,687 @@ holding the whole app and nobody who was deliberately narrowed.
 silently narrow the app the day somebody granted it back — four screens of
 fourteen, with nothing on any screen saying why.
 
-**A PERSON WEARS SEVERAL HATS, and the grant is where each one is worn.**
-`app_access.role` is the role an app is held under: Vikram is a manager in the
-CRM and a clerk in Accounts, which are different powers over different data
-rather than one power applied twice. Before it, `users.role` held one value and
-decided three separate things — what somebody may do, how much they may see,
-and which controls are drawn — so whoever set up the account of a person with
-four jobs picked the most powerful and everything else came with it silently.
-A grant with NO role means the account's own, which is what every grant meant
-before the column existed and what `npm run app:grant` still writes: a terminal
-that knows nothing about roles has to go on granting an app that works.
+**THE HANDSET MAP IS OLA MAPS, the same supplier the console uses.** Two map
+suppliers is two bills, two outages and two answers to "why does this shop sit
+in the wrong lane". `sales/ola-maps.tsx` records the style quirks the web hit;
+the handset uses the same style URL and the same key, which now travels in the
+sync payload.
 
-**What you may DO is the union; what you may SEE is still one answer.**
+**That key is the SECOND named exception in `lib/secrets.ts`, and the caveat is
+not the same as the first.** A tile key has to reach whoever asks for tiles — a
+key that never left the server could not load a street — and the browser's
+mitigation is to restrict it to a domain. A phone has no domain, and Ola's
+console offers no package-name or signing-certificate restriction of the kind
+Google Maps has. So a key in an APK is extractable, and the honest mitigations
+are a SEPARATE Ola key for the handset, revocable without taking the console's
+maps down, and a spend cap on it. It is sent only to a device already
+authenticated as a bound handset, which is the most the server side can do.
+
+**A PIN IS ONLY DRAWN WHERE THERE IS A FIX, and what could not be drawn is said
+in words.** Half this book has never been pinned. Spacing those shops out to
+fill the screen is the one thing a map of where things are must not do, and a
+map that silently omits a third of the book is one somebody plans a day from and
+is wrong. NO MAP is an answer too: with no key configured the screen says so
+rather than drawing a grey rectangle, which is the rule the microphone already
+follows.
+
+**The tap means a different thing on each SCREEN, not in the component.** On the
+customers list it opens the record; on the journey picker it picks a stop. The
+map takes a handler, so neither screen has to know the other exists — and MapLibre
+React Native's `LngLatBounds` is `[west, south, east, north]`, which is GeoJSON's
+order and NOT the `ne`/`sw` pair the web's MapLibre GL takes. Two libraries, two
+orders, and getting it wrong opens the map on the wrong hemisphere rather than
+failing.
+
+**A LEAD IS A ROW IN BOTH HANDSET TABLES, so the book's view asks an EXISTS.**
+The office collapsed leads and customers into one `customers` row long ago, and
+the wire still sends leads down their own channel into `leads` keyed on the same
+id — so "is this a lead" on the handset is a correlated subquery against that
+table, never a column read. `archived = 0` is part of it: an archived lead is
+one filed out of the way, and letting it remove a shop from the Customers view
+too would leave that shop on no screen at all.
+
+**AND THE CARD SAYS WHICH IT IS AND WHICH RUNG, because "Lead" alone answers a
+question nobody asked.** A salesman reading this list is choosing between a
+Suspect he has visited twice, a Prospect that owes him a qualification and a
+shop already in Negotiation, and those are three different mornings. The rung
+lives in `leads`, so `LEAD_FACTS` selects it — the same `EXISTS` the chips
+filter on, plus the two stage columns, as correlated subqueries rather than a
+`LEFT JOIN`, because both tables carry `id`, `name` and `city` and a join makes
+every bare column in the builder ambiguous. `accountLine` composes the words
+from `stageOf`, the SAME resolver `/lead` draws its ladder from, so the list and
+the record cannot disagree about one shop.
+
+**A LEAD'S CARD OPENS `/lead`, and everything else opens `/customer`.** Both
+went to `/customer`, which for a lead is a page of empty ledgers and — far
+worse — the only screen in the app with no route to the funnel on it. The
+ladder, the §28 gates and both forms are on `/lead`, and `/leads` was the single
+door to them, so a salesman who found a shop through the tab he already had open
+could neither see its rung nor move it. The record carries a link back the other
+way, for arrivals from search, a journey stop or a visit.
+
+**These three rules are PURE and live in `lib/account-label.ts`,** the handset's
+counterpart to MahekOne's own `lib/account-types.ts` and pure for the same
+reason. They were in `data/customers.ts`, which imports the database — so
+nothing that decided the words on four hundred rows a day could be tested
+without a handset, which is exactly how the `customerStage` bug below survived.
+
+The Everything / Customers / Leads chips are a VIEW and not a scope. All three
+show only his own book, already narrowed to the territory he works, and nothing
+there reaches another salesman's. They sit beside the origin chips rather than
+inside the filter sheet because they change what the list IS, and a list whose
+subject is hidden behind a menu is one people misread.
+
+**A TERRITORY NARROWS A BOOK. IT IS NOT A PERMISSION.**
+`mbos_user_territories` — renamed from `mbos_manager_territories`, because it is
+no longer only a manager's — says which geography a person works, with a `kind`
+of state, region, city or beat. A salesman allocated Nagpur sees HIS customers
+and HIS leads in Nagpur, never another salesman's: `ASSIGNED_TO_SQL` and the two
+seats beside it remain the whole of who may see what, and the territory clause
+can only remove rows from what they already allow.
+
+The distinction is worth stating because the two look alike from a distance, and
+a reader who mistakes this for the security boundary might delete a real check
+believing it redundant.
+
+**NO TERRITORY NOW MEANS NO BOOK, and that is a REVERSAL.** It meant no
+narrowing until this landed, and the old reasoning is still true rather than
+wrong: allocating cities to eight people and forgetting the ninth empties her
+handset, and an empty screen is the one outcome nobody debugs, because it looks
+like having no work. That failure is already on record here — reading one seat
+instead of two gave Seema Roy "queue cleared" on a day she had 195 accounts to
+work. What changed is that the other side of the trade turned out to cost more:
+an unallocated salesman carried the WHOLE book, which on this book is 2,587
+shops on one phone, and nothing anywhere said he should not have them.
+
+So `territoryClause` answers a FALSE condition where nothing is allocated,
+never `undefined` — an absent clause and a false one look alike in a type
+signature and are opposite answers to "what may this person see", and the
+dangerous one should be the loud one. `customerIdsInScope` short-circuits
+before the query is asked.
+
+**What pays for the reversal is that the emptiness is NAMED at both ends.**
+"Nothing in your book yet" sends a salesman to ask why nobody has given him
+shops; it is the wrong sentence when the answer is that nobody has allocated
+him an area, and it is what makes an unallocated handset look like a broken
+sync for a fortnight. `mbosTerritoryState` rides on the bootstrap AND on every
+delta — territory is changed at a desk in the middle of a working day and the
+shops leave the phone on the next pull — so the Customers tab says "no area set
+for you yet", prints the area where the count is, and the team screen counts
+the handsets the office has switched off. A handset with no area is a support
+call; one that does not say so is a fortnight of silence.
+
+**Managers and admins are carved out, and only they.** A field salesman works a
+beat somebody allocates him. A manager on a handset is not walking one — his
+scope has already answered the question — and emptying his phone for want of an
+allocation nobody would think to make reads as a broken sync rather than as a
+rule.
+
+**A TERRITORY IS A HIERARCHY, picked from the top.** A city belongs to a state
+and a beat to a city, so `mbos_user_territories.parent` says what a row was
+picked UNDER and `PARENT_KIND` is the one statement of the shape — the dialog
+reads it to decide what opens what, the action reads it to refuse a city
+arriving without its state, and the clause reads it to know which column a
+parent compares against. Empty means not stated, which is every row written
+before the column and is read as "this place wherever it is": a city allocated
+last month must not silently stop matching because a column arrived.
+
+Down a branch it is AND, across branches OR. Maharashtra plus Pune inside it
+means PUNE — so **the narrowest pick in a branch is the allocation** and the
+wider ones above it are the path to it rather than a second grant. Stored as
+both, the clause would OR them and hand him the whole state, which is the
+opposite of what picking a city meant and invisible on every screen afterwards,
+because "Maharashtra, Pune" reads like a narrowing either way. `setSalesmanTerritories`
+prunes to the leaves, on the server, because a server action is a URL and the
+dialog is not the only thing that can post to it.
+
+**The picker is a tree because a flat list was unusable.** `customers.city`
+holds whatever the sheet typed, and on the real book that is several hundred
+values most of which are whole postal addresses — "06, MAHADEV TOWERS CO-OP HSG
+SOC, LTD, LBS MARG, HARINIWAS CIRCLE, Thane, Maharashtra, 400602" offered as a
+city. Nesting does not clean that and cannot; it makes it REACHABLE, because a
+state's worth of it is a list somebody can search and the country's is not.
+`knownPlaces` returns the tree with a shop count on every node, biggest first,
+so the city somebody means is at the top and the long tail of addresses is
+below it. Shops naming no state are counted and said out loud: no territory can
+reach them, which is a real consequence of switching the default off.
+
+**Changing where somebody works TOMBSTONES the shops that leave.** A pull says
+what exists and only a tombstone says what stopped, so without this a salesman
+moved from Maharashtra to Gujarat keeps every Maharashtra shop on the phone for
+ever — and walks to one of them with nothing anywhere looking wrong. The
+difference is taken over HIS OWN book rather than over `customers`, or a
+reallocation would tombstone thousands of shops that were never on the phone.
+An empty BEFORE is read as everything he can see, which is the deploy: a handset
+that synced under the old rule holds shops `territoryClause([])` now says it
+never had, and diffing against an empty before would leave every one of them
+there.
+
+That is also what forced `deletionsSince` to hold the cursor back on a full
+page. The cursor moves to `now` at the top of a pull, so a tombstone past the
+2,000-row limit fell behind it and was never read again; a book of 2,587 shops
+moving to somebody else is 2,587 tombstones from one click.
+
+**One table, and each consumer asks for the kinds it means.** `managerScope`
+reads `kind = 'region'` and the handset's book reads the rest, so allocating a
+salesman a city cannot narrow a manager's console to it. Two tables would be two
+places for "Vidarbha" to be spelled differently.
+
+**THE AGREED CITY IS A HARD FILTER on the pick list, and that overruled us.**
+It used to rise to the top without filtering, on the reasoning that a man going
+to Nagpur often has one call to make on the way. Mahek's answer is that a day is
+a city; the call on the road is added from the customers list or made unplanned
+with a deviation reason, which is what that field exists for. The sort is
+NEAREST rather than longest-unseen for the same kind of reason — a man filling a
+Tuesday morning in one town is choosing a walking order.
+
+**WHAT "NEAREST" IS MEASURED FROM is the part that had to be got right.**
+`pickOrigin`: for TODAY it is where he is standing; for any other day it is the
+CENTROID of our shops in that city. He picks tomorrow's doors at home, so his
+fix is his sofa — and sorting Wardha by distance from a sofa in Nagpur puts the
+list very nearly upside down. The centroid needs no geocoding service, no
+connection and no city-centre table, and is the better answer anyway: the middle
+of our business in that town rather than the middle of the town. With neither a
+fix nor a pinned shop it returns null and the caller keeps the old ordering — a
+list sorted around an invented origin looks right and is wrong.
+
+**A shop with no pin sorts LAST rather than being dropped**, the same rule the
+route engine follows and for the same reason: a shop missing from the day's list
+is a shop nobody visits and nobody ever finds out why.
+
+**"WHAT IS NEAR ME" IS ORDERED BY WHAT IS WORTH DOING, not by distance.**
+The mapping brief says so in as many words, and `engines/nearby.ts` is the one
+place that rule lives: distance is a COST subtracted from what a stop is worth,
+never the sort key. A shop with NO reason is dropped rather than listed —
+"nearby" is a list of what to do, and the whole book is a different screen
+answering a different question. Proximity decides exactly one thing: which of
+two shops with the same reason to go to first.
+
+It is deliberately NOT a second copy of the Call Log's ranking. That engine
+weighs a promise against a debt against a stock check to order four hundred
+names for a telecaller working down a list; this answers "of the eleven shops
+within three kilometres, which one now". Re-deriving the first here would be a
+scoring system drifting from a scoring system, invisible until two screens
+disagree about one shop. **Next Best Visit is the HEAD of that list**, not a
+second sum, so the button and the list can never recommend different shops.
+
+**And it needs no map.** Every coordinate, cycle, debt and open task is already
+on the handset, so this works with one bar in a market lane — which is the only
+moment anybody asks. The map itself stays blocked on a native dependency and a
+new APK; the ANSWER was never blocked on either.
+
+**Navigate is a deep link, and that is the whole feature.** No dependency, no
+key, no bill, no tile ever fetched. `engines/route.ts` orders a day by
+straight-line distance and says in its own header that it is not a routing
+service — real turn-by-turn needs a road network, a directions API and a
+connection, and the phone that most needs directions has one bar. An app that
+has already downloaded the roads beats all of that, free.
+
+**AND IT WAS DRAWN EVERYWHERE EXCEPT ON THE ROAD.** The button existed on the
+journey screen from the day it shipped — in the arm of the ternary that renders
+BEFORE he sets off. Pressing "Start visit" swapped that card for the open-leg
+one and took navigation away with it, and the On-your-way screen, which is the
+screen a salesman is looking at while he is actually travelling, never had one
+at all. So the deep link was offered at every moment except the only one it is
+for. `components/ui/navigate.tsx` is the one control now, in two shapes for two
+layouts and one behaviour: a second inline `openMaps` call site is how the
+failure message on one of them stops matching the other.
+
+**WHAT THAT SCREEN LACKED WAS A DISTANCE, and it is WORDS rather than tiles.**
+"Is this shop round the corner, or has the book got it in the wrong town" is the
+question a man on a bike is asking, and an in-app map answers it worse than a
+sentence does: it can draw a straight line between two dots and cannot say which
+road, and it costs tiles and battery on a moving handset to say less than the
+maps app he already has. `navigationLine` prints `distanceLabel` — the same
+words the check-in refusal quotes back at him at the door, so the two cannot
+phrase one distance two ways. **A stale reading carries its age** rather than
+passing as live: while he is moving the gap grows, and "4.1 km away" from a fix
+taken before he set off is a lie by the time he reads it. **A shop with no pin
+says so**, because `openMaps` then searches the name and the town — which is a
+good answer and a DIFFERENT one, landing him near a name rather than on a
+doorway, and roughly half this book has no coordinate.
+
+**The radio runs on a cadence there, which it does nowhere else.** The
+On-your-way screen exists only while somebody is travelling and closes the
+moment he says he is here, so a fix every twenty seconds costs a few minutes of
+a ride rather than a day — and `getFix` remembers what it takes, so the check-in
+gate at the end of the journey gets a warm fix instead of standing at a door
+waiting for a cold one. It is BALANCED at range and PRECISE under a kilometre:
+past that the figure answers "is it worth going" and the rounding throws the
+accuracy away anyway, and inside it the figure has become "which doorway", which
+a reading good to a city block cannot answer. Neither the cadence nor that range
+is in the registry — nothing is priced, refused or paid on either. What IS
+configuration is `mbos.location.activityFixMaxAgeSeconds`, because that decides
+what a screen ASSERTS about a reading rather than how often one is taken.
+
+**A POTENTIAL IS A JUDGEMENT and is stored with its author and its date.**
+`products.priceSource` is still `unset`, so nothing here can derive what a shop
+could spend. `potential_monthly_paise` is somebody's estimate, and an estimate
+with no date on it is one a reader cannot weigh. The ANNUAL figure and CURRENT
+SALES are derived and never stored: the first is twelve times the month and the
+second comes from orders, and a stored second copy is one that can disagree.
+**The gap is never negative** — a shop buying more than somebody guessed is an
+estimate that has been overtaken, and "-₹40,000 opportunity" invites the reader
+to see a decline. **No estimate is not a gap of zero**, which would read as "no
+opportunity here": null says the true thing, that nobody has judged it.
+
+**EVERY TIMELINE KIND IS A CONSTANT, never a literal at the call site.**
+`CRM_EVENT` and `MBOS_EVENT` in `lib/timeline.ts` are the whole vocabulary. The
+natural key is (app, kind, source row), so a literal that drifts by one
+character produces a stream that can never deduplicate against itself — a
+retried sync writes a second copy and the record reads as the salesman having
+visited twice. `timeline-coverage.test.ts` reads the source and fails on a bare
+string, and on any kind DECLARED and never written, which is the other half:
+that one reads on a customer record as a gap in their history rather than as an
+unbuilt feature. It found two the moment it was written.
+
+**Where one record produces several events, the STAGE goes in the source id.**
+A sample is dispatched, received and reviewed, and all three name the same row —
+so `sourceRecordId` is `<id>:dispatched`, `<id>:received`, `<id>:review`. Left
+as the bare id the natural key would collapse them onto one row, the first
+written would win, and the receipt would never appear.
+
+**QUOTATION IS ABSENT, and that is the honest answer.** §R asks for it; there is
+no quotation record in MahekOne to project FROM, and a timeline row with no
+source is not a projection — it is a sentence somebody typed, in a table whose
+entire discipline is that every row points back at the record that is the actual
+truth. A test asserts its absence, so building the record is what deletes the
+test rather than the gap being forgotten.
+
+**An internal note's BODY never reaches the timeline.** `visibleToRoles` decides
+who may read a note and the timeline has no such gate, so copying the words in
+would route a restricted note straight around its own restriction. The entry
+records that one was written; the note stays where the rule about reading it
+lives.
+
+**"DID WE SELL ANYTHING" IS DERIVED FROM ONE LIST, not restated in SQL.**
+`orderCountsSql` used to spell the three counting statuses out as a literal
+beside `PURCHASE_STATUSES`, which held the same three — two definitions waiting
+to disagree. Adding §N's `in_transit` and `delivered` is precisely the change
+that would have split them, and the half that drifts is the SQL: it is read by
+the eight money queries and checked by nothing. It is built from the array now,
+and `order-status.test.ts` pins the pair against the ENUM as well, so a status
+in neither list fails the build rather than silently not counting.
+
+Goods on a lorry are goods sold. An order that reached the customer must not
+stop counting towards EOD value, the buying cycle, the product history and
+outstanding merely because somebody recorded that it arrived.
+
+**AN ORDER CARRIES THREE PARTIES' WORDS TOO.** `status` is OURS — accounts
+accepted it, the godown sent it, the lorry has it. `customer_confirmed_at` is
+the SHOP agreeing to what was written down; `delivery_confirmed_at` is the shop
+saying the goods came. They are routinely days apart and either confirmation can
+come first, so no one column could carry them. `delivery_discrepancy` null means
+nobody REPORTED a mismatch, which is not the same as "it was correct" — nobody
+was asked.
+
+**A discrepancy notifies and does NOT raise a complaint.** A complaint is the
+customer's, with a category and photographs, and inventing one on their behalf
+from a delivery note would put words in their mouth on a record they can
+dispute.
+
+**A DECLINED ORDER CANNOT BE DELIVERED, whatever a stale handset believes.** The
+phone may still be showing an order accounts turned down ten minutes ago —
+rejections reach it on the next pull — and marking that delivered would
+resurrect a refused sale into every figure `PURCHASE_STATUSES` feeds.
+
+**THE REORDER DUE IS DERIVED ON THE PHONE, from the customer's own cycle.**
+There is no reorder channel on the pull and no connection in a market lane, so
+`reorderState` reads `lastOrderDate` and `cycleDays`, which every customer row
+already carries. It deliberately does NOT restate the Call Log's ranking: that
+engine weighs a reorder against a promise, a debt and a stock check to decide
+who to ring first out of four hundred, and this answers one question about one
+shop the salesman is already outside. The nightly `raiseReorderFollowUps` raises
+a task ONCE — the standing open task is the guard — because thirty rows for one
+quiet shop is a list people stop reading. Measured cycles only: a default is a
+guess, and chasing on a guess rings a quarterly buyer every month.
+
+**A SAMPLE HAS THREE DATES BECAUSE THREE PARTIES ASSERT THREE THINGS.**
+`dispatched_at` is us saying it went. `delivered_at` is the carrier, or our own
+man, saying it arrived. `received_at` is the SHOP saying it is in their hands.
+No two of those are the same fact, and §J turns entirely on the third — "sample
+received Yes/No; if No the follow-up remains pending" — which a single delivery
+date could never answer. It is the same discipline `payment_receipts` keeps for
+money, one module over, and `received_at` is NEVER defaulted from
+`delivered_at`: a default would quietly assert something nobody asked the
+customer.
+
+**The review call is dated from CONFIRMED RECEIPT.** Not from dispatch, which is
+the whole reason the third date exists: a review timed from the day we posted it
+rings a customer still waiting for the parcel, and that call teaches them we do
+not know where our own stock is. `mbos.samples.reviewAfterDays` is the window,
+and the task is raised once, on the transition, so a re-sent confirmation cannot
+stack a second one on somebody's list.
+
+**Trial STARTED and trial COMPLETED are two columns, and the gap is the point.**
+A trial started and never finished is the commonest way a sample goes quiet, and
+it is invisible where the only column is an outcome.
+
+**A REJECTED SAMPLE HAS TO SAY WHY.** The same rule as a lost lead and an On
+Hold, for the same reason: the next sample goes out exactly the same otherwise.
+Enforced in the handler and stated on the screen before the button is pressed,
+because being refused after the fact loses the sentence somebody had in mind.
+
+**AN APPROVED SAMPLE OPENS NEGOTIATION, and that is what unlocks the order.**
+§L follows §K deliberately: the sample review is what authorises a commercial
+conversation, not the salesman deciding he is ready for one. `afterSampleVerdict`
+moves the lead to `negotiation`, which is the stage `handleOrder` requires — so
+the gate and the thing that opens it are one mechanism rather than two.
+
+**QUALIFYING A LEAD IS WHAT STARTS THE WORKFLOW.** `qualifyLead` fills the Lead
+Manager seat from the ORG CHART — the same `managerNameByEmployeeName` that
+`recomputeSalesManagers` reads nightly, asked about one person, so the seat a
+qualification assigns and the sales manager the nightly pass writes cannot
+disagree about who reports to whom. It notifies, and it raises a validation call
+for the NEXT WORKING DAY, holidays included, from the same working-week
+configuration the forecast reads. It is IDEMPOTENT — the seat itself is the
+guard — because a sync endpoint retries and a second pass must not put a second
+call on somebody's list. It does NOT set `lead_manager_decided_at`: nobody
+decided this, the org chart did, and stamping it would freeze the seat against
+every future org change as a side effect of a lead being qualified.
+
+**It fires from BOTH doors.** A lead qualified from the lead screen and one
+qualified by answering a visit's own decision start the same workflow. A
+workflow that fires on one of two paths is a workflow salesmen learn not to
+rely on.
+
+**THE VALIDATION CALL'S ANSWERS ARE NOT WRITTEN OVER THE LEAD'S.**
+`lead_requirement` is what the salesman was told standing in the shop;
+`mbos_lead_validations.confirmed_requirement` is what the office was told on the
+phone. The two disagreeing is the single most useful thing this call produces —
+it is how anybody finds out the report and the shop did not match — and
+collapsing them would overwrite the first reading with the second and destroy
+exactly that. It is a TABLE and not columns for the same reason: a lead is
+routinely validated twice, and the first call is usually the one that matters.
+
+**The requirement VISIT does overwrite them, and that is not a contradiction.**
+It is the same person asking the same question better informed, not a second
+party's account of it.
+
+**The script is CONFIGURATION.** `mbos.leads.validationScript` holds the
+headings and lines the caller reads out, because it is content: it will be
+argued about, improved after a bad call and eventually translated, and none of
+that should need a deploy — or, on the handset, an APK nobody can recall.
+
+**NO COMMERCIAL COMMITMENT BEFORE NEGOTIATION.** §G says the requirement visit
+carries no price, service or quality promise, and an order is the most
+commercial commitment there is — so `handleOrder` refuses one against a lead
+below `negotiation`. This one IS a refusal, unlike the visit cap, and the
+difference is what is lost: refusing a visit loses a record of work that really
+happened, while refusing an order loses nothing, because the order was never
+agreed with anybody who could agree it. The message names the way forward.
+
+**THE CHECK-IN IS REFUSED PAST THE RADIUS, AND THAT IS A REVERSAL.**
+`engines/geo.ts` states the principle the field product was built on — a
+reading is evidence, never a gate — and Mahek asked for the opposite on this
+one act: a salesman may check in to a shop only from within
+`mbos.location.visitMismatchM` of it. The old behaviour was to measure the same
+distance and raise a FLAG, which meant the answer was read hours later by
+somebody who could no longer tell, and a visit logged from a tea shop across
+the road counted as a visit until somebody went looking.
+
+**What pays for the reversal is that the ARRIVAL is where it sits, and that it
+refuses only what a reading can prove.** Refused at the door, before a word has
+been typed, the cost is a walk to the right shop and pressing the button again;
+`arriveHere` writes nothing, the travel leg stays open, the dwell clock does not
+start and no meter has been photographed — which is why the fix is now taken
+BEFORE the camera rather than beside it. Refusing the SAVE would be the old
+mistake exactly: the note, the photograph, the order and the day are already
+in the phone by then.
+
+**Three answers accept, and only one refuses.** No fix and a fix too wide to
+trust both go through — a reading that cannot show he is there cannot show he is
+not, and refusing on one would block every check-in inside a concrete godown. A
+shop with NO PIN goes through too, and this is the half nobody would guess at:
+487 of the 1,076 shops on a real handset have no coordinate, so refusing there
+would make half the book unvisitable to close a gap the salesman did not open.
+That check-in becomes the pin — guarded by `gps_lat is null` in the statement
+and not only in the branch above it, so two visits in flight cannot fight over
+it — and a POOR fix never pins a shop, because a pin dropped four hundred metres
+out would refuse every honest visit afterwards, which is this rule's own failure
+arriving by the back door.
+
+**The way past a refusal costs a sentence, and it is offered only after one.**
+The pin in this book was typed by hand, dropped in an office or inherited from a
+legacy CSV, so a salesman standing in the right shop is refused by the database
+being wrong about as often as by anything else. He says so in writing, the visit
+saves UNVERIFIED carrying his words in `check_in_override_reason`, and his
+manager reads them. Drawn before he has been refused it would be a way round the
+radius nobody had to be refused by, which is a different feature.
+
+**And "the pin is wrong" is a REQUEST, never a write.** The handset can already
+move a pin through `customer_update`, so an override that moved it directly
+would mean one override put the pin wherever somebody was standing and the
+radius never refused him there again. `mbos_visits.pin_correction` is the ask,
+answered by a manager on `/sales/visits`, and it carries NO coordinates —
+what is being accepted is the check-in fix already on that row, which is the
+point the manager can open on the map link beside it. A second copy of two
+numbers already in the record is a copy that can disagree with it. It does not
+touch `verified`: accepting the pin says the book was wrong, and standing behind
+the visit is `acceptVisit`, one menu item along.
+
+**The SERVER recomputes and never refuses, and that is not the gate leaking.**
+An APK cannot be recalled, so handsets in the field go on sending check-ins the
+old build never turned down, and every one of those is real work. Rejecting
+would put the visit in `/rejections` for ever and lose the note, the photograph
+and the order behind it. `handleVisit` measures the same distance, marks the
+row unverified with the distance said plainly, and where no override reason came
+with it says exactly that — which is also the only signal a payload that did not
+come from the app would leave.
+
+**ONE NUMBER, not two.** `mbos.location.visitMismatchM` is the distance a
+check-in is refused at AND the distance a saved visit is flagged at, because
+they are one fact: past the radius the only visits that exist are overrides, and
+every override is worth a manager's eye. Its default moved 200 → 100 in
+`0120_check_in_is_a_gate`, matching on `updated_by_id is null` so a team that
+chose 200 is left alone. `checkConsistency` still refuses a radius at or below
+`mbos.location.gpsAccuracyThresholdM` — that used to produce a flag nobody
+opened and now produces a salesman refused at the door of the right shop. The
+check-in is also the one fix in the app taken at `Accuracy.High`: everything
+else here asks for `Balanced`, which on Android is roughly a city block, and a
+reading that coarse cannot tell a doorway from the tea shop it is now deciding
+against.
+
+**A SUSPECT CANNOT BE VISITED FOR EVER, and the cap ASKS rather than refuses.**
+§B of the brief wants a maximum of three visits "enforced", and enforced as a
+block is the one shape this app must not use: `engines/geo.ts` states the
+principle the rest of the field product rests on — a reading is evidence, never
+a gate — because a salesman whose visit is refused stops recording visits, and
+the company loses the GPS, the competitor note and the reason in order to stop a
+number reaching four. The check-in radius above is the one deliberate exception
+to it and buys its way out at the arrival, where nothing has been typed yet;
+this one has a visit already made and would be throwing that away. What §B
+actually wants is that nobody keeps visiting a shop nobody has decided about,
+and that is bought by demanding an ANSWER.
+
+So there are three states and none of them blocks the visit being made:
+`mbos.leads.visitsBeforeDecision` starts the warning, `mbos.leads.maxSuspectVisits`
+makes the Prospect-or-not answer mandatory before the visit can be CLOSED, and
+past it the manager is notified instead. Keeping it a Suspect asks why. Only
+`new` and `contacted` are capped — a qualified prospect visited a fourth time is
+a negotiation, not a stall, and must never be asked to justify itself.
+
+**The rule lives in two runtimes and shares its NUMBERS, not a module.**
+`visitCapState` is pure and on the handset; `handleVisit` checks the same thing
+server-side, because a sync endpoint accepts payloads from a device somebody
+owns and a form is not a rule. They cannot import from each other — one is an
+Expo package — so what is shared is the two configured thresholds, which reach
+the handset on every pull with the rest of the `mbos.*` keys. The comparison is
+one line at each end deliberately: a rule small enough to be obvious cannot
+drift the way a re-derived one does.
+
+**The decision is written in the VISIT's transaction.** A visit that saved and
+a decision that failed a moment later would leave the lead where it was with the
+salesman believing he had answered — and the next visit would demand the same
+answer again. The count behind it is `count(*)` over `mbos_visits`, not a cached
+column: a cache needs a recompute path, an invalidation on every visit write, and
+a way to be wrong. On the handset it is the office's count plus whatever is still
+in the outbox, because a salesman who made visit two with no signal must still
+be asked on visit three.
+
+**ON HOLD IS NOT LOST, and both ask for a reason.** `on_hold` is a live prospect
+that is not moving — a plant shutdown, a budget quarter, a decision maker
+abroad — and folding it into `lost` made every stalled lead look dead, which is
+how a real prospect gets archived by the staleness sweep. It stays ON the
+handset for the same reason. Lost asks for a reason because nobody will look
+again; this one asks because somebody will, and "back after Diwali" is what
+tells them when. `lead_hold_reason` is one column for both that question and
+"why is this still a Suspect", because they are the same question.
+
+**A LEAD'S CONSUMPTION IS IN LITRES, and it is the one place cans do not win.**
+Every other quantity in MahekOne is cans, because cans are what the customer
+says when ordering and litres are derived from the SKU's own packing. There is
+no SKU at capture: a prospect says "about two hundred litres a month" long
+before anybody knows what pack they will buy it in, so cans would be a unit
+nobody has agreed the size of. `lead_monthly_volume_litres` is that number, and
+`lead_requirement` is what they want in their own words — free text rather than
+a product id, because resolving "thinner for a spray booth" to a SKU at capture
+is the salesman guessing on the customer's behalf.
+
+**GST IS ASKED AT THE QUALIFY TRANSITION, and never on the column.** Making a
+prospect real means we could invoice them, and that is what the number is for —
+so `handleLead` refuses `stage = 'qualified'` without one, reading what is
+already stored as well as what arrived so a lead given its number last week
+qualifies today without retyping. NOT NULL on `customers.gstin` would refuse the
+entire imported book: 5,292 shops came from the EMP 2.0 master with no GSTIN
+between them. The constraint belongs on the moment somebody asserts this is a
+business we can bill, not on the record.
+
+**A PHOTOGRAPH IS BOUND WHEN ITS PARENT IS WRITTEN, by `bindMbosMedia`.** Media
+syncs AFTER its parent — that is the whole point of a separate queue — so the
+handset uploads naming `parentId: 'pending'`, because at the moment the camera
+closed the record did not exist. Something has to go back and say what it was,
+and nothing did: the attachment kept the literal string `pending` for ever, so
+`canRead` looked for a record with that id and refused the file to everybody.
+It is called after the record is safe and cannot fail the write — a lead is
+never lost to a photograph.
+
+**A LEAD HAS TWO SEATS, and only one of them is the book.** The office asks that
+the sales manager over a salesman picks up a lead once it is qualified, while
+the salesman goes on making the visits — two people on one record, so two
+columns. `customers.lead_manager_id` is the coordinating seat. It is read by
+`scopedToUsers` and by `assertCustomerInScope`, which answer who may SEE and
+WORK a record; it is deliberately NOT read by `ASSIGNED_TO_SQL`, which answers
+whose book it is. Moving the owner instead would have been the obvious
+implementation and it takes the lead off the handset of the person who was just
+told to keep visiting the shop — a lead's owner IS its MBOS scope. It is the
+same split `back_office_am_id` already lives under, with the same consequence:
+one record legitimately appears on two lists. `lead_manager_decided_at` is the
+usual mark that a person chose, so an override survives the next org-chart pass.
+
+**A ROLE IS A LEVEL. THE APP IS THE JOB.** There are three roles and there are
+three in every app: **associate, manager, admin**. There used to be four —
+`telecaller`, `manager`, `accounts`, `admin` — and they were two different
+ideas in one list: two levels of seniority beside two job titles borrowed from
+two particular apps. So a grant for any THIRD app had no honest word for
+"ordinary worker", and the Access screen offered the CRM's job title instead:
+it asked managers to make a field salesman a *telecaller*, and the seed agreed
+— `mahesh@mahek.in`, who has never made a phone call for this company, was
+stored as one. So was anybody on Reports, on the Sales Dashboard, or on HRMS.
+
+`telecaller` was ALREADY the base level rather than a job. The old `can()`
+ended with `return !MANAGER_ONLY.has(capability)` — you hold anything not
+explicitly withheld — which is the definition of an associate, and is exactly
+why a salesman could be given that value and still work correctly.
+
+**A HAT IS AN APP AND A LEVEL, and `can()` takes one.** `app_access` has
+stored one row per person per app since roles were split off `users.role`, so
+the pair was always there to be read; only the vocabulary is new. Associate on
+Accounts is the clerk, associate on the CRM is the telecaller, associate on the
+Salesman App is the field salesman — one level, three jobs, decided by the
+grant rather than by a word.
+
+**The matrix is one table, in `lib/access-control.ts`.** Each app names what
+its own two lower levels carry; `admin` holds everything everywhere and is not
+listed. The three bundles it hands out — `BOOK_WORK`, `BOOK_MANAGEMENT`,
+`LEDGER_DECISIONS` — are DERIVED from the capability sets above them rather
+than retyped, because those sets carry the reasoning for why each capability
+sits where it does, and a hand-typed copy would be a second answer that drifts
+from the argument that produced it. Tune WHERE a bundle goes in the table; tune
+WHAT is in it by moving a capability between the sets, beside the paragraph
+explaining it.
+
+**THE LEDGER APPS ARE WHY THIS IS PER-APP.** `order.approve`, `payment.confirm`,
+`creditnote.issue` and `customer.reassign` used to hang on a role called
+`accounts`, which is how they were kept away from managers — "the person
+chasing a target must not sign off the orders that hit it". With `accounts`
+gone as a role the Accounts APP carries them, so a CRM manager still cannot
+approve an order and an Accounts manager can. That is STRICTER than the old
+rule rather than looser: an accounts clerk who was also given the CRM used to
+carry order approval into it.
+
+**And inside that app the level decides.** An Accounts associate records and
+reads — `payment.record` is SHARED and `customer.read` is what a statement is
+made of — and every decision that moves money is the Accounts MANAGER's. That
+is why the migration maps the old `accounts` role to **manager**, not
+associate: mapping it "junior" because the word sounds junior would have taken
+order approval away from the only person who had it, and the approvals queue
+would have stopped on deploy day.
+
+**A LEVEL WITH NO GRANT IS NOT A GRANT.** A hat with no app carries only what
+every signed-in person carries. Reading the account's own role as a grant is
+how somebody with a `manager` account and no apps at all would quietly hold
+every manager capability in the building — which is what `can(user.role, …)`
+did at twenty-two call sites, all of them now `canFor(user, …)`, the union over
+real hats.
+
+**What you may DO is the union; what you may SEE is resolved PER APP.**
 Hold a capability under any hat and you hold it — `canAny`, and
-`requireCapability` checks the union. Scope is not there yet: `users.role` is
-what mine/team/all is read from, and it is now DERIVED — the widest role
-somebody holds anywhere, rebuilt by `setAccess` — so a manager in the CRM gets
-their team on the day the hat is granted, without teaching thirty-one screens
-about a list. The imprecision is named rather than hidden: an admin in the
-console is an admin for reading everywhere, including the calling book. Scope
-resolved per app is the next piece of work, and that paragraph in
-`app_access.role` is what should be deleted when it lands.
+`requireCapability` checks the union. None of its 117 call sites changed when
+roles became levels, because it gathers the hats itself. Scope is the other
+half: `src/proxy.ts` names the app on the request from its URL prefix, and
+`resolveScope` reads the grant for THAT app.
 
-**The audit records WHICH HAT allowed it.** With one role per person, "was he
-allowed to do this" was answerable from the person; with four it is not. The
-log said Vikram approved an order and nobody could tell whether he did it as
-the accounts clerk — ordinary — or because a manager hat carried it, which it
-does not and must not. `requireCapability` returns the granting role and every
-audited action writes it into `audit_log.actor_role`. It asks for the NARROWEST
-hat that carries the capability, not the most powerful: admin holds everything,
-so asking admin first would stamp "admin" on every action anybody senior took
-and the column would stop distinguishing the clerk doing their job from the
-administrator reaching past a rule. Null means not recorded, never "no role".
+**THE LEDGER DESK SEES EVERY BOOK, and that is a fact about the app rather than
+the level.** The approval queue is every associate's orders and nobody's own
+book. It used to key on `role === "accounts"`; keying on the LEVEL instead
+would empty the queue from either end — an associate scoped to their own book,
+a manager scoped to their reports, and a clerk has neither. Where the request
+names an app, `hat.app === "accounts"` answers it. Where it names none — a job,
+a script, a test, the MBOS API — `hatInForce` asks the GRANTS instead and
+honours only the case that used to be expressible: somebody whose apps are the
+ledger desk and nothing else, which is exactly who `users.role = 'accounts'`
+meant. A person who also holds the CRM is left to the header, as they already
+were.
+
+`users.role` stays derived — the widest LEVEL held anywhere — because two
+things still want "is this person a manager at all": `isManager`, on thirty-one
+screens deciding whether to DRAW a control, and the fallback where there is no
+app to ask about. One consequence is worth naming rather than discovering: an
+Accounts manager now passes `isManager`, where the old `accounts` role did not.
+That is the model working — a manager of the ledger is a manager — and it
+widens the handful of things gated on `isManager` alone rather than on a
+capability, feedback triage among them.
+
+**And it can only ever NARROW.** The derived level is the widest of the hats, so
+a per-app hat is by construction no wider. Resolving per app can lose reach and
+cannot gain it — which is why 73 call sites of `resolveScope` did not have to be
+audited one at a time. The header is stripped off the incoming request before
+the proxy writes it, so a client cannot post its own `x-mahek-app: admin`.
+
+**The audit records WHICH HAT allowed it, and that now takes TWO columns.**
+With one role per person, "was he allowed to do this" was answerable from the
+person; with several it is not. `requireCapability` returns the granting hat and
+every audited action writes `audit_log.actor_role` and `actor_app`. The second
+became necessary the day roles stopped being job titles: `accounts` said the
+clerk did it and `manager` said seniority carried it, and `associate` says
+neither — the app is what tells the person at the ledger desk from the person
+on the phones. It asks for the NARROWEST hat that carries the capability, not
+the most powerful, and prefers one naming an app over the account's own: admin
+holds everything, so asking admin first would stamp "admin" on every action
+anybody senior took. Null means not recorded, never "no role".
+
+**A refusal names what would have allowed it, and only when it can.** The app
+is named where exactly ONE carries the capability — `order.approve` is the
+Accounts desk's and nowhere else — and left out where several do, because
+`team.report` belongs to the manager level of five apps and naming whichever
+sorted first would send somebody to ask for the wrong grant. `requirementFor`
+searches the matrix rather than declaring an answer beside it, so the sentence
+cannot name a grant that does not exist.
 
 **Two hats that should not meet are named, never refused.** The matrix keeps
 `order.approve` away from managers on purpose — the person chasing a target
-must not sign off the orders that hit it — and a union of roles can put both on
+must not sign off the orders that hit it — and a union of hats can put both on
 one person. At nine people that is sometimes the only way the work gets done,
 and a system that refuses it is defeated in a minute by granting admin instead,
 which grants far more and records no reason. So the combination is allowed, the
@@ -186,7 +835,13 @@ review page says in words what it lets them do, and every action taken under it
 carries the hat that authorised it. The rules are in `lib/role-conflicts.ts`,
 pure and client-safe because the review page is a client component and a second
 copy typed into the screen would drift — and the half that drifts is always the
-half somebody reads.
+half somebody reads. **A conflict is between two HATS**, not two roles: it used
+to read "telecaller and accounts", which was a sentence only because two of the
+four role values were secretly app names. "Associate and associate" says
+nothing, so the pair names the apps, and the level sits beside it where the
+level is what makes the pair bite — an Accounts ASSOCIATE decides nothing and
+clashes with nobody. An admin matches every pair by construction, so they are
+told none: four warnings on every administrator is four warnings nobody reads.
 
 **Access is granted to a person, and the people are in HRMS.** The console's
 People section is one screen, Access, and its dialog reads the employee master
@@ -334,7 +989,20 @@ src/
                            and both list pages
     config/                registry.ts (every setting + validation) and
                            store.ts (cached reads, audited writes)
+    lead-labels.ts         the funnel's whole vocabulary — the three sales
+                           types, every rung's two names, the four coded reason
+                           lists, §8's twelve questions, §16's seven feedback
+                           fields, §13's fifteen nurture rows, §14's eleven
+                           buttons and §18's eight. PURE and client-safe,
+                           because the forms that write these run in a browser
+                           and on a handset while the services that read them
+                           are `server-only`
     engines/               the derived-state engines — PURE, no I/O:
+                           lead-ladder — the three ladders, which rung follows
+                           which, and the four funnel bands every new rung maps
+                           onto; lead-gates — §28 itself, what each rung
+                           demands and which of it is missing; lead-nurture —
+                           an event in, the manager's tasks out,
                            buying-cycle, queue, escalation, inactivity,
                            targets, eod, payment-followup, allocation,
                            next-step — when this customer comes back, and why,
@@ -387,6 +1055,11 @@ src/
     mailer.ts              the one place mail leaves MahekOne
     dictation.ts           the one place speech becomes text — transcribe,
                            render into English, tighten, rewrite
+    dictation-requests.ts  the same feature as a REQUEST — readiness, the two
+                           calls, and the ONE copy of the six refusals. Two
+                           doors read it: the CRM's session-authenticated
+                           api/dictate/*, and the handset's token-authenticated
+                           api/mbos/dictate/*
     jobs.ts                scheduled work, idempotent and hand-triggerable
     result.ts              the Result type every action returns
     queries.ts             every scope-aware read
@@ -648,6 +1321,183 @@ four hundred rows. The type filter carries two options that are not types: the
 evidence list, and third parties with nobody billing them, which should be
 empty and is not on a book converted before distributors were recorded. A row
 nobody can account for is worse than one that says why it is there.
+
+**A LEAD CLIMBS A LADDER, AND WHICH LADDER IS THE FIRST THING ASKED.** Mahek
+sells three ways and they are not the same job: a direct customer is worked
+towards a first order, a distributor towards an appointment, and a third-party
+shop towards an order somebody else invoices. `customers.lead_sales_type` picks
+between them and is chosen before anything else is typed, because it decides
+which questions the rest of the form asks. `lib/engines/lead-ladder.ts` holds
+the three, and no screen writes a stage list out.
+
+**NULL is the fourth answer, and it is what let this ship.** A lead raised
+before the funnel existed carries no sales type and climbs the six rungs this
+product shipped with — `new · contacted · qualified · negotiation · won · lost`,
+kept whole and kept first in the enum. Nothing backfills one. Guessing which of
+three ladders somebody was on is a decision dressed up as a migration, and the
+ladder decides which GATES apply, so a wrong guess would not merely mislabel a
+record: it would block the salesman working it.
+
+**`bandOf` is why seventeen new rungs moved no figure.** The console funnel
+draws four bands and the owner's cohort conversion counts by them, both reading
+`lead_stage`. Adding rungs without mapping them would have dropped every lead on
+a new one out of the bands entirely — a pipeline that silently shrinks as the
+team works it, which is the worst possible direction for that bug. The map is in
+the ladder engine and there is a test that walks every enum value through it, so
+a twenty-fourth rung added without a band fails the build rather than a report.
+
+**§28 IS THE WHOLE POINT: no lead moves forward because somebody pressed a
+button.** `lib/engines/lead-gates.ts` answers whether a rung may be entered and,
+where it may not, WHICH conditions are missing — because a refusal that does not
+say what it wants teaches a salesman to press the button again rather than to do
+the work. Three callers, one answer: the handset draws the next rung disabled
+with the missing list underneath, the server action refuses on the same function
+before it writes, and the console shows a manager what a lead is stuck behind. A
+second copy typed into a screen would drift inside one release, and the half that
+drifts is the half somebody is reading.
+
+**The gate engine is pure because it has to run with no signal.** The salesman
+deciding whether he can request a sample is standing in a shop, and a rule that
+only exists on the server is a rule he finds out about on the drive home. It
+takes configuration and its inputs as arguments and performs no I/O, like every
+engine here, and the handset compiles the same file.
+
+**A tick is not an answer where a column exists.** Four of the twelve
+qualification conditions — the monthly requirement, the potential, the product
+and the competitor — are satisfied by the VALUE and not by the checkbox beside
+it. A ticked box beside an empty field is precisely the state the gates exist to
+prevent, and a checklist that can be completed without answering anything is a
+checklist people learn to complete.
+
+**The map and the toll are two files on purpose.** `lead-ladder.ts` answers
+"what comes next"; `lead-gates.ts` answers "may we". Folding them together would
+put the reason a lead is stuck inside the function that draws its progress, and
+the console needs the second without the first.
+
+**§22 SAYS CUSTOMER AT THE SECOND ORDER AND THIS CODEBASE SAYS OTHERWISE, so
+the two words are separated rather than reconciled.** A lead here IS an account
+that has never ordered, and about thirty places read `customers.kind` on exactly
+that understanding — the Call Log's prospect cadence, sales attribution, the
+buying cycle, the owner's funnel. Honouring §22 literally would leave an account
+with one order, one bill and one confirmed payment sitting at `kind = 'lead'`,
+and every one of those readers would get it wrong. So `kind` flips at the FIRST
+order — `promotesToCustomerAt` is the one place that is decided — and the ladder
+keeps its own `second_order` and `customer` rungs, which are the funnel's
+statement about the relationship rather than the ledger's about the account.
+
+**A working lead is held back from the Call Log, and SHOWN.** A lead that stays
+a lead through eleven rungs would otherwise sit on the telecaller's prospect
+cadence for months, so the office rings a shop a salesman is actively working to
+ask for a first order — two people chasing one customer, neither knowing about
+the other. A lead carrying a sales type is suppressed from the prospect reason,
+and suppression is a return value rather than a filter, so it appears in the
+held-back strip with the reason said in words. A lead with no sales type is
+untouched.
+
+**§24: an active lead may not sit with nothing owed by anybody.** The action,
+the day, the person and what that person is expected to come back with — four
+answers, not a date. A date alone is what this had, and a date alone is how a
+lead sits for six weeks with everybody assuming somebody else is holding it. It
+is enforced on every upward move by the gate engine rather than by a required
+field on one form, and legacy leads are exempt: demanding a next action to move
+a four-year-old lead would freeze the book the rule exists to unstick.
+
+**§4 pushes rather than holds.** Two visits to decide whether a Suspect is worth
+anything, three at the outside — and past the cap nothing is refused, a decision
+is DEMANDED. The lead turns into one question, Prospect or Not Prospect, and
+both answers are moves the engine allows. How many visits a suspect has had is
+counted from `mbos_visits` and is deliberately not a column: a counter would
+drift the first time a visit arrived late from a handset.
+
+**A REASON IS A CODE, NEVER A LABEL.** Why a Suspect became a Prospect (§5), why
+the customer wants a trial (§10), why a lead was lost (§26) and why a manager
+overrode a gate — four lists, all in `lib/config/registry.ts` because a manager
+should be able to reword one without a deploy, and all stored as codes because a
+stored label stops resolving the moment they do. It is also what makes "how many
+did we lose on credit terms this quarter" a question somebody can ask rather
+than a grep over free text.
+
+**The override exists so the rule survives contact with a Tuesday.** A system
+that refuses everything is defeated in a week by people recording the work after
+the event, and the record then says the process was followed when it was not —
+which is worse than the gate being open. So a manager may pass a shut gate, it
+demands a reason, and `lead_stage_transitions.overridden_conditions` stores
+exactly what was still missing. `leads.allowManagerOverride` turns it off for a
+team that would rather be stuck.
+
+**Every move is a row, and the row is the timeline.** `lead_stage_transitions`
+is append-only: a transition recorded wrongly is corrected by a further
+transition, never by an edit, for the same reason `calls.next_step_*` is never
+rebuilt — it records what somebody decided on a day, and a rewrite destroys the
+question rather than answering it. §25's timeline is that table joined to the
+manager's calls, the samples, the orders and the receipts, and every lead write
+also lands a `timeline_events` row so the story reaches the customer record it
+becomes.
+
+**§8 stores the ANSWERS, not the verdict.** The sales manager rings the customer
+to establish that the visit happened, that Mahek was explained and that the
+opportunity is real. A verdict on its own would be worth very little a month
+later; the value is the twelve answers, because "whose product did he say he was
+using" is exactly what somebody needs before the negotiation call. Two of the
+twelve are about the salesman rather than the sale, and they are why the call
+exists at all — no amount of GPS proves that Mahek was explained properly.
+
+**§13's fifteen tasks are a table, not fifteen conditionals.**
+`NURTURE_SEQUENCE` in `lib/lead-labels.ts` names the trigger, the delay, the
+owner and the sentence; `lib/engines/lead-nurture.ts` turns an event into the
+tasks that should exist, keyed on `mbos_tasks.sourceType`/`sourceId` so a second
+pass raises nothing twice. `owner` matters: the salesman and the manager are
+chased for different things about the same lead, and one list would read as one
+person being nagged twice.
+
+**§16 does not stop.** A sample review is chased on day 2, then 4, then 6 — and
+the LAST interval repeats until there is an answer, because a trial nobody
+reviewed is stock given away for nothing. `mbos_samples.review_chase_count` is
+what lets a screen say "asked three times", which is the number that tells a
+manager to pick up the phone themselves.
+
+**A sample's STATE and its VERDICT are different questions.**
+`mbos_samples.state` is the journey — requested, approved, dispatched, received,
+tried, reviewed — and `trial_outcome` is what the customer thought. With one
+column, a sample approved three weeks ago and never dispatched looked identical
+to one under evaluation; it is stock nobody gave away and an opportunity nobody
+took. `more_testing` is a real third verdict rather than a shrug: "they want to
+try it again on a different substrate" is neither approval nor rejection, and
+recording it as pending loses the fact that a trial happened at all.
+
+**§16's feedback is seven answers because "good" cannot be read back.** Quality,
+performance, application, drying, the comparison, price, and one open box. The
+whole point of a trial is the comparison, and a note field cannot later be read
+as "better drying than the incumbent, price is the problem".
+
+**§12: a salesman may never appoint a distributor, and a manager may not do it
+alone.** It routes through `mbos_approvals` — the same table and the same
+two-step chain every other MBOS decision uses — with `stepIndex` 0 the sales
+manager and 1 management, which is the `distributor.approve` capability and
+admin's alone. What forces the second step is named rather than judged:
+exclusivity always, a discount above
+`leads.distributorDiscountApprovalPercent`, a credit limit above
+`leads.distributorCreditLimitApprovalPaise`. The person carrying the target must
+not be the person allowing the discount that hits it — the same reasoning that
+keeps `order.approve` away from managers entirely.
+
+**The distributor's own salesman is a name, not an account.** Rahul, in §23's
+example, works for the distributor, has no MahekOne login and never will.
+`distributor_salesmen` is that fact, and `customer_distributors` points at it, so
+the chain Mahek → distributor → his salesman → the shop is recorded from the
+first visit rather than reconstructed at conversion. Giving him a `users` row
+would put him in every person picker in the product.
+
+**§20 is RENDERED, never re-implemented.** Order Received → Confirmed →
+Dispatched → In Transit → Delivered is a second status ladder for a row whose
+status already comes from the Order Details tab and from accounts' approval. A
+parallel one would be overwritten every thirty minutes by the sheet projection
+or would fight it into `sync_conflicts`. The lead page shows the orders and the
+receipts that exist; it writes neither.
+
+**§21 already existed and is called rather than rebuilt.** The reorder cycle is
+`engines/buying-cycle.ts`, measured from real approved orders and discounted by
+`cycle_confidence`. The repeat-order call is a nurture task dated from it.
 
 **The Call Log chases orders, not contact.** A customer with a measured buying
 cycle gets a stock-check call at a percentage of their own cycle — 70% of 30
@@ -953,6 +1803,158 @@ everywhere. A failed upload leaves the complaint, call or follow-up intact and
 the message says how many files made it — never all-or-nothing, and never a
 lost call because a photograph did not upload.
 
+**THE ATTENDANCE SELFIE IS THE ONE EXCEPTION, and it is not an attachment.**
+Every MBOS check-in and every check-out takes a front-facing photograph inside
+the app, there is no path through `src/data/attendance.ts` that writes a
+session end without one, and the camera screen's only two exits are the
+photograph and abandoning the action. That reverses the rule above for exactly
+one file, on the reasoning the rule itself rests on: everything else here is a
+photograph OF something attached to a record that stands without it, and this
+one IS the record. An attendance mark on its own is a claim that somebody was
+somewhere at a time; the photograph is the only part of it that is evidence.
+Skippable — which is how it shipped, under a button reading "Start the day
+without a photo" — the two kinds of day were indistinguishable afterwards:
+some proved something, some proved nothing, and nothing on the record said
+which. The GPS fix is still never required, still recorded as missing when it
+is missing, and the day still starts outside the geofence with the reason
+asked for afterwards. A refused camera permission is therefore a real dead
+end, and the screen says so in words rather than working around itself.
+
+**A selfie is required PER SESSION, at BOTH ends.** A day is
+`[{ inAt, outAt }]` — a salesman breaks for lunch or comes out again in the
+evening — so "a selfie at check-in" would have meant one photograph covering
+three separate arrivals. `resumeDay` passed `selfieMediaId: null` and
+check-out took no photograph at all, so a day proved that somebody arrived
+once and proved nothing whatever about when they stopped, which is the half
+that decides the hours. Both are now required BY THE TYPE rather than by the
+screen: `checkIn` and `checkOut` take a non-nullable id, because a screen that
+forgets to ask is a screen and a parameter that cannot be omitted is the rule.
+Each session carries `inSelfieId` and `outSelfieId`, and the day-level
+`check_in_selfie_id`/`check_out_selfie_id` are the first-in and last-out
+mirrors, exactly as `check_in_at` and `check_out_at` already are.
+
+**THE SERVER HAD NO SESSIONS, so a day of three arrived as one pair.** The
+handset has modelled a day as a list since its own v2 migration and
+`mbos_attendance_days` kept two timestamps — so 9-to-1 plus 2-to-6 reached the
+office as nine hours on the record that feeds a payslip, with the break
+invisible. It is a `jsonb` column now, stored as the handset reports it and
+NOT a cache: rebuilding it from the two marks is precisely the loss it exists
+to prevent. It is also the only place N photographs can live, since a day with
+two breaks carries six.
+
+**A check-in is never refused because a photograph is still uploading.** Media
+is a separate queue that syncs AFTER its parent — that is the whole point of
+it — so an attendance row routinely names a file whose bytes are still on the
+phone, and the two selfie columns are foreign keys onto `attachments`. A key
+does not care about the reason: it would reject the check-in over a file in
+transit. So the id is written to those columns only once the attachment row
+exists, the handset re-sends as its media queue drains, and the `sessions`
+list holds every id from the first pass regardless — the mark is never lost to
+the ordering of an upload.
+
+**EVERY FIELD PHOTOGRAPH WAS BEING DELETED BY THE NIGHTLY JOB.** The worst bug
+in the subsystem and the quietest: `storeMbosMedia` never wrote `parent_type`
+or `parent_id`. The handset has sent both on every upload since it was
+written; the route read an `entityId` nothing sends, and the action dropped
+even that. So every selfie, cheque, bill and shop front landed in
+`attachments` with a null parent — and `sweepOrphans`, which runs nightly,
+selects exactly that (`parent_id is null` past
+`attachments.orphanCleanupHours`, 24 by default), removes the bytes from
+storage and marks the row removed. A photograph taken on Monday was gone on
+Tuesday. Until then it was readable by its uploader alone, because `canRead`
+falls back to "unbound and still the uploader's own" — so no manager had ever
+been able to open one either. The enum values (`mbos_visit`,
+`mbos_attendance`, …) had been declared a migration early with a comment
+saying they were used by nothing "yet"; nothing ever went back for them.
+`MBOS_PARENTS` is the mapping, an unrecognised name parents nothing rather
+than guessing, and the sweep still removes what genuinely belongs to nothing.
+
+**An attendance selfie has no customer behind it, and answered 404 to
+everybody.** The second half of the same story. `customerBehind` falls through
+to `calls` for any parent type it does not name, so an attendance id was
+looked up among calls, found nothing, and every read was refused — to the
+salesman in the photograph and to the manager it exists for. Who may open one
+is asked in `canReadAttendanceSelfie`: the person in it, and whoever can see
+his attendance, which is `managerScope` — the Sales Dashboard's own narrowing
+rather than a second opinion about it. Not "anybody holding the field app": a
+salesman must not be able to fetch a colleague's photograph by id, and these
+ids travel in payloads.
+
+**AND THAT LAST SENTENCE WAS A PROMISE THE CODE DID NOT KEEP.**
+`managerScope` narrows a REGIONAL manager and is vacuous for everybody else: it
+answers `salesmanIds: null`, meaning everybody, for anyone with no `region` row
+in `mbos_user_territories` — three separate returns in it do so — and a plain
+field salesman has none. Which is nearly all of them. So the ordinary
+colleague, holding only the field app, got the national answer and could open
+anybody's check-in photograph by id. It failed OPEN, the dangerous direction,
+and lasted because nothing looked broken: everything worked. The test that
+should have caught it gave its colleague a territory row on purpose, "so he is
+scoped rather than national", and stepped around the only case that leaked.
+
+**So the `sales` GRANT is asked first, and the narrowing sits behind it.**
+"Whoever can see his attendance" means whoever can open `/sales/attendance`,
+and that layout redirects anybody without the grant whatever their role —
+`listUserApps` reads `app_access` and nothing else, so there is no implicit
+access for an admin. A manager who was never given the Sales Dashboard has no
+screen on which to see anybody's attendance, and a photograph is not a back
+door to one. Every OTHER caller of `managerScope` is a list inside `/sales/*`
+and is already behind that layout; the two in `attachment-service.ts` are
+reached from `/api/attachments/[id]`, which has no gate but a signed-in
+session, which is why the check belongs in them.
+`canReadTravelLegPhoto` is the same rule for the same reason.
+
+**AND IT IS THE ONE FILE HERE WITH A CLOCK ON IT.** Everything else in this
+subsystem is a photograph OF something — a damaged can, a cheque, a shop
+front — attached to a record that stands without it, and it is kept as long as
+the record is. A check-in selfie is not that. It is evidence that the person
+who marked the day is the person who worked it, and that question is asked
+within a day or two of the day or it is never asked at all. Held beyond that it
+stops being verification and becomes a standing collection of photographs of
+employees: worse to hold, worse to leak, and nothing anybody asked for.
+`mbos.attendance.selfieRetentionHours` is the window — 72 hours — and
+`sweepAttendanceSelfies` is what enforces it.
+
+**HOURLY, not nightly, because the number is on a screen.** Swept once a night,
+"72 hours" would mean up to ninety-six for everybody who checked in during the
+morning, and the gap between what a setting says and what it does is the kind
+of thing nobody notices until it is the subject of an argument about somebody's
+pay. It rides `mbosHourly` beside the escalations.
+
+**Measured from when it ARRIVED, never from when it was taken.** A salesman in
+a district with no signal photographs himself on Monday and syncs on Wednesday;
+anchored to the check-in, that file would be swept within hours of landing and
+the manager would never once have been able to open it. The window is a promise
+about how long somebody has to LOOK, so it runs from the first moment there was
+anything to look at. The consequence is that the screen and the window can
+honestly differ — a photograph on an old day may still be there — so the screen
+shows what EXISTS rather than computing a window of its own. One number, one
+enforcer.
+
+**What goes is the image and nothing else.** The attachment row stays, the day
+keeps its `check_in_selfie_id`, and every `sessions` entry keeps the ids it was
+written with. "A photograph was taken at 09:04 and has since been deleted" and
+"no photograph was taken" are different facts about somebody's attendance, and
+the second is the one that reads as a person cutting a corner. A sweep that
+nulled the columns would rewrite the first into the second, months later,
+silently, on the record a payslip is read against. There is a test for it.
+
+**The manager sees them on the Attendance screen, ONE PER MARK.** A day is a
+list of arrivals and departures — a salesman breaks for lunch and comes out
+again in the evening — so both ends of every session carry a photograph and all
+of them are drawn. Showing the day's first selfie alone would verify that he
+arrived in the morning and assert nothing whatever about the two marks that
+decide the hours. Three things are drawn differently and they are three
+different facts: a photograph you can open, one that was taken and has since
+been deleted, and a mark with no photograph against it at all. `canRead` is
+still what gates every image, so a manager sees his own team's and nobody
+else's.
+
+**A swept file answers 410, not 502.** `/api/attachments/[id]` used to reach
+storage for a `removed` row, find nothing and report a read failure — which
+reads as a broken backend and sends somebody looking for a fault that is not
+there. The row is deliberately kept, so "it existed and is gone" is a thing the
+endpoint can actually say.
+
 **Removing an attachment is a status, not a delete.** It detaches from the
 parent and moves to `removed`; the bytes go only when retention says so. A
 payment proof outlives whoever tidied it off a screen.
@@ -1185,6 +2187,84 @@ ceiling in one place rather than at twenty call sites that would each get one
 of them slightly wrong — `maxLength` stops typing but not a programmatic set,
 so the box would otherwise accept more than the field will save.
 
+**THE SALESMAN GETS THE SAME MICROPHONE, and he needed it more than the
+telecaller did.** A telecaller types slowly with a customer on the line; a
+salesman types on a phone, one-handed, standing in a shop, in a language he
+does not write. MBOS had a microphone on exactly one box — a "Hold to talk"
+recorder on the visit screen — and the other seven prose fields on the app
+(the lead note, the leave reason, the expense note, the tour purpose, the
+complaint's "in their words", the sample's "why he wants it") had none. That
+recorder had also never been reachable: nothing on any path called
+`requestMicrophone`, so `RECORD_AUDIO` was never asked for and preparing
+threw, and the screen reported a broken handset rather than a dialog nobody
+put up. `VoiceField` is `VoiceTextarea`'s counterpart and every one of those
+boxes is one now.
+
+**It is the SAME hearing, through the same functions, behind a different
+door.** `lib/dictation-requests.ts` holds what used to be inside
+`/api/dictate/*`: read the configuration, ask `transcribeSpeech`, and turn
+each of the six ways it can fail into a status and a sentence. Only the
+authentication differs between the two doors — a browser session for the CRM,
+a device token for `/api/mbos/dictate/*` — and three of those six sentences
+are specific and hard-won ("record it in two shorter goes" is not "the service
+is down", and neither is "tell your manager, this one will not fix itself"), so
+a second copy of that ladder would drift within a release. The half that
+drifts is always the half somebody reads at the worst moment.
+
+**A handset cannot ASK whether it may draw a microphone.** The CRM's mic hits
+`/api/dictate` as it renders, which is right for a browser and useless in a
+godown with no bars — a screen that had to reach a server before offering a
+button would offer none exactly where speaking beats typing most. The answer
+rides down on the pull instead, as `mbos.ai.dictation`, and is read from the
+local cache. What crosses is the ANSWER and never the question: no `voice.*`
+setting goes down that wire and no key behind one, because nothing on a phone
+calls a transcription provider — the audio goes to MahekOne and MahekOne spends
+the credential. Two tests in `mbos-wire.test.ts` pin both halves, because the
+two sides are joined only by a spelling and getting it wrong FAILS SILENTLY:
+`getConfig` falls back to `{ available: false }` and every screen simply draws
+nothing, on a deployment that paid for the feature and switched it on.
+
+**No signal is a different refusal from no provider, and they are drawn
+differently.** No provider — dictation off, or no key — is permanent, so
+nothing is drawn at all, which is the rule the CRM already follows. No signal
+is temporary and changes minute to minute, so the mic stays where it is and
+goes dim; a control that appeared and vanished while somebody looked at the
+screen is one they learn is not there.
+
+**And one field has an answer to no signal rather than an apology.** The visit
+note is where the recording is a record of what a customer said rather than a
+keyboard, and a visit has somewhere to keep audio — so `keepAudio` there means
+the mic still works offline: it records, the file joins the media queue, and
+the office writes it out on the far side through the transcript channel that
+already existed. That is what the old "Hold to talk" recorder claimed to do.
+Everywhere else the audio is dropped the moment the words come back, exactly
+as the CRM's is, because a recording of a customer conversation is not a thing
+to hold without a reason.
+
+**A visit keeps the recording even when it was dictated.** The words in the box
+are somebody's reading of what was said; the audio is what was said. Handing it
+to the queue happens BEFORE the transcription is attempted, so a provider that
+does not answer costs the note and never the recording — and saying it again
+discards the superseded file rather than shipping every attempt.
+
+**Speech is not music, and the preset was for a band.**
+`RecordingPresets.HIGH_QUALITY` is 128 kbps of stereo at 44.1 kHz — about a
+megabyte a minute, crawling up a 2G link while somebody waits for their own
+words, or sitting in the media queue ahead of the payment behind it. None of it
+buys accuracy: every model this audio can reach downmixes to mono and resamples
+to 16 kHz first. 24 kHz mono at 32 kbps is a seventh of the size and still
+comfortably above what they use. `LOW_QUALITY` is the wrong floor in the other
+direction — AMR narrowband on Android is a telephone line, and a telephone line
+is where transcription of Indian-language speech starts losing names and
+numbers.
+
+**The bytes are sniffed here too, and for the second reason rather than the
+first.** The handset labels its own recordings `audio/m4a`, which names no
+container Sarvam recognises — and the extension there is the one place a media
+type is genuinely load bearing, since the service refuses the part before it
+reads a byte. The bytes say `audio/mp4`, which is both the truth and what
+Sarvam can take.
+
 **An order taken on a call is the customer saying yes, not the business.**
 Accounts check who they are and what they already owe before it is accepted,
 so a new order sits at `pending_approval` until they decide. Two different
@@ -1207,6 +2287,46 @@ separately — computing both from the same rows put them in conflict.
 person chasing the target must not sign off the orders that hit it. Declining
 requires a reason, and it lands on the customer timeline, because the telecaller
 has to ring back and say something.
+
+**AND THE PERSON WHO TOOK IT IS TOLD, which for a long time they were not.**
+The sentence above was the whole of it: the reason landed on the timeline and
+stopped there, so the telecaller who had promised a customer their order found
+out by opening that customer's record — which nobody does unprompted. In
+practice the customer rang first. Every other write in this app that changes
+somebody else's work already tells them: a reassignment tells both sides, a
+feedback reply tells the reporter, a target revision tells whoever it was set
+for. `lib/notify.ts` says in as many words that a decision nobody receives is
+not a decision, and `lib/actions/sales.ts` says it about MBOS approvals — an
+order decision was the one path in the app that never said it.
+
+**The reason travels IN the message, not behind a link.** It is the entire
+content of a decline — they have to ring the customer and say something — and a
+notification that makes somebody open a screen to find out what to say is one
+they read later. The decline is `kind: "warn"`, which is a kind the bell
+actually colours: it reads `warn` and `danger`, and the several existing callers
+writing `warning` are silently drawn as ordinary.
+
+**And it carries NO `mbosHref`, deliberately.** The obvious guess is
+`/rejections`, since that is where a field salesman reads what the office
+refused — and it would be wrong. That screen renders `listRejections` from the
+handset's own OUTBOX: records refused before they were ever stored. An order
+declined here synced perfectly well days ago, so it is not in that queue and
+never will be, and the tap would land on a screen that does not contain it. A
+null falls through to `/notifications`, which carries the reason in the body —
+the honest default `notify.ts` names, and better than a deep link that is
+confidently pointed at nothing.
+
+**Whose number it is, is `orders.userId` — never whoever owns the account
+today.** The person who has to ring back is the one who made the promise, and a
+reassignment since does not move that. Two people are deliberately not told: an
+order the SHEET wrote carries no `user_id`, because nobody in MahekOne took it,
+and an approver who is also the taker does not need telling what they just did —
+the same discipline as a reassignment that changes nothing notifying nobody.
+
+**It runs after the transaction and can never fail the decision.** The order is
+decided, audited and recomputed before the courtesy runs, exactly as the
+next-step sentence is a courtesy on top of a completed call. A bell that could
+not be written must not undo an order decision already standing in the ledger.
 
 **Money the customer says has arrived is not money the business has seen.** A
 payment reported by a telecaller sits at `reported` until accounts find it in
@@ -1678,6 +2798,35 @@ dialog, a manager left untouched is OMITTED from the request rather than sent
 as its current value — sending it would stamp a decision mark on an account
 nobody decided anything about.
 
+**AND THE BACK OFFICE SEAT IS "LOGISTICS", which is why no such role exists.**
+The MBOS brief assigns six items to a Logistics actor and MahekOne's role list
+is telecaller, manager, accounts, admin — so those items sat unbuilt, blocked
+on a seat that appeared to be missing. It was not missing: dispatch is the
+first word in the sentence above, and the people who put things on lorries and
+chase them are the back office team. Reading the brief's job title as a role to
+be created is what kept it blocked. A fifth `users.role` would have been a new
+way to see the whole company's book — scope reads the derived widest role — to
+model something that has existed since the second manager column shipped.
+
+**Where nobody holds it, the task still lands, and it SAYS why.** An account
+with no back office person still has to produce a chase: a sample that never
+arrives is the quietest way a lead dies, because the salesman assumes it is
+being tried and the shop assumes we forgot. So it falls through to the Lead
+Manager and the description says it came there because no back office person is
+named. That distinction is the whole of it — quietly moving a job the brief
+puts elsewhere looks like completion, and naming why it moved does not. It also
+turns the gap into something somebody can fix, which a silent fallback never
+does. `back_office_am_id` and never `back_office_name`: a task needs somebody
+who can sign in and close it, and the name column is for a person who may have
+no login at all.
+
+**A chase is CLOSED by the answer, not deleted by it.** Confirmed receipt marks
+the task done and keeps its `sourceId`, because "we asked where this parcel was
+and then it arrived" is the only way anybody finds out a courier is the
+problem. Deleting it leaves a lead that converted late and nothing saying why.
+It is closed before the review task is raised, so the two never sit on one list
+saying opposite things about one sample.
+
 **A reassignment is a decision, so the sheet keeps its hands off it.**
 `customers.amDecidedAt` is the third mark of its kind, after
 `orders.approvedAt` and `bills.paymentDecidedAt`, and it guards TWO things
@@ -1720,6 +2869,45 @@ than a thousand rows, so "this account's salesperson has left" handed the
 account to them, on a customer they had never sold to, with the departed
 salesperson's name still on the screen because that is a different column.
 After `am_decided_at` the sales seat is read exactly as it stands.
+
+**AN ACCOUNT HAS A FIFTH SEAT, and it is the answer to §Q.** The brief asks
+for the account to become a customer on the second order and for the
+relationship to pass to a customer manager in the same breath. That is a
+sentence about what the account IS and a sentence about who RUNS it, joined by
+an "and" that hides the fact they are independent. `kind` answers the first and
+flips on the FIRST order — `lead-conversion-service.ts` has the whole argument,
+and it is settled. `relationship_owner_id` answers the second, and nothing
+derives one from the other.
+
+**It moves SIGHT, and deliberately not a rupee.** It is read by `scopedToUsers`
+and by `assertCustomerInScope`, because a seat that did not carry sight would
+announce to somebody that an account is theirs and then refuse them the screen —
+a failure this file already carries three paragraphs about, having shipped
+twice. It is NOT read by `ASSIGNED_TO_SQL`, and that is the load-bearing half:
+that expression decides who is credited for an account's orders and whose
+target it counts toward, so reading this there would move revenue between
+people as a side effect of naming a relationship manager. Moving money is
+`customer.reassign`, accounts' and admin's for exactly that reason.
+`customer.handOver` is a manager's, and it can be *because* it moves none —
+the same test the sales manager seat passes, one seat along. There is an
+integration test asserting a handover leaves `sales_am_id`, `owner_id`, `kind`
+and `am_decided_at` untouched, because that is the thing nobody would notice.
+
+**Whether a handover is OUTSTANDING is derived, never stored.** Converted, and
+`handed_over_at` still null. A flag would be a cache with nothing rebuilding it,
+and the only facts it could be rebuilt from are the two columns it would be
+caching. It is the same shape as the third-party filter listing shops with no
+distributor: a list that should be empty and is not, because a row nobody can
+account for is worse than one that says why it is there.
+
+**And the seat's LABEL comes from a map, not a chain.** `seat-labels.ts`, pure
+and client-safe like `complaint-labels` beside it. The record page rendered the
+three seats with a ternary whose last arm was "Back office", so adding a fourth
+relabelled it rather than failing — a handover reading on a customer's history
+as a back office change, silently, on the screen somebody opens to find out
+what happened to an account. `handover.test.ts` reads `amRoleEnum.enumValues`
+and asserts every one has a label, so a fifth seat fails at the schema rather
+than on the page.
 
 **A lead moves by `owner_id` and a customer by `sales_am_id`.** That is what
 `ASSIGNED_TO_SQL` reads, so writing only `sales_am_id` leaves every lead
@@ -2282,6 +3470,39 @@ release path was written down nowhere anybody looks — which is why it is
 written here. Local `gradlew assembleRelease` is for trying a change on your own
 phone and nothing else. See DEPLOY.md, "Releasing the handset app".
 
+**A DELTA MUST SEND WHAT THE BOOTSTRAP SENDS, and the only way to be sure of
+that is for it to be the same function.** The customers channel was two
+queries — `customersForDevice` at sign-in and an anonymous `sql` template
+inside `buildPull` — and they had drifted eleven columns apart: `thirdParty`,
+`cycleDays`, `gstin`, `dealerCode`, `territoryRegion`, `customerType`,
+`potential`, `creditDays`, `visitFrequencyDays`, `gpsAccuracyM` and the
+`distributors` list, plus `healthBand`, which is in neither SELECT and is
+computed by `bandFor` on the way out of the bootstrap alone.
+
+**A MISSING COLUMN IS NOT A NULL, WHICH IS WHY IT LOOKED LIKE NOTHING.**
+`upsert` writes exactly the columns that ARRIVE, so an omitted one is not
+written over — the bootstrap's value sits on the row being right about the day
+the salesman signed in and wrong from then on. `pullCursor` is set once in
+`sync/engine.ts` and cleared nowhere: not by a migration, not by an app
+upgrade. So "then on" is the life of the installation, and a column added for a
+new screen reached a handset only if its owner happened to sign out and back
+in. It cost three things on the customers card — the "Third party" chip, the
+status dot and its word, and the reorder line — so a shop marked third-party in
+the office on Tuesday still read as an ordinary customer, and a customer who
+went dormant in March still read Active.
+
+**`mbos-wire.test.ts` could not have caught it, and its `DELTA` list says so in
+its own comment.** That test asks whether a payload sends something the handset
+CANNOT HOLD — an extra column, which throws and takes the whole pull with it.
+It cannot ask the opposite, because a column the delta merely omits is not a
+fault in any file, it is an absence, and an absence has to be measured against
+a second list. Retiring an entry from `DELTA` is therefore the goal rather than
+a chore: an entry leaves that list exactly when its channel starts calling the
+function the bootstrap calls, and at that point the `WIRE` entry above covers
+both. Three have left. The 2,000 cap and the `updated_at` ordering stay on the
+IDS, which is the half that has to be ordered — the cap must take the oldest
+changes first, or the ones it drops are never asked for again.
+
 **A pull says what exists; only a tombstone says what stopped.** A deleted row
 has no `updated_at` for a delta to notice, so without `mbos_deletions` a
 withdrawn document, a removed stop and a reassigned customer sit on the handset
@@ -2328,6 +3549,35 @@ handset's schema is a string in a project `tsconfig.json` excludes, and the two
 are joined only inside a phone. It type-checks, it lints, the integration tests
 pass, and it is wrong.
 
+**A FUNCTION WITH NO CALLER IS A FEATURE NOBODY CAN USE, and nothing was
+checking for one.** An exported function that nothing imports is legal
+TypeScript and clean lint — it is exported, so no unused-symbol rule fires, and
+`tsc` has no opinion about who imports it. So a feature can be finished in
+`data/`, given a server handler, given a wire payload, pass every test in the
+suite, and simply have no screen. Nothing goes red and nothing looks wrong.
+`markDeposited` and `markBounced` were complete on both ends for months with no
+button anywhere, so cash in hand could only ever grow and a bounced cheque
+could not be reported at all; `listTours` meant a salesman asked to work away
+for a week and the manager's answer reached his phone, was stored, and was
+never shown to him. `validationsFor`, `listOrders`, `listPayments`, `touchLead`
+and `daysAwaitingAnswer` were the same shape. `mbos-app/src/data/reachable.test.ts`
+asserts every export in `data/` is named somewhere outside its own definition,
+with a `PARKED` allowlist that takes a REASON — the alternative is not "no
+allowlist", it is the list this app already had, held nowhere and known to
+nobody. It proves a function is reached, never that the path is one a person
+can walk; the cheap half is what was missing.
+
+**And a handler the handset never calls is the same bug across the wire.**
+`dispatchItem` is the whole list of things a salesman can send us, and a `case`
+with no matching `entityType:` on the handset means the server half shipped and
+the phone half never arrived — both compile perfectly alone. `internal_note`
+sat like that from the day the module shipped: §R had a table, a role list and
+a bootstrap that narrowed by role, and `handleInternalNote` waited for a
+payload nothing sent, so it was a read path over a table nothing could put a
+row in. `mbos-wire.test.ts` now reads the dispatcher against the handset's
+writes and fails on either direction, with a `SERVER_ONLY` map for the cases
+where "the office sends this one" is the honest answer.
+
 **A HAND-ROLLED HANDLER CANNOT THROW, and that is the trap rather than the
 safety.** Three tables — `tasks`, `leads`, `samples` — are written by a handler
 that types its column list out, because none of them is the same word twice on
@@ -2369,6 +3619,29 @@ the cursor, so every one of them failed and the whole pull answered 500 the
 moment a handset had a cursor; bootstrap passes no Date at all, which is exactly
 why sign-in worked and syncing after it did not. An ISO instant carries its own
 zone, so this is not the bare-cast rule in different clothes.
+
+**A NUMBER SUBTRACTED FROM A DATE NEEDS ITS TYPE SAID OUT LOUD, and this one
+took the whole delta down again.** Same endpoint, same 500, a different cause,
+and it outlived the fix above: `p.plan_date >= (now() at time zone $tz)::date -
+$days`. `$days` is a bind parameter and an untyped parameter beside a date lets
+Postgres resolve the subtraction as `date - date` — which yields an integer, so
+`date >= integer` has no operator and the query throws. `buildPull` ran two of
+these inside its `Promise.all`, so the rejection took every other channel with
+it: the journey, the customers, the products, the tasks, the price list, all of
+it, on every pull from a handset holding a cursor. Which is every pull after
+sign-in, because the bootstrap is what issues the first one. `::int` on the
+parameter is the whole fix and `planDaysFor` is the one copy of it.
+
+**And NOTHING HAD EVER EXECUTED `buildPull`** — that is why both of these
+lived there. The wire test reads the file as TEXT to compare column names
+against the handset's schema, which is a real check and cannot see a query that
+throws; `buildBootstrap` was exercised and the delta was not. Correct columns
+in a query nothing runs is exactly the state it was in for both bugs. There is
+a test in `activity-location.test.ts` that RUNS the delta with a cursor now,
+asserts every channel the handset applies came back as an array, and puts a
+real plan day and stop through it. Its point is not the date arithmetic: it is
+that the next query which only fails at the database fails there rather than on
+a phone in Nagpur.
 
 **And it came back, in the order handler, where it failed differently.**
 `handleOrder` bound `orderedAt` — a Date — into both `update customers set
@@ -2478,6 +3751,60 @@ as though it were.
 every customer would make the figure fall every time somebody added a prospect.
 "A thousand transactions" says nothing without the number of customers behind
 it — a thousand from 250 is a different business to a thousand from 900.
+
+**THE BAND OWNS THE PHRASE "AT RISK", AND THE SCORE MAY NOT BORROW IT.**
+There are two health models and both are worth having — the BAND asks whether
+somebody has stopped buying, from one fact, their own cycles elapsed; the SCORE
+asks how the relationship is doing, from five. They were being rendered in five
+places with four different sets of thresholds, and two of those five used the
+same two words for different questions: `/sales/leads` called a customer "At
+risk" below a SCORE of 40, and the owner's report called one "At risk" at 1.25
+CYCLES overdue. A manager and an owner could read that phrase about one shop on
+one afternoon and mean different things, which is what B3-16 was raised about.
+The handset's `customerStage` was the worst of the five — `< 40 ? 'Overdue' :
+< 60 ? 'At risk'`, a third pair of thresholds, neither of them configuration,
+and an unscored customer falling through to "Active", which is a verdict about
+somebody nothing had measured.
+
+**AND THE FIX LEFT ITS OWN WRECKAGE, which took a year to notice.** The
+replacement kept a branch reading `status === 'Overdue' || 'At risk' ||
+'Active'`, while `customer_status` is an enum of exactly `active`, `inactive`
+and `deactivated` — lower case, and two of those three literals name nothing
+that exists anywhere in MahekOne. So the branch could never once fire, every
+account fell through to the band, and a shop somebody had deliberately
+DEACTIVATED read as whatever its buying cycle happened to say. `deactivated` is
+the one that has to win, because `recomputeInactivity` derives every other value
+and pointedly never writes that one. `inactive` gets no word of its own: it is
+the same fact the `dormant` band states, from the same threshold.
+
+**A null verdict now draws NO DOT, which is the half that was on the screen.**
+The function has always answered null for an account nothing has been measured
+on, and its contract says the caller invents nothing — but the card drew the dot
+unconditionally and made only the WORD conditional. So a shop nobody has ever
+sold to got a bare GREEN dot with nothing beside it: the most reassuring mark on
+the card, on the row that has earned it least. On a fresh book that is most of
+the screen.
+
+`lib/customer-health.ts` is the one place either becomes words, pure and
+client-safe like `account-types` and `seat-labels` beside it. The band gets the
+retention word; a low score says `watch` and NAMES the components dragging it,
+because "paying late, two complaints open" is both truer than "at risk" and
+tells somebody what to do. There is a test asserting a score can never produce
+the phrase.
+
+**And its two thresholds are configuration now.** They were a literal 70 and 50
+inside the handset's health pill — two business numbers invisible to the one
+screen a manager would change them on. `mbos.health.strongAtOrAbove` joins
+`mbos.health.atRiskBelow`, and `checkConsistency` refuses a strong threshold at
+or below the watch one, because a score between them would be both at once.
+The old key keeps its name so no stored setting has to be migrated; what
+changed is its label, which is what a manager actually reads.
+
+**The band reaches the handset on the wire, computed once.** Like the score
+beside it: a phone deriving its own would derive it from a book hours old, and
+two salesmen standing in one shop would read different words about it. It is
+filled in JS by `bandFor` — never as a CASE in the query — because a second
+copy of that rule drifts the day somebody changes a multiplier.
 
 **CUSTOMER HEALTH IS FOUR BANDS OF ONE EXISTING RULE, not a second one.** Active,
 at risk, dormant and lost, measured in multiples of the customer's OWN buying
@@ -2701,6 +4028,89 @@ MahekOne sets no monthly target for a field salesman and a figure with nothing
 to be computed from would be an invention on the one screen where a wrong number
 is least forgivable.
 
+**HOW HE GOT TO THE SHOP IS ASKED WHEN HE SETS OFF, and "Start visit" now
+means "I am setting off".** Pressing it opens `TravelGate` — the modes from
+`mbos_travel_modes`, an admin's rows rather than a list in a screen — and the
+visit stays LOCKED behind an "I have arrived" step until he says he is there.
+That reversal is the point: starting the dwell clock at the tap would count the
+ride as time in the shop, which is the one number the dwell check exists to be
+honest about. Nothing new is priced by this. A leg it opens is the same
+`mbos_travel_legs` row `/travel` writes, on the same `mbos_expense_days`, and
+the policy engine decides what it is worth exactly as before — so a day's
+reimbursement is one figure however its legs got there.
+
+**A LEG NOW HAS A REAL GAP BETWEEN ITS TWO ENDS, which is a state `/travel`
+could never express.** The day log writes `started_at` and `ended_at` in the
+same breath, because it is typed up once the journey is over; a leg opened from
+a visit sits with `ended_at` null while he is on the road. It is a ROW and not a
+screen state — Android reaps this app on the road constantly, and a "travelling"
+flag in memory would be gone by the time he arrived with the departure
+photograph already taken and nothing left to attach it to. A partial unique
+index keeps one open leg per person, at both ends: he cannot be travelling to
+two shops at once, and two open legs would mean the arrival photograph had a
+choice of which departure to close.
+
+**THE METER IS PHOTOGRAPHED AT BOTH ENDS, because one photograph cannot show
+two readings.** `odometer_photo_id` keeps exactly the meaning it had — a
+day-log leg types both readings at once and photographs the meter as it stands
+— and `odometer_end_photo_id` is its counterpart. The one that would otherwise
+be missing is the DEPARTURE: the reading nobody can go back and check, because
+by then the meter has moved. Both the reading and the picture are required and
+neither is redundant — two photographs cannot be subtracted, and a figure with
+no picture behind it cannot be checked by anybody who was not standing there.
+
+**`origin` is what lets the server be strict about one and not the other.** A
+`day_log` leg is typed from memory once the journey is over: the photograph is
+optional and always will be, because refusing it for want of a picture nobody
+can now take would mean refusing to record a journey that happened. A `visit`
+leg was opened as he set off and closed as he arrived, so the app was present
+at both ends and CAN insist. Without the column the strictness would silently
+have broken the screen that shipped first, which is the whole reason it is a
+column rather than a guess from which fields happen to be filled in.
+
+**It is our own camera, unlike every other rear-facing photograph.**
+`selfie-camera.tsx` argues that only the selfie should be ours and every word of
+that still holds — it just does not decide this one, because `OdometerCamera` is
+not asking for a photograph. It is asking for a NUMBER with the photograph as
+its proof, and the two have to be one act. Handed to the system camera they
+become two: MBOS goes to the background where a battery manager reaps it, and
+the digits get typed against an image nobody is looking at any more. The only
+ways out are both together, or abandoning the journey.
+
+**The reading is refused while he is still at the meter, which is the only
+moment it can be.** An arrival below the departure is a digit dropped from the
+front, not a meter running backwards; a distance above
+`mbos.travel.maxLegKilometres` is a typo, not a long day. Checked in
+`lib/travel-leg.ts` on the handset and AGAIN in `handleTravelLeg`, because a
+mileage claim is money and a check that lives only in an interface is not a
+check. A journey called off is CLOSED AT ITS OWN READING so it measures nothing
+and carries the reason — deleting it would leave the next departure following on
+from a gap, which is the pattern an audit stops at.
+
+**A bus or train ticket is offered on the way out and never demanded.** It is a
+scrap of paper that gets lost between the seat and the shop door, and refusing
+the visit over one would mean refusing to record a visit that happened. Skipping
+says in words that the fare can still be added on `/travel`, so nobody skips it
+believing the money is gone; the PNR is optional beside it, because a local bus
+ticket has no number and that is what a duplicate would be caught on.
+
+**EVERY ODOMETER PHOTOGRAPH WAS BEING DELETED NIGHTLY, and none of them could be
+opened.** Both halves of the bug AGENTS.md already records for the whole MBOS
+media subsystem, arriving again with the module written after the fix.
+`MBOS_PARENTS` did not name `travel_leg`, so `storeMbosMedia` resolved no parent
+and every file landed with `parent_id` null — which is exactly what
+`sweepOrphans` removes past `attachments.orphanCleanupHours`. A meter
+photographed on Monday was gone on Tuesday, and until then only its uploader
+could open it, because `canRead` named no rule for `mbos_travel_leg` either and
+`customerBehind` fell through to `calls`. Who may open one is
+`canReadTravelLegPhoto`: the man who took it, and whoever holds the `sales`
+grant with him inside `managerScope`. The grant is asked FIRST and is not
+optional — `managerScope` answers "national, sees everybody" for anybody with no
+row in `mbos_manager_territories`, which is every plain salesman, so falling
+straight through would let one salesman open another's mileage evidence by id.
+It is not read through the customer's scope either, though a leg names a shop:
+this is evidence about a person's expense claim, not about the customer.
+
 **Tracking runs between the check-in and the check-out and not one second either
 side.** A track that carried on after the day was closed would be following
 somebody home. The handset takes a fix every few seconds — dense enough that
@@ -2737,6 +4147,39 @@ before. `flush()` loops until the queue is short now. The general lesson is the
 one worth keeping: a drain whose rate is fixed and whose fill rate is not is a
 queue that reports success all the way down.
 
+**AND THE THREE SECONDS IN THAT PARAGRAPH WERE NOT A SETTING ANYBODY CHOSE.**
+`mbos.location.trackEveryMinutes` said five and the handset asked for five, and
+Android delivered at 3.0 seconds for three days. `timeInterval` NEVER REACHES
+IT: expo-location declares it `Long?` and reads it out of the task's persisted
+options with `map["timeInterval"] as? Long` — but options are stored as JSON,
+so `org.json` hands back a boxed `Integer` and a strict `as?` yields null. The
+override is skipped in silence and `Accuracy`'s own fallback of 3000 ms stands.
+`distanceInterval` is declared `Int?` and survives the same round trip, which
+is why the one parameter nobody meant to be load-bearing was the only one
+arriving. A hundred times the fixes, a hundred times the battery, and the queue
+above could never have drained whatever `flush()` did.
+
+**So the cadence is enforced where no cast can lose it, and that is
+JavaScript.** `deferredUpdatesInterval` is set beside `timeInterval` because it
+IS read with a coercing `getLong` and does arrive — but it is the battery half
+only, since expo bypasses it outright while the app is in the foreground
+through its own `shouldReportDeferredLocations`. The authority on what actually
+gets WRITTEN is `shouldKeepFix` in `engines/cadence.ts`, which is pure and
+tested. It is an engine rather than three lines inside `trail.ts` for exactly
+the reason the bug lasted three days: that file imports expo-location and
+TaskManager at module scope, so nothing in it can be exercised without a
+device, and a cadence nobody can test is a cadence nobody can be sure of. The
+mark lives in `kv` and not in `positions`, because the queue is emptied as it
+uploads — asking the table would answer "nothing kept recently" the moment a
+flush succeeded, and the cadence would collapse back to whatever the OS felt
+like delivering. A clock corrected BACKWARDS resets it rather than stalling,
+or a phone an hour fast would record nothing until it caught up with a mark
+from a future it no longer believes in.
+
+**A fix that is not kept is still REMEMBERED.** The trail wants one point every
+few minutes; `whereNow()` wants the freshest reading there is, and throttling
+that would age the position on every order and payment by the whole cadence.
+
 **A fix is judged against the SESSION IT BELONGS TO, not against today.** The
 sentence at the top of this section used to be enforced by asking whether the
 sender is checked in RIGHT NOW, which is a different question. A batch is a
@@ -2755,6 +4198,73 @@ forget — and answering that to a batch whose check-in is still in the outbox
 destroys a morning to win a race by thirty seconds. `no-session-yet` is the one
 answer that means hold on to them, and the handset drops them itself after a
 week, because a queue that only ever grows is the other way to lose a day.
+
+**"NO FIX TODAY" WAS FOUR DIFFERENT PROBLEMS WEARING ONE SENTENCE.** The
+background permission set to "while using the app", location switched off on
+the phone itself, no signal since breakfast, and a flat battery — four causes,
+three of which somebody can act on, and the team list drew them identically. A
+manager reading that line had no way to tell which, so he rang the salesman and
+asked him to describe his own settings screen. `lib/handset-health.ts` is the
+one place any of it becomes words, pure and client-safe like `customer-health`
+beside it, because the panel is a client component and a second copy typed into
+a screen drifts inside a release.
+
+**A BOOLEAN COULD NOT SAY WHICH.** `background_location_granted` answers true or
+false, and its `false` covers both "while using the app" — a settings trip — and
+"refused outright", which is a different conversation entirely.
+`location_permission` carries the OS's own four answers, and the boolean is KEPT
+and still written beside it: an APK cannot be recalled, so handsets in the field
+go on sending only the boolean and the screen has to go on reading it. Its
+`false` renders as `restricted`, which says the trail has gaps without inventing
+a reason for them. The migration backfills `true` to `always` and deliberately
+leaves `false` alone — guessing there would put a fact on the screen that
+nobody established.
+
+**NULL IS NOT AN ANSWER, and three things depend on it.** A handset that has
+never reported reads null, which is not a refusal, not `undetermined` — that is
+the OS saying nobody has been asked — and not a fault to draw. `readDeviceState`
+OMITS a field rather than nulling it, so an old build's report cannot wipe the
+richer answers a newer one gave for the same phone; a partial report is a
+partial update. It is the same trade the wire already makes in the other
+direction, where an unknown column is dropped rather than the row refused.
+
+**THERE IS NO LIVE BATTERY READING AND THE SCREEN MAY NEVER IMPLY ONE.** A
+phone speaks when it syncs, so every figure is "at last contact" — minutes old
+inside a working day, hours outside one. `device_state_at` rides with it and a
+check constraint refuses the readings without it, because a bare "8%" reads as
+now and would have somebody ringing a salesman whose phone charged overnight.
+The row prints "Battery 8% — read 12 min ago", which is the discipline
+`mbos_activity_locations` already keeps for a fix's age and the On-your-way
+screen keeps for a distance.
+
+**IT RIDES CHANNELS ALREADY OPEN, and only inside a working day.** The battery
+goes up with the position batch, which is already authenticated, already names
+the device and already runs every few minutes — a poller of its own would spend
+the battery in order to report it. It is written after the session check in
+`positions/route.ts` and nowhere else, so a handset that carried on reporting
+after check-out would be a beacon on somebody's evening, which is precisely what
+the trail itself is forbidden from being. It is a SIBLING of the positions array
+and never a field inside a fix: a position's id is `at|lat|lng`, and folding a
+changing value into a key is how a redelivered batch stops deduplicating.
+
+**NOTHING CLAIMS SOMEBODY'S INTERNET IS OFF, because nothing could.** A phone
+with no connection cannot report having no connection, so any column saying so
+could only ever be written by a handset that was online at the time. SILENCE
+carries it, and silence is `last_seen_at` — which is also why that column now
+moves on every position batch rather than only at sign-in. It was written at
+login and nowhere else, so four screens calling it "last synced" were showing
+the last time somebody typed their password, and a handset syncing perfectly all
+week read as untouched since Monday.
+
+**A HEALTHY PHONE SAYS NOTHING AT ALL.** A row listing four green facts is a
+specification sheet, and the one line that matters gets read as furniture — the
+mistake the microphone made when it was drawn at the weight of the resize grip.
+`mbos.location.handsetQuietMinutes` and `mbos.location.lowBatteryPercent` decide
+when there is something to say, and they are configuration because they change
+what a screen ASSERTS, which is the same reason `activityFixMaxAgeSeconds` is.
+Neither is `mbos.sync.quietHours`: that one asks whether a phone has stopped
+syncing at all, over days, and this asks whether a man who checked in this
+morning has gone quiet since.
 
 **`SCHEMA_VERSION` COUNTS THE MIGRATIONS RATHER THAN BEING TYPED BESIDE THEM.**
 It was a literal and it drifted: travel and expense added an eleventh block and
@@ -2953,6 +4463,94 @@ shops are never clicked. Out of scope or gone both answer with nothing to
 show, the same "absent to them, never a crash" rule the CRM record page
 itself follows. A prospect pin keeps its plain text popup — there is no
 customer record behind it yet.
+
+**THE HANDSET'S MAP WORKS WITH NO SIGNAL, because the streets are on the
+phone.** The Live map and Territory's map are read in an office; the handset's
+is read in a paint market with two bars of nothing, which is exactly where a
+map is worth most and exactly where a tile server cannot be reached. MapLibre
+serves a tile out of a downloaded pack without being asked to, so the drawing
+needed no code — what needed code is deciding WHAT is worth several hundred
+megabytes of somebody's phone, saying what it will cost before he starts, and
+being able to tell him afterwards whether where he is standing is inside it.
+`mbos-app/src/engines/tiles.ts` is the arithmetic, pure like every other
+engine; `data/offline-maps.ts` wires it to the book and the native pack store;
+`app/maps.tsx` is the screen.
+
+**A DISTRICT IS NOT THE UNIT.** An administrative boundary was drawn for
+revenue collection: most of one is fields with no shop in it, and a beat that
+straddles two needs both. The areas offered are CLUSTERED FROM THE SALESMAN'S
+OWN BOOK — single-link on a grid, so two shops on a street are always one area
+and two towns an hour apart never are — and named with the office's own word
+for where they are, the area falling back to the city. A repeated name is
+separated by its town rather than by a number, because two rows both reading
+"Sadar" are two rows nobody can tell apart and the one with the wrong 300 MB
+in it is the one they will pick.
+
+**THE KEY IS NOT IN THE STYLE URL, and that is what makes any of it work.**
+MapLibre files every downloaded resource under the URL it asked for. With
+`?api_key=` on that URL the pack is stored under the key — so rotating it in
+the Admin Console makes several hundred megabytes on a phone unreachable, with
+nothing on any screen able to say why the map went blank. `TransformRequestManager`
+signs requests at the HTTP layer, which runs AFTER the offline database has
+been consulted, so a pack is stored key-less and found key-less and a rotated
+key costs one request and no tiles. It fixes a second thing in the same
+motion: a key on the style URL authenticates the style file ALONE, and the
+tile sources, glyphs and sprite sheet it names carry none — which is why Ola's
+own SDK signs every request rather than the first. The web has done this since
+Territory's map shipped; the handset never got the equivalent.
+
+**The size is on the row before the button is pressed.** These are the largest
+downloads this product asks anybody for, and a progress bar that appears after
+the decision is not a decision. It is an ESTIMATE — a vector tile over a paint
+market is several times one over farmland — and every screen calls it one; the
+question it is right about is "tens of megabytes or hundreds", which is the
+one the answer turns on. `mbos.maps.maxZoom` is the setting that decides it,
+because each step closer is four times the tiles.
+
+**Two ceilings in two units, and only one of them can explain itself.** Ours
+refuses an area up front with its size on the screen; MapLibre's own tile count
+ABORTS a download part-way with an error about tiles. `checkConsistency`
+refuses a tile ceiling below what the megabyte ceiling allows, or a salesman
+starts a download this app has already told him is fine and watches it stop.
+Its shipped default is 6,000 tiles — a few square kilometres, inherited from
+Mapbox's terms — so it has to be raised before the first pack is created.
+
+**A saved area is matched to a pack by GEOMETRY, never by a stored id.** An id
+written into the metadata at download time is wrong the first time somebody
+adds a shop and the cluster moves: the pack is orphaned, the area offers to
+download itself again, and the phone ends up holding two copies of the same
+300 MB with nothing able to say so. Coverage is counted in SHOPS — "9 of these
+62 are outside the map you saved" is something a salesman can act on, and "83%
+of the bounding box" is not — and PARTIAL is a real answer that is never
+rounded to either end. Rounding up draws a map with a blank corner and no
+explanation; rounding down hides a map that would have worked for most of what
+he needs.
+
+**Saving again replaces, and the old pack goes AFTER the new one lands.** The
+grown area is a superset, so nothing is lost by dropping the old one, and
+MapLibre shares resources between packs and frees a tile only when no pack
+still wants it — so an overlapping download costs the new tiles and not the
+old ones again. Deleting first is the version that loses a salesman his
+working map for the twenty minutes the new download takes, on the day he is
+standing in the market it covers.
+
+**Nothing here deletes anything on its own.** Not a pack for an area that has
+left his book, not one that has gone stale, not one that failed half-way. Each
+is listed with what it is and a way to remove it: the storage is his, and
+taking back three hundred megabytes unasked is the kind of helpfulness nobody
+thanks you for. "Old" is a nudge and never an expiry — refreshing re-checks
+each tile against the server and fetches only what changed, which is why it is
+worth offering at all.
+
+**And the map screen says which of four things is true, rather than drawing a
+grey rectangle.** No key, no pinned shops, covered, or offline with nothing
+saved for here — and only the last is new. Where an area is covered the map
+draws exactly as it does in the office and the signal is irrelevant; where it
+is partly covered it draws and says how many shops fall outside; where there
+is no signal and nothing saved it does NOT draw, because the pins would sit on
+a blank ground and the thing that is being hidden is that fifteen minutes on
+Wi-Fi would have prevented it. That last state carries the link to the screen
+that fixes it.
 
 ## Testing
 

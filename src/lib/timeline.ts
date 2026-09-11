@@ -107,6 +107,105 @@ export const CRM_EVENT = {
   call: "telecaller_call",
   order: "order",
   payment: "payment",
+  /**
+   * §R — whose account this is, changing.
+   *
+   * `crm` rather than `mbos` because that is where reassignment happens: the
+   * capability is accounts' and admin's and the screen is the customer list, so
+   * the app that wrote it is the CRM whoever pressed the button was in.
+   */
+  ownerChange: "owner_change",
+} as const;
+
+/**
+ * The event types MBOS writes, named here beside the CRM's for the same reason.
+ *
+ * The natural key is built from this string, so a typo makes a second, silently
+ * duplicated stream — and worse, one nothing will ever deduplicate, because the
+ * conflict target will never match. Five of these existed as literals at their
+ * call sites before §R was worked through; the rest are new, and all of them
+ * live here now so the set can be read in one place and compared against what
+ * the brief asks for.
+ *
+ * §R asks for twenty-three kinds. `quotation` is deliberately absent: there is
+ * no quotation record in MahekOne to project FROM, and a timeline entry with no
+ * source row is not a projection of anything — it is a sentence somebody typed,
+ * in a table whose whole discipline is that every row points back at the record
+ * that is the actual truth.
+ */
+export const MBOS_EVENT = {
+  /* Already written before §R was completed. */
+  visit: "visit",
+  order: "order",
+  payment: "payment",
+  complaint: "complaint",
+  sample: "sample",
+
+  /* The lead's own life. */
+  leadCreated: "lead_created",
+  leadAssigned: "lead_assigned",
+  leadConverted: "lead_converted",
+  ownerChange: "owner_change",
+  /**
+   * §Q — the relationship passing to whoever runs the account from here.
+   *
+   * Its own kind rather than a second use of `ownerChange`, which the CRM
+   * already writes when an account MANAGER moves. The two would read
+   * identically on a customer's history and mean different things: one is the
+   * sales or back-office seat moving, the other is the moment a lead somebody
+   * won in the field became somebody else's account to run. Reading a history
+   * to find out when that happened is the whole reason the marker exists.
+   */
+  relationshipHandover: "relationship_handover",
+
+  /* What was learnt, and from whom. */
+  requirement: "requirement",
+  competitor: "competitor",
+  validation: "validation_call",
+  internalNote: "internal_note",
+
+  /* The sample, at each point somebody's word changes. */
+  sampleDispatched: "sample_dispatched",
+  sampleReceived: "sample_received",
+  sampleReview: "sample_review",
+
+  /* The commercial half. */
+  negotiation: "negotiation",
+  delivery: "delivery",
+
+  /** Where a shop actually is, recorded the first time somebody stood in it. */
+  gps: "gps",
+
+  /* ---- the funnel §5 §12 §15 §25 ----
+   *
+   * Four of the funnel's writes have NO entry here and deliberately reuse the
+   * ones above: a stage move writes `leadStage`, but a dispatched sample writes
+   * `sampleDispatched`, a delivered one `sampleReceived`, a reviewed one
+   * `sampleReview`, and the manager's §8 verification call writes `validation`.
+   * Those four already existed for the same events under slightly different
+   * spellings, and a second constant beside each would have produced exactly
+   * what this whole map exists to prevent — two streams for one event, neither
+   * able to deduplicate against the other, because the natural key is built
+   * from this string.
+   */
+
+  /** Every move up, down or out of a ladder. §25's timeline is built on it. */
+  leadStage: "lead_stage",
+
+  /** §15 — the points where somebody's word about a sample changes. */
+  sampleRequested: "sample_requested",
+  sampleDecided: "sample_request_decided",
+  sampleCancelled: "sample_cancelled",
+
+  /* §12 — appointing a distributor, at each signature. */
+  distributorSubmitted: "distributor_submitted",
+  distributorTerms: "distributor_terms_agreed",
+  distributorAgreement: "distributor_agreement",
+
+  /** §14 — a file sent or a call placed from the manager's lead page. */
+  leadCommunication: "lead_communication",
+  /** §18 — the eight questions, and the date they produced. */
+  firstOrderAsk: "lead_first_order_ask",
 } as const;
 
 /**

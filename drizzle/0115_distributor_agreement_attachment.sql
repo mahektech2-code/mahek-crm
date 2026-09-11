@@ -1,0 +1,21 @@
+-- A signed distributor agreement had nowhere to be filed, and the nightly job
+-- would have eaten it.
+--
+-- `attachments.parent_type` had no value for it, so `recordDistributorAgreement`
+-- could only have left the row unparented — and `sweepOrphans` selects exactly
+-- that (`parent_id is null` past `attachments.orphanCleanupHours`), removes the
+-- bytes from storage and marks the row removed. A contract uploaded on Monday
+-- would be gone on Tuesday. That is not a hypothetical failure: it is precisely
+-- what happened to every MBOS field photograph for months, because the upload
+-- path never wrote a parent and nobody noticed until somebody went looking for
+-- a selfie.
+--
+-- Filing it as `mbos_document` instead would have been the other trap: `canRead`
+-- decides who may open a file FROM the parent kind, and the document rules are
+-- role lists plus a customer's scope — a commercial contract readable by every
+-- salesman holding the field app.
+--
+-- Its own value, and `customerBehind` gains an explicit branch for it rather
+-- than falling through to `calls`, which is the fall-through that made every
+-- attendance selfie answer 404 to the person in it.
+ALTER TYPE "attachment_parent" ADD VALUE IF NOT EXISTS 'distributor_agreement';

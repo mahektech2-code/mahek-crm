@@ -1,8 +1,9 @@
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
-import { all, run } from '../db';
+import { all, getKv, run, setKv } from '../db';
 import { getConfig } from '../data/config';
 import { getFix, fixOf, rememberFix } from '../native/location';
+import { shouldKeepFix } from '../engines/cadence';
 import { postPositions, reportLocationPermission } from './api';
 
 /**
@@ -104,12 +105,57 @@ async function store(lat: number, lng: number, accuracyM: number | null, at: num
  * perfectly good evidence of which part of the city somebody was in, which is
  * all a trail claims to be.
  */
+/* ------------------------------------------------------------- the cadence */
+
+const LAST_KEPT = 'trailLastKeptAt';
+
+/** Milliseconds between kept fixes, from configuration. */
+async function minGapMs(): Promise<number> {
+  const minutes = await getConfig<number>('mbos.location.trackEveryMinutes', 5);
+  return Math.max(1, minutes) * 60_000;
+}
+
+/**
+ * Is this fix far enough from the last one we kept to be worth keeping?
+ *
+ * THE CADENCE IS ENFORCED HERE BECAUSE NOTHING ELSE CAN BE TRUSTED TO. See the
+ * note on `start()` — `timeInterval` never reaches Android, and
+ * `deferredUpdatesInterval` does but is bypassed outright while the app is in
+ * the foreground. This is the one place a cast cannot lose it.
+ *
+ * The mark is in the kv store rather than read back off `positions`, because
+ * the queue is emptied as it uploads — asking the table would say "nothing
+ * kept recently" the moment a flush succeeded, and the cadence would collapse
+ * to whatever the OS felt like delivering.
+ *
+ * A clock that has gone BACKWARDS resets rather than stalls. Otherwise a phone
+ * whose time was corrected an hour earlier would take no fixes at all until it
+ * caught up with a mark from a future it no longer believes in.
+ */
+async function keep(at: number, gap: number): Promise<boolean> {
+  const raw = await getKv(LAST_KEPT);
+  const lastKeptAt = raw ? Number(raw) : 0;
+  /* The DECISION is pure and lives in `engines/cadence.ts`, so it can be
+     tested without a device — see the note there. This function is only the
+     reading and writing of the mark. */
+  if (!shouldKeepFix({ at, lastKeptAt, gapMs: gap })) return false;
+  await setKv(LAST_KEPT, String(at));
+  return true;
+}
+
 TaskManager.defineTask<{ locations: Location.LocationObject[] }>(TASK_NAME, async ({ data, error }) => {
   if (error || !data) return;
+
+  const gap = await minGapMs();
   for (const loc of data.locations) {
     const accuracyM = loc.coords.accuracy != null ? Math.round(loc.coords.accuracy) : null;
-    await store(loc.coords.latitude, loc.coords.longitude, accuracyM, loc.timestamp);
+    /* REMEMBERED whether or not it is kept. The trail is a shape and wants one
+       point every few minutes; `whereNow()` wants the freshest reading there
+       is, and throttling that would age the position on every order and
+       payment by the whole cadence. */
     rememberFix({ lat: loc.coords.latitude, lng: loc.coords.longitude, accuracyM: accuracyM ?? 9999, at: loc.timestamp });
+    if (!(await keep(loc.timestamp, gap))) continue;
+    await store(loc.coords.latitude, loc.coords.longitude, accuracyM, loc.timestamp);
   }
   /*
    * Pushed here rather than left for the sync engine's own timer, which is a
@@ -152,6 +198,27 @@ async function takeForeground(): Promise<void> {
  * ever runs — and never blocks the day opening on the answer. Returns
  * whether it actually started, so `start()` knows whether it needs the
  * foreground floor instead.
+ *
+ * **`timeInterval` NEVER REACHES ANDROID, AND NO ERROR SAYS SO.**
+ * expo-location declares it `Long?` and reads it out of the task's persisted
+ * options with `map["timeInterval"] as? Long` — but task options are stored as
+ * JSON, so `org.json` hands back a boxed `Integer` and a strict `as?` yields
+ * null. The override is skipped in silence and `Accuracy`'s own fallback of
+ * **3000 ms** stands. `distanceInterval` is declared `Int?` and survives the
+ * same round trip, which is why the parameter nobody meant to be load-bearing
+ * was the only one arriving.
+ *
+ * Production ran at a median gap of 3.0 seconds for three days on a setting
+ * that asked for five minutes: a hundred times the fixes, a hundred times the
+ * battery, and an upload queue that could never drain. Nothing looked broken —
+ * the uploads succeeded, the connection was fine, and the Live map simply
+ * showed where somebody had been the night before.
+ *
+ * So the cadence is enforced in TWO places and neither is this argument.
+ * `deferredUpdatesInterval` below is read with a coercing `getLong` and does
+ * arrive, but it is the battery half only — expo bypasses it outright while
+ * the app is in the foreground. `keep()` is the authority on what is actually
+ * written, because it is JavaScript and no cast can lose it.
  */
 async function startBackground(everyMs: number): Promise<boolean> {
   try {
@@ -166,9 +233,27 @@ async function startBackground(everyMs: number): Promise<boolean> {
     if (!granted) return false;
 
     await Location.startLocationUpdatesAsync(TASK_NAME, {
-      accuracy: Location.Accuracy.High,
+      /*
+       * BALANCED, not High. High asks for GPS continuously; Balanced is happy
+       * with the network fixes a trail is made of — this records which part of
+       * a city somebody was in, not which doorway, and the difference is
+       * roughly the whole of the battery cost.
+       */
+      accuracy: Location.Accuracy.Balanced,
+      /* Kept for iOS, which reads it, and for the day expo-location fixes the
+         cast that loses it on Android. Nothing depends on it arriving. */
       timeInterval: everyMs,
       distanceInterval: 0,
+      /* THE ONE ANDROID HONOURS. `deferredUpdatesInterval` is read with a
+         coercing `getLong`, so the number survives the JSON round trip that
+         `timeInterval` does not — see the note above this function. It batches
+         fixes while the app is in the BACKGROUND instead of waking us every
+         three seconds, which is the battery half of the cadence. Expo bypasses
+         it in the foreground through its own `shouldReportDeferredLocations`,
+         which is exactly why `keep()` and not this is the authority on what
+         gets written. */
+      deferredUpdatesInterval: everyMs,
+      deferredUpdatesDistance: 0,
       showsBackgroundLocationIndicator: true,
       pausesUpdatesAutomatically: false,
       foregroundService: {

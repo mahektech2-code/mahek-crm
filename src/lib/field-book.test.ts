@@ -32,7 +32,8 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, customers, users } from "@/db/schema";
+import { appAccess, customers, mbosUserTerritories, users } from "@/db/schema";
+import { buildBootstrap } from "@/lib/services/mbos-service";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { scopedToUsers } from "@/lib/access-control";
 import { customerIdsInScope, type MbosPrincipal } from "@/lib/services/mbos-service";
@@ -53,7 +54,7 @@ function principalFor(user: typeof users.$inferSelect): MbosPrincipal {
   return {
     user,
     deviceId: "dev_test",
-    role: "telecaller",
+    role: "associate",
     scope: { kind: "own", userIds: [user.id] },
   };
 }
@@ -66,11 +67,23 @@ async function makeUser(name: string, email: string) {
       name,
       email,
       passwordHash: "x",
-      role: "telecaller",
+      role: "associate",
       initials: "XX",
     })
     .returning();
   await db.insert(appAccess).values({ id: id("acc"), userId: row.id, app: "field" });
+  /*
+   * ALLOCATED, because an unallocated salesman now holds nothing at all and
+   * every test in this file would pass for the wrong reason. That rule has its
+   * own tests at the bottom; these are about the NAME LINK, and a fixture that
+   * quietly answers "empty" to all of them would hide the day the link broke.
+   */
+  await db.insert(mbosUserTerritories).values({
+    id: id("ut"),
+    userId: row.id,
+    kind: "state",
+    region: "Maharashtra",
+  });
   return row;
 }
 
@@ -86,6 +99,9 @@ async function makeShop(name: string, salesPersonName: string | null) {
          the schema refuses one without a number or a town. */
       phone: String(++phoneCounter),
       city: "Nagpur",
+      /* Somewhere real, because a territory is what lets a book through now
+         and a shop with no state is one no allocation can reach. */
+      region: "Maharashtra",
       kind: "customer",
       salesPersonName,
     })
@@ -253,6 +269,112 @@ describe("a field salesman's book", () => {
 
     const ids = await customerIdsInScope(principalFor({ ...salesman, salesPersonName: "   " }));
     assert.deepEqual(ids, []);
+  });
+
+  test("NO AREA ALLOCATED MEANS NO BOOK, however well the name matches", async () => {
+    /*
+     * The reversal, and the reason the fixture above allocates one. This used
+     * to mean "no narrowing", so an unallocated salesman carried the whole
+     * book — which on the real book is five thousand shops on one phone.
+     *
+     * The emptiness is named at both ends rather than left silent: the handset
+     * says "no area set for you yet" instead of "nothing in your book", and the
+     * team screen counts the handsets the office has switched off.
+     */
+    await db
+      .update(users)
+      .set({ salesPersonName: AS_A_PERSON_TYPES_IT })
+      .where(eq(users.id, salesman.id));
+    await db.delete(mbosUserTerritories).where(eq(mbosUserTerritories.userId, salesman.id));
+
+    const ids = await customerIdsInScope(
+      principalFor({ ...salesman, salesPersonName: AS_A_PERSON_TYPES_IT }),
+    );
+    assert.deepEqual(ids, [], "a linked salesman with nowhere allocated must hold nothing");
+
+    /*
+     * AND THE PULL HAS TO SAY SO, or the handset never finds out.
+     *
+     * Returning nothing is only half the rule. A pull ADDS and UPDATES; the
+     * only thing that removes a shop from a phone is a tombstone, and
+     * tombstones are written when somebody EDITS an allocation — so a book
+     * that shrank any other way (a role changed, an account reassigned, a
+     * city corrected) left the handset holding shops the server would no
+     * longer send it, for ever. `bookIds` is the authoritative set travelling
+     * with every pass so the handset can drop the difference itself.
+     */
+    const boot = await buildBootstrap(
+      principalFor({ ...salesman, salesPersonName: AS_A_PERSON_TYPES_IT }),
+    );
+    assert.deepEqual(
+      boot.bookIds,
+      [],
+      "the pull must STATE the empty book — a handset cannot let go of what it is never told about",
+    );
+  });
+
+  test("a city narrows INSIDE its state rather than beside it", async () => {
+    /*
+     * The whole point of the hierarchy. Stored as a state row OR a city row,
+     * picking one city would hand him the entire state — a narrowing that
+     * widens, and invisible on every screen afterwards because "Maharashtra,
+     * Pune" reads like a narrowing either way.
+     */
+    await db
+      .update(users)
+      .set({ salesPersonName: AS_A_PERSON_TYPES_IT })
+      .where(eq(users.id, salesman.id));
+
+    const elsewhere = await makeShop("Pune Paints", AS_A_PERSON_TYPES_IT);
+    await db.update(customers).set({ city: "Pune" }).where(eq(customers.id, elsewhere));
+
+    await db.delete(mbosUserTerritories).where(eq(mbosUserTerritories.userId, salesman.id));
+    await db.insert(mbosUserTerritories).values({
+      id: id("ut"),
+      userId: salesman.id,
+      kind: "city",
+      region: "Pune",
+      parent: "Maharashtra",
+    });
+
+    const ids = await customerIdsInScope(
+      principalFor({ ...salesman, salesPersonName: AS_A_PERSON_TYPES_IT }),
+    );
+    assert.deepEqual(ids, [elsewhere], "only the allocated city, not the whole state it sits in");
+  });
+
+  test("A MANAGER IS NOT NARROWED BY A RULE ABOUT BEATS", async () => {
+    /*
+     * The carve-out, and it is deliberate. A manager on a handset is not
+     * walking a beat — his scope has already answered the question — and
+     * emptying his phone for want of an allocation nobody would think to make
+     * reads as a broken sync rather than as a rule.
+     */
+    await db
+      .update(users)
+      .set({ salesPersonName: AS_A_PERSON_TYPES_IT })
+      .where(eq(users.id, salesman.id));
+
+    const [manager] = await db
+      .insert(users)
+      .values({
+        id: id("usr"),
+        name: "Vikram",
+        email: "vikram2@test.local",
+        passwordHash: "x",
+        role: "manager",
+        initials: "V",
+      })
+      .returning();
+
+    const ids = await customerIdsInScope({
+      user: manager,
+      deviceId: "dev_test",
+      role: "manager",
+      scope: { kind: "team", userIds: [manager.id, salesman.id] },
+    });
+
+    assert.deepEqual([...ids].sort(), [...hisShops].sort(), "no allocation, and still his team's book");
   });
 
   test("the CRM's own definition of whose book it is does not move", async () => {

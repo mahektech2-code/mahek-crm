@@ -4,7 +4,7 @@ import {
   type Role,
   type RoleConflict,
 } from "@/lib/access-control";
-import { asc } from "drizzle-orm";
+import { asc, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, appModuleAccess, employees, users } from "@/db/schema";
 import { APPS, type AppId } from "@/lib/apps";
@@ -53,13 +53,28 @@ export type AppGrant = {
 export type AccessRow = {
   userId: string;
   name: string;
-  email: string;
+  /** Null where somebody signs in with their work number alone. */
+  email: string | null;
   phone: string | null;
-  role: "telecaller" | "manager" | "accounts" | "admin";
+  role: "associate" | "manager" | "admin";
   initials: string;
   active: boolean;
   /** The HRMS row this account matches, where there is one. */
   employeeCode: string | null;
+  /**
+   * How that row was arrived at.
+   *
+   * `linked` is somebody's deliberate answer, stored on the account.
+   * `guessed` is the old email-or-company-mobile heuristic, which on the real
+   * book matches almost nobody and, where it does fire, is choosing between
+   * payroll rows that share a number. `none` is what every field salesman's
+   * account read as while their salary screen sat blank.
+   *
+   * It is on the row rather than derived on the screen because the salary
+   * figures are joined the same way in SQL, and a screen that decided this
+   * for itself would be a second opinion about somebody's pay.
+   */
+  employeeMatch: "linked" | "guessed" | "none";
   department: string | null;
   /** Active in the employee sheet. Null where HRMS has never heard of them. */
   employeeStatus: "active" | "inactive" | "unknown" | null;
@@ -182,6 +197,7 @@ export async function listAccess(): Promise<AccessRow[]> {
         role: users.role,
         initials: users.initials,
         active: users.active,
+        employeeId: users.employeeId,
       })
       .from(users)
       .orderBy(asc(users.name)),
@@ -216,26 +232,44 @@ export async function listAccess(): Promise<AccessRow[]> {
     modulesByUser.set(m.userId, forUser);
   }
 
+  const byId = new Map<string, EmployeeLite>();
   const byEmail = new Map<string, EmployeeLite>();
   const byPhone = new Map<string, EmployeeLite>();
   for (const e of staff) {
+    byId.set(e.id, e);
     const em = emailKey(e.email);
     if (em && !byEmail.has(em)) byEmail.set(em, e);
     if (e.phone && !byPhone.has(e.phone)) byPhone.set(e.phone, e);
   }
 
   return accounts.map((u) => {
-    // Every hat, the account's own included: a grant with no role of its own
-    // is held under it, so it is one of the roles this person wears.
-    const heldRoles = [
-      ...new Set<Role>([
-        u.role as Role,
-        ...(appsByUser.get(u.id) ?? []).map(
-          (app) => rolesByUserApp.get(`${u.id}:${app}`) ?? (u.role as Role),
-        ),
-      ]),
+    /*
+     * Every hat, the account's own included: a grant with no role of its own
+     * is held under it, so it is one of the hats this person wears.
+     *
+     * The APP travels with the level now. A conflict is between two apps —
+     * the calling book and the ledger desk — and with roles reduced to levels
+     * a list of bare roles could no longer express one: "associate and
+     * associate" is not a sentence about anything.
+     */
+    const heldHats = [
+      { app: null as string | null, role: u.role as Role },
+      ...(appsByUser.get(u.id) ?? []).map((app) => ({
+        app: app as string | null,
+        role: rolesByUserApp.get(`${u.id}:${app}`) ?? (u.role as Role),
+      })),
     ];
+    const heldRoles = [...new Set<Role>(heldHats.map((h) => h.role))];
+    /* The link somebody made first, and only then the guess — the same order
+       lib/employee-link.ts applies in SQL for the salary figures, said once
+       there and mirrored here because this screen reads the master in memory
+       rather than joining to it. Where an account is linked the guess is not
+       consulted at all: on a book carrying two payroll rows for one person it
+       would disagree with the deliberate answer, and this is the screen
+       somebody would be reading to find out which is right. */
+    const linked = u.employeeId ? (byId.get(u.employeeId) ?? null) : null;
     const match =
+      linked ??
       byEmail.get(emailKey(u.email) ?? "") ??
       byPhone.get(phoneKey(u.phone) ?? "") ??
       null;
@@ -248,6 +282,9 @@ export async function listAccess(): Promise<AccessRow[]> {
       initials: u.initials,
       active: u.active,
       employeeCode: match?.employeeCode ?? null,
+      /* Chosen, or merely matched. An admin looking for the accounts whose pay
+         will not show up needs to be able to tell the two apart at a glance. */
+      employeeMatch: linked ? "linked" : match ? "guessed" : "none",
       department: match?.department ?? null,
       employeeStatus: match ? match.status : null,
       grants: buildGrants(
@@ -256,7 +293,7 @@ export async function listAccess(): Promise<AccessRow[]> {
         (app) => rolesByUserApp.get(`${u.id}:${app}`) ?? null,
       ),
       roles: heldRoles,
-      conflicts: conflictsFor(heldRoles),
+      conflicts: conflictsFor(heldHats),
     };
   });
 }
@@ -418,4 +455,59 @@ export function moduleCatalogue() {
     built: a.built,
     keys: moduleKeysForApp(a.id),
   })).filter((a) => a.keys.length > 0);
+}
+
+/* ------------------------------------------------- the payroll master, to link */
+
+export type LinkableEmployee = {
+  id: string;
+  employeeCode: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  department: string | null;
+  position: string | null;
+  status: "active" | "inactive" | "unknown";
+  /** The account already holding this row, where there is one. */
+  takenByUserId: string | null;
+  takenByName: string | null;
+};
+
+/**
+ * The employee master as a list to pick ONE row from, for `linkEmployee`.
+ *
+ * Deliberately not `listCandidates`, which merges the master with the accounts
+ * on email or work number and hands back one row per PERSON. That merge is the
+ * very guess this link exists to replace, so building the picker on it would
+ * hide the rows somebody most needs to see — the two `Pritesh` rows that share
+ * a mobile are one candidate there and must be two choices here.
+ *
+ * A row already spoken for is listed with the account holding it rather than
+ * filtered out: somebody looking for an employee they cannot find would
+ * otherwise conclude the search is broken, when the answer is that a colleague
+ * linked it last week.
+ *
+ * Withdrawn rows are dropped. HR has stopped maintaining those, so a salary
+ * read through one would go quietly stale — and `linkEmployee` refuses them
+ * anyway, so offering them would be offering a click that fails.
+ */
+export async function employeesForLink(): Promise<LinkableEmployee[]> {
+  const rows = await db.execute<LinkableEmployee>(sql`
+    select e.id,
+           e.employee_code as "employeeCode",
+           e.name,
+           nullif(btrim(coalesce(e.email, '')), '') as email,
+           coalesce(nullif(btrim(coalesce(e.company_mobile, '')), ''),
+                    nullif(btrim(coalesce(e.personal_mobile, '')), '')) as phone,
+           e.department,
+           e.position,
+           e.status::text as status,
+           u.id as "takenByUserId",
+           u.name as "takenByName"
+      from employees e
+      left join users u on u.employee_id = e.id
+     where e.sheet_status is distinct from 'withdrawn'
+     order by e.name asc
+  `);
+  return rows as unknown as LinkableEmployee[];
 }

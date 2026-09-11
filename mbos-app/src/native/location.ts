@@ -42,8 +42,21 @@ export async function hasPermission(): Promise<boolean> {
  *
  * The timeout is short on purpose: the salesman is standing in a shop with the
  * owner waiting. Ten seconds of trying, then carry on without one and say so.
+ *
+ * **`precise` IS FOR THE ONE READING THAT DECIDES SOMETHING.** Everything else
+ * here asks for `Balanced`, which on Android is roughly a city block and is
+ * exactly right for the questions it answers — which part of town an order was
+ * taken in, where a leg set off from. The check-in gate is a different
+ * question: it refuses a salesman at 100 m, and a reading only good to 100 m
+ * cannot tell the doorway from the tea shop across the road, so every refusal
+ * it produced would land on somebody standing in the right place.
+ *
+ * It is a parameter rather than the new default because `High` keeps the GPS
+ * radio on longer, and paying that on every fix the app takes — the trail, the
+ * departure, every order — to serve one of them would be a battery cost with
+ * nothing to show for it.
  */
-export async function getFix(opts: { accuracyThresholdM: number; timeoutMs?: number } = { accuracyThresholdM: 100 }): Promise<FixResult> {
+export async function getFix(opts: { accuracyThresholdM: number; timeoutMs?: number; precise?: boolean } = { accuracyThresholdM: 100 }): Promise<FixResult> {
   const granted = await hasPermission();
   if (!granted) {
     const ok = await requestPermission();
@@ -55,7 +68,9 @@ export async function getFix(opts: { accuracyThresholdM: number; timeoutMs?: num
   try {
     const timeout = opts.timeoutMs ?? 10_000;
     const position = await Promise.race([
-      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+      Location.getCurrentPositionAsync({
+        accuracy: opts.precise ? Location.Accuracy.High : Location.Accuracy.Balanced,
+      }),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), timeout)),
     ]);
 

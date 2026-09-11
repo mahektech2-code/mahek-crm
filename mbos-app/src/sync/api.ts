@@ -5,6 +5,8 @@ import * as Application from 'expo-application';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { getKv, setKv } from '../db';
+import { buildLabel } from '../native/updates';
+import { readDeviceState } from './device-state';
 
 /**
  * The one place a request leaves this app.
@@ -220,7 +222,17 @@ export async function login(args: { mobile: string; password?: string; otp?: str
   return request('/api/mbos/auth/login', {
     method: 'POST',
     auth: false,
-    body: JSON.stringify({ ...args, deviceId: await deviceId(), deviceLabel: await deviceLabel() }),
+    /* `platform` and `appVersion` have been accepted by the login since MBOS
+       shipped and were never sent, so `mbos_devices` recorded neither for any
+       handset — and those are the two columns somebody reaches for the moment
+       something is wrong in the field. See `buildLabel`. */
+    body: JSON.stringify({
+      ...args,
+      deviceId: await deviceId(),
+      deviceLabel: await deviceLabel(),
+      platform: Platform.OS,
+      appVersion: buildLabel(),
+    }),
   });
 }
 
@@ -230,8 +242,23 @@ export async function requestOtp(mobile: string): Promise<{ sent: boolean }> {
 
 /* -------------------------------------------------------------- bootstrap */
 
+/**
+ * WHY THE BOOK IS THE SIZE IT IS.
+ *
+ * Optional like every channel — an older server does not send it, and the app
+ * has to go on working against one. Absent is read as "the office has not told
+ * us", which draws the ordinary empty state rather than accusing anybody of
+ * forgetting a territory.
+ */
+export type TerritoryState = {
+  allocated: boolean;
+  exempt: boolean;
+  places: string[];
+};
+
 export type PullPayload = {
   cursor?: string;
+  territory?: TerritoryState;
   config?: Record<string, unknown>;
   customers?: unknown[];
   products?: unknown[];
@@ -244,6 +271,19 @@ export type PullPayload = {
   /** The office's order and receipt history, ten of each per customer. */
   customerOrders?: unknown[];
   customerPayments?: unknown[];
+  /** The open bills behind the shop's outstanding, so a collection can name
+      one instead of being spread oldest-first. Optional like every other
+      channel: an older server simply does not send it. */
+  customerBills?: unknown[];
+  /**
+   * THE WHOLE BOOK AS IDS — what this handset is allowed to hold.
+   *
+   * `applyPull` drops every local customer that is not in here. See
+   * `reconcileBook`, which is where the difference between ABSENT and EMPTY
+   * is enforced: undefined is an older server that does not speak this and
+   * must change nothing, `[]` is this server saying the book is empty.
+   */
+  bookIds?: string[];
   leads?: unknown[];
   notifications?: unknown[];
   documents?: unknown[];
@@ -375,6 +415,102 @@ export async function uploadMedia(args: {
   return res.json() as Promise<{ remoteRef: string }>;
 }
 
+/* -------------------------------------------------------------- dictation */
+
+export type DictationHeard = {
+  ok: true;
+  /** The faithful English. Not a summary — that is a button somebody presses. */
+  english: string;
+  /** What was said, in the language it was said in. */
+  spoken: string;
+  language: string | null;
+};
+
+/**
+ * Speech in, an English note back, and NOTHING queued.
+ *
+ * Every other write in this app goes through the outbox because a record has
+ * to survive having no signal. This one deliberately does not: its whole point
+ * is that the salesman READS what came back before it reaches a form, and a
+ * dictation that arrived tomorrow would be a note nobody checked. So it fails
+ * where there is no connection, and the mic says so rather than pretending.
+ *
+ * A longer ceiling than `request`'s twenty seconds. That one is sized for a
+ * record going up; this is a minute of audio going up a village link and two
+ * provider calls at the far end, and giving up at twenty seconds would fail
+ * the recordings that most needed to be spoken rather than typed.
+ */
+export async function dictateTranscribe(args: {
+  uri: string;
+  /** Recorded seconds — PAUSED time excluded. The server routes on it. */
+  seconds: number;
+}): Promise<DictationHeard | { ok: false; error: string }> {
+  const form = new FormData();
+  /* React Native's FormData takes this shape for a file; it is not a Blob.
+     The name is cosmetic — the server sniffs the bytes. */
+  form.append('audio', {
+    uri: args.uri,
+    name: 'dictation.m4a',
+    type: 'audio/m4a',
+  } as unknown as Blob);
+  form.append('seconds', String(Math.round(args.seconds)));
+
+  const token = await accessToken();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 90_000);
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/api/mbos/dictate/transcribe`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        'x-mbos-device': await deviceId(),
+      },
+      body: form,
+      signal: controller.signal,
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error:
+        e instanceof Error && e.name === 'AbortError'
+          ? 'That took too long to send. Your recording is still here — try again.'
+          : 'No connection to MahekOne. Type the note instead.',
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const body = (await res.json().catch(() => null)) as
+    | (DictationHeard | { ok: false; error?: string })
+    | null;
+
+  /* The server's own sentence, every time it sent one. It knows which of the
+     six things went wrong and each one sends the person somewhere different;
+     a generic message here would throw all of that away. */
+  if (!body || !body.ok) {
+    return { ok: false, error: body?.error ?? 'That did not come back. Try recording again.' };
+  }
+  return body;
+}
+
+export async function dictateRefine(args: {
+  text: string;
+  mode: 'tighten' | 'rewrite';
+  instruction?: string;
+}): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+  try {
+    const out = await request<{ ok: true; text: string }>('/api/mbos/dictate/refine', {
+      method: 'POST',
+      body: JSON.stringify(args),
+    });
+    return out;
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'That did not come back.' };
+  }
+}
+
 /* --------------------------------------------------------------- last seen */
 
 export async function lastPullAt(): Promise<number> {
@@ -397,9 +533,28 @@ export async function markPulled(at = Date.now()): Promise<void> {
 export async function postPositions(
   positions: { id: string; at: number; lat: number; lng: number; accuracyM: number | null }[],
 ): Promise<{ ok: boolean; stored: number; tracking?: string }> {
+  /*
+   * THE BATTERY RIDES THIS REQUEST, because this request is already going.
+   *
+   * A flat phone is the commonest reason a trail simply stops mid-beat, and
+   * it is the one cause a manager can still do something about while the day
+   * is running. Reporting it needs no channel of its own: this batch runs
+   * every few minutes while a day is open, is already authenticated and
+   * already names the device. A poller would spend the battery to report it.
+   *
+   * It goes as a SIBLING of the array and never inside a position. A
+   * position's id is derived from its own reading (`at|lat|lng`), which is
+   * what makes a redelivered batch deduplicate — folding device state into a
+   * fix would put a changing value inside a key that must not change.
+   *
+   * The state can never fail the flush: a caught reading simply sends no such
+   * field, and the office reads an absent field as "not reported" rather than
+   * as an answer.
+   */
+  const state = await readDeviceState().catch(() => ({}));
   return request('/api/mbos/positions', {
     method: 'POST',
-    body: JSON.stringify({ positions, deviceId: await deviceId() }),
+    body: JSON.stringify({ positions, deviceId: await deviceId(), ...state }),
   });
 }
 
@@ -416,10 +571,27 @@ export async function registerPushToken(pushToken: string | null): Promise<{ ok:
  * permission — the office cannot know this any other way, since the OS's
  * answer to that prompt never reaches a server on its own. Called once per
  * `start()`, from `trail.ts`, right after the answer is known.
+ *
+ * IT SENDS MORE THAN THE BOOLEAN NOW, and the boolean is still first.
+ *
+ * `backgroundGranted` alone could not tell "Allow only while using the app"
+ * from "refused outright", nor either of those from the phone's own location
+ * switch being off — three different conversations to have with a salesman,
+ * drawn identically in the office. The richer fields ride the same request
+ * because the server treats a missing one as "not reported" rather than as an
+ * answer, so an older handset posting only the boolean goes on working
+ * exactly as it did.
+ *
+ * The boolean is NOT derived from the richer answer at this end. The server
+ * still reads it, every handset in the field still sends it, and computing it
+ * here from `locationPermission` would make one report two statements that
+ * could disagree.
  */
 export async function reportLocationPermission(backgroundGranted: boolean): Promise<{ ok: boolean }> {
+  /* Never allowed to cost the report: a failed reading omits its field. */
+  const state = await readDeviceState().catch(() => ({}));
   return request('/api/mbos/location-permission', {
     method: 'POST',
-    body: JSON.stringify({ backgroundGranted }),
+    body: JSON.stringify({ backgroundGranted, ...state }),
   });
 }

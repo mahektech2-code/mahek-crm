@@ -1,16 +1,18 @@
 import React from 'react';
 import { View, Text, Pressable, TextInput } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { color as C, HIT, radius, type, weight } from '../src/theme/tokens';
+import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
 import { Card, HealthPill, PrimaryButton } from '../src/components/ui/primitives';
 import { BottomSheet } from '../src/components/ui/overlays';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useStore } from '../src/state/store';
+import { getConfig } from '../src/data/config';
 import { distanceLabel, inr, isoDate, plural, pretty, shopName } from '../src/lib/format';
+import { reorderLabel, reorderState } from '../src/engines/leads';
 import { callNumber, openMaps, openWhatsApp } from '../src/lib/messaging';
 import {
-  accountType,
+  accountLine,
   addFieldShop,
   billableCustomers,
   cityOrigins,
@@ -19,7 +21,15 @@ import {
   listCustomersPage,
   type Customer,
 } from '../src/data/customers';
-import { CUSTOMER_PAGE, metresFromDist2, type Origin } from '../src/data/customer-query';
+import {
+  CUSTOMER_PAGE,
+  metresFromDist2,
+  type BookView,
+  type Origin,
+} from '../src/data/customer-query';
+import { ShopMap } from '../src/components/ui/shop-map';
+import { territoryState } from '../src/sync/pull';
+import type { TerritoryState } from '../src/sync/api';
 import { whereNow } from '../src/native/where';
 
 /**
@@ -39,9 +49,29 @@ export default function Customers() {
   const custQ = useStore((s) => s.custQ);
   const set = useStore((s) => s.set);
   const notify = useStore((s) => s.notify);
-  const beginVisit = useStore((s) => s.beginVisit);
+  const askTravel = useStore((s) => s.askTravel);
   const sheet = useStore((s) => s.sheet);
 
+  /* The two health thresholds. Read from configuration, never typed here —
+     they used to be a literal 70 and 50 inside the pill, which put two
+     business numbers where the one screen a manager would change them on
+     could not see them. */
+  const [healthWatch, setHealthWatch] = React.useState(40);
+  const [healthStrong, setHealthStrong] = React.useState(70);
+  React.useEffect(() => {
+    let live = true;
+    void Promise.all([
+      getConfig<number>('mbos.health.atRiskBelow', 40),
+      getConfig<number>('mbos.health.strongAtOrAbove', 70),
+    ]).then(([w, st]) => {
+      if (!live) return;
+      setHealthWatch(w);
+      setHealthStrong(st);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
   const [rowMore, setRowMore] = React.useState<Customer | null>(null);
 
   /* ------------------------------------- a shop that is not on the book yet
@@ -68,6 +98,39 @@ export default function Customers() {
   const [hasMore, setHasMore] = React.useState(false);
   const [loadingMore, setLoadingMore] = React.useState(false);
   const [today] = React.useState(() => isoDate(new Date()));
+  /*
+   * WHAT THE OFFICE LAST SAID ABOUT WHERE HE WORKS.
+   *
+   * Read on focus rather than once on mount: territory is changed at a desk in
+   * the middle of a working day, the shops leave the handset on the next pull,
+   * and a screen that had cached "you have an area" would then show the wrong
+   * sentence over an empty list — the one failure this whole thing exists to
+   * remove.
+   *
+   * Null means the server has never said, which is an older server or a handset
+   * that has not pulled since this shipped. Null is NOT "no area": it draws the
+   * ordinary empty state, because telling somebody their area is unset when
+   * nobody has actually said so sends them to the office for nothing.
+   */
+  const [territory, setTerritory] = React.useState<TerritoryState | null>(null);
+  /*
+   * WHICH HALF OF THE BOOK. Customers, leads, or both.
+   *
+   * It is a VIEW and not a scope: all three show only his own, and a territory
+   * has already narrowed them to where he works. Nothing here reaches another
+   * salesman's book.
+   */
+  const [view, setView] = React.useState<BookView>('all');
+  /* What the count below is counting. `all` holds both, and calling that
+     "customers" is the screen arguing with its own Leads chip. */
+  const counted = view === 'leads' ? 'lead' : view === 'customers' ? 'customer' : 'account';
+  /*
+   * LIST OR MAP, and the tap means a different thing on each SCREEN rather than
+   * on each mode: here it opens the record, and on the journey screen the same
+   * component adds a stop. The component takes the handler rather than deciding,
+   * so neither screen has to know about the other.
+   */
+  const [asMap, setAsMap] = React.useState(false);
 
   /* ------------------------------------------------- where to measure from
    *
@@ -128,16 +191,19 @@ export default function Customers() {
   useFocusEffect(
     React.useCallback(() => {
       let live = true;
-      void listCustomersPage({ query: custQ, origin }).then((p) => {
+      void listCustomersPage({ query: custQ, origin, view }).then((p) => {
         if (!live) return;
         setRows(p.rows);
         setTotal(p.total);
         setHasMore(p.hasMore);
       });
+      void territoryState().then((t) => {
+        if (live) setTerritory(t);
+      });
       return () => {
         live = false;
       };
-    }, [custQ, origin]),
+    }, [custQ, origin, view]),
   );
 
   /* Load more APPENDS, and asks for the page after what is on screen — never
@@ -147,7 +213,7 @@ export default function Customers() {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     try {
-      const p = await listCustomersPage({ query: custQ, origin, offset: rows.length });
+      const p = await listCustomersPage({ query: custQ, origin, view, offset: rows.length });
       setRows((prev) => [...prev, ...p.rows]);
       setTotal(p.total);
       setHasMore(p.hasMore);
@@ -205,6 +271,12 @@ export default function Customers() {
     }
   };
 
+  /* Only ever true when the server has SAID so — see the state above. `exempt`
+     is a manager or an admin, for whom the rule does not apply at all and who
+     must not be told to go and ask for a territory. */
+  const noArea = territory !== null && !territory.exempt && !territory.allocated;
+  const area = territory?.allocated ? territory.places : [];
+
   return (
     <AppFrame title="Customers" activeTab="customers" contentStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}>
       <View style={{ position: 'relative' }}>
@@ -237,10 +309,108 @@ export default function Customers() {
         </Pressable>
       </View>
 
+      {/* LIST OR MAP. A tray with two joined halves rather than a third row of
+          free-standing chips, because this control is not a filter at all — it
+          does not change WHICH shops are in the book, only how the same book is
+          drawn. Three rows of identical pills stacked one under the other read
+          as one bank of nine buttons that all do the same kind of thing, and
+          the thing that separates a mode switch from a filter at a glance is
+          its GEOMETRY, not its position. It says "view" in both halves for the
+          same reason: "List" beside "Map" is two nouns, and a noun on a button
+          reads as the thing you are about to be shown rather than the way you
+          are about to be shown it. */}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignSelf: 'flex-start',
+          marginTop: 12,
+          padding: 3,
+          borderRadius: radius.md,
+          borderWidth: 1,
+          borderColor: C.border,
+          backgroundColor: C.wash,
+        }}>
+        {([
+          { key: false, label: 'List view' },
+          { key: true, label: 'Map view' },
+        ] as const).map((seg) => {
+          const on = asMap === seg.key;
+          return (
+            <Pressable
+              key={String(seg.key)}
+              onPress={() => setAsMap(seg.key)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: on }}
+              style={{
+                paddingHorizontal: 16,
+                paddingVertical: 8,
+                borderRadius: radius.sm,
+                backgroundColor: on ? C.surface : 'transparent',
+                boxShadow: on ? shadow.soft : undefined,
+              }}>
+              <Text
+                style={[
+                  { fontSize: 13, color: on ? C.ink : C.muted },
+                  weight(on ? 600 : 500),
+                ]}>
+                {seg.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {/* WHICH HALF. A view, never a scope — all three show only his own book,
+          already narrowed to the territory he works. Drawn beside "where from"
+          rather than buried in the filter sheet because it changes what the
+          list IS, and a list whose subject is hidden behind a menu is one people
+          misread.
+
+          AND THE ROW IS NAMED. Two rows of identically drawn pills with nothing
+          saying what question each answers is why they read as one row of six:
+          "Leads" and "A–Z" are answers to different questions, and only the
+          label says so. The label is what carries it; the different fills below
+          are what let somebody who is not reading tell the rows apart. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, alignItems: 'center' }}>
+        <Text style={[type.label, { width: 42 }]}>Show</Text>
+        {([
+          { key: 'all', label: 'Everything' },
+          { key: 'customers', label: 'Customers' },
+          { key: 'leads', label: 'Leads' },
+        ] as const).map((chip) => {
+          const on = view === chip.key;
+          return (
+            <Pressable
+              key={chip.key}
+              onPress={() => setView(chip.key)}
+              accessibilityState={{ selected: on }}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 7,
+                borderRadius: radius.pill,
+                borderWidth: 1,
+                borderColor: on ? C.ink : C.border,
+                backgroundColor: on ? C.ink : C.surface,
+              }}>
+              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
+                {chip.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       {/* WHERE FROM. Three chips rather than a menu: it is one tap, it is
           always visible, and the one in use is the answer to "why is this shop
-          at the top". */}
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' }}>
+          at the top".
+
+          Its selected chip is TINTED rather than filled, and that is a
+          hierarchy rather than a decoration: the row above decides which shops
+          are in the book and this one only decides what order they come in, so
+          exactly one row on the screen is solid at a time. Two solid black rows
+          one under the other is what made them a single mush to look at. */}
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, alignItems: 'center' }}>
+        <Text style={[type.label, { width: 42 }]}>Sort</Text>
         {[
           { key: 'me', label: 'Near me' },
           { key: 'city', label: cities.some((c) => c.city === originMode) ? originMode : 'By city' },
@@ -254,15 +424,20 @@ export default function Customers() {
             <Pressable
               key={chip.key}
               onPress={() => (chip.key === 'city' ? setPickingCity(true) : setOriginMode(chip.key))}
+              accessibilityState={{ selected: on }}
               style={{
                 paddingHorizontal: 12,
                 paddingVertical: 7,
-                borderRadius: radius.sm,
+                borderRadius: radius.pill,
                 borderWidth: 1,
-                borderColor: on ? C.ink : C.border,
-                backgroundColor: on ? C.ink : C.surface,
+                borderColor: on ? C.primaryEdge : C.border,
+                backgroundColor: on ? C.primaryTint : C.surface,
               }}>
-              <Text style={[{ fontSize: 13, color: on ? C.surface : C.body }, weight(500)]}>
+              <Text
+                style={[
+                  { fontSize: 13, color: on ? C.primaryDeep : C.body },
+                  weight(on ? 600 : 500),
+                ]}>
                 {chip.label}
               </Text>
             </Pressable>
@@ -272,16 +447,32 @@ export default function Customers() {
 
       {/* A CAPPED LIST SAYS WHAT IT IS A SLICE OF, and the count comes from
           SQL rather than from what happens to be loaded — otherwise the first
-          page of a book of six hundred reads as a book of fifteen. */}
+          page of a book of six hundred reads as a book of fifteen.
+
+          AND IT NAMES WHAT IT COUNTED. Under Everything this read "2,317
+          customers" about a list that is customers AND leads, on a screen whose
+          own chips have just offered those as two different things — so the one
+          sentence that exists to say what is on screen contradicted the control
+          directly above it. The chip picks the noun. */}
       <Text style={[type.caption, { marginTop: 10 }]}>
         {total === 0
           ? 'Nothing in your book yet'
           : rows.length < total
-            ? `Showing ${rows.length} of ${plural(total, 'customer')}`
-            : plural(total, 'customer') + ' \u00b7 your territory'}
+            ? `Showing ${rows.length} of ${plural(total, counted)}`
+            : plural(total, counted) + ' \u00b7 your territory'}
         {origin && originMode === 'me' ? ' \u00b7 nearest first' : ''}
         {origin && originMode !== 'me' && originMode !== 'name' ? ` \u00b7 nearest ${originMode} first` : ''}
       </Text>
+
+      {/* WHICH PLACES THIS IS CUT TO, printed where the count is rather than
+          buried in a profile screen. A salesman who cannot find a shop he knows
+          is his needs to see the area before he concludes the app has lost it —
+          and the answer is almost always that the shop is outside it. */}
+      {area.length ? (
+        <Text style={[type.caption, { marginTop: 2, color: C.muted }]}>
+          {'Your area: ' + area.join(', ')}
+        </Text>
+      ) : null}
 
       {/* Asked and could not is a different fact from never asked, and the
           salesman is the one who can do something about it. */}
@@ -291,31 +482,74 @@ export default function Customers() {
         </Text>
       ) : null}
 
-      {/* Nothing matched. The one thing worth offering is the thing he is
-          about to need — and the sentence says which kind of shop this opens,
-          because a record we bill is the office's to create. */}
+      {/* AN EMPTY BOOK AND A SWITCHED-OFF ONE ARE DIFFERENT FACTS, and no
+          screen may draw them alike.
+
+          "Nothing in your book yet" sends a salesman to ask why nobody has
+          given him shops. It is the wrong sentence when the real answer is that
+          no area has been allocated to him, and it is the sentence that makes
+          an unallocated handset look like a broken sync for a fortnight. The
+          office is told the same thing from the other end, on the team screen.
+
+          `noArea` is only ever true when the server has actually SAID so —
+          `territoryState` answers null on an older server and on a handset that
+          has not pulled since this shipped, and null draws the ordinary empty
+          state rather than accusing anybody. */}
       {rows.length === 0 ? (
         <Card style={{ marginTop: 12, alignItems: 'center', paddingVertical: 28 }}>
           <Text style={[{ fontSize: 15, color: C.ink, textAlign: 'center' }, weight(500)]}>
-            {custQ.trim() ? 'No shop matches that' : 'Nothing in your book yet'}
+            {custQ.trim()
+              ? 'No shop matches that'
+              : noArea
+                ? 'No area set for you yet'
+                : 'Nothing in your book yet'}
           </Text>
           <Text style={[type.caption, { marginTop: 4, textAlign: 'center', paddingHorizontal: 24 }]}>
-            If you are standing in a shop we deliver to on somebody else&apos;s bill, open it
-            here and take the order.
+            {noArea && !custQ.trim()
+              ? 'Your customer list stays empty until the office sets the area you work. Nothing of yours is lost — ask your manager to set it on the Sales Dashboard.'
+              : 'If you are standing in a shop we deliver to on somebody else\u2019s bill, open it here and take the order.'}
           </Text>
-          <View style={{ marginTop: 14, alignSelf: 'stretch', paddingHorizontal: 24 }}>
-            <PrimaryButton label="Add a delivery shop" onPress={openAdd} />
-          </View>
+          {noArea && !custQ.trim() ? null : (
+            <View style={{ marginTop: 14, alignSelf: 'stretch', paddingHorizontal: 24 }}>
+              <PrimaryButton label="Add a delivery shop" onPress={openAdd} />
+            </View>
+          )}
         </Card>
       ) : null}
 
+      {/* THE MAP. Only the loaded page is drawn, deliberately: the list pages
+          fifteen at a time and a map that quietly showed the whole book would
+          disagree with the count above it. The sentence under the map says what
+          could not be placed. */}
+      {asMap && rows.length ? (
+        <View style={{ marginTop: 12 }}>
+          <ShopMap
+            pins={rows.map((x) => ({
+              id: x.id,
+              name: x.name,
+              lat: x.gpsLat ?? NaN,
+              lng: x.gpsLng ?? NaN,
+            }))}
+            /* HERE a tap opens the record. On the journey screen the same
+               component adds a stop — the difference lives in the caller, so
+               neither screen knows about the other. */
+            onPress={(pin) => {
+              set({ custId: pin.id, pTab: 0 });
+              router.push('/customer');
+            }}
+          />
+        </View>
+      ) : null}
+
       <View style={{ gap: 12, marginTop: 8 }}>
-        {rows.map((x) => {
+        {asMap ? null : rows.map((x) => {
           /* Rupees at the point of display, paise everywhere behind it. */
           const dues = x.outstandingPaise / 100;
           const stage = customerStage(x);
           const seenDays = daysSince(x.lastVisitDate, today);
-          const type_ = accountType(x);
+          /* "Lead · Suspect", not "Lead". The rung is what the salesman is
+             choosing between on this screen — see `accountLine`. */
+          const type_ = accountLine(x);
           /* Only where the origin is the salesman himself. A distance from the
              middle of a town he picked is not how far HE has to walk, and
              printing it as though it were would be a lie of the most useful
@@ -325,8 +559,25 @@ export default function Customers() {
           <Card key={x.id} padded={false} style={{ overflow: 'hidden' }}>
             <Pressable
               onPress={() => {
+                /*
+                 * A LEAD OPENS THE LEAD SCREEN, and everything else opens the
+                 * customer record.
+                 *
+                 * Both used to open `/customer`, which for a lead is a page of
+                 * empty ledgers — no dues, no bills, no order history — and,
+                 * far worse, the only screen in the app with no route to the
+                 * funnel on it. The ladder, the §28 gates and both forms live
+                 * on `/lead`, and `/leads` was the single door to them. So a
+                 * salesman who found a shop the obvious way, through the tab
+                 * he already had open, could not see which rung it was on or
+                 * move it.
+                 *
+                 * `custId` is set either way: `/lead` links across to the
+                 * record, and the record is what the back button lands on.
+                 */
                 set({ custId: x.id, pTab: 0 });
-                router.push('/customer');
+                if (x.isLead) router.push(`/lead?id=${x.id}&from=customers`);
+                else router.push('/customer');
               }}
               style={{ padding: 16 }}>
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
@@ -344,9 +595,18 @@ export default function Customers() {
                     {[x.contactPerson, x.city].filter(Boolean).join(' · ')}
                   </Text>
                 </View>
-                {/* A customer the office has not scored yet gets no pill at all —
-                    a zero would read as the worst score there is. */}
-                {x.healthScore != null ? <HealthPill value={x.healthScore} /> : null}
+                {/* A customer the office has not scored yet gets no NUMBER —
+                    a zero would read as the worst score there is — but a band
+                    can still stand on its own, because it needs only the last
+                    order date and the cycle. Both absent draws nothing. */}
+                {x.healthScore != null || x.healthBand ? (
+                  <HealthPill
+                    value={x.healthScore ?? null}
+                    band={x.healthBand ?? null}
+                    strongAtOrAbove={healthStrong}
+                    watchBelow={healthWatch}
+                  />
+                ) : null}
               </View>
 
               <Text
@@ -362,6 +622,29 @@ export default function Customers() {
                   pretty(x.lastOrderDate)}
               </Text>
 
+              {/* §P — due to reorder, on the customer's OWN measured rhythm.
+                  Derived on the phone from two columns every row already
+                  carries, so it is right in a market lane with no signal.
+                  Above the status row rather than inside it: the status is what
+                  the account IS, this is what to do about it today. */}
+              {reorderLabel(x.lastOrderDate, x.cycleDays, today) ? (
+                <Text
+                  style={[
+                    {
+                      fontSize: 14,
+                      lineHeight: 20,
+                      marginTop: 4,
+                      color:
+                        reorderState(x.lastOrderDate, x.cycleDays, today) === 'overdue'
+                          ? C.danger
+                          : C.warnInk,
+                    },
+                    weight(500),
+                  ]}>
+                  {reorderLabel(x.lastOrderDate, x.cycleDays, today)}
+                </Text>
+              ) : null}
+
               <View
                 style={{
                   flexDirection: 'row',
@@ -369,17 +652,43 @@ export default function Customers() {
                   justifyContent: 'space-between',
                   marginTop: 8,
                 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <View
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: 4,
-                      backgroundColor: stage === 'Overdue' ? C.danger : stage === 'At risk' ? C.warn : C.success,
-                    }}
-                  />
-                  <Text style={{ fontSize: 14, color: C.body }}>{stage}</Text>
-                </View>
+                {/*
+                  NO VERDICT, NO DOT.
+
+                  `customerStage` answers null for an account nothing has been
+                  measured on — never ordered, so no cycle, so no band — and
+                  its own contract says the caller draws no verdict rather than
+                  inventing one. This drew the dot unconditionally and only the
+                  WORD was conditional, so a shop nobody has ever sold to got a
+                  bare GREEN dot: the most reassuring mark on the card, on the
+                  row that deserves it least, with nothing beside it to say what
+                  it meant. On a fresh book that is most of the screen.
+                */}
+                {stage ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 4,
+                        /* Dormant and Lost are the far end of the same scale
+                           and must not fall through to green, which is what the
+                           old 'Overdue' check did the moment the words changed.
+                           `Closed` is somebody's decision to stop dealing with
+                           this shop and is the same: it is not a green dot. */
+                        backgroundColor:
+                          stage === 'Dormant' || stage === 'Lost' || stage === 'Closed'
+                            ? C.danger
+                            : stage === 'At risk'
+                              ? C.warn
+                              : C.success,
+                      }}
+                    />
+                    <Text style={{ fontSize: 14, color: C.body }}>{stage}</Text>
+                  </View>
+                ) : (
+                  <View />
+                )}
 
                 {/* Quiet, and on the other side of the row: it is a fact about
                     the account rather than about today, so it should be
@@ -444,7 +753,8 @@ export default function Customers() {
                     if (out.status !== 'opened') notify(out.reason);
                   },
                 },
-                { g: 'shop', l: 'Visit', run: () => { beginVisit(x.id); router.push('/visit'); } },
+                /* The travel question comes first — see `TravelGate`. */
+                { g: 'shop', l: 'Visit', run: () => askTravel({ customerId: x.id, customerName: x.name }) },
                 { g: 'order', l: 'Order', run: () => { set({ custId: x.id }); router.push('/order?from=customers'); } },
                 { g: 'dots', l: 'More', run: () => { set({ custId: x.id }); setRowMore(x); } },
               ].map((a) => (
@@ -570,9 +880,26 @@ export default function Customers() {
 
       <BottomSheet open={!!rowMore} onClose={() => setRowMore(null)}>
         <Text style={[{ fontSize: 15, color: C.ink, marginBottom: 4 }, weight(600)]}>{rowMore?.name ?? ''}</Text>
+        {/*
+          THESE FOUR RAISED A TOAST AND DID NOTHING ELSE.
+
+          `Request sample` is wired now: `requestLeadSample` and the screen that
+          calls it both exist, and the screen already takes the shop from the
+          store — so the row that named the feature was the only part missing.
+          Choosing the shop here sets `custId`, which is what `app/samples.tsx`
+          reads as its subject.
+
+          The other three are still toasts and are deliberately left as they
+          are rather than pointed at the nearest screen that half-fits. A
+          complaint is raised from inside a visit, where the photographs and
+          the order it is about are to hand; quotations and a document library
+          for a customer do not exist in MBOS at all. Sending somebody to a
+          screen that cannot do the thing the row names is worse than the
+          toast, because it costs them the walk to find out.
+        */}
         {[
           { g: 'sample', l: 'Request sample', s: 'Sent for approval' },
-          { g: 'note', l: 'Log complaint', s: 'Goes to the desk team' },
+          { g: 'note', l: 'Log complaint', s: 'Raised from the visit' },
           { g: 'doc', l: 'Send quotation', s: 'From the price list' },
           { g: 'doc', l: 'Documents', s: 'Agreements and KYC' },
         ].map((i) => (
@@ -580,8 +907,14 @@ export default function Customers() {
             key={i.l}
             onPress={() => {
               const name = rowMore?.name ?? '';
+              const shop = rowMore;
               setRowMore(null);
-              notify(i.l === 'Documents' ? 'Documents' : i.l.replace('Request sample', 'Sample for ' + name).replace('Log complaint', 'Complaint for ' + name).replace('Send quotation', 'Quotation for ' + name));
+              if (i.l === 'Request sample') {
+                if (!shop) return;
+                set({ custId: shop.id });
+                return router.push('/samples?ask=1&from=customers');
+              }
+              notify(i.l === 'Documents' ? 'Documents' : i.l.replace('Log complaint', 'Complaint for ' + name).replace('Send quotation', 'Quotation for ' + name));
             }}
             style={{ flexDirection: 'row', alignItems: 'center', gap: 14, height: 60 }}>
             <View style={{ width: HIT, height: HIT, borderRadius: radius.sm, backgroundColor: C.primaryTint, alignItems: 'center', justifyContent: 'center' }}>

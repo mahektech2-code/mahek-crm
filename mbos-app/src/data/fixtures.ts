@@ -66,11 +66,21 @@ export const DAY_AHEAD = [
  * figure that does not open is ordinary; a figure that says it opens and does
  * not is what teaches people to stop tapping things.
  */
+/*
+ * The six figures, and where each one opens.
+ *
+ * THREE OF THEM WENT NOWHERE. A tile with no `route` renders identically to
+ * one with a route and does nothing when pressed, which is worse than a tile
+ * that is visibly not a button — the figure invites the tap, and the silence
+ * reads as the app having missed it. Two of the three had nowhere to go until
+ * `orders` and `collections` existed; the third is the customer book, where
+ * every row already carries what that shop owes.
+ */
 export const DASH_CARDS: { l: string; tone?: 'danger' | 'amber'; route?: string }[] = [
-  { l: 'Today’s sales' },
+  { l: 'Today’s sales', route: 'orders' },
   { l: 'Visits', route: 'journey' },
-  { l: 'Collection due', tone: 'danger' },
-  { l: 'Cash in hand', tone: 'amber' },
+  { l: 'Collection due', tone: 'danger', route: 'customers' },
+  { l: 'Cash in hand', tone: 'amber', route: 'collections' },
   { l: 'Tasks', tone: 'amber', route: 'tasks' },
   { l: 'Follow-ups', route: 'tasks' },
 ];

@@ -6,12 +6,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { assessFix, haversineMetres, visitLocationVerdict, withinGeofence } from './geo';
-import { optimiseRoute } from './route';
+import { assessFix, checkInVerdict, haversineMetres, visitLocationVerdict, withinGeofence } from './geo';
+import { optimiseRoute, pickOrigin } from './route';
 import { assessOrder } from './credit';
 import { healthScore, type HealthInputs, type HealthThresholds, type HealthWeights } from './health';
 import { applySchemes, matches, type Scheme } from './schemes';
-import { cashPosition, type Collection } from './cash';
+import { cashPosition, collectionMode, type Collection } from './cash';
 import { deriveStatus, workedLabel } from './attendance';
 import { balanceAfter, leaveDays, overlaps } from './leave';
 import { canValueOrders, derivedQuantities, lineValuePaise } from './order';
@@ -79,6 +79,62 @@ test('a distant visit is flagged, and a customer with no coordinate is not', () 
   const noCoords = visitLocationVerdict(far, null, 150);
   assert.equal(noCoords.mismatch, false);
   assert.equal(noCoords.reason, 'customer_not_located');
+});
+
+/* ---- the check-in gate, which is the one thing in geo.ts that refuses ---- */
+
+test('a check-in beyond the radius is refused, and one inside it is not', () => {
+  const doorway = { lat: NAGPUR.lat + 30 / 111_320, lng: NAGPUR.lng, accuracyM: 12 };
+  const inside = checkInVerdict(doorway, NAGPUR, 100, 50);
+  assert.equal(inside.accepted, true);
+  assert.equal(inside.reason, 'ok');
+  assert.ok((inside.metresAway ?? 0) < 40);
+
+  const teaShop = { lat: NAGPUR.lat + 340 / 111_320, lng: NAGPUR.lng, accuracyM: 12 };
+  const refused = checkInVerdict(teaShop, NAGPUR, 100, 50);
+  assert.equal(refused.accepted, false);
+  assert.equal(refused.reason, 'too_far');
+  assert.ok(refused.sentence.includes('340 m'), 'the distance is said, not just the refusal');
+  assert.equal(refused.pinsTheShop, false, 'a refused check-in never moves the pin');
+});
+
+test('the radius includes its own edge, exactly as the geofence does', () => {
+  const at100 = { lat: NAGPUR.lat + 100 / 111_320, lng: NAGPUR.lng, accuracyM: 8 };
+  assert.equal(checkInVerdict(at100, NAGPUR, 100, 50).accepted, true);
+  assert.equal(checkInVerdict(at100, NAGPUR, 99, 50).accepted, false);
+});
+
+test('a fix that cannot prove he is there cannot prove he is not', () => {
+  // No fix at all — a concrete godown in a market lane.
+  const blind = checkInVerdict(null, NAGPUR, 100, 50);
+  assert.equal(blind.accepted, true);
+  assert.equal(blind.reason, 'unmeasurable');
+  assert.equal(blind.metresAway, null, 'zero would read as standing in the doorway');
+
+  // A fix wide enough that the shop is well inside its own error.
+  const wide = { lat: NAGPUR.lat + 300 / 111_320, lng: NAGPUR.lng, accuracyM: 400 };
+  const vague = checkInVerdict(wide, NAGPUR, 100, 50);
+  assert.equal(vague.accepted, true, 'refusing on a 400 m fix is refusing on nothing');
+  assert.equal(vague.reason, 'unmeasurable');
+});
+
+test('a shop with no pin lets the check-in through, and is pinned by it', () => {
+  const anywhere = { lat: NAGPUR.lat + 2, lng: NAGPUR.lng, accuracyM: 9 };
+  const first = checkInVerdict(anywhere, null, 100, 50);
+  assert.equal(first.accepted, true);
+  assert.equal(first.reason, 'unpinned');
+  assert.equal(first.pinsTheShop, true);
+});
+
+test('a poor fix never pins an unpinned shop', () => {
+  // The order of the ladder is the whole of this: judged the other way round,
+  // the first check-in on a bad afternoon drops the pin four hundred metres
+  // out and every honest visit afterwards is refused against it.
+  const poor = { lat: NAGPUR.lat, lng: NAGPUR.lng, accuracyM: 400 };
+  const verdict = checkInVerdict(poor, null, 100, 50);
+  assert.equal(verdict.accepted, true);
+  assert.equal(verdict.reason, 'unmeasurable');
+  assert.equal(verdict.pinsTheShop, false);
 });
 
 /* ----------------------------------------------------------------- route */
@@ -452,6 +508,43 @@ test('cash carried is per-collection, and the SLA is too', () => {
   assert.equal(clean.nextDeadline, null);
 });
 
+test('a stored payment mode reaches the engine as the engine spells it', () => {
+  /*
+   * THE BUG THIS PINS. `cashInHand` read every undeposited row and handed the
+   * engine `mode: 'cash'` as a literal, so the filter in `cashPosition` — the
+   * one the whole engine is built around — matched everything it was given.
+   * A UPI receipt that was in the company's account before the salesman left
+   * the shop was counted as notes in his pocket, on the home screen and
+   * against the deposit deadline he is chased on.
+   *
+   * The engine's own test above already proved it excludes a cheque. It could
+   * not catch this, because the caller never gave it one to exclude.
+   */
+  assert.equal(collectionMode('Cash'), 'cash');
+  assert.equal(collectionMode('Cheque'), 'cheque');
+  assert.equal(collectionMode('UPI'), 'upi');
+  assert.equal(collectionMode('Bank transfer'), 'neft');
+
+  /* An unknown mode must never read as cash. A fifth mode added to the
+     collection form and forgotten here costs one row missing from cash in
+     hand; read as cash it would put money in somebody's pocket that is not
+     there and chase them for banking it. */
+  assert.equal(collectionMode('Credit note'), 'other');
+  assert.equal(collectionMode(''), 'other');
+
+  /* And end to end: only the cash one is carried. */
+  const now = 1_000 * HOUR;
+  const rows: Collection[] = (['Cash', 'Cheque', 'UPI', 'Bank transfer'] as const).map((m, i) => ({
+    id: 'p' + i,
+    customerName: m,
+    amountPaise: 1_000_00,
+    collectedAt: now - HOUR,
+    mode: collectionMode(m),
+    depositedAt: null,
+  }));
+  assert.equal(cashPosition(rows, 48, now).totalPaise, 1_000_00);
+});
+
 /* ------------------------------------------------------------ attendance */
 
 const SHIFT = { halfDayThresholdHours: 4, fullDayThresholdHours: 8, isWorkingDay: true, approvedLeave: null };
@@ -642,4 +735,40 @@ test('a fraction of a second never rounds a minute up early', () => {
   assert.equal(workedLabel(59_900, true), '0h 00m 59s');
   assert.equal(workedLabel(3_599_999, true), '0h 59m 59s');
   assert.equal(workedLabel(3_600_000, true), '1h 00m 00s');
+});
+
+/* ------------------------------------------------- pickOrigin, for a day */
+
+test('planning today from a known position measures from where he is', () => {
+  const here = { lat: 21.1458, lng: 79.0882 };
+  const origin = pickOrigin({ fix: here, forToday: true, cityShops: [{ lat: 20.7, lng: 78.6 }] });
+  assert.deepEqual(origin, here);
+});
+
+test('planning tomorrow measures from the city, not from his sofa', () => {
+  /* The case that makes this function necessary. He picks tomorrow's Wardha
+     shops in the evening at home in Nagpur — sorting them by distance from the
+     sofa puts the list very nearly upside down. */
+  const sofa = { lat: 21.1458, lng: 79.0882 };
+  const wardha = [
+    { lat: 20.7453, lng: 78.6022 },
+    { lat: 20.7501, lng: 78.6100 },
+  ];
+  const origin = pickOrigin({ fix: sofa, forToday: false, cityShops: wardha });
+  assert.ok(origin);
+  /* The centroid of the shops, not the fix. */
+  assert.ok(Math.abs(origin.lat - 20.7477) < 0.01, String(origin.lat));
+  assert.ok(Math.abs(origin.lng - 78.6061) < 0.01, String(origin.lng));
+});
+
+test('a city with no pinned shops falls back to the fix rather than inventing one', () => {
+  const here = { lat: 21.1458, lng: 79.0882 };
+  assert.deepEqual(pickOrigin({ fix: here, forToday: false, cityShops: [] }), here);
+});
+
+test('no fix and no pins answers null rather than a made-up point', () => {
+  /* The caller then sorts by something that needs no distance. A list ordered
+     around an invented origin is worse than one that admits it cannot measure —
+     it looks right and is wrong. */
+  assert.equal(pickOrigin({ fix: null, forToday: true, cityShops: [] }), null);
 });

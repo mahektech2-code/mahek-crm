@@ -36,7 +36,7 @@ export type ProvisionInput = {
   name?: string;
   /** A new email. Also the new sign-in, so it must be free. */
   email?: string;
-  role?: "telecaller" | "manager" | "accounts" | "admin";
+  role?: "associate" | "manager" | "admin";
   /** The complete set of apps this account may open. Replaces what is there. */
   apps?: string[];
   /** Apps to add, leaving the rest alone. */
@@ -45,8 +45,8 @@ export type ProvisionInput = {
 
 export type ProvisionResult = {
   userId: string;
-  before: { name: string; email: string; role: string; apps: string[] };
-  after: { name: string; email: string; role: string; apps: string[] };
+  before: { name: string; email: string | null; role: string; apps: string[] };
+  after: { name: string; email: string | null; role: string; apps: string[] };
   changed: string[];
 };
 

@@ -1,4 +1,5 @@
 import * as Updates from 'expo-updates';
+import * as Application from 'expo-application';
 
 /**
  * Picking up a new build without anybody reinstalling anything.
@@ -68,4 +69,46 @@ export function runningBuild(): { id: string; embedded: boolean; channel: string
     embedded: Updates.isEmbeddedLaunch,
     channel: Updates.channel ?? null,
   };
+}
+
+/**
+ * Which build this handset is actually running.
+ *
+ * The server has had an `app_version` column on `mbos_devices` since MBOS
+ * shipped and the login has always accepted one; the handset has never sent
+ * it, so every device row reads blank. That is the column somebody needs the
+ * moment anything is wrong in the field — "is this the bug we fixed, or has
+ * that fix not reached him" is unanswerable without it, and the answer decides
+ * whether the next hour is spent debugging or distributing.
+ *
+ * It carries BOTH halves because there are two, and since `expo-updates` they
+ * move independently. The native version is what an APK install pins; the
+ * update id is which JavaScript bundle is running on top of it, and that is
+ * what changes when a fix ships over the air. The native half read `1.0.0` on
+ * every handset for the whole first year, because nothing bumped it until the
+ * check-in radius made "which build is he on" a question somebody had to
+ * answer at a shop door; DEPLOY.md now makes the bump part of releasing. It is
+ * still a number a person moves by hand, which is exactly why `runtimeVersion`
+ * uses the fingerprint policy rather than the version.
+ *
+ * `embedded` is a build running the bundle it shipped with — no update has
+ * been applied yet — and is worth naming rather than leaving blank, because
+ * blank is what this column already said for a year and it meant "nobody
+ * asked".
+ */
+export function buildLabel(): string {
+  const native = [
+    Application.nativeApplicationVersion ?? '?',
+    Application.nativeBuildVersion ? `(${Application.nativeBuildVersion})` : null,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  /* Not the words "no update channel": `schema-usage.test.ts` greps this
+     project for SQL, and that phrase reads as `UPDATE channel` to it. A guard
+     that scans prose for statements is worth more than the phrasing. */
+  if (!Updates.isEnabled) return `${native} · updates off`;
+  /* `updateId` is null on the bundle that came with the APK. */
+  const bundle = Updates.updateId ? Updates.updateId.slice(0, 8) : 'embedded';
+  return `${native} · ${bundle}`;
 }

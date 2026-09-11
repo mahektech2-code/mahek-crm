@@ -6,9 +6,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color as C, HIT, radius, weight } from '../../theme/tokens';
 import { Icon } from './Icon';
 import { PrimaryButton, SecondaryButton, T } from './primitives';
+import { getConfig } from '../../data/config';
+import { hoursInWords } from '../../lib/format';
 
 /**
- * The check-in selfie, taken inside the app.
+ * The attendance selfie, taken inside the app.
  *
  * It used to hand off to the system camera through `ImagePicker`, which opens
  * whatever camera app the phone has and — every time, on every handset here —
@@ -27,15 +29,62 @@ import { PrimaryButton, SecondaryButton, T } from './primitives';
  * system camera is better at those than anything worth writing: it has the
  * flash, the zoom and the tap-to-focus people already know. `takePhoto` still
  * handles all three.
+ *
+ * **THE PHOTOGRAPH IS MANDATORY, and that is a reversal.** This screen shipped
+ * with "Start the day without a photo" on it, under the rule that runs through
+ * the rest of the app: a save is never blocked by an attachment, and a
+ * salesman who cannot mark attendance cannot work. That rule still holds for
+ * every OTHER photograph here — a complaint photo, a cheque, a shop front —
+ * and it does not hold for this one, because this one is not an attachment to
+ * a record. It IS the record: an attendance mark with no photograph behind it
+ * is a claim that somebody was somewhere, and the whole reason to take it is
+ * that a claim and a proof are different things. Skippable, it was neither —
+ * the days with a photograph proved something and the days without proved
+ * nothing, and nobody reading the record afterwards could tell which kind of
+ * day they were looking at.
+ *
+ * So the only ways out of this screen are the photograph and CANCELLING THE
+ * WHOLE ACTION. There is no third door, and a refused camera permission is a
+ * dead end that says so in words — see `Refusal`. That is the real cost of
+ * "mandatory" and it is stated on the screen rather than worked around behind
+ * it.
+ *
+ * It is used for every check-in AND every check-out, several times a day, so
+ * it takes its own words: "Start your day" and "Close your day" are different
+ * things to be photographed for, and a camera that said the first one while
+ * closing the day would read as the app having lost its place.
+ *
+ * **AND IT SAYS WHO SEES IT AND FOR HOW LONG.** A photograph of somebody's own
+ * face, taken because the app insists, is the one file in this product where
+ * the person handing it over is entitled to know what happens to it — and this
+ * screen is the only place they will ever be standing when the question occurs
+ * to them. Both halves are said, because either alone is worse than neither:
+ * "kept for 3 days" without naming the manager hides who is looking, and
+ * "your manager can see it" without the window reads as for ever.
+ *
+ * The window is READ, never written into this sentence.
+ * `mbos.attendance.selfieRetentionHours` is what the sweep on the server
+ * actually enforces and it arrives on the handset with the rest of the
+ * configuration, so the screen cannot promise a number the office has since
+ * changed. Where it has not arrived yet the sentence is left out rather than
+ * guessed at — a wrong promise about this is worse than no promise.
  */
 
 export type SelfieResult = { uri: string } | null;
 
 export function SelfieCamera({
   open,
+  title,
+  subtitle,
+  cancelLabel,
   onDone,
 }: {
   open: boolean;
+  /** What this photograph is for: "Start your day", "Close your day". */
+  title: string;
+  subtitle: string;
+  /** What backing out abandons, said plainly — it is no longer a skip. */
+  cancelLabel: string;
   /** The photograph, or null for every way out — cancel, refusal, failure. */
   onDone: (result: SelfieResult) => void;
 }) {
@@ -47,6 +96,21 @@ export function SelfieCamera({
   /* What was taken, held for the person to look at before it becomes the
      record of their attendance. */
   const [shot, setShot] = React.useState<string | null>(null);
+  /* How long it is kept, from the office's own setting. `null` until it has
+     been read, and it stays null on a handset that has never bootstrapped —
+     the sentence is then absent rather than invented. */
+  const [keptFor, setKeptFor] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    let live = true;
+    void getConfig<number>('mbos.attendance.selfieRetentionHours')
+      .then((h) => live && setKeptFor(h > 0 ? hoursInWords(h) : null))
+      .catch(() => live && setKeptFor(null));
+    return () => {
+      live = false;
+    };
+  }, [open]);
 
   /* Fresh camera every time it opens, so a retake from yesterday is never on
      screen and `onCameraReady` fires again for the new mount. */
@@ -98,14 +162,15 @@ export function SelfieCamera({
             gap: 12,
           }}>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <T style={[{ fontSize: 17, lineHeight: 22, color: '#FFFFFF' }, weight(600)]}>Start your day</T>
-            <T style={{ fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.65)' }}>
-              A photo of you goes with the check-in.
-            </T>
+            <T style={[{ fontSize: 17, lineHeight: 22, color: '#FFFFFF' }, weight(600)]}>{title}</T>
+            <T style={{ fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.65)' }}>{subtitle}</T>
           </View>
+          {/* The cross ABANDONS the check-in now rather than skipping the
+              photograph — it is the same button it always was and it no longer
+              means the same thing, so its label says which. */}
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Close the camera"
+            accessibilityLabel={cancelLabel}
             onPress={() => onDone(null)}
             style={{ width: HIT, height: HIT, alignItems: 'center', justifyContent: 'center' }}>
             <Icon name="close" size={24} color="#FFFFFF" strokeWidth={1.5} />
@@ -118,7 +183,7 @@ export function SelfieCamera({
             <Image source={{ uri: shot }} style={{ flex: 1 }} resizeMode="cover" />
           ) : denied ? (
             <Refusal
-              body="Camera permission is off for MBOS. Turn it on in your phone’s Settings, or start the day without a photo."
+              body="Camera permission is off for MBOS. Attendance needs the photo, so turn the camera on in your phone’s Settings and try again. Tell your manager if you cannot."
             />
           ) : permission?.granted ? (
             <CameraView
@@ -137,6 +202,28 @@ export function SelfieCamera({
 
         {/* ---- the shutter, or the two answers about what it took ---- */}
         <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: insets.bottom + 16, gap: 10 }}>
+          {/*
+            WHAT HAPPENS TO IT, above the button that commits it.
+
+            Here rather than in the header, because this is where the decision
+            is: it is read once before the shutter and again before "Use this
+            photo", which are the two moments somebody might wonder. In the
+            header it would be a line of grey text under a title, which is
+            furniture — the same mistake the microphone made before it was
+            given a colour.
+          */}
+          {keptFor ? (
+            <T
+              style={{
+                fontSize: 13,
+                lineHeight: 18,
+                color: 'rgba(255,255,255,0.65)',
+                textAlign: 'center',
+              }}>
+              {`Your manager can see this photo for ${keptFor}. It is deleted after that.`}
+            </T>
+          ) : null}
+
           {shot ? (
             <>
               <PrimaryButton label="Use this photo" onPress={() => onDone({ uri: shot })} />
@@ -154,16 +241,20 @@ export function SelfieCamera({
                     : 'The camera is still starting up.'
                 }
               />
-              {/* The day must never wait on a photograph. This is the same rule
-                  `startDay` follows on a refused camera and a missing fix: the
-                  check-in is recorded either way, and what is missing is
-                  recorded as missing. */}
+              {/*
+                This was "Start the day without a photo" — see the note at the
+                top of the file. It is a CANCEL now, and it says so: the way
+                out of this screen is either the photograph or abandoning the
+                action, and a button offering a third thing is what made the
+                record unreadable. Its words name what is being abandoned, so
+                nobody presses it thinking the day starts anyway.
+              */}
               <Pressable
                 accessibilityRole="button"
                 onPress={() => onDone(null)}
                 style={{ minHeight: HIT, alignItems: 'center', justifyContent: 'center' }}>
                 <T style={[{ fontSize: 15, color: 'rgba(255,255,255,0.8)' }, weight(500)]}>
-                  Start the day without a photo
+                  {cancelLabel}
                 </T>
               </Pressable>
             </>

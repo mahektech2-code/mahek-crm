@@ -1,6 +1,10 @@
 # Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
 
 # dependencies
+# Both spellings, deliberately. A trailing slash matches a DIRECTORY and not a
+# symlink of the same name — and a worktree that symlinks node_modules at the
+# main checkout is exactly how one gets committed. It happened on this branch.
+node_modules
 node_modules/
 
 # Expo

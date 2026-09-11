@@ -21,14 +21,25 @@ import { FilterPills, Modal, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { grantableApps, moduleGroupsForApp, modulesForApp } from "@/lib/modules";
 import type { AppId } from "@/lib/apps";
-import { candidatesForGrant, setAccess } from "@/lib/actions/access";
+import {
+  candidatesForGrant,
+  employeesToLink,
+  issueCredential,
+  linkEmployee,
+  setAccess,
+  type IssuedCredential,
+} from "@/lib/actions/access";
 import {
   endSessionsFor,
   sendPasswordResetFor,
   setUserActive,
 } from "@/lib/actions/people";
 import { mintImpersonationLink } from "@/lib/actions/impersonation";
-import type { AccessRow, Candidate } from "@/lib/services/access-service";
+import type {
+  AccessRow,
+  Candidate,
+  LinkableEmployee,
+} from "@/lib/services/access-service";
 import { useAdmin } from "./store";
 
 /* ---------------------------------------------------------------------------
@@ -56,12 +67,20 @@ import { useAdmin } from "./store";
 
 const APPS = grantableApps();
 
-import { ROLE_CONFLICTS } from "@/lib/role-conflicts";
+import { conflictsFor } from "@/lib/role-conflicts";
 
+/*
+ * THE SAME THREE IN EVERY APP.
+ *
+ * This list used to carry `Telecaller` and `Accounts` beside `Manager` and
+ * `Admin` — two job titles from two particular apps in a list of seniority
+ * levels — so granting the Salesman App asked which kind of telecaller a
+ * field salesman was. What the app is, the row already says; this only has to
+ * say how senior they are in it.
+ */
 const ROLES = [
-  { id: "telecaller", label: "Telecaller" },
+  { id: "associate", label: "Associate" },
   { id: "manager", label: "Manager" },
-  { id: "accounts", label: "Accounts" },
   { id: "admin", label: "Admin" },
 ] as const;
 
@@ -103,6 +122,13 @@ export function AccessSection({
   const [managing, setManaging] = React.useState<AccessRow | null>(null);
   /** Turning the sign-in itself off, or back on. */
   const [switching, setSwitching] = React.useState<AccessRow | null>(null);
+  /** Saying which HRMS row this account is — see `EmployeeLinkDialog`. */
+  const [linking, setLinking] = React.useState<AccessRow | null>(null);
+  /* THE SECOND DOOR ONTO A PASSWORD. The grant flow offers one at the moment
+     an account is set up, which is the moment most of them are needed — but
+     somebody set up in March who cannot get in today is not going to be given
+     access again to reach it. */
+  const [crediting, setCrediting] = React.useState<AccessRow | null>(null);
   /** A just-minted sign-in link, shown once so it can be copied. */
   const [linkFor, setLinkFor] = React.useState<{
     name: string;
@@ -240,6 +266,8 @@ export function AccessSection({
                           onManage={() => setManaging(r)}
                           onSwitch={() => setSwitching(r)}
                           onOpen={() => onOpenUser(r.userId)}
+                          onLinkEmployee={() => setLinking(r)}
+                          onCredential={() => setCrediting(r)}
                           onGotLink={setLinkFor}
                         />
                       </span>
@@ -260,6 +288,9 @@ export function AccessSection({
             say(r);
             closeDrawer();
           }}
+          /* Saved, and the dialog stays up to offer a password. The toast
+             fires either way, so the list behind it is already right. */
+          onSaved={say}
         />
       ) : null}
 
@@ -375,6 +406,21 @@ export function AccessSection({
         ) : null}
       </Modal>
 
+      {/* Which payroll row this account is. Keyed on the person for the same
+          reason the access dialog is: fresh initial state on a remount beats an
+          effect resetting it when a prop changes. */}
+      {linking ? (
+        <EmployeeLinkDialog
+          key={linking.userId}
+          row={linking}
+          onClose={() => setLinking(null)}
+          onDone={(r) => {
+            say(r);
+            setLinking(null);
+          }}
+        />
+      ) : null}
+
       {/* Managing somebody already on the list: straight to the apps. Keyed on
           the person, so the draft is initial state on a fresh mount rather than
           something an effect has to reset. */}
@@ -387,7 +433,33 @@ export function AccessSection({
             say(r);
             setManaging(null);
           }}
+          onSaved={say}
         />
+      ) : null}
+
+      {/* The same page the grant flow ends on, reached from a row. Keyed on
+          the person so a second person opens a fresh one rather than the last
+          one's password. */}
+      {crediting ? (
+        <Modal
+          open
+          onClose={() => setCrediting(null)}
+          width={720}
+          title={`A password for ${crediting.name}`}
+          footer={
+            <Button variant="primary" onClick={() => setCrediting(null)}>
+              Done
+            </Button>
+          }
+        >
+          <CredentialStep
+            key={crediting.userId}
+            userId={crediting.userId}
+            name={crediting.name}
+            created={false}
+            phone={crediting.phone}
+          />
+        </Modal>
       ) : null}
     </div>
   );
@@ -421,13 +493,20 @@ function PersonCells({ row, onOpen }: { row: AccessRow; onOpen: () => void }) {
       <Td className="align-top capitalize">{row.role}</Td>
       <Td className="align-top">
         {row.employeeCode ? (
-          <span className="inline-flex items-center gap-2">
+          <span className="inline-flex flex-wrap items-center gap-2">
             {row.employeeCode}
             {row.employeeStatus === "active" ? null : (
               <Badge tone="warn">
                 {row.employeeStatus === "inactive" ? "Left" : "Status unknown"}
               </Badge>
             )}
+            {/* Chosen, or merely matched. A guess and an answer look identical
+                on a row, and one of them is deciding whose salary shows up. */}
+            {row.employeeMatch === "guessed" ? (
+              <Badge tone="warn" title="Matched on email or work number, not chosen. Link them to be sure.">
+                Guessed
+              </Badge>
+            ) : null}
           </span>
         ) : (
           // Said rather than left blank: the HRMS check could not be made for
@@ -446,6 +525,8 @@ function PersonMenu({
   onManage,
   onSwitch,
   onOpen,
+  onLinkEmployee,
+  onCredential,
   onGotLink,
 }: {
   row: AccessRow;
@@ -455,6 +536,8 @@ function PersonMenu({
   onManage: () => void;
   onSwitch: () => void;
   onOpen: () => void;
+  onLinkEmployee: () => void;
+  onCredential: () => void;
   onGotLink: (link: { name: string; url: string; expiresInMinutes: number }) => void;
 }) {
   return (
@@ -473,8 +556,32 @@ function PersonMenu({
         },
         { label: "Open their record", onSelect: onOpen },
         {
-          label: "Send a field-app password link",
+          /* Not hidden where a row was already guessed: a guess is exactly what
+             somebody would come here to confirm or correct. */
+          label:
+            row.employeeMatch === "linked"
+              ? "Change the HRMS record"
+              : "Link an HRMS record",
+          onSelect: onLinkEmployee,
+        },
+        {
+          /* Two ways to give somebody a password and they are not the same
+             act: this one goes to a mailbox and lets them choose it, which is
+             better wherever they have a work email they read. The one below
+             is for everybody else — most of the field staff. */
+          label: "Email a password-reset link",
+          disabled: !row.active,
+          title: row.active ? undefined : "This account cannot sign in",
           onSelect: () => void sendPasswordResetFor(row.userId).then(say),
+        },
+        {
+          label: "Generate a password to read out",
+          destructive: true,
+          disabled: !row.active,
+          title: row.active
+            ? "Replaces their current password and signs them out everywhere"
+            : "This account cannot sign in",
+          onSelect: onCredential,
         },
         {
           label: "End every session",
@@ -503,17 +610,20 @@ function PersonMenu({
 
 /* ------------------------------------------------------------- the dialog */
 
-type Step = "who" | "access" | "review";
+type Step = "who" | "access" | "review" | "done";
 
 function AccessDialog({
   person,
   onClose,
   onDone,
+  onSaved,
 }: {
   /** Somebody already on the list. Absent means start from the picker. */
   person?: AccessRow;
   onClose: () => void;
   onDone: (r: { ok: boolean; message?: string; error?: string }) => void;
+  /** Saved, but not finished with — the dialog is still open behind the toast. */
+  onSaved: (r: { ok: boolean; message?: string; error?: string }) => void;
 }) {
   const [step, setStep] = React.useState<Step>(person ? "access" : "who");
   const [chosen, setChosen] = React.useState<Candidate | null>(
@@ -557,13 +667,13 @@ function AccessDialog({
   const [roleDraft, setRoleDraft] = React.useState<Record<string, RoleId>>(() => {
     const out: Record<string, RoleId> = {};
     for (const g of person?.grants ?? []) {
-      out[g.app] = (g.role ?? person?.role ?? "telecaller") as RoleId;
+      out[g.app] = (g.role ?? person?.role ?? "associate") as RoleId;
     }
     return out;
   });
   const [email, setEmail] = React.useState(person?.email ?? "");
   const [phone, setPhone] = React.useState(person?.phone ?? "");
-  const [role, setRole] = React.useState<(typeof ROLES)[number]["id"]>("telecaller");
+  const [role, setRole] = React.useState<(typeof ROLES)[number]["id"]>("associate");
   const [saving, setSaving] = React.useState(false);
   const [fieldError, setFieldError] = React.useState<Record<string, string>>({});
 
@@ -579,6 +689,13 @@ function AccessDialog({
     setFieldError({});
     setStep("access");
   };
+
+  /* WHAT THE SAVE PRODUCED, so the last page can ask the right question. A
+     brand new account has a password nobody has ever been told; an existing
+     one may have somebody signed in on theirs right now, and generating a
+     replacement takes that away. Only this component knows which, so the
+     wording lives here rather than being guessed at in the action. */
+  const [saved, setSaved] = React.useState<{ created: boolean; userId: string } | null>(null);
 
   const submit = () => {
     if (!chosen) return;
@@ -596,7 +713,7 @@ function AccessDialog({
       })),
       account: chosen.userId
         ? undefined
-        : { email: email.trim(), phone: phone.trim() || null, role },
+        : { email: email.trim() || null, phone: phone.trim() || null, role },
     }).then((r) => {
       setSaving(false);
       if (!r.ok && r.fieldErrors?.length) {
@@ -605,6 +722,18 @@ function AccessDialog({
         // that is not on it.
         setFieldError(Object.fromEntries(r.fieldErrors.map((f) => [f.field, f.message])));
         setStep("access");
+        return;
+      }
+      /* SAVED, AND THE DIALOG STAYS OPEN TO ASK ONE MORE THING. The access is
+         written and the toast says so — nothing here is pending — but a person
+         who cannot sign in has not been set up, and the moment the office is
+         thinking about this person is the only moment they will do anything
+         about it. Closing on success is what left every new account holding a
+         password nobody knew. */
+      if (r.ok) {
+        setSaved({ created: r.data.created, userId: r.data.userId });
+        setStep("done");
+        onSaved(r);
         return;
       }
       onDone(r);
@@ -623,35 +752,45 @@ function AccessDialog({
           ? "Enable access — who"
           : step === "access"
             ? `What ${chosen?.name} can open`
-            : `Review — ${chosen?.name}`
+            : step === "review"
+              ? `Review — ${chosen?.name}`
+              : `${chosen?.name} can now sign in`
       }
       footer={
-        <>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              if (step === "review") return setStep("access");
-              if (step === "access" && !person) return setStep("who");
-              onClose();
-            }}
-          >
-            {step === "review" || (step === "access" && !person) ? "Back" : "Cancel"}
+        step === "done" ? (
+          /* One way out, and it is not "Cancel" — there is nothing left to
+             cancel. The access is written whatever happens on this page. */
+          <Button variant="primary" onClick={onClose}>
+            Done
           </Button>
-          {step === "access" ? (
-            <Button variant="primary" onClick={() => setStep("review")}>
-              Review
-            </Button>
-          ) : step === "review" ? (
+        ) : (
+          <>
             <Button
-              variant={changes.revoked.length ? "danger" : "primary"}
-              disabled={saving || !changes.any}
-              title={changes.any ? undefined : "Nothing has changed"}
-              onClick={submit}
+              variant="secondary"
+              onClick={() => {
+                if (step === "review") return setStep("access");
+                if (step === "access" && !person) return setStep("who");
+                onClose();
+              }}
             >
-              {saving ? "Saving…" : "Grant access"}
+              {step === "review" || (step === "access" && !person) ? "Back" : "Cancel"}
             </Button>
-          ) : null}
-        </>
+            {step === "access" ? (
+              <Button variant="primary" onClick={() => setStep("review")}>
+                Review
+              </Button>
+            ) : step === "review" ? (
+              <Button
+                variant={changes.revoked.length ? "danger" : "primary"}
+                disabled={saving || !changes.any}
+                title={changes.any ? undefined : "Nothing has changed"}
+                onClick={submit}
+              >
+                {saving ? "Saving…" : "Grant access"}
+              </Button>
+            ) : null}
+          </>
+        )
       }
     >
       {step === "who" ? (
@@ -673,19 +812,182 @@ function AccessDialog({
           accountRole={(person?.role as RoleId) ?? role}
           fieldError={fieldError}
         />
-      ) : (
+      ) : step === "review" ? (
         <ReviewStep
           name={chosen?.name ?? ""}
           creating={needsAccount}
           email={email}
+          phone={phone}
           role={role}
           changes={changes}
           draft={draft}
           roleDraft={roleDraft}
           accountRole={(person?.role as RoleId) ?? role}
         />
+      ) : (
+        <CredentialStep
+          userId={saved?.userId ?? ""}
+          name={chosen?.name ?? ""}
+          created={saved?.created ?? false}
+          phone={phone.trim() || chosen?.phone || null}
+        />
       )}
     </Modal>
+  );
+}
+
+/* --------------------------------------------------------------- step four */
+
+/**
+ * The page that ASKS.
+ *
+ * Granting access does not mint a password — the office decides. A credential
+ * that appeared unasked would be one left on a screen somebody walks away
+ * from, and on an existing account it would sign somebody out mid-call with no
+ * warning at all.
+ *
+ * What it exists to prevent is the state this flow used to end in: an account
+ * granted four apps, a welcome email telling the employee to wait for a code
+ * that is never sent, and a password `randomUUID()` chose. Everything was
+ * green and nobody could sign in.
+ */
+function CredentialStep({
+  userId,
+  name,
+  created,
+  phone,
+}: {
+  userId: string;
+  name: string;
+  /** Whether the grant that just ran created the account. */
+  created: boolean;
+  phone: string | null;
+}) {
+  const [issued, setIssued] = React.useState<IssuedCredential | null>(null);
+  const [working, setWorking] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [copied, setCopied] = React.useState(false);
+
+  const first = name.split(" ")[0];
+
+  const generate = () => {
+    setWorking(true);
+    setError(null);
+    void issueCredential(userId).then((r) => {
+      setWorking(false);
+      if (r.ok) setIssued(r.data);
+      else setError(r.error);
+    });
+  };
+
+  if (issued) {
+    return (
+      <div>
+        <div className="rounded-[4px] border border-line bg-canvas px-4 py-3.5">
+          <p className="text-[13px] text-body">
+            Read this out to {first}, or copy it into a message. {" "}
+            <span className="font-medium text-ink">
+              It is not stored anywhere and cannot be shown again
+            </span>{" "}
+            — closing this box is the last time anyone sees it.
+          </p>
+
+          <div className="mt-3 grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-2">
+            <span className="text-xs font-medium tracking-[0.04em] text-muted uppercase">
+              Signs in with
+            </span>
+            <span className="font-mono text-[15px] text-ink">{issued.signInWith}</span>
+
+            <span className="text-xs font-medium tracking-[0.04em] text-muted uppercase">
+              Password
+            </span>
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="rounded-[4px] border border-line bg-surface px-2.5 py-1 font-mono text-[19px] tracking-[0.08em] text-ink select-all">
+                {issued.password}
+              </span>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  void navigator.clipboard
+                    ?.writeText(issued.password)
+                    .then(() => setCopied(true))
+                    .catch(() => setError("This browser would not let the page copy. Read it out instead."));
+                }}
+              >
+                {copied ? "Copied" : "Copy"}
+              </Button>
+            </span>
+          </div>
+
+          {/* THE DASH COUNTS. It is in the string and in the hash, so somebody
+              who leaves it out is refused — which reads as a wrong password
+              rather than as a mistyped one. */}
+          <p className="mt-3 text-[13px] text-muted">
+            The dash is part of the password. Letters are capitals. Ask {first} to
+            change it once they are in, from Forgot password on the sign-in screen.
+          </p>
+        </div>
+
+        {issued.sessionsEnded > 0 ? (
+          <p className="mt-3 text-[13px] text-body">
+            {issued.sessionsEnded === 1
+              ? `${first} was signed in somewhere and has been signed out — the old password no longer works.`
+              : `${first} was signed in on ${issued.sessionsEnded} devices and has been signed out of all of them — the old password no longer works.`}
+          </p>
+        ) : null}
+
+        {error ? <p className="mt-3 text-[13px] text-danger">{error}</p> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="rounded-[4px] border border-line bg-canvas px-4 py-3.5">
+        <p className="text-[15px] font-medium text-ink">
+          {created
+            ? `Generate a password for ${first}?`
+            : `Give ${first} a new password?`}
+        </p>
+        <p className="mt-1.5 text-[13px] text-body">
+          {created ? (
+            <>
+              The account exists and the apps are granted, but nobody can sign into it
+              yet — a new account is created with a password nobody knows, and nothing
+              has been emailed to anyone. Generate one to read out or paste into a
+              message. If {first} has a work email they can set their own instead, from
+              Forgot password on the sign-in screen.
+            </>
+          ) : (
+            <>
+              Only if they cannot get in. This{" "}
+              <span className="font-medium text-ink">replaces the password they have now</span>{" "}
+              and signs them out everywhere, so do not do it to somebody who is working.
+              A reset link from their row menu lets them choose their own instead.
+            </>
+          )}
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button
+            variant={created ? "primary" : "danger"}
+            disabled={working || !userId}
+            onClick={generate}
+          >
+            {working
+              ? "Generating…"
+              : created
+                ? "Generate a password"
+                : "Replace their password"}
+          </Button>
+          <span className="text-[13px] text-muted">
+            {phone
+              ? `They sign in with ${phone} and this password.`
+              : "They sign in with their work email and this password."}
+          </span>
+        </div>
+        {error ? <p className="mt-2.5 text-[13px] text-danger">{error}</p> : null}
+      </div>
+    </div>
   );
 }
 
@@ -879,16 +1181,37 @@ function AccessStep({
               {name} has no MahekOne account yet
             </span>
             <span className="text-[13px] text-muted">
-              One is created when you grant access. No password is typed here — they get a
-              link to choose their own, good once, for thirty minutes.
+              One is created when you grant access. Give them a work number or an email —
+              either one signs them in, and with both they pick. No password is typed
+              here; you generate one to read out on the last page.
             </span>
           </div>
           <div className="mt-2 grid grid-cols-[1.4fr_1fr_1fr] gap-2">
-            <Field label="Sign-in email" error={fieldError.email}>
-              <Input value={email} onChange={(e) => onEmail(e.target.value)} />
+            {/* NEITHER IS STARRED, because neither on its own is required —
+                what is required is one of the two, which is a sentence about
+                the pair and belongs above them rather than on either. */}
+            <Field
+              label="Work email"
+              hint={phone.trim() ? "Optional" : undefined}
+              error={fieldError.email}
+            >
+              <Input
+                value={email}
+                placeholder="priya@mahek.in"
+                onChange={(e) => onEmail(e.target.value)}
+              />
             </Field>
-            <Field label="Work number" error={fieldError.phone}>
-              <Input value={phone} onChange={(e) => onPhone(e.target.value)} />
+            <Field
+              label="Work number"
+              hint={email.trim() ? "Optional" : undefined}
+              error={fieldError.phone}
+            >
+              <Input
+                value={phone}
+                placeholder="9820011001"
+                inputMode="numeric"
+                onChange={(e) => onPhone(e.target.value)}
+              />
             </Field>
             <Field label="Role">
               <Select value={role} onChange={(e) => onRole(e.target.value as typeof role)}>
@@ -1145,6 +1468,7 @@ function ReviewStep({
   name,
   creating,
   email,
+  phone,
   role,
   changes,
   draft,
@@ -1153,6 +1477,7 @@ function ReviewStep({
 }: {
   name: string;
   creating: boolean;
+  phone: string;
   email: string;
   role: string;
   changes: Changes;
@@ -1162,6 +1487,10 @@ function ReviewStep({
   accountRole: RoleId;
 }) {
   const appName = (id: AppId) => APPS.find((a) => a.id === id)?.name ?? id;
+  /* "Manager in Accounts", because a level on its own no longer names a hat
+     and "Associate and Associate" is not a warning anybody can act on. */
+  const hatName = (h: { app: string; level?: string }) =>
+    `${h.level ? roleName(h.level as RoleId) : "Anyone"} in ${appName(h.app as AppId)}`;
   const roleOf = (id: AppId) => roleDraft[id] ?? accountRole;
   const roleName = (id: RoleId) => ROLES.find((r) => r.id === id)?.label ?? id;
 
@@ -1175,10 +1504,14 @@ function ReviewStep({
    * here in the words of the rule it bends, on the page where somebody is
    * deciding.
    */
-  const held = [...new Set<RoleId>(Object.keys(draft).map((a) => roleOf(a as AppId)))];
-  const conflicts = ROLE_CONFLICTS.filter(
-    (c) => held.includes(c.roles[0]) && held.includes(c.roles[1]),
-  );
+  /* A hat is an app AND a level now, so the pair is compared on both — the
+     ledger desk clashes with the calling book, and it is the Accounts
+     MANAGER who decides, not the associate who records. */
+  const heldHats = Object.keys(draft).map((a) => ({
+    app: a,
+    role: roleOf(a as AppId) as string,
+  }));
+  const conflicts = conflictsFor(heldHats);
   const scope = (id: AppId) => {
     const n = (draft[id] ?? []).length;
     const total = ALL_OF(id).length;
@@ -1203,7 +1536,15 @@ function ReviewStep({
             tone: "success" as const,
             tag: "Create",
             what: name,
-            detail: `signs in with ${email} as a ${role} — a link to choose a password is emailed to them.`,
+            /* WHAT THEY WILL TYPE INTO THE FIRST BOX, and nothing about mail.
+               Granting access sends nothing now: it used to mint and email a
+               reset link every time, which is a thing the office cannot see
+               happen, cannot repeat, and which reaches nobody at all on an
+               account with no address. The password is generated on the next
+               page and read out. */
+            detail: `${role}, signing in with ${[phone, email].filter(Boolean).join(" or ")}${
+              phone && email ? " — whichever they prefer" : ""
+            }.`,
           },
         ]
       : []),
@@ -1278,15 +1619,15 @@ function ReviewStep({
       {conflicts.length ? (
         <div className="mt-2 rounded-[4px] border border-warn bg-warn-soft px-3 py-2.5">
           <div className="text-[13px] font-medium text-warn-ink">
-            {name} will wear {held.length} hats at once
+            {name} will wear {heldHats.length} hats at once
           </div>
           {conflicts.map((c) => (
             <p
-              key={c.roles.join("+")}
+              key={c.hats.map((h) => `${h.app}:${h.level ?? "any"}`).join("+")}
               className="mt-1 text-[13px] leading-[19px] text-warn-ink"
             >
               <span className="font-medium">
-                {roleName(c.roles[0])} and {roleName(c.roles[1])}:
+                {hatName(c.hats[0])} and {hatName(c.hats[1])}:
               </span>{" "}
               {c.sentence}
             </p>
@@ -1312,5 +1653,214 @@ function ReviewStep({
         </p>
       ) : null}
     </div>
+  );
+}
+
+/* ------------------------------------------------- which payroll row this is */
+
+/**
+ * Saying which HRMS employee an account is.
+ *
+ * Salary, days worked and reimbursements are all read by joining the account to
+ * the employee master, and until this existed that join was a guess on the
+ * email or the company mobile. On the real book the guess finds almost nobody —
+ * most employees carry no email at all, the accounts are `@mahek.in` while the
+ * sheet holds personal addresses, and the work numbers on the accounts are not
+ * the company mobiles in the sheet — so every field salesman's salary screen
+ * was blank, in a way that looked exactly like being paid nothing.
+ *
+ * It is a picker rather than a matcher on purpose. The master carries two rows
+ * for the same man at two different salaries sharing one mobile, so there is a
+ * real question here that only a person can answer, and a screen that answered
+ * it automatically would be deciding somebody's pay on a coin toss.
+ *
+ * A row already spoken for is shown and refused rather than hidden: somebody
+ * hunting for an employee they cannot find would otherwise conclude the search
+ * is broken when the answer is that a colleague linked it last week.
+ */
+function EmployeeLinkDialog({
+  row,
+  onClose,
+  onDone,
+}: {
+  row: AccessRow;
+  onClose: () => void;
+  onDone: (r: { ok: boolean; message?: string; error?: string }) => void;
+}) {
+  const [all, setAll] = React.useState<LinkableEmployee[] | null>(null);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [q, setQ] = React.useState("");
+  const [chosen, setChosen] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    let live = true;
+    void employeesToLink().then((r) => {
+      if (!live) return;
+      if (r.ok) setAll(r.data);
+      else setLoadError(r.error ?? "The employee master could not be read.");
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const shown = React.useMemo(() => {
+    const rows = all ?? [];
+    const needle = q.trim().toLowerCase();
+    if (!needle) return rows.slice(0, 60);
+    return rows
+      .filter((e) =>
+        [e.name, e.employeeCode, e.email, e.phone, e.department, e.position]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(needle),
+      )
+      .slice(0, 60);
+  }, [all, q]);
+
+  const current = (all ?? []).find((e) => e.takenByUserId === row.userId) ?? null;
+
+  const save = (employeeId: string | null) => {
+    setSaving(true);
+    void linkEmployee({ userId: row.userId, employeeId }).then((r) => {
+      setSaving(false);
+      onDone(r);
+    });
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Which employee is ${row.name}?`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          {current ? (
+            <Button
+              variant="secondary"
+              disabled={saving}
+              /* Unlinking destroys nothing — it falls back to the guess, which
+                 is where the account was before anybody linked it. So it takes
+                 no confirmation beyond this click. */
+              title="Their pay goes back to being matched on email or work number"
+              onClick={() => save(null)}
+            >
+              Unlink
+            </Button>
+          ) : null}
+          <Button
+            variant="primary"
+            disabled={!chosen || saving}
+            title={chosen ? undefined : "Pick an employee first"}
+            onClick={() => chosen && save(chosen)}
+          >
+            {saving ? "Saving…" : "Link them"}
+          </Button>
+        </>
+      }
+    >
+      <div className="text-sm leading-[21px] text-body">
+        <p>
+          This is what their salary, days worked and reimbursements are read
+          from — on the Sales Dashboard and on their handset, from the same
+          record, so the two cannot disagree.
+        </p>
+        {current ? (
+          <p className="mt-2">
+            Linked to{" "}
+            <span className="font-medium text-ink">
+              {current.employeeCode} {current.name}
+            </span>
+            .
+          </p>
+        ) : row.employeeCode ? (
+          <p className="mt-2">
+            Nothing is linked. {row.employeeCode} is showing because their email
+            or work number happened to match it — worth confirming, because on
+            this book that match is usually wrong or missing.
+          </p>
+        ) : (
+          <p className="mt-2">
+            Nothing is linked and nothing matched, which is why their pay reads
+            blank rather than zero.
+          </p>
+        )}
+
+        <div className="mt-3">
+          <Field label="Search the employee master">
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Name, employee code, number or department"
+              autoFocus
+            />
+          </Field>
+        </div>
+
+        {loadError ? (
+          <p className="mt-3 text-danger">{loadError}</p>
+        ) : all === null ? (
+          <p className="mt-3 text-muted">Reading the employee master…</p>
+        ) : shown.length === 0 ? (
+          <p className="mt-3 text-muted">
+            {q.trim()
+              ? "Nobody in the master matches that."
+              : "The employee master is empty. HRMS mirrors the workbook, so check the sync."}
+          </p>
+        ) : (
+          <div className="mt-3 max-h-72 overflow-auto rounded-[4px] border border-line">
+            {shown.map((e) => {
+              const takenByOther = !!e.takenByUserId && e.takenByUserId !== row.userId;
+              const isCurrent = e.takenByUserId === row.userId;
+              return (
+                <button
+                  key={e.id}
+                  type="button"
+                  disabled={takenByOther}
+                  title={
+                    takenByOther
+                      ? `Already linked to ${e.takenByName}. Unlink that account first — one payroll row cannot belong to two people.`
+                      : undefined
+                  }
+                  onClick={() => setChosen(e.id)}
+                  className={cx(
+                    "flex w-full items-start gap-2 border-0 border-b border-line px-3 py-2 text-left last:border-b-0",
+                    takenByOther
+                      ? "cursor-not-allowed bg-canvas opacity-60"
+                      : "cursor-pointer bg-transparent hover:bg-canvas",
+                    chosen === e.id ? "bg-canvas ring-1 ring-inset ring-brand" : "",
+                  )}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13px] font-medium text-ink">
+                      {e.name}
+                    </span>
+                    <span className="block text-[12px] text-muted">
+                      {[e.employeeCode, e.position ?? e.department, e.email ?? e.phone]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                    {isCurrent ? <Badge tone="success">Linked</Badge> : null}
+                    {takenByOther ? <Badge tone="warn">{e.takenByName}</Badge> : null}
+                    {e.status === "active" ? null : (
+                      <Badge tone="warn">
+                        {e.status === "inactive" ? "Left" : "Status unknown"}
+                      </Badge>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }

@@ -29,6 +29,66 @@ export const CUSTOMER_PAGE = 15;
 /** Where to measure from: a fix, a city's centre, or nothing. */
 export type Origin = { lat: number; lng: number } | null;
 
+/**
+ * Which half of the book to show.
+ *
+ * A LEAD IS A ROW IN BOTH TABLES on this handset. The office collapsed the two
+ * into one `customers` row long ago — `kind` and `lead_stage` live there — but
+ * the wire still sends leads down their own channel into `leads`, keyed on the
+ * same id. So "is this a lead" is asked as an EXISTS against that table rather
+ * than read off a column the handset does not have.
+ *
+ * `archived = 0` matters: an archived lead is one filed out of the way, and it
+ * should not make its customer row disappear from the Customers view.
+ */
+export type BookView = 'all' | 'customers' | 'leads';
+
+const IS_LEAD = `EXISTS (SELECT 1 FROM leads l WHERE l.id = customers.id AND l.archived = 0)`;
+
+/**
+ * WHAT THE CARD NEEDS TO SAY WHAT A ROW IS, added to the projection of both
+ * pages below.
+ *
+ * The list used to select `customers.*` and nothing else, which meant the card
+ * could name the account's KIND and never its RUNG — a lead sat in the book
+ * reading "Lead", or on a row whose `kind` had never been filled in, reading
+ * nothing at all. Suspect, Prospect and Negotiation are the whole of what a
+ * salesman is deciding between when he looks at this list, and they live in
+ * `leads`, one table over.
+ *
+ * `isLead` is the same EXISTS the view chips use, SELECTED rather than only
+ * filtered on. That is the rule this file's own header states — on the handset
+ * "is this a lead" is a correlated subquery and never a column read, because
+ * the office collapsed leads and customers into one `customers` row and
+ * `kind` on that row is not the answer.
+ *
+ * Correlated subqueries rather than a `LEFT JOIN leads`: both tables carry
+ * `id`, `name` and `city`, so a join turns every bare column in the WHERE and
+ * the ORDER BY ambiguous and the whole builder would have to be requalified to
+ * add one word to a card. `leads.id` is the PRIMARY KEY, so each of these is a
+ * point lookup.
+ *
+ * NONE OF THEM BINDS A PARAMETER, which is what keeps the note below about
+ * placeholder order true: the six in the projection are still the CASE's own,
+ * and they still come before the WHERE's.
+ */
+const LEAD_FACTS = `${IS_LEAD} AS isLead,
+    (SELECT l.funnelStage FROM leads l WHERE l.id = customers.id AND l.archived = 0) AS leadFunnelStage,
+    (SELECT l.stage FROM leads l WHERE l.id = customers.id AND l.archived = 0) AS leadStage`;
+
+/** The clause for a view, or null where everything is wanted. */
+function viewClause(view: BookView | undefined): string | null {
+  if (view === 'leads') return IS_LEAD;
+  if (view === 'customers') return `NOT ${IS_LEAD}`;
+  return null;
+}
+
+/** Join whatever clauses there are into a WHERE, or an empty string. */
+function whereOf(parts: (string | null)[]): string {
+  const live = parts.filter(Boolean);
+  return live.length ? `WHERE ${live.join(' AND ')}` : '';
+}
+
 export type Query = { sql: string; params: (string | number)[] };
 
 /* Name, contact, city, phone, GST and dealer code — because a salesman looking
@@ -47,11 +107,13 @@ function normalise(query: string | undefined): string {
 }
 
 /** How many shops MATCH — the number the screen prints, never a loaded length. */
-export function customerCountQuery(query?: string): Query {
+export function customerCountQuery(query?: string, view?: BookView): Query {
   const q = normalise(query);
-  return q
-    ? { sql: `SELECT COUNT(*) AS n FROM customers WHERE ${SEARCH}`, params: searchParams(q) }
-    : { sql: 'SELECT COUNT(*) AS n FROM customers', params: [] };
+  const where = whereOf([q ? `(${SEARCH})` : null, viewClause(view)]);
+  return {
+    sql: `SELECT COUNT(*) AS n FROM customers ${where}`,
+    params: q ? searchParams(q) : [],
+  };
 }
 
 /**
@@ -80,6 +142,7 @@ export function customerCountQuery(query?: string): Query {
 export function customerPageQuery(args: {
   query?: string;
   origin?: Origin;
+  view?: BookView;
   limit?: number;
   offset?: number;
 } = {}): Query {
@@ -88,12 +151,14 @@ export function customerPageQuery(args: {
   const offset = args.offset ?? 0;
   const origin = args.origin ?? null;
 
-  const where = q ? `WHERE ${SEARCH}` : '';
+  /* The view clause carries no parameters of its own, so the binding order
+     below — projection, then search, then the page — is unchanged by it. */
+  const where = whereOf([q ? `(${SEARCH})` : null, viewClause(args.view)]);
   const whereParams = q ? searchParams(q) : [];
 
   if (!origin) {
     return {
-      sql: `SELECT * FROM customers ${where} ORDER BY name COLLATE NOCASE, id LIMIT ? OFFSET ?`,
+      sql: `SELECT *, ${LEAD_FACTS} FROM customers ${where} ORDER BY name COLLATE NOCASE, id LIMIT ? OFFSET ?`,
       params: [...whereParams, limit, offset],
     };
   }
@@ -102,7 +167,7 @@ export function customerPageQuery(args: {
   /* The SELECT list is bound BEFORE the WHERE, because that is the order the
      placeholders appear in the statement. Six of them, all in the projection. */
   return {
-    sql: `SELECT *,
+    sql: `SELECT *, ${LEAD_FACTS},
             CASE WHEN gpsLat IS NULL OR gpsLng IS NULL THEN NULL
                  ELSE ((gpsLat - ?) * (gpsLat - ?))
                     + (((gpsLng - ?) * ?) * ((gpsLng - ?) * ?))

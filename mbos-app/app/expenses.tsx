@@ -3,12 +3,14 @@ import { Pressable, TextInput, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Choice, Input, ListCard, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
+import { Badge, Choice, ListCard, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
+import { VoiceField } from '../src/components/ui/dictate';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { Icon } from '../src/components/ui/Icon';
-import { claimExpense, listExpenses, type Expense } from '../src/data/requests';
+import { claimExpense, expensesOn, listExpenses, type Expense } from '../src/data/requests';
 import { getConfig } from '../src/data/config';
-import { activePolicy, previewClaim, CLAIM_KINDS, type LocalPolicy } from '../src/data/travel';
+import { activePolicy, previewClaim, CLAIM_KINDS, type ClaimedLine, type LocalPolicy } from '../src/data/travel';
+import type { ExpenseKind } from '../src/engines/generated/expense-policy';
 import { takePhoto } from '../src/native/capture';
 import { dmy, inr, isoDate } from '../src/lib/format';
 import { useStore } from '../src/state/store';
@@ -46,9 +48,16 @@ export default function ExpensesScreen() {
      the one he read here was the wrong one. */
   const [policy, setPolicy] = React.useState<LocalPolicy | null>(null);
   const [maxAgeDays, setMaxAgeDays] = React.useState(30);
+  /* What is ALREADY on the day he is claiming for. The policy caps a day, not a
+     claim, so a preview priced without these reports the whole cap however much
+     of it has gone — and he finds out at approval. */
+  const [dayLines, setDayLines] = React.useState<ClaimedLine[]>([]);
 
   const [open, setOpen] = React.useState(false);
   const [fixing, setFixing] = React.useState(false);
+  /* The line he reopened, held so it can be left OUT of the day's total:
+     correcting a ₹300 claim must not read as ₹300 already spent. */
+  const [fixingId, setFixingId] = React.useState<string | null>(null);
   const [ex, setEx] = React.useState<Draft>(EMPTY);
   const [err, setErr] = React.useState<'amt' | 'bill' | 'when' | 'note' | null>(null);
   const [cal, setCal] = React.useState(false);
@@ -83,15 +92,49 @@ export default function ExpensesScreen() {
   const kind = ex.kind || kinds[0]!.key;
   const exAmtPaise = (parseInt(ex.amt.replace(/[^0-9]/g, ''), 10) || 0) * 100;
 
-  /* The same engine the office prices the day with, run on this one line. A
+  /* The clock is read ONCE, in a state initialiser rather than during render —
+     and it is what the sheet falls back to before he has picked a day. */
+  const [todayIso] = React.useState(() => isoDate(new Date()));
+  const claimDay = ex.whenIso || todayIso;
+
+  /* Re-read on `rows` as well as on the day, because sending a claim reloads
+     the list and the day it landed on now has one more line on it. */
+  React.useEffect(() => {
+    let live = true;
+    void expensesOn(claimDay).then((l) => {
+      if (live) setDayLines(l);
+    });
+    return () => {
+      live = false;
+    };
+  }, [claimDay, rows]);
+
+  /* `expensesOn` already leaves out refused claims, which is every line `fix`
+     can reopen — but which states count towards a day is that function's rule
+     to change, and this screen must not silently double-count the moment it
+     widens. */
+  const alreadyClaimed = React.useMemo(
+    () => dayLines.filter((l) => l.id !== fixingId),
+    [dayLines, fixingId],
+  );
+
+  /* The same engine the office prices the day with, run on the real day. A
      second reading of the rules here is how a salesman is told one figure and
      paid another. */
-  const preview = previewClaim(policy, kind as never, exAmtPaise, ex.billMediaId != null);
+  const preview = previewClaim({
+    policy,
+    kind: kind as ExpenseKind,
+    claimedPaise: exAmtPaise,
+    hasBill: ex.billMediaId != null,
+    day: claimDay,
+    alreadyClaimed,
+  });
   const exOver = preview.excessPaise > 0;
   const capLine = preview.line;
 
   const add = () => {
     setFixing(false);
+    setFixingId(null);
     setErr(null);
     const today = new Date();
     setEx({ ...EMPTY, kind: kinds[0]!.key, when: dmy(isoDate(today)), whenIso: isoDate(today) });
@@ -100,6 +143,7 @@ export default function ExpensesScreen() {
 
   const fix = (x: Expense) => {
     setFixing(true);
+    setFixingId(x.id);
     setErr(null);
     setEx({
       kind: x.category,
@@ -118,6 +162,7 @@ export default function ExpensesScreen() {
     setEx(EMPTY);
     setErr(null);
     setFixing(false);
+    setFixingId(null);
     setCal(false);
   };
 
@@ -161,7 +206,6 @@ export default function ExpensesScreen() {
   };
 
   /* The two refusals the design writes out, so a greyed day always says why. */
-  const [todayIso] = React.useState(() => isoDate(new Date()));
   const oldestIso = React.useMemo(() => {
     const o = new Date();
     o.setDate(o.getDate() - maxAgeDays);
@@ -373,10 +417,9 @@ export default function ExpensesScreen() {
           <T s="label" style={{ marginBottom: 6 }}>
             What it was for
           </T>
-          <Input
+          <VoiceField
             value={ex.note}
             onChangeText={(v) => patch({ note: v })}
-            multiline
             invalid={err === 'note'}
             placeholder="Nagpur – Kamptee – Nagpur, 84 km"
             style={{ minHeight: 72 }}

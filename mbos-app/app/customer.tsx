@@ -6,7 +6,11 @@ import { Icon } from '../src/components/ui/Icon';
 import { Badge, Card, HealthPill, Input, PrimaryButton } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
-import { customerSamples, type Sample } from '../src/data/requests';
+import { getLead, type Lead } from '../src/data/leads';
+import { stageOf } from '../src/data/lead-funnel';
+import { stageLabel } from '../src/engines/funnel';
+import { complaintsFor, customerSamples, type Complaint, type Sample } from '../src/data/requests';
+import { writeInternalNote } from '../src/data/internal-notes';
 import {
   competitorRecords,
   customerOrders,
@@ -34,7 +38,7 @@ import { callNumber, openWhatsApp } from '../src/lib/messaging';
  * know which he has.
  */
 
-const TABS = ['Overview', 'Timeline', 'Orders', 'Payments', 'Samples', 'Competitors'];
+const TABS = ['Overview', 'Timeline', 'Orders', 'Payments', 'Samples', 'Complaints', 'Competitors'];
 const TL_FILTERS = ['All', 'Visits', 'Orders', 'Payments', 'Calls', 'Complaints'];
 
 /** The stream's own event types, in the words the design puts on the badge. */
@@ -72,16 +76,30 @@ function freshness(at: number): string {
 
 export default function CustomerRecord() {
   const c = useCustomer();
+  /*
+   * IS THIS SHOP ALSO A LEAD, and where is it standing?
+   *
+   * Asked of the `leads` table rather than read off `c.kind`, which is the
+   * rule `customer-query.ts` states: the office keeps one `customers` row for
+   * both and the lead arrives down its own channel keyed on the same id.
+   *
+   * `getCustomer` selects from `customers` alone, so the row in the store
+   * cannot answer this — hence a second read rather than another column.
+   */
+  const [lead, setLead] = React.useState<Lead | null>(null);
   const pTab = useStore((s) => s.pTab);
   const tlFilter = useStore((s) => s.tlFilter);
   const set = useStore((s) => s.set);
   const notify = useStore((s) => s.notify);
-  const beginVisit = useStore((s) => s.beginVisit);
+  const askTravel = useStore((s) => s.askTravel);
 
   const [events, setEvents] = React.useState<TimelineEvent[]>([]);
   const [orders, setOrders] = React.useState<CustomerOrder[]>([]);
   const [receipts, setReceipts] = React.useState<CustomerPayment[]>([]);
   const [samples, setSamples] = React.useState<Sample[]>([]);
+  const [gripes, setGripes] = React.useState<Complaint[]>([]);
+  const [note, setNote] = React.useState('');
+  const [noteBusy, setNoteBusy] = React.useState(false);
   const [competitors, setCompetitors] = React.useState<Awaited<ReturnType<typeof competitorRecords>>>([]);
   const [compForm, setCompForm] = React.useState(false);
   const [comp, setComp] = React.useState({ name: '', rate: '', note: '', credit: '', delivery: '', strengths: '', weaknesses: '' });
@@ -97,10 +115,12 @@ export default function CustomerRecord() {
       customerOrders(id),
       customerPayments(id),
       customerSamples(id),
-    ]).then(([t, k, o, r, sm]) => {
+      complaintsFor(id),
+    ]).then(([t, k, o, r, sm, g]) => {
       setOrders(o);
       setReceipts(r);
       setSamples(sm);
+      setGripes(g);
       setEvents(t);
       setCompetitors(k);
     });
@@ -116,10 +136,12 @@ export default function CustomerRecord() {
       customerOrders(id),
       customerPayments(id),
       customerSamples(id),
-    ]).then(([t, k, o, r, sm]) => {
+      complaintsFor(id),
+    ]).then(([t, k, o, r, sm, g]) => {
       setOrders(o);
       setReceipts(r);
       setSamples(sm);
+      setGripes(g);
         if (!live) return;
         setEvents(t);
         setCompetitors(k);
@@ -152,6 +174,17 @@ export default function CustomerRecord() {
     reload();
   };
 
+  React.useEffect(() => {
+    let live = true;
+    if (!c?.id) return;
+    void getLead(c.id).then((row) => {
+      if (live) setLead(row && !row.archived ? row : null);
+    });
+    return () => {
+      live = false;
+    };
+  }, [c?.id]);
+
   /* A record that has not arrived on this handset yet is said plainly rather
      than rendered as somebody else's figures under a blank name. */
   if (!c) {
@@ -181,8 +214,49 @@ export default function CustomerRecord() {
               {[c.contactPerson, c.city, c.phone].filter(Boolean).join(' · ')}
             </Text>
           </View>
-          {c.healthScore != null ? <HealthPill value={c.healthScore} large /> : null}
+          {c.healthScore != null || c.healthBand ? (
+            <HealthPill value={c.healthScore ?? null} band={c.healthBand ?? null} large />
+          ) : null}
         </View>
+
+        {/*
+          THE WAY TO THE FUNNEL, from the record.
+
+          The ladder, the §28 gates and both forms live on `/lead`, and `/leads`
+          was the only door to any of them — so this screen, which a salesman
+          reaches from search, from a journey stop and from a visit, could show
+          him a lead and give him no way to see which rung it was on, let alone
+          move it. It says the rung rather than just "Lead" because the rung is
+          the thing he is deciding about, and because a link whose label is a
+          category teaches nobody that there is a funnel behind it.
+        */}
+        {lead ? (
+          <Pressable
+            onPress={() => router.push(`/lead?id=${lead.id}&from=customer`)}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              marginTop: 12,
+              paddingVertical: 10,
+              paddingHorizontal: 12,
+              borderRadius: radius.md,
+              borderWidth: 1,
+              borderColor: C.border,
+              backgroundColor: C.wash,
+            }}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={[{ fontSize: 14, color: C.ink }, weight(500)]}>
+                {'Lead · ' + stageLabel(stageOf(lead))}
+              </Text>
+              <Text style={[type.caption, { marginTop: 2 }]}>
+                Open the funnel to move it on, or see what it is waiting for
+              </Text>
+            </View>
+            <Text style={{ fontSize: 18, lineHeight: 18, color: C.muted }}>›</Text>
+          </Pressable>
+        ) : null}
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.hairline }}>
           <View>
@@ -206,7 +280,11 @@ export default function CustomerRecord() {
 
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
           <Pressable
-            onPress={() => { beginVisit(c.id); router.push('/visit'); }}
+            /* Asks how he is getting there first — see `TravelGate`. The
+               shop's name goes with it so the question can name what it is
+               about; a sheet asking "how are you getting there?" with no
+               destination on it is a sheet somebody dismisses. */
+            onPress={() => askTravel({ customerId: c.id, customerName: c.name })}
             style={{ flex: 1, height: 52, borderRadius: radius.md, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
             <Text style={[{ fontSize: 15, color: '#FFFFFF' }, weight(600)]}>Visit</Text>
           </Pressable>
@@ -295,6 +373,67 @@ export default function CustomerRecord() {
             {/* The last six bills, as the office scored them. Nothing is derived
                 here — payment behaviour is the server's to compute. */}
             <PayBehaviour raw={c.payBehaviour} />
+
+            {/* ---- a private note for the office ----
+
+                §R. `mbos_internal_notes` has had a table, a role list and a
+                bootstrap that narrows by role since the MBOS module shipped,
+                and `handleInternalNote` has been waiting on the server for a
+                payload no handset ever sent — a read path over a table nothing
+                could put a row in, exactly the shape competitor records were
+                in before they got a write path.
+
+                IT IS WRITE-ONLY HERE, and that is the feature rather than an
+                omission. `services/mbos-service.ts` never selects the table at
+                all, on its own stated reasoning: a note that could leak is not
+                on the device to leak, and a filter in the app is a filter
+                somebody can turn off. So nothing is stored locally either —
+                the note sits in the outbox until it goes, and after that this
+                phone has no copy. The screen says so rather than leaving him
+                to discover it by looking for a list that will never appear. */}
+            <Card>
+              <Text style={[type.label, { marginBottom: 6 }]}>A private note for the office</Text>
+              <Text style={{ fontSize: 13, lineHeight: 19, color: C.muted, marginBottom: 10 }}>
+                Something about this shop the customer should never see. It goes to the office and
+                is not kept on this phone, so you will not see it here afterwards.
+              </Text>
+              <Input
+                value={note}
+                onChangeText={setNote}
+                placeholder="Pays on time but argues every rate — send the list in writing"
+                multiline
+              />
+              <Pressable
+                accessibilityRole="button"
+                disabled={noteBusy || !note.trim()}
+                onPress={() => {
+                  if (!id) return;
+                  setNoteBusy(true);
+                  void writeInternalNote({ customerId: id, body: note })
+                    .then((r) => {
+                      if (!r.ok) return notify(r.message);
+                      setNote('');
+                      notify('Sent to the office · not kept on this phone');
+                    })
+                    .finally(() => setNoteBusy(false));
+                }}
+                style={({ pressed }) => ({
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minHeight: 48,
+                  marginTop: 10,
+                  borderRadius: radius.sm,
+                  borderWidth: 1,
+                  borderColor: note.trim() ? C.primary : C.border,
+                  backgroundColor: pressed ? C.wash : note.trim() ? C.primaryTint : C.surface,
+                  opacity: noteBusy ? 0.6 : 1,
+                })}>
+                <Text
+                  style={[{ fontSize: 15, color: note.trim() ? C.primaryDeep : C.faint }, weight(500)]}>
+                  Send it to the office
+                </Text>
+              </Pressable>
+            </Card>
           </View>
         ) : null}
 
@@ -314,6 +453,26 @@ export default function CustomerRecord() {
                 );
               })}
             </ScrollView>
+
+            {/* AN EMPTY TIMELINE HAD NOTHING TO SAY, which is not the same as
+                having nothing to show. Orders and Payments beside it both draw
+                an `Empty`; this tab drew the filter chips and then stopped, so
+                a shop with no history rendered as a blank space under a row of
+                pills — indistinguishable from a tab that had failed to load,
+                and reported as exactly that. The two causes are worth telling
+                apart in the words, because only one of them is the salesman's
+                to act on: a filter that excludes everything is undone by
+                pressing All, and an empty stream is the office's to fill. */}
+            {events.length === 0 ? (
+              <Empty
+                head={tlFilter === 'All' ? 'Nothing recorded yet' : 'Nothing under ' + tlFilter}
+                body={
+                  tlFilter === 'All'
+                    ? 'Visits, calls, orders and payments appear here as the office records them. A shop nobody has dealt with yet has nothing to show.'
+                    : 'This shop has history, but none of it is ' + tlFilter.toLowerCase() + '. Tap All to see the rest.'
+                }
+              />
+            ) : null}
 
             {events.map((e, i) => {
               const last = i === events.length - 1;
@@ -483,8 +642,65 @@ export default function CustomerRecord() {
           </View>
         ) : null}
 
-        {/* ---- competitors ---- */}
+        {/* ---- complaints ----
+
+            A complaint was WRITE-ONLY for as long as it has existed.
+            `logComplaint` wrote the row from the visit drawer and sent it to
+            the desk team, and nothing on this handset ever selected one back —
+            so the next time the salesman walked into the same shop and was
+            asked what had happened about it, the record could not tell him
+            even that it had been sent. The thing he is most likely to be asked
+            on his next visit was the one thing he could not look up.
+
+            `status` is the office's word and arrives on the sync, so an answer
+            appears here without anybody on this end doing anything. */}
         {pTab === 5 ? (
+          <View>
+            {gripes.length === 0 ? (
+              <Card style={{ paddingVertical: 24 }}>
+                <Text style={[type.small, { color: C.muted, textAlign: 'center' }]}>
+                  Nothing logged against this shop. A complaint is raised from the visit, under the
+                  Complaint outcome.
+                </Text>
+              </Card>
+            ) : (
+              <View style={{ gap: 10 }}>
+                {gripes.map((g) => (
+                  <Card key={g.id}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      {/* The stored value is already the word on the button.
+                          `logComplaint` writes the design's own label locally
+                          and only translates to MahekOne's enum on the WIRE —
+                          see `wireComplaintCategory` — so there is nothing to
+                          map back here, and a mapping would be a second
+                          vocabulary to keep in step with the first. */}
+                      <Text style={[{ flex: 1, minWidth: 0, fontSize: 15, color: C.ink }, weight(500)]}>
+                        {g.category}
+                      </Text>
+                      <Badge tone={g.status === 'open' ? 'amber' : 'success'}>
+                        {g.syncState === 'queued' ? 'Not sent' : g.status === 'open' ? 'Open' : 'Closed'}
+                      </Badge>
+                    </View>
+                    <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
+                      {g.description}
+                    </Text>
+                    <Text style={type.caption}>{pretty(isoDate(new Date(g.clientCreatedAt)))}</Text>
+                  </Card>
+                ))}
+                {/* No `Slice` here, unlike Orders and Payments above it. Those
+                    two are the OFFICE's lists, capped at ten by the server, so
+                    "older ones stay in the office" is literally true of them.
+                    Complaints are only ever raised on this handset and there
+                    is no pull channel bringing others down, so this list is
+                    the whole history and saying otherwise would be a false
+                    sentence on a screen somebody reads before ringing. */}
+              </View>
+            )}
+          </View>
+        ) : null}
+
+        {/* ---- competitors ---- */}
+        {pTab === 6 ? (
           <View>
             {!compForm ? (
               <Pressable

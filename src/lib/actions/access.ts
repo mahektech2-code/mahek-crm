@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
@@ -10,22 +10,22 @@ import {
   auditLog,
   employees,
   passwordResets,
+  sessions,
   users,
 } from "@/db/schema";
 import { APP_IDS, getApp, type AppId } from "@/lib/apps";
 import { getModule, moduleKeysForApp } from "@/lib/modules";
 import { hashPassword, isManager, requireUser } from "@/lib/auth";
+import { newPassword } from "@/lib/password";
 import { initialsOf } from "@/lib/format";
-import { mailConfigured, sendMail } from "@/lib/mailer";
-import {
-  appOrigin,
-  hashResetToken,
-  newResetToken,
-  RESET_TTL_MINUTES,
-} from "@/lib/password-reset";
 import { err as fail, fieldErr, ok, type Result } from "@/lib/result";
 import { widestRole, type Role } from "@/lib/access-control";
-import { listCandidates, type Candidate } from "@/lib/services/access-service";
+import {
+  employeesForLink,
+  listCandidates,
+  type Candidate,
+  type LinkableEmployee,
+} from "@/lib/services/access-service";
 
 /* ---------------------------------------------------------------------------
  * Granting and narrowing access.
@@ -102,7 +102,7 @@ export type AccessGrantInput = {
    * dialog that does not send one, or a terminal that knows nothing about
    * them, goes on granting an app that works.
    */
-  role?: "telecaller" | "manager" | "accounts" | "admin" | null;
+  role?: "associate" | "manager" | "admin" | null;
 };
 
 export type SetAccessInput = {
@@ -114,17 +114,16 @@ export type SetAccessInput = {
   grants: AccessGrantInput[];
   /** Only read when an account has to be created. */
   account?: {
-    email: string;
+    /** At least one of these two. Both is fine and often better. */
+    email?: string | null;
     phone?: string | null;
-    role: "telecaller" | "manager" | "accounts" | "admin";
+    role: "associate" | "manager" | "admin";
   };
 };
 
 export type SetAccessResult = {
   userId: string;
   created: boolean;
-  /** Said plainly rather than assumed — mail may not be configured. */
-  resetLinkSent: boolean;
   granted: string[];
   revoked: string[];
   changed: string[];
@@ -177,7 +176,7 @@ function desiredState(grants: AccessGrantInput[]): {
 }
 
 /** The four, as a list, so an unknown one is refused rather than stored. */
-const ROLES = ["telecaller", "manager", "accounts", "admin"] as const;
+const ROLES = ["associate", "manager", "admin"] as const;
 
 /**
  * Write one app's module rows.
@@ -233,7 +232,6 @@ export async function setAccess(
 
   let userId = input.userId ?? null;
   let created = false;
-  let resetLinkSent = false;
   let personName = "";
 
   /* ------------------------------------------------------ a new account */
@@ -272,30 +270,48 @@ export async function setAccess(
       );
     }
 
-    const email = input.account.email.trim().toLowerCase();
+    /*
+     * EITHER ONE SIGNS THEM IN, so either one will do.
+     *
+     * `signIn` matches the last ten digits of a work number as readily as it
+     * matches a whole email, and has since it was written — so both of these
+     * are credentials and neither is the credential. Demanding both meant that
+     * setting up a field salesman, who is issued a handset and a number and no
+     * company mailbox, required somebody to type an address into the box that
+     * nobody would ever read: a fact invented to satisfy a column.
+     *
+     * The rule is therefore "at least one", and it can only live HERE, where
+     * the two are weighed together. A NOT NULL on either column can see half
+     * the answer and would refuse the very case this exists for.
+     */
+    const email = input.account.email?.trim().toLowerCase() || null;
     const phone = input.account.phone ? input.account.phone.replace(/\D/g, "").slice(-10) : null;
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+
+    if (!email && !phone) {
+      return fieldErr(
+        "phone",
+        "Give them a work number or an email — one of the two is how they sign in.",
+      );
+    }
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
       return fieldErr("email", "That does not look like an email address.");
     }
-    // The web has no password any more — a work number and a code sent to it
-    // is the whole credential, so an account with no number is one nobody can
-    // ever sign into.
-    if (!phone) {
-      return fieldErr("phone", "A work number is required — it's how they sign in.");
-    }
-    if (!/^[6-9]\d{9}$/.test(phone)) {
+    if (phone && !/^[6-9]\d{9}$/.test(phone)) {
       return fieldErr("phone", "A work number is ten digits, starting 6 to 9.");
     }
 
     // Both are sign-ins, so both have to be unique or the login form has two
-    // answers to one question.
+    // answers to one question. `users_email_key` and the partial
+    // `users_phone_key` say the same thing at the database; this checks first
+    // so the refusal can name which box to fix rather than surfacing as a
+    // constraint violation naming neither.
     const clash = await db
       .select({ id: users.id, email: users.email, phone: users.phone })
       .from(users);
-    if (clash.some((c) => c.email === email)) {
+    if (email && clash.some((c) => c.email === email)) {
       return fieldErr("email", "An account already uses that email.");
     }
-    if (clash.some((c) => c.phone === phone)) {
+    if (phone && clash.some((c) => c.phone === phone)) {
       return fieldErr("phone", "An account already uses that work number.");
     }
 
@@ -304,14 +320,18 @@ export async function setAccess(
     created = true;
 
     /*
-     * A password nobody knows.
+     * A password nobody knows, and the account is UNUSABLE until somebody
+     * issues one.
      *
-     * The web needs none — a code sent to the work number above is what makes
-     * the account usable, immediately. This hash exists only in case the same
-     * account is ever paired with MBOS, the field salesman handset app, which
-     * still authenticates the old way over its own API and cannot be changed
-     * from here. Typing a real one into this dialog would mean somebody
-     * reading it out over a phone, so it stays one nobody knows.
+     * This used to claim the web needed no password because a code was sent to
+     * the work number. No code was ever sent — `otp_channel` is an enum in the
+     * schema that nothing reads — so what this actually produced was an
+     * account that could not be signed into at all, with a welcome email
+     * telling the employee to wait for something that was never coming.
+     *
+     * A real password is still not typed into the dialog, because that is a
+     * password somebody chooses badly and reuses. `issueCredential` generates
+     * one on the step after this and shows it once.
      */
     const passwordHash = await hashPassword(randomUUID() + randomUUID());
     const apps = [...wanted.keys()];
@@ -326,6 +346,14 @@ export async function setAccess(
         initials: initialsOf(employee.name),
         passwordHash,
         active: true,
+        /* WHICH employee this account is, recorded at the one moment it is
+           known for certain: somebody has just picked them out of the master
+           by hand. Everything downstream that needs pay, days worked or
+           reimbursements reads this rather than guessing from an email the
+           sheet mostly does not carry — see `users.employeeId`. An account
+           created any other way keeps the old guess, and `npm run
+           employee:link` is what settles those. */
+        employeeId: employee.id,
       });
       await tx.insert(appAccess).values(
         apps.map((app) => ({
@@ -341,8 +369,6 @@ export async function setAccess(
       }
     });
 
-    resetLinkSent = await mailResetLink(userId, employee.name, email, phone, me.name);
-
     await audit(
       me.id,
       "create-user",
@@ -354,12 +380,10 @@ export async function setAccess(
     refresh();
 
     return ok(
-      { userId, created, resetLinkSent, granted: apps, revoked: [], changed: [] },
-      `${personName} can now open ${describe(apps)} — sign-in is a code sent to ${phone}. ${
-        resetLinkSent
-          ? "A link to set a field-app password has also been emailed to them, in case they are ever paired with MBOS."
-          : "No mail is configured on this deployment, so that field-app password link went to the server log instead of to them."
-      }`,
+      { userId, created, granted: apps, revoked: [], changed: [] },
+      `${personName} can now open ${describe(apps)}. They sign in with ${
+        phone ?? email
+      } and a password — generate one on the next page.`,
     );
   }
 
@@ -472,13 +496,14 @@ export async function setAccess(
      * manager hat in the CRM gives them their team on the day it is granted,
      * which is what the person granting it expects.
      */
-    const heldRoles = [...wanted.keys()].map(
-      (app) => (wantedRoles.get(app) ?? account.role) as Role,
-    );
-    if (heldRoles.length) {
+    const heldHats = [...wanted.keys()].map((app) => ({
+      app,
+      role: (wantedRoles.get(app) ?? account.role) as Role,
+    }));
+    if (heldHats.length) {
       await tx
         .update(users)
-        .set({ role: widestRole(heldRoles) })
+        .set({ role: widestRole(heldHats) })
         .where(eq(users.id, userId!));
     }
     for (const app of [...granted, ...changed]) {
@@ -515,7 +540,7 @@ export async function setAccess(
   ].filter(Boolean);
 
   return ok(
-    { userId, created: false, resetLinkSent: false, granted, revoked, changed },
+    { userId, created: false, granted, revoked, changed },
     `${personName} ${said.join(" · ")}.` +
       (revoked.length && !wanted.size
         ? " They can still sign in, and the launcher will say plainly that they have nothing."
@@ -547,47 +572,163 @@ async function hrmsBlock(userId: string): Promise<string | null> {
   return match?.blocked ?? null;
 }
 
-/** Mint and send a single-use reset link. Returns whether it actually went. */
-async function mailResetLink(
+/* ------------------------------------------------------- the credential */
+
+export type IssuedCredential = {
+  userId: string;
+  name: string;
+  /** What they type into the first box. The work number where there is one. */
+  signInWith: string;
+  phone: string | null;
+  email: string | null;
+  /** SHOWN ONCE. Never stored, never audited, never readable again. */
+  password: string;
+  /** Signed out everywhere, because the password they held is now wrong. */
+  sessionsEnded: number;
+};
+
+/**
+ * Mint a sign-in this person can be told over the telephone.
+ *
+ * THIS IS THE FIX FOR AN ONBOARDING PATH THAT DID NOT WORK. `setAccess`
+ * creates an account with `hashPassword(randomUUID() + randomUUID())` — a
+ * password nobody knows — and then told the person granting access that
+ * "sign-in is a code sent to {phone}", while the welcome email told the
+ * employee to enter their work number because "we send a code to it, no
+ * password needed". THERE IS NO CODE. `otp_channel` is an enum in the schema
+ * that nothing reads: no table, no sender, no route. So the only door was the
+ * reset link the same email filed under "skip this unless you use MBOS", which
+ * needs mail configured AND a work email the person actually reads — and most
+ * of the field staff this screen exists to set up have neither.
+ *
+ * So the office generates one and reads it out, which is what it was doing
+ * with `mahek1234` anyway, only now the password is unguessable and the fact
+ * that it was issued is on the record.
+ *
+ * **IT IS NEVER AUTOMATIC.** Granting access does not mint a credential; the
+ * screen ASKS. A password that appears unasked is one that gets left on a
+ * screen somebody walks away from, and on an existing account it would be a
+ * silent lockout of whoever was using the old one.
+ *
+ * **A MANAGER MAY NOT MINT A WAY INTO AN ACCOUNT WIDER THAN THEIR OWN.**
+ * Everything else on this screen is checked against the actor and this is the
+ * one action where seeing the result IS the access — `sendPasswordResetFor`
+ * can be pointed at anybody precisely because what it produces goes to a
+ * mailbox the actor cannot read. This produces a password on the actor's own
+ * screen, so a manager asking for one on an admin's account would be granting
+ * themselves admin and leaving "issued a credential" in the log rather than
+ * "escalated". Admin is admin's alone.
+ *
+ * The old password stops working the moment this is called, so every session
+ * on that account goes with it — a live session is somebody signed in on a
+ * credential that no longer exists — and any outstanding reset link is spent,
+ * because a link minted before this would quietly set a THIRD password and
+ * neither the office nor the employee would know which one was live.
+ */
+export async function issueCredential(
   userId: string,
-  name: string,
-  email: string,
-  phone: string,
-  actorName: string,
-): Promise<boolean> {
-  const token = newResetToken();
-  await db.transaction(async (tx) => {
+): Promise<Result<IssuedCredential>> {
+  let me;
+  try {
+    me = await actor();
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
+  }
+
+  const [account] = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      phone: users.phone,
+      role: users.role,
+      active: users.active,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!account) return fail("That account no longer exists.", "not_found");
+
+  if (!account.active) {
+    // Disabling a sign-in and revoking access are different questions — see
+    // the Access screen, which answers both in one row. Handing somebody a
+    // password for an account that refuses every sign-in is a support call
+    // dressed up as a solution.
+    return fail(
+      `${account.name}'s sign-in is disabled, so a password would not let them in. Enable it first.`,
+      "rule_violation",
+    );
+  }
+
+  /* NEITHER IDENTIFIER IS A STATE THAT SHOULD NOT EXIST — `setAccess` refuses
+     to create one and the login form has nothing to match on — but the column
+     allows it, so this says so rather than printing a password beside a blank
+     space and leaving somebody to work out why it never worked. */
+  const signInWith = account.phone ?? account.email;
+  if (!signInWith) {
+    return fail(
+      `${account.name} has neither a work number nor an email on their account, so there is nothing to sign in with. Add one on their record first.`,
+      "rule_violation",
+    );
+  }
+
+  if (ROLES.indexOf(account.role as Role) > ROLES.indexOf(me.role as Role)) {
+    return fail(
+      `Only an administrator can issue a password for ${account.name}, whose account is an administrator.`,
+      "not_permitted",
+    );
+  }
+
+  /* WHETHER THIS TAKES SOMETHING AWAY IS THE CALLER'S TO SAY, not this
+     function's to guess. A brand new account carries a password nobody has
+     ever been told and loses nothing; every other account may have somebody
+     signed in on the old one right now. The only signals here — open sessions,
+     a null `last_login_at` — are both false negatives on an account that is
+     simply not signed in at the moment, or that predates the column being
+     written at all. The dialog knows for certain, because it created the
+     account a second ago, so the sentence is written there. */
+  const password = newPassword();
+  const passwordHash = await hashPassword(password);
+
+  const ended = await db.transaction(async (tx) => {
+    await tx
+      .update(users)
+      .set({ passwordHash, updatedAt: new Date() })
+      .where(eq(users.id, userId));
     await tx
       .update(passwordResets)
       .set({ usedAt: new Date() })
       .where(and(eq(passwordResets.userId, userId), isNull(passwordResets.usedAt)));
-    await tx.insert(passwordResets).values({
-      id: newId("rst"),
-      userId,
-      tokenHash: hashResetToken(token),
-      expiresAt: new Date(Date.now() + RESET_TTL_MINUTES * 60_000),
-    });
+    const gone = await tx
+      .delete(sessions)
+      .where(eq(sessions.userId, userId))
+      .returning({ id: sessions.id });
+    return gone.length;
   });
 
-  await sendMail({
-    to: email,
-    subject: "Your MahekOne sign-in",
-    text: [
-      `Hello ${name.split(" ")[0]},`,
-      "",
-      `${actorName} has set you up on MahekOne. To sign in on the web, open`,
-      `MahekOne and enter your work number, ${phone} — we send a code to it,`,
-      "no password needed.",
-      "",
-      "The link below is only for the MBOS field salesman app, which pairs",
-      "with a password rather than a code. Skip it unless you use that app:",
-      `Open this link to choose one — it works once and expires in ${RESET_TTL_MINUTES} minutes:`,
-      "",
-      `${await appOrigin()}/login/reset?token=${token}`,
-    ].join("\n"),
-  });
+  /* WHAT WAS ISSUED, NEVER WHAT IT WAS. An audit row is read by more people
+     than this screen was, and a password in it is a password in every backup
+     of the log. That it happened, to whom, and by whose hand is the whole of
+     what anybody needs later. */
+  await audit(
+    me.id,
+    "issue-credential",
+    userId,
+    `Sign-in password issued to ${account.name}${
+      ended ? ` · ${ended} session${ended === 1 ? "" : "s"} ended` : ""
+    }`,
+  );
+  refresh();
 
-  return mailConfigured();
+  return ok({
+    userId,
+    name: account.name,
+    signInWith,
+    phone: account.phone,
+    email: account.email,
+    password,
+    sessionsEnded: ended,
+  });
 }
 
 /** The picker's list, re-read on demand so a fresh HRMS sync shows up. */
@@ -598,4 +739,107 @@ export async function candidatesForGrant(): Promise<Result<Candidate[]>> {
     return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
   }
   return ok(await listCandidates());
+}
+
+/* ------------------------------------------------------- the payroll link */
+
+/**
+ * Say which HRMS employee an account is, or take the answer back.
+ *
+ * The one door onto `users.employeeId` that does not require a terminal. On a
+ * deploy nobody has shell access to a terminal is not a fallback, it is a
+ * locked door — the same lesson the sheet import learned — and this is a field
+ * that decides whether anybody's salary appears on a screen at all.
+ *
+ * `employeeId: null` unlinks, which is not the same as never having linked:
+ * the account falls back to the email-or-company-mobile guess, exactly where
+ * it was before. Nothing is destroyed by unlinking, so it takes no
+ * confirmation beyond the click.
+ *
+ * ONE PAYROLL ROW CANNOT BELONG TO TWO ACCOUNTS. The unique index says so and
+ * would refuse it; this checks first so the refusal can NAME the other account
+ * rather than surfacing as a constraint violation naming neither.
+ */
+export async function linkEmployee(input: {
+  userId: string;
+  employeeId: string | null;
+}): Promise<Result<{ employeeCode: string | null }>> {
+  let me;
+  try {
+    me = await actor();
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
+  }
+
+  const [person] = await db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(eq(users.id, input.userId))
+    .limit(1);
+  if (!person) return fail("That account no longer exists.", "not_found");
+
+  if (input.employeeId === null) {
+    await db.update(users).set({ employeeId: null }).where(eq(users.id, person.id));
+    await audit(me.id, "unlink-employee", person.id, `${person.name} · unlinked from payroll`);
+    refresh();
+    return ok(
+      { employeeCode: null },
+      `${person.name} is no longer linked to an HRMS record. Their pay falls back to matching on email or work number, which on this book usually finds nobody.`,
+    );
+  }
+
+  const [employee] = await db
+    .select({
+      id: employees.id,
+      name: employees.name,
+      code: employees.employeeCode,
+      sheetStatus: employees.sheetStatus,
+    })
+    .from(employees)
+    .where(eq(employees.id, input.employeeId))
+    .limit(1);
+  if (!employee) return fail("That employee is no longer in the master.", "not_found");
+  if (employee.sheetStatus === "withdrawn") {
+    /* Refused rather than warned about: HR has stopped maintaining that row,
+       so a salary read through it would go stale with nothing saying when. */
+    return fail(
+      `${employee.name} is no longer in the employee sheet, so their figures would stop being maintained.`,
+      "rule_violation",
+    );
+  }
+
+  const [clash] = await db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(and(eq(users.employeeId, employee.id), ne(users.id, person.id)))
+    .limit(1);
+  if (clash) {
+    return fail(
+      `${employee.code} ${employee.name} is already linked to ${clash.name}. Unlink that account first — one payroll row cannot belong to two people.`,
+      "conflict",
+    );
+  }
+
+  await db.update(users).set({ employeeId: employee.id }).where(eq(users.id, person.id));
+  await audit(
+    me.id,
+    "link-employee",
+    person.id,
+    `${person.name} · linked to ${employee.code} ${employee.name}`,
+  );
+  refresh();
+  return ok(
+    { employeeCode: employee.code },
+    `${person.name} is ${employee.code} ${employee.name}. Their salary, days worked and reimbursements now read off that record.`,
+  );
+}
+
+/** The employee master, for the link picker. Read fresh on every open. */
+export async function employeesToLink(): Promise<Result<LinkableEmployee[]>> {
+  try {
+    await actor();
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Not allowed.", "not_permitted");
+  }
+  return ok(await employeesForLink());
 }

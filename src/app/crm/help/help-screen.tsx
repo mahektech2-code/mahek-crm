@@ -24,7 +24,11 @@ export function HelpScreen({
 }) {
   const [query, setQuery] = React.useState("");
   const [roleFilter, setRoleFilter] = React.useState(
-    role === "telecaller" ? "Telecaller" : "All roles",
+    /* An associate opening the Help centre is a telecaller HERE — this screen
+       is the CRM's, and the articles are tagged by the job rather than by the
+       level. It read `role === "telecaller"`, which is permanently false since
+       roles became levels, so everybody landed on "All roles". */
+    role === "associate" ? "Telecaller" : "All roles",
   );
   const [category, setCategory] = React.useState("All");
   const [activeId, setActiveId] = React.useState<string | null>(null);

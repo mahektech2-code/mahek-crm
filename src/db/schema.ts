@@ -41,12 +41,16 @@ import { relations, sql } from "drizzle-orm";
  * rather than a capability on the Orders app, so that being able to OPEN the
  * app and being able to ACCEPT an order stay separable.
  */
-export const roleEnum = pgEnum("role", [
-  "telecaller",
-  "manager",
-  "accounts",
-  "admin",
-]);
+/**
+ * A LEVEL, NOT A JOB TITLE.
+ *
+ * It held `telecaller` and `accounts` beside `manager` and `admin` — two job
+ * titles from two particular apps sitting in a list of seniority levels — so a
+ * grant for any third app had no honest word for "ordinary worker". The same
+ * three now apply in every app, and the app the grant is held under is what
+ * says which job it is. See `lib/access-control.ts` for the matrix.
+ */
+export const roleEnum = pgEnum("role", ["associate", "manager", "admin"]);
 
 /** How a login code reached somebody's phone. */
 export const otpChannelEnum = pgEnum("otp_channel", ["sms", "whatsapp"]);
@@ -159,6 +163,16 @@ export const orderStatusEnum = pgEnum("order_status", [
   "declined",
   "confirmed",
   "dispatched",
+  /**
+   * §N — after the godown and before the shop.
+   *
+   * `dispatched` is us saying it left. These two are where it got to, and both
+   * count as a sale exactly as `dispatched` does: goods on a lorry are goods
+   * sold. See `PURCHASE_STATUSES`, which is the ONE list that decides that and
+   * which the SQL is now derived from rather than restating.
+   */
+  "in_transit",
+  "delivered",
   "cancelled",
 ]);
 
@@ -221,6 +235,14 @@ export const amRoleEnum = pgEnum("am_role", [
   "sales",
   "sales_manager",
   "back_office",
+  /**
+   * Who runs the RELATIONSHIP once a lead has become a customer — §Q's real
+   * requirement, which the brief had riding on `kind` instead. It is a fourth
+   * value here rather than a table of its own because "a seat on this account
+   * moved, from whom, to whom, why, and who did it" is one question with one
+   * answer shape, and `customer_am_changes` already answers it three times.
+   */
+  "relationship",
 ]);
 
 /**
@@ -441,11 +463,36 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
    */
   "mbos_travel_leg",
   /**
+   * §12 — the signed distributor agreement, and its own parent kind for the
+   * usual reason: `canRead` decides who may open a file FROM the parent kind.
+   *
+   * Filed as `mbos_document` it would be read under the document rules, which
+   * are role lists and a customer's scope — a commercial contract handed to
+   * every salesman holding the field app. Left unparented, which is what it was
+   * before this value existed, `sweepOrphans` deletes the bytes within
+   * `attachments.orphanCleanupHours` and marks the row removed: the same
+   * nightly job that quietly destroyed every field photograph for months.
+   *
+   * `parentId` is the CUSTOMER, because the agreement is about the account and
+   * not about the application row — a profile can be superseded and the
+   * contract it produced is still the contract.
+   */
+  "distributor_agreement",
+  /**
    * The policy document as HR issued it. Nothing parses it; it is the source
    * of record, so that the rates typed beside it can always be checked
    * against the thing they were typed from.
    */
   "expense_policy",
+  /**
+   * A photograph of the shop, taken while raising a lead.
+   *
+   * Its own kind rather than `mbos_visit`, because `canRead` decides who may
+   * open a file FROM the parent kind and there is no visit behind a lead at
+   * the moment the picture is taken. A lead IS a `customers` row, so this one
+   * resolves straight through the customer's own scope.
+   */
+  "mbos_lead",
 ]);
 
 /**
@@ -532,10 +579,32 @@ export const users = pgTable(
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
-    email: text("email").notNull(),
+    /**
+     * EITHER OF THESE SIGNS SOMEBODY IN, and neither is guaranteed.
+     *
+     * `signIn` has always matched the last ten digits of the work number as
+     * readily as the whole email, so both are credentials — but only one of
+     * them is a thing every person here HAS. A field salesman is issued a
+     * handset and a number and no company mailbox, and requiring an address
+     * for him meant the office typed one in that nobody would ever read, which
+     * is a fact invented to satisfy a column.
+     *
+     * So the constraint is "at least one", and it lives in `setAccess` where
+     * the two can be weighed together rather than on either column, which can
+     * only ever see half the answer.
+     *
+     * Both are unique where present. `users_email_key` has always said so;
+     * `users_phone_key` is partial, because Postgres lets a unique index hold
+     * any number of NULLs and there is nothing to spread about an absent
+     * number. Without it two accounts could share a work number and `signIn`
+     * would take whichever row came back first — silently signing somebody in
+     * as a colleague, or refusing them because it checked the other one's
+     * password.
+     */
+    email: text("email"),
     phone: text("phone"),
     passwordHash: text("password_hash").notNull(),
-    role: roleEnum("role").notNull().default("telecaller"),
+    role: roleEnum("role").notNull().default("associate"),
     initials: text("initials").notNull(),
     /** The manager a telecaller reports to — drives a manager's team scope. */
     reportsToId: text("reports_to_id"),
@@ -563,6 +632,42 @@ export const users = pgTable(
      * null answers no.
      */
     salesPersonName: text("sales_person_name"),
+    /**
+     * WHICH HRMS EMPLOYEE THIS ACCOUNT IS, said rather than guessed.
+     *
+     * The second link of exactly the same kind as `salesPersonName` above, for
+     * the same reason and with the same rule about not inferring it. Pay, days
+     * worked and reimbursements are all read by joining `users` to `employees`
+     * on `lower(email)` or `company_mobile = users.phone`, and on the real
+     * book that heuristic finds nobody: 56 of 71 employees carry no email at
+     * all, the accounts are `@mahek.in` while the sheet holds personal gmail
+     * addresses, and the work numbers on the accounts are not the company
+     * mobiles in the sheet. So every field salesman's salary read blank, on a
+     * screen where a missing number and a zero one look identical.
+     *
+     * It CANNOT be fixed by matching harder, and that is the load-bearing
+     * part. The book carries `Pritesh Doshi` and `Pritesh Bipin Doshi` as two
+     * rows at two different salaries sharing one company mobile, so a name
+     * match picks one and is wrong half the time about somebody's pay. Held,
+     * never auto-picked — the same rule the catalogue import follows for a
+     * name carried by two legacy product ids.
+     *
+     * Written in two places and nowhere else: `setAccess`, where an account is
+     * created FROM an employee and the answer is already in hand, and
+     * `npm run employee:link`, which proposes the unambiguous ones and refuses
+     * the rest rather than choosing. NULL is the ordinary state and costs
+     * nothing — every read falls back to the old heuristic where this is null,
+     * which is why adding it moved no figure on any screen.
+     *
+     * The constraint itself lives in the migration and NOT in a
+     * `.references()` here, for the reason `reportsToId` above carries none:
+     * `employees` references `sheetSyncRuns`, which references `users`, so
+     * declaring that arrow closes a cycle and TypeScript gives up inferring
+     * all three tables — `users implicitly has type any`, and every query in
+     * the app silently loses its checking at once. The database still has the foreign key
+     * and the `on delete set null`; Drizzle simply does not need to know.
+     */
+    employeeId: text("employee_id"),
     active: boolean("active").notNull().default(true),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -572,7 +677,13 @@ export const users = pgTable(
   },
   (t) => [
     uniqueIndex("users_email_key").on(t.email),
+    uniqueIndex("users_phone_key").on(t.phone).where(sql`${t.phone} is not null`),
     index("users_reports_to_idx").on(t.reportsToId),
+    /* One account per employee. Two accounts claiming one payroll row would
+       show the same salary twice with no way to tell which was meant. */
+    uniqueIndex("users_employee_key")
+      .on(t.employeeId)
+      .where(sql`${t.employeeId} is not null`),
   ],
 );
 
@@ -598,12 +709,16 @@ export const appAccess = pgTable(
      * terminal that knows nothing about roles has to go on granting an app
      * that works.
      *
-     * What it decides is CAPABILITIES, which are the union across every grant
-     * a person holds. What it does not yet decide is SCOPE: `users.role` is
-     * still what mine/team/all is read from, and it is now derived — the
-     * widest role somebody holds anywhere — so a manager-in-the-CRM sees their
-     * team. Scope per app is the next step, and until it lands an admin
-     * anywhere is an admin everywhere for reading.
+     * It decides CAPABILITIES as a union — hold one under any hat and you hold
+     * it — and it now decides SCOPE per app as well. `src/proxy.ts` names the
+     * app on the request and `resolveScope` reads the grant for THAT app, so a
+     * manager hat on the Sales Dashboard no longer widens what the same person
+     * sees in the CRM. Before that it did: `users.role` is the widest role held
+     * anywhere, and an admin anywhere was an admin everywhere for reading.
+     *
+     * Resolving per app can only ever NARROW, because the derived role is the
+     * widest of these. A row with no role here is the account's own, so a grant
+     * written by `npm run app:grant` behaves exactly as it always did.
      */
     role: roleEnum("role"),
     grantedById: text("granted_by_id").references(() => users.id),
@@ -758,14 +873,90 @@ export const impersonationTokens = pgTable(
 /* -------------------------------------------------------------- §3.3 customer */
 
 /** A record is one or the other, and the difference decides what is shown. */
-/** The qualification ladder. `won` is the stage a conversion leaves behind. */
+/**
+ * Every rung of every ladder, in one enum.
+ *
+ * THE FIRST SIX ARE THE LADDER THIS SHIPPED WITH and they are kept exactly as
+ * they were. A lead with no `leadSalesType` climbs those six and nothing about
+ * it changed on the day the rest arrived — which is what let this land without
+ * touching a single existing row, the console funnel, or the owner's cohort
+ * conversion. `lib/engines/lead-ladder.ts` is what decides which rungs belong
+ * to which ladder; nothing reads this list in order.
+ *
+ * `won` and `lost` stay terminal for all three ladders. `customer` and
+ * `active_distributor` are the funnel's own final rungs and are NOT the same
+ * statement as `customers.kind` — see the note on `leadSalesType`.
+ */
 export const mbosLeadStageEnum = pgEnum("mbos_lead_stage", [
+  /* the original six */
   "new",
   "contacted",
   "qualified",
   "negotiation",
+  /**
+   * A live prospect that is not moving, and why.
+   *
+   * Genuinely different from `lost`, which is the end: nobody rings a lost
+   * lead again and its reason is the only thing the record is still worth.
+   * This one is a plant shutdown, a budget quarter, a decision maker abroad —
+   * and folding the two into one word made every stalled lead look dead, which
+   * is how a real prospect gets archived by the staleness sweep.
+   */
+  "on_hold",
   "won",
   "lost",
+  /* shared by the direct-customer and third-party ladders */
+  "suspect",
+  "prospect",
+  "qualification",
+  "sample_trial",
+  "sample_received",
+  "sample_review",
+  "first_order",
+  "delivery",
+  "payment",
+  "second_order",
+  "customer",
+  /* the distributor appointment ladder */
+  "management_review",
+  "commercial_discussion",
+  "distributor_approval",
+  "distributor_agreement",
+  "initial_stock_order",
+  "active_distributor",
+]);
+
+/**
+ * Which ladder a lead climbs, and the three ways Mahek sells.
+ *
+ * Direct is Mahek to the shop. Distributor is an appointment — the objective is
+ * a signed distributor, not a sample. Third party is Mahek to a distributor to
+ * the shop, where the goods reach a counter we do not invoice.
+ *
+ * NULL is the fourth answer and the load-bearing one: it means a lead raised
+ * before any of this existed, and it climbs the original six rungs. Nothing
+ * backfills it, because guessing which of three ladders somebody was on is a
+ * decision dressed as a migration.
+ */
+export const leadSalesTypeEnum = pgEnum("lead_sales_type", [
+  "direct",
+  "distributor",
+  "third_party",
+]);
+
+/**
+ * Who answered a stage move, and under what authority.
+ *
+ * A gate that was overridden is not the same event as a gate that was passed,
+ * and a month later the only thing that can tell them apart is this column.
+ */
+export const leadTransitionKindEnum = pgEnum("lead_transition_kind", [
+  /* every condition was met */
+  "passed",
+  /* a manager moved it anyway, with a reason */
+  "overridden",
+  /* moved back down the ladder */
+  "reverted",
 ]);
 
 export const customerKindEnum = pgEnum("customer_kind", ["lead", "customer"]);
@@ -875,6 +1066,188 @@ export const customers = pgTable(
     leadLastActivityDate: date("lead_last_activity_date"),
     /** When it stopped being a lead. The row did not change identity. */
     leadConvertedAt: timestamp("lead_converted_at", { withTimezone: true }),
+
+    /* ---- the funnel §2, §3 ----
+     *
+     * `leadSalesType` picks the ladder and is chosen before anything else is
+     * typed, because it decides which questions the rest of the form asks.
+     * Changing it later is its own action with its own reason: a lead half way
+     * up the distributor ladder does not become a shop by somebody tapping a
+     * different chip.
+     *
+     * IT IS NOT `customerType`, which is what the account IS in the trade and
+     * decides a price list. A dealer can be sold to directly or through a
+     * distributor, and both are true at once.
+     */
+    leadSalesType: leadSalesTypeEnum("lead_sales_type"),
+    /**
+     * The day the lead reached the stage it is on.
+     *
+     * Its own column rather than derived from the newest transition row: the
+     * console sorts and ages by it on every list, and a correlated subquery per
+     * row to answer "how long has this been sitting here" is the query that
+     * makes a leads screen slow on the book that most needs one.
+     */
+    leadStageSince: date("lead_stage_since"),
+
+    /* ---- §24 THE NEXT ACTION, and it is four answers rather than a date ----
+     *
+     * `leadNextFollowUpDate` above is the salesman's own diary and stays what
+     * it always was. This is the spec's rule: an active lead may not sit with
+     * nothing owed by anybody, so it names the action, the day, the person and
+     * what that person is expected to come back with. A date alone was what
+     * this had, and a date alone is how a lead sits for six weeks with everyone
+     * assuming somebody else has it.
+     *
+     * Enforced in `advanceLeadStage`, not by a required field on one screen.
+     */
+    leadNextAction: text("lead_next_action"),
+    leadNextActionDate: date("lead_next_action_date"),
+    leadNextActionOwnerId: text("lead_next_action_owner_id").references(() => users.id),
+    leadNextActionOutcome: text("lead_next_action_outcome"),
+
+    /* ---- §7, §8 THE MANAGER'S SEAT, WHICH ARRIVED FROM BOTH DIRECTIONS ----
+     *
+     * `leadManagerId` below is not mine and is not duplicated here. The office's
+     * own flow put a coordinating manager on a lead at qualification; the
+     * specification's §7 puts one there at Prospect to make the verification
+     * call. That is one seat with two reasons to fill it, and two columns would
+     * have been two answers to "who is coordinating this" — with the screens
+     * reading whichever their author happened to know about.
+     *
+     * `assignLeadManager` writes it and stamps `leadManagerDecidedAt` when a
+     * PERSON chose rather than the territory rule.
+     */    /** §8 — set by the manager's verification call, never by the salesman. */
+    leadVerifiedAt: timestamp("lead_verified_at", { withTimezone: true }),
+    leadVerifiedById: text("lead_verified_by_id").references(() => users.id),
+
+    /* ---- §6, §9 what a prospect had to answer to become one ----
+     *
+     * These are the eight mandatory fields, stored as columns because every one
+     * of them is asked about on a list or in a report — "which leads want
+     * Nano", "what is the pipeline worth in litres". The fifty-five yes/no
+     * qualification CONDITIONS are jsonb below, because those are only ever
+     * read as a set.
+     */
+    leadCompetitor: text("lead_competitor"),
+    leadRequiredProductId: text("lead_required_product_id").references(() => products.id),
+    leadCreditDaysWanted: integer("lead_credit_days_wanted"),
+    leadApplication: text("lead_application"),
+
+    /**
+     * §9, §11 — the qualification checklist's answers, keyed by condition id.
+     *
+     * Jsonb rather than fifty-five columns and a migration per question: the
+     * conditions are configuration, a manager may add one, and the only reader
+     * is `lib/engines/lead-gates.ts`, which takes the whole object. A value is
+     * `true`, or a short string where the condition records something.
+     */
+    leadQualification: jsonb("lead_qualification")
+      .$type<Record<string, boolean | string>>()
+      .notNull()
+      .default({}),
+
+    /**
+     * §4 — the Suspect decision, once it has been made.
+     *
+     * How many visits a suspect has had is NOT stored: it is counted from
+     * `mbos_visits`, because a column would drift the first time a visit was
+     * deleted or arrived late from a handset. What is stored is the answer, so
+     * a lead the salesman decided against is not asked again every morning.
+     */
+    leadSuspectDecidedAt: timestamp("lead_suspect_decided_at", { withTimezone: true }),
+
+    /* ---- §23 the third-party chain ----
+     *
+     * Who bills this shop lives in `customer_distributors` and always has. What
+     * had no home is the distributor's OWN salesman — Rahul, in the spec's
+     * example — because he has no MahekOne login and never will. Named on the
+     * lead so the chain is recorded from the first visit rather than
+     * reconstructed at conversion.
+     */
+    leadDistributorSalesmanId: text("lead_distributor_salesman_id"),
+
+    /** §18 — what the manager was told when they asked for the first order. */
+    leadExpectedOrderDate: date("lead_expected_order_date"),
+    leadExpectedOrderValuePaise: bigint("lead_expected_order_value_paise", { mode: "number" }),
+    /**
+     * WHO COORDINATES THIS LEAD'S CONVERSION — a second seat, beside the owner.
+     *
+     * The office proposes that the sales manager over the salesman picks this
+     * up once a lead is qualified, while the salesman goes on making the field
+     * visits. Those are two people on one record, so they need two columns: a
+     * lead's owner IS its handset scope — `ASSIGNED_TO_SQL` reads `owner_id`
+     * for a lead, and the MBOS book is filtered on it — so moving the owner
+     * would take the lead off the phone of the person still expected to walk
+     * into the shop.
+     *
+     * It is read by `scopedToUsers`, which answers who may SEE a record, and
+     * deliberately NOT by `ASSIGNED_TO_SQL`, which answers whose book it is.
+     * That is the same split `backOfficeAmId` already lives under, and it has
+     * the same consequence: one record legitimately appears on two lists.
+     *
+     * Null on customers, and on a lead nobody has qualified yet.
+     */
+    leadManagerId: text("lead_manager_id").references(() => users.id),
+    /**
+     * When a PERSON set that seat, as opposed to the qualification rule filling
+     * it in from the org chart. The same mark as `salesManagerDecidedAt` and it
+     * does the same job: an override has to survive the next org-chart change,
+     * or it is not an override.
+     */
+    leadManagerDecidedAt: timestamp("lead_manager_decided_at", {
+      withTimezone: true,
+    }),
+
+    /**
+     * What they want to buy, in the customer's own words.
+     *
+     * Free text and deliberately not a product id: a shop says "thinner for a
+     * spray booth", and resolving that to a SKU at capture would be the
+     * salesman guessing on their behalf. It becomes a real order line later,
+     * when somebody has asked which pack.
+     */
+    leadRequirement: text("lead_requirement"),
+    /**
+     * How much they get through in a month, in LITRES.
+     *
+     * Every other quantity in MahekOne is cans, because cans are what a
+     * customer says when ordering and litres are derived from the SKU's own
+     * packing. There is no SKU here — a prospect says "about two hundred
+     * litres a month" long before anybody knows what they will buy it as, and
+     * litres is the only unit that sentence survives in.
+     */
+    leadMonthlyVolumeLitres: integer("lead_monthly_volume_litres"),
+    /**
+     * Who signs. Distinct from `contactPerson`, who is whoever answers the
+     * phone — on the accounts where this matters they are routinely different
+     * people, and negotiating with the wrong one is the visit wasted.
+     */
+    leadDecisionMaker: text("lead_decision_maker"),
+    /**
+     * §L — what was agreed once negotiation opened.
+     *
+     * On the customer rather than the order, because terms are the standing
+     * arrangement a salesman negotiated and the first order is priced UNDER
+     * them rather than carrying them. A discount that needs authorising still
+     * goes through `mbos_approvals`, which exists for exactly that: this is the
+     * record of the position, not a second approval path.
+     */
+    leadDeliveryTerms: text("lead_delivery_terms"),
+    leadAgreedTerms: text("lead_agreed_terms"),
+    /**
+     * WHY IT IS NOT MOVING — one column for two questions that are the same
+     * question.
+     *
+     * "It is staying a Suspect after three visits, why" and "it is On Hold,
+     * why" are both somebody explaining a lead that has stopped progressing,
+     * and two columns would give the screen two fields to read and the
+     * salesman two places to type the same sentence.
+     *
+     * Not `leadLostReason`, which is a different question entirely: that one
+     * is why we stopped, this is why we have not started.
+     */
+    leadHoldReason: text("lead_hold_reason"),
 
     /*
      * A shop we deliver to, served through a distributor.
@@ -998,6 +1371,42 @@ export const customers = pgTable(
      * true of every row that existed when this column arrived.
      */
     amDecidedAt: timestamp("am_decided_at", { withTimezone: true }),
+
+    /**
+     * WHO OWNS THE RELATIONSHIP — the fifth seat, and the answer to §Q.
+     *
+     * The brief asks for the account to become a customer on the second order
+     * and for the relationship to pass to a customer manager in the same
+     * breath. Those are two facts about two different things: what the account
+     * IS, and who RUNS it. `kind` answers the first and flips on the first
+     * order (see `lead-conversion-service.ts`); this answers the second, and
+     * nothing derives one from the other.
+     *
+     * It is read by `scopedToUsers` — whoever is handed a relationship has to
+     * be able to open it, or they have been given work that is invisible to
+     * them — and deliberately NOT by `ASSIGNED_TO_SQL`. That is the same split
+     * `backOfficeAmId` and `leadManagerId` already live under, and here it is
+     * load-bearing: `ASSIGNED_TO_SQL` decides whose orders these are and whose
+     * target they count toward, so reading this there would move revenue
+     * between people as a side effect of naming a relationship manager. Moving
+     * money is `customer.reassign`, which is accounts' and admin's for exactly
+     * that reason; this is a manager's, and it can be because it moves none.
+     *
+     * Null on a lead, and on a customer nobody has handed over yet.
+     */
+    relationshipOwnerId: text("relationship_owner_id").references(() => users.id),
+    /**
+     * When the relationship was handed over, and the ONLY thing that says it
+     * has been.
+     *
+     * Whether a handover is OUTSTANDING is derived — converted, and this still
+     * null — never stored. A stored flag would be a cache with nothing
+     * rebuilding it, and this codebase has the scars: every derived value here
+     * is recomputed from the facts precisely so a screen and the ledger cannot
+     * drift. There is nothing to recompute if the question is asked of the
+     * column that already answers it.
+     */
+    handedOverAt: timestamp("handed_over_at", { withTimezone: true }),
     deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
     deactivatedById: text("deactivated_by_id").references(() => users.id),
     deactivationReason: text("deactivation_reason"),
@@ -1102,6 +1511,29 @@ export const customers = pgTable(
     gpsLat: doublePrecision("gps_lat"),
     gpsLng: doublePrecision("gps_lng"),
     gpsAccuracyM: integer("gps_accuracy_m"),
+    /**
+     * A PIN THAT WAS LOOKED UP, kept apart from the one above.
+     *
+     * `gpsLat` is where somebody stood; this is where an address resolved to,
+     * and the two are different kinds of claim. Visit verification reads the
+     * field pin before deciding whether a salesman was really at a shop, so a
+     * geocode landing in that column would make an answer out of a guess on
+     * the one screen where that matters most.
+     *
+     * 503 shops on the real book have an address and no pin at all, and those
+     * are invisible on the territory map and unroutable in a day's plan. This
+     * is what puts them roughly in the right place — roughly being the honest
+     * word: asked for a Nagpur address the API answered with the LOCALITY
+     * centre. `geocodedPrecision` carries Ola's own word for how exact the
+     * answer is, so a screen can draw a guess differently from a measurement
+     * rather than presenting them alike.
+     */
+    geocodedLat: doublePrecision("geocoded_lat"),
+    geocodedLng: doublePrecision("geocoded_lng"),
+    geocodedPrecision: text("geocoded_precision"),
+    /** What was actually sent, so a bad answer can be told from a bad question. */
+    geocodedQuery: text("geocoded_query"),
+    geocodedAt: timestamp("geocoded_at", { withTimezone: true }),
     gpsCapturedAt: timestamp("gps_captured_at", { withTimezone: true }),
 
     /** The route a salesman walks, and where it sits. Free text, from the beat master. */
@@ -1112,6 +1544,29 @@ export const customers = pgTable(
 
     customerType: customerTypeEnum("customer_type"),
     potential: customerPotentialEnum("potential"),
+    /**
+     * 2-§P — what this account could be worth in a month, in PAISE.
+     *
+     * `potential` beside it orders a book into three bands and cannot be
+     * subtracted from anything; a gap needs a number. The lead columns already
+     * hold this for a lead, and it stops being readable the moment the lead
+     * becomes a customer — which is the point at which the question starts
+     * being worth asking every quarter.
+     *
+     * A JUDGEMENT, never a measurement, and the two columns beside it are what
+     * keep that visible: `products.priceSource` is still `unset`, so nothing in
+     * MahekOne can derive what a shop could spend, and an estimate with no date
+     * on it is one nobody can weigh. "He thought this in 2024" is most of what
+     * a reader needs to know about a figure like this.
+     *
+     * There is no ANNUAL column and no CURRENT SALES column. The first is this
+     * times twelve and the second is derivable from orders — a stored second
+     * copy is a copy that can disagree, and two screens quoting two numbers for
+     * one shop is how both stop being believed.
+     */
+    potentialMonthlyPaise: bigint("potential_monthly_paise", { mode: "number" }),
+    potentialEstimatedAt: timestamp("potential_estimated_at", { withTimezone: true }),
+    potentialEstimatedById: text("potential_estimated_by_id").references(() => users.id),
 
     /** Paise, like every other amount. Null means no limit has been set. */
     creditLimitPaise: bigint("credit_limit_paise", { mode: "number" }),
@@ -1165,6 +1620,7 @@ export const customers = pgTable(
      * that is the row a transfer would otherwise scan the table for.
      */
     index("customers_sales_manager_idx").on(t.salesManagerId),
+    index("customers_relationship_owner_idx").on(t.relationshipOwnerId),
     index("customers_sales_manager_name_idx").on(t.salesManagerPersonName),
     index("customers_name_idx").on(t.name),
     index("customers_phone_idx").on(t.phone),
@@ -1654,6 +2110,31 @@ export const orders = pgTable(
     /* ---- approval, §order-approval ---- */
     approvedById: text("approved_by_id"),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
+    /**
+     * THE CUSTOMER'S OWN CONFIRMATION, which is not our approval.
+     *
+     * `status = 'confirmed'` is ACCOUNTS accepting the order — they checked the
+     * credit and said we will supply it. This is the other party agreeing to
+     * what was written down. They are routinely days apart and either can come
+     * first, so one column could never have carried both.
+     */
+    customerConfirmedAt: timestamp("customer_confirmed_at", { withTimezone: true }),
+    /** Read back on the call, a WhatsApp reply, a signature on the copy. */
+    customerConfirmedNote: text("customer_confirmed_note"),
+    /**
+     * And their confirmation that the goods came — the third assertion, exactly
+     * as on a sample. We dispatched it, the carrier says it arrived, the SHOP
+     * says it has it. Never inferred from the status.
+     */
+    deliveryConfirmedAt: timestamp("delivery_confirmed_at", { withTimezone: true }),
+    deliveryConfirmedById: text("delivery_confirmed_by_id").references(() => users.id),
+    /**
+     * What actually turned up, where it was not what was sent. Null means
+     * nobody reported a discrepancy, which is NOT the same as "it was correct"
+     * — nobody was asked. A short delivery is a fact about the delivery and
+     * belongs beside it rather than only inside a complaint somebody raised.
+     */
+    deliveryDiscrepancy: text("delivery_discrepancy"),
     /** Required when declining — a refusal the telecaller cannot read is a row nobody can act on. */
     declineReason: text("decline_reason"),
     orderedAt: timestamp("ordered_at", { withTimezone: true }).notNull(),
@@ -2378,6 +2859,20 @@ export const auditLog = pgTable(
      * and anything written outside a capability check.
      */
     actorRole: roleEnum("actor_role"),
+    /**
+     * THE OTHER HALF OF WHICH HAT, and it became necessary the day roles
+     * stopped being job titles.
+     *
+     * `actor_role` alone answered the question while a role named the job:
+     * "accounts" said the clerk did it, "manager" said seniority carried it.
+     * `associate` says neither — the app is what distinguishes the person at
+     * the ledger desk from the person on the phones, and without it this
+     * column stops telling apart the two things it was added to tell apart.
+     *
+     * Null means not recorded, never "no app": every row that predates this,
+     * and anything authorised by the account's own role rather than a grant.
+     */
+    actorApp: appIdEnum("actor_app"),
     beforeState: jsonb("before_state"),
     afterState: jsonb("after_state"),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
@@ -2769,6 +3264,17 @@ export const customerDistributors = pgTable(
     isPrimary: boolean("is_primary").notNull().default(false),
     /** The arrangement in somebody's own words — a route, a rate, a caveat. */
     note: text("note"),
+    /**
+     * §23 — which of the distributor's own people covers this shop.
+     *
+     * Optional, and it stays optional: a distributor with one counter and no
+     * sales team is ordinary, and refusing the arrangement for want of a name
+     * would make the commonest case the hardest to record.
+     */
+    distributorSalesmanId: text("distributor_salesman_id").references(
+      () => distributorSalesmen.id,
+      { onDelete: "set null" },
+    ),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -4081,6 +4587,69 @@ export const mbosDevices = pgTable(
      * phone's own settings does.
      */
     backgroundLocationGranted: boolean("background_location_granted"),
+    /**
+     * THE SAME QUESTION, ANSWERED IN THREE WAYS RATHER THAN TWO.
+     *
+     * `background_location_granted` above is a boolean, and a boolean cannot
+     * tell "Allow only while using the app" from "refused outright" — both
+     * arrive as `false`, and they send a manager to two different
+     * conversations. The first is a salesman who said yes to the wrong dialog
+     * and needs walking to one settings screen; the second is somebody who
+     * has turned location off for MahekOne entirely.
+     *
+     * `always` | `while_using` | `denied` | `undetermined` — the OS's own four
+     * answers, read from `getForegroundPermissionsAsync` and
+     * `getBackgroundPermissionsAsync` together. The old boolean is KEPT and
+     * still written: an APK cannot be recalled, so handsets in the field go on
+     * reporting only the boolean for as long as they are out there, and the
+     * screen has to keep reading it.
+     *
+     * Null means this build does not report it, which is not the same as
+     * `undetermined` — that is the OS saying nobody has been asked yet.
+     */
+    locationPermission: text("location_permission"),
+    /**
+     * Whether LOCATION ITSELF is switched on, which is not a permission.
+     *
+     * A salesman can have granted MahekOne everything and still have the
+     * phone's location toggle off — commonly to save battery — and the
+     * symptom on the Live map is identical to a refused permission while the
+     * fix is completely different. `hasServicesEnabledAsync` is the OS
+     * answering about the device rather than about us.
+     */
+    locationServicesEnabled: boolean("location_services_enabled"),
+    /**
+     * What the handset was connected by when it last spoke — wifi, cellular,
+     * or none at that moment.
+     *
+     * IT CAN NEVER SAY "THE INTERNET IS OFF". A phone with no connection
+     * cannot report that it has no connection, and a column that appeared to
+     * answer that question would be believed. Silence is what says it, and
+     * silence is measured server-side from `last_seen_at`. This answers the
+     * different and still useful question of what he was on when he could
+     * reach us — a day spent entirely on cellular in a market lane explains a
+     * sparse trail that wifi would not.
+     */
+    connectionType: text("connection_type"),
+    /** 0–100 at `device_state_at`. Never live — see that column. */
+    batteryPercent: integer("battery_percent"),
+    /** On charge at the same moment: 20% climbing is not 20% falling. */
+    batteryCharging: boolean("battery_charging"),
+    /**
+     * WHEN THE THREE READINGS ABOVE WERE TAKEN, and the reason they are
+     * useless without it.
+     *
+     * There is no such thing as a live battery reading here. The handset
+     * speaks when it syncs, so every figure is "at last contact" — minutes
+     * old during an open day, and hours or days old outside one. Rendered
+     * bare, "8%" reads as now and would have somebody ringing a salesman
+     * whose phone charged overnight.
+     *
+     * It is the same discipline `mbos_activity_locations` keeps for a fix's
+     * age and the On-your-way screen keeps for a distance: the reading is
+     * evidence, its age is part of it, and the screen prints both or neither.
+     */
+    deviceStateAt: timestamp("device_state_at", { withTimezone: true }),
   },
   (t) => [
     uniqueIndex("mbos_devices_device_key").on(t.deviceId),
@@ -4152,6 +4721,25 @@ export const mbosJourneyPlans = pgTable(
     proposedAt: timestamp("proposed_at", { withTimezone: true }),
     /** Why he will not walk it. Required by the action that writes a refusal. */
     refusalReason: text("refusal_reason"),
+    /**
+     * WHO STARTED THIS DAY.
+     *
+     * This table was built for one direction — the office proposes a city
+     * and the salesman answers — and a day he starts himself reaches the
+     * same states through a different door. Without a mark saying which,
+     * "he went where he was asked" and "he chose it himself" read
+     * identically on every screen afterwards, and only one of those is a
+     * fact about the office's planning.
+     *
+     * False by default, which is load-bearing: every row that existed when
+     * this arrived was proposed by the office, so it moved nothing. The
+     * same reasoning `dayState` shipped with.
+     *
+     * It does NOT weaken the negotiation. A self-planned day is born
+     * `agreed` — there is nobody to agree with — and the manager is told,
+     * so the office still sees the whole calendar.
+     */
+    selfPlanned: boolean("self_planned").notNull().default(false),
     /** What he wants instead. Optional — "not this" is a legitimate answer. */
     counterCity: text("counter_city"),
     respondedAt: timestamp("responded_at", { withTimezone: true }),
@@ -4194,6 +4782,35 @@ export const mbosSampleOutcomeEnum = pgEnum("mbos_sample_outcome", [
   "pending",
   "approved",
   "rejected",
+  /**
+   * §15 — the third answer, and the one the two-value version could not give.
+   *
+   * "The customer wants to try it again on a different substrate" is neither an
+   * approval nor a rejection, and recording it as `pending` loses the fact that
+   * a trial actually happened and produced an opinion.
+   */
+  "more_testing",
+]);
+
+/**
+ * §15 — where a sample has got to, which is a different question to what the
+ * customer thought of it.
+ *
+ * `trialOutcome` is the verdict and stays null-ish until there is one; this is
+ * the journey, and every step of it is a date somebody can be chased about. A
+ * sample that was approved three weeks ago and never dispatched is stock nobody
+ * gave away and an opportunity nobody took, and with one column it looked
+ * identical to a sample under evaluation.
+ */
+export const mbosSampleStateEnum = pgEnum("mbos_sample_state", [
+  "requested",
+  "approved",
+  "rejected",
+  "dispatched",
+  "received",
+  "trial_done",
+  "reviewed",
+  "cancelled",
 ]);
 
 /**
@@ -4215,12 +4832,104 @@ export const mbosSamples = pgTable(
     /** CANS, like every other quantity in MahekOne. See `products`. */
     quantityCans: integer("quantity_cans"),
     requestedDate: date("requested_date"),
+    /**
+     * WE SENT IT — our own claim, and the first of three.
+     *
+     * Equal to `deliveredAt` where the salesman handed it over standing in the
+     * shop. Two days apart where it went on a lorry, and the gap between them
+     * is the only thing that says whether the transport is the problem. One
+     * column could not tell a sample in transit from one nobody had picked up.
+     */
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    courierName: text("courier_name"),
+    trackingNumber: text("tracking_number"),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    /**
+     * THEY CONFIRMED IT — the customer's word, and the third of three.
+     *
+     * The same discipline `payment_receipts` keeps for money: what we did, what
+     * the carrier says and what the other party confirms are three assertions
+     * by three parties, and no two are the same fact. §J turns entirely on this
+     * one — "sample received Yes/No; if No the follow-up remains pending" — and
+     * a single delivery date could never answer it.
+     *
+     * Null means the follow-up is still open, which is a real answer. It is
+     * never defaulted from `deliveredAt`: a default would quietly assert
+     * something nobody has asked the customer.
+     */
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    receivedReportedById: text("received_reported_by_id").references(() => users.id),
     /** Proof of handover — an `attachments` id, never a URL. */
     deliveryPhotoId: text("delivery_photo_id").references(() => attachments.id),
+    /**
+     * §K — the trial itself, which is what the sample was for.
+     *
+     * Two dates because the gap between them IS the review window: a trial
+     * started and never finished is the commonest way a sample goes quiet, and
+     * it is invisible where the only column is an outcome.
+     */
+    trialStartedAt: timestamp("trial_started_at", { withTimezone: true }),
+    trialCompletedAt: timestamp("trial_completed_at", { withTimezone: true }),
     trialOutcome: mbosSampleOutcomeEnum("trial_outcome").notNull().default("pending"),
+    /** How the shop found it, in their own words rather than a score. */
+    satisfaction: text("satisfaction"),
+    /** What else they asked for while we had their attention. */
+    additionalRequirement: text("additional_requirement"),
+    /**
+     * Mandatory on a rejection, enforced in the handler rather than by a check
+     * constraint: the column is null on every sample nobody has decided yet,
+     * and a constraint would have to encode the outcome as well as the reason.
+     */
+    rejectionReason: text("rejection_reason"),
     followUpDate: date("follow_up_date"),
     feedbackNotes: text("feedback_notes"),
+
+    /* ---- §15 the lifecycle ----
+     *
+     * `state` is derived from nothing and set by the person doing the step, so
+     * every one of these dates has a name against it in the timeline. The
+     * approval itself is an `mbos_approvals` row of type `sample` — this column
+     * is the subject's own position, and the two are kept in step by
+     * `advanceSample` rather than by anybody writing both.
+     */
+    state: mbosSampleStateEnum("state").notNull().default("requested"),
+    /** §10 — a code from `leads.sampleReasons`. Why the customer wants one. */
+    reasonCode: text("reason_code"),
+    /** What it is going to be used on. Decides whether the trial means anything. */
+    application: text("application"),
+    /** The lead this sample belongs to, where it was raised from the funnel. */
+    leadStageAtRequest: mbosLeadStageEnum("lead_stage_at_request"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    approvedById: text("approved_by_id").references(() => users.id),
+    /*
+     * `dispatchedAt`, `courierName`, `trackingNumber`, `receivedAt` and
+     * `trialCompletedAt` are declared ONCE, above, and the lifecycle reads
+     * those. Two teams built §15 at the same time and this block carried a
+     * second set of the same five under different names — `courier_docket` for
+     * the tracking number, `received_confirmed_at` for the received date, and
+     * three exact duplicates. A duplicate key in an object literal is not an
+     * error in TypeScript's eyes at the point it matters here: the later
+     * declaration simply wins, so half the product wrote one column and half
+     * read the other, and a sample dispatched on one screen read as never sent
+     * on the next. One column per fact.
+     */
+    dispatchedById: text("dispatched_by_id").references(() => users.id),
+    /** What was promised. `deliveredAt` above is what happened. */
+    expectedDeliveryDate: date("expected_delivery_date"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    reviewedById: text("reviewed_by_id").references(() => users.id),
+    /**
+     * §16 — how many times the review has been chased.
+     *
+     * The ladder is day 2, then 4, then 6, and it does not stop until there is
+     * an answer. Stored so the nightly pass knows which rung it is on without
+     * counting tasks, and so a screen can say "asked three times" — which is
+     * the number that tells a manager to pick the phone up themselves.
+     */
+    reviewChaseCount: integer("review_chase_count").notNull().default(0),
+    lastReviewChaseAt: timestamp("last_review_chase_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancelReason: text("cancel_reason"),
     /** Set when the trial became a sale. The conversion report is this column. */
     convertedOrderId: text("converted_order_id").references(() => orders.id, {
       onDelete: "set null",
@@ -4247,6 +4956,25 @@ export const mbosVisitOutcomeEnum = pgEnum("mbos_visit_outcome", [
   "sample",
   "not_available",
   "closed",
+]);
+
+/**
+ * WHAT A SALESMAN SAID ABOUT THE SHOP'S OWN PIN, and what was done about it.
+ *
+ * Raised only by somebody who was refused a check-in and passed it anyway: he
+ * is standing in the shop and the book disagrees, and one of the two is wrong.
+ * It is a REQUEST rather than a write, and that is the load-bearing part — the
+ * handset can already move a pin through `customer_update`, so letting the
+ * override do it directly would mean one override moved the pin to wherever he
+ * stood and the radius never refused him again. A manager decides, on the
+ * visit's own row, from the check-in fix that is already stored there.
+ *
+ * Null is the ordinary case: nobody asked.
+ */
+export const mbosPinCorrectionEnum = pgEnum("mbos_pin_correction", [
+  "requested",
+  "accepted",
+  "rejected",
 ]);
 
 /**
@@ -4347,6 +5075,34 @@ export const mbosVisits = pgTable(
     /** A manager overriding a mismatch — the visit still happened. */
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
     acceptedById: text("accepted_by_id"),
+
+    /* ---- the check-in gate, and the way past it ---- */
+    /**
+     * HIS OWN WORDS, given before a refused check-in was allowed through.
+     *
+     * Its own column rather than folded into `unverifiedReason`, for the same
+     * reason `deviationReason` and `distanceFromShopM` have theirs: the server
+     * composes a sentence out of this and a manager screen would otherwise be
+     * able to show what the salesman actually wrote only as prose, and only
+     * ever inside somebody else's sentence.
+     *
+     * Null means the check-in was never refused — which is every visit logged
+     * before the radius became a gate, and most of them after.
+     */
+    checkInOverrideReason: text("check_in_override_reason"),
+    /**
+     * "The pin is wrong, move it to where I stood." Null means nobody asked.
+     *
+     * There is deliberately no second pair of coordinates here: what he is
+     * proposing IS `checkInLat`/`checkInLng` on this very row, and a stored
+     * copy of two numbers already in the record is a copy that can disagree
+     * with it.
+     */
+    pinCorrection: mbosPinCorrectionEnum("pin_correction"),
+    pinCorrectionDecidedAt: timestamp("pin_correction_decided_at", {
+      withTimezone: true,
+    }),
+    pinCorrectionDecidedById: text("pin_correction_decided_by_id"),
   },
   (t) => [
     index("mbos_visits_customer_idx").on(t.customerId, t.checkInAt.desc()),
@@ -4357,78 +5113,242 @@ export const mbosVisits = pgTable(
 
 /* ----------------------------------------------------------------- leads */
 
-/** §2.5 — where the prospect came from. Conversion is reported by this. */
-export const mbosLeadSourceEnum = pgEnum("mbos_lead_source", [
-  "manual",
-  "website",
-  "referral",
-  "exhibition",
-  "cold_call",
-  "whatsapp",
-  "campaign",
-]);
-
-/* `mbosLeadStageEnum` now lives beside `customerKindEnum` — it is a column
- * on `customers`, and a const must be defined before the table that reads it. */
+/*
+ * `mbos_leads` USED TO BE HERE and it is gone.
+ *
+ * It was the second table for one noun — the CRM had `kind = 'lead'` with no
+ * ladder, the handset had a ladder in a table of its own — and the ONE LEAD
+ * consolidation moved every column of it onto `customers` as `lead_*`. What it
+ * left behind was the table itself, referenced by nothing but the seed's
+ * truncate list, under a doc comment still describing the two-table world it
+ * had just stopped being. A dead table with living prose above it is worse than
+ * either, because the prose is what the next person reads.
+ *
+ * The funnel's own tables are below. They hang off `customers`, like the
+ * columns do.
+ */
 
 /**
- * §2.5 — a prospect the field team is working.
+ * §5, §10, §25, §26 — every move up, down or out of the ladder, one row each.
  *
- * `customers.kind = 'lead'` already exists and is a different animal: it is a
- * party the sheet knows about that has never ordered. This is a lead somebody
- * MET, before there is any reason to put a row in the customer master at all —
- * a name and a mobile number from an exhibition is not a customer, and writing
- * one would put it on the collections list's outer joins and the queue's
- * prospect cadence on the strength of a business card.
+ * This is the audit AND the timeline's source, and it is the only place a
+ * reason code is stored. A stage on the customer row answers "where is it now";
+ * nothing but this answers "how did it get here", which is the question asked
+ * of a lead that has been sitting at Prospect for two months.
  *
- * Conversion writes a customer and records its id here; the lead row stays, so
- * "where did this account come from" keeps its answer.
+ * It is append-only. A transition recorded wrongly is corrected by a further
+ * transition, never by an edit — the same rule `calls.next_step_*` follows, and
+ * for the same reason: this records what somebody decided on a day, and a
+ * rewrite destroys the question rather than answering it.
  */
-export const mbosLeads = pgTable(
-  "mbos_leads",
+export const leadStageTransitions = pgTable(
+  "lead_stage_transitions",
   {
-    ...mbosColumns(),
-    name: text("name").notNull(),
-    companyName: text("company_name"),
-    /** Mandatory in the form, and the duplicate check runs on it. */
-    mobile: text("mobile"),
-    city: text("city"),
-    area: text("area"),
-    source: mbosLeadSourceEnum("source").notNull().default("manual"),
-    /** Paise. What the salesman thinks the account could be worth in a month. */
-    estimatedPotentialPaise: bigint("estimated_potential_paise", { mode: "number" }),
-    assignedToUserId: text("assigned_to_user_id").references(() => users.id),
-    stage: mbosLeadStageEnum("stage").notNull().default("new"),
-    nextFollowUpDate: date("next_follow_up_date"),
-    notes: text("notes"),
-    gpsLat: doublePrecision("gps_lat"),
-    gpsLng: doublePrecision("gps_lng"),
-
-    /** Set on conversion. The lead is not deleted — it is where the account began. */
-    convertedCustomerId: text("converted_customer_id").references(() => customers.id, {
-      onDelete: "set null",
-    }),
-    convertedAt: timestamp("converted_at", { withTimezone: true }),
-    /** Mandatory when the stage is `lost`: a loss nobody explained teaches nothing. */
-    lostReason: text("lost_reason"),
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /** Null on the first row: a lead created at Suspect came from nowhere. */
+    fromStage: mbosLeadStageEnum("from_stage"),
+    toStage: mbosLeadStageEnum("to_stage").notNull(),
+    salesType: leadSalesTypeEnum("sales_type"),
+    kind: leadTransitionKindEnum("kind").notNull().default("passed"),
     /**
-     * A lead nobody has touched for the configured window archives itself. It
-     * is a flag rather than a delete, because a cold lead is exactly who a
-     * campaign goes back to next year.
+     * A code from the matching list in `lib/config/registry.ts` — never the
+     * label. The lists are editable, and a stored label stops resolving the day
+     * somebody rewords one.
      */
-    archived: boolean("archived").notNull().default(false),
-    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    reasonCode: text("reason_code"),
+    /** What the person typed beside the code, where they typed anything. */
+    note: text("note"),
     /**
-     * Derived cache: the last day anything happened on this lead. It drives
-     * the stale flag and the auto-archive, and it is rebuilt from activity
-     * rather than typed.
+     * §28 — what was still missing when a manager moved it anyway.
+     *
+     * Only ever set on an `overridden` row. It is the list of condition ids the
+     * gate was refusing on, kept because "who let this through and what were
+     * they ignoring" is the whole point of allowing an override at all.
      */
-    lastActivityDate: date("last_activity_date"),
+    overriddenConditions: jsonb("overridden_conditions").$type<string[]>().notNull().default([]),
+    actorId: text("actor_id").references(() => users.id),
+    /** Which hat allowed it. Null means not recorded, never "no role". */
+    actorRole: text("actor_role"),
+    /** And which app it was worn in — see `audit_log.actor_app`. */
+    actorApp: text("actor_app"),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index("mbos_leads_assigned_idx").on(t.assignedToUserId, t.stage),
-    index("mbos_leads_mobile_idx").on(t.mobile),
-    index("mbos_leads_stale_idx").on(t.archived, t.lastActivityDate),
+    /* The record page reads this newest-first, and a tiebreaker is not
+       optional: several transitions of one lead share a second. */
+    index("lead_stage_transitions_customer_idx").on(t.customerId, t.at, t.id),
+    index("lead_stage_transitions_stage_idx").on(t.toStage, t.at),
+  ],
+);
+
+
+/**
+ * §23 — the distributor's own salesman. Rahul, in the spec's example.
+ *
+ * Deliberately NOT a `users` row. He works for the distributor, he has no
+ * MahekOne login, he will never sign in, and giving him one would put him in
+ * every person picker in the product. He is a fact about how a shop is served,
+ * which is the same kind of fact `sales_person_name` already is.
+ */
+export const distributorSalesmen = pgTable(
+  "distributor_salesmen",
+  {
+    id: text("id").primaryKey(),
+    /** The distributor he works for — an account we invoice. */
+    distributorCustomerId: text("distributor_customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    mobile: text("mobile"),
+    territory: text("territory"),
+    /** Left rather than deleted: which shops he served is still history. */
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    index("distributor_salesmen_distributor_idx").on(t.distributorCustomerId, t.active),
+  ],
+);
+
+/**
+ * §11 — the thirty conditions a distributor answers that a shop does not.
+ *
+ * Its own table rather than more `lead_*` columns, because not one of these is
+ * true of a shop and thirty always-null columns on 5,292 customers is a table
+ * nobody can read. One row per candidate, created when the lead picks the
+ * distributor ladder.
+ *
+ * The five groups are the spec's own: legal, distribution capability,
+ * commercial capability, territory and commitment. `lib/engines/lead-gates.ts`
+ * is what decides which of them a stage needs — this table only holds answers.
+ */
+export const distributorProfiles = pgTable(
+  "distributor_profiles",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+
+    /* business and legal */
+    gstVerified: boolean("gst_verified").notNull().default(false),
+    panNumber: text("pan_number"),
+    panVerified: boolean("pan_verified").notNull().default(false),
+    businessAddressVerified: boolean("business_address_verified").notNull().default(false),
+    businessType: text("business_type"),
+    yearsInBusiness: integer("years_in_business"),
+    decisionMaker: text("decision_maker"),
+
+    /* distribution capability
+     *
+     * `hasDealerNetwork` and `hasWarehouse` are NULLABLE, unlike the four
+     * verification flags above them, and the difference is the whole point: a
+     * verification is a task somebody completes, so `false` honestly means "not
+     * done yet" and the gate is right to hold out for `true`. These two are
+     * FACTS about the distributor, and "no, they have no godown" is a complete
+     * answer that a gate demanding `true` can never accept — a candidate
+     * without one could never be appointed, and the only way through the form
+     * was to lie on it. Null is unanswered; either boolean is an answer.
+     */
+    hasDealerNetwork: boolean("has_dealer_network"),
+    activeDealerCount: integer("active_dealer_count"),
+    territoryCovered: text("territory_covered"),
+    citiesCovered: text("cities_covered"),
+    salesTeamSize: integer("sales_team_size"),
+    deliveryCapability: text("delivery_capability"),
+    hasWarehouse: boolean("has_warehouse"),
+    /** Litres. The unit every capacity in MahekOne is measured in. */
+    storageCapacityLitres: integer("storage_capacity_litres"),
+
+    /* commercial capability */
+    productPortfolio: text("product_portfolio"),
+    competitorBrands: text("competitor_brands"),
+    /** Paise, like every other money column here. */
+    monthlyPotentialPaise: bigint("monthly_potential_paise", { mode: "number" }),
+    initialOrderPotentialPaise: bigint("initial_order_potential_paise", { mode: "number" }),
+    investmentCapacityPaise: bigint("investment_capacity_paise", { mode: "number" }),
+    expectedMonthlyPurchasePaise: bigint("expected_monthly_purchase_paise", { mode: "number" }),
+    creditDaysRequired: integer("credit_days_required"),
+    creditLimitRequiredPaise: bigint("credit_limit_required_paise", { mode: "number" }),
+
+    /* territory */
+    proposedTerritory: text("proposed_territory"),
+    existingDistributorChecked: boolean("existing_distributor_checked").notNull().default(false),
+    territoryConflict: boolean("territory_conflict"),
+    territoryConflictNote: text("territory_conflict_note"),
+    exclusivityRequested: boolean("exclusivity_requested"),
+
+    /* commitment */
+    initialStockCommitmentPaise: bigint("initial_stock_commitment_paise", { mode: "number" }),
+    monthlyPurchaseCommitmentPaise: bigint("monthly_purchase_commitment_paise", { mode: "number" }),
+    dealerDevelopmentCommitment: text("dealer_development_commitment"),
+    expectedStartDate: date("expected_start_date"),
+
+    /* ---- §12 the commercial terms, which are what force the second step ----
+     *
+     * Any of these three set to something out of the ordinary routes the
+     * approval to management rather than stopping at the sales manager. The
+     * routing decision itself is in `lib/engines/lead-gates.ts`; these are the
+     * numbers it reads.
+     */
+    specialDiscountPercent: integer("special_discount_percent"),
+    agreedCreditLimitPaise: bigint("agreed_credit_limit_paise", { mode: "number" }),
+    exclusivityGranted: boolean("exclusivity_granted"),
+    commercialTermsNote: text("commercial_terms_note"),
+    commercialTermsAgreedAt: timestamp("commercial_terms_agreed_at", { withTimezone: true }),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    /* One profile per candidate. A second is a double-submit, not a second
+       application, and two would let two screens disagree about one answer. */
+    uniqueIndex("distributor_profiles_customer_key").on(t.customerId),
+  ],
+);
+
+/**
+ * §16 — what the customer actually said about the sample.
+ *
+ * Seven answers rather than one free-text box, because the whole point of the
+ * trial is the comparison, and "good" written in a notes field cannot be read
+ * back as "better drying than the competitor, price is the problem". The
+ * seventh is still free text, for what the six do not cover.
+ *
+ * One row per sample. Recorded once by whoever took the review call — a second
+ * opinion is a second sample.
+ */
+export const sampleFeedback = pgTable(
+  "sample_feedback",
+  {
+    id: text("id").primaryKey(),
+    sampleId: text("sample_id")
+      .notNull()
+      .references(() => mbosSamples.id, { onDelete: "cascade" }),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    quality: text("quality"),
+    performance: text("performance"),
+    application: text("application"),
+    drying: text("drying"),
+    competitorComparison: text("competitor_comparison"),
+    priceFeedback: text("price_feedback"),
+    otherComments: text("other_comments"),
+    recordedById: text("recorded_by_id").references(() => users.id),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sample_feedback_sample_key").on(t.sampleId),
+    index("sample_feedback_customer_idx").on(t.customerId),
   ],
 );
 
@@ -4914,7 +5834,21 @@ export const mbosTravelLegs = pgTable(
     odometerStartKm: integer("odometer_start_km"),
     odometerEndKm: integer("odometer_end_km"),
     odometerMetres: integer("odometer_metres"),
+    /** The meter as he SET OFF. See `odometerEndPhotoId` below. */
     odometerPhotoId: text("odometer_photo_id").references(() => attachments.id),
+    /**
+     * The meter as he SET OFF, and as he ARRIVED. Two photographs, because one
+     * cannot show two readings taken half an hour apart.
+     *
+     * `odometerPhotoId` is the older column and keeps exactly the meaning it
+     * had — a leg logged after the fact on `/travel` types both readings at
+     * once and photographs the meter as it stands, which is a picture of the
+     * START of the next leg as much as the end of this one. What changes is
+     * that a leg opened from "Start visit" can now hold the pair, and the
+     * departure reading is the one that matters: by the time anybody thinks to
+     * check it, the meter has moved.
+     */
+    odometerEndPhotoId: text("odometer_end_photo_id").references(() => attachments.id),
 
     /** What the policy said to pay on, and where it came from. Derived. */
     chosenMetres: integer("chosen_metres"),
@@ -4929,6 +5863,18 @@ export const mbosTravelLegs = pgTable(
     ticketReference: text("ticket_reference"),
 
     note: text("note"),
+    /**
+     * `day_log` | `visit` — and it decides what may be DEMANDED of the leg.
+     *
+     * A day-log leg is typed on `/travel` from memory once the journey is
+     * over, so the photograph is optional and always will be: refusing to
+     * record a journey that already happened only means nobody finds out.
+     * A visit leg is opened as he sets off and closed as he arrives, so the
+     * app is present at both ends and can insist on the meter being
+     * photographed with the reading typed against it — which is the only
+     * reason asking at the moment of travelling is worth the two taps.
+     */
+    origin: text("origin").notNull().default("day_log"),
   },
   (t) => [
     index("mbos_travel_legs_user_idx").on(t.userId, t.startedAt.desc()),
@@ -5041,7 +5987,41 @@ export const mbosAttendanceDays = pgTable(
     checkOutLat: doublePrecision("check_out_lat"),
     checkOutLng: doublePrecision("check_out_lng"),
     checkOutAccuracyM: integer("check_out_accuracy_m"),
+    /** An `attachments` id — the selfie the check-OUT captured. */
+    checkOutSelfieId: text("check_out_selfie_id").references(() => attachments.id),
     checkOutAddress: text("check_out_address"),
+
+    /**
+     * THE DAY'S SESSIONS, and the two marks above are only its ends.
+     *
+     * `[{ inAt, outAt, inSelfieId, outSelfieId }]`, oldest first, at most one
+     * open — the handset's own shape, stored as it arrives. The handset has
+     * modelled a day this way since its v2 migration ("a salesman breaks for
+     * lunch, or goes home and comes out again for an evening call") and the
+     * server had nowhere to put it: a three-session day arrived here as one
+     * pair, so 9-to-1 plus 2-to-6 read as nine hours on the record that feeds
+     * a payslip, and the office could not see the break at all.
+     *
+     * It is also the only place N selfies can live. Every check-in and every
+     * check-out is photographed, so a day with two breaks carries six — and
+     * `checkInSelfieId`/`checkOutSelfieId` beside it are the first and the
+     * last of them, mirrors for the screens exactly as the two timestamps are.
+     *
+     * Stored rather than derived, and NOT a cache: it is what the handset
+     * reported, and rebuilding it from the two marks is precisely the loss it
+     * exists to stop. `workedSeconds` below is the cache.
+     */
+    sessions: jsonb("sessions")
+      .$type<
+        {
+          inAt: number;
+          outAt: number | null;
+          inSelfieId?: string | null;
+          outSelfieId?: string | null;
+        }[]
+      >()
+      .notNull()
+      .default([]),
     /** True where the day closed itself because nobody checked out. */
     autoCheckedOut: boolean("auto_checked_out").notNull().default(false),
 
@@ -5090,7 +6070,17 @@ export const mbosLeaveRequests = pgTable(
     toDate: date("to_date").notNull(),
     /** A single day taken as a half. Whole days otherwise. */
     halfDay: boolean("half_day").notNull().default(false),
-    /** Derived from the dates and the working calendar. Rebuilt, never typed. */
+    /**
+     * WORKING days spanned, both ends counted — Sundays and `mbos_holidays`
+     * excluded. Computed in `handleLeave` from `engines/leave.ts`, never taken
+     * from the payload: it is what a balance is debited by, and a number the
+     * handset can set is a number somebody can set.
+     *
+     * This is days ABSENT, not days spent: a half day is one day here with
+     * `halfDay` true, and costs half. Whole, because the column is an integer
+     * and half of one day is a fact about the day rather than a different
+     * quantity of them.
+     */
     days: integer("days").notNull().default(0),
     reason: text("reason"),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
@@ -5103,11 +6093,25 @@ export const mbosLeaveRequests = pgTable(
 );
 
 /**
- * §2.11 — entitlement and consumption, per person per year per type.
+ * §2.11 — what ONE PERSON is entitled to, where it differs from everybody
+ * else's.
  *
- * `usedDays` is a derived cache rebuilt from approved requests; the balance is
- * the subtraction and is not stored at all, because a stored balance is a
- * number two writers can disagree about.
+ * A row here is an override and nothing else. The ordinary entitlement is
+ * `mbos.leave.annualEntitlementDays` in the configuration registry, so a person
+ * with no row gets the company's answer — which is the whole reason this table
+ * stopped being the source of it. Nothing ever wrote an entitlement: the only
+ * code that created a row was the approval path, at zero days, so somebody had
+ * a row for a kind of leave only AFTER taking some and it read "-2 of 0 left".
+ * The handset builds its list of leave kinds from these, so before anybody had
+ * taken any leave the form could offer nothing but loss of pay.
+ *
+ * **`usedDays` is dead and must not be revived.** It was incremented on
+ * approval and decremented by nothing, so a reversed decision left it
+ * permanently wrong with no way to rebuild it. What has been spent is derived
+ * from the approved requests, in `leaveBalances` — the same shape as
+ * outstanding and the buying cycle. The column is left in place rather than
+ * dropped because doing so is a migration for no behaviour; it is read by
+ * nothing and written by nothing.
  */
 export const mbosLeaveBalances = pgTable(
   "mbos_leave_balances",
@@ -5141,29 +6145,68 @@ export const mbosLeaveBalances = pgTable(
  * region is whatever the customer master says it is, and a second list would
  * offer the console regions the book does not use.
  */
-export const mbosManagerTerritories = pgTable(
-  "mbos_manager_territories",
+/**
+ * A PERSON'S GEOGRAPHY — which is two people's question, not one.
+ *
+ * It held the regions a MANAGER oversees, and `managerScope` still reads it for
+ * exactly that. A salesman needs the same fact about himself: which cities he
+ * works, so his book, his map and his day's picking are bounded to where he
+ * actually goes. One table, because it is one idea — two would be two places
+ * for "Vidarbha" to be spelled differently.
+ *
+ * A SALESMAN'S TERRITORY IS A FILTER, NOT A PERMISSION, and the distinction is
+ * the important thing in this file. It NARROWS a book he already had:
+ * `ASSIGNED_TO_SQL` and the two seats beside it remain the whole of who may see
+ * what. Nobody gains sight of another salesman's customer by being allocated a
+ * city, and no row here can widen anything.
+ *
+ * That is worth saying out loud because the two look alike from a distance, and
+ * a reader who mistakes this for the security boundary might remove a real
+ * check believing it redundant.
+ *
+ * NO TERRITORY MEANS NO NARROWING. Allocating cities to eight people and
+ * forgetting the ninth must not empty her book — that is the failure this
+ * codebase already has on record, where reading one seat instead of two gave
+ * Seema Roy "queue cleared" on a day she had 195 accounts to work.
+ */
+export const mbosUserTerritories = pgTable(
+  "mbos_user_territories",
   {
     id: text("id").primaryKey(),
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    /**
+     * Which geography this names, because a state and a city are not
+     * interchangeable and the column each matches against is different.
+     * `region` is the default so every row that existed kept its meaning.
+     */
+    kind: text("kind").notNull().default("region"),
+    /** The value itself — kept as `region` for the column somebody may query. */
     region: text("region").notNull(),
+    /**
+     * WHAT THIS PLACE SITS INSIDE — a city's state, a beat's city.
+     *
+     * A territory is a hierarchy and a bare city row cannot express one:
+     * "Pune" is a different allocation depending on which state somebody had
+     * in mind, and there is an Aurangabad in Maharashtra and another in Bihar.
+     *
+     * Empty means NOT STATED, which is what every row written before this
+     * column means and what the clause goes on reading as "this place wherever
+     * it is". Empty rather than null so the key below collapses duplicates —
+     * Postgres treats two NULLs as distinct and would let the same place be
+     * allocated to one person twice.
+     */
+    parent: text("parent").notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id"),
   },
-  (t) => [uniqueIndex("mbos_manager_territories_key").on(t.userId, t.region)],
+  (t) => [
+    uniqueIndex("mbos_user_territories_key").on(t.userId, t.kind, t.region, t.parent),
+    index("mbos_user_territories_user_idx").on(t.userId, t.kind),
+  ],
 );
 
-/**
- * §2.11 — the days nobody is expected to work.
- *
- * `scope` is free text and not a foreign key to a beat, because a holiday is
- * regional in a way the territory model cannot express: "Nagpur East and
- * Nagpur West" is two beats, "all beats" is every beat there will ever be, and
- * a join table would need maintaining every time a beat is renamed. Null means
- * everywhere.
- */
 export const mbosHolidays = pgTable(
   "mbos_holidays",
   {
@@ -5256,6 +6299,98 @@ export const mbosTasks = pgTable(
   ],
 );
 
+/* ------------------------------------------------------ lead validation */
+
+/**
+ * §E — the call that checks the salesman's report against the shop itself.
+ *
+ * An EVENT, not a fact about the account, which is why it is a table and not a
+ * set of columns on `customers`. A lead is routinely validated twice — the
+ * first call reached a receptionist, the second reached the proprietor — and
+ * columns on the customer would keep only the second and destroy the first.
+ * The first is usually the one that matters, because it is the one that says
+ * the salesman's report and the shop's own account of it did not agree.
+ *
+ * The `confirmed*` columns are deliberately NOT written over the lead's own.
+ * What the salesman was told and what the office was told are two readings of
+ * the same shop, and the difference between them is the only thing this call
+ * produces that nothing else could.
+ */
+export const mbosLeadValidations = pgTable(
+  "mbos_lead_validations",
+  {
+    ...mbosColumns(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /**
+     * Not necessarily the Lead Manager. §E says "Lead Manager/Telecaller", and
+     * on a nine-person team it is whoever is free.
+     */
+    calledByUserId: text("called_by_user_id")
+      .notNull()
+      .references(() => users.id),
+    calledAt: timestamp("called_at", { withTimezone: true }).notNull().defaultNow(),
+    /** A call nobody answered is still a call that was made. */
+    reached: boolean("reached").notNull().default(true),
+
+    /* §E's four questions. All nullable — a shop with plenty to say about
+     * dispatch and nothing about quality is the ordinary case, and a form
+     * demanding all four collects four sentences of filler. */
+    productFeedback: text("product_feedback"),
+    qualityFeedback: text("quality_feedback"),
+    dispatchFeedback: text("dispatch_feedback"),
+    salesmanFeedback: text("salesman_feedback"),
+
+    /* What the SHOP says, as against what the salesman reported. */
+    confirmedRequirement: text("confirmed_requirement"),
+    confirmedMonthlyVolumeLitres: integer("confirmed_monthly_volume_litres"),
+    confirmedCompetitor: text("confirmed_competitor"),
+    confirmedPotentialPaise: bigint("confirmed_potential_paise", { mode: "number" }),
+
+    /* ---- §8's twelve questions, the seven §E had no box for ----
+     *
+     * The Sales Manager's verification call asks twelve things, and seven of
+     * them are not §E's four. They are COLUMNS rather than lines inside
+     * `notes`, which is where they started: "how many of last month's leads
+     * said price was the problem" is the question §8 exists to answer, and
+     * `notes ilike '%price%'` is not an answer to it. A jsonb blob of answers
+     * — this branch's first attempt at the same table — has the identical
+     * problem one level along.
+     *
+     * The first three are the reason the call is a MANAGER's. Whether the
+     * salesman actually went, whether he explained Mahek and whether any of it
+     * landed are questions about the salesman rather than about the sale, and
+     * a check somebody performs on their own work is not a check. Stored as
+     * text rather than boolean because "he came but only for five minutes" is
+     * the answer that matters and a tick cannot hold it.
+     */
+    salesmanVisited: text("salesman_visited"),
+    mahekExplained: text("mahek_explained"),
+    productUnderstood: text("product_understood"),
+    /** What they are using today — the incumbent, in their own words. */
+    currentProduct: text("current_product"),
+    /** Whether the monthly figure could grow, as a sentence not a number. */
+    growthPotential: text("growth_potential"),
+    priceConcern: text("price_concern"),
+    /** The last question, and the one that decides whether to send a sample. */
+    genuineInterest: text("genuine_interest"),
+
+    /**
+     * `pending` is a call that was made and left undecided, which is a real
+     * state rather than a missing value — the caller reached somebody, wrote
+     * down what they said, and the judgement is somebody else's.
+     */
+    verdict: text("verdict").notNull().default("pending"),
+    verdictReason: text("verdict_reason"),
+    notes: text("notes"),
+  },
+  (t) => [
+    index("mbos_lead_validations_customer_idx").on(t.customerId, t.calledAt.desc()),
+    index("mbos_lead_validations_caller_idx").on(t.calledByUserId, t.calledAt.desc()),
+  ],
+);
+
 /* ---------------------------------------------------- competitor records */
 
 /**
@@ -5321,6 +6456,16 @@ export const mbosDocumentCategoryEnum = pgEnum("mbos_document_category", [
   "kyc",
   "policy",
   "marketing",
+  /**
+   * §14 — the two the communication buttons need and the library did not have.
+   *
+   * A manager pressing "Send company profile" has to get the current company
+   * profile, and `marketing` held brochures, videos and profiles together with
+   * nothing to tell them apart. The button is only as good as the category
+   * behind it.
+   */
+  "company_profile",
+  "product_video",
 ]);
 
 /** §2.11 — the document library. The bytes are an `attachments` row. */
@@ -5403,6 +6548,15 @@ export const mbosApprovalTypeEnum = pgEnum("mbos_approval_type", [
   "tour",
   "sample",
   "attendance_regularisation",
+  /**
+   * §12 — appointing a distributor, which a salesman may never do alone.
+   *
+   * It uses the same two-step chain every other approval here already has:
+   * `stepIndex` 0 is the sales manager's review, 1 is management. Special
+   * discount, credit limit and territory exclusivity are what force the second
+   * step, and `routeReason` says which.
+   */
+  "distributor_appointment",
 ]);
 
 export const mbosApprovalStateEnum = pgEnum("mbos_approval_state", [
@@ -6505,7 +7659,10 @@ export type MbosJourneyPlan = typeof mbosJourneyPlans.$inferSelect;
 export type MbosJourneyStop = typeof mbosJourneyStops.$inferSelect;
 export type MbosSample = typeof mbosSamples.$inferSelect;
 export type MbosVisit = typeof mbosVisits.$inferSelect;
-export type MbosLead = typeof mbosLeads.$inferSelect;
+export type LeadStageTransition = typeof leadStageTransitions.$inferSelect;
+export type DistributorProfile = typeof distributorProfiles.$inferSelect;
+export type DistributorSalesman = typeof distributorSalesmen.$inferSelect;
+export type SampleFeedback = typeof sampleFeedback.$inferSelect;
 export type MbosExpense = typeof mbosExpenses.$inferSelect;
 export type MbosExpenseClaim = typeof mbosExpenseClaims.$inferSelect;
 export type MbosAttendanceDay = typeof mbosAttendanceDays.$inferSelect;
@@ -6536,3 +7693,35 @@ export type MbosTravelMode = typeof mbosTravelModes.$inferSelect;
 export type MbosExpenseDay = typeof mbosExpenseDays.$inferSelect;
 export type MbosTravelLeg = typeof mbosTravelLegs.$inferSelect;
 export type MbosExpenseException = typeof mbosExpenseExceptions.$inferSelect;
+
+/**
+ * Road distance and driving time between two points, as answered by Ola Maps.
+ *
+ * A CACHE, and nothing derives from it that cannot be recomputed. Empty it and
+ * every screen falls back to the straight-line answer it gave before, which is
+ * also exactly what happens when Ola is unreachable — so an outage and an
+ * empty cache are the same, already-handled thing.
+ *
+ * Keyed on the ROUNDED coordinate rather than on a customer, because a leg
+ * starts wherever the salesman is — his home, a live fix, a shop — and only
+ * some of those are rows in `customers`. Four decimal places is about eleven
+ * metres, which is inside the accuracy of the handset fixes themselves, so the
+ * rounding cannot lose a distinction the data carries and it stops a re-plan
+ * from being a fresh bill.
+ *
+ * DIRECTED. One-ways and divided carriageways mean A to B is not always B to
+ * A, and a cache that folded the two would quietly report the wrong way round.
+ */
+export const roadLegs = pgTable(
+  "road_legs",
+  {
+    id: text("id").primaryKey(),
+    /** `legKey` in `lib/road-legs.ts` — the one place the rounding is decided. */
+    fromKey: text("from_key").notNull(),
+    toKey: text("to_key").notNull(),
+    metres: integer("metres").notNull(),
+    seconds: integer("seconds").notNull(),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("road_legs_pair_key").on(t.fromKey, t.toKey)],
+);

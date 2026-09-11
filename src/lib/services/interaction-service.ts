@@ -18,7 +18,7 @@ import {
   reminders,
 } from "@/db/schema";
 import { OUTCOMES_BY_TYPE, type InteractionTypeKey, type OutcomeKey } from "@/db/catalogue";
-import { assignedUserId, resolveScope, assertCustomerInScope } from "../access-control";
+import { resolveScope, assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
 import {
   recomputeBuyingCycle,
@@ -33,6 +33,11 @@ import { nextStepForCustomer } from "./queue-service";
 import { addDays, onOrAfterWorkingDay } from "../business-date";
 import { err, ok, type Result } from "../result";
 import { CRM_EVENT, callTimelineSummary, writeTimelineEvents } from "../timeline";
+import {
+  conversionColumns,
+  hasOrderedBefore,
+  recordConversion,
+} from "./lead-conversion-service";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -855,27 +860,32 @@ export async function saveInteraction(
         set.lastOrderDate = orderedOn;
       }
 
-      // A lead becomes a customer the moment it orders. That is the whole
-      // definition of the difference, so it converts here rather than waiting
-      // for somebody to remember to change a dropdown — a lead with orders
-      // against it would keep showing the lead notice and hiding the very
-      // purchase history it had just started building.
+      // A lead becomes a customer on its SECOND order, which is the client's
+      // own correction of the rule this used to apply. A first order from a
+      // shop that has just finished a trial is a few cans to try in their own
+      // booth; it is the end of the trial rather than the start of a
+      // relationship, and it routinely does not repeat.
+      //
+      // The order just written is excluded from the count by id, so the
+      // question is strictly "have they ordered before" — and what counts as
+      // an order is `lib/order-status.ts`, so an order accounts declined can
+      // never promote anybody.
       //
       // The person who found them becomes the sales account manager. Back
       // office is deliberately left unassigned: who handles the dispatch and
-      // billing is a decision, not something to guess at on first order.
-      if (customer.kind === "lead") {
-        set.kind = "customer";
-        // Through the one definition of whose book a record is in. A lead
-        // answers to its owner, and a reassignment moves a lead by writing
-        // that column — so this carries the CURRENT holder across rather than
-        // re-deriving a fallback that could disagree with it.
-        set.salesAmId = assignedUserId({
-          kind: "lead",
-          ownerId: customer.ownerId,
-          salesAmId: customer.salesAmId,
-        });
-        set.customerSince = orderedOn;
+      // billing is a decision, not something to guess at.
+      if (customer.kind === "lead" && (await hasOrderedBefore(tx, customer.id, orderId))) {
+        /*
+         * Through `lead-conversion-service`, which is the ONE definition of
+         * what happens when a lead orders. MBOS converts on its own order path
+         * too, and two copies of this would drift within a release — the half
+         * that drifts being whichever nobody is watching.
+         *
+         * Spread into the update this function is already building rather than
+         * issued as a second statement: twenty other fields are going in the
+         * same write.
+         */
+        Object.assign(set, conversionColumns(customer, orderedOn));
         converted = true;
       }
     }
@@ -886,15 +896,16 @@ export async function saveInteraction(
     // hiding inside the interaction's.
     if (converted) {
       produced.push("converted-to-customer");
-      await tx.insert(auditLog).values({
-        id: id("aud"),
-        actorId: ctx.user.id,
-        action: "customer.convertedFromLead",
-        entityType: "customer",
-        entityId: customer.id,
-        beforeState: { kind: "lead", leadSource: customer.leadSource } as never,
-        afterState: { kind: "customer", salesAmId: set.salesAmId } as never,
-      });
+      /* The audit line AND the timeline entry, both from the shared service —
+         a conversion the customer record cannot show is one nobody reading
+         their history would ever know happened. */
+      await recordConversion(
+        tx,
+        customer,
+        ctx.user.id,
+        set.salesAmId ?? null,
+        "ordered on a call",
+      );
     }
 
     /* ----------------------------------------------------- quick note use */

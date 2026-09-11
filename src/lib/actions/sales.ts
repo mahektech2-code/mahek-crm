@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
@@ -14,9 +14,8 @@ import {
   mbosDevices,
   mbosDocuments,
   mbosHolidays,
-  mbosLeaveBalances,
   mbosLeaveRequests,
-  mbosManagerTerritories,
+  mbosUserTerritories,
   mbosJourneyPlans,
   mbosJourneyStops,
   mbosPriceList,
@@ -34,6 +33,16 @@ import { calendarDate } from "@/lib/business-date";
 import { fieldBook, managerScope, onlyMine } from "@/lib/services/sales-service";
 import type { DocumentCategory } from "@/lib/mbos/library-labels";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
+import {
+  PARENT_KIND,
+  setWorkingTerritories,
+  territoriesFor,
+  territoryClause,
+  TERRITORY_KINDS,
+  type Territory,
+  type TerritoryKind,
+} from "@/lib/services/territory-service";
+import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
 import { notifyUsers } from "../notify";
 
 /** Count, noun and verb agree at every value. */
@@ -163,6 +172,29 @@ export async function decideApproval(input: {
       );
     }
 
+    /* A request the person took back is not a request.
+     *
+     * Withdrawing marks `cancelled_at` on the leave and leaves the approval
+     * `pending`, so it sat in this queue looking like work — and approving it
+     * debited the balance and told the salesman his leave was approved, for
+     * days he had already said he no longer wanted. The queue filters these out
+     * now; this is the same rule where it actually binds, because a queue is a
+     * screen and a screen is not a permission. */
+    if (approval.type === "leave") {
+      const [subject] = await db
+        .select({ cancelledAt: mbosLeaveRequests.cancelledAt })
+        .from(mbosLeaveRequests)
+        .where(eq(mbosLeaveRequests.id, approval.subjectId))
+        .limit(1);
+
+      if (subject?.cancelledAt) {
+        return err(
+          "This leave was withdrawn by the person who asked for it, so there is nothing to decide. It has already left their calendar.",
+          "conflict",
+        );
+      }
+    }
+
     const note = input.note?.trim() ?? "";
     if (input.decision !== "approved" && !note) {
       return err(
@@ -199,48 +231,21 @@ export async function decideApproval(input: {
         and(eq(mbosApprovals.id, input.approvalId), eq(mbosApprovals.state, "pending")),
       );
 
-    /* The one place `mbos_leave_balances.used_days` moves. Not on the request
-     * itself — a request has no state of its own, it is derived entirely
-     * from its approval — so the balance has to be debited from here, the
-     * single place a leave request actually becomes decided. A missing
-     * balance row is not skipped: it is created at zero entitlement, so the
-     * debit is recorded honestly even before anybody has seeded what a
-     * person is entitled to for the year. */
-    if (approval.type === "leave" && input.decision === "approved") {
-      const [leave] = await db
-        .select({
-          leaveType: mbosLeaveRequests.leaveType,
-          days: mbosLeaveRequests.days,
-          fromDate: mbosLeaveRequests.fromDate,
-        })
-        .from(mbosLeaveRequests)
-        .where(eq(mbosLeaveRequests.id, approval.subjectId))
-        .limit(1);
-
-      if (leave) {
-        const year = new Date(leave.fromDate).getUTCFullYear();
-        await db
-          .insert(mbosLeaveBalances)
-          .values({
-            id: gen("mbos_lbal"),
-            userId: approval.requestedByUserId,
-            year,
-            leaveType: leave.leaveType,
-            entitledDays: 0,
-            usedDays: leave.days,
-            createdById: user.id,
-            updatedById: user.id,
-          })
-          .onConflictDoUpdate({
-            target: [mbosLeaveBalances.userId, mbosLeaveBalances.year, mbosLeaveBalances.leaveType],
-            set: {
-              usedDays: sql`${mbosLeaveBalances.usedDays} + ${leave.days}`,
-              updatedAt: new Date(),
-              updatedById: user.id,
-            },
-          });
-      }
-    }
+    /* Nothing debits a balance here, and that is the fix rather than an
+     * omission.
+     *
+     * This used to increment `mbos_leave_balances.used_days` — creating the row
+     * at ZERO days entitled if it was missing, which it always was, so a
+     * person's first approved leave gave them a balance reading "-2 of 0 left".
+     * Nothing decremented it either: a decision reversed, or leave withdrawn
+     * after it was granted, left the figure permanently short with no way to
+     * notice and no way to rebuild it.
+     *
+     * What somebody has spent is DERIVED from the approved requests now, in
+     * `leaveBalances` — the same shape as outstanding and the buying cycle, and
+     * for the same reason. `mbos_leave_balances` is the entitlement OVERRIDE
+     * table now: a row means this person is on different terms, deliberately.
+     * `used_days` is no longer read or written by anything. */
 
     await db.insert(auditLog).values({
       id: gen("aud"),
@@ -1189,6 +1194,180 @@ export async function withdrawScheme(id: string): Promise<Result> {
  * widest scope there is, so it is stated rather than arrived at by unticking
  * the last box without noticing.
  */
+/**
+ * Where a salesman WORKS — the cities and beats his book narrows to.
+ *
+ * A different act from `setManagerTerritories` below, and deliberately its own
+ * action rather than a mode of it. That one sets a manager's oversight patch,
+ * which decides which SALESMEN a console shows; this narrows which CUSTOMERS a
+ * handset shows. One function behind one capability doing two jobs is how the
+ * more generous answer ends up applying to both.
+ *
+ * `people.manage` rather than a new capability: deciding where somebody works
+ * is the same kind of act as deciding who they report to, and it is already the
+ * gate on this screen.
+ */
+/**
+ * THE SHOPS THAT LEAVE HIS HANDSET when where he works changes.
+ *
+ * A pull says what exists and only a tombstone says what stopped, so without
+ * this a salesman moved from Maharashtra to Gujarat keeps every Maharashtra
+ * shop on the phone for ever — and walks to one of them, and nothing anywhere
+ * looks wrong.
+ *
+ * Read as a DIFFERENCE over his own book rather than over `customers`: the
+ * whole table would tombstone thousands of shops that were never on the phone,
+ * and the deletions channel is a queue somebody else's withdrawn product is
+ * also waiting in.
+ *
+ * THE EMPTY BEFORE IS THE DEPLOY, and it is the case worth spelling out. Under
+ * the rule this replaced, nowhere allocated meant the WHOLE book — so a phone
+ * that synced before the change holds shops that `territoryClause([])` now says
+ * it never had. Diffing against an empty before would tombstone nothing and
+ * leave every one of them there, which is precisely the handset the change
+ * exists to clear. So an empty before is read as "everything he can see".
+ */
+async function shopsLeavingTheBook(
+  userId: string,
+  wanted: Territory[],
+): Promise<string[]> {
+  const book = await bookIdsIgnoringTerritory(userId);
+  if (!book.length) return [];
+
+  const had = (await territoriesFor(userId)).filter((t) => t.kind !== "region");
+  const ids = (clause: SQL) =>
+    db
+      .select({ id: customers.id })
+      .from(customers)
+      .where(and(inArray(customers.id, book), clause))
+      .then((rows) => rows.map((r) => r.id));
+
+  const before = had.length ? await ids(territoryClause(had)) : book;
+  if (!before.length) return [];
+
+  const after = new Set(wanted.length ? await ids(territoryClause(wanted)) : []);
+  return before.filter((id) => !after.has(id));
+}
+
+export async function setSalesmanTerritories(input: {
+  salesmanId: string;
+  territories: { kind: string; value: string; parent?: string }[];
+}): Promise<Result<void>> {
+  try {
+    const user = await requireSales();
+
+    const [person] = await db
+      .select({ id: users.id, name: users.name })
+      .from(users)
+      .where(eq(users.id, input.salesmanId))
+      .limit(1);
+    if (!person) return err("That account is not on MahekOne.", "not_found");
+
+    /* Only the kinds this screen owns. A `region` arriving here would clear a
+       manager's patch as a side effect of allocating a salesman a city — see
+       `setWorkingTerritories`, which refuses them for the same reason. */
+    const asked = input.territories
+      .filter((t) => t.kind !== "region" && t.value.trim())
+      .map((t) => ({
+        kind: t.kind as TerritoryKind,
+        value: t.value.trim(),
+        parent: t.parent?.trim() ?? "",
+      }));
+
+    const bad = asked.filter(
+      (t) => !(TERRITORY_KINDS as readonly string[]).includes(t.kind),
+    );
+    if (bad.length) {
+      return err(`Not a kind of place: ${bad.map((b) => b.kind).join(", ")}.`, "validation");
+    }
+
+    /*
+     * A CITY WITHOUT ITS STATE IS NOT AN ALLOCATION, and the action says so
+     * rather than trusting the dialog to have asked in the right order. A
+     * server action is a URL: the screen that nests these is not the only
+     * thing that can post to it, and a bare "Pune" is genuinely ambiguous —
+     * there is an Aurangabad in Maharashtra and another in Bihar.
+     */
+    const orphan = asked.filter((t) => PARENT_KIND[t.kind] && !t.parent);
+    if (orphan.length) {
+      return err(
+        `Pick the ${PARENT_KIND[orphan[0].kind]} first — ${orphan
+          .map((o) => o.value)
+          .join(", ")} needs to sit inside one.`,
+        "validation",
+      );
+    }
+
+    /*
+     * THE NARROWEST PICK IN A BRANCH IS THE ALLOCATION, and the wider ones
+     * above it are the path to it rather than a second grant.
+     *
+     * Maharashtra plus Pune inside it has to mean Pune. Stored as both, the
+     * clause would OR them and hand him the whole state — the opposite of what
+     * somebody who took the trouble to pick a city meant, and invisible on
+     * every screen afterwards because "Maharashtra, Pune" reads like a
+     * narrowing. So a state with cities under it is dropped, and a city with
+     * beats under it is dropped, and what is stored is the leaves.
+     */
+    const parents = new Set(asked.map((t) => t.parent).filter(Boolean));
+    const wanted = asked.filter((t) => !parents.has(t.value));
+
+    const before = await territoriesFor(input.salesmanId);
+    const key = (t: { kind: string; value: string; parent?: string }) =>
+      `${t.kind}:${(t.parent ?? "").toLowerCase()}:${t.value.toLowerCase()}`;
+    const had = before.filter((t) => t.kind !== "region").map(key).sort();
+    const now = wanted.map(key).sort();
+    if (JSON.stringify(had) === JSON.stringify(now)) return okVoid("Nothing changed.");
+
+    /* The shops that leave his book, read BEFORE the change — afterwards they
+       are simply not his and there is nothing left to name. See `tombstone`:
+       a pull says what exists, and only a tombstone says what stopped, so
+       without this the shops he no longer works stay on the phone for ever. */
+    const leaving = await shopsLeavingTheBook(input.salesmanId, wanted);
+
+    await setWorkingTerritories(input.salesmanId, wanted, user.id);
+
+    for (const id of leaving) {
+      await tombstone("customers", id, "territory", input.salesmanId);
+    }
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.salesman.territories",
+      entityType: "user",
+      entityId: input.salesmanId,
+      beforeState: { territories: had } as never,
+      afterState: { territories: now } as never,
+    });
+
+    /*
+     * His book changes under him, and a book that shrinks silently reads as a
+     * broken sync — which is the report the office gets rather than a question
+     * about territory.
+     */
+    await tell(
+      input.salesmanId,
+      wanted.length ? "Where you work has changed" : "Your handset has no area set",
+      wanted.length
+        ? `Your handset now shows your customers in ${wanted.map((t) => t.value).join(", ")}. Everything else is still yours — it is just not on this list.`
+        : "No area is set for you, so your customer list will be empty until the office sets one. Nothing of yours is lost.",
+    );
+
+    revalidatePath("/sales/people");
+    return okVoid(
+      wanted.length
+        ? `${person.name} works ${wanted.map((t) => t.value).join(", ")}.`
+        : `${person.name} has no area set, so their handset shows no customers at all.`,
+    );
+  } catch (e) {
+    return err(
+      e instanceof Error ? e.message : "That could not be saved.",
+      "validation",
+    );
+  }
+}
+
 export async function setManagerTerritories(input: {
   managerId: string;
   regions: string[];
@@ -1205,10 +1384,18 @@ export async function setManagerTerritories(input: {
 
     const wanted = [...new Set(input.regions.map((r) => r.trim()).filter(Boolean))].sort();
 
+    /* REGIONS ONLY. This action sets a manager's oversight patch, and the
+       table now also holds a salesman's working cities — deleting by user id
+       alone would wipe those as a side effect of editing a region. */
     const before = await db
-      .select({ region: mbosManagerTerritories.region })
-      .from(mbosManagerTerritories)
-      .where(eq(mbosManagerTerritories.userId, input.managerId));
+      .select({ region: mbosUserTerritories.region })
+      .from(mbosUserTerritories)
+      .where(
+        and(
+          eq(mbosUserTerritories.userId, input.managerId),
+          eq(mbosUserTerritories.kind, "region"),
+        ),
+      );
     const had = before.map((b) => b.region).sort();
 
     if (JSON.stringify(had) === JSON.stringify(wanted)) {
@@ -1217,13 +1404,19 @@ export async function setManagerTerritories(input: {
 
     await db.transaction(async (tx) => {
       await tx
-        .delete(mbosManagerTerritories)
-        .where(eq(mbosManagerTerritories.userId, input.managerId));
+        .delete(mbosUserTerritories)
+        .where(
+          and(
+            eq(mbosUserTerritories.userId, input.managerId),
+            eq(mbosUserTerritories.kind, "region"),
+          ),
+        );
       if (wanted.length) {
-        await tx.insert(mbosManagerTerritories).values(
+        await tx.insert(mbosUserTerritories).values(
           wanted.map((region) => ({
             id: gen("mt"),
             userId: input.managerId,
+            kind: "region",
             region,
             createdById: user.id,
           })),
@@ -1663,6 +1856,124 @@ export async function acceptVisit(input: { visitId: string }): Promise<Result> {
 
     refresh();
     return okVoid("Accepted — marked verified.");
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * "The shop's pin is wrong — move it to where I stood."
+ *
+ * A salesman refused at the door types a sentence, the visit lands unverified
+ * carrying it, and he may ask for the shop's own pin to be corrected. This is
+ * where that is decided, and the decision belongs to a person for one reason:
+ * the handset can already move a pin through `customer_update`, so an override
+ * that moved it on its own would mean one override put the pin wherever
+ * somebody was standing and the radius would never refuse him there again.
+ *
+ * NO COORDINATES ARE PASSED IN. What is being accepted is the check-in fix
+ * already stored on this visit — taking them from the request would let the
+ * screen propose one point and the write land another, and the whole value of
+ * the correction is that it is the reading a manager can see on the row.
+ *
+ * It does NOT touch `verified`. Whether the visit was proved and whether the
+ * book was wrong are two questions: accepting the pin says the shop is where
+ * he said, and standing behind the visit is `acceptVisit`, one action along.
+ * Answering both from one click would move a figure nobody asked about.
+ */
+export async function decidePinCorrection(input: {
+  visitId: string;
+  accept: boolean;
+}): Promise<Result> {
+  try {
+    const user = await requireSales();
+
+    const [visit] = await db
+      .select({
+        id: mbosVisits.id,
+        customerId: mbosVisits.customerId,
+        pinCorrection: mbosVisits.pinCorrection,
+        checkInLat: mbosVisits.checkInLat,
+        checkInLng: mbosVisits.checkInLng,
+        checkInAccuracyM: mbosVisits.checkInAccuracyM,
+      })
+      .from(mbosVisits)
+      .where(eq(mbosVisits.id, input.visitId))
+      .limit(1);
+    if (!visit) return err("That visit is no longer here.", "not_found");
+    if (visit.pinCorrection !== "requested") {
+      return err(
+        visit.pinCorrection
+          ? "Somebody has already answered this one."
+          : "Nobody asked for this shop's pin to be moved.",
+        "validation",
+      );
+    }
+    if (input.accept && (visit.checkInLat == null || visit.checkInLng == null)) {
+      /* A request raised on a check-in with no fix behind it. The handset
+         cannot produce one — the pin question is only asked after a refusal,
+         and a refusal needs a fix to have been measured — but a payload is
+         not a promise, and moving a pin to nowhere is the one outcome worth
+         refusing outright. */
+      return err(
+        "That check-in carried no location, so there is nothing to move the pin to.",
+        "validation",
+      );
+    }
+
+    const decidedAt = new Date();
+    await db.transaction(async (tx) => {
+      await tx
+        .update(mbosVisits)
+        .set({
+          pinCorrection: input.accept ? "accepted" : "rejected",
+          pinCorrectionDecidedAt: decidedAt,
+          pinCorrectionDecidedById: user.id,
+          updatedById: user.id,
+          updatedAt: decidedAt,
+        })
+        .where(eq(mbosVisits.id, input.visitId));
+
+      if (input.accept) {
+        /* `gps_captured_at` moves with it, because it is a NEW measurement and
+           a screen weighing a pin reads how old it is. Not the geocoded pair:
+           those hold a guess, deliberately kept out of visit verification, and
+           a measurement written into them would lose the distinction. */
+        await tx
+          .update(customers)
+          .set({
+            gpsLat: visit.checkInLat,
+            gpsLng: visit.checkInLng,
+            gpsAccuracyM: visit.checkInAccuracyM,
+            gpsCapturedAt: decidedAt,
+            updatedById: user.id,
+            updatedAt: decidedAt,
+          })
+          .where(eq(customers.id, visit.customerId));
+      }
+    });
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: input.accept ? "mbos.visit.pin.accept" : "mbos.visit.pin.reject",
+      entityType: "customer",
+      entityId: visit.customerId,
+      beforeState: { visitId: input.visitId, pinCorrection: "requested" } as never,
+      afterState: {
+        visitId: input.visitId,
+        pinCorrection: input.accept ? "accepted" : "rejected",
+        gpsLat: input.accept ? visit.checkInLat : undefined,
+        gpsLng: input.accept ? visit.checkInLng : undefined,
+      } as never,
+    });
+
+    refresh();
+    return okVoid(
+      input.accept
+        ? "Moved — the shop now sits where he checked in."
+        : "Left as it is.",
+    );
   } catch (e) {
     return fromThrown(e);
   }
@@ -2315,5 +2626,110 @@ export async function bulkAssignTask(input: {
     );
   } catch (e) {
     return fromThrown(e);
+  }
+}
+
+/* --------------------------------------------------- leave, for one person */
+
+/**
+ * Give somebody terms of their own, or put them back on everybody's.
+ *
+ * `mbos.leave.annualEntitlementDays` is what a person gets unless a row in
+ * `mbos_leave_balances` says otherwise. That override already worked and there
+ * was NO WAY TO WRITE ONE — nothing in MahekOne created such a row, so it was
+ * a mechanism with no door, and a salesman hired on different terms could not
+ * be given them from any screen.
+ *
+ * NULL CLEARS rather than sets zero, and the two are genuinely different: a
+ * cleared kind falls back to the company figure, and a stored zero is somebody
+ * deciding this person gets none — which is a real answer for a probationer.
+ * Clearing DELETES the row rather than storing a sentinel, because the engine
+ * reads a present row as an override and the absence of one as "use the
+ * default"; a row meaning "no override" would be a third state nothing reads.
+ *
+ * `used_days` is never touched. What somebody has taken is counted from their
+ * approved requests, and a column that could be edited here would let days be
+ * handed back by typing over the record of them being taken.
+ */
+export async function setLeaveEntitlement(input: {
+  userId: string;
+  year: number;
+  /** Kind to days, or null to fall back to the company figure. */
+  days: Record<string, number | null>;
+}): Promise<Result> {
+  try {
+    const me = await requireSales();
+
+    const [person] = await db
+      .select({ id: users.id, name: users.name })
+      .from(users)
+      .where(eq(users.id, input.userId))
+      .limit(1);
+    if (!person) return err("That account no longer exists.", "not_found");
+
+    if (!Number.isInteger(input.year) || input.year < 2000 || input.year > 2100) {
+      return err("That is not a year.", "validation");
+    }
+
+    for (const [kind, value] of Object.entries(input.days)) {
+      if (value === null) continue;
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        return err(`${kind} has to be a number of days, and not a negative one.`, "validation");
+      }
+      /* Half days, because leave is taken in them — and nothing finer, because
+         a quarter day is not a thing anybody applies for and would print as a
+         balance nobody could act on. */
+      if (value * 2 !== Math.round(value * 2)) {
+        return err(`${kind} has to be a whole number of days or a half.`, "validation");
+      }
+      if (value > 365) return err(`${kind} cannot be more than a year.`, "validation");
+    }
+
+    await db.transaction(async (tx) => {
+      for (const [kind, value] of Object.entries(input.days)) {
+        /* Loss of pay is what leave BECOMES when a balance runs out. There is
+           no balance of unpaid days to hold, so there is nothing to override. */
+        if (kind === "loss_of_pay") continue;
+
+        if (value === null) {
+          await tx.execute(sql`
+            delete from mbos_leave_balances
+             where user_id = ${person.id} and year = ${input.year}
+               and leave_type = ${kind}::mbos_leave_type
+          `);
+          continue;
+        }
+
+        await tx.execute(sql`
+          insert into mbos_leave_balances
+            (id, user_id, year, leave_type, entitled_days, used_days,
+             created_at, updated_at, created_by_id, updated_by_id)
+          values (${gen("mbos_lbal")}, ${person.id}, ${input.year},
+                  ${kind}::mbos_leave_type, ${value}, 0, now(), now(), ${me.id}, ${me.id})
+          on conflict (user_id, year, leave_type) do update
+            set entitled_days = excluded.entitled_days,
+                updated_at = now(),
+                updated_by_id = ${me.id}
+        `);
+      }
+    });
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: me.id,
+      action: "leave.entitlement.set",
+      entityType: "user",
+      entityId: person.id,
+      afterState: { year: input.year, days: input.days } as never,
+    });
+
+    refresh();
+    revalidatePath("/sales/leave");
+    return ok(
+      undefined,
+      `${person.name}'s leave for ${input.year} is set. It reaches their handset on the next sync.`,
+    );
+  } catch (e) {
+    return err(e instanceof Error ? e.message : "That did not work.", "not_permitted");
   }
 }

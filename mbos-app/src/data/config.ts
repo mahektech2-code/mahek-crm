@@ -1,4 +1,10 @@
 import { all, one } from '../db';
+import {
+  LOST_REASONS,
+  OVERRIDE_REASONS,
+  PROSPECT_REASONS,
+  SAMPLE_REASONS,
+} from '../engines/funnel/lead-labels';
 
 /**
  * Configuration, read from the local cache of what MahekOne's Admin Console
@@ -30,6 +36,18 @@ const DEFAULTS: Record<string, unknown> = {
      what a handset does before it has ever heard from the office. */
   'mbos.location.trackWhileWorking': true,
   'mbos.location.trackEverySeconds': 3,
+
+  /* maps kept for no signal — see `engines/tiles.ts` for what each one costs */
+  'mbos.maps.offlineEnabled': true,
+  'mbos.maps.minZoom': 9,
+  'mbos.maps.maxZoom': 16,
+  'mbos.maps.areaSeparationKm': 25,
+  'mbos.maps.paddingMetres': 2000,
+  'mbos.maps.bytesPerTileEstimate': 45_000,
+  'mbos.maps.maxPackMegabytes': 500,
+  'mbos.maps.tileCountLimit': 250_000,
+  'mbos.maps.downloadOnWifiOnly': true,
+  'mbos.maps.refreshAfterDays': 120,
 
   /* visits */
   'mbos.visits.minimumDwellSeconds': 120,
@@ -69,6 +87,28 @@ const DEFAULTS: Record<string, unknown> = {
   /* attendance and leave */
   'mbos.attendance.halfDayHours': 4,
   'mbos.attendance.fullDayHours': 8,
+  /*
+   * `mbos.attendance.selfieRetentionHours` is DELIBERATELY ABSENT, and it is
+   * the one key here that should stay absent.
+   *
+   * Every default above is a number the app falls back to so a salesman on a
+   * handset that has never bootstrapped can still work. That reasoning does
+   * not carry to this one: it is not used to decide anything, it is PRINTED —
+   * the selfie camera tells the person being photographed how long his own
+   * face is kept. A default would make the screen promise 72 hours on a phone
+   * that has never heard from an office which may have set 24, and a wrong
+   * promise about that is worse than no promise. Absent, the sentence is left
+   * out until the real figure arrives, which is one sync away.
+   */
+
+  /* health — the two thresholds the pill colours by, and the two words it
+     must not confuse. `atRiskBelow` is a SCORE threshold and says a customer
+     is worth a look; "at risk" itself is the retention BAND, which the server
+     computes from the customer's own cycles and sends on the wire. Two
+     settings using one phrase for two questions is what B3-16 was raised
+     about. */
+  'mbos.health.atRiskBelow': 40,
+  'mbos.health.strongAtOrAbove': 70,
 
   /* health score — weights, normalised at use */
   'mbos.health.componentWeights': {
@@ -89,11 +129,50 @@ const DEFAULTS: Record<string, unknown> = {
 
   /* ai */
   'mbos.ai.retainAudioAfterTranscription': false,
+  /*
+   * NO MICROPHONE UNTIL THE OFFICE SAYS THERE IS ONE.
+   *
+   * Unlike every other default here, this one is not "what the app uses before
+   * real configuration arrives" so much as the only honest answer to a
+   * question the handset cannot settle by itself. Whether dictation works
+   * depends on a provider key that lives on the server and never comes down
+   * this wire, so a handset that has never completed a bootstrap has no way to
+   * know — and drawing the mic on a guess is drawing a button that fails when
+   * pressed, which is the one thing this feature is not allowed to do.
+   */
+  'mbos.ai.dictation': { available: false },
 
   /* leads */
   'mbos.leads.staleDays': 30,
   'mbos.leads.archiveDays': 90,
   'mbos.leads.escalateAfterDays': 7,
+
+  /*
+   * The funnel's own thresholds and its four coded lists.
+   *
+   * These are `leads.*` rather than `mbos.leads.*` because they are the SAME
+   * settings the CRM, the console and the server action read — a suspect
+   * window of three on a phone and two in the office would be two rules
+   * wearing one name, and the salesman would be the one who found out.
+   *
+   * TODO(integration): `mbosConfigPayload()` in
+   * `src/lib/services/mbos-service.ts` sends every `mbos.*` key and
+   * `products.priceSource`, so none of these reaches a handset yet — the
+   * defaults below are what the app runs on until workstream A widens it to
+   * carry the `leads.*` keys too. They are copied from
+   * `lib/config/registry.ts`, which takes its own from the same
+   * `lead-labels.ts` this app compiles, so the words on the screen are right
+   * even while the numbers are only defaults.
+   */
+  'leads.suspectMaxVisits': 3,
+  'leads.requireNextAction': true,
+  'leads.allowManagerOverride': true,
+  'leads.prospectReasons': PROSPECT_REASONS.map((r) => ({ ...r })),
+  'leads.sampleReasons': SAMPLE_REASONS.map((r) => ({ ...r })),
+  'leads.lostReasons': LOST_REASONS.map((r) => ({ ...r })),
+  'leads.overrideReasons': OVERRIDE_REASONS.map((r) => ({ ...r })),
+  'leads.sampleReviewChaseDays': [2, 4, 6],
+  'leads.verificationDueDays': 2,
 
   /* tasks */
   'mbos.tasks.escalationHours': 24,

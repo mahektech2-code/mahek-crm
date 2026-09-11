@@ -11,6 +11,13 @@
  * ------------------------------------------------------------------------- */
 
 import { COMPLAINT_CATEGORIES } from "../constants";
+import {
+  LOST_REASONS,
+  OVERRIDE_REASONS,
+  PROSPECT_REASONS,
+  SAMPLE_REASONS,
+} from "../lead-labels";
+import { LEAVE_TYPES, PAID_LEAVE_TYPES, type PaidLeaveType } from "../mbos/types";
 
 export type SettingType = "integer" | "decimal" | "text" | "boolean" | "structured";
 
@@ -54,6 +61,8 @@ export type SettingCategory =
   | "mbos-push"
   | "mbos-leads"
   | "mbos-tasks"
+  /** Maps on the handset, and how much of one it may keep for no signal. */
+  | "mbos-maps"
   /**
    * Travel and expense — the PLATFORM behaviour, not the reimbursement terms.
    *
@@ -669,9 +678,13 @@ export const SETTINGS = [
   },
   /* -------------------------------------------------------------- sign-in */
   /*
-   * There is no password on the web. A work number and a code sent to it is
-   * the whole credential, so these thresholds are the security of the login
-   * screen itself and none of them may be a constant.
+   * NOTHING READS THESE YET, and a reader should know it before tuning one.
+   * They were written for a sign-in where a work number and a code sent to it
+   * are the whole credential. That flow is not built: `otp_channel` is an enum
+   * in the schema with no table, no sender and no route behind it, and `signIn`
+   * asks for a work number or an email AND a password. They are kept because
+   * the thresholds are the right ones for the day it is built and none of them
+   * may be a constant then — but until then, changing one changes nothing.
    */
   {
     key: "auth.otp.codeLength",
@@ -1631,10 +1644,10 @@ export const SETTINGS = [
     key: "mbos.location.visitMismatchM",
     type: "integer",
     category: "mbos-location",
-    label: "Visit location mismatch distance",
+    label: "How close a check-in has to be",
     description:
-      "Metres between the check-in and the customer's own pin before the visit is flagged for a manager. It must be comfortably larger than the accuracy above, or an honest fix on a busy street reads as somebody checking in from the tea shop.",
-    default: 200,
+      "Metres between the salesman and the shop's own pin. Inside it the check-in goes ahead; outside it the handset refuses, and he can only pass by saying in writing that the pin is wrong — which reaches you as an unverified visit. It is ALSO the distance a saved visit is flagged at, because the distance a check-in is refused at and the distance one is questioned at are one fact. Keep it comfortably larger than the accuracy above: a fix that is itself 50 m wide cannot tell a doorway from the tea shop across the road, and every refusal it produces falls on somebody standing in the right place.",
+    default: 100,
     min: 20,
     max: 5000,
   },
@@ -1745,6 +1758,28 @@ export const SETTINGS = [
     default: 900,
     min: 60,
     max: 86_400,
+  },
+  {
+    key: "mbos.location.handsetQuietMinutes",
+    type: "integer",
+    category: "mbos-location",
+    label: "How long a working handset may go silent before the Live map says so",
+    description:
+      "Minutes. A phone that cannot reach us cannot tell us it cannot reach us, so silence is the only evidence there is that a salesman is out of signal, out of battery or has closed the app — and this is where that silence starts being worth saying out loud. It changes what the Live map SAYS and nothing a handset does. It is deliberately not the same number as the Sync health screen's quiet hours: that one asks whether a phone has stopped syncing at all, over days, and this one asks whether a man who checked in this morning has gone quiet since — which on an open working day is a question measured in minutes.",
+    default: 30,
+    min: 5,
+    max: 720,
+  },
+  {
+    key: "mbos.location.lowBatteryPercent",
+    type: "integer",
+    category: "mbos-location",
+    label: "Battery level the Live map calls low",
+    description:
+      "Per cent, at or below which a salesman's handset is flagged on the team list. A flat phone in the middle of a beat is the commonest reason a trail simply stops, and it is the one cause a manager can still do something about while the day is running. The reading is never live — it is whatever the phone last reported — so the screen always prints the time it was taken beside it.",
+    default: 20,
+    min: 5,
+    max: 50,
   },
   {
     key: "mbos.sync.quietHours",
@@ -2034,6 +2069,17 @@ export const SETTINGS = [
       "A photograph at check-in. Off where the team finds it intrusive and the geofence is enough; it changes what the check-in asks for, never whether it is allowed.",
     default: true,
   },
+  {
+    key: "mbos.attendance.selfieRetentionHours",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Keep an attendance photograph for",
+    description:
+      "Hours before a check-in or check-out photograph is deleted. It is EVIDENCE OF A MOMENT, not a record to keep: it exists so a manager can verify that the person who marked the day is the person who worked it, and that question is asked within a day or two or not at all. Held longer it stops being verification and becomes a collection of photographs of employees, which is a different thing to hold and a worse one to lose. Only the image goes — the check-in, its time, its place and the fact that a photograph was taken are all kept for ever. This is ALSO how far back the Attendance screen can show one, because they are the same fact: a screen offering a photograph the sweep has already destroyed is a screen that appears broken.",
+    default: 72,
+    min: 1,
+    max: 8760,
+  },
 
   /* --------------------------------------------------------------- leave */
   {
@@ -2056,6 +2102,33 @@ export const SETTINGS = [
       "On, an employee out of balance may still apply, as loss of pay. Off, the application is refused — which turns a conversation with a manager into an error message.",
     default: true,
   },
+  {
+    key: "mbos.leave.annualEntitlementDays",
+    type: "structured",
+    category: "mbos-leave",
+    label: "Leave a person gets in a year",
+    description:
+      "Days per kind, for everybody, per calendar year. This is what the handset builds its list of leave kinds from — a kind missing from here cannot be applied for at all, and with none of them set the only thing the form can offer is loss of pay. A person on different terms gets a row in `mbos_leave_balances`, which overrides this for them alone. `loss_of_pay` does not belong here: it is what leave becomes once the balance is gone, and there is no balance of unpaid days to keep.",
+    /*
+     * Twenty-four days, which is the two a month the employee sheet states
+     * on 54 of its 64 filled rows — the only leave figure Mahek has written
+     * down anywhere, so it is the one to default to.
+     *
+     * The sheet's `yearly_maximum_leave` says 60 and is NOT this number: it
+     * only reconciles with two days a month if it means the most absence
+     * allowed in a year including unpaid, which is a different question to
+     * what somebody is entitled to. Six rows carry 24 in the MONTHLY column,
+     * which is the annual figure typed into the wrong cell — that is why the
+     * sheet is read for the number once, here, by a person, rather than
+     * projected into balances every night by a job.
+     *
+     * The split across the three kinds is not in the sheet at all. It is a
+     * decision, and this is where it is recorded rather than in anybody's
+     * memory.
+     */
+    default: { casual: 12, sick: 6, earned: 6 },
+  },
+
 
   /* -------------------------------------------------------- health score */
   {
@@ -2077,10 +2150,21 @@ export const SETTINGS = [
     key: "mbos.health.atRiskBelow",
     type: "integer",
     category: "mbos-health",
-    label: "At-risk score",
+    label: "Watch below this score",
     description:
-      "A customer scoring below this is shown as at risk on the salesman's list and in the AI assistant's suggestions. Advisory — nothing is blocked by a score.",
+      "A customer scoring below this is worth a look, and the screens say which of the five components is dragging. Deliberately NOT called at risk any more: that phrase belongs to the retention band, which asks whether somebody has stopped BUYING, and a customer ordering perfectly on time can still score badly for late payments or open complaints. Two settings using one phrase for two questions is what B3-16 was raised about. Advisory - nothing is blocked by a score. The key keeps its old name so no stored setting has to be migrated.",
     default: 40,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "mbos.health.strongAtOrAbove",
+    type: "integer",
+    category: "mbos-health",
+    label: "Strong at or above this score",
+    description:
+      "At or above this a customer's score reads as strong. It existed as a literal 70 inside the handset's health pill, with 50 beside it, which made two business thresholds invisible to the one screen a manager would go to change them. Nothing business-critical is a constant.",
+    default: 70,
     min: 0,
     max: 100,
   },
@@ -2276,6 +2360,339 @@ export const SETTINGS = [
     min: 1,
     max: 90,
   },
+  {
+    key: "mbos.leads.visitsBeforeDecision",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Warn about a Suspect after",
+    description:
+      "Visits to a lead that is still a Suspect before the handset starts asking the salesman to decide. A warning, never a refusal — he is told the next visit needs an answer, and the visit itself is never blocked.",
+    default: 2,
+    min: 1,
+    max: 10,
+  },
+  {
+    key: "mbos.leads.maxSuspectVisits",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Suspect decision required at",
+    description:
+      "The visit on which a Prospect-or-not answer becomes mandatory before the visit can be closed. It does NOT stop the visit being made or recorded — a cap that refuses the save is a cap that produces unlogged visits, and the company loses the GPS, the competitor note and the reason to prevent a number reaching four. Beyond it the lead is escalated to the manager instead.",
+    default: 3,
+    min: 1,
+    max: 10,
+  },
+
+  {
+    key: "mbos.leads.validationScript",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Validation call script",
+    description:
+      "What the caller reads out and asks on the Prospect validation call. Configuration rather than code because it is CONTENT — the wording will be argued about, improved after a bad call, and translated, and none of that should need a deploy. Each section is a heading and the lines under it; the caller sees them in this order, on the handset and in the console.",
+    default: {
+      sections: [
+        {
+          heading: "Introduce yourself — 30 seconds",
+          lines: [
+            "Good morning, my name is ___ from Mahek Marketing India.",
+            "I look after this area with ___, who came to see you on ___.",
+            "Is this a good moment, or shall I call back?",
+          ],
+        },
+        {
+          heading: "Introduce the company — 30 seconds",
+          lines: [
+            "We make thinners and coatings and supply shops and factories across the region.",
+            "We deliver ourselves, and we can hold stock for a regular customer.",
+          ],
+        },
+        {
+          heading: "Check the visit",
+          lines: [
+            "Did our man explain the products clearly?",
+            "What did you make of the quality?",
+            "Any thoughts on how we dispatch and how quickly?",
+            "And was he alright with you — anything we should know?",
+          ],
+        },
+        {
+          heading: "Confirm what they need",
+          lines: [
+            "What is it you are actually looking for?",
+            "Roughly how much do you get through in a month?",
+            "Who are you buying from at the moment?",
+          ],
+        },
+      ],
+    },
+  },
+
+  {
+    key: "mbos.samples.reviewAfterDays",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Sample review call after",
+    description:
+      "Days after the customer CONFIRMS they have the sample before the review call is due. Dated from confirmed receipt and never from dispatch: a review timed from the day we posted it rings somebody still waiting for the parcel, and that call teaches them we do not know where our own stock is.",
+    default: 3,
+    min: 1,
+    max: 30,
+  },
+
+  {
+    key: "mbos.samples.transitChaseAfterDays",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Chase a sample in transit after",
+    description:
+      "Days after DISPATCH before somebody is asked to find out where the sample got to. It is the mirror of the review call: that one is dated from confirmed receipt because the customer has it, and this one from dispatch because they do not. A sample that never arrives is the quietest way a lead dies - the salesman assumes it is being tried, the shop assumes we forgot, and nothing on either screen says otherwise.",
+    default: 4,
+    min: 1,
+    max: 30,
+  },
+
+  {
+    key: "mbos.location.nearbyRadiusOptions",
+    type: "structured",
+    category: "mbos-location",
+    label: "Nearby search radii",
+    description:
+      "The distances the handset offers when a salesman asks what is near him, in metres. Configuration because a city beat and a district tour do not mean the same thing by 'nearby' — five kilometres is the next lane in Nagpur and half a day in Vidarbha.",
+    default: { metres: [1000, 3000, 5000, 10000, 25000] },
+  },
+  {
+    key: "mbos.location.nearbyPerKilometreCost",
+    type: "integer",
+    category: "mbos-location",
+    label: "What a kilometre is worth",
+    description:
+      "How much a kilometre of travel counts AGAINST a reason to visit, when the handset orders what is nearby. This is the whole trade-off in one number: raise it and the list stays local, lower it and a good reason will send somebody across town. It is configuration and not a constant because a kilometre on a two-wheeler through a market and a kilometre on a district tour are not the same kilometre.",
+    default: 12,
+    min: 0,
+    max: 200,
+  },
+
+  /* ------------------------------------------------- maps, kept for offline
+
+     A salesman in a market lane has no signal, and a map that is blank exactly
+     where he is standing is worse than no map at all. These decide what a
+     handset may download to answer that, and every one of them is a trade
+     between the size of the download and how much of the map survives it. */
+  {
+    key: "mbos.maps.offlineEnabled",
+    type: "boolean",
+    category: "mbos-maps",
+    label: "Let handsets download maps to work offline",
+    description:
+      "On, a salesman can save the streets around the places he works so the map still draws with no signal. Off, the screen is not offered at all rather than offered and refused — a control that fails when pressed is worse than one never drawn. Nothing already downloaded is deleted by turning this off; it stops new downloads.",
+    default: true,
+  },
+  {
+    key: "mbos.maps.maxZoom",
+    type: "integer",
+    category: "mbos-maps",
+    label: "Closest zoom saved",
+    description:
+      "How far in a saved map still has streets. THIS IS THE SETTING THAT DECIDES THE SIZE — each step closer is four times the tiles, so 17 is roughly four times the download of 16 and sixteen times that of 15. At 16 a market lane has its name on it, which is the point of the whole feature; at 14 the download is small and the salesman is looking at a map of the town he already knows.",
+    default: 16,
+    min: 10,
+    max: 18,
+  },
+  {
+    key: "mbos.maps.minZoom",
+    type: "integer",
+    category: "mbos-maps",
+    label: "Furthest zoom saved",
+    description:
+      "How far out a saved map still draws. Costs almost nothing — the whole of a district is four tiles at zoom 9 — and without it the map is blank the moment somebody pinches out to see where an area sits.",
+    default: 9,
+    min: 0,
+    max: 14,
+  },
+  {
+    key: "mbos.maps.areaSeparationKm",
+    type: "integer",
+    category: "mbos-maps",
+    label: "How far apart two places are",
+    description:
+      "Kilometres between shops before the handset treats them as two places to download rather than one. This is what stops a book spread over a state becoming a single box with three hundred kilometres of farmland in it. Raise it and a salesman downloads fewer, larger maps; lower it and he downloads more, smaller ones, and has to remember which. Shops link in a chain, so a beat running down a highway stays one map however long it is, as long as each step is under this.",
+    default: 25,
+    min: 1,
+    max: 200,
+  },
+  {
+    key: "mbos.maps.paddingMetres",
+    type: "integer",
+    category: "mbos-maps",
+    label: "Margin around the shops",
+    description:
+      "Metres of map saved beyond the outermost shop. A map that stops at the shop's own doorstep is no use for getting there — this is the road he arrives on, the junction he turns at and the lane behind. It is also what keeps a download useful as the book grows: a shop added next month just outside the old edge is still inside what was saved.",
+    default: 2000,
+    min: 0,
+    max: 20000,
+  },
+  {
+    key: "mbos.maps.bytesPerTileEstimate",
+    type: "integer",
+    category: "mbos-maps",
+    label: "Assumed size of one map tile",
+    description:
+      "Bytes, used ONLY to tell a salesman what a download will cost before he starts it. A tile over a paint market is several times one over farmland, so this is an estimate and every screen calls it one — but the decision it informs is \"tens of megabytes or hundreds\", and it is right about that. Tune it once somebody has watched a few real downloads finish against what this predicted.",
+    default: 45000,
+    min: 1000,
+    max: 500000,
+  },
+  {
+    key: "mbos.maps.maxPackMegabytes",
+    type: "integer",
+    category: "mbos-maps",
+    label: "Largest map a handset may save",
+    description:
+      "Megabytes. An area estimated above this is shown with its size and NOT offered — a download that fills a salesman's phone is a phone that stops taking photographs of cheques. If a place somebody genuinely works is over the limit, the fix is to lower \"How far apart two places are\" so it splits into towns, or to save one zoom level less.",
+    default: 500,
+    min: 20,
+    max: 4000,
+  },
+  {
+    key: "mbos.maps.tileCountLimit",
+    type: "integer",
+    category: "mbos-maps",
+    label: "Tiles a handset may hold in total",
+    description:
+      "A ceiling MapLibre itself enforces across every saved map on the phone, and it ABORTS a download rather than trimming it — so it is deliberately set well above what the megabyte limit above allows. The two are different units and the phone cannot convert between them; if this one binds first, a download the size check had already approved stops part-way with an error about tiles that means nothing to the person reading it. Its own shipped default is 6,000, which is a few square kilometres and no use here at all.",
+    default: 250000,
+    min: 1000,
+    max: 5000000,
+  },
+  {
+    key: "mbos.maps.downloadOnWifiOnly",
+    type: "boolean",
+    category: "mbos-maps",
+    label: "Only download maps on Wi-Fi",
+    description:
+      "On, the download button says why it is off while the phone is on mobile data. Several hundred megabytes out of a salesman's own data allowance is a real cost to him, and it is the kind he only finds out about at the end of the month. Off, he decides — the size is on the screen either way.",
+    default: true,
+  },
+  {
+    key: "mbos.maps.refreshAfterDays",
+    type: "integer",
+    category: "mbos-maps",
+    label: "Call a saved map old after",
+    description:
+      "Days before a saved map is marked as worth refreshing. Roads do not change quickly, so this is a nudge and never an expiry — nothing is deleted and the old map goes on working. Refreshing re-checks each tile against the server and downloads only what actually changed, so it costs far less than saving the area again.",
+    default: 120,
+    min: 7,
+    max: 1095,
+  },
+
+  /* ------------------------------------------------------ the lead funnel */
+  {
+    key: "leads.suspectMaxVisits",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Visits before a Suspect must be decided",
+    description:
+      "§4. A salesman gets this many visits to work out whether there is a genuine opportunity, and then the lead turns into a single question: Prospect or not. The specification's normal target is two and its absolute maximum is three. Nothing is refused when the cap is reached - a decision is DEMANDED, which is the opposite gesture, and the lead cannot be quietly left in the drawer instead.",
+    default: 3,
+    min: 1,
+    max: 10,
+  },
+  {
+    key: "leads.requireNextAction",
+    type: "boolean",
+    category: "mbos-leads",
+    label: "Every active lead must have a next action",
+    description:
+      "§24. An upward move is refused unless the lead names what happens next, on what day, and who is doing it. Off, a lead may move with none of the three - which is how a lead sits for six weeks with everybody assuming somebody else is holding it. It never applies to a lead raised before the funnel existed: those carry no sales type and are exempt by design.",
+    default: true,
+  },
+  {
+    key: "leads.allowManagerOverride",
+    type: "boolean",
+    category: "mbos-leads",
+    label: "A manager may move a lead past a gate",
+    description:
+      "§28 with its escape hatch. A system that refuses everything is defeated in a week by people recording the work after the event, and the record then says the process was followed when it was not - which is worse than the gate being open. An override is a manager's alone, it demands a reason, and it stores exactly which conditions were still missing. Off, nobody may pass a gate that is shut.",
+    default: true,
+  },
+  {
+    key: "leads.prospectReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Why a Suspect becomes a Prospect",
+    description:
+      "§5. A closed list rather than a text box, because the question exists to stop a shop being promoted on the strength of having been walked past - and a free-text field answers it with 'good potential' every time, which is not an answer and cannot be counted. Each entry is a code and a label; the code is what is stored, so rewording a label never orphans the leads already carrying it.",
+    default: PROSPECT_REASONS.map((r) => ({ ...r })),
+  },
+  {
+    key: "leads.sampleReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Why the customer wants a trial",
+    description:
+      "§10. Asked at the moment the sample is requested, for the same reason as the list above: a sample is stock given away, and 'they asked for one' has to be distinguishable from 'they are comparing us against the incumbent'.",
+    default: SAMPLE_REASONS.map((r) => ({ ...r })),
+  },
+  {
+    key: "leads.lostReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Why a lead was lost",
+    description:
+      "§26. A loss nobody explained teaches nothing, which the handset and the server have both refused to accept for as long as the field has existed. What this adds is that the answer is a CODE - so 'how many did we lose on credit terms this quarter' becomes a question somebody can ask, rather than a grep over free text.",
+    default: LOST_REASONS.map((r) => ({ ...r })),
+  },
+  {
+    key: "leads.overrideReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Why a manager overrode a gate",
+    description:
+      "Only offered where the override setting above is on. The commonest honest answer is the first one - the work was done and recorded afterwards - and naming it is what keeps the override from being used as a shrug.",
+    default: OVERRIDE_REASONS.map((r) => ({ ...r })),
+  },
+  {
+    key: "leads.sampleReviewChaseDays",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Chasing a sample review",
+    description:
+      "§16. Days after the sample was received to ask what they thought, in order. The specification's own ladder is day 2, then 4, then 6, and it does not stop: the LAST interval repeats until there is an answer, because a trial nobody reviewed is stock given away for nothing. The count of times it has been asked is on the sample, and a screen showing 'asked three times' is what tells a manager to ring themselves.",
+    default: [2, 4, 6],
+  },
+  {
+    key: "leads.verificationDueDays",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Verification call is due within",
+    description:
+      "§7, §8. Days from a lead reaching Prospect before the sales manager's verification call is overdue. Deliberately short: the call checks that the visit happened and that Mahek was explained, and both answers decay fast in the customer's memory.",
+    default: 2,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "leads.distributorDiscountApprovalPercent",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Discount needing management approval",
+    description:
+      "§12. A special discount above this routes the distributor appointment past the sales manager to management. The person carrying the target must not be the person allowing the discount that hits it - the same reasoning that keeps order approval away from managers entirely.",
+    default: 5,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "leads.distributorCreditLimitApprovalPaise",
+    type: "integer",
+    category: "mbos-leads",
+    label: "Credit limit needing management approval",
+    description:
+      "§12, in paise. A credit limit above this routes the appointment to management. Territory exclusivity always does, whatever the numbers say, because it is the one term that cannot be walked back without taking something away from somebody.",
+    default: 50000000,
+    min: 0,
+  },
 
   /* --------------------------------------------------------------- tasks */
   {
@@ -2321,6 +2738,17 @@ export const SETTINGS = [
     default: 120,
     min: 0,
     max: 3600,
+  },
+  {
+    key: "mbos.travel.maxLegKilometres",
+    type: "integer",
+    category: "mbos-location",
+    label: "Longest single journey to one shop",
+    description:
+      "Kilometres. A guard against a mistyped odometer, not a limit on how far anybody may travel: 41,208 entered as 4,120 turns one journey into a claim for thirty-seven thousand kilometres, and the policy engine would price it without a murmur. Above this the handset refuses the reading while he is still standing at the meter and can look again — which is the only moment anybody can. It applies to a journey opened from Start visit; a leg typed up afterwards on the Travel screen is a different kind of evidence and is not held to it.",
+    default: 400,
+    min: 1,
+    max: 5000,
   },
 
   /* ------------------------------------------------------------------ sync */
@@ -2454,6 +2882,21 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
  */
 export function checkConsistency(config: Config): string[] {
   const problems: string[] = [];
+
+  /*
+   * A score cannot be both strong and worth watching. Set the strong threshold
+   * at or below the watch one and every score in the overlap is rendered green
+   * by one rule and red by the other on two screens that both claim to show
+   * health — which is the shape of the confusion B3-16 was raised about, one
+   * level down. Refused here rather than resolved by ordering the branches in
+   * `healthView`, because a rule the code silently works around is a rule
+   * nobody knows is broken.
+   */
+  if (config["mbos.health.strongAtOrAbove"] <= config["mbos.health.atRiskBelow"]) {
+    problems.push(
+      `Health: "strong at or above" (${config["mbos.health.strongAtOrAbove"]}) must sit above "watch below" (${config["mbos.health.atRiskBelow"]}), or a score between them is both at once.`,
+    );
+  }
 
   /*
    * Sarvam's synchronous endpoint refuses audio over 30 seconds. With the
@@ -2647,15 +3090,16 @@ export function checkConsistency(config: Config): string[] {
   // it would produce orders valued from a table that does not exist.
   /* ------------------------------------------------- MBOS — field sales */
 
-  // A fix the handset rates worse than the mismatch distance cannot tell the
-  // two apart: every honest check-in on a poor signal would read as somebody
-  // standing somewhere else, and a flag raised on all of them is a flag a
-  // manager stops opening.
+  // A fix the handset rates worse than the check-in radius cannot tell the two
+  // apart: every honest check-in on a poor signal would read as somebody
+  // standing somewhere else. This used only to raise a flag a manager stops
+  // opening; it now REFUSES the check-in, so the same misconfiguration turns
+  // into a salesman standing in the right shop being told he is not there.
   const accuracy = config["mbos.location.gpsAccuracyThresholdM"];
   const mismatch = config["mbos.location.visitMismatchM"];
   if (mismatch <= accuracy) {
     problems.push(
-      `A visit is flagged as a location mismatch at ${mismatch}m, but a fix is trusted down to ${accuracy}m of error. The mismatch distance must be comfortably larger than the accuracy threshold, or an honest check-in on a poor signal is flagged as a false one.`,
+      `A check-in is refused past ${mismatch}m from the shop, but a fix is trusted down to ${accuracy}m of error. The radius must be comfortably larger than the accuracy threshold, or an honest salesman on a poor signal is refused at the door of the right shop.`,
     );
   }
 
@@ -2700,6 +3144,18 @@ export function checkConsistency(config: Config): string[] {
   const staleDays = config["mbos.leads.staleDays"];
   const archiveDays = config["mbos.leads.archiveDays"];
   const escalateDays = config["mbos.leads.escalateAfterDays"];
+  /*
+   * The warning has to come BEFORE the decision is demanded, or it is not a
+   * warning. Equal is allowed and means "no warning" — a team that wants the
+   * answer on the second visit with no build-up can say so.
+   */
+  const warnAt = config["mbos.leads.visitsBeforeDecision"];
+  const decideAt = config["mbos.leads.maxSuspectVisits"];
+  if (warnAt > decideAt) {
+    problems.push(
+      `A Suspect decision is demanded on visit ${decideAt} but the warning does not start until visit ${warnAt}. The salesman would be asked for an answer he was never told was coming.`,
+    );
+  }
   if (archiveDays <= staleDays) {
     problems.push(
       `Leads archive after ${archiveDays} days but only go stale at ${staleDays}. Archiving must come later, or a lead is filed away before anybody is told it needs working.`,
@@ -2708,6 +3164,37 @@ export function checkConsistency(config: Config): string[] {
   if (escalateDays > staleDays) {
     problems.push(
       `A lead escalates to the manager after ${escalateDays} days but is not stale until ${staleDays}. Escalation is meant to save the lead, so it has to come first.`,
+    );
+  }
+
+  /*
+   * A saved map whose closest zoom is below its furthest is an empty download:
+   * the handset would ask for every level from 16 down to 9 and there are none,
+   * so the pack completes instantly at nothing and the salesman is left with a
+   * row that says "saved" over a blank map.
+   */
+  const mapMin = config["mbos.maps.minZoom"];
+  const mapMax = config["mbos.maps.maxZoom"];
+  if (mapMin > mapMax) {
+    problems.push(
+      `Saved maps would go from zoom ${mapMin} out to ${mapMax} in, which is no zoom levels at all. The closest zoom must be at least the furthest one.`,
+    );
+  }
+
+  /*
+   * The tile ceiling and the megabyte ceiling are two limits in two units on
+   * the same download, and only one of them is enforced by something that can
+   * explain itself. MapLibre's ABORTS the download; ours refuses it up front
+   * with the size on the screen. If the tile ceiling binds first, a salesman
+   * starts a download this app has already told him is fine and it stops
+   * part-way with an error about tiles.
+   */
+  const megabyteCeiling = config["mbos.maps.maxPackMegabytes"];
+  const perTile = config["mbos.maps.bytesPerTileEstimate"];
+  const tilesAtCeiling = Math.ceil((megabyteCeiling * 1_000_000) / perTile);
+  if (config["mbos.maps.tileCountLimit"] < tilesAtCeiling) {
+    problems.push(
+      `A ${megabyteCeiling} MB map is about ${tilesAtCeiling.toLocaleString("en-IN")} tiles, which is more than the ${config["mbos.maps.tileCountLimit"].toLocaleString("en-IN")}-tile ceiling. Downloads the size limit allows would abort part-way — raise the tile ceiling, or lower the megabyte one.`,
     );
   }
 
@@ -2739,6 +3226,42 @@ export function checkConsistency(config: Config): string[] {
     }
     if (Object.values(caps).some((v) => typeof v !== "number" || v < 0)) {
       problems.push("Every expense cap must be an amount in paise, none of them negative.");
+    }
+  }
+
+  /*
+   * An entitlement is not just a number — it is the LIST the handset builds
+   * its leave form from, so a typo here does not misprice a kind of leave, it
+   * removes it. Somebody who cannot find "casual" on the form applies for loss
+   * of pay instead and finds out on the payslip, which is precisely the failure
+   * this setting exists to end.
+   */
+  const entitlement = config["mbos.leave.annualEntitlementDays"];
+  if (!entitlement || typeof entitlement !== "object") {
+    problems.push(
+      "Leave entitlement must be an object of leave kinds to days a year. With none set, the only thing the handset's leave form can offer is loss of pay.",
+    );
+  } else {
+    const unknown = Object.keys(entitlement).filter(
+      (k) => !(PAID_LEAVE_TYPES as readonly string[]).includes(k),
+    );
+    if (unknown.length) {
+      const wrongHalf = unknown.filter((k) => (LEAVE_TYPES as readonly string[]).includes(k));
+      problems.push(
+        `These are not kinds of leave anybody has a balance of: ${unknown.join(", ")}. The kinds are ${PAID_LEAVE_TYPES.join(", ")}.${
+          wrongHalf.length
+            ? ` ${wrongHalf.join(", ")} is what leave becomes once the balance is spent, so there is no yearly allowance of it to set.`
+            : ""
+        }`,
+      );
+    }
+    if (Object.values(entitlement).some((v) => typeof v !== "number" || v < 0)) {
+      problems.push("Every leave entitlement must be a number of days, none of them negative.");
+    }
+    if (!Object.keys(entitlement).length) {
+      problems.push(
+        "No kind of leave has an entitlement, so the handset's leave form can offer nothing but loss of pay — every request anybody makes would be unpaid.",
+      );
     }
   }
 
@@ -2925,6 +3448,8 @@ export type Config = {
   "mbos.location.trailGapMeters": number;
   "mbos.location.logActivityLocation": boolean;
   "mbos.location.activityFixMaxAgeSeconds": number;
+  "mbos.location.handsetQuietMinutes": number;
+  "mbos.location.lowBatteryPercent": number;
   "mbos.sync.quietHours": number;
 
   "mbos.orders.approvalThresholdPaise": number;
@@ -2958,12 +3483,15 @@ export type Config = {
   "mbos.attendance.halfDayHours": number;
   "mbos.attendance.autoCheckOutHour": number;
   "mbos.attendance.selfieRequired": boolean;
+  "mbos.attendance.selfieRetentionHours": number;
 
   "mbos.leave.noticeDays": number;
   "mbos.leave.allowLossOfPay": boolean;
+  "mbos.leave.annualEntitlementDays": Partial<Record<PaidLeaveType, number>>;
 
   "mbos.health.componentWeights": Record<MbosHealthComponent, number>;
   "mbos.health.atRiskBelow": number;
+  "mbos.health.strongAtOrAbove": number;
   "mbos.health.staleAfterHours": number;
 
   "mbos.sync.imageMaxDimensionPx": number;
@@ -2984,11 +3512,44 @@ export type Config = {
   "mbos.leads.staleDays": number;
   "mbos.leads.archiveDays": number;
   "mbos.leads.escalateAfterDays": number;
+  "mbos.leads.visitsBeforeDecision": number;
+  "mbos.leads.maxSuspectVisits": number;
+  "mbos.samples.reviewAfterDays": number;
+  "mbos.samples.transitChaseAfterDays": number;
+  "mbos.location.nearbyRadiusOptions": { metres: number[] };
+  "mbos.location.nearbyPerKilometreCost": number;
+  "mbos.leads.validationScript": {
+    sections: { heading: string; lines: string[] }[];
+  };
+
+  "mbos.maps.offlineEnabled": boolean;
+  "mbos.maps.minZoom": number;
+  "mbos.maps.maxZoom": number;
+  "mbos.maps.areaSeparationKm": number;
+  "mbos.maps.paddingMetres": number;
+  "mbos.maps.bytesPerTileEstimate": number;
+  "mbos.maps.maxPackMegabytes": number;
+  "mbos.maps.tileCountLimit": number;
+  "mbos.maps.downloadOnWifiOnly": boolean;
+  "mbos.maps.refreshAfterDays": number;
+
+  "leads.suspectMaxVisits": number;
+  "leads.requireNextAction": boolean;
+  "leads.allowManagerOverride": boolean;
+  "leads.prospectReasons": { code: string; label: string }[];
+  "leads.sampleReasons": { code: string; label: string }[];
+  "leads.lostReasons": { code: string; label: string }[];
+  "leads.overrideReasons": { code: string; label: string }[];
+  "leads.sampleReviewChaseDays": number[];
+  "leads.verificationDueDays": number;
+  "leads.distributorDiscountApprovalPercent": number;
+  "leads.distributorCreditLimitApprovalPaise": number;
 
   "mbos.tasks.escalationHours": number;
   "mbos.tasks.requireCompletionNote": boolean;
   "mbos.approvals.escalationHours": number;
   "mbos.visits.minimumDwellSeconds": number;
+  "mbos.travel.maxLegKilometres": number;
   "mbos.sync.mediaWifiOnly": boolean;
   "mbos.ai.retainAudioAfterTranscription": boolean;
 };

@@ -1,9 +1,19 @@
 import "server-only";
+import { bandFor, type HealthBand } from "../engines/inactivity";
+import type { BusinessDate } from "../business-date";
 import { cache } from "react";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
 import { today } from "../recompute";
+import { employeeJoinOn, employeeLinkKindSql } from "@/lib/employee-link";
+import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "@/lib/territory-sql";
+import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
+import {
+  leaveBalances as leaveBalancesFor,
+  leaveDebitDays,
+  type LeaveBalance,
+} from "@/lib/engines/leave";
 
 /* ---------------------------------------------------------------------------
  * Every read the Sales Dashboard makes.
@@ -74,13 +84,23 @@ export const managerScope = cache(async function managerScope(): Promise<Manager
   }
 
   const rows = await db.execute<{ region: string }>(sql`
-    select region from mbos_manager_territories where user_id = ${userId}
+    -- REGIONS ONLY. The table also holds a salesman's working cities now, and
+    -- reading one of those as an oversight region would narrow a manager's
+    -- console to a city on the day somebody allocated him one.
+    select region from mbos_user_territories
+     where user_id = ${userId} and kind = 'region'
   `);
 
   if (!rows.length) return { national: true, regions: [], salesmanIds: null };
 
-  const regions = rows.map((r) => r.region);
-  const list = sql`(${sql.join(regions.map((r) => sql`${r}`), sql`, `)})`;
+  /* Every spelling of every region on the patch, folded the same way the chip
+     list folds them. Compared as raw text a manager allocated "Gujarat" would
+     oversee the 31 customers spelled that way and not the 97 spelled "Gujrat"
+     — most of the state missing from their console, with nothing saying so. */
+  const regions = rows.map((r) => canonicalState(r.region));
+  const keys = [...new Set(regions.flatMap((r) => stateVariants(r)))];
+  if (!keys.length) return { national: true, regions: [], salesmanIds: null };
+  const list = sql`(${sql.join(keys.map((k) => sql`${k}`), sql`, `)})`;
 
   /* A salesman is in scope when any shop in his book is. The book is the
    * territory — `customers.territory_region` — rather than a second field on
@@ -90,7 +110,7 @@ export const managerScope = cache(async function managerScope(): Promise<Manager
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       join customers c on coalesce(c.sales_am_id, c.owner_id) = u.id
-     where c.territory_region in ${list}
+     where ${sql.raw(stateKeySql(qualify(TERRITORY_REGION_SQL, "c")))} in ${list}
   `);
 
   return { national: false, regions, salesmanIds: men.map((m) => m.id) };
@@ -110,6 +130,28 @@ export function onlyMine(scope: ManagerScope, column: string) {
   return sql`and ${sql.raw(column)} in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`;
 }
 
+/**
+ * A request somebody took back is not waiting on anybody.
+ *
+ * Withdrawing leave marks `cancelled_at` on the request and deliberately does
+ * NOT touch the approval — the office never decided anything, so recording a
+ * decision would be a lie, and `mbos_approval_state` has no word for "taken
+ * back" that an APK already in somebody's pocket would understand. So the
+ * approval stays `pending` for ever and every read of the queue has to know it.
+ *
+ * Every read, which is the point of writing it once: the queue itself, the
+ * count on the dashboard, the sidebar badge and the "oldest thing waiting"
+ * figure. Miss one and a withdrawn request quietly becomes a desk that looks
+ * three days behind.
+ */
+const NOT_WITHDRAWN = sql`
+  and not exists (
+    select 1 from mbos_leave_requests l
+     where l.id = ap.subject_id
+       and ap.type = 'leave'
+       and l.cancelled_at is not null
+  )`;
+
 /* ═════════════════════════════════════════════════════════════════ the team */
 
 export type Salesman = {
@@ -123,8 +165,20 @@ export type Salesman = {
   deviceBoundAt: Date | null;
   /** When the handset last spoke to MahekOne. Null where it never has. */
   lastSeenAt: Date | null;
+  /** The handset bound to them now, so it can be released. Null if none is. */
+  boundDeviceId: string | null;
   lastLoginAt: Date | null;
   customerCount: number;
+  /**
+   * Where he WORKS. Empty means his whole book, which is the safe default and
+   * a deliberate one — allocating cities to eight people and forgetting the
+   * ninth must not empty her handset.
+   *
+   * Regions are excluded: those are a manager's oversight patch, set on its own
+   * screen, and a salesman's dialog must not appear able to change them.
+   */
+  /** Where he works. `parent` is the state a city sits in — see `PARENT_KIND`. */
+  territories: { kind: string; value: string; parent: string }[];
 };
 
 /**
@@ -148,9 +202,29 @@ export async function fieldTeam(): Promise<Salesman[]> {
              where d.user_id = u.id and d.active) as "deviceBoundAt",
            (select max(d.last_seen_at) from mbos_devices d
              where d.user_id = u.id and d.active) as "lastSeenAt",
+           /* The handset currently bound, so it can be released from this row.
+              A salesman who changes phone cannot sign in on the new one while
+              the old binding stands, and until now the only way to lift it was
+              a screen he could not reach. Newest wins where a row somehow
+              carries two: the one he is actually holding is the one he last
+              signed in on. */
+           (select d.device_id from mbos_devices d
+             where d.user_id = u.id and d.active
+             order by d.bound_at desc limit 1) as "boundDeviceId",
            (select count(*)::int from customers c
              where coalesce(c.sales_am_id, c.owner_id) = u.id
-               and c.status = 'active') as "customerCount"
+               and c.status = 'active') as "customerCount",
+           -- Where he WORKS, which narrows the book above rather than being
+           -- part of it. Regions are excluded: those are a manager's oversight
+           -- patch, set on its own screen, and showing them here would read as
+           -- something this dialog can change.
+           coalesce((
+             select json_agg(json_build_object('kind', t.kind, 'value', t.region,
+                                               'parent', coalesce(t.parent, ''))
+                             order by t.parent, t.kind, t.region)
+               from mbos_user_territories t
+              where t.user_id = u.id and t.kind <> 'region'
+           ), '[]'::json) as "territories"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
      where true ${onlyMine(scope, "u.id")}
@@ -281,6 +355,8 @@ export async function teamDay(day?: string): Promise<TeamDay> {
 export type ConsoleCounts = {
   /** "11 salesmen · All India · 7 regions" */
   teamLine: string;
+  /** The full patch, for the header's hover — see `patch` below. */
+  scopeDetail: string;
   /** "National sales manager", or "South sales manager". From the scope. */
   title: string;
   /** "6 of 11 in the field" */
@@ -306,6 +382,20 @@ export type ConsoleCounts = {
  * A count is only ever what is WAITING — the design draws no badge at zero,
  * because a zero beside a heading reads as a problem rather than as an empty
  * queue. The numbers are returned raw and the shell decides that.
+ *
+ * THE "regions" COUNT MAY NOT READ `territory_region` DIRECTLY, which is what
+ * it did. That column is empty on every one of the 5,915 rows in production and
+ * `customers.region` is the one the sheet fills — `TERRITORY_REGION_SQL` is the
+ * fall-through and the ONE definition of this geography, and reading the raw
+ * column instead is exactly the failure that file was written about. It counted
+ * zero on every book in the company, so the console header has said "no
+ * territory set" since it shipped, printed beside the very list of states it
+ * was contradicting. Folded with `stateKeySql` as well, because the sheet holds
+ * Gujrat beside Gujarat and a distinct over the raw text counts one state
+ * twice.
+ *
+ * This note is out here rather than inside the query because the SQL is a
+ * template literal, and a backtick in a comment inside one ends the string.
  */
 export async function consoleCounts(
   day: string,
@@ -323,8 +413,12 @@ export async function consoleCounts(
          join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date
         where u.active and d.check_in_at is not null and d.check_out_at is null
           ${mine("u.id")}) as "live",
-      (select count(distinct c.territory_region)::int from customers c
-        where c.territory_region is not null and c.status = 'active'
+      -- WHERE THE BOOK ACTUALLY IS. See the note above this function for why
+      -- it may not read territory_region directly.
+      (select count(distinct ${sql.raw(stateKeySql(qualify(TERRITORY_REGION_SQL, "c")))})::int
+         from customers c
+        where ${sql.raw(qualify(TERRITORY_REGION_SQL, "c"))} is not null
+          and c.status = 'active'
           ${mine("coalesce(c.sales_am_id, c.owner_id)")}) as "regions",
 
       (select count(*)::int from mbos_tasks t
@@ -356,6 +450,7 @@ export async function consoleCounts(
 
       (select count(*)::int from mbos_approvals ap
         where ap.state = 'pending' and ap.type = 'leave'
+          ${NOT_WITHDRAWN}
           ${mine("ap.requested_by_user_id")}) as "leave",
       (select count(*)::int from mbos_approvals ap
         where ap.state = 'pending' and ap.type = 'expense_claim'
@@ -368,16 +463,54 @@ export async function consoleCounts(
   const team = n("team");
   const regions = n("regions");
 
+  /*
+   * THE PATCH, NAMED OR COUNTED — never spelled out at any length.
+   *
+   * This joined every region with a comma, so a manager holding five states got
+   * "Andhra Pradesh, Maharashtra, Odisha, Rajasthan, West Bengal" in a header
+   * bar that also has to hold a search box, three controls and his own name.
+   * It does not wrap and it did not shrink, so it pushed the user chip off the
+   * right edge of the screen — the whole right-hand end of the header was
+   * unreachable, and the design's own example is "11 salesmen · All India ·
+   * 7 states", a count rather than a list.
+   *
+   * One or two are still NAMED, because that is the answer somebody wants and
+   * it is short. Three or more is a count, with the full list on the hover of
+   * the element that prints it — the names are not lost, they stop being the
+   * thing that breaks the bar.
+   */
+  const patch = scope.national
+    ? "All India"
+    : scope.regions.length <= 2
+      ? scope.regions.join(" and ")
+      : `${scope.regions.length} states`;
+
   return {
     title: scope.national
       ? "National sales manager"
-      : `${scope.regions.join(", ")} sales manager`,
+      : scope.regions.length === 1
+        ? `${scope.regions[0]} sales manager`
+        : "Regional sales manager",
+    /* The full patch, for the hover. A count is quick to read and it is not an
+       answer, so the answer has to be one gesture away. */
+    scopeDetail: scope.national
+      ? "Every state — a national manager sees the whole field team"
+      : `Oversees ${scope.regions.join(", ")}`,
     teamLine: [
       `${team} ${team === 1 ? "salesman" : "salesmen"}`,
       /* The scope, not just the headcount. It is how a regional manager knows
        * at a glance that they are looking at their own patch. */
-      scope.national ? "All India" : scope.regions.join(", "),
-      regions ? `${regions} ${regions === 1 ? "region" : "regions"}` : "no territory set",
+      patch,
+      /*
+       * WHERE THE BOOK IS, which is a different question to where he may look,
+       * and worth printing only where the two can differ. A regional manager's
+       * customers are inside his patch by definition, so "5 states · 5 states"
+       * would be the same fact twice; a national manager's spread is the only
+       * thing in the line that is not a constant.
+       */
+      ...(scope.national
+        ? [regions ? `${regions} ${regions === 1 ? "state" : "states"}` : "no customer names a state"]
+        : []),
     ].join(" · "),
     liveLine: `${n("live")} of ${team} in the field`,
     tasks: n("tasks"),
@@ -494,7 +627,8 @@ export async function pendingApprovals(): Promise<PendingApproval[]> {
 
       from mbos_approvals ap
       join users u on u.id = ap.requested_by_user_id
-     where ap.state = 'pending' ${onlyMine(scope, "ap.requested_by_user_id")}
+     where ap.state = 'pending' ${NOT_WITHDRAWN}
+       ${onlyMine(scope, "ap.requested_by_user_id")}
      order by ap.requested_at asc
      limit 200
   `) as unknown as PendingApproval[];
@@ -503,7 +637,8 @@ export async function pendingApprovals(): Promise<PendingApproval[]> {
 /** For the sidebar badge and the launcher tile. */
 export async function pendingApprovalCount(): Promise<number> {
   const rows = await db.execute<{ n: number }>(
-    sql`select count(*)::int as n from mbos_approvals where state = 'pending'`,
+    sql`select count(*)::int as n from mbos_approvals ap
+         where ap.state = 'pending' ${NOT_WITHDRAWN}`,
   );
   return Number(rows[0]?.n ?? 0);
 }
@@ -518,9 +653,10 @@ export async function pendingApprovalCount(): Promise<number> {
 export async function oldestApprovalHours(): Promise<number> {
   const rows = await db.execute<{ hours: number }>(sql`
     select coalesce(
-             floor(extract(epoch from (now() - min(requested_at))) / 3600), 0
+             floor(extract(epoch from (now() - min(ap.requested_at))) / 3600), 0
            )::int as hours
-      from mbos_approvals where state = 'pending'
+      from mbos_approvals ap
+     where ap.state = 'pending' ${NOT_WITHDRAWN}
   `);
   return Number(rows[0]?.hours ?? 0);
 }
@@ -636,6 +772,18 @@ export type VisitRow = {
   checkOutLat: number | null;
   checkOutLng: number | null;
   checkOutAccuracyM: number | null;
+  /**
+   * What the salesman typed to get past a refused check-in, in his own words.
+   *
+   * The server folds it into `unverifiedReason`'s sentence as well, because
+   * that is the column every existing screen reads — this is here so a screen
+   * can show what he actually wrote rather than only what was written about
+   * him, which is the same argument `distanceFromShopM` carries one field up.
+   */
+  checkInOverrideReason: string | null;
+  /** "The shop's pin is wrong" — asked, decided, or never raised. */
+  pinCorrection: "requested" | "accepted" | "rejected" | null;
+  pinCorrectionDecidedAt: Date | null;
 };
 
 /**
@@ -666,7 +814,10 @@ export async function visitsList(day: string): Promise<VisitRow[]> {
            v.check_in_lat as "checkInLat", v.check_in_lng as "checkInLng",
            v.check_in_accuracy_m as "checkInAccuracyM",
            v.check_out_lat as "checkOutLat", v.check_out_lng as "checkOutLng",
-           v.check_out_accuracy_m as "checkOutAccuracyM"
+           v.check_out_accuracy_m as "checkOutAccuracyM",
+           v.check_in_override_reason as "checkInOverrideReason",
+           v.pin_correction::text as "pinCorrection",
+           v.pin_correction_decided_at as "pinCorrectionDecidedAt"
       from mbos_visits v
       join users u on u.id = v.salesman_id
       join customers c on c.id = v.customer_id
@@ -825,6 +976,17 @@ export type LeadRow = {
   salesmanId: string | null;
   salesmanName: string | null;
   initials: string | null;
+  /**
+   * Who coordinates the conversion, once the lead is qualified. Distinct from
+   * the salesman above, who keeps the book and keeps making the visits — see
+   * `customers.leadManagerId`. Null until a lead is qualified.
+   */
+  leadManagerId: string | null;
+  leadManagerName: string | null;
+  /** Why a held or stuck lead is not moving. Null while it is progressing. */
+  holdReason: string | null;
+  /** How many times anybody has stood in this shop. Counted, never cached. */
+  visitCount: number;
   nextFollowUpDate: string | null;
   lastActivityDate: string | null;
   /** Days since anything happened. What "stale" is measured from. */
@@ -850,6 +1012,14 @@ export type LeadRow = {
   customerStatus: string | null;
   customerLastOrderDate: string | null;
   customerCycleDays: number | null;
+  /**
+   * The retention band — the ONE definition of "gone quiet", the same one
+   * `customers.status`, the Call Log and the owner's report read. Computed in
+   * JS from the two columns above rather than as a CASE in the query, because
+   * a second copy of that rule is a copy that drifts. Null where the lead has
+   * never ordered: no band, and the screen says so in words.
+   */
+  customerHealthBand: HealthBand | null;
   customerOutstandingPaise: number | null;
 };
 
@@ -887,6 +1057,18 @@ const LEAD_ROW_SELECT = sql`
            c.lead_stage::text as stage,
            c.owner_id as "salesmanId",
            u.name as "salesmanName", u.initials,
+           /* The coordinating seat. It is NOT the owner and must not be drawn
+            * as one: the salesman above still holds the book and still makes
+            * the visits. This is who runs the conversation about price, terms
+            * and samples once the lead is qualified. */
+           c.lead_manager_id as "leadManagerId",
+           lm.name as "leadManagerName",
+           c.lead_hold_reason as "holdReason",
+           /* The same count the handset is sent, from the same expression, so
+            * the office and the salesman cannot disagree about how many times
+            * somebody has been to a shop. */
+           (select count(*)::int from mbos_visits v
+             where v.customer_id = c.id) as "visitCount",
            c.lead_next_follow_up_date::text as "nextFollowUpDate",
            c.lead_last_activity_date::text as "lastActivityDate",
            c.lead_notes as notes,
@@ -907,18 +1089,48 @@ const LEAD_ROW_SELECT = sql`
 /** Prospects each salesman is working, and how long since anybody touched one. */
 export async function leadsList(day: string): Promise<LeadRow[]> {
   const scope = await managerScope();
-  return db.execute<LeadRow>(sql`
+  return withHealthBand(day, await db.execute<LeadRow>(sql`
     ${LEAD_ROW_SELECT},
            coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
            (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
       from customers c
       left join users u on u.id = c.owner_id
+      left join users lm on lm.id = c.lead_manager_id
      where c.lead_stage is not null
        and c.lead_archived = false
        ${onlyMine(scope, "c.owner_id")}
      order by c.lead_next_follow_up_date asc nulls last, c.lead_last_activity_date asc nulls last
      limit 400
-  `) as unknown as LeadRow[];
+  `) as unknown as LeadRow[]);
+}
+
+/**
+ * Fill in each row's retention band.
+ *
+ * `bandFor` is the one definition of "has this customer gone quiet", shared
+ * with `customers.status`, the Call Log and the owner's retention report.
+ * Spelling it as a CASE expression in the query above would have been a second
+ * copy of a rule whose entire point is that there is one — and the copy drifts
+ * the day somebody changes a multiplier on the Settings screen.
+ *
+ * Null stays null: a lead that has never ordered is in NO band, which the
+ * screen says in words rather than drawing one it invented.
+ */
+async function withHealthBand(day: string, rows: LeadRow[]): Promise<LeadRow[]> {
+  const { getConfig } = await import("../config/store");
+  const config = await getConfig();
+  return rows.map((r) => ({
+    ...r,
+    customerHealthBand:
+      bandFor(
+        {
+          lastOrderDate: (r.customerLastOrderDate as BusinessDate | null) ?? null,
+          cycleDays: Number(r.customerCycleDays ?? 0),
+        },
+        day as BusinessDate,
+        config,
+      )?.band ?? null,
+  }));
 }
 
 /**
@@ -938,6 +1150,7 @@ export async function archivedLeadsList(day: string): Promise<LeadRow[]> {
            (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
       from customers c
       left join users u on u.id = c.owner_id
+      left join users lm on lm.id = c.lead_manager_id
      where c.lead_stage is not null
        and c.lead_archived = true
        ${onlyMine(scope, "c.owner_id")}
@@ -1294,6 +1507,34 @@ export type AttendanceRow = {
   autoCheckedOut: boolean;
   workedSeconds: number | null;
   visits: number;
+  /**
+   * Every arrival and departure of the day, with the photograph taken at each.
+   *
+   * The day-level `check_in_selfie_id`/`check_out_selfie_id` are the first-in
+   * and last-out mirrors and are deliberately NOT what this screen reads: a
+   * salesman who breaks for lunch and comes out again in the evening has three
+   * arrivals, and showing one photograph for the day would verify the first and
+   * assert nothing whatever about the other two.
+   *
+   */
+  sessions: {
+    inAt: string | null;
+    outAt: string | null;
+    inSelfieId: string | null;
+    outSelfieId: string | null;
+  }[];
+  /**
+   * Which of those ids can still be opened.
+   *
+   * Asked of the attachments table rather than worked out from the retention
+   * window, because the two can honestly differ: a photograph taken on a Monday
+   * with no signal and synced on Wednesday is younger than the day it belongs
+   * to, and the window runs from when it arrived. An id present in a session
+   * and absent from this list is a photograph that WAS taken and has since been
+   * deleted — which is a different thing to say than "none was taken", and the
+   * screen says it differently.
+   */
+  availableSelfieIds: string[];
 };
 
 /**
@@ -1324,7 +1565,22 @@ export async function attendanceForDay(day: string): Promise<AttendanceRow[]> {
            d.worked_seconds as "workedSeconds",
            (select count(*)::int from mbos_visits v
              where v.salesman_id = u.id
-               and (v.check_in_at ${IST_DAY})::date = ${day}::date) as "visits"
+               and (v.check_in_at ${IST_DAY})::date = ${day}::date) as "visits",
+           /* The day as the handset reported it. Null on a row written before
+              sessions existed, which the screen falls back from rather than
+              drawing an empty list. */
+           coalesce(d.sessions, '[]'::jsonb) as "sessions",
+           /* Which photographs are still openable, asked of the attachments
+              table itself. The sessions column names its ids for ever — that
+              is the point of keeping them — so an id present there says a
+              photograph was TAKEN and says nothing about whether it still
+              exists. (No backticks in here: this is inside a sql template and
+              one would end it.) */
+           coalesce((select jsonb_agg(a.id) from attachments a
+                      where a.parent_type = 'mbos_attendance'
+                        and a.parent_id = d.id
+                        and a.status = 'available'), '[]'::jsonb)
+             as "availableSelfieIds"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date
@@ -1376,11 +1632,24 @@ export async function leaveRequests(): Promise<LeaveRow[]> {
            ap.decision_note as "decisionNote",
            d.name as "approverName",
            ap.requested_at as "requestedAt",
+           /* Who ELSE is off on these days.
+            *
+            * "Else" is load-bearing and was missing: without the user check a
+            * person's own request could name them, which reads as a clash with
+            * themselves. And a REFUSED request is not somebody being off — it
+            * counted here, so the banner warned about two salesmen away in one
+            * week when one of them had already been told no. Waiting counts,
+            * because two requests decided one at a time by somebody who cannot
+            * see the other is the whole reason this column exists. */
            (select string_agg(distinct u2.name, ', ')
               from mbos_leave_requests l2
               join users u2 on u2.id = l2.user_id
+              left join mbos_approvals ap2
+                     on ap2.subject_id = l2.id and ap2.type = 'leave'
              where l2.id <> l.id
+               and l2.user_id <> l.user_id
                and l2.cancelled_at is null
+               and coalesce(ap2.state::text, 'pending') in ('pending', 'approved')
                and l2.from_date <= l.to_date
                and l2.to_date >= l.from_date) as "clashesWith"
       from mbos_leave_requests l
@@ -1475,6 +1744,46 @@ export type LastKnown = {
    * trail with real gaps in it. Null means never reported, not refused.
    */
   backgroundTrackingGranted: boolean | null;
+  /**
+   * WHY THE MAP IS EMPTY, where the handset was able to say.
+   *
+   * "No fix today" has four ordinary causes and used to be one sentence for
+   * all of them: the background permission refused, location switched off on
+   * the phone, no signal, or a flat battery. They are four different
+   * conversations — one is a settings screen, one is a charger, and one is
+   * nobody's fault at all — and a manager guessing between them rings a
+   * salesman to ask him to read out his own permissions.
+   *
+   * Every one of these is NULLABLE and stays drawn as unknown when it is
+   * null. Handsets already in the field report none of it and will go on
+   * doing so until they are updated, which is not a fault to display.
+   */
+  deviceModel: string | null;
+  appVersion: string | null;
+  locationPermission: string | null;
+  locationServicesEnabled: boolean | null;
+  connectionType: string | null;
+  batteryPercent: number | null;
+  batteryCharging: boolean | null;
+  /**
+   * When the three readings above were taken — NOT when they were drawn.
+   *
+   * There is no live reading here and the screen must never imply one: the
+   * handset speaks when it syncs, so a battery figure is minutes old inside a
+   * working day and hours old outside one. This is what lets the row say "64%
+   * at 09:14" instead of "64%", the same way a travelling salesman's distance
+   * carries the age of the fix it was measured from.
+   */
+  deviceStateAt: Date | null;
+  /**
+   * The last time the HANDSET SPOKE, which is the only honest answer to "is
+   * his internet off".
+   *
+   * A phone with no connection cannot report that it has no connection, so
+   * nothing the handset sends could ever carry that fact. Silence carries it,
+   * and this is the silence measured.
+   */
+  lastHeardAt: Date | null;
 };
 
 /**
@@ -1522,7 +1831,15 @@ export async function lastKnownPositions(day: string): Promise<LastKnown[]> {
            d.check_in_at as "checkInAt", d.check_out_at as "checkOutAt",
            f.lat, f.lng, f.at as "seenAt", f.place, f.acc as "accuracyM",
            (d.status = 'on_leave') as "onLeave",
-           dev.background_location_granted as "backgroundTrackingGranted"
+           dev.background_location_granted as "backgroundTrackingGranted",
+           dev.model as "deviceModel", dev.app_version as "appVersion",
+           dev.location_permission as "locationPermission",
+           dev.location_services_enabled as "locationServicesEnabled",
+           dev.connection_type as "connectionType",
+           dev.battery_percent as "batteryPercent",
+           dev.battery_charging as "batteryCharging",
+           dev.device_state_at as "deviceStateAt",
+           dev.last_seen_at as "lastHeardAt"
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
       left join mbos_attendance_days d on d.user_id = u.id and d.day = ${day}::date
@@ -2291,6 +2608,9 @@ export type BookCustomer = {
   creditLimitPaise: number | null;
   creditBlocked: boolean;
   healthScore: number | null;
+  /** The retention band. See `withHealthBand` — one definition, filled in JS. */
+  healthBand: HealthBand | null;
+  cycleDays: number | null;
   lastVisitDate: string | null;
   lastOrderDate: string | null;
 };
@@ -2325,7 +2645,7 @@ export async function fieldBook(filter?: {
             or coalesce(c.area, '') ilike ${"%" + filter.search + "%"})`
     : sql``;
 
-  return db.execute<BookCustomer>(sql`
+  const rows = (await db.execute<BookCustomer>(sql`
     select c.id, c.name, c.city, c.area, c.beat, c.phone,
            coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
            u.name as "salesmanName",
@@ -2334,6 +2654,8 @@ export async function fieldBook(filter?: {
            c.credit_limit_paise as "creditLimitPaise",
            c.credit_blocked as "creditBlocked",
            c.health_score as "healthScore",
+           -- the two facts the band is derived from, so it can be filled in JS
+           c.cycle_days as "cycleDays",
            c.last_visit_date::text as "lastVisitDate",
            c.last_order_date::text as "lastOrderDate"
       from customers c
@@ -2343,7 +2665,25 @@ export async function fieldBook(filter?: {
        ${salesman} ${beat} ${gps} ${search}
      order by c.name asc
      limit 500
-  `) as unknown as BookCustomer[];
+  `)) as unknown as BookCustomer[];
+
+  const { getConfig } = await import("../config/store");
+  const [config, day] = await Promise.all([getConfig(), today()]);
+  /* The same one definition the leads list and the handset payload use. A
+     manager arranging somebody's day should be able to see which of these
+     shops has gone quiet without opening each one. */
+  return rows.map((r) => ({
+    ...r,
+    healthBand:
+      bandFor(
+        {
+          lastOrderDate: (r.lastOrderDate as BusinessDate | null) ?? null,
+          cycleDays: Number(r.cycleDays ?? 0),
+        },
+        day,
+        config,
+      )?.band ?? null,
+  }));
 }
 
 /** How much of the book has no coordinates. A count, and then a decision. */
@@ -2377,6 +2717,17 @@ export type ShopPin = {
   beat: string | null;
   lat: number;
   lng: number;
+  /**
+   * True where the pin was looked up from an address rather than captured by
+   * standing in the shop.
+   *
+   * It is on the row rather than derived on the map because the difference is
+   * real and often large: an Indian address outside a metro geocodes to the
+   * locality centre, which can be several hundred metres from the door.
+   * Drawing it identically to a field fix would present a guess as a
+   * measurement on the screen a territory is planned from.
+   */
+  approximate: boolean;
   salesmanId: string | null;
   salesmanName: string | null;
 };
@@ -2391,13 +2742,23 @@ export async function shopPins(): Promise<ShopPin[]> {
   const scope = await managerScope();
   return db.execute<ShopPin>(sql`
     select c.id, c.name, c.city, c.area, c.beat,
-           c.gps_lat as lat, c.gps_lng as lng,
+           /* The field pin first, then the looked-up one. 503 shops carry an
+              address and no pin, and they were absent from this map entirely
+              — a shop nobody can see is a shop nobody plans a day around. */
+           coalesce(c.gps_lat, c.geocoded_lat) as lat,
+           coalesce(c.gps_lng, c.geocoded_lng) as lng,
+           /* WHICH KIND OF PIN THIS IS. A geocode is a locality centre often
+              enough that drawing it identically to a fix taken in the doorway
+              would present a guess as a measurement. The map draws it hollow,
+              the same way a stale activity fix is drawn. */
+           (c.gps_lat is null) as "approximate",
            coalesce(c.sales_am_id, c.owner_id) as "salesmanId",
            u.name as "salesmanName"
       from customers c
       left join users u on u.id = coalesce(c.sales_am_id, c.owner_id)
      where c.status = 'active' and c.kind = 'customer'
-       and c.gps_lat is not null and c.gps_lng is not null
+       and coalesce(c.gps_lat, c.geocoded_lat) is not null
+       and coalesce(c.gps_lng, c.geocoded_lng) is not null
        ${onlyMine(scope, "coalesce(c.sales_am_id, c.owner_id)")}
   `) as unknown as ShopPin[];
 }
@@ -2513,6 +2874,12 @@ const SETTING_GROUPS: Array<{ category: string; label: string; blurb: string }> 
       "Batch sizes, the offline login window, and what the handset holds. Changing these changes how a phone behaves in a market with no signal.",
   },
   {
+    category: "mbos-maps",
+    label: "Maps on the handset",
+    blurb:
+      "What a salesman may save so the map still draws in a market with no signal. The closest zoom is the setting that decides the size — every step in is four times the download.",
+  },
+  {
     category: "mbos-devices",
     label: "Handsets",
     blurb:
@@ -2594,6 +2961,17 @@ export type PayRow = {
   salesmanName: string;
   active: boolean;
   employeeCode: string | null;
+  /**
+   * Whether that employee was CHOSEN or merely matched.
+   *
+   * `guessed` means nobody has linked this account and the old email-or-mobile
+   * heuristic found the row — which on this book is rare and, where it does
+   * fire, is matching an account against whichever of two same-named payroll
+   * rows happened to share a number. A pay figure arrived at that way is worth
+   * saying out loud rather than printing beside a chosen one as though the two
+   * were the same kind of fact.
+   */
+  employeeMatch: "linked" | "guessed";
   employeeStatus: string | null;
   netSalaryPaise: number | null;
   conveyancePaise: number | null;
@@ -2629,6 +3007,7 @@ export async function payForPeriod(from: string, to: string): Promise<PayRow[]> 
   return db.execute<PayRow>(sql`
     select u.id as "salesmanId", u.name as "salesmanName", u.active,
            e.employee_code as "employeeCode",
+           ${employeeLinkKindSql("u")} as "employeeMatch",
            e.status_raw as "employeeStatus",
            e.net_salary_paise as "netSalaryPaise",
            e.conveyance_paise as "conveyancePaise",
@@ -2654,10 +3033,13 @@ export async function payForPeriod(from: string, to: string): Promise<PayRow[]> 
 
       from users u
       join app_access a on a.user_id = u.id and a.app = 'field'
-      /* Email then company mobile — the same rule the Access screen uses. */
-      left join employees e
-             on lower(e.email) = lower(u.email)
-             or (e.company_mobile is not null and e.company_mobile = u.phone)
+      /* The link somebody made, falling back to the old email-or-mobile guess
+         where nobody has made one -- see lib/employee-link.ts, which the
+         handset's own copy of these figures reads too. The guess alone matched
+         almost nobody on the real book, so this screen showed a blank salary
+         for every field salesman with no way to say whether that meant unpaid
+         or unknown. */
+      left join employees e on ${employeeJoinOn("u", "e")}
      where u.active ${onlyMine(scope, "u.id")}
      order by u.name asc
   `) as unknown as PayRow[];
@@ -2685,8 +3067,12 @@ export async function managers(): Promise<ManagerRow[]> {
   return db.execute<ManagerRow>(sql`
     select u.id, u.name, u.email, u.role::text as role, u.active,
            coalesce(
+             -- REGIONS ONLY, and from the renamed table. It also holds a
+             -- salesman's working cities now, and listing one of those as a
+             -- manager's patch would show "Nagpur" as somewhere they oversee.
              (select array_agg(t.region order by t.region)
-                from mbos_manager_territories t where t.user_id = u.id),
+                from mbos_user_territories t
+               where t.user_id = u.id and t.kind = 'region'),
              '{}'
            ) as regions
       from users u
@@ -2703,13 +3089,159 @@ export async function managers(): Promise<ManagerRow[]> {
  * screen regions nobody's shops are in.
  */
 export async function knownRegions(): Promise<string[]> {
+  /* The SAME expression the filter matches on — see `TERRITORY_REGION_SQL`.
+     Read straight off `territory_region` this came back EMPTY on the real book,
+     so the patch dialog offered no chips and no manager's patch could ever be
+     set; and a row inserted by hand would have matched nothing and blanked that
+     manager's console. A chip list and a filter that read different columns is
+     how a screen offers a place no book is in. */
   const rows = await db.execute<{ region: string }>(sql`
-    select distinct c.territory_region as region
+    select distinct ${sql.raw(qualify(TERRITORY_REGION_SQL, "c"))} as region
       from customers c
-     where c.territory_region is not null and c.territory_region <> ''
+     where ${sql.raw(qualify(TERRITORY_REGION_SQL, "c"))} is not null
      order by 1
   `);
-  return rows.map((r) => r.region);
+
+  /* ONE CHIP PER PLACE, however the sheet spelled it.
+     
+     The book holds 24 distinct strings for about 20 places — Gujrat 97 beside
+     Gujarat 31, Chhattisgadh 14 beside Chhattisgarh 19, TAMIL NADU beside
+     Tamilnadu. Offered raw, each spelling was its own chip and its own
+     territory: allocating "Gujarat" gave somebody 31 customers and silently
+     withheld 97, which is worse than an empty result because the screen looks
+     like it worked.
+     
+     `canonicalState` is the same fold `territoryClause` matches on, so a chip
+     and the filter behind it cannot disagree about which customers a place
+     has. A spelling this file has not been taught is kept as typed rather than
+     guessed into a neighbour — a state nobody listed is likelier than a typo,
+     and folding it on a string edit would move customers between
+     territories. */
+  const seen = new Map<string, string>();
+  for (const r of rows) {
+    const name = canonicalState(r.region);
+    if (name && !seen.has(stateKey(name))) seen.set(stateKey(name), name);
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * THE PLACES THE BOOK ACTUALLY USES, as the tree they form.
+ *
+ * A city belongs to a state and a beat to a city, so this is one query grouped
+ * rather than three flat lists. Flat lists are what the dialog had, and on this
+ * book that meant every city value in the country under one heading — several
+ * hundred of them, most of them not cities at all but whole postal addresses
+ * the sheet dropped into the column ("06, MAHADEV TOWERS CO-OP HSG SOC, LTD,
+ * LBS MARG, HARINIWAS CIRCLE, Thane, Maharashtra, 400602"). Nesting does not
+ * clean that data and cannot; what it does is make it reachable, because a
+ * state's worth of it is a list somebody can search and the country's is not.
+ *
+ * Read off `customers` rather than kept as a list of their own, exactly as
+ * `knownRegions` is and for the same reason: a separate list would offer places
+ * no customer is in, and a territory that matches nothing is a book that goes
+ * quietly empty.
+ *
+ * Trimmed and deduplicated case-insensitively, because "Nagpur", "nagpur " and
+ * "NAGPUR" are one city typed by three people — and the filter that reads these
+ * compares the same way, so the dialog must not offer three chips that behave
+ * as one. States are folded by `canonicalState`, the same fold the clause
+ * matches on, so a chip and the filter behind it cannot disagree about which
+ * customers a place has.
+ */
+export type BeatNode = { beat: string; shops: number };
+
+export type PlaceNode = {
+  city: string;
+  beats: BeatNode[];
+  /** How many shops carry it. The dialog prints it — a city of 1 is usually a typo. */
+  shops: number;
+};
+
+export type StateNode = {
+  state: string;
+  cities: PlaceNode[];
+  shops: number;
+};
+
+export type PlaceTree = {
+  states: StateNode[];
+  /**
+   * SHOPS THAT NAME NO STATE, counted and never hidden.
+   *
+   * They cannot be allocated: every branch of the tree starts at a state, and a
+   * row with nothing in `region` matches no state row. Under the old rule they
+   * reached whoever held their book anyway; under the new one they reach
+   * nobody, which is a real consequence of switching the default off and is
+   * therefore said out loud on the screen rather than left to be discovered.
+   */
+  statelessShops: number;
+};
+
+export async function knownPlaces(): Promise<PlaceTree> {
+  const rows = await db.execute<{
+    region: string | null;
+    city: string | null;
+    beat: string | null;
+    shops: number;
+  }>(sql`
+    select ${sql.raw(qualify(TERRITORY_REGION_SQL, "c"))} as region,
+           nullif(trim(c.city), '') as city,
+           nullif(trim(c.beat), '') as beat,
+           count(*)::int as shops
+      from customers c
+     group by 1, 2, 3
+  `);
+
+  /* Keyed on the fold, valued on the first spelling seen, so the tree carries
+     one node per place however many ways the sheet spelled it. */
+  const states = new Map<string, StateNode>();
+  let statelessShops = 0;
+
+  for (const r of rows) {
+    const state = canonicalState(r.region);
+    if (!state) {
+      statelessShops += r.shops;
+      continue;
+    }
+
+    const sKey = stateKey(state);
+    let node = states.get(sKey);
+    if (!node) {
+      node = { state, cities: [], shops: 0 };
+      states.set(sKey, node);
+    }
+    node.shops += r.shops;
+
+    if (!r.city) continue;
+    const cKey = r.city.toLowerCase();
+    let city = node.cities.find((c) => c.city.toLowerCase() === cKey);
+    if (!city) {
+      city = { city: r.city, beats: [], shops: 0 };
+      node.cities.push(city);
+    }
+    city.shops += r.shops;
+
+    if (r.beat) {
+      const beat = city.beats.find((b) => b.beat.toLowerCase() === r.beat!.toLowerCase());
+      if (beat) beat.shops += r.shops;
+      else city.beats.push({ beat: r.beat, shops: r.shops });
+    }
+  }
+
+  /* Biggest first inside a state: the city somebody means is almost always one
+     of the few with real shop counts, and the long tail is address strings. */
+  for (const node of states.values()) {
+    node.cities.sort((a, b) => b.shops - a.shops || a.city.localeCompare(b.city));
+    for (const c of node.cities) {
+      c.beats.sort((a, b) => b.shops - a.shops || a.beat.localeCompare(b.beat));
+    }
+  }
+
+  return {
+    states: [...states.values()].sort((a, b) => a.state.localeCompare(b.state)),
+    statelessShops,
+  };
 }
 
 /* ══════════════════════════════════════════════════ one salesman's record */
@@ -2927,4 +3459,82 @@ export async function salesmanRecord(
     leads: leads as never,
     tasks: tasks as never,
   };
+}
+
+/* ══════════════════════════════════════ leave, per person */
+
+export type EntitlementRow = {
+  userId: string;
+  name: string;
+  balances: LeaveBalance[];
+  /** The kinds this person has a stored figure for, as against the default. */
+  overridden: string[];
+};
+
+/**
+ * What each salesman may take this year, and how much is left.
+ *
+ * The entitlement itself is CONFIGURATION — `mbos.leave.annualEntitlementDays`
+ * — and a row in `mbos_leave_balances` overrides it for one person. That much
+ * already worked. What did not exist was any way to WRITE such a row: nothing
+ * in MahekOne created one, so the override was a mechanism with no door, and a
+ * salesman on different terms could not be given them.
+ *
+ * Read through `leaveBalances`, the same engine the handset's own figures come
+ * through, so this screen and the phone in somebody's pocket cannot disagree
+ * about how many days remain.
+ */
+export async function leaveEntitlements(year: number): Promise<EntitlementRow[]> {
+  const scope = await managerScope();
+  const { getConfig } = await import("../config/store");
+
+  const [people, overrideRows, usedRows, config] = await Promise.all([
+    db.execute<{ userId: string; name: string }>(sql`
+      select u.id as "userId", u.name
+        from users u
+        join app_access a on a.user_id = u.id and a.app = 'field'
+       where u.active ${onlyMine(scope, "u.id")}
+       order by u.name asc
+    `),
+    db.execute<{ userId: string; kind: string; entitled: number }>(sql`
+      select b.user_id as "userId", b.leave_type::text as kind, b.entitled_days as entitled
+        from mbos_leave_balances b
+       where b.year = ${year}
+    `),
+    /* The approved requests, not a stored sum — what a request costs is
+       `leaveDebitDays`, and spelling that arithmetic out in SQL as well is how
+       two answers to "how much has he taken" come to exist. */
+    db.execute<{ userId: string; kind: string; days: number; halfDay: boolean }>(sql`
+      select r.user_id as "userId", r.leave_type::text as kind, r.days, r.half_day as "halfDay"
+        from mbos_leave_requests r
+        join mbos_approvals ap on ap.subject_id = r.id and ap.type = 'leave'
+       where ap.state in ('approved', 'partially_approved')
+         and r.cancelled_at is null
+         and extract(year from r.from_date) = ${year}
+    `),
+    getConfig(),
+  ]);
+
+  const entitlement = config["mbos.leave.annualEntitlementDays"] ?? {};
+
+  const overridesBy = new Map<string, Record<string, number>>();
+  for (const r of overrideRows as unknown as { userId: string; kind: string; entitled: number }[]) {
+    const forUser = overridesBy.get(r.userId) ?? {};
+    forUser[r.kind] = r.entitled;
+    overridesBy.set(r.userId, forUser);
+  }
+
+  const usedBy = new Map<string, Record<string, number>>();
+  for (const r of usedRows as unknown as { userId: string; kind: string; days: number; halfDay: boolean }[]) {
+    const forUser = usedBy.get(r.userId) ?? {};
+    forUser[r.kind] = (forUser[r.kind] ?? 0) + leaveDebitDays(Number(r.days), r.halfDay);
+    usedBy.set(r.userId, forUser);
+  }
+
+  return (people as unknown as { userId: string; name: string }[]).map((p) => ({
+    userId: p.userId,
+    name: p.name,
+    balances: leaveBalancesFor(entitlement, usedBy.get(p.userId) ?? {}, overridesBy.get(p.userId) ?? {}),
+    overridden: Object.keys(overridesBy.get(p.userId) ?? {}),
+  }));
 }

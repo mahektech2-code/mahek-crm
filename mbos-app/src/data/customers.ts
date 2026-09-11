@@ -1,12 +1,37 @@
 import { all, newId, one } from '../db';
 import {
+  CUSTOMER_PAGE,
   cityOriginsQuery,
   customerCountQuery,
   customerPageQuery,
+  type BookView,
   type Origin,
 } from './customer-query';
 import { enqueue } from '../sync/queue';
 import { insertAndQueue, insertLocal, stamp } from './write';
+
+/*
+ * WHAT A CARD SAYS ABOUT A ROW lives in `lib/account-label.ts` and is
+ * re-exported here, where every caller already looked for it.
+ *
+ * It left because this file imports the database and therefore cannot be
+ * tested without a handset — and these three decide the words on four hundred
+ * rows a salesman reads a day. `customerStage` shipped with a branch comparing
+ * against two values the `customer_status` enum cannot produce, so it could
+ * never fire, and nothing anywhere noticed: there was no test that could.
+ */
+export { accountLine, accountType, customerStage } from '../lib/account-label';
+
+/**
+ * The retention band, exactly as the server computes and sends it.
+ *
+ * Declared HERE, in the data layer, because this is the wire shape — the
+ * component that draws it imports this rather than keeping its own copy of the
+ * four words. Two copies of a four-value union is how the fifth rendering of
+ * customer health came to exist in the first place.
+ */
+export type HealthBandValue = 'active' | 'at-risk' | 'dormant' | 'lost';
+
 
 /**
  * Reading the book.
@@ -38,7 +63,23 @@ export type Customer = {
   creditBlockReason: string | null;
   outstandingPaise: number;
   submittedNotInvoicedPaise: number;
+  /**
+   * The lead's own facts, from `LEAD_FACTS` in `customer-query.ts`. Absent on
+   * every other read of this table — `getCustomer` selects `*` from
+   * `customers` alone — which is why all three are optional rather than
+   * nullable: undefined means nobody asked, and null would claim we did.
+   */
+  isLead?: number;
+  leadFunnelStage?: string | null;
+  leadStage?: string | null;
   healthScore: number | null;
+  /**
+   * The retention band, computed by the server from the customer's own buying
+   * cycle — 'active' | 'at-risk' | 'dormant' | 'lost'. Null where they have
+   * never ordered, which is not a band: they have not stopped buying, they
+   * have not started.
+   */
+  healthBand: HealthBandValue | null;
   healthComponents: string | null;
   lastOrderDate: string | null;
   lastVisitDate: string | null;
@@ -79,12 +120,16 @@ export type CustomerPage = {
 export async function listCustomersPage(args: {
   query?: string;
   origin?: Origin;
+  /** Customers, leads, or the whole book. See `BookView`. */
+  view?: BookView;
   offset?: number;
   limit?: number;
 } = {}): Promise<CustomerPage> {
   const offset = args.offset ?? 0;
 
-  const count = customerCountQuery(args.query);
+  /* The SAME view goes to both, or the screen prints a total over a list that
+     does not match it. */
+  const count = customerCountQuery(args.query, args.view);
   const totalRow = await one<{ n: number }>(count.sql, count.params);
   const total = totalRow?.n ?? 0;
 
@@ -149,6 +194,29 @@ export type CustomerPayment = {
 };
 
 /**
+ * One open bill, as Accounts holds it.
+ *
+ * `balancePaise` is what is still open. On an `unstated` bill that is the full
+ * amount purely because nobody has recorded anything against it either way —
+ * it is NOT a debt, the office keeps it out of the outstanding figure, and the
+ * screen has to say which kind of number it is rather than printing it beside
+ * real balances.
+ */
+export type CustomerBill = {
+  id: string;
+  customerId: string;
+  billNo: string | null;
+  billDate: string | null;
+  dueDate: string | null;
+  amountPaise: number | null;
+  paidPaise: number | null;
+  balancePaise: number | null;
+  overdueDays: number | null;
+  disputed: number | null;
+  paymentPosition: string | null;
+};
+
+/**
  * What the office knows this shop bought and paid.
  *
  * Read-only, and capped at ten of each by the server. The screen says so —
@@ -170,36 +238,20 @@ export async function customerPayments(id: string): Promise<CustomerPayment[]> {
 }
 
 /**
- * What KIND of account this is, in one word.
+ * The open bills behind the shop's outstanding, oldest first.
  *
- * The mark wins over the kind, which is the rule MahekOne's own
- * `lib/account-types.ts` states for the web list and for the same reason:
- * "Lead · Third party" is two facts fighting over one glance, and on a phone
- * there is even less room to lose the argument in. A shop we deliver to and do
- * not bill is a third party whatever its kind says.
+ * Oldest first because that is the order they are chased in and the order the
+ * automatic spread settles them in — so the list a salesman reads and the
+ * allocation the server would make on its own tell the same story.
  *
- * `null` where the row predates migration v12 and nothing has re-synced it —
- * saying "Customer" on no evidence would be a guess, and this is the one field
- * whose whole job is to stop the salesman guessing.
+ * These are the office's, read-only, and replaced wholesale on every pull. A
+ * settled bill is gone from the next pass rather than left here to be offered.
  */
-export function accountType(c: Pick<Customer, 'kind' | 'thirdParty'>): string | null {
-  if (c.thirdParty) return 'Third party';
-  if (c.kind === 'lead') return 'Lead';
-  if (c.kind === 'customer') return 'Customer';
-  return null;
-}
-
-/**
- * The word on the card: Active, At risk, Overdue.
- *
- * MahekOne owns it and sends it down in `status`; the health band is only the
- * fallback for a row that arrived without one, because a card with a blank
- * where the verdict goes is a card nobody trusts.
- */
-export function customerStage(c: Pick<Customer, 'status' | 'healthScore'>): 'Active' | 'At risk' | 'Overdue' {
-  if (c.status === 'Overdue' || c.status === 'At risk' || c.status === 'Active') return c.status;
-  if (c.healthScore == null) return 'Active';
-  return c.healthScore < 40 ? 'Overdue' : c.healthScore < 60 ? 'At risk' : 'Active';
+export async function customerBills(id: string): Promise<CustomerBill[]> {
+  return all<CustomerBill>(
+    'SELECT * FROM customer_bills WHERE customerId = ? ORDER BY billDate ASC, id ASC',
+    [id],
+  );
 }
 
 /** Whole days since a `YYYY-MM-DD`, or null when there is no date to count from. */
@@ -222,8 +274,21 @@ export async function getCustomer(id: string): Promise<Customer | null> {
  * missing them then capturing them is an early field task rather than a
  * background nicety.
  */
-export async function customersWithoutGps(): Promise<Customer[]> {
-  return all<Customer>('SELECT * FROM customers WHERE gpsLat IS NULL OR gpsLng IS NULL ORDER BY name');
+export async function customersWithoutGps(): Promise<{ rows: Customer[]; total: number }> {
+  /* Capped and counted like every other read of the book. Nothing calls this
+     yet, which is exactly why the cap goes on now: 487 of the 1,076 shops on a
+     real handset have no coordinate, so the screen this is waiting for would
+     mount half the territory on its first render and freeze the app the way
+     the pick list did. */
+  const counted = await one<{ n: number }>(
+    'SELECT COUNT(*) AS n FROM customers WHERE gpsLat IS NULL OR gpsLng IS NULL',
+  );
+  const rows = await all<Customer>(
+    `SELECT * FROM customers
+      WHERE gpsLat IS NULL OR gpsLng IS NULL
+      ORDER BY name LIMIT ${CUSTOMER_PAGE}`,
+  );
+  return { rows, total: counted?.n ?? rows.length };
 }
 
 /**

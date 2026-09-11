@@ -254,6 +254,7 @@ export async function convertToThirdParty(
         actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
         action: "customer.convertThirdParty",
         entityType: "customer",
         entityId: customerIds.length === 1 ? customerIds[0] : "bulk",
@@ -309,6 +310,7 @@ export async function revertThirdParty(
         actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
         action: "customer.revertThirdParty",
         entityType: "customer",
         entityId: changed.length === 1 ? changed[0].id : "bulk",
@@ -444,6 +446,7 @@ export async function addDistributor(
         actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
         action: "customer.addDistributor",
         entityType: "customer",
         entityId: customerId,
@@ -552,6 +555,7 @@ export async function updateDistributor(
         actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
         action: "customer.updateDistributor",
         entityType: "customer",
         entityId: link.customerId,
@@ -615,6 +619,7 @@ export async function removeDistributor(linkId: string): Promise<Result> {
         actorId: ctx.user.id,
       // Which hat allowed it — see `audit_log.actor_role`.
       actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
         action: "customer.removeDistributor",
         entityType: "customer",
         entityId: link.customerId,

@@ -8,8 +8,10 @@ import {
   calls,
   customers,
   followUpAttempts,
+  mbosAttendanceDays,
   mbosCourses,
   mbosDocuments,
+  mbosTravelLegs,
   paymentReceipts,
 } from "@/db/schema";
 import { resolveScope, assertCustomerInScope } from "../access-control";
@@ -335,6 +337,53 @@ export async function canRead(attachmentId: string): Promise<boolean> {
     return Boolean(course?.active);
   }
 
+  /*
+   * ATTENDANCE HAS NO CUSTOMER BEHIND IT, and every selfie was a 404.
+   *
+   * `customerBehind` below falls through to `calls` for any parent type it
+   * does not name, so an attendance selfie's `parentId` — an
+   * `mbos_attendance_days` id — was looked up in the calls table, found
+   * nothing, and this returned false. Every check-in photograph ever taken was
+   * refused to everybody, including the person in it and the manager it exists
+   * for. It failed SHUT, which is the safe direction and exactly why it
+   * survived: no screen displayed one, so there was nothing to notice it on.
+   * It is the same bug AGENTS.md already records for the whole subsystem, one
+   * parent type over, and it matters more now that the photograph is
+   * mandatory: a proof nobody can open is not a proof.
+   *
+   * Who may see it: the salesman himself, and whoever can see his attendance —
+   * which is the Sales Dashboard's own narrowing, `scopedToUsers`, so a
+   * manager sees their own people and an admin sees everybody. Not "anyone
+   * with the field app": a salesman must not be able to fetch a colleague's
+   * photograph by id.
+   */
+  if (row.parentType === "mbos_attendance") {
+    return canReadAttendanceSelfie(row.parentId);
+  }
+
+  /*
+   * EVERY ODOMETER PHOTOGRAPH AND EVERY TICKET WAS A 404, to everybody.
+   *
+   * The same bug as the attendance selfie above, one parent type over, and it
+   * arrived with the expense module: `mbos_travel_leg` had a place in the
+   * enum, the media route filed files under it correctly, and nothing here
+   * named it — so `customerBehind` fell through to `calls`, looked a
+   * `mbos_travel_legs` id up among the calls, found nothing, and refused the
+   * read. To the salesman who took it and to the manager approving the claim
+   * it belongs to. It fails SHUT, which is the safe direction and exactly why
+   * it survived: the only screen that shows one is the claim review, and a
+   * broken image there reads as a photograph nobody took.
+   *
+   * It cannot be answered by the customer's scope either, though a leg often
+   * names a shop. An odometer photograph is not evidence about the customer —
+   * it is evidence about the SALESMAN, on a record somebody is eventually paid
+   * out on. Read through the shop, a telecaller holding that book could open a
+   * colleague's expense evidence.
+   */
+  if (row.parentType === "mbos_travel_leg") {
+    return canReadTravelLegPhoto(row.parentId);
+  }
+
   const customerId = await customerBehind(row.parentType, row.parentId);
   if (!customerId) return false;
 
@@ -401,10 +450,138 @@ async function canReadDocument(documentId: string): Promise<boolean> {
   }
 }
 
+/**
+ * Who may open an attendance selfie.
+ *
+ * Three answers, in this order, because they are three different people:
+ *
+ *   The salesman in the photograph. Always — it is a photograph of him,
+ *   attached to his own attendance, and the handset shows it back to him.
+ *
+ *   Whoever can see his attendance. That is the Sales Dashboard's own
+ *   narrowing and not a second opinion about it: `managerScope` gives a
+ *   regional manager their own salesmen and a national one everybody, which is
+ *   exactly the list `attendanceForDay` draws the screen from. Two definitions
+ *   of who may look at a person's day would drift, and the generous one always
+ *   wins in the end.
+ *
+ *   Nobody else. Not "anybody holding the field app" — a salesman must not be
+ *   able to fetch a colleague's photograph by guessing at an id, and these ids
+ *   travel in payloads.
+ *
+ * A missing attendance row answers no rather than throwing: an unbound selfie
+ * is already handled above, so a bound one naming a row that does not exist is
+ * a bug and refusing is the safe direction.
+ */
+async function canReadAttendanceSelfie(attendanceId: string): Promise<boolean> {
+  const [day] = await db
+    .select({ userId: mbosAttendanceDays.userId })
+    .from(mbosAttendanceDays)
+    .where(eq(mbosAttendanceDays.id, attendanceId));
+  if (!day) return false;
+
+  const ctx = await resolveScope();
+  if (day.userId === ctx.user.id) return true;
+
+  /*
+   * THE `sales` GRANT IS ASKED FIRST, and it is what makes the third answer
+   * above true rather than merely intended.
+   *
+   * `managerScope` narrows a manager to their own salesmen — but it answers
+   * `salesmanIds: null`, meaning "national, sees everybody", for anybody with
+   * no `region` row in `mbos_user_territories`, and a plain field salesman has
+   * none. Three separate returns in that function do it: no session, no rows,
+   * no usable region key. So reading it straight through gave every salesman
+   * the national answer, and one could open a colleague's check-in photograph
+   * by id — exactly what the comment above this function has always said must
+   * not happen. It failed OPEN, which is the dangerous direction and the
+   * reason it survived: nothing looked broken, because everything worked.
+   *
+   * The narrowing is real for a REGIONAL manager and vacuous for everybody
+   * else, so it cannot be the whole check. It has to sit behind the question
+   * of whether this person may look at the field's work at all, and the answer
+   * to that is the `sales` grant — the same one `src/app/sales/layout.tsx`
+   * redirects on. Every OTHER caller of `managerScope` is a list inside
+   * `/sales/*`, already behind that layout; this one is reached from
+   * `/api/attachments/[id]`, which has no gate but a signed-in session, which
+   * is why the check belongs here.
+   *
+   * `canReadTravelLegPhoto` below is the same rule for the same reason, and
+   * these two are the only places in this file that ask.
+   */
+  const { listUserApps } = await import("../access");
+  const apps = await listUserApps(ctx.user.id);
+  if (!apps.includes("sales")) return false;
+
+  const { managerScope } = await import("./sales-service");
+  const scope = await managerScope();
+  /* `null` is a national manager — everybody. See `onlyMine`, which reads the
+     same field to mean the same thing in SQL. Reached only by somebody who
+     already holds the Sales Dashboard. */
+  if (scope.salesmanIds === null) return true;
+  return scope.salesmanIds.includes(day.userId);
+}
+
+/**
+ * Who may open a leg's odometer photographs or its ticket: the man who took
+ * them, and whoever can see his claims.
+ *
+ * The `sales` GRANT is asked first and `managerScope` alone is not enough.
+ * `managerScope` answers `salesmanIds: null` — "national, sees everybody" —
+ * for anybody with no row in `mbos_manager_territories`, and a plain field
+ * salesman has none, so falling straight through to it would let one salesman
+ * open another's mileage evidence by id. These ids travel in payloads. The
+ * grant is the same one `src/app/sales/layout.tsx` redirects on, which makes
+ * this the same question as "may you look at the field's work at all".
+ */
+async function canReadTravelLegPhoto(legId: string): Promise<boolean> {
+  const [leg] = await db
+    .select({ userId: mbosTravelLegs.userId })
+    .from(mbosTravelLegs)
+    .where(eq(mbosTravelLegs.id, legId));
+  if (!leg) return false;
+
+  const ctx = await resolveScope();
+  if (leg.userId === ctx.user.id) return true;
+
+  const { listUserApps } = await import("../access");
+  const apps = await listUserApps(ctx.user.id);
+  if (!apps.includes("sales")) return false;
+
+  const { managerScope } = await import("./sales-service");
+  const scope = await managerScope();
+  /* `null` is a national manager — everybody, the same meaning `onlyMine`
+     reads out of the same field in SQL. Reached only by somebody who already
+     holds the Sales Dashboard. */
+  if (scope.salesmanIds === null) return true;
+  return scope.salesmanIds.includes(leg.userId);
+}
+
 async function customerBehind(
   parentType: string,
   parentId: string,
 ): Promise<string | null> {
+  /*
+   * §12 — the agreement's parent IS the customer, so there is nothing to look
+   * up. Named explicitly rather than left to the fall-through below: that
+   * fall-through goes to `calls`, which is how every attendance selfie came to
+   * answer 404 to the salesman in it — an id looked up among calls, found
+   * nothing, and the read was refused.
+   */
+  if (parentType === "distributor_agreement") return parentId;
+
+  /*
+   * A LEAD IS THE CUSTOMER ROW, so there is nothing to look up.
+   *
+   * `mbos_lead` parents a shop photograph taken while raising a lead, and its
+   * `parentId` is already a `customers.id` — the whole point of collapsing the
+   * two tables into one. Falling through to the switch below would look it up
+   * among `calls`, find nothing, and refuse the file to everybody, which is
+   * exactly the bug `mbos_attendance` was fixed for, and the same one the
+   * branch immediately above names.
+   */
+  if (parentType === "mbos_lead") return parentId;
+
   const table =
     parentType === "complaint"
       ? complaints
@@ -425,6 +602,69 @@ async function customerBehind(
  * configured window — long enough that a telecaller interrupted mid-call still
  * finds their file when they come back to it.
  */
+/**
+ * THE ATTENDANCE PHOTOGRAPHS, DELETED ON A CLOCK.
+ *
+ * The one file in this product with a life of its own. Everything else here is
+ * a photograph OF something — a damaged can, a cheque, a shop front — attached
+ * to a record that stands without it, and it is kept as long as the record is.
+ * A check-in selfie is not that: it is evidence that the person who marked the
+ * day is the person who worked it, and that is a question asked within a day or
+ * two of the day or never. Held beyond it, it stops being verification and
+ * becomes a standing collection of photographs of employees — a different thing
+ * to hold, a worse thing to leak, and one nobody asked for.
+ *
+ * WHAT GOES IS THE IMAGE AND NOTHING ELSE. The attachment row stays, the day
+ * keeps its `check_in_selfie_id`, and every `sessions` entry keeps the ids it
+ * was written with. That is deliberate: "a photograph was taken at 09:04 and
+ * has since been deleted" and "no photograph was ever taken" are different
+ * facts about somebody's attendance, and a sweep that nulled the columns would
+ * turn the first into the second — retrospectively making an honest day look
+ * like a skipped one, on the record a payslip is read against. The same
+ * distinction `removeAttachment` keeps, for the same reason.
+ *
+ * MEASURED FROM WHEN IT ARRIVED, not from when it was taken. A salesman in a
+ * district with no signal photographs himself on Monday and syncs on
+ * Wednesday; anchored to the check-in, that file would be swept within hours of
+ * landing and the manager would never once have been able to open it. The
+ * window is a promise about how long somebody has to LOOK, so it runs from the
+ * first moment there was anything to look at.
+ *
+ * Hourly rather than nightly, so "72 hours" means about seventy-three and not
+ * up to ninety-six. The number is on a screen; a nightly sweep would make it
+ * wrong by a day for everybody who checked in during the morning.
+ */
+export async function sweepAttendanceSelfies(): Promise<{ swept: number }> {
+  const config = await getConfig();
+  const cutoff = new Date(
+    Date.now() - config["mbos.attendance.selfieRetentionHours"] * 60 * 60 * 1000,
+  );
+
+  const expired = await db
+    .select({ id: attachments.id, storedRef: attachments.storedRef })
+    .from(attachments)
+    .where(
+      and(
+        eq(attachments.parentType, "mbos_attendance"),
+        eq(attachments.status, "available"),
+        lt(attachments.uploadedAt, cutoff),
+      ),
+    );
+
+  for (const row of expired) {
+    /* The bytes first, the row second. The other order leaves a row saying
+       "removed" over a file still sitting in storage, which is the one state
+       nothing later would ever go back and tidy. */
+    if (row.storedRef) await fileStorage.remove(row.storedRef).catch(() => {});
+    await db
+      .update(attachments)
+      .set({ status: "removed", removedAt: new Date(), updatedAt: new Date() })
+      .where(eq(attachments.id, row.id));
+  }
+
+  return { swept: expired.length };
+}
+
 export async function sweepOrphans(): Promise<{ swept: number }> {
   const config = await getConfig();
   const cutoff = new Date(

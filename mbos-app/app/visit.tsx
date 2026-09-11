@@ -3,9 +3,24 @@ import { View, Text, Pressable, TextInput } from 'react-native';
 import { router } from 'expo-router';
 import { color as C, HIT, radius, shadow, type, weight } from '../src/theme/tokens';
 import { Icon } from '../src/components/ui/Icon';
-import { Card, Choice } from '../src/components/ui/primitives';
+import { Card, Choice, PrimaryButton, SecondaryButton } from '../src/components/ui/primitives';
 import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { AppFrame } from '../src/components/shell/AppFrame';
+import { OdometerCamera, type OdometerResult } from '../src/components/ui/odometer-camera';
+import {
+  abandonLeg,
+  arriveForVisit,
+  arrivedLegFor,
+  attachTicketToLeg,
+  bindLegToVisit,
+  openLegOf,
+  travelModes,
+  type TravelLeg,
+  type TravelMode,
+} from '../src/data/travel';
+import { arrivalPrompt, checkFare, legLine, navigationLine, travellingFor } from '../src/lib/travel-leg';
+import { suspectFor, visitCapThresholds } from '../src/data/leads';
+import { visitCapState, type VisitCapThresholds } from '../src/engines/leads';
 import { useCustomer, useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { isoDate, pretty } from '../src/lib/format';
@@ -16,9 +31,17 @@ import { previousVisitNote, saveVisit, type PreviousNote } from '../src/data/vis
 import { logComplaint, requestSample } from '../src/data/requests';
 import { starterProducts } from '../src/data/customers';
 import { todayStops } from '../src/data/journey';
-import { visitLocationVerdict } from '../src/engines/geo';
+import {
+  checkInVerdict,
+  haversineMetres,
+  visitLocationVerdict,
+  type CheckInVerdict,
+} from '../src/engines/geo';
 import { fixOf, getFix, type Fix } from '../src/native/location';
-import { queueRecording, takePhoto, useVoiceRecorder } from '../src/native/capture';
+import { queueOdometerPhoto, queueRecording, takePhoto } from '../src/native/capture';
+import { discardQueuedMedia } from '../src/sync/media';
+import { VoiceField } from '../src/components/ui/dictate';
+import { NavigateButton } from '../src/components/ui/navigate';
 
 /**
  * Capturing a visit.
@@ -29,29 +52,58 @@ import { queueRecording, takePhoto, useVoiceRecorder } from '../src/native/captu
  * told. A salesman who cannot log a visit stops logging visits, and then the
  * office knows nothing at all.
  *
- * The GPS follows the same rule one level down. A fix is EVIDENCE, never a
- * gate: no fix, a fix accurate to half a kilometre, or a shop whose recorded
- * coordinates are simply wrong all let the visit through and are recorded as
- * what they are.
+ * The GPS follows the same rule one level down, at the SAVE. A fix is evidence
+ * there, never a gate: no fix, a fix accurate to half a kilometre, or a shop
+ * whose recorded coordinates are simply wrong all let the visit through and
+ * are recorded as what they are.
+ *
+ * **THE ARRIVAL IS THE EXCEPTION, and it is the one thing on this screen that
+ * refuses.** Mahek asked for a check-in measurably outside the radius to be
+ * turned down rather than flagged, and the arrival is the only place that can
+ * honestly happen: nothing has been typed yet, so a refusal costs a walk to
+ * the right door instead of a day's work, and he can press the button again.
+ * `checkInVerdict` decides it and refuses only what a reading can prove — no
+ * fix, a fix too wide to trust and a shop with no pin all still go through.
+ * The way past a refusal is a typed sentence, which saves the visit unverified
+ * and goes to his manager: the pin in this book is very often the wrong one,
+ * and a salesman who cannot record being where he actually is stops recording.
  */
 
 type Product = { id: string; name: string; packSize: string | null };
+
+/*
+ * How often the On-your-way screen asks the radio where he is, and the range at
+ * which that question changes character.
+ *
+ * NEITHER IS A BUSINESS RULE, which is why neither is in the registry. Nothing
+ * is priced, refused or paid on these: the cadence is how often one line of
+ * text is refreshed while a screen that only exists mid-journey is open, and
+ * the range is where a distance stops meaning "is it worth going" and starts
+ * meaning "which doorway". What IS configuration is the age at which a reading
+ * is called stale — `mbos.location.activityFixMaxAgeSeconds`, read below —
+ * because that decides what a screen ASSERTS about a fix.
+ */
+const ROAD_FIX_EVERY_MS = 20_000;
+const APPROACHING_M = 1_000;
 
 export default function Visit() {
   const c = useCustomer();
   const boot = useBoot();
   const gps = useStore((s) => s.gps);
   const shots = useStore((s) => s.shots);
-  const rec = useStore((s) => s.rec);
   const note = useStore((s) => s.note);
   const outcome = useStore((s) => s.outcome);
   const nextDate = useStore((s) => s.nextDate);
   const visitStart = useStore((s) => s.visitStart);
   const visitDone = useStore((s) => s.visitDone);
   const set = useStore((s) => s.set);
+  /* Set on the route screen, before the shop was chosen. See `deviationReason`
+     in the save below. */
+  const offPlanReason = useStore((s) => s.offPlanReason);
   const notify = useStore((s) => s.notify);
   const markVisitDone = useStore((s) => s.markVisitDone);
   const askConfirm = useStore((s) => s.askConfirm);
+  const arrivedAt = useStore((s) => s.arrivedAt);
 
   const [form, setForm] = React.useState<'complaint' | 'sample' | null>(null);
   const [draft, setDraft] = React.useState<Record<string, string>>({});
@@ -64,6 +116,44 @@ export default function Visit() {
   const [fix, setFix] = React.useState<Fix | null>(null);
   const [fixReason, setFixReason] = React.useState<string | null>(null);
   const [voiceNoteId, setVoiceNoteId] = React.useState<string | null>(null);
+  /*
+   * §B — is this shop still a Suspect, and is a decision due?
+   *
+   * Null for anything that is not a lead, which is most of the book: a real
+   * customer is never asked to justify a visit. Loaded rather than derived,
+   * because the count includes visits the office knows about and this phone
+   * does not.
+   */
+  const [suspect, setSuspect] = React.useState<{ stage: string; visits: number } | null>(null);
+  const [capCfg, setCapCfg] = React.useState<VisitCapThresholds | null>(null);
+  const [decision, setDecision] = React.useState<string | null>(null);
+  const [decisionWhy, setDecisionWhy] = React.useState('');
+  const [decisionErr, setDecisionErr] = React.useState<string | null>(null);
+  /* §G — the requirement visit. Shown on a lead only: asking a customer of four
+     years what they are looking for is a question they have answered by
+     ordering, and a field nobody fills teaches people to scroll past the form. */
+  const [reqWhat, setReqWhat] = React.useState('');
+  const [reqLitres, setReqLitres] = React.useState('');
+  const [reqCans, setReqCans] = React.useState('');
+
+  React.useEffect(() => {
+    if (!c?.id) return;
+    let live = true;
+    void Promise.all([suspectFor(c.id), visitCapThresholds()]).then(([sus, cfg]) => {
+      if (!live) return;
+      setSuspect(sus);
+      setCapCfg(cfg);
+    });
+    return () => {
+      live = false;
+    };
+  }, [c?.id]);
+
+  /* `ok` | `warn` | `decide`, and nothing here ever blocks the visit being
+     MADE — see the note above `visitCapState`. What `decide` blocks is closing
+     it without an answer, which is a different thing and the thing §B wants. */
+  const capState =
+    suspect && capCfg ? visitCapState(suspect.stage, suspect.visits, capCfg) : 'ok';
   const [linked, setLinked] = React.useState<{ complaintId?: string; sampleId?: string }>({});
   const [products, setProducts] = React.useState<Product[]>([]);
   const [stopId, setStopId] = React.useState<string | null>(null);
@@ -73,9 +163,8 @@ export default function Visit() {
   /* Thresholds, never constants: the dwell floor and the distance that counts
      as a mismatch are both a manager's to move. */
   const [minDwell, setMinDwell] = React.useState(120);
-  const [maxMetres, setMaxMetres] = React.useState(150);
-
-  const recorder = useVoiceRecorder();
+  const [maxLegKm, setMaxLegKm] = React.useState(400);
+  const [maxMetres, setMaxMetres] = React.useState(100);
 
   /**
    * The dwell clock has to tick, because one of the save conditions is time.
@@ -90,19 +179,153 @@ export default function Visit() {
     return () => clearInterval(t);
   }, []);
 
+  /* ---- the journey that got him here ----
+     Read from SQLite, not the store: the app is routinely killed on the road
+     and a leg held in memory would be gone by the time he walked in. `null`
+     after `legLoaded` means the visit was started before travel legs existed
+     or by a path that does not ask — and that visit still saves as it always
+     did. */
+  const [leg, setLeg] = React.useState<TravelLeg | null>(null);
+  const [legLoaded, setLegLoaded] = React.useState(false);
+  const [modes, setModes] = React.useState<TravelMode[]>([]);
+  const [arriving, setArriving] = React.useState(false);
+  const [metering, setMetering] = React.useState(false);
+  /*
+   * The refusal, held so the card can say the distance rather than raise a
+   * toast that is gone before he has read it. Cleared on the next attempt: it
+   * describes ONE reading, and he has walked since.
+   */
+  const [refused, setRefused] = React.useState<CheckInVerdict | null>(null);
+  /*
+   * What he said to get past it, and what he was asked next.
+   *
+   * `overrideReason` rides all the way to the save — it is what makes the
+   * visit unverified and what his manager reads — and losing it between the
+   * door and the save is how a flagged visit quietly becomes a clean one.
+   */
+  const [overrideReason, setOverrideReason] = React.useState<string | null>(null);
+  const [pinAsk, setPinAsk] = React.useState(false);
+  const [pinRequested, setPinRequested] = React.useState(false);
+  const answerOdometer = React.useRef<((r: OdometerResult) => void) | null>(null);
+
+  /* ---- the ticket, asked once on the way out ---- */
+  const [ticketOpen, setTicketOpen] = React.useState(false);
+  const [ticketShot, setTicketShot] = React.useState<string | null>(null);
+  const [fare, setFare] = React.useState('');
+  const [ticketRef, setTicketRef] = React.useState('');
+  const [fareErr, setFareErr] = React.useState<string | null>(null);
+  const [ticketBusy, setTicketBusy] = React.useState(false);
+  /* Carried across the ticket question so an unverified save that detours
+     through it still saves as unverified. Losing it here would silently
+     upgrade a flagged visit to a clean one. */
+  const [pendingUnverified, setPendingUnverified] = React.useState<string | null>(null);
+
   const custId = c?.id ?? null;
+  const userId = boot.session?.user.id ?? '';
+
+  /*
+   * The leg he is on, or the one he closed to get here.
+   *
+   * Both in one read, because they are the same journey at two moments and the
+   * screen has to tell them apart: an OPEN leg means he is still travelling
+   * and the visit has not begun; a CLOSED one is the journey the visit will be
+   * stamped onto when it saves.
+   *
+   * By person AND by shop. Reading by person alone would hand him a journey to
+   * a different shop the moment he opened somebody else's record on the road.
+   */
+  const loadLeg = React.useCallback(() => {
+    let live = true;
+    if (!custId || !userId) return;
+    void Promise.all([openLegOf(userId), arrivedLegFor(userId, custId), travelModes()]).then(
+      ([running, arrived, rows]) => {
+        if (!live) return;
+        setModes(rows);
+        setLeg(running && running.customerId === custId ? running : arrived);
+        setLegLoaded(true);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [custId, userId]);
+  React.useEffect(loadLeg, [loadLeg]);
+
+  const legMode = leg ? modes.find((m) => m.key === leg.modeKey) ?? null : null;
+  const needsMeter = !!legMode?.requiresOdometer;
+
+  /* ---- how far there is left to go ----
+   *
+   * ONLY WHILE HE IS ON THE ROAD. This is the one screen in the app that is
+   * open precisely because somebody is travelling, and it closes the moment he
+   * says he is here — so a fix taken on a short cadence costs the radio a few
+   * minutes of a ride rather than a day, and buys the only number this screen
+   * was missing: whether the shop is round the corner or in the wrong town.
+   *
+   * The reading is BALANCED at range and PRECISE on the approach. Under a
+   * kilometre the figure stops being "is it worth going" and becomes "which
+   * doorway", and a fix good to a city block cannot answer the second — while
+   * paying for that accuracy over a ten-kilometre ride would buy nothing the
+   * rounding does not throw away. The check-in at the end is precise for the
+   * same reason, one step further along.
+   */
+  const onTheRoad = legLoaded && !!leg && leg.endedAt == null;
+  /* The pin as two numbers rather than as the customer, so the timer below
+     restarts when the SHOP moves and not every time the record is re-read. */
+  const pinLat = c?.gpsLat ?? null;
+  const pinLng = c?.gpsLng ?? null;
+  const [roadFix, setRoadFix] = React.useState<Fix | null>(null);
+  /* The same reading, reachable from inside the interval without becoming a
+     dependency of it: naming the state there would tear the timer down and
+     rebuild it on every fix, which is a cadence nobody chose. */
+  const roadFixRef = React.useRef<Fix | null>(null);
+  const [staleAfterS, setStaleAfterS] = React.useState(900);
+  React.useEffect(() => {
+    void getConfig<number>('mbos.location.activityFixMaxAgeSeconds', 900).then(setStaleAfterS);
+  }, []);
+  React.useEffect(() => {
+    if (!onTheRoad) return;
+    let live = true;
+    const shop = pinLat != null && pinLng != null ? { lat: pinLat, lng: pinLng } : null;
+
+    async function read() {
+      const near =
+        shop && roadFixRef.current
+          ? haversineMetres(roadFixRef.current, shop) < APPROACHING_M
+          : false;
+      const got = fixOf(
+        await getFix({ accuracyThresholdM: 100, timeoutMs: 12_000, precise: near }),
+      );
+      /* A failed reading leaves the previous one standing rather than blanking
+         the line — the last known distance with its age on it is worth more
+         than nothing at all, which is what `navigationLine` is built to say. */
+      if (live && got) {
+        roadFixRef.current = got;
+        setRoadFix(got);
+      }
+    }
+
+    void read();
+    const t = setInterval(() => void read(), ROAD_FIX_EVERY_MS);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [onTheRoad, pinLat, pinLng]);
 
   React.useEffect(() => {
     let live = true;
     void Promise.all([
       getConfig<number>('mbos.visits.minimumDwellSeconds', 120),
-      getConfig<number>('mbos.location.visitMismatchM', 150),
+      getConfig<number>('mbos.location.visitMismatchM', 100),
       starterProducts(5),
       todayStops(),
-    ]).then(([dwell, metres, skus, stops]) => {
+      getConfig<number>('mbos.travel.maxLegKilometres', 400),
+    ]).then(([dwell, metres, skus, stops, maxKm]) => {
       if (!live) return;
       setMinDwell(dwell);
       setMaxMetres(metres);
+      setMaxLegKm(maxKm);
       setProducts(skus);
       /* A stop on today's plan makes this a planned visit and gets marked
          visited when the save lands. */
@@ -154,32 +377,160 @@ export default function Visit() {
     };
   }, [gps, set]);
 
-  const startRecording = async () => {
+  /* ────────────────────────────────────────────────────────── arriving */
+
+  const askOdometer = () =>
+    new Promise<OdometerResult>((resolve) => {
+      answerOdometer.current = resolve;
+      setMetering(true);
+    });
+
+  /**
+   * He is here. This is where the visit actually begins — or does not.
+   *
+   * THE FIX COMES BEFORE THE CAMERA, which reverses the order this function
+   * shipped with. The two used to overlap deliberately: the radio settled
+   * while the meter was photographed, which cost nothing because nothing could
+   * turn the arrival down. Now something can. Photographing the meter first
+   * would mean taking a picture, queueing it, and then being told he is three
+   * hundred metres away — leaving a photograph of a reading he has to take
+   * again, attached to a leg that is still open. So the one thing that can
+   * refuse is asked first, and the camera only opens once the arrival is
+   * certain to happen.
+   *
+   * `precise` on the fix for the same reason: this reading now decides
+   * something. See `getFix`.
+   *
+   * `override` is his own sentence, given after a refusal. Passed in rather
+   * than read from state because the confirm dialog hands it back and state
+   * set a line earlier is not yet readable here.
+   */
+  const arriveHere = async (override?: string) => {
+    if (!leg || arriving) return;
+    setArriving(true);
     try {
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-      set({ rec: 'rec' });
+      const [threshold, radiusM] = await Promise.all([
+        getConfig<number>('mbos.location.gpsAccuracyThresholdM', 50),
+        getConfig<number>('mbos.location.visitMismatchM', 100),
+      ]);
+      const result = await getFix({ accuracyThresholdM: threshold, precise: true });
+      const got = fixOf(result);
+
+      const gate = checkInVerdict(
+        got ? { lat: got.lat, lng: got.lng, accuracyM: got.accuracyM } : null,
+        c && c.gpsLat != null && c.gpsLng != null ? { lat: c.gpsLat, lng: c.gpsLng } : null,
+        radiusM,
+        threshold,
+      );
+      if (!gate.accepted && !override) {
+        /* NOTHING IS WRITTEN. The leg stays open because he is still
+           travelling, the dwell clock does not start, and no meter has been
+           photographed — so pressing the button again from the right place
+           costs him nothing and leaves nothing behind. */
+        setRefused(gate);
+        return;
+      }
+      setRefused(null);
+
+      let odometer: { km: number; photoId: string } | null = null;
+      if (needsMeter) {
+        const shot = await askOdometer();
+        /* Cancelled. Nothing written, nothing to undo, and no toast: he has
+           just pressed a button whose words say what it abandons. */
+        if (!shot) return;
+        try {
+          odometer = { km: shot.km, photoId: await queueOdometerPhoto(shot.uri, leg.id) };
+        } catch {
+          notify('The photo could not be saved on this phone, so the trip is still open. Try again.');
+          return;
+        }
+      }
+
+      /*
+       * ONE FIX, TWO RECORDS. It closes the leg and it checks the visit in,
+       * and they must be the same reading — two acquisitions seconds apart
+       * would let the arrival and the check-in disagree about where the shop
+       * is, and a manager reading a mismatch would have no way to tell which
+       * of the two was being questioned. It is also the reading the gate above
+       * was answered on, which is the third thing that must not drift: a
+       * salesman let through on one fix and recorded on another would read as
+       * having been allowed past a distance nobody measured.
+       */
+      setFix(got);
+      setFixReason(result.status === 'ok' ? null : result.reason);
+      set({ gps: got ? 'locked' : 'off' });
+
+      const at = Date.now();
+      await arriveForVisit({
+        legId: leg.id,
+        fix: got ? { lat: got.lat, lng: got.lng } : null,
+        odometer,
+      });
+
+      if (override) setOverrideReason(override);
+      /* The dwell clock starts on the instant written onto the leg, not on a
+         second reading of the clock — see `arrivedAt` in the store. */
+      arrivedAt(at);
+      loadLeg();
+      /*
+       * ASKED AFTER HE IS IN, never before. It is a second question about a
+       * different thing — the book, not him — and putting it in front of the
+       * arrival would make getting into the shop depend on answering it.
+       * Only where there is a pin to be wrong about: a shop with no pin is
+       * being pinned by this check-in already.
+       */
+      if (override && c?.gpsLat != null && c?.gpsLng != null) setPinAsk(true);
     } catch {
-      notify('The microphone could not start. Type the note instead.');
+      notify('That arrival could not be recorded on this phone. Nothing has been lost — try again.');
+    } finally {
+      setArriving(false);
     }
   };
 
-  const stopRecording = async () => {
-    set({ rec: 'busy' });
+  /**
+   * The way past a refusal, and the only one.
+   *
+   * A required sentence, because this is the whole of what a manager gets: the
+   * distance is already on the record and says nothing about which of the two
+   * readings is wrong. `askConfirm` refuses to close without it.
+   */
+  const overrideRefusal = () =>
+    askConfirm({
+      title: 'Are you at the shop?',
+      body:
+        'Say so and the visit is recorded from here, marked unverified, with your reason sent to your manager. The shop’s own location in MahekOne may simply be wrong — a lot of them are — and this is how that gets found out.',
+      reasonLabel: 'Where you actually are · required',
+      confirmLabel: 'I am at the shop',
+      run: (reason) => {
+        void arriveHere(reason);
+      },
+    });
+
+  /**
+   * The recording, queued for the office.
+   *
+   * Called by the note's microphone in BOTH of its modes — dictated on signal,
+   * kept for later without — because a visit is the one place the audio is
+   * worth having either way: it is what the customer actually said, and the
+   * words in the box are somebody's reading of it.
+   *
+   * `pending` as the parent, exactly as a shop photograph is. The visit does
+   * not exist yet; `saveVisit` claims the media when it does.
+   */
+  const keepVoiceNote = async (uri: string, mode: 'dictate' | 'record') => {
     try {
-      await recorder.stop();
-      const uri = recorder.uri;
-      if (!uri) {
-        set({ rec: 'failed' });
-        return;
-      }
-      /* Queued as it is. Re-encoding speech to save bytes loses the words, and
-         the audio is the only copy of what the customer actually said. */
+      /* Said again means the last one was not wanted. Dropped before the new
+         one is queued, so a visit carries the recording it kept and not every
+         attempt at it. */
+      if (voiceNoteId) await discardQueuedMedia(voiceNoteId);
       const mediaId = await queueRecording(uri, 'visit', 'pending');
       setVoiceNoteId(mediaId);
-      set({ rec: 'failed' });
+      set({ voice: mode === 'dictate' ? 'dictated' : 'queued' });
     } catch {
-      set({ rec: 'failed' });
+      /* A save is never blocked by a recording. The note he read and approved
+         is already in the box; losing the audio behind it costs the office a
+         second copy of something it can already read. */
+      notify('That recording could not be kept, but your note is safe.');
     }
   };
 
@@ -214,6 +565,7 @@ export default function Visit() {
     dwellSeconds,
     minimumDwellSeconds: minDwell,
     maxMetresFromShop: maxMetres,
+    checkInOverridden: !!overrideReason,
     hasShopPhoto: !!shots.shop,
     outcome,
     followOnCaptured: !!(outcome && visitDone[outcome]),
@@ -222,12 +574,102 @@ export default function Visit() {
   const followOn = outcome ? FOLLOW_ON[outcome] : undefined;
   const doneLine = outcome ? visitDone[outcome] : undefined;
 
+  /**
+   * The ticket, asked once, on the way out.
+   *
+   * IT IS A QUESTION AND NEVER A GATE. Skipping is offered in words — the fare
+   * can still be added on the Travel screen, where the day is priced — so
+   * nobody skips it believing the money is gone. A bus ticket is a scrap of
+   * paper that gets lost between the seat and the shop door, and refusing the
+   * visit over one would mean refusing to record a visit that happened, which
+   * is the rule this whole screen is built on.
+   *
+   * Asked once and not again: a leg already carrying a fare goes straight
+   * through, because one trip is one fare and being asked twice is how
+   * somebody claims it twice.
+   */
+  function askTicketThenSave(unverifiedReason: string | null = null) {
+    const wants = leg && legMode?.requiresTicket && leg.ticketAmountPaise == null;
+    if (!wants) {
+      void saveAndGo(elapsedLabel(dwellSeconds), unverifiedReason);
+      return;
+    }
+    setTicketShot(null);
+    setFare('');
+    setTicketRef('');
+    setFareErr(null);
+    setPendingUnverified(unverifiedReason);
+    setTicketOpen(true);
+  }
+
+  const shootTicket = async () => {
+    if (!leg) return;
+    /* The SYSTEM camera here, unlike the odometer. This one really is a
+       photograph OF something — a printed ticket he is holding — with no
+       number to be typed against the image while it is on screen, so the
+       argument in `odometer-camera.tsx` does not carry across and the flash
+       and tap-to-focus people already know are worth more. */
+    const shot = await takePhoto({ parentType: 'travel_leg', parentId: leg.id, kind: 'ticket_photo' });
+    if (!shot.ok) {
+      if (shot.reason !== 'cancelled') notify(shot.reason);
+      return;
+    }
+    setTicketShot(shot.mediaId);
+  };
+
+  const claimTicket = async () => {
+    if (!leg || ticketBusy) return;
+    const verdict = checkFare(fare);
+    if (!verdict.ok) {
+      setFareErr(verdict.why);
+      return;
+    }
+    setTicketBusy(true);
+    try {
+      await attachTicketToLeg({
+        legId: leg.id,
+        amountPaise: verdict.paise,
+        photoId: ticketShot,
+        reference: ticketRef.trim() || null,
+      });
+      setTicketOpen(false);
+      notify('Ticket added to today’s travel');
+      loadLeg();
+    } catch {
+      /* THE VISIT IS NOT LOST TO A FAILED FARE. He goes on to save it and the
+         ticket stays addable on the Travel screen — exactly what skipping
+         would have left him with. */
+      notify('The ticket could not be added just now — save the visit and add it from Travel.');
+      setTicketOpen(false);
+    } finally {
+      setTicketBusy(false);
+      void saveAndGo(elapsedLabel(dwellSeconds), pendingUnverified);
+    }
+  };
+
   async function saveAndGo(spent: string, unverifiedReason: string | null) {
     if (!c || saving) return;
+
+    /*
+     * The one thing that stops a save here, and it stops it to ASK rather than
+     * to refuse: past the cap the salesman says which way the lead goes before
+     * the visit closes. The visit is still recorded — this is a field on the
+     * same form, not a rejection — and the server checks the same rule against
+     * the same two configured numbers.
+     */
+    if (capState === 'decide' && !decision) {
+      setDecisionErr('Say which way this one goes before you close the visit.');
+      return;
+    }
+    if (decision === 'still_suspect' && !decisionWhy.trim()) {
+      setDecisionErr('Say why we are still going — somebody will ask.');
+      return;
+    }
+
     setSaving(true);
     const checkOut: Fix | null = fix ? { ...fix, at: now } : null;
     try {
-      await saveVisit({
+      const visitId = await saveVisit({
         customerId: c.id,
         customerName: c.name,
         userId: boot.session?.user.id ?? '',
@@ -243,20 +685,232 @@ export default function Visit() {
         nextFollowUpDate: nextDate || null,
         journeyStopId: stopId,
         wasPlanned: !!stopId,
-        deviationReason: null,
+        /*
+         * Why this shop, when it is not on the plan.
+         *
+         * Hardcoded null since this screen was written, while the route screen
+         * asked for the reason and threw it away in a toast — so `visits`
+         * carried the column, the manager screens read it, and no visit in the
+         * history has ever had one. It is taken on the route screen and spent
+         * here.
+         *
+         * Dropped where the shop turns OUT to be on today's plan: a stop he
+         * was always going to make is not a deviation, whatever he typed
+         * before he chose it.
+         */
+        deviationReason: stopId ? null : offPlanReason,
         locationMismatch: verdictGeo.mismatch,
         metresFromShop: metresAway,
-        verified: unverifiedReason == null,
-        unverifiedReason,
+        /*
+         * AN OVERRIDDEN CHECK-IN IS NEVER A CLEAN VISIT, whatever the
+         * checklist showed.
+         *
+         * `visitChecks` lets the gps check read OK on an override so he is not
+         * asked for a second sentence at the save — but that is about not
+         * asking twice, and it must not become a claim that the visit
+         * verified. The server reaches the same answer from the same reason
+         * and does not trust this flag; what these two lines keep true is that
+         * the record on his OWN phone says what the office's says, and that
+         * `saveVisit` raises the "saved unverified" notice it should.
+         */
+        verified: unverifiedReason == null && !overrideReason,
+        unverifiedReason:
+          unverifiedReason ??
+          (overrideReason ? `Checked in past the ${maxMetres} m radius: ${overrideReason}` : null),
+        checkInOverrideReason: overrideReason,
+        pinCorrectionRequested: pinRequested,
         linkedComplaintId: linked.complaintId ?? null,
         linkedSampleId: linked.sampleId ?? null,
+        suspectDecision: decision,
+        suspectReason: decisionWhy.trim() || null,
+        requirement: reqWhat.trim() || null,
+        monthlyVolumeLitres: Number(reqLitres.replace(/[^\d]/g, '')) || null,
+        quantityCans: Number(reqCans.replace(/[^\d]/g, '')) || null,
       });
-      set({ visitSpent: spent });
+      /* Spent, whether or not it was used — a reason typed for one shop must
+         not attach itself to the next unrelated visit hours later. */
+      set({ visitSpent: spent, offPlanReason: null });
+      /* The journey is spent on this visit, locally, so the record reads
+         correctly on this handset without waiting for a pull — and so the
+         next visit to this shop does not pick the same leg up again.
+         Deliberately AFTER the save: a leg bound to a visit that failed to
+         write would be a journey pointing at nothing. */
+      if (leg) await bindLegToVisit(leg.id, visitId);
+
       router.replace('/saved');
     } catch {
       setSaving(false);
       notify('The visit could not be saved on this phone. Nothing has been lost — try again.');
     }
+  }
+
+  /*
+   * ─────────────────────────────────────────── still on the road
+   *
+   * THE VISIT SCREEN IS LOCKED UNTIL HE SAYS HE IS HERE, and that is the point
+   * of asking how he travels at all. "Start visit" now means "I am setting
+   * off", so opening the whole form at that moment would start the dwell
+   * clock, ask for a GPS fix and offer a shop photograph while he is still on
+   * the bike — and the dwell figure, which exists to say how long he spent
+   * with the customer, would quietly become how long the ride took.
+   *
+   * Rendered INSTEAD of the form rather than over it: a modal on top of a
+   * working screen invites somebody to dismiss it and carry on, and there is
+   * nothing underneath to carry on with.
+   */
+  if (legLoaded && leg && leg.endedAt == null) {
+    const prompt = arrivalPrompt({
+      requiresOdometer: needsMeter,
+      odometerStartKm: leg.odometerStartKm,
+    });
+    const shopPin = pinLat != null && pinLng != null ? { lat: pinLat, lng: pinLng } : null;
+    const away = navigationLine({
+      hasPin: !!shopPin,
+      metresAway: roadFix && shopPin ? haversineMetres(roadFix, shopPin) : null,
+      fixAgeSeconds: roadFix ? Math.round((now - roadFix.at) / 1000) : null,
+      staleAfterSeconds: staleAfterS,
+    });
+    return (
+      <AppFrame
+        title="On your way"
+        activeTab="customers"
+        onBack={() => router.back()}
+        contentStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24 }}>
+        <Card style={{ padding: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Icon name="nav" size={20} color={C.primaryDeep} strokeWidth={1.8} />
+            <Text style={[type.h2, { flex: 1, minWidth: 0 }]}>{c?.name ?? leg.toLabel ?? ''}</Text>
+          </View>
+          <Text style={[type.caption, { marginTop: 8 }]}>
+            {legLine({
+              modeLabel: legMode?.label ?? leg.modeKey,
+              odometerStartKm: null,
+              odometerEndKm: null,
+              ticketAmountPaise: null,
+            }) +
+              ' · travelling ' +
+              travellingFor(leg.startedAt ?? Date.now(), now)}
+          </Text>
+          {leg.odometerStartKm != null ? (
+            <Text style={[type.caption, { marginTop: 2 }]}>
+              {'Set off on ' + leg.odometerStartKm.toLocaleString('en-IN') + ' km'}
+            </Text>
+          ) : null}
+          {/*
+            NAVIGATION SITS WITH THE JOURNEY, above the line about ending it.
+            The card is two halves and they are read at two different moments:
+            the top is the ride he is on and is read as he sets off, the bottom
+            is how the ride stops and is read when he gets there. Dropping the
+            button between the prompt and the button that answers it would split
+            the only pair on the card that belongs together.
+          */}
+          <NavigateButton
+            lat={c?.gpsLat}
+            lng={c?.gpsLng}
+            name={c?.name ?? leg.toLabel}
+            city={c?.area ?? c?.city}
+            detail={away}
+            style={{ marginTop: 12 }}
+          />
+
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 14 }}>{prompt.line}</Text>
+
+          {/*
+            THE REFUSAL, said with its number.
+            It sits above the button rather than in a toast because a toast is
+            gone before it has been read, and the one thing he needs from this
+            screen is how far off he is — which tells him whether to walk
+            twenty steps or whether the book has the shop in the wrong town.
+          */}
+          {refused ? (
+            <View
+              style={{
+                marginTop: 14,
+                borderWidth: 1,
+                borderColor: C.warnEdge,
+                backgroundColor: C.warnBg,
+                borderRadius: radius.lg,
+                paddingVertical: 12,
+                paddingHorizontal: 14,
+              }}>
+              <Text style={[{ fontSize: 14, lineHeight: 20, color: C.ink }, weight(500)]}>
+                {refused.sentence}
+              </Text>
+              <Text style={[type.caption, { marginTop: 6 }]}>
+                Walk to the shop and press again — nothing has been recorded yet.
+              </Text>
+            </View>
+          ) : null}
+
+          <View style={{ marginTop: 14 }}>
+            <PrimaryButton
+              label={arriving ? 'One moment…' : refused ? 'Check again' : prompt.button}
+              onPress={() => void arriveHere()}
+              disabled={arriving}
+              whyDisabled="Recording where you are."
+            />
+          </View>
+          {/*
+            OFFERED ONLY ONCE HE HAS BEEN REFUSED. Drawn from the start it
+            would be a way round the radius that nobody had to be refused by
+            first, which is a different feature.
+          */}
+          {refused ? (
+            <View style={{ marginTop: 10 }}>
+              <SecondaryButton
+                label="I am at the shop — its location here is wrong"
+                onPress={overrideRefusal}
+              />
+            </View>
+          ) : null}
+          {/*
+            CALLING IT OFF IS THE WAY OUT THAT IS NOT AN ARRIVAL, and it is
+            not a skip. (It was the only other way out before the radius could
+            refuse one; the override above is the second, and it ends with him
+            in the shop rather than on his way home.)
+            The meter has already moved, so there is no version of this where
+            nothing happened — what he chooses is whether the journey is
+            recorded against a shop he reached or against a trip he abandoned,
+            and the second still needs a sentence or the next departure's
+            reading follows on from a gap.
+          */}
+          <View style={{ marginTop: 10 }}>
+            <SecondaryButton
+              label="I am not going after all"
+              onPress={() =>
+                askConfirm({
+                  title: 'Call off this trip?',
+                  body:
+                    'It stays on your record with the reason you give, measuring nothing — the meter has already moved, and a journey that vanished would leave the next one following on from a gap.',
+                  reasonLabel: 'Why · required',
+                  confirmLabel: 'Call off the trip',
+                  run: (reason) => {
+                    void abandonLeg(leg.id, reason).then(() => {
+                      notify('Trip called off');
+                      router.replace('/journey');
+                    });
+                  },
+                })
+              }
+            />
+          </View>
+        </Card>
+
+        <OdometerCamera
+          open={metering}
+          title="Photograph the meter"
+          subtitle="You have arrived — this is where the trip is measured to."
+          cancelLabel="Cancel — I have not arrived yet"
+          previousKm={leg.odometerStartKm}
+          maxLegKilometres={maxLegKm}
+          onDone={(result) => {
+            setMetering(false);
+            answerOdometer.current?.(result);
+            answerOdometer.current = null;
+          }}
+        />
+      </AppFrame>
+    );
   }
 
   return (
@@ -276,7 +930,7 @@ export default function Visit() {
               <Text style={[{ fontSize: 15, color: C.ink }, weight(500)]}>{elapsedLabel(dwellSeconds)}</Text>
             </View>
             <Pressable
-              onPress={() => (verdict.verified ? saveAndGo(elapsedLabel(dwellSeconds), null) : notify(verdict.firstFailure))}
+              onPress={() => (verdict.verified ? askTicketThenSave() : notify(verdict.firstFailure))}
               accessibilityLabel={verdict.verified ? 'Save visit' : verdict.firstFailure}
               style={[
                 { height: 52, paddingHorizontal: 24, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', backgroundColor: verdict.verified ? C.primary : C.hairline },
@@ -397,77 +1051,192 @@ export default function Visit() {
         ) : null}
       </Card>
 
+      {/* ---- §B · is this one going anywhere? ----
+          Drawn only for a Suspect, and only once the count is worth mentioning.
+          It is a QUESTION on the visit form, never a refusal of the visit: a
+          salesman whose visit is blocked stops recording visits, and the
+          company loses the GPS, the competitor note and the reason in order to
+          stop a number reaching four. */}
+      {capState !== 'ok' && suspect && capCfg ? (
+        <Card
+          style={{
+            marginTop: 12,
+            borderLeftWidth: 3,
+            borderLeftColor: capState === 'decide' ? C.warnInk : C.hairline,
+          }}>
+          <Text style={type.label}>
+            {'Visit ' + suspect.visits + ' / ' + capCfg.maxSuspectVisits + ' · still a Suspect'}
+          </Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: C.body }}>
+            {capState === 'decide'
+              ? 'Say which way this one goes before you close the visit. The visit is recorded either way.'
+              : 'Next time round you will be asked to decide. Worth thinking about now.'}
+          </Text>
+
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+            {[
+              { v: 'qualified', label: 'A prospect' },
+              { v: 'contacted', label: 'Keep working it' },
+              { v: 'on_hold', label: 'On hold' },
+              { v: 'still_suspect', label: 'Still a Suspect' },
+              { v: 'lost', label: 'Lost' },
+            ].map((o) => (
+              <Choice
+                key={o.v}
+                label={o.label}
+                selected={decision === o.v}
+                onPress={() => {
+                  setDecision(decision === o.v ? null : o.v);
+                  setDecisionErr(null);
+                }}
+                style={{ paddingHorizontal: 14 }}
+              />
+            ))}
+          </View>
+
+          {/* On hold and staying a Suspect both ask why, and for the same
+              reason: somebody is going to look at this lead again and the
+              sentence is what tells them when, or whether. Lost asks too —
+              that one because nobody will. */}
+          {decision === 'still_suspect' || decision === 'on_hold' || decision === 'lost' ? (
+            <TextInput
+              value={decisionWhy}
+              onChangeText={(v) => {
+                setDecisionWhy(v);
+                setDecisionErr(null);
+              }}
+              placeholder={
+                decision === 'lost'
+                  ? 'Why we are not going back'
+                  : 'What we are waiting for'
+              }
+              placeholderTextColor={C.faint}
+              multiline
+              style={{
+                marginTop: 12,
+                minHeight: 64,
+                borderWidth: 1,
+                borderColor: C.border,
+                borderRadius: radius.sm,
+                padding: 12,
+                fontSize: 15,
+                color: C.ink,
+                textAlignVertical: 'top',
+              }}
+            />
+          ) : null}
+
+          {decisionErr ? (
+            <Text style={[{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.danger }, weight(500)]}>
+              {decisionErr}
+            </Text>
+          ) : null}
+        </Card>
+      ) : null}
+
+      {/* ---- §G · what they actually need ----
+          On a lead only. These overwrite the lead's own columns deliberately,
+          unlike the validation call's answers: this is the same person asking
+          the same question better informed, not a second party's account. */}
+      {suspect ? (
+        <Card style={{ marginTop: 12 }}>
+          <Text style={type.label}>What they need</Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, marginTop: 6, color: C.body }}>
+            Optional. Fill it in when you have taken the price list and asked properly.
+          </Text>
+
+          <TextInput
+            value={reqWhat}
+            onChangeText={setReqWhat}
+            placeholder="What they want — thinner for a spray booth"
+            placeholderTextColor={C.faint}
+            style={{
+              marginTop: 12, minHeight: 48, borderWidth: 1, borderColor: C.border,
+              borderRadius: radius.sm, paddingHorizontal: 12, fontSize: 15, color: C.ink,
+            }}
+          />
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+            <View style={{ flex: 1 }}>
+              <TextInput
+                value={reqLitres}
+                onChangeText={setReqLitres}
+                placeholder="Litres a month"
+                placeholderTextColor={C.faint}
+                keyboardType="number-pad"
+                style={{
+                  minHeight: 48, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm,
+                  paddingHorizontal: 12, fontSize: 15, color: C.ink,
+                }}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              {/* Cans, because that is what an ORDER is counted in — the litres
+                  beside it are what the shop says its consumption is. Two
+                  different questions, and the units say which is which. */}
+              <TextInput
+                value={reqCans}
+                onChangeText={setReqCans}
+                placeholder="Cans to start"
+                placeholderTextColor={C.faint}
+                keyboardType="number-pad"
+                style={{
+                  minHeight: 48, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm,
+                  paddingHorizontal: 12, fontSize: 15, color: C.ink,
+                }}
+              />
+            </View>
+          </View>
+
+          {/* §G's business rule, said on the screen where it applies rather
+              than only refused at the server. */}
+          <Text style={{ fontSize: 13, lineHeight: 19, marginTop: 10, color: C.muted }}>
+            No price or delivery promises at this stage. Anything commercial goes to the Lead Manager.
+          </Text>
+        </Card>
+      ) : null}
+
       {/* ---- what was said ---- */}
       <Card style={{ marginTop: 12 }}>
         <Text style={type.label}>What was said</Text>
 
-        {rec === 'idle' ? (
-          <Pressable
-            onPress={startRecording}
-            style={{ width: '100%', height: 64, marginTop: 12, borderRadius: radius.sm, borderWidth: 1, borderColor: C.primary, backgroundColor: C.primaryTint, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-            <Icon name="mic" size={24} color={C.primaryDeep} strokeWidth={1.5} />
-            <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(600)]}>Hold to talk</Text>
-          </Pressable>
-        ) : null}
+        {/*
+          ONE MICROPHONE, and what it does depends on the signal.
 
-        {rec === 'rec' ? (
-          <View style={{ marginTop: 12, borderWidth: 1, borderColor: C.primary, backgroundColor: C.primaryTint, borderRadius: radius.sm, padding: 14 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: 4, height: 36 }}>
-              {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-                <View key={i} style={{ width: 5, height: 12 + (i % 4) * 8, borderRadius: 3, backgroundColor: C.primary }} />
-              ))}
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 12 }}>
-              <Text style={[{ fontSize: 15, color: C.primaryDeep }, weight(500)]}>
-                {'Recording · ' + elapsedLabel(Math.round(recorder.currentTime))}
-              </Text>
-              <Pressable
-                onPress={stopRecording}
-                style={{ height: HIT, paddingHorizontal: 16, borderRadius: radius.sm, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={[{ fontSize: 15, color: '#FFFFFF' }, weight(500)]}>Done</Text>
-              </Pressable>
-            </View>
-          </View>
-        ) : null}
+          It used to be two things on this card: a "Hold to talk" recorder that
+          queued the audio for the office to write out later, and a note box
+          underneath it. The recorder had never been reachable — nothing on any
+          path asked for the RECORD_AUDIO permission, so preparing threw and the
+          screen reported a broken microphone — and the card carried a state
+          called `done` that nothing ever set, so its "AI transcribed · edit
+          before saving" badge could not appear and the salesman had no way to
+          see the transcript at all. What he did see, after a recording that had
+          uploaded perfectly, was "No signal to transcribe".
 
-        {rec === 'busy' ? (
-          <View style={{ marginTop: 12, borderWidth: 1, borderColor: C.border, backgroundColor: C.wash, borderRadius: radius.sm, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <View style={{ width: 18, height: 18, borderWidth: 2, borderColor: C.primaryEdge, borderTopColor: C.primary, borderRadius: 9 }} />
-            <Text style={{ fontSize: 15, color: C.body }}>Turning that into text…</Text>
-          </View>
-        ) : null}
+          Both halves answer the same question, so they are one control now.
+          On signal it dictates: he speaks, reads the English, corrects it and
+          it lands in this box before he saves. Off signal it does what the old
+          recorder claimed to — the audio is queued and the office writes it out
+          — which is the honest fallback rather than an apology, and it is the
+          reason `keepAudio` exists at all.
 
-        {rec === 'failed' ? (
-          <View style={{ marginTop: 12, borderWidth: 1, borderColor: C.warnEdge, backgroundColor: C.warnBg, borderRadius: radius.sm, padding: 14 }}>
-            <Text style={{ fontSize: 13, lineHeight: 19, color: C.warnInk }}>
-              No signal to transcribe. The recording is saved and will be turned into text when you are back on.
+          The audio is kept in BOTH cases, unlike everywhere else this box
+          appears. A visit note is the one field where the recording is a record
+          of what a customer said rather than a keyboard, and the office keeps
+          it either way.
+        */}
+        <View style={{ marginTop: 12 }}>
+          <VoiceField
+            value={note}
+            onChangeText={(v) => set({ note: v })}
+            keepAudio="keep"
+            onRecording={(uri, _seconds, mode) => void keepVoiceNote(uri, mode)}
+          />
+          {voiceNoteId ? (
+            <Text style={[type.caption, { marginTop: 6 }]}>
+              The recording goes to the office with this visit.
             </Text>
-          </View>
-        ) : null}
-
-        {/* The note itself. The transcript is written server-side once the
-            recording lands, so what he types here is his own and is never
-            overwritten by it. */}
-        {rec !== 'rec' && rec !== 'busy' ? (
-          <View style={{ marginTop: 12 }}>
-            {rec === 'done' ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <View style={{ backgroundColor: C.infoBg, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
-                  <Text style={[{ fontSize: 12, color: C.info, textTransform: 'uppercase', letterSpacing: 0.36 }, weight(500)]}>
-                    AI transcribed
-                  </Text>
-                </View>
-                <Text style={type.caption}>Edit before saving</Text>
-              </View>
-            ) : null}
-            <TextInput
-              value={note}
-              onChangeText={(v) => set({ note: v })}
-              multiline
-              style={{ width: '100%', minHeight: 96, padding: 12, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm, fontSize: 14, lineHeight: 20, color: C.ink, backgroundColor: C.surface, textAlignVertical: 'top' }}
-            />
-          </View>
-        ) : null}
+          ) : null}
+        </View>
       </Card>
 
       {/* ---- how it went ---- */}
@@ -593,7 +1362,10 @@ export default function Visit() {
               confirmLabel: 'Save unverified',
               run: (reason) => {
                 set({ overrodeReason: reason });
-                void saveAndGo(elapsedLabel(dwellSeconds), reason);
+                /* The ticket is asked for on BOTH save paths. A fare offered
+                   only on the clean one is a fare quietly lost on exactly the
+                   visits that already went wrong. */
+                askTicketThenSave(reason);
               },
             })
           }
@@ -605,6 +1377,53 @@ export default function Visit() {
       </View>
 
       <View style={{ height: 96 }} />
+
+      {/*
+        ---- the shop's own pin, questioned by somebody standing at it ----
+
+        A REQUEST AND NEVER A WRITE. The handset can already move a pin through
+        `customer_update`, so letting the override move it directly would mean
+        one override put the pin wherever he happened to be and the radius
+        never refused him there again. A manager decides, on the visit's own
+        row, from the check-in fix already stored on it — which is why nothing
+        here sends a coordinate: what he is proposing IS the check-in, and a
+        second copy of two numbers already in the record is a copy that can
+        disagree with it.
+
+        Backing out is No. It is a question about the book, asked of somebody
+        who has a shopkeeper waiting, and a sheet that would not close until it
+        was answered would be answered at random.
+      */}
+      <BottomSheet open={pinAsk} onClose={() => setPinAsk(false)}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
+          <Text style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
+            Is this shop in the wrong place?
+          </Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
+            MahekOne has {c?.name ?? 'this shop'} about {metresAway ?? '?'} m from where you
+            checked in. If the shop is here and the map is wrong, ask your manager to move
+            it — the next visit will not be questioned, and nor will anybody else&rsquo;s.
+          </Text>
+
+          <View style={{ marginTop: 16, gap: 8 }}>
+            <PrimaryButton
+              label="Yes — ask my manager to move it here"
+              onPress={() => {
+                setPinRequested(true);
+                setPinAsk(false);
+                notify('Your manager will be asked to move it. It goes with this visit.');
+              }}
+            />
+            <SecondaryButton
+              label="No — leave it as it is"
+              onPress={() => {
+                setPinRequested(false);
+                setPinAsk(false);
+              }}
+            />
+          </View>
+        </View>
+      </BottomSheet>
 
       {/* ---- complaint, logged without leaving the visit ---- */}
       <BottomSheet open={form === 'complaint'} onClose={() => setForm(null)} scroll>
@@ -624,13 +1443,12 @@ export default function Visit() {
         {formErr === 'cat' ? <Text style={{ fontSize: 13, color: C.danger }}>Pick what it is about.</Text> : null}
 
         <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>In their words</Text>
-        <TextInput
+        <VoiceField
           value={draft.what ?? ''}
           onChangeText={(v) => { setDraft({ ...draft, what: v }); setFormErr(null); }}
-          multiline
+          invalid={formErr === 'what'}
           placeholder="Two drums arrived dented and he refused them"
-          placeholderTextColor={C.faint}
-          style={{ width: '100%', minHeight: 90, padding: 12, borderWidth: 1, borderColor: formErr === 'what' ? C.danger : C.border, borderRadius: radius.lg, fontSize: 15, color: C.ink, textAlignVertical: 'top' }}
+          style={{ minHeight: 90 }}
         />
         {formErr === 'what' ? (
           <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Write what the customer actually said.</Text>
@@ -680,13 +1498,12 @@ export default function Visit() {
         {formErr === 'sku' ? <Text style={{ fontSize: 13, color: C.danger }}>Pick the product he wants to try.</Text> : null}
 
         <Text style={[type.label, { marginTop: 14, marginBottom: 6 }]}>Why he wants it</Text>
-        <TextInput
+        <VoiceField
           value={draft.why ?? ''}
           onChangeText={(v) => { setDraft({ ...draft, why: v }); setFormErr(null); }}
-          multiline
+          invalid={formErr === 'why'}
           placeholder="Comparing against what he buys from Asian"
-          placeholderTextColor={C.faint}
-          style={{ width: '100%', minHeight: 80, padding: 12, borderWidth: 1, borderColor: formErr === 'why' ? C.danger : C.border, borderRadius: radius.lg, fontSize: 15, color: C.ink, textAlignVertical: 'top' }}
+          style={{ minHeight: 80 }}
         />
         {formErr === 'why' ? (
           <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Your manager approves on this reason.</Text>
@@ -746,6 +1563,122 @@ export default function Visit() {
             setCalOpen(null);
           }}
         />
+      </BottomSheet>
+      {/* ────────────────────────────────────── the ticket, on the way out */}
+      <BottomSheet
+        open={ticketOpen}
+        /*
+          BACKING OUT IS SKIPPING, and it saves the visit rather than
+          cancelling it. A sheet that swallowed the save when dismissed would
+          make the ticket a gate by accident — he would press Save, tap
+          outside, and find nothing had happened.
+        */
+        onClose={() => {
+          setTicketOpen(false);
+          void saveAndGo(elapsedLabel(dwellSeconds), pendingUnverified);
+        }}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 20 }}>
+          <Text style={[{ fontSize: 17, lineHeight: 22, color: C.ink }, weight(600)]}>
+            {'Your ' + (legMode?.label ?? 'travel').toLowerCase() + ' ticket'}
+          </Text>
+          <Text style={{ fontSize: 14, lineHeight: 20, color: C.body, marginTop: 6 }}>
+            Add what it cost and it goes onto today&rsquo;s travel straight away. If you
+            have not got it on you, skip — you can still add it on the Travel screen.
+          </Text>
+
+          <View style={{ marginTop: 14 }}>
+            <Text style={type.label}>What did it cost?</Text>
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 8,
+                marginTop: 6,
+                borderWidth: 1,
+                borderColor: fareErr ? C.danger : C.border,
+                borderRadius: radius.md,
+                paddingHorizontal: 14,
+              }}>
+              <Text style={[{ fontSize: 17, color: C.body }, weight(500)]}>₹</Text>
+              <TextInput
+                value={fare}
+                onChangeText={(v) => {
+                  setFare(v);
+                  if (fareErr) setFareErr(null);
+                }}
+                keyboardType="decimal-pad"
+                placeholder="40"
+                placeholderTextColor={C.faint}
+                autoFocus
+                accessibilityLabel="Ticket fare in rupees"
+                style={{ flex: 1, height: 52, fontSize: 18, color: C.ink }}
+              />
+            </View>
+            {fareErr ? (
+              <Text style={{ fontSize: 13, lineHeight: 18, color: C.danger, marginTop: 6 }}>{fareErr}</Text>
+            ) : null}
+          </View>
+
+          {/* The PNR or ticket number, which is what a duplicate is caught on
+              — two people claiming one journey, or the same journey claimed
+              twice. Optional, because a local bus ticket has no number and
+              refusing the fare over one would lose the claim entirely. */}
+          <View style={{ marginTop: 12 }}>
+            <Text style={type.label}>Ticket or PNR number · optional</Text>
+            <View
+              style={{
+                marginTop: 6,
+                borderWidth: 1,
+                borderColor: C.border,
+                borderRadius: radius.md,
+                paddingHorizontal: 14,
+              }}>
+              <TextInput
+                value={ticketRef}
+                onChangeText={setTicketRef}
+                autoCapitalize="characters"
+                placeholder="If it has one"
+                placeholderTextColor={C.faint}
+                accessibilityLabel="Ticket or PNR number"
+                style={{ height: 52, fontSize: 16, color: C.ink }}
+              />
+            </View>
+          </View>
+
+          <Pressable
+            onPress={() => void shootTicket()}
+            style={{
+              height: 72,
+              marginTop: 12,
+              borderRadius: radius.md,
+              borderWidth: 1,
+              borderColor: ticketShot ? C.primary : C.border,
+              backgroundColor: ticketShot ? C.primaryTint : C.surface,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+            <Icon name="camera" size={22} color={ticketShot ? C.primaryDeep : C.body} strokeWidth={1.5} />
+            <Text style={[{ fontSize: 14, marginTop: 4, color: ticketShot ? C.primaryDeep : C.body }, weight(500)]}>
+              {ticketShot ? 'Ticket photographed ✓ — tap to retake' : 'Photograph the ticket · optional'}
+            </Text>
+          </Pressable>
+
+          <View style={{ marginTop: 16, gap: 10 }}>
+            <PrimaryButton
+              label={ticketBusy ? 'Adding…' : 'Add it and save the visit'}
+              onPress={() => void claimTicket()}
+              disabled={ticketBusy}
+              whyDisabled="Adding the ticket."
+            />
+            <SecondaryButton
+              label="Skip — I will add it later"
+              onPress={() => {
+                setTicketOpen(false);
+                void saveAndGo(elapsedLabel(dwellSeconds), pendingUnverified);
+              }}
+            />
+          </View>
+        </View>
       </BottomSheet>
     </AppFrame>
   );

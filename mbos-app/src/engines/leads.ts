@@ -7,11 +7,11 @@
  * pinned by tests that need neither SQLite nor a handset.
  */
 
-export const LEAD_STAGES = ['New', 'Contacted', 'Qualified', 'Negotiation', 'Converted', 'Lost'] as const;
+export const LEAD_STAGES = ['New', 'Contacted', 'Qualified', 'Negotiation', 'On hold', 'Converted', 'Lost'] as const;
 export type LeadStage = (typeof LEAD_STAGES)[number];
 
 /** Archived is a FILTER. A lead is never deleted, only kept out of the way. */
-export const LEAD_FILTERS = ['All', 'New', 'Contacted', 'Qualified', 'Negotiation', 'Lost', 'Archived'] as const;
+export const LEAD_FILTERS = ['All', 'New', 'Contacted', 'Qualified', 'Negotiation', 'On hold', 'Lost', 'Archived'] as const;
 export type LeadFilter = (typeof LEAD_FILTERS)[number];
 
 /**
@@ -23,6 +23,23 @@ export type LeadFilter = (typeof LEAD_FILTERS)[number];
  * same list.
  */
 export const LEAD_SOURCES = ['Walked past', 'Referral', 'Market enquiry', 'Exhibition', 'Office'] as const;
+
+/**
+ * What the account IS in the trade.
+ *
+ * The values are the server's `customer_type` enum verbatim, so a converted
+ * lead needs no translation on the way through — this is the one field on the
+ * lead form that is already a column on `customers` and will still be one
+ * after the account is opened. The LABELS are separate because "manufacturer"
+ * is a database word and "makes things, buys to use" is what a salesman is
+ * actually deciding between outside a shop.
+ */
+export const CUSTOMER_TYPES = [
+  { value: 'dealer', label: 'Dealer' },
+  { value: 'retailer', label: 'Retailer' },
+  { value: 'distributor', label: 'Distributor' },
+  { value: 'manufacturer', label: 'Manufacturer' },
+] as const;
 
 /**
  * A mobile number as it will be compared, not as it was typed.
@@ -77,8 +94,79 @@ export function matchDuplicate(
  * the whole value of the record after that.
  */
 export function stageRefusal(stage: string, reason: string | null | undefined): string | null {
-  if (stage !== 'Lost') return null;
-  return String(reason ?? '').trim() ? null : 'Say why it was lost — nobody rings this shop again after this.';
+  const said = String(reason ?? '').trim();
+  if (stage === 'Lost') {
+    return said ? null : 'Say why it was lost — nobody rings this shop again after this.';
+  }
+  /* On hold asks too, and for the opposite reason to Lost. Lost wants the
+     reason because nobody will ever look again; this one wants it because
+     somebody will — "back after Diwali" is what tells them when. */
+  if (stage === 'On hold') {
+    return said ? null : 'Say what you are waiting for — that is what tells anybody when to pick it up again.';
+  }
+  return null;
+}
+
+/* ------------------------------------------------------- the visit cap */
+
+/**
+ * How many visits a Suspect has had, and what the handset should do about it.
+ *
+ * §B asks for a maximum "enforced". Enforced as a REFUSAL is the one shape
+ * this app must not use — `engines/geo.ts` states the principle the whole
+ * field product rests on, that a reading is evidence and never a gate, because
+ * a salesman whose visit is refused stops recording visits and the company
+ * loses the GPS, the competitor note and the reason to stop a number reaching
+ * four. What §B actually wants is that nobody keeps visiting a shop nobody has
+ * decided about, and that is bought by demanding an ANSWER.
+ *
+ * So there are three states and none of them blocks anything:
+ *   `ok`      nothing to say.
+ *   `warn`    the next visit will need a decision. Said early, so the answer
+ *             is not sprung on somebody standing in a shop.
+ *   `decide`  this visit needs one before it can be closed.
+ *
+ * The thresholds are configuration and arrive from the office — the server
+ * enforces `decide` against the same two numbers, which is what keeps the two
+ * runtimes agreeing without a shared module they cannot have.
+ */
+export type VisitCapState = 'ok' | 'warn' | 'decide';
+
+export type VisitCapThresholds = { visitsBeforeDecision: number; maxSuspectVisits: number };
+
+/** Only these two are a Suspect. A qualified prospect being visited again is a
+ *  negotiation, not a stall, and must never be asked to justify itself. */
+const SUSPECT_STAGES = ['New', 'Contacted'];
+
+export function visitCapState(
+  stage: string,
+  /** Visits already recorded. The one being made is this plus one. */
+  visitsSoFar: number,
+  cfg: VisitCapThresholds,
+): VisitCapState {
+  if (!SUSPECT_STAGES.includes(stage)) return 'ok';
+  const thisVisit = visitsSoFar + 1;
+  if (thisVisit >= cfg.maxSuspectVisits) return 'decide';
+  if (thisVisit >= cfg.visitsBeforeDecision) return 'warn';
+  return 'ok';
+}
+
+/**
+ * "Visit 2 / 3" — what the lead card prints.
+ *
+ * Null where there is nothing to say, so a qualified prospect's card carries no
+ * counter at all rather than one that has stopped meaning anything.
+ */
+export function visitCapLabel(
+  stage: string,
+  visitsSoFar: number,
+  cfg: VisitCapThresholds,
+): string | null {
+  if (!SUSPECT_STAGES.includes(stage)) return null;
+  /* Past the cap it keeps counting rather than sticking at "3 / 3": a fourth
+     visit happened, the manager has been told, and a counter that lies about
+     it is worse than one that reads oddly. */
+  return 'Visit ' + visitsSoFar + ' / ' + cfg.maxSuspectVisits;
 }
 
 /** A follow-up in the past is a follow-up nobody will be reminded about. */
@@ -128,4 +216,62 @@ export function leadAlert(lead: LeadTiming, today: string, cfg: LeadThresholds):
     return 'Untouched for ' + quiet + ' days — your manager sees this one';
   }
   return null;
+}
+
+/* ------------------------------------------------------- the reorder due */
+
+/**
+ * Is this customer due to order again?
+ *
+ * §P asks for a reorder reminder, and the office already answers this question
+ * for the telecallers' Call Log. The handset cannot ask it: there is no reorder
+ * channel on the pull, and a salesman in a market lane has no connection to ask
+ * over. So it is derived here from two columns every customer row already
+ * carries — `lastOrderDate` and `cycleDays` — which is what makes it work with
+ * the phone in flight mode.
+ *
+ * It deliberately does NOT restate the Call Log's ranking. That engine weighs a
+ * reorder against a promise, a debt and a stock check to decide who to ring
+ * FIRST out of four hundred; this answers one question about one shop the
+ * salesman is already standing outside. Copying the ranking here would be a
+ * second scoring system drifting from the first — and the half that drifts is
+ * always the half somebody reads.
+ *
+ * Null where there is nothing to say: a customer who has never ordered has no
+ * cycle to be late against, and saying "due" about them would be an invention.
+ */
+export type ReorderState = 'due' | 'overdue' | null;
+
+export function reorderState(
+  lastOrderDate: string | null,
+  cycleDays: number | null,
+  today: string,
+): ReorderState {
+  if (!lastOrderDate || !cycleDays || cycleDays <= 0) return null;
+  const since = daysBetween(lastOrderDate, today);
+  if (since == null) return null;
+  if (since >= cycleDays * 2) return 'overdue';
+  if (since >= cycleDays) return 'due';
+  return null;
+}
+
+/**
+ * The one line a customer card carries about it, or none.
+ *
+ * It says the CYCLE as well as the verdict, because "due" on its own invites
+ * the reply "due by whose reckoning" — and the cycle is the customer's own
+ * measured rhythm rather than a company default, which is exactly the thing
+ * worth saying out loud.
+ */
+export function reorderLabel(
+  lastOrderDate: string | null,
+  cycleDays: number | null,
+  today: string,
+): string | null {
+  const state = reorderState(lastOrderDate, cycleDays, today);
+  if (!state) return null;
+  const since = daysBetween(lastOrderDate, today) ?? 0;
+  return state === 'overdue'
+    ? 'Overdue to reorder — ' + since + ' days, buys every ' + cycleDays
+    : 'Due to reorder — ' + since + ' days, buys every ' + cycleDays;
 }

@@ -29,15 +29,16 @@ import { eq, or } from "drizzle-orm";
 import { db } from "../src/db";
 import { users } from "../src/db/schema";
 
-const ROLES = ["telecaller", "manager", "accounts", "admin"] as const;
+const ROLES = ["associate", "manager", "admin"] as const;
 type Role = (typeof ROLES)[number];
 
 /** What each role opens, in one line, printed on every change. */
 const CONSEQUENCE: Record<Role, string> = {
-  telecaller: "their own book only, and none of the manager actions",
-  manager: "their reporting line, targets, exports and configuration",
-  accounts: "every book for approvals, and none of the calling work",
-  admin: "everything, including approving orders and confirming payments",
+  associate:
+    "their own book only, in whichever apps they hold, and none of the manager actions",
+  manager:
+    "their reporting line in each app they hold it in — targets, exports and configuration in the CRM; approvals, receipts and credit notes in Accounts",
+  admin: "everything, everywhere, including approving orders and confirming payments",
 };
 
 async function main() {
@@ -72,6 +73,9 @@ async function main() {
 
   console.log(`${user.name}: ${user.role} → ${role}`);
   console.log(`They can now reach ${CONSEQUENCE[role as Role]}.`);
+  /* This sets the ACCOUNT's level, which is what a grant with no level of its
+     own falls back to. What each app lets them do still depends on holding
+     that app — see the matrix in `lib/access-control.ts`. */
   /*
    * Sessions are not ended. The role is read per request rather than baked
    * into the session row, so the change takes effect on their next page load

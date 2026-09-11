@@ -4,6 +4,8 @@ import { getConfig } from './config';
 import { leaveDays, overlaps, balanceAfter } from '../engines/leave';
 import { isoDate } from '../lib/format';
 import { wireComplaintCategory } from '../lib/wire';
+import type { ClaimedLine } from './travel';
+import type { ExpenseKind } from '../engines/generated/expense-policy';
 
 /**
  * The things that need somebody's permission: expenses, leave, samples.
@@ -68,6 +70,44 @@ export type Expense = {
 
 export async function listExpenses(): Promise<Expense[]> {
   return all<Expense>('SELECT * FROM expenses ORDER BY spentOn DESC');
+}
+
+/**
+ * The claims already standing on one day, for pricing what a new one earns.
+ *
+ * `listExpenses` cannot answer this and should not be made to: it is the whole
+ * list this handset holds, newest first, and its type does not carry `kind` —
+ * which is the column the policy actually prices on, and the one place
+ * `category` is not a synonym for it, since `local_transport` is stored under
+ * the category `travel`. A day priced off the category puts every auto fare
+ * under the wrong cap.
+ *
+ * **A REFUSED CLAIM EATS NO HEADROOM.** The office turned it down, it will pay
+ * nothing, and counting it would tell a salesman he has less left today than he
+ * has — the same failure the day's headroom exists to fix, pointing the other
+ * way. It matters most on the one screen that reopens a refused line:
+ * correcting a ₹300 claim writes a NEW row rather than editing the old one, so
+ * a rejected ₹300 counted here would read as ₹300 already spent the moment he
+ * opened it to put it right.
+ */
+export async function expensesOn(spentOn: string): Promise<ClaimedLine[]> {
+  const rows = await all<{
+    id: string;
+    kind: string | null;
+    category: string;
+    amountPaise: number;
+    billPhotoId: string | null;
+  }>(
+    `SELECT id, kind, category, amountPaise, billPhotoId FROM expenses
+      WHERE spentOn = ? AND state <> 'Rejected'`,
+    [spentOn],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    kind: ((r.kind ?? r.category) as ExpenseKind) ?? 'other',
+    claimedPaise: r.amountPaise,
+    hasProof: r.billPhotoId != null,
+  }));
 }
 
 /**
@@ -367,15 +407,59 @@ export async function logComplaint(args: {
   return id;
 }
 
+export type Complaint = {
+  id: string;
+  customerId: string;
+  visitId: string | null;
+  category: string;
+  description: string;
+  status: string;
+  clientCreatedAt: number;
+  syncState: string;
+};
+
+/**
+ * This shop's complaints, newest first.
+ *
+ * A complaint was WRITE-ONLY for as long as it has existed: `logComplaint`
+ * wrote the row and sent it, and nothing on the handset ever selected one
+ * back. So the salesman raised it standing in the shop, and the next time the
+ * same customer asked him what had happened about it he had no way to answer —
+ * not even to say it had been sent. The thing he is most likely to be asked
+ * about on his next visit was the one thing the record could not tell him.
+ *
+ * `status` is the office's word and arrives on the sync, so an answer shows up
+ * here without anybody on this end doing anything.
+ */
+export async function complaintsFor(customerId: string): Promise<Complaint[]> {
+  return all<Complaint>(
+    `SELECT id, customerId, visitId, category, description, status, clientCreatedAt, syncState
+       FROM complaints WHERE customerId = ? ORDER BY clientCreatedAt DESC LIMIT 50`,
+    [customerId],
+  );
+}
+
 /* -------------------------------------------------------------- samples */
 
 export type Sample = {
   id: string; customerId: string; productName: string | null; state: string;
   requestedAt: number; followUpDate: string | null; trialOutcome: string | null; syncState: string;
+  /* The three assertions, in the order they happen. See `SampleProgress`. */
+  dispatchedAt: number | null;
+  courierName: string | null;
+  trackingNumber: string | null;
+  deliveredAt: number | null;
+  receivedAt: number | null;
+  trialStartedAt: number | null;
+  trialCompletedAt: number | null;
+  satisfaction: string | null;
+  additionalRequirement: string | null;
+  rejectionReason: string | null;
   /* The row has carried these since the table was written; the type simply
      never named them, so the one screen that wants them could not read them. */
-  cans: number | null; reason: string | null;
-  deliveredAt: number | null; convertedOrderId: string | null;
+  cans: number | null;
+  reason: string | null;
+  convertedOrderId: string | null;
 };
 
 /**
@@ -440,13 +524,15 @@ export async function requestSample(args: {
   return id;
 }
 
-/**
- * Feedback still pending past its follow-up date is flagged. A sample nobody
- * chased is a sample that was given away.
+/*
+ * A sample after it is asked for lives in `data/lead-samples.ts`, not here.
+ *
+ * `overdueSamples`, `updateSample`, `sampleRefusal` and `SampleProgress` stood
+ * in this file and were called by nothing: the funnel module took the same
+ * `samples` table over and answered the same questions in more detail, and the
+ * two screens that show a sample — `app/samples.tsx` and `app/sample.tsx` —
+ * both read it. Two modules over one table is how the same question gets two
+ * answers, so the half nobody was reading has gone rather than been wired to a
+ * second screen. `requestSample` and `customerSamples` stay because the visit
+ * drawer and the customer record still call them.
  */
-export async function overdueSamples(today: string): Promise<Sample[]> {
-  return all<Sample>(
-    `SELECT * FROM samples WHERE state NOT IN ('Converted','Rejected') AND followUpDate IS NOT NULL AND followUpDate < ?`,
-    [today],
-  );
-}
